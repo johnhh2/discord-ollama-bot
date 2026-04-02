@@ -68,6 +68,56 @@ Run `ollama list` to see which models you have available.
 python bot.py
 ```
 
+---
+
+## Docker setup (Docker Desktop)
+
+This is the recommended way to run the bot persistently without keeping a terminal open.
+
+### 1. Make sure your `.env` is configured
+
+Same as above. One important difference — since the bot runs inside a container, it can't reach `localhost` on your machine directly. Change `OLLAMA_BASE_URL` in your `.env` to:
+
+```env
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+```
+
+`host.docker.internal` is a special hostname Docker Desktop provides on Windows to reach the host machine.
+
+### 2. Build and start the container
+
+Open Docker Desktop, then run:
+
+```powershell
+cd C:\Users\John-Hugh\discord-ollama-bot
+docker compose up -d
+```
+
+- `-d` runs it in the background (detached)
+- Docker Desktop will show the container under the **Containers** tab
+
+### 3. View logs
+
+```powershell
+docker compose logs -f
+```
+
+Or click the container in Docker Desktop and open the **Logs** tab.
+
+### 4. Stop the bot
+
+```powershell
+docker compose down
+```
+
+### 5. Rebuild after code changes
+
+```powershell
+docker compose up -d --build
+```
+
+---
+
 ## Usage
 
 - **Mention the bot** in any channel it can see: `@BotName hello!`
