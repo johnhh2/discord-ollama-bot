@@ -722,7 +722,7 @@ async def on_message(message: discord.Message):
             del active_mocks[uid]
         else:
             mocked = mocking_font(message.content)
-            await message.channel.send(f"**{message.author.display_name}:** {mocked}")
+            await message.channel.send(mocked)
 
     # Auto-award daily on any bot interaction
     if (
@@ -1453,6 +1453,11 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         role = discord.utils.find(lambda r: r.name.lower() == name.lower() and r.id in bot_roles, ctx.guild.roles)
         if role is None:
             await ctx.send(embed=emb("❌ Not Found", f"No bot-created role named **{name}** exists.", C_RED))
+            return
+        # Check if user is the only one with this role
+        if len(role.members) != 1 or role.members[0].id != uid:
+            member_count = len(role.members)
+            await ctx.send(embed=emb("❌ Not Alone", f"This role has **{member_count}** member(s). You must be the only one with this role to remove it.", C_RED))
             return
         cost = 0 if godmode else 2000
         if cost > 0 and not deduct_balance(uid, cost):
