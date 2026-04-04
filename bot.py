@@ -1191,7 +1191,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
 
 
 @bot.command(name="hangman")
-async def cmd_hangman(ctx: commands.Context):
+async def cmd_hangman(ctx: commands.Context, *args):
     cid = ctx.channel.id
     if cid in active_hangman_games:
         await ctx.send(embed=emb("🔤 Already Playing", "Just type your guess directly!", C_ORANGE))
@@ -1203,6 +1203,11 @@ async def cmd_hangman(ctx: commands.Context):
         "wrong_guesses": 0,
         "user_id": ctx.author.id,
     }
+    # Invite flow for mentioned users
+    invited_users = [m for m in ctx.message.mentions if m.id != ctx.author.id]
+    if invited_users:
+        await _wait_for_confirmations(ctx, invited_users, title="📨 Hangman Invite")
+        # No state changes needed — hangman is already open to all channel users
     await ctx.send(embed=emb("🔤 Hangman", build_hangman_display(active_hangman_games[cid]) + "\n\nJust type a letter or use `!guess` to guess the full word!", C_ORANGE))
 
 
