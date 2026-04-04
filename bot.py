@@ -684,7 +684,7 @@ async def _passive_ragebait(message: discord.Message, history: list[str]):
         "You are an expert at crafting ragebait — messages specifically engineered to provoke "
         "an emotional reaction. Your goal is to write something that will genuinely irritate, "
         "annoy, or get under the skin of the target. "
-        "Rules: be specific to the target by name, be witty and cutting rather than just insulting, "
+        "Rules: be specific to the target by referring to them by name (no @ symbols), be witty and cutting rather than just insulting, "
         "use irony or condescension where effective, keep it under 200 characters, "
         "and make it feel natural — like something a person would actually say. "
         "Output only the ragebait message with no preamble, explanation, or quotation marks."
@@ -692,7 +692,7 @@ async def _passive_ragebait(message: discord.Message, history: list[str]):
     prompt = (
         f"Write a ragebait reply aimed at {message.author.display_name} based on what they just said. "
         f"Their recent messages for context:\n{context}\n"
-        "Make it personal, pointed, and reactive to what they actually wrote."
+        "Make it personal, pointed, and reactive to what they actually wrote. Do not use @ symbols."
     )
     placeholder = await message.reply("...")
     typing_task = asyncio.create_task(keep_typing(message.channel))
@@ -702,7 +702,7 @@ async def _passive_ragebait(message: discord.Message, history: list[str]):
                 {"role": "system", "content": ragebait_system},
                 {"role": "user", "content": prompt},
             ], placeholder)
-        await finalize(placeholder, message.channel, full_response)
+        await finalize(placeholder, message.channel, f"{message.author.mention} {full_response}")
     except Exception as e:
         await placeholder.edit(content=f"⚠️ {e}")
     finally:
@@ -1294,24 +1294,54 @@ async def cmd_ttt(ctx: commands.Context, *args):
         await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
         return
     if not ctx.message.mentions:
-        await ctx.send("Usage: `!ttt @user`")
+        await ctx.send("Usage: `!ttt @user [amount]`")
         return
     invited = ctx.message.mentions[0]
     if invited.id == uid:
         await ctx.send(embed=emb("❌ Can't Invite Yourself", "Pick a different opponent.", C_RED))
         return
-    confirmed = await _wait_for_confirmations(ctx, [invited], title="📨 Tic-Tac-Toe Invite")
+
+    # Parse optional amount
+    amount = 0
+    if args:
+        try:
+            amount = int(args[0])
+            if amount <= 0:
+                await ctx.send("Amount must be positive.")
+                return
+        except ValueError:
+            await ctx.send("Invalid amount. Usage: `!ttt @user [amount]`")
+            return
+
+    # Deduct from both players if betting
+    if amount > 0:
+        if not deduct_balance(uid, amount):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"You need {amount} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
+        if not deduct_balance(invited.id, amount):
+            add_balance(uid, amount)  # Refund host
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"{invited.display_name} needs {amount} 🪙. Balance: {get_balance(invited.id)} 🪙", C_RED))
+            return
+
+    wager_text = f" for {amount} 🪙" if amount > 0 else ""
+    confirmed = await _wait_for_confirmations(ctx, [invited], title=f"📨 Tic-Tac-Toe Invite{wager_text}")
     if not confirmed:
+        if amount > 0:
+            add_balance(uid, amount)
+            add_balance(invited.id, amount)
         await ctx.send(embed=emb("❌ Invite Declined", f"{invited.display_name} didn't accept.", C_RED))
         return
+
     active_ttt_games[cid] = {
         "board": [None]*9,
         "players": [uid, invited.id],
         "marks": {uid: "❌", invited.id: "⭕"},
         "current": uid,
+        "amount": amount,
     }
     game = active_ttt_games[cid]
-    await ctx.send(embed=emb("🎮 Tic-Tac-Toe Started", build_ttt_display(game) + f"\n\n{ctx.author.mention} (❌) vs {invited.mention} (⭕)\n{ctx.author.mention}'s turn. Use `!m <1-9>`", C_BLUE))
+    wager_info = f"\nWager: {amount} 🪙 each" if amount > 0 else ""
+    await ctx.send(embed=emb("🎮 Tic-Tac-Toe Started", build_ttt_display(game) + f"\n\n{ctx.author.mention} (❌) vs {invited.mention} (⭕){wager_info}\n{ctx.author.mention}'s turn. Use `!m <1-9>`", C_BLUE))
 
 
 @bot.command(name="c4")
@@ -1322,14 +1352,41 @@ async def cmd_c4(ctx: commands.Context, *args):
         await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
         return
     if not ctx.message.mentions:
-        await ctx.send("Usage: `!c4 @user`")
+        await ctx.send("Usage: `!c4 @user [amount]`")
         return
     invited = ctx.message.mentions[0]
     if invited.id == uid:
         await ctx.send(embed=emb("❌ Can't Invite Yourself", "Pick a different opponent.", C_RED))
         return
-    confirmed = await _wait_for_confirmations(ctx, [invited], title="📨 Connect 4 Invite")
+
+    # Parse optional amount
+    amount = 0
+    if args:
+        try:
+            amount = int(args[0])
+            if amount <= 0:
+                await ctx.send("Amount must be positive.")
+                return
+        except ValueError:
+            await ctx.send("Invalid amount. Usage: `!c4 @user [amount]`")
+            return
+
+    # Deduct from both players if betting
+    if amount > 0:
+        if not deduct_balance(uid, amount):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"You need {amount} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
+        if not deduct_balance(invited.id, amount):
+            add_balance(uid, amount)  # Refund host
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"{invited.display_name} needs {amount} 🪙. Balance: {get_balance(invited.id)} 🪙", C_RED))
+            return
+
+    wager_text = f" for {amount} 🪙" if amount > 0 else ""
+    confirmed = await _wait_for_confirmations(ctx, [invited], title=f"📨 Connect 4 Invite{wager_text}")
     if not confirmed:
+        if amount > 0:
+            add_balance(uid, amount)
+            add_balance(invited.id, amount)
         await ctx.send(embed=emb("❌ Invite Declined", f"{invited.display_name} didn't accept.", C_RED))
         return
     active_c4_games[cid] = {
@@ -1337,9 +1394,11 @@ async def cmd_c4(ctx: commands.Context, *args):
         "players": [uid, invited.id],
         "marks": {uid: "🔴", invited.id: "🟡"},
         "current": uid,
+        "amount": amount,
     }
     game = active_c4_games[cid]
-    await ctx.send(embed=emb("🟡 Connect 4 Started", build_c4_display(game) + f"\n\n{ctx.author.mention} (🔴) vs {invited.mention} (🟡)\n{ctx.author.mention}'s turn. Use `!m <1-7>`", C_BLUE))
+    wager_info = f"\nWager: {amount} 🪙 each" if amount > 0 else ""
+    await ctx.send(embed=emb("🟡 Connect 4 Started", build_c4_display(game) + f"\n\n{ctx.author.mention} (🔴) vs {invited.mention} (🟡){wager_info}\n{ctx.author.mention}'s turn. Use `!m <1-7>`", C_BLUE))
 
 
 @bot.command(name="m")
@@ -1364,8 +1423,10 @@ async def cmd_move(ctx: commands.Context, pos: int = None):
         if winner:
             del active_ttt_games[cid]
             winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
-            add_balance(winner_uid, 100)
-            await ctx.send(embed=emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{ctx.guild.get_member(winner_uid).mention} wins! **+100 🪙**", C_GREEN))
+            amount = game.get("amount", 0)
+            winnings = amount * 2 if amount > 0 else 100
+            add_balance(winner_uid, winnings)
+            await ctx.send(embed=emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{ctx.guild.get_member(winner_uid).mention} wins! **+{winnings} 🪙**", C_GREEN))
         elif all(c is not None for c in game["board"]):
             del active_ttt_games[cid]
             await ctx.send(embed=emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + "\n\nIt's a draw!", C_GOLD))
@@ -1393,8 +1454,10 @@ async def cmd_move(ctx: commands.Context, pos: int = None):
         if winner:
             del active_c4_games[cid]
             winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
-            add_balance(winner_uid, 100)
-            await ctx.send(embed=emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{ctx.guild.get_member(winner_uid).mention} wins! **+100 🪙**", C_GREEN))
+            amount = game.get("amount", 0)
+            winnings = amount * 2 if amount > 0 else 100
+            add_balance(winner_uid, winnings)
+            await ctx.send(embed=emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{ctx.guild.get_member(winner_uid).mention} wins! **+{winnings} 🪙**", C_GREEN))
         elif all(game["board"][r][c] is not None for r in range(6) for c in range(7)):
             del active_c4_games[cid]
             await ctx.send(embed=emb("🤝 Connect 4 Draw", build_c4_display(game) + "\n\nIt's a draw!", C_GOLD))
@@ -1962,14 +2025,14 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             "You are an expert at crafting ragebait — messages specifically engineered to provoke "
             "an emotional reaction. Your goal is to write something that will genuinely irritate, "
             "annoy, or get under the skin of the target. "
-            "Rules: be specific to the target by name, be witty and cutting rather than just insulting, "
+            "Rules: be specific to the target by referring to them by name (no @ symbols), be witty and cutting rather than just insulting, "
             "use irony or condescension where effective, keep it under 200 characters, "
             "and make it feel natural — like something a person would actually say. "
             "Output only the ragebait message with no preamble, explanation, or quotation marks."
         )
         prompt = (
             f"Write a ragebait message aimed at {target.display_name}.{topic_clause} "
-            "Make it personal, pointed, and likely to provoke a reaction."
+            "Make it personal, pointed, and likely to provoke a reaction. Do not use @ symbols."
         )
         placeholder = await ctx.send("...")
         typing_task = asyncio.create_task(keep_typing(ctx.channel))
