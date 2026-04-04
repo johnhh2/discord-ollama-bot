@@ -816,7 +816,7 @@ async def cmd_clearhistory(ctx: commands.Context):
     await ctx.send(embed=emb("🔧 History Cleared", "Conversation history cleared for this channel.", C_GREY))
 
 
-@bot.command(name="help", aliases=["llama", "h"])
+@bot.command(name="help", aliases=["h"])
 async def cmd_help(ctx: commands.Context):
     embed = discord.Embed(title="📖 Commands", color=0x3498db)
     embed.add_field(name="💰 Economy", inline=False, value=(
@@ -1210,6 +1210,13 @@ async def cmd_ask(ctx: commands.Context, *, question: str = None):
         await ctx.send("⚠️ Slow down! Please wait a moment before sending another message.")
         return
 
+    # Check cost
+    uid = ctx.author.id
+    cost = 0 if godmode else 10
+    if cost > 0 and not deduct_balance(uid, cost):
+        await ctx.send(embed=emb("💸 Insufficient Funds", f"Asking costs **10 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        return
+
     # Gather last 10 channel messages (excluding the !ask command itself)
     history_lines = []
     async for msg in ctx.channel.history(limit=11):
@@ -1247,9 +1254,9 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
     if character_prompt is None:
         await ctx.send("Usage: `!roleplay <character prompt>`")
         return
-    cost = 0 if godmode else 100
+    cost = 0 if godmode else 50
     if cost > 0 and not deduct_balance(uid, cost):
-        await ctx.send(embed=emb("💸 Insufficient Funds", f"Starting a roleplay costs **100 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        await ctx.send(embed=emb("💸 Insufficient Funds", f"Starting a roleplay costs **50 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
         return
     active_roleplays[uid] = {"character_prompt": character_prompt, "channel_id": ctx.channel.id}
     roleplay_histories[uid] = []
