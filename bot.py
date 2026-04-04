@@ -2055,8 +2055,6 @@ async def cmd_event(ctx: commands.Context, amount: str = None, duration: str = N
 
 @bot.event
 async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
-    if user.bot:
-        return
     if reaction.message.id not in active_events:
         return
     if str(reaction.emoji) != "🪙":
