@@ -28,6 +28,12 @@ ACTIVE_CHANNEL_IDS = (
 CHANNEL_PROMPTS_FILE = "channel_prompts.json"
 ECONOMY_FILE = "data/economy.json"
 BOT_ROLES_FILE = "data/bot_roles.json"
+BOT_ADMINS_FILE = "data/bot_admins.json"
+BOT_SETTINGS_FILE = "data/bot_settings.json"
+GUILD_SETTINGS_FILE = "data/guild_settings.json"
+INSURANCE_FILE = "data/insurance.json"
+MODELS_FILE = "data/models.json"
+INITIAL_BOT_ADMIN_ID = 139928946044174336
 
 
 def load_channel_prompts() -> dict[int, str]:
@@ -70,17 +76,113 @@ def save_bot_roles():
         json.dump(list(bot_roles), f)
 
 
+def load_bot_admins() -> set[int]:
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(BOT_ADMINS_FILE):
+        with open(BOT_ADMINS_FILE) as f:
+            return set(json.load(f))
+    return {INITIAL_BOT_ADMIN_ID}
+
+
+def save_bot_admins():
+    os.makedirs("data", exist_ok=True)
+    with open(BOT_ADMINS_FILE, "w") as f:
+        json.dump(list(bot_admins), f)
+
+
+def load_bot_settings() -> dict:
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(BOT_SETTINGS_FILE):
+        with open(BOT_SETTINGS_FILE) as f:
+            return json.load(f)
+    return {"vram_text": "16GB"}
+
+
+def save_bot_settings():
+    os.makedirs("data", exist_ok=True)
+    with open(BOT_SETTINGS_FILE, "w") as f:
+        json.dump(bot_settings, f, indent=2)
+
+
+def load_guild_settings() -> dict:
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(GUILD_SETTINGS_FILE):
+        with open(GUILD_SETTINGS_FILE) as f:
+            return json.load(f)
+    return {}
+
+
+def save_guild_settings():
+    os.makedirs("data", exist_ok=True)
+    with open(GUILD_SETTINGS_FILE, "w") as f:
+        json.dump(guild_settings, f, indent=2)
+
+
+def get_guild_cfg(guild_id: int) -> dict:
+    key = str(guild_id)
+    if key not in guild_settings:
+        guild_settings[key] = {}
+    return guild_settings[key]
+
+
+def load_insurance() -> dict:
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(INSURANCE_FILE):
+        with open(INSURANCE_FILE) as f:
+            data = json.load(f)
+            now = time.time()
+            return {k: v for k, v in data.items() if v.get("expires_at", 0) > now}
+    return {}
+
+
+def save_insurance():
+    os.makedirs("data", exist_ok=True)
+    with open(INSURANCE_FILE, "w") as f:
+        json.dump(insurance, f, indent=2)
+
+
+def is_insured(uid: int, against: str) -> bool:
+    if str(uid) not in insurance:
+        return False
+    entry = insurance[str(uid)]
+    if entry.get("expires_at", 0) <= time.time():
+        del insurance[str(uid)]
+        save_insurance()
+        return False
+    return against in entry.get("protected_from", [])
+
+
+def load_models() -> tuple[str, str]:
+    """Load persisted AI models. Returns (ask_model, roleplay_model)."""
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(MODELS_FILE):
+        with open(MODELS_FILE) as f:
+            data = json.load(f)
+            return data.get("ask_model", OLLAMA_MODEL), data.get("roleplay_model", OLLAMA_MODEL)
+    return OLLAMA_MODEL, OLLAMA_MODEL
+
+
+def save_models(ask_model: str, roleplay_model: str):
+    """Save AI models to disk."""
+    os.makedirs("data", exist_ok=True)
+    with open(MODELS_FILE, "w") as f:
+        json.dump({"ask_model": ask_model, "roleplay_model": roleplay_model}, f, indent=2)
+
+
 channel_prompts = load_channel_prompts()
 economy = load_economy()
 bot_roles: set[int] = load_bot_roles()
+bot_admins: set[int] = load_bot_admins()
+bot_settings: dict = load_bot_settings()
+guild_settings: dict = load_guild_settings()
+insurance: dict = load_insurance()
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 # ── AI model globals ──────────────────────────────────────────────────────────
-current_model = OLLAMA_MODEL
-current_roleplay_model = OLLAMA_MODEL
+current_model, current_roleplay_model = load_models()
 
 # ── Admin state ───────────────────────────────────────────────────────────────
 godmode = False
@@ -101,6 +203,12 @@ user_last_request: dict[int, float] = {}
 bot_start_time = time.monotonic()
 stats_commands_ran: int = 0
 stats_messages_seen: int = 0
+
+# ── Audit log ─────────────────────────────────────────────────────────────────
+audit_log: deque = deque(maxlen=20)
+
+# ── Mock state ────────────────────────────────────────────────────────────────
+active_mocks: dict[int, dict] = {}  # user_id → {expires_at: float, started_by: int}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -140,7 +248,15 @@ def deduct_balance(uid: int, n: int) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def is_admin(ctx: commands.Context) -> bool:
-    return ctx.author.name == ".xeph"
+    return ctx.author.id in bot_admins
+
+
+def is_server_admin(ctx: commands.Context) -> bool:
+    return ctx.guild is not None and ctx.author.guild_permissions.administrator
+
+
+def can_manage_settings(ctx: commands.Context) -> bool:
+    return is_admin(ctx) or is_server_admin(ctx)
 
 
 def check_rate_limit(user_id: int) -> bool:
@@ -154,6 +270,19 @@ def check_rate_limit(user_id: int) -> bool:
 
 def get_system_prompt(channel_id: int) -> str:
     return channel_prompts.get(channel_id, SYSTEM_PROMPT)
+
+
+def mocking_font(text: str) -> str:
+    """Convert text to mocking alternating case: LiKe ThIs."""
+    result = []
+    uppercase = False
+    for char in text:
+        if char.isalpha():
+            result.append(char.upper() if uppercase else char.lower())
+            uppercase = not uppercase
+        else:
+            result.append(char)
+    return "".join(result)
 
 
 def get_memory_mb() -> float:
@@ -173,6 +302,18 @@ def format_uptime() -> str:
     hours, r = divmod(r, 3600)
     minutes = r // 60
     return f"{days}d {hours}h {minutes}m"
+
+
+async def check_ollama_connected() -> bool:
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{OLLAMA_BASE_URL}/api/tags",
+                timeout=aiohttp.ClientTimeout(total=3),
+            ) as resp:
+                return resp.status == 200
+    except Exception:
+        return False
 
 
 # ── Blackjack helpers ─────────────────────────────────────────────────────────
@@ -451,6 +592,23 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Global checks
+# ─────────────────────────────────────────────────────────────────────────────
+
+@bot.check
+async def global_command_channel_check(ctx: commands.Context) -> bool:
+    if ctx.guild is None:
+        return True
+    if ctx.command and ctx.command.name == "settings":
+        return True  # always allow !settings so admins can't lock themselves out
+    cfg = get_guild_cfg(ctx.guild.id)
+    command_channels = cfg.get("command_channels", [])
+    if command_channels and ctx.channel.id not in command_channels:
+        return False
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Events
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -459,6 +617,14 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.CommandNotFound):
         print(f"[debug] {error}")
         return
+    if isinstance(error, commands.CheckFailure):
+        return  # silently ignore — command blocked by channel restriction
+    audit_log.append({
+        "time": time.time(),
+        "user": f"{ctx.author.display_name} ({ctx.author.id})",
+        "command": ctx.message.content[:100],
+        "error": f"{type(error).__name__}: {error}",
+    })
     raise error
 
 
@@ -548,6 +714,15 @@ async def on_message(message: discord.Message):
             del active_ragebaits[uid]
         if random.random() < 0.5:
             asyncio.create_task(_passive_ragebait(message, list(rage["history"])))
+
+    # Mock: track mocked users and repeat their messages in mocking font
+    if uid in active_mocks and not message.content.startswith("!"):
+        mock = active_mocks[uid]
+        if mock["expires_at"] <= time.time():
+            del active_mocks[uid]
+        else:
+            mocked = mocking_font(message.content)
+            await message.channel.send(f"**{message.author.display_name}:** {mocked}")
 
     # Auto-award daily on any bot interaction
     if (
@@ -666,6 +841,9 @@ async def cmd_help(ctx: commands.Context):
     embed.add_field(name="🛒 Shop", inline=False, value=(
         "`!shop` — Browse items\n"
     ))
+    embed.add_field(name="🔞 NSFW", inline=False, value=(
+        "`!rule34 [tags]` — Random image from rule34 (alias: `!r34`)"
+    ))
     embed.add_field(name="🔧 Utility", inline=False, value=(
         "`!stats` — Show bot statistics\n"
         "`!clearhistory` — Reset AI chat history for this channel"
@@ -679,11 +857,13 @@ async def cmd_stats(ctx: commands.Context):
     msg_rate = stats_messages_seen / elapsed if elapsed > 0 else 0
     text_channels = sum(len(g.text_channels) for g in bot.guilds)
     voice_channels = sum(len(g.voice_channels) for g in bot.guilds)
+    ai_connected = await check_ollama_connected()
+    vram_text = bot_settings.get("vram_text", "16GB")
 
     embed = discord.Embed(title="📊 Bot Stats", color=C_BLUE)
     embed.add_field(name="🤖 Bot", value=str(bot.user), inline=True)
     embed.add_field(name="🆔 Bot ID", value=str(bot.user.id), inline=True)
-    embed.add_field(name="⚙️ Shard", value=f"#0 / 1", inline=True)
+    embed.add_field(name="⚙️ Shard", value="#0 / 1", inline=True)
     embed.add_field(name="💬 Commands Ran", value=str(stats_commands_ran), inline=True)
     embed.add_field(name="📨 Messages", value=f"{stats_messages_seen} ({msg_rate:.2f}/sec)", inline=True)
     embed.add_field(name="🧠 Memory", value=f"{get_memory_mb():.2f} MB", inline=True)
@@ -693,28 +873,48 @@ async def cmd_stats(ctx: commands.Context):
         f"{text_channels} Text Channels\n"
         f"{voice_channels} Voice Channels"
     ), inline=True)
+    ai_status = "🟢 Connected" if ai_connected else "🔴 Disconnected"
+    embed.add_field(name="🧠 AI Status", value=(
+        f"{ai_status}\n"
+        f"Ask model: `{current_model}`\n"
+        f"Roleplay model: `{current_roleplay_model}`\n"
+        f"vRAM: {vram_text}"
+    ), inline=True)
     await ctx.send(embed=embed)
 
 
 @bot.command(name="adminhelp")
 async def cmd_adminhelp(ctx: commands.Context):
-    if not is_admin(ctx):
+    if not can_manage_settings(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
         return
     embed = discord.Embed(title="⚙️ Admin Commands", color=C_GOLD)
-    embed.add_field(name="🪙 Economy", inline=False, value=(
-        "`!give @user <amount>` — Add or remove coins from a user\n"
-        "`!event <amount> [hours]` — Start a reaction event"
+    embed.add_field(name="🔧 Server Settings", inline=False, value=(
+        "`!settings` — View current server settings\n"
+        "`!settings ai-channels #ch... / clear` — Restrict AI commands to channels\n"
+        "`!settings cmd-channels #ch... / clear` — Restrict all commands to channels\n"
+        "`!settings shop <item> on|off` — Toggle shop items\n"
+        "`!settings rule34 on|off / ban <tag> / unban <tag> / banned` — rule34 config"
     ))
-    embed.add_field(name="🤖 AI", inline=False, value=(
-        "`!model [name]` — View or change the AI model\n"
-        "`!roleplaymodel [name]` — View or change the roleplay model"
+    embed.add_field(name="🔍 Moderation", inline=False, value=(
+        "`!audit` — Last 5 failed command attempts\n"
+        "`!clear [n]` — Delete last n bot messages (default 50)"
     ))
-    embed.add_field(name="⚙️ Config", inline=False, value=(
-        "`!setprompt <prompt>` — Set a custom system prompt for this channel\n"
-        "`!clearprompt` — Reset this channel's prompt to default\n"
-        "`!godmode` — Toggle free costs on/off"
-    ))
+    if is_admin(ctx):
+        embed.add_field(name="🪙 Economy", inline=False, value=(
+            "`!give @user <amount>` — Add or remove coins from a user\n"
+            "`!event <amount> [hours]` — Start a reaction event"
+        ))
+        embed.add_field(name="🤖 AI", inline=False, value=(
+            "`!model [name]` — View or change the AI model\n"
+            "`!roleplaymodel [name]` — View or change the roleplay model"
+        ))
+        embed.add_field(name="⚙️ Config", inline=False, value=(
+            "`!setprompt <prompt>` — Set a custom system prompt for this channel\n"
+            "`!clearprompt` — Reset this channel's prompt to default\n"
+            "`!godmode` — Toggle free costs on/off\n"
+            "`!vramtext [text]` — View or set the vRAM display text in !stats"
+        ))
     await ctx.send(embed=embed)
 
 
@@ -987,6 +1187,13 @@ async def cmd_guess(ctx: commands.Context, *, guess: str = None):
 
 @bot.command(name="ask")
 async def cmd_ask(ctx: commands.Context, *, question: str = None):
+    if ctx.guild:
+        cfg = get_guild_cfg(ctx.guild.id)
+        ai_channels = cfg.get("ai_channels", [])
+        if ai_channels and ctx.channel.id not in ai_channels:
+            names = " ".join(f"<#{cid}>" for cid in ai_channels)
+            await ctx.send(embed=emb("❌ Wrong Channel", f"AI commands are only allowed in: {names}", C_RED))
+            return
     if question is None:
         await ctx.send("Usage: `!ask <question>`")
         return
@@ -1020,6 +1227,13 @@ async def cmd_ask(ctx: commands.Context, *, question: str = None):
 
 @bot.command(name="roleplay")
 async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
+    if ctx.guild:
+        cfg = get_guild_cfg(ctx.guild.id)
+        ai_channels = cfg.get("ai_channels", [])
+        if ai_channels and ctx.channel.id not in ai_channels:
+            names = " ".join(f"<#{cid}>" for cid in ai_channels)
+            await ctx.send(embed=emb("❌ Wrong Channel", f"AI commands are only allowed in: {names}", C_RED))
+            return
     uid = ctx.author.id
     if character_prompt is None:
         await ctx.send("Usage: `!roleplay <character prompt>`")
@@ -1075,19 +1289,30 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
     uid = ctx.author.id
 
     if subcommand is None:
-        await ctx.send(embed=emb(
-            "🛒 Shop",
-            "`!shop nickname <new_name>` — Change your own nickname — **2,000 🪙**\n"
-            "`!shop nickname @user <new_name>` — Change someone else's nickname — **10,000 🪙**\n"
-            "`!shop role <name> <hex>` — Create a custom colored role — **10,000 🪙**\n"
-            "`!shop removerole <name>` — Delete a bot-created role — **2,000 🪙**\n"
-            "`!shop ragebait @user [topic]` — Ragebait someone for 10 messages — **5,000 🪙**",
-            C_PURPLE,
-        ))
+        _si = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
+        _items = []
+        if _si.get("nickname", True):
+            _items.append("`!shop nickname <new_name>` — Change your own nickname — **2,000 🪙**")
+            _items.append("`!shop nickname @user <new_name>` — Change someone else's nickname — **10,000 🪙**")
+        if _si.get("role", True):
+            _items.append("`!shop role <name> <hex>` — Create a custom colored role — **10,000 🪙**")
+        if _si.get("removerole", True):
+            _items.append("`!shop removerole <name>` — Delete a bot-created role — **2,000 🪙**")
+        if _si.get("ragebait", True):
+            _items.append("`!shop ragebait @user [topic]` — Ragebait someone for 10 messages — **5,000 🪙**")
+        _items.append("`!shop mock @user` — Mock someone's messages for 5 minutes — **3,000 🪙**")
+        _items.append("`!shop insurance` — Protect yourself for 24 hours — **1,000 🪙**")
+        desc = "\n".join(_items) if _items else "No shop items are currently available."
+        await ctx.send(embed=emb("🛒 Shop", desc, C_PURPLE))
         return
+
+    _shop_cfg = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
 
     # ── !shop nickname ────────────────────────────────────────────────────────
     if subcommand == "nickname":
+        if not _shop_cfg.get("nickname", True):
+            await ctx.send(embed=emb("🛒 Disabled", "The nickname shop item is disabled in this server.", C_GREY))
+            return
         if not args:
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop nickname <new_name>` or `!shop nickname @user <new_name>`", C_PURPLE))
             return
@@ -1107,6 +1332,9 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if not new_name:
             await ctx.send(embed=emb("🛒 Shop", "Please provide a new nickname.", C_PURPLE))
             return
+        if is_insured(target.id, "nickname"):
+            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be renamed.", C_GOLD))
+            return
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **{cost_label} 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
@@ -1125,6 +1353,9 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
 
     # ── !shop role ────────────────────────────────────────────────────────────
     if subcommand == "role":
+        if not _shop_cfg.get("role", True):
+            await ctx.send(embed=emb("🛒 Disabled", "The role shop item is disabled in this server.", C_GREY))
+            return
         if len(args) < 2:
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop role <name> <hex_color>` (e.g. `!shop role CoolGuy ff00aa`)", C_PURPLE))
             return
@@ -1142,6 +1373,9 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             return
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+            return
+        if is_insured(uid, "role"):
+            await ctx.send(embed=emb("🛡️ Protected", "You have insurance and can't be given new roles.", C_GOLD))
             return
         cost = 0 if godmode else 10000
         if cost > 0 and not deduct_balance(uid, cost):
@@ -1165,6 +1399,9 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
 
     # ── !shop removerole ──────────────────────────────────────────────────────
     if subcommand == "removerole":
+        if not _shop_cfg.get("removerole", True):
+            await ctx.send(embed=emb("🛒 Disabled", "The removerole shop item is disabled in this server.", C_GREY))
+            return
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
             return
@@ -1203,10 +1440,16 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
 
     # ── !shop ragebait ────────────────────────────────────────────────────────
     if subcommand == "ragebait":
+        if not _shop_cfg.get("ragebait", True):
+            await ctx.send(embed=emb("🛒 Disabled", "The ragebait shop item is disabled in this server.", C_GREY))
+            return
         if not ctx.message.mentions:
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop ragebait @user [topic]`", C_PURPLE))
             return
         target = ctx.message.mentions[0]
+        if is_insured(target.id, "ragebait"):
+            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against ragebait.", C_GOLD))
+            return
         topic = " ".join(a for a in args if not a.startswith("<@"))
         cost = 0 if godmode else 5000
         if cost > 0 and not deduct_balance(uid, cost):
@@ -1244,7 +1487,211 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             typing_task.cancel()
         return
 
+    # ── !shop mock ────────────────────────────────────────────────────────────
+    if subcommand == "mock":
+        if not ctx.message.mentions:
+            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mock @user`", C_PURPLE))
+            return
+        target = ctx.message.mentions[0]
+        cost = 0 if godmode else 3000
+        if cost > 0 and not deduct_balance(uid, cost):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **3,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
+        active_mocks[target.id] = {"expires_at": time.time() + 300, "started_by": uid}
+        await ctx.send(embed=emb(
+            "🎭 Mock Activated",
+            f"**{target.display_name}** will be mocked for 5 minutes!",
+            C_PURPLE,
+        ))
+        return
+
+    # ── !shop insurance ───────────────────────────────────────────────────────
+    if subcommand == "insurance":
+        key = str(uid)
+        cost = 0 if godmode else 1000
+        if cost > 0 and not deduct_balance(uid, cost):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"Insurance costs **1,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
+        insurance[key] = {
+            "expires_at": time.time() + 86400,
+            "protected_from": ["ragebait", "mock", "nickname", "role"],
+        }
+        save_insurance()
+        await ctx.send(embed=emb(
+            "🛡️ Insurance Purchased",
+            "Protected for 24 hours against ragebait, mock, nickname, and role changes!",
+            C_GREEN,
+        ))
+        return
+
     await ctx.send(embed=emb("🛒 Unknown Item", "Try `!shop` to see what's available.", C_PURPLE))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Commands — Settings
+# ─────────────────────────────────────────────────────────────────────────────
+
+@bot.command(name="settings")
+async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
+    if ctx.guild is None:
+        await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+        return
+    if not can_manage_settings(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "Requires server admin or bot admin.", C_RED))
+        return
+
+    cfg = get_guild_cfg(ctx.guild.id)
+
+    # ── Show current settings ─────────────────────────────────────────────────
+    if subcommand is None:
+        ai_channels = cfg.get("ai_channels", [])
+        cmd_channels = cfg.get("command_channels", [])
+        shop_items = cfg.get("shop_items", {})
+        r34_enabled = cfg.get("rule34_enabled", True)
+        r34_banned = cfg.get("rule34_banned_tags", [])
+
+        ai_val = " ".join(f"<#{c}>" for c in ai_channels) if ai_channels else "all channels"
+        cmd_val = " ".join(f"<#{c}>" for c in cmd_channels) if cmd_channels else "all channels"
+        item_names = ["nickname", "role", "removerole", "ragebait"]
+        shop_val = "  ".join(
+            f"{n} {'✅' if shop_items.get(n, True) else '❌'}" for n in item_names
+        )
+        r34_val = ("✅ enabled" if r34_enabled else "❌ disabled")
+        if r34_banned:
+            r34_val += f"\nBanned tags: {', '.join(r34_banned)}"
+
+        embed = discord.Embed(title="⚙️ Server Settings", color=C_BLUE)
+        embed.add_field(name="🤖 AI channels", value=ai_val, inline=False)
+        embed.add_field(name="💬 Command channels", value=cmd_val, inline=False)
+        embed.add_field(name="🛒 Shop items", value=shop_val, inline=False)
+        embed.add_field(name="🔞 rule34", value=r34_val, inline=False)
+        embed.set_footer(text="Use !settings <subcommand> to change. Subcommands: ai-channels, cmd-channels, shop, rule34")
+        await ctx.send(embed=embed)
+        return
+
+    # ── ai-channels ───────────────────────────────────────────────────────────
+    if subcommand == "ai-channels":
+        if args and args[0].lower() == "clear":
+            cfg["ai_channels"] = []
+            save_guild_settings()
+            await ctx.send(embed=emb("⚙️ AI Channels", "AI channel restriction removed — all channels allowed.", C_GREEN))
+        elif ctx.message.channel_mentions:
+            cfg["ai_channels"] = [c.id for c in ctx.message.channel_mentions]
+            save_guild_settings()
+            names = " ".join(c.mention for c in ctx.message.channel_mentions)
+            await ctx.send(embed=emb("⚙️ AI Channels", f"AI commands restricted to: {names}", C_GREEN))
+        else:
+            await ctx.send(embed=emb("⚙️ AI Channels", "Usage: `!settings ai-channels #channel ...` or `!settings ai-channels clear`", C_GREY))
+        return
+
+    # ── cmd-channels ──────────────────────────────────────────────────────────
+    if subcommand == "cmd-channels":
+        if args and args[0].lower() == "clear":
+            cfg["command_channels"] = []
+            save_guild_settings()
+            await ctx.send(embed=emb("⚙️ Command Channels", "Command channel restriction removed — all channels allowed.", C_GREEN))
+        elif ctx.message.channel_mentions:
+            cfg["command_channels"] = [c.id for c in ctx.message.channel_mentions]
+            save_guild_settings()
+            names = " ".join(c.mention for c in ctx.message.channel_mentions)
+            await ctx.send(embed=emb("⚙️ Command Channels", f"All commands restricted to: {names}\n(Note: `!settings` always works everywhere)", C_GREEN))
+        else:
+            await ctx.send(embed=emb("⚙️ Command Channels", "Usage: `!settings cmd-channels #channel ...` or `!settings cmd-channels clear`", C_GREY))
+        return
+
+    # ── shop ──────────────────────────────────────────────────────────────────
+    if subcommand == "shop":
+        valid_items = {"nickname", "role", "removerole", "ragebait"}
+        if len(args) < 2 or args[0].lower() not in valid_items or args[1].lower() not in ("on", "off"):
+            await ctx.send(embed=emb("⚙️ Shop", f"Usage: `!settings shop <item> on|off`\nItems: {', '.join(valid_items)}", C_GREY))
+            return
+        item = args[0].lower()
+        enabled = args[1].lower() == "on"
+        if "shop_items" not in cfg:
+            cfg["shop_items"] = {}
+        cfg["shop_items"][item] = enabled
+        save_guild_settings()
+        status = "✅ enabled" if enabled else "❌ disabled"
+        await ctx.send(embed=emb("⚙️ Shop", f"**{item}** is now {status}.", C_GREEN))
+        return
+
+    # ── rule34 ────────────────────────────────────────────────────────────────
+    if subcommand == "rule34":
+        if not args:
+            await ctx.send(embed=emb("⚙️ rule34", "Usage: `!settings rule34 on|off` / `ban <tag>` / `unban <tag>` / `banned`", C_GREY))
+            return
+        action = args[0].lower()
+        if action in ("on", "off"):
+            cfg["rule34_enabled"] = (action == "on")
+            save_guild_settings()
+            status = "✅ enabled" if action == "on" else "❌ disabled"
+            await ctx.send(embed=emb("⚙️ rule34", f"rule34 is now {status}.", C_GREEN))
+        elif action == "ban" and len(args) >= 2:
+            tag = args[1].lower()
+            banned = cfg.setdefault("rule34_banned_tags", [])
+            if tag not in banned:
+                banned.append(tag)
+                save_guild_settings()
+            await ctx.send(embed=emb("⚙️ rule34", f"Tag `{tag}` banned.", C_GREEN))
+        elif action == "unban" and len(args) >= 2:
+            tag = args[1].lower()
+            banned = cfg.get("rule34_banned_tags", [])
+            if tag in banned:
+                banned.remove(tag)
+                save_guild_settings()
+                await ctx.send(embed=emb("⚙️ rule34", f"Tag `{tag}` unbanned.", C_GREEN))
+            else:
+                await ctx.send(embed=emb("⚙️ rule34", f"Tag `{tag}` was not banned.", C_GREY))
+        elif action == "banned":
+            banned = cfg.get("rule34_banned_tags", [])
+            val = ", ".join(f"`{t}`" for t in banned) if banned else "none"
+            await ctx.send(embed=emb("⚙️ rule34 Banned Tags", val, C_GREY))
+        else:
+            await ctx.send(embed=emb("⚙️ rule34", "Usage: `!settings rule34 on|off` / `ban <tag>` / `unban <tag>` / `banned`", C_GREY))
+        return
+
+    await ctx.send(embed=emb("⚙️ Settings", "Unknown subcommand. Use `!settings` to see options.", C_GREY))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Commands — Moderation
+# ─────────────────────────────────────────────────────────────────────────────
+
+@bot.command(name="audit")
+async def cmd_audit(ctx: commands.Context):
+    if not is_admin(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        return
+    if not audit_log:
+        await ctx.send(embed=emb("🔍 Audit Log", "No failed attempts recorded.", C_GREY))
+        return
+    recent = list(audit_log)[-5:]
+    lines = []
+    for e in reversed(recent):
+        ts = time.strftime("%H:%M:%S", time.localtime(e["time"]))
+        lines.append(f"**{ts}** — {e['user']}\n`{e['command']}`\n_{e['error']}_")
+    await ctx.send(embed=emb("🔍 Audit Log", "\n\n".join(lines), C_GOLD))
+
+
+@bot.command(name="clear")
+async def cmd_clear(ctx: commands.Context, n: int = 50):
+    if not can_manage_settings(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        return
+    deleted = 0
+    async for message in ctx.channel.history(limit=500):
+        if deleted >= n:
+            break
+        if message.author == bot.user:
+            await message.delete()
+            deleted += 1
+    confirm = await ctx.send(embed=emb(
+        "🗑️ Cleared",
+        f"Deleted {deleted} bot message{'s' if deleted != 1 else ''}.",
+        C_GREY,
+    ))
+    await asyncio.sleep(5)
+    await confirm.delete()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1273,6 +1720,7 @@ async def cmd_model(ctx: commands.Context, model_name: str = None):
         await ctx.send(embed=emb("⚙️ Model", f"Current model: `{current_model}`", C_GREY))
         return
     current_model = model_name
+    save_models(current_model, current_roleplay_model)
     await ctx.send(embed=emb("⚙️ Model", f"Switched to `{model_name}`", C_GREY))
 
 
@@ -1286,7 +1734,21 @@ async def cmd_roleplaymodel(ctx: commands.Context, model_name: str = None):
         await ctx.send(embed=emb("⚙️ Roleplay Model", f"Current roleplay model: `{current_roleplay_model}`", C_GREY))
         return
     current_roleplay_model = model_name
+    save_models(current_model, current_roleplay_model)
     await ctx.send(embed=emb("⚙️ Roleplay Model", f"Switched to `{model_name}`", C_GREY))
+
+
+@bot.command(name="vramtext")
+async def cmd_vramtext(ctx: commands.Context, *, text: str = None):
+    if not is_admin(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        return
+    if text is None:
+        await ctx.send(embed=emb("⚙️ vRAM Text", bot_settings.get("vram_text", "16GB"), C_GREY))
+        return
+    bot_settings["vram_text"] = text
+    save_bot_settings()
+    await ctx.send(embed=emb("⚙️ vRAM Text", f"Set to: {text}", C_GREY))
 
 
 @bot.command(name="setprompt")
@@ -1314,8 +1776,14 @@ async def cmd_event(ctx: commands.Context, amount: str = None, duration: str = N
     if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
         return
+    try:
+        await ctx.message.delete()
+    except discord.Forbidden:
+        print(f"[event] No permission to delete command message in {ctx.channel}")
+    except Exception as e:
+        print(f"[event] Failed to delete command message: {e}")
     if amount is None:
-        await ctx.send(embed=emb("⚙️ Event", "Usage: `!event <amount> [duration_hours]`", C_GREY))
+        await ctx.send(embed=emb("⚙️ Event", "Usage: `!event <amount> [duration_hours] [#channel]`", C_GREY))
         return
     try:
         amount = int(amount)
@@ -1326,21 +1794,33 @@ async def cmd_event(ctx: commands.Context, amount: str = None, duration: str = N
 
     duration_hours = None
     if duration is not None:
-        try:
-            duration_hours = float(duration)
-            assert duration_hours > 0
-        except (ValueError, AssertionError):
-            await ctx.send(embed=emb("❌ Invalid Duration", "Duration must be a positive number of hours.", C_RED))
-            return
+        # If duration looks like a channel mention, it's actually the channel arg
+        if duration.startswith("<#"):
+            duration = None
+        else:
+            try:
+                duration_hours = float(duration)
+                assert duration_hours > 0
+            except (ValueError, AssertionError):
+                await ctx.send(embed=emb("❌ Invalid Duration", "Duration must be a positive number of hours.", C_RED))
+                return
+
+    # Resolve target channel
+    target_channel = ctx.channel
+    if ctx.message.channel_mentions:
+        target_channel = ctx.message.channel_mentions[-1]
 
     duration_str = f" for {duration_hours}h" if duration_hours else ""
-    event_msg = await ctx.send(embed=emb(
+    event_msg = await target_channel.send(embed=emb(
         "🎉 Coin Event!",
         f"React with 🪙 to receive **{amount} 🪙**!{duration_str}",
         C_GOLD,
     ))
     await event_msg.add_reaction("🪙")
     active_events[event_msg.id] = {"amount": amount, "rewarded": set()}
+
+    if target_channel != ctx.channel:
+        await ctx.send(embed=emb("✅ Event Started", f"Event posted in {target_channel.mention}.", C_GREEN))
 
     if duration_hours:
         async def _close_event():
@@ -1392,6 +1872,80 @@ async def cmd_give(ctx: commands.Context, target: discord.Member = None, amount:
         f"New balance: {get_balance(target.id)} 🪙",
         C_GOLD,
     ))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Commands — Rule34
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _r34_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[dict]:
+    url = (
+        f"https://api.rule34.xxx/index.php"
+        f"?page=dapi&s=post&q=index&json=1&limit=100&tags={search_tags}"
+    )
+    async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+        if resp.status != 200:
+            return []
+        text = await resp.text()
+    # API returns "0\n" or XML when no results instead of []
+    text = text.strip()
+    if not text or text == "0" or text.startswith("<"):
+        return []
+    try:
+        import json as _json
+        data = _json.loads(text)
+    except Exception:
+        print(f"[rule34] JSON parse failed for tags={search_tags!r}, body={text[:200]!r}")
+        return []
+    print(f"[rule34] tags={search_tags!r} data type={type(data).__name__} len={len(data) if isinstance(data, list) else 'N/A'}")
+    if isinstance(data, list) and data:
+        print(f"[rule34] first item type={type(data[0]).__name__} val={str(data[0])[:200]}")
+    if not isinstance(data, list):
+        return []
+    return [p for p in data if isinstance(p, dict) and p.get("file_url")]
+
+
+@bot.command(name="rule34", aliases=["r34"])
+async def cmd_rule34(ctx: commands.Context, *, tags: str = ""):
+    cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
+    if not cfg.get("rule34_enabled", True):
+        await ctx.send(embed=emb("🔞 Disabled", "rule34 is disabled in this server.", C_GREY))
+        return
+    await ctx.typing()
+    _STOP = {"and", "or", "with", "the", "a", "an"}
+    tag_parts = [w for w in tags.strip().split() if w.lower() not in _STOP]
+    banned = [t.lower() for t in cfg.get("rule34_banned_tags", [])]
+    tag_parts = [w for w in tag_parts if w.lower() not in banned]
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Try all tags combined first, then fall back to each tag alone
+            search_tags = "+".join(tag_parts) if tag_parts else "solo"
+            posts = await _r34_fetch(session, search_tags)
+
+            if not posts and len(tag_parts) > 1:
+                for part in tag_parts:
+                    posts = await _r34_fetch(session, part)
+                    if posts:
+                        search_tags = part
+                        break
+    except Exception as e:
+        await ctx.send(embed=emb("❌ rule34", f"Request failed: {e}", C_RED))
+        return
+
+    if not posts:
+        label = " ".join(tag_parts) if tag_parts else "solo"
+        await ctx.send(embed=emb("🔞 rule34", f"No results for `{label}`.", C_GREY))
+        return
+
+    post = random.choice(posts)
+    file_url = post["file_url"]
+    display = search_tags.replace("+", " ") if tag_parts else "random"
+
+    embed = discord.Embed(title=f"🔞 rule34: {display}", color=C_PURPLE)
+    embed.set_image(url=file_url)
+    embed.set_footer(text=f"Score: {post.get('score', '?')} | Rating: {post.get('rating', '?')}")
+    await ctx.send(embed=embed)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
