@@ -1324,7 +1324,10 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
                 reward_msg += f"<@{player_id}>: +{player_reward} 🪙 | Balance: {get_balance(player_id)} 🪙\n"
 
             await channel.send(embed=emb("🎉 Correct!", reward_msg.strip(), C_GREEN))
+        elif guess in game["guessed_words"]:
+            await channel.send(embed=emb("⚠️ Already Guessed", f"You already guessed `{guess}`!", C_GOLD))
         else:
+            game["guessed_words"].add(guess)
             game["wrong_guesses"] += 1
             if game["wrong_guesses"] >= 6:
                 word = game["word"]
@@ -1386,6 +1389,7 @@ async def cmd_hangman(ctx: commands.Context, *args):
     active_hangman_games[cid] = {
         "word": word,
         "guessed_letters": set(),
+        "guessed_words": set(),  # Track full word guesses to prevent repeats
         "wrong_guesses": 0,
         "user_id": ctx.author.id,
         "active_players": {ctx.author.id},  # Track who's actively guessing
