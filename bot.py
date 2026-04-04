@@ -937,6 +937,11 @@ async def cmd_adminhelp(ctx: commands.Context):
             "`!godmode` — Toggle free costs on/off\n"
             "`!vramtext [text]` — View or set the vRAM display text in !stats"
         ))
+        admin_embed.add_field(name="📢 Bot Control", inline=False, value=(
+            "`!say <text>` — Make the bot repeat text in channel\n"
+            "`!botinvite` — Display bot invite link\n"
+            "`!invite` — Display server invite link"
+        ))
     await ctx.send(embed=admin_embed)
 
 
