@@ -853,8 +853,8 @@ async def cmd_help(ctx: commands.Context):
     help_embed.add_field(name="🎮 Games", inline=False, value=(
         "`!hangman [@user1 @user2]` — Start hangman (type guesses directly, invite others with mentions)\n"
         "`!guess <letter or word>` — Explicit hangman guess (full words only via command)\n"
-        "`!ttt @user` — Tic-Tac-Toe (use !m <1-9> to place, wins 100 🪙)\n"
-        "`!c4 @user` — Connect 4 (use !m <1-7> to drop, wins 100 🪙)\n"
+        "`!ttt @user [amount]` — Tic-Tac-Toe (use !m <1-9> to place; wins 100 🪙 or 2x wager if betting)\n"
+        "`!c4 @user [amount]` — Connect 4 (use !m <1-7> to drop; wins 100 🪙 or 2x wager if betting)\n"
         "`!m <number>` — Make a move in tic-tac-toe or connect 4"
     ))
     help_embed.add_field(name="🤖 AI", inline=False, value=(
