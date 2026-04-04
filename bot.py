@@ -2314,7 +2314,7 @@ async def _wait_for_confirmations(
     ctx: commands.Context,
     invited_users: list,
     title: str = "📨 Game Invite",
-    timeout: float = 20.0,
+    timeout: float = 60.0,
 ) -> set:
     """Wait for invited users to react with ✅ within timeout. Returns set of confirmed user IDs."""
     if not invited_users:
@@ -2323,7 +2323,7 @@ async def _wait_for_confirmations(
     mentions = " ".join(u.mention for u in invited_users)
     invite_msg = await ctx.send(embed=emb(
         title,
-        f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ within 20 seconds to join!",
+        f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ within 60 seconds to join!",
         C_BLUE,
     ))
     await invite_msg.add_reaction("✅")
