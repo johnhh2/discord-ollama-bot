@@ -846,10 +846,11 @@ async def on_message(message: discord.Message):
         return
 
     # Intercept free-text hangman guesses (no prefix needed when game is active)
+    # Only single-letter guesses via free-text; full words require !guess command
     cid = message.channel.id
     if cid in active_hangman_games and not message.content.startswith("!"):
         guess = message.content.lower().strip()
-        if guess and guess.isalpha():
+        if guess and guess.isalpha() and len(guess) == 1:
             await _process_hangman_guess(message.channel, uid, cid, guess)
             return
 
@@ -1367,7 +1368,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             await channel.send(embed=emb("❌ Wrong Letter", build_hangman_display(game), C_ORANGE))
 
 
-@bot.command(name="hangman", aliases=["hang"])
+@bot.command(name="hangman", aliases=["hang", "hm"])
 async def cmd_hangman(ctx: commands.Context, *args):
     cid = ctx.channel.id
     if cid in active_hangman_games:
