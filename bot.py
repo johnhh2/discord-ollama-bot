@@ -438,7 +438,7 @@ async def keep_typing(channel: discord.abc.Messageable):
     try:
         while True:
             await channel.trigger_typing()
-            await asyncio.sleep(8)
+            await asyncio.sleep(5)
     except asyncio.CancelledError:
         pass
 
