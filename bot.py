@@ -2187,7 +2187,8 @@ async def _r34_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[d
         f"https://api.rule34.xxx/index.php"
         f"?page=dapi&s=post&q=index&json=1&limit=100&tags={search_tags}"
     )
-    async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+    headers = {"User-Agent": "Mozilla/5.0"}
+    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
         if resp.status != 200:
             return []
         text = await resp.text()
@@ -2212,7 +2213,7 @@ async def _r34_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[d
 @bot.command(name="rule34", aliases=["r34"])
 async def cmd_rule34(ctx: commands.Context, *, tags: str = ""):
     cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
-    if not cfg.get("rule34_enabled", True):
+    if not cfg.get("rule34_enabled", False):
         await ctx.send(embed=emb("🔞 Disabled", "rule34 is disabled in this server.", C_GREY))
         return
     await ctx.typing()
