@@ -1293,7 +1293,7 @@ async def cmd_stop(ctx: commands.Context):
 # Commands — Shop
 # ─────────────────────────────────────────────────────────────────────────────
 
-@bot.command(name="shop")
+@bot.command(name="shop", aliases=["store"])
 async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
     uid = ctx.author.id
 
@@ -1301,21 +1301,23 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         _si = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
         _items = []
         if _si.get("nickname", True):
-            _items.append("`!shop nickname <new_name>` — Change your own nickname — **2,000 🪙**")
-            _items.append("`!shop nickname @user <new_name>` — Change someone else's nickname — **10,000 🪙**")
-            _items.append("`!shop removenickname` — Remove your own nickname — **2,000 🪙**")
+            _items.append((2000, "`!shop nickname <new_name>` — Change your own nickname — **2,000 🪙**"))
+            _items.append((10000, "`!shop nickname @user <new_name>` — Change someone else's nickname — **10,000 🪙**"))
+            _items.append((2000, "`!shop removenickname` — Remove your own nickname — **2,000 🪙**"))
         if _si.get("role", True):
-            _items.append("`!shop role <name> <hex>` — Create a custom colored role — **10,000 🪙**")
+            _items.append((10000, "`!shop role <name> <hex>` — Create a custom colored role — **10,000 🪙**"))
         if _si.get("removerole", True):
-            _items.append("`!shop removerole <name>` — Delete a bot-created role — **2,000 🪙**")
+            _items.append((2000, "`!shop removerole <name>` — Delete a bot-created role — **2,000 🪙**"))
         if _si.get("channel", True):
-            _items.append("`!shop channel <name>` — Create a new text channel — **20,000 🪙**")
-            _items.append("`!shop removechannel <name>` — Delete a bot-created channel — **20,000 🪙**")
+            _items.append((20000, "`!shop channel <name>` — Create a new text channel — **20,000 🪙**"))
+            _items.append((20000, "`!shop removechannel <name>` — Delete a bot-created channel — **20,000 🪙**"))
         if _si.get("ragebait", True):
-            _items.append("`!shop ragebait @user [topic]` — Ragebait someone for 10 messages — **5,000 🪙**")
-        _items.append("`!shop mock @user` — Mock someone's messages for 5 minutes — **3,000 🪙**")
-        _items.append("`!shop insurance` — Protect yourself for 24 hours — **1,000 🪙**")
-        desc = "\n".join(_items) if _items else "No shop items are currently available."
+            _items.append((5000, "`!shop ragebait @user [topic]` — Ragebait someone for 10 messages — **5,000 🪙**"))
+        _items.append((3000, "`!shop mock @user` — Mock someone's messages for 5 minutes — **3,000 🪙**"))
+        _items.append((1000, "`!shop insurance` — Protect yourself for 24 hours — **1,000 🪙**"))
+        # Sort by price (lowest to highest)
+        _items.sort(key=lambda x: x[0])
+        desc = "\n".join(item[1] for item in _items) if _items else "No shop items are currently available."
         await ctx.send(embed=emb("🛒 Shop", desc, C_PURPLE))
         return
 
