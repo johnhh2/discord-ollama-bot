@@ -153,21 +153,16 @@ def is_insured(uid: int, against: str) -> bool:
     return against in entry.get("protected_from", [])
 
 
-def load_models() -> tuple[str, str]:
-    """Load persisted AI models. Returns (ask_model, roleplay_model)."""
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(MODELS_FILE):
-        with open(MODELS_FILE) as f:
-            data = json.load(f)
-            return data.get("ask_model", OLLAMA_MODEL), data.get("roleplay_model", OLLAMA_MODEL)
-    return OLLAMA_MODEL, OLLAMA_MODEL
+def get_guild_ask_model(guild_id: int) -> str:
+    """Get the ask model for a guild, with fallback to default."""
+    cfg = get_guild_cfg(guild_id)
+    return cfg.get("ask_model", OLLAMA_MODEL)
 
 
-def save_models(ask_model: str, roleplay_model: str):
-    """Save AI models to disk."""
-    os.makedirs("data", exist_ok=True)
-    with open(MODELS_FILE, "w") as f:
-        json.dump({"ask_model": ask_model, "roleplay_model": roleplay_model}, f, indent=2)
+def get_guild_roleplay_model(guild_id: int) -> str:
+    """Get the roleplay model for a guild, with fallback to default."""
+    cfg = get_guild_cfg(guild_id)
+    return cfg.get("roleplay_model", OLLAMA_MODEL)
 
 
 channel_prompts = load_channel_prompts()
@@ -181,9 +176,6 @@ insurance: dict = load_insurance()
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
-
-# ── AI model globals ──────────────────────────────────────────────────────────
-current_model, current_roleplay_model = load_models()
 
 # ── Admin state ───────────────────────────────────────────────────────────────
 godmode = False
@@ -456,8 +448,14 @@ async def stream_ollama(
     messages: list[dict],
     placeholder: discord.Message,
     model: str = None,
+    guild_id: int = None,
 ) -> str:
-    used_model = model or current_model
+    if model:
+        used_model = model
+    elif guild_id:
+        used_model = get_guild_ask_model(guild_id)
+    else:
+        used_model = OLLAMA_MODEL
     payload = {"model": used_model, "messages": messages, "stream": True}
 
     full_response = ""
@@ -512,6 +510,7 @@ async def respond(
     content: str,
     reply_to: discord.Message,
     system_prompt: str = None,
+    guild_id: int = None,
 ):
     channel_id = channel.id
     history = channel_histories[channel_id]
@@ -525,7 +524,7 @@ async def respond(
 
     try:
         async with aiohttp.ClientSession() as session:
-            full_response = await stream_ollama(session, messages, placeholder)
+            full_response = await stream_ollama(session, messages, placeholder, guild_id=guild_id)
         history.append({"role": "assistant", "content": full_response})
         await finalize(placeholder, channel, full_response)
     except aiohttp.ClientError as e:
@@ -560,8 +559,10 @@ async def respond_roleplay(
 
     try:
         async with aiohttp.ClientSession() as session:
+            guild_id = rp.get("guild_id")
+            model = get_guild_roleplay_model(guild_id) if guild_id else OLLAMA_MODEL
             full_response = await stream_ollama(
-                session, messages, placeholder, model=current_roleplay_model
+                session, messages, placeholder, model=model
             )
         history.append({"role": "assistant", "content": full_response})
         await finalize(placeholder, channel, full_response)
@@ -812,7 +813,8 @@ async def on_message(message: discord.Message):
     if uid in active_roleplays:
         await respond_roleplay(message.channel, uid, content, message)
     else:
-        await respond(message.channel, uid, content, message)
+        guild_id = message.guild.id if message.guild else None
+        await respond(message.channel, uid, content, message, guild_id=guild_id)
 
     await bot.process_commands(message)
 
@@ -872,24 +874,28 @@ async def cmd_stats(ctx: commands.Context):
     vram_text = bot_settings.get("vram_text", "16GB")
 
     embed = discord.Embed(title="📊 Bot Stats", color=C_BLUE)
-    embed.add_field(name="🤖 Bot", value=f"  {bot.user}", inline=True)
-    embed.add_field(name="🆔 Bot ID", value=f"  {bot.user.id}", inline=True)
-    embed.add_field(name="⚙️ Shard", value="  #0 / 1", inline=True)
-    embed.add_field(name="💬 Commands Ran", value=f"  {stats_commands_ran}", inline=True)
-    embed.add_field(name="📨 Messages", value=f"  {stats_messages_seen} ({msg_rate:.2f}/sec)", inline=True)
-    embed.add_field(name="🧠 Memory", value=f"  {get_memory_mb():.2f} MB", inline=True)
-    embed.add_field(name="⏱️ Uptime", value=f"  {format_uptime()}", inline=True)
+    indent = "⠀ "  # Invisible character + space for indentation that Discord preserves
+    embed.add_field(name="🤖 Bot", value=f"{indent}{bot.user}", inline=True)
+    embed.add_field(name="🆔 Bot ID", value=f"{indent}{bot.user.id}", inline=True)
+    embed.add_field(name="⚙️ Shard", value=f"{indent}#0 / 1", inline=True)
+    embed.add_field(name="💬 Commands Ran", value=f"{indent}{stats_commands_ran} Commands", inline=True)
+    embed.add_field(name="📨 Messages", value=f"{indent}{stats_messages_seen} ({msg_rate:.2f}/sec)", inline=True)
+    embed.add_field(name="🧠 Memory", value=f"{indent}{get_memory_mb():.2f} MB", inline=True)
+    embed.add_field(name="⏱️ Uptime", value=f"{indent}{format_uptime()}", inline=True)
     embed.add_field(name="🌐 Presence", value=(
-        f"  {len(bot.guilds)} Servers\n"
-        f"  {text_channels} Text Channels\n"
-        f"  {voice_channels} Voice Channels"
+        f"{indent}{len(bot.guilds)} Servers\n"
+        f"{indent}{text_channels} Text Channels\n"
+        f"{indent}{voice_channels} Voice Channels"
     ), inline=True)
-    ai_status = "🟢 Connected" if ai_connected else "🔴 Disconnected"
-    embed.add_field(name="🧠 AI Status", value=(
-        f"  {ai_status}\n"
-        f"  Ask model: `{current_model}`\n"
-        f"  Roleplay model: `{current_roleplay_model}`\n"
-        f"  vRAM: {vram_text}"
+    ai_status = "Online" if ai_connected else "Offline"
+    ai_status_emoji = "🟢" if ai_connected else "🔴"
+    ask_model = get_guild_ask_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
+    roleplay_model = get_guild_roleplay_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
+    embed.add_field(name=f"{ai_status_emoji} AI Status", value=(
+        f"{indent}Status: {ai_status}\n"
+        f"{indent}Ask model: `{ask_model}`\n"
+        f"{indent}Roleplay model: `{roleplay_model}`\n"
+        f"{indent}vRAM: {vram_text}"
     ), inline=True)
     await ctx.send(embed=embed)
 
@@ -1249,7 +1255,8 @@ async def cmd_ask(ctx: commands.Context, *, question: str = None):
     else:
         system_prompt = ASK_SYSTEM_PROMPT
 
-    await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt)
+    guild_id = ctx.guild.id if ctx.guild else None
+    await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id)
 
 
 @bot.command(name="roleplay")
@@ -1269,7 +1276,7 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
     if cost > 0 and not deduct_balance(uid, cost):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Starting a roleplay costs **50 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
         return
-    active_roleplays[uid] = {"character_prompt": character_prompt, "channel_id": ctx.channel.id}
+    active_roleplays[uid] = {"character_prompt": character_prompt, "channel_id": ctx.channel.id, "guild_id": ctx.guild.id if ctx.guild else None}
     roleplay_histories[uid] = []
     preview = character_prompt[:100] + ("..." if len(character_prompt) > 100 else "")
     await ctx.send(embed=emb(
@@ -1905,29 +1912,37 @@ async def cmd_godmode(ctx: commands.Context):
 
 @bot.command(name="model")
 async def cmd_model(ctx: commands.Context, model_name: str = None):
-    global current_model
     if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
         return
-    if model_name is None:
-        await ctx.send(embed=emb("⚙️ Model", f"Current model: `{current_model}`", C_GREY))
+    if ctx.guild is None:
+        await ctx.send(embed=emb("❌ Error", "This command only works in servers.", C_RED))
         return
-    current_model = model_name
-    save_models(current_model, current_roleplay_model)
+    cfg = get_guild_cfg(ctx.guild.id)
+    if model_name is None:
+        current = cfg.get("ask_model", OLLAMA_MODEL)
+        await ctx.send(embed=emb("⚙️ Model", f"Current model: `{current}`", C_GREY))
+        return
+    cfg["ask_model"] = model_name
+    save_guild_settings()
     await ctx.send(embed=emb("⚙️ Model", f"Switched to `{model_name}`", C_GREY))
 
 
 @bot.command(name="roleplaymodel")
 async def cmd_roleplaymodel(ctx: commands.Context, model_name: str = None):
-    global current_roleplay_model
     if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
         return
-    if model_name is None:
-        await ctx.send(embed=emb("⚙️ Roleplay Model", f"Current roleplay model: `{current_roleplay_model}`", C_GREY))
+    if ctx.guild is None:
+        await ctx.send(embed=emb("❌ Error", "This command only works in servers.", C_RED))
         return
-    current_roleplay_model = model_name
-    save_models(current_model, current_roleplay_model)
+    cfg = get_guild_cfg(ctx.guild.id)
+    if model_name is None:
+        current = cfg.get("roleplay_model", OLLAMA_MODEL)
+        await ctx.send(embed=emb("⚙️ Roleplay Model", f"Current roleplay model: `{current}`", C_GREY))
+        return
+    cfg["roleplay_model"] = model_name
+    save_guild_settings()
     await ctx.send(embed=emb("⚙️ Roleplay Model", f"Switched to `{model_name}`", C_GREY))
 
 
@@ -2102,6 +2117,12 @@ async def cmd_botinvite(ctx: commands.Context):
     class InviteView(ui.View):
         @ui.button(label="Get Bot Invitation Link", style=discord.ButtonStyle.primary)
         async def copy_button(self, interaction: discord.Interaction, button: ui.Button):
+            # Verify the user clicking the button is an admin
+            user_ctx = await bot.get_context(interaction.message)
+            user_ctx.author = interaction.user
+            if not is_admin(user_ctx):
+                await interaction.response.send_message("❌ You don't have permission to view this link.", ephemeral=True)
+                return
             await interaction.response.send_message(f"```\n{invite_url}\n```", ephemeral=True)
 
     embed = discord.Embed(
