@@ -35,6 +35,20 @@ BOT_SETTINGS_FILE = "data/bot_settings.json"
 GUILD_SETTINGS_FILE = "data/guild_settings.json"
 INSURANCE_FILE = "data/insurance.json"
 MODELS_FILE = "data/models.json"
+SLOT_JACKPOT_FILE = "data/slots_jackpot.json"
+
+# Slot machine configuration
+SLOT_REEL = (
+    ["🍒"] * 7 +
+    ["🍋"] * 5 +
+    ["🔔"] * 4 +
+    ["🎰"] * 3 +
+    ["7️⃣"] * 1
+)
+SLOT_DENOMS = [9, 18, 36, 45, 90, 135, 270]
+SLOT_MAX_BET = 270
+SLOT_JACKPOT_SEED = 5_000
+SLOT_JACKPOT_CONTRIB = 0.01
 INITIAL_BOT_ADMIN_ID = 139928946044174336
 
 
@@ -62,6 +76,21 @@ def save_economy():
     os.makedirs("data", exist_ok=True)
     with open(ECONOMY_FILE, "w") as f:
         json.dump(economy, f, indent=2)
+
+
+def load_jackpot() -> int:
+    os.makedirs("data", exist_ok=True)
+    try:
+        with open(SLOT_JACKPOT_FILE) as f:
+            return max(SLOT_JACKPOT_SEED, json.load(f).get("jackpot", SLOT_JACKPOT_SEED))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return SLOT_JACKPOT_SEED
+
+
+def save_jackpot(value: int):
+    os.makedirs("data", exist_ok=True)
+    with open(SLOT_JACKPOT_FILE, "w") as f:
+        json.dump({"jackpot": value}, f)
 
 
 def load_bot_roles() -> set[int]:
@@ -168,6 +197,7 @@ def get_guild_roleplay_model(guild_id: int) -> str:
 
 channel_prompts = load_channel_prompts()
 economy = load_economy()
+slot_jackpot = load_jackpot()
 bot_roles: set[int] = load_bot_roles()
 bot_admins: set[int] = load_bot_admins()
 bot_settings: dict = load_bot_settings()
@@ -414,10 +444,6 @@ def build_hangman_display(game: dict) -> str:
         f"Lives left: {lives_left}"
     )
 
-
-# ── Slots ─────────────────────────────────────────────────────────────────────
-
-SLOT_SYMBOLS = ["🍒", "🍋", "🍊", "🍇", "💎", "🪙"]
 
 # ── Embed colors ──────────────────────────────────────────────────────────────
 
@@ -933,6 +959,11 @@ async def cmd_help(ctx: commands.Context):
     help_embed.add_field(name="🔞 NSFW", inline=False, value=(
         "`!rule34 [tags]` — Random image from rule34 (alias: `!r34`)"
     ))
+    help_embed.add_field(name="🎉 Fun", inline=False, value=(
+        "`!dog` — Random dog picture\n"
+        "`!cat` — Random cat picture\n"
+        "`!race @user1 [@user2 ...] [amount]` — Race to type a word (optional bet)"
+    ))
     help_embed.add_field(name="🔧 Utility", inline=False, value=(
         "`!stats` — Show bot statistics\n"
         "`!clearhistory` — Reset AI chat history for this channel"
@@ -976,7 +1007,7 @@ async def cmd_stats(ctx: commands.Context):
     await ctx.send(embed=embed)
 
 
-@bot.command(name="adminhelp")
+@bot.command(name="adminhelp", aliases=["helpadmin"])
 async def cmd_adminhelp(ctx: commands.Context):
     if not can_manage_settings(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
@@ -1115,44 +1146,118 @@ async def cmd_flip(ctx: commands.Context, amount: str = None):
         await ctx.send(embed=emb("🪙 Tails!", f"You lost **{amount} 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
 
 
-@bot.command(name="slots")
+def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
+    """Returns (result_label, multiplier). Caller applies multiplier to bet."""
+    a, b, c = reels
+    cherry = "🍒"
+
+    # Priority: evaluate highest payout first
+    if a == b == c:
+        sym = a
+        if sym == "7️⃣":
+            return ("jackpot", 100)
+        if sym == "🎰":
+            return ("3bar", 20)
+        if sym == "🔔":
+            return ("3bell", 10)
+        if sym == "🍋":
+            return ("3lemon", 5)
+        if sym == cherry:
+            return ("3cherry", 3)
+
+    # Cherry retention (only checked when no 3-of-a-kind)
+    cherry_count = reels.count(cherry)
+    if cherry_count >= 2:
+        return ("2cherry", 2)
+    if cherry_count == 1:
+        return ("1cherry", 1)
+
+    return ("nothing", 0)
+
+
+@bot.command(name="slots", aliases=["slot"])
 async def cmd_slots(ctx: commands.Context, amount: str = None):
+    global slot_jackpot
     uid = ctx.author.id
+
     if amount is None:
-        await ctx.send("Usage: `!slots <amount>`")
+        denom_str = " | ".join(str(d) for d in SLOT_DENOMS)
+        await ctx.send(embed=emb(
+            "🎰 Slots",
+            f"Usage: `!slots <bet>`\nValid bets: {denom_str} 🪙\n"
+            f"Bet **{SLOT_MAX_BET} 🪙** to be eligible for the "
+            f"**Progressive Jackpot: {slot_jackpot:,} 🪙**",
+            C_GOLD,
+        ))
         return
+
     try:
         amount = int(amount)
-        assert amount > 0
+        assert amount in SLOT_DENOMS
     except (ValueError, AssertionError):
-        await ctx.send("Please provide a positive whole number amount.")
+        denom_str = ", ".join(str(d) for d in SLOT_DENOMS)
+        await ctx.send(embed=emb("❌ Invalid Bet", f"Valid bets: {denom_str} 🪙", C_RED))
         return
+
     if not godmode and not deduct_balance(uid, amount):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Balance: {get_balance(uid)} 🪙", C_RED))
         return
-    reels = [random.choice(SLOT_SYMBOLS) for _ in range(3)]
+
+    # Jackpot contribution (1% of every bet, rounded up)
+    contrib = max(1, int(amount * SLOT_JACKPOT_CONTRIB))
+    slot_jackpot += contrib
+    save_jackpot(slot_jackpot)
+
+    # Spin
+    reels = [random.choice(SLOT_REEL) for _ in range(3)]
     display = " | ".join(reels)
-    if reels[0] == reels[1] == reels[2]:
-        sym = reels[0]
-        if sym == "🪙":
-            mult = 10
-        elif sym == "💎":
-            mult = 5
-        else:
-            mult = 3
-        winnings = amount * mult
-        add_balance(uid, winnings)
+    label, mult = eval_slots(reels, amount)
+
+    # Progressive jackpot: only at max bet
+    if label == "jackpot" and amount == SLOT_MAX_BET:
+        prize = slot_jackpot
+        slot_jackpot = SLOT_JACKPOT_SEED
+        save_jackpot(slot_jackpot)
+        add_balance(uid, prize)
         await ctx.send(embed=emb(
-            "🎰 Jackpot!",
-            f"{display}\n\n**{mult}x!** You won **{winnings} 🪙**! Balance: {get_balance(uid)} 🪙",
-            C_GREEN,
+            "🎰 PROGRESSIVE JACKPOT!",
+            f"{display}\n\n🏆 **You hit the Progressive Jackpot!**\n"
+            f"**Won: {prize:,} 🪙** | Balance: {get_balance(uid):,} 🪙\n"
+            f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*",
+            C_GOLD,
         ))
-    else:
+        return
+
+    if mult == 0:
         await ctx.send(embed=emb(
-            "🎰 No Match",
-            f"{display}\n\nYou lost **{amount} 🪙**. Balance: {get_balance(uid)} 🪙",
+            "🎰 No Win",
+            f"{display}\n\nYou lost **{amount} 🪙**. Balance: {get_balance(uid):,} 🪙\n"
+            f"Progressive Jackpot: **{slot_jackpot:,} 🪙** (bet {SLOT_MAX_BET} 🪙 to enter)",
             C_RED,
         ))
+        return
+
+    winnings = amount * mult
+    add_balance(uid, winnings)
+
+    result_labels = {
+        "jackpot": f"7️⃣7️⃣7️⃣ — **{mult}x** (max bet for jackpot)",
+        "3bar":    f"🎰🎰🎰 — **{mult}x**",
+        "3bell":   f"🔔🔔🔔 — **{mult}x**",
+        "3lemon":  f"🍋🍋🍋 — **{mult}x**",
+        "3cherry": f"🍒🍒🍒 — **{mult}x**",
+        "2cherry": f"Two Cherries — **{mult}x**",
+        "1cherry": f"One Cherry — **Money Back**",
+    }
+    desc_line = result_labels.get(label, f"**{mult}x**")
+
+    await ctx.send(embed=emb(
+        "🎰 Winner!",
+        f"{display}\n\n{desc_line}\n"
+        f"Won **{winnings} 🪙** | Balance: {get_balance(uid):,} 🪙\n"
+        f"Progressive Jackpot: **{slot_jackpot:,} 🪙**",
+        C_GREEN,
+    ))
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1457,7 +1562,10 @@ async def cmd_ttt(ctx: commands.Context, *args):
         if amount > 0:
             add_balance(uid, amount)
             add_balance(invited.id, amount)
-        await ctx.send(embed=emb("❌ Invite Declined", f"{invited.display_name} didn't accept.", C_RED))
+            msg = f"{invited.display_name} didn't accept. Coins refunded ({amount} 🪙 each)."
+        else:
+            msg = f"{invited.display_name} didn't accept."
+        await ctx.send(embed=emb("❌ Invite Declined", msg, C_RED))
         return
 
     active_ttt_games[cid] = {
@@ -1515,7 +1623,10 @@ async def cmd_c4(ctx: commands.Context, *args):
         if amount > 0:
             add_balance(uid, amount)
             add_balance(invited.id, amount)
-        await ctx.send(embed=emb("❌ Invite Declined", f"{invited.display_name} didn't accept.", C_RED))
+            msg = f"{invited.display_name} didn't accept. Coins refunded ({amount} 🪙 each)."
+        else:
+            msg = f"{invited.display_name} didn't accept."
+        await ctx.send(embed=emb("❌ Invite Declined", msg, C_RED))
         return
     active_c4_games[cid] = {
         "board": [[None]*7 for _ in range(6)],
@@ -1826,7 +1937,10 @@ async def cmd_race(ctx: commands.Context, *args):
     if not confirmed_ids:
         if amount > 0:
             add_balance(uid, amount)
-        await ctx.send(embed=emb("❌ No One Joined", "Race cancelled — no one accepted the invite.", C_RED))
+            msg = f"Race cancelled — no one accepted the invite. Coins refunded ({amount} 🪙)."
+        else:
+            msg = "Race cancelled — no one accepted the invite."
+        await ctx.send(embed=emb("❌ No One Joined", msg, C_RED))
         return
 
     # Build final player list (host + confirmed)
@@ -1851,7 +1965,7 @@ async def cmd_race(ctx: commands.Context, *args):
     asyncio.create_task(_run_race(ctx.channel, cid, race_msg))
 
 
-@bot.command(name="stop", aliases=["quit", "forfeit"])
+@bot.command(name="stop", aliases=["quit", "forfeit", "q"])
 async def cmd_stop(ctx: commands.Context):
     uid = ctx.author.id
     cid = ctx.channel.id

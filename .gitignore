@@ -209,5 +209,10 @@ __marimo__/
 # Custom
 TODO.txt
 
+# Claude Code local configuration
+.claude/
+
 # Data
+data/
 economy.json
+guild_settings.json
