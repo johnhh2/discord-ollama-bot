@@ -735,7 +735,7 @@ async def on_message(message: discord.Message):
         await _auto_daily(message)
 
     # Intercept hit / stand for active blackjack (with or without ! prefix)
-    if content_lower in ("!hit", "!stand", "hit", "stand") and uid in active_blackjack_games:
+    if content_lower in ("!hit", "!stand", "hit", "stand") and uid in active_blackjack_games and active_blackjack_games[uid].get("channel_id") == message.channel.id:
         game = active_blackjack_games[uid]
         if content_lower in ("!hit", "hit"):
             card = draw_card(game["deck"])
@@ -776,7 +776,7 @@ async def on_message(message: discord.Message):
 
     is_dm = isinstance(message.channel, discord.DMChannel)
     is_mentioned = bot.user in message.mentions
-    in_roleplay = uid in active_roleplays
+    in_roleplay = uid in active_roleplays and active_roleplays[uid].get("channel_id") == message.channel.id
 
     if not (is_dm or is_mentioned or in_roleplay):
         await bot.process_commands(message)
@@ -1251,7 +1251,7 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
     if cost > 0 and not deduct_balance(uid, cost):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Starting a roleplay costs **100 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
         return
-    active_roleplays[uid] = {"character_prompt": character_prompt}
+    active_roleplays[uid] = {"character_prompt": character_prompt, "channel_id": ctx.channel.id}
     roleplay_histories[uid] = []
     preview = character_prompt[:100] + ("..." if len(character_prompt) > 100 else "")
     await ctx.send(embed=emb(
