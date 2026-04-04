@@ -849,7 +849,12 @@ async def cmd_help(ctx: commands.Context):
         "`!stats` — Show bot statistics\n"
         "`!clearhistory` — Reset AI chat history for this channel"
     ))
-    await ctx.send(embed=embed)
+    msg = await ctx.send(embed=embed)
+    await asyncio.sleep(300)  # 5 minutes
+    try:
+        await msg.delete()
+    except discord.NotFound:
+        pass
 
 
 @bot.command(name="stats", aliases=["stat"])
@@ -916,7 +921,12 @@ async def cmd_adminhelp(ctx: commands.Context):
             "`!godmode` — Toggle free costs on/off\n"
             "`!vramtext [text]` — View or set the vRAM display text in !stats"
         ))
-    await ctx.send(embed=embed)
+    msg = await ctx.send(embed=embed)
+    await asyncio.sleep(300)  # 5 minutes
+    try:
+        await msg.delete()
+    except discord.NotFound:
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1350,11 +1360,21 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
         if not sections:
-            await ctx.send(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE))
+            msg = await ctx.send(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE))
+            await asyncio.sleep(300)  # 5 minutes
+            try:
+                await msg.delete()
+            except discord.NotFound:
+                pass
             return
 
         desc = "\n\n".join(f"**{section}**\n" + "\n".join(items) for section, items in sections.items())
-        await ctx.send(embed=emb("🛒 Shop", desc, C_PURPLE))
+        msg = await ctx.send(embed=emb("🛒 Shop", desc, C_PURPLE))
+        await asyncio.sleep(300)  # 5 minutes
+        try:
+            await msg.delete()
+        except discord.NotFound:
+            pass
         return
 
     _shop_cfg = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
@@ -2085,7 +2105,7 @@ async def cmd_botinvite(ctx: commands.Context):
 
     # Create a view with a button
     class InviteView(ui.View):
-        @ui.button(label="Get Invite URL", style=discord.ButtonStyle.primary)
+        @ui.button(label="Get Bot Invitation Link", style=discord.ButtonStyle.primary)
         async def copy_button(self, interaction: discord.Interaction, button: ui.Button):
             await interaction.response.send_message(f"```\n{invite_url}\n```", ephemeral=True)
 
@@ -2117,7 +2137,7 @@ async def cmd_invite(ctx: commands.Context):
 
         # Create a view with a button
         class ServerInviteView(ui.View):
-            @ui.button(label="Copy Server Invite", style=discord.ButtonStyle.primary)
+            @ui.button(label="Get Server Invitation Link", style=discord.ButtonStyle.primary)
             async def copy_button(self, interaction: discord.Interaction, button: ui.Button):
                 await interaction.response.send_message(f"```\n{invite_url}\n```", ephemeral=True)
 
