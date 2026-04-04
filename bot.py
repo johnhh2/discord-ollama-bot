@@ -1980,7 +1980,7 @@ async def cmd_event(ctx: commands.Context, amount: str = None, duration: str = N
     if ctx.message.channel_mentions:
         target_channel = ctx.message.channel_mentions[-1]
 
-    duration_str = f" for {duration_hours}h" if duration_hours else ""
+    duration_str = f" (expires in {int(duration_hours)} hours)" if duration_hours else ""
     event_msg = await target_channel.send(embed=emb(
         "🎉 Coin Event!",
         f"React with 🪙 to receive **{amount} 🪙**!{duration_str}",
@@ -2048,6 +2048,23 @@ async def cmd_give(ctx: commands.Context, target: discord.Member = None, amount:
         f"New balance: {get_balance(target.id)} 🪙",
         C_GOLD,
     ))
+
+
+@bot.command(name="say")
+async def cmd_say(ctx: commands.Context, *, text: str = None):
+    if not can_manage_settings(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        return
+    if text is None:
+        await ctx.send(embed=emb("🔊 Say", "Usage: `!say <text>`", C_GREY))
+        return
+    # Try to delete the command message (fail silently)
+    try:
+        await ctx.message.delete()
+    except (discord.Forbidden, discord.NotFound):
+        pass
+    # Send the message
+    await ctx.send(text)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
