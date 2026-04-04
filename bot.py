@@ -18,6 +18,7 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "dolphin3:8b")
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant.")
 HISTORY_LIMIT = int(os.getenv("HISTORY_LIMIT", "20"))
 RATE_LIMIT_SECONDS = float(os.getenv("RATE_LIMIT_SECONDS", "5.0"))
+RACE_TRACK_LEN = 20
 
 _raw_channels = os.getenv("ACTIVE_CHANNEL_IDS", "")
 ACTIVE_CHANNEL_IDS = (
@@ -189,6 +190,7 @@ active_events: dict[int, dict] = {}     # message_id → {amount, rewarded: set}
 active_ragebaits: dict[int, dict] = {} # user_id → {remaining: int, history: list[str]}
 active_ttt_games: dict[int, dict] = {}  # channel_id → {board, players, marks, current}
 active_c4_games: dict[int, dict] = {}   # channel_id → {board, players, marks, current}
+active_race_games: dict[int, dict] = {} # channel_id → {players, names, positions, amount}
 
 # ── Misc state ────────────────────────────────────────────────────────────────
 channel_histories: dict[int, deque] = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
@@ -432,6 +434,17 @@ def emb(title: str, description: str, color: int) -> discord.Embed:
     return discord.Embed(title=title, description=description, color=color)
 
 
+def _render_race(game: dict) -> str:
+    """Render the race board with each player's lane."""
+    lines = []
+    for uid in game["players"]:
+        pos = game["positions"][uid]
+        name = game["names"][uid]
+        track = "▓" * pos + "🏇" + "░" * (RACE_TRACK_LEN - pos)
+        lines.append(f"`{track}` **{name}**")
+    return "\n".join(lines)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Async infrastructure
 # ─────────────────────────────────────────────────────────────────────────────
@@ -513,12 +526,14 @@ async def respond(
     reply_to: discord.Message,
     system_prompt: str = None,
     guild_id: int = None,
+    author_name: str = None,
 ):
     channel_id = channel.id
     history = channel_histories[channel_id]
     system_prompt = system_prompt or get_system_prompt(channel_id)
 
-    history.append({"role": "user", "content": content})
+    formatted_content = f"{author_name}: {content}" if author_name else content
+    history.append({"role": "user", "content": formatted_content})
     messages = [{"role": "system", "content": system_prompt}] + list(history)
 
     placeholder = await reply_to.reply("...")
@@ -544,6 +559,7 @@ async def respond_roleplay(
     user_id: int,
     content: str,
     reply_to: discord.Message,
+    author_name: str = None,
 ):
     rp = active_roleplays[user_id]
     history_key = rp.get("history_owner", user_id)
@@ -554,7 +570,8 @@ async def respond_roleplay(
         f"Never break character or acknowledge that you are an AI."
     )
 
-    history.append({"role": "user", "content": content})
+    formatted_content = f"{author_name}: {content}" if author_name else content
+    history.append({"role": "user", "content": formatted_content})
     messages = [{"role": "system", "content": system_prompt}] + history
 
     placeholder = await reply_to.reply("...")
@@ -577,6 +594,53 @@ async def respond_roleplay(
         await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
     finally:
         typing_task.cancel()
+
+
+async def _run_race(channel, cid: int, race_msg: discord.Message):
+    """Animate and run a race until there's a winner."""
+    import random
+
+    game = active_race_games[cid]
+
+    while cid in active_race_games:
+        await asyncio.sleep(1.5)
+        if cid not in active_race_games:
+            break
+
+        # Advance each player
+        for uid in game["players"]:
+            game["positions"][uid] = min(
+                game["positions"][uid] + random.randint(1, 3),
+                RACE_TRACK_LEN,
+            )
+
+        # Check for winners
+        winners = [uid for uid in game["players"] if game["positions"][uid] >= RACE_TRACK_LEN]
+        board = _render_race(game)
+
+        if winners:
+            del active_race_games[cid]
+            amount = game["amount"]
+            total_pot = amount * len(game["players"])
+            share = total_pot // len(winners) if winners else 0
+
+            if len(winners) == 1:
+                winner_name = game["names"][winners[0]]
+                if share > 0:
+                    add_balance(winners[0], share)
+                result = f"{board}\n\n🏆 **{winner_name}** wins" + (f" **{share} 🪙**!" if share else "!")
+            else:
+                for w in winners:
+                    if share > 0:
+                        add_balance(w, share)
+                names = ", ".join(f"**{game['names'][w]}**" for w in winners)
+                result = f"{board}\n\n🤝 Tie! {names} each get **{share} 🪙**"
+
+            await race_msg.edit(embed=emb("🏁 Race Finished!", result, C_GREEN))
+            return
+
+        # Update board
+        await race_msg.edit(embed=emb("🏇 Race in Progress", board, C_ORANGE))
 
 
 async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
@@ -819,10 +883,10 @@ async def on_message(message: discord.Message):
         return
 
     if uid in active_roleplays:
-        await respond_roleplay(message.channel, uid, content, message)
+        await respond_roleplay(message.channel, uid, content, message, author_name=message.author.display_name)
     else:
         guild_id = message.guild.id if message.guild else None
-        await respond(message.channel, uid, content, message, guild_id=guild_id)
+        await respond(message.channel, uid, content, message, guild_id=guild_id, author_name=message.author.display_name)
 
     await bot.process_commands(message)
 
@@ -1148,6 +1212,33 @@ def check_c4_winner(board: list) -> str | None:
     return None
 
 
+def calculate_hangman_reward(word: str) -> int:
+    """Calculate hangman reward based on word difficulty.
+
+    Formula (AI-derived):
+    - Base: 10 coins
+    - Length Bonus: (word_length - 3) × 6
+    - Unique Letters Bonus: unique_count × 3
+    - Rare Letters Bonus: rare_count × 15
+
+    Examples:
+    - 5-letter average word (APPLE): ~25 coins
+    - 10-letter hard word with rare letters: ~150 coins
+    """
+    RARE_LETTERS = {'z', 'q', 'x', 'j', 'k', 'w', 'v'}
+
+    word_lower = word.lower()
+    base = 10
+    length_bonus = max(0, (len(word) - 3)) * 6
+    unique_count = len(set(word_lower))
+    unique_bonus = unique_count * 3
+    rare_count = sum(1 for c in word_lower if c in RARE_LETTERS)
+    rare_bonus = rare_count * 15
+
+    total = base + length_bonus + unique_bonus + rare_bonus
+    return total
+
+
 @bot.command(name="blackjack")
 async def cmd_blackjack(ctx: commands.Context, amount: str = None):
     uid = ctx.author.id
@@ -1209,16 +1300,29 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
     if not guess.isalpha():
         return  # silently ignore non-alpha free-text; cmd_guess shows an error
 
+    # Track this player as active
+    game["active_players"].add(author_id)
+
     # Full word guess
     if len(guess) > 1:
         if guess == game["word"]:
+            word = game["word"]
+            total_reward = calculate_hangman_reward(word)
+            active_players = list(game["active_players"])
+            per_player = total_reward // len(active_players)
+            remainder = total_reward % len(active_players)
+
             del active_hangman_games[cid]
-            add_balance(author_id, 50)
-            await channel.send(embed=emb(
-                "🎉 Correct!",
-                f"The word was `{game['word']}`!\n**+50 🪙** | Balance: {get_balance(author_id)} 🪙",
-                C_GREEN,
-            ))
+
+            # Distribute rewards
+            reward_msg = f"The word was `{word}`!\n\n**Total: {total_reward} 🪙** split among {len(active_players)} player(s)\n"
+            for i, player_id in enumerate(active_players):
+                bonus = 1 if i < remainder else 0
+                player_reward = per_player + bonus
+                add_balance(player_id, player_reward)
+                reward_msg += f"<@{player_id}>: +{player_reward} 🪙 | Balance: {get_balance(player_id)} 🪙\n"
+
+            await channel.send(embed=emb("🎉 Correct!", reward_msg.strip(), C_GREEN))
         else:
             game["wrong_guesses"] += 1
             if game["wrong_guesses"] >= 6:
@@ -1235,13 +1339,23 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
     game["guessed_letters"].add(guess)
     if guess in game["word"]:
         if all(c in game["guessed_letters"] for c in game["word"]):
+            word = game["word"]
+            total_reward = calculate_hangman_reward(word)
+            active_players = list(game["active_players"])
+            per_player = total_reward // len(active_players)
+            remainder = total_reward % len(active_players)
+
             del active_hangman_games[cid]
-            add_balance(author_id, 50)
-            await channel.send(embed=emb(
-                "🎉 You Got It!",
-                f"The word was `{game['word']}`!\n**+50 🪙** | Balance: {get_balance(author_id)} 🪙",
-                C_GREEN,
-            ))
+
+            # Distribute rewards
+            reward_msg = f"The word was `{word}`!\n\n**Total: {total_reward} 🪙** split among {len(active_players)} player(s)\n"
+            for i, player_id in enumerate(active_players):
+                bonus = 1 if i < remainder else 0
+                player_reward = per_player + bonus
+                add_balance(player_id, player_reward)
+                reward_msg += f"<@{player_id}>: +{player_reward} 🪙 | Balance: {get_balance(player_id)} 🪙\n"
+
+            await channel.send(embed=emb("🎉 You Got It!", reward_msg.strip(), C_GREEN))
         else:
             await channel.send(embed=emb("✅ Good Guess!", build_hangman_display(game), C_GREEN))
     else:
@@ -1265,6 +1379,7 @@ async def cmd_hangman(ctx: commands.Context, *args):
         "guessed_letters": set(),
         "wrong_guesses": 0,
         "user_id": ctx.author.id,
+        "active_players": {ctx.author.id},  # Track who's actively guessing
     }
     # Invite flow for mentioned users
     invited_users = [m for m in ctx.message.mentions if m.id != ctx.author.id]
@@ -1534,7 +1649,7 @@ async def cmd_ask(ctx: commands.Context, *, question: str = None):
         system_prompt = ASK_SYSTEM_PROMPT
 
     guild_id = ctx.guild.id if ctx.guild else None
-    await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id)
+    await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
 
 async def _wait_for_confirmations(
     ctx: commands.Context,
@@ -1646,7 +1761,84 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
     ))
 
 
-@bot.command(name="stop")
+@bot.command(name="race")
+async def cmd_race(ctx: commands.Context, *args):
+    cid = ctx.channel.id
+    uid = ctx.author.id
+
+    if cid in active_ttt_games or cid in active_c4_games or cid in active_race_games:
+        await ctx.send(embed=emb("❌ Game Active", "Finish the current game first.", C_RED))
+        return
+
+    invited_users = [m for m in ctx.message.mentions if m.id != uid]
+    if not invited_users:
+        await ctx.send("Usage: `!race @user1 [@user2 ...] [amount]`")
+        return
+
+    # Parse optional amount (any numeric arg that isn't a mention)
+    amount = 0
+    for a in args:
+        if not a.startswith("<@"):
+            try:
+                amount = int(a)
+                if amount <= 0:
+                    await ctx.send(embed=emb("❌ Invalid Amount", "Amount must be positive.", C_RED))
+                    return
+            except ValueError:
+                pass
+
+    all_players = [uid] + [u.id for u in invited_users]
+
+    # Deduct bets from all players upfront
+    paid = []
+    if amount > 0:
+        for player_uid in all_players:
+            if not deduct_balance(player_uid, amount):
+                for refund_uid in paid:
+                    add_balance(refund_uid, amount)
+                member = ctx.guild.get_member(player_uid) if ctx.guild else None
+                name = member.display_name if member else str(player_uid)
+                await ctx.send(embed=emb("💸 Insufficient Funds", f"**{name}** can't cover the **{amount} 🪙** bet.", C_RED))
+                return
+            paid.append(player_uid)
+
+    confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="🏇 Race Invite")
+
+    # Refund anyone who didn't confirm
+    declined = set(u.id for u in invited_users) - confirmed_ids
+    if amount > 0:
+        for d_uid in declined:
+            add_balance(d_uid, amount)
+
+    if not confirmed_ids:
+        if amount > 0:
+            add_balance(uid, amount)
+        await ctx.send(embed=emb("❌ No One Joined", "Race cancelled — no one accepted the invite.", C_RED))
+        return
+
+    # Build final player list (host + confirmed)
+    final_players = [uid] + list(confirmed_ids)
+
+    # Build names map
+    names = {}
+    for p_uid in final_players:
+        member = ctx.guild.get_member(p_uid) if ctx.guild else None
+        names[p_uid] = member.display_name if member else str(p_uid)
+
+    active_race_games[cid] = {
+        "players": final_players,
+        "names": names,
+        "positions": {p: 0 for p in final_players},
+        "amount": amount,
+    }
+
+    board = _render_race(active_race_games[cid])
+    race_msg = await ctx.send(embed=emb("🏇 Race Starting!", board, C_ORANGE))
+
+    asyncio.create_task(_run_race(ctx.channel, cid, race_msg))
+
+
+@bot.command(name="stop", aliases=["quit", "forfeit"])
 async def cmd_stop(ctx: commands.Context):
     uid = ctx.author.id
     cid = ctx.channel.id
@@ -1701,6 +1893,19 @@ async def cmd_stop(ctx: commands.Context):
             stopped.append(f"🟡 Connect 4 (forfeited, opponent wins {winnings} 🪙)")
         else:
             stopped.append("🟡 Connect 4 (forfeited)")
+
+    if cid in active_race_games and uid in active_race_games[cid]["players"]:
+        game = active_race_games[cid]
+        amount = game.get("amount", 0)
+        opponents = [p for p in game["players"] if p != uid]
+        del active_race_games[cid]
+        if amount > 0 and opponents:
+            share = amount * len(game["players"]) // len(opponents)
+            for opp in opponents:
+                add_balance(opp, share)
+            stopped.append(f"🏇 Race (forfeited, opponent(s) win {share} 🪙 each)")
+        else:
+            stopped.append("🏇 Race (forfeited)")
 
     if not stopped:
         await ctx.send(embed=emb("⏹️ Nothing to Stop", "No active roleplay, blackjack, or hangman game.", C_GREY))
@@ -2092,10 +2297,11 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **3,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
-        active_mocks[target.id] = {"expires_at": time.time() + 300, "started_by": uid}
+        expires_at = int(time.time() + 300)
+        active_mocks[target.id] = {"expires_at": expires_at, "started_by": uid}
         await ctx.send(embed=emb(
             "🎭 Mock Activated",
-            f"**{target.display_name}** will be mocked for 5 minutes!",
+            f"**{target.display_name}** will be mocked until <t:{expires_at}:R>!",
             C_PURPLE,
         ))
         return
@@ -2107,14 +2313,15 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"Insurance costs **1,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
+        expires_at = int(time.time() + 86400)
         insurance[key] = {
-            "expires_at": time.time() + 86400,
+            "expires_at": expires_at,
             "protected_from": ["ragebait", "mock", "nickname", "role"],
         }
         save_insurance()
         await ctx.send(embed=emb(
             "🛡️ Insurance Purchased",
-            "Protected for 24 hours against ragebait, mock, nickname, and role changes!",
+            f"Protected until <t:{expires_at}:R> against ragebait, mock, nickname, and role changes!",
             C_GREEN,
         ))
         return
@@ -2413,7 +2620,10 @@ async def cmd_event(ctx: commands.Context, amount: str = None, duration: str = N
     if ctx.message.channel_mentions:
         target_channel = ctx.message.channel_mentions[-1]
 
-    duration_str = f" (expires in {int(duration_hours)} hours)" if duration_hours else ""
+    duration_str = ""
+    if duration_hours:
+        expires_at = int(time.time() + duration_hours * 3600)
+        duration_str = f" (expires <t:{expires_at}:R>)"
     event_msg = await target_channel.send(embed=emb(
         "🎉 Coin Event!",
         f"React with 🪙 to receive **{amount} 🪙**!{duration_str}",
