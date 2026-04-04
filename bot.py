@@ -269,6 +269,16 @@ def check_rate_limit(user_id: int) -> bool:
     return False
 
 
+def log_bot_permission_error(ctx: commands.Context, error_msg: str):
+    """Log a bot permission error to the audit log."""
+    audit_log.append({
+        "time": time.time(),
+        "user": f"{ctx.author.display_name} ({ctx.author.id})",
+        "command": ctx.message.content[:100],
+        "error": f"Bot Permission Error: {error_msg}",
+    })
+
+
 def get_system_prompt(channel_id: int) -> str:
     return channel_prompts.get(channel_id, SYSTEM_PROMPT)
 
@@ -1395,6 +1405,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         except discord.Forbidden:
             if cost > 0:
                 add_balance(uid, cost)
+            log_bot_permission_error(ctx, "change nickname")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to change that nickname.", C_RED))
         except discord.HTTPException as e:
             if cost > 0:
@@ -1466,6 +1477,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         except discord.Forbidden:
             if cost > 0:
                 add_balance(uid, cost)
+            log_bot_permission_error(ctx, "manage roles")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to manage roles.", C_RED))
         except Exception as e:
             if cost > 0:
@@ -1512,6 +1524,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         except discord.Forbidden:
             if cost > 0:
                 add_balance(uid, cost)
+            log_bot_permission_error(ctx, "delete role")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete that role.", C_RED))
         except Exception as e:
             if cost > 0:
@@ -1562,6 +1575,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         except discord.Forbidden:
             if cost > 0:
                 add_balance(uid, cost)
+            log_bot_permission_error(ctx, "create channels")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to create channels.", C_RED))
         except Exception as e:
             if cost > 0:
@@ -1609,6 +1623,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         except discord.Forbidden:
             if cost > 0:
                 add_balance(uid, cost)
+            log_bot_permission_error(ctx, "delete channel")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete that channel.", C_RED))
         except Exception as e:
             if cost > 0:
@@ -2131,6 +2146,7 @@ async def cmd_invite(ctx: commands.Context):
 
         await ctx.send(embed=embed, view=ServerInviteView())
     except discord.Forbidden:
+        log_bot_permission_error(ctx, "create invites")
         await ctx.send(embed=emb("❌ No Permission", "I don't have permission to create invites in this channel.", C_RED))
     except Exception as e:
         await ctx.send(embed=emb("❌ Error", f"Failed to generate invite: {str(e)}", C_RED))
