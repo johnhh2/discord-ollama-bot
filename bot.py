@@ -54,7 +54,7 @@ INITIAL_BOT_ADMIN_ID = 139928946044174336
 SCRATCHOFF_FILE = "data/scratchoff.json"
 SCRATCH_SYMBOLS = ["🌟", "🎰", "💎", "🍒", "🍀", "🔔", "🍋", "🍇", "🃏", "🎲"]
 SCRATCHOFF_MAX_DAILY = 3
-SCRATCHOFF_PAYOUTS = {1: 200, 2: 1000, 3: 10000}
+SCRATCHOFF_PAYOUTS = {1: 100, 2: 1000, 3: 10000}
 
 
 def load_channel_prompts() -> dict[int, str]:
@@ -944,6 +944,7 @@ async def cmd_help(ctx: commands.Context):
     help_embed.add_field(name="🎲 Gambling", inline=False, value=(
         "`!flip <amount>` — 50/50 coinflip\n"
         "`!slots <amount>` — 3-reel slot machine\n"
+        "`!scratchoff` — Daily scratchoff lottery (3 attempts/day)\n"
         "`!blackjack <amount>` — Interactive blackjack (type `hit` / `stand`)"
     ))
     help_embed.add_field(name="🎮 Games", inline=False, value=(
