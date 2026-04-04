@@ -849,13 +849,7 @@ async def cmd_help(ctx: commands.Context):
         "`!stats` — Show bot statistics\n"
         "`!clearhistory` — Reset AI chat history for this channel"
     ))
-
-    class HelpView(ui.View):
-        @ui.button(label="Show Help", style=discord.ButtonStyle.primary)
-        async def help_button(self, interaction: discord.Interaction, button: ui.Button):
-            await interaction.response.send_message(embed=help_embed, ephemeral=True)
-
-    await ctx.send("Click the button below to see the help menu:", view=HelpView())
+    await ctx.send(embed=help_embed)
 
 
 @bot.command(name="stats", aliases=["stat"])
@@ -922,13 +916,7 @@ async def cmd_adminhelp(ctx: commands.Context):
             "`!godmode` — Toggle free costs on/off\n"
             "`!vramtext [text]` — View or set the vRAM display text in !stats"
         ))
-
-    class AdminHelpView(ui.View):
-        @ui.button(label="Show Admin Help", style=discord.ButtonStyle.danger)
-        async def adminhelp_button(self, interaction: discord.Interaction, button: ui.Button):
-            await interaction.response.send_message(embed=admin_embed, ephemeral=True)
-
-    await ctx.send("Click the button below to see admin commands:", view=AdminHelpView())
+    await ctx.send(embed=admin_embed)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1362,22 +1350,11 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
         if not sections:
-            class NoShopView(ui.View):
-                @ui.button(label="Shop", style=discord.ButtonStyle.primary, disabled=True)
-                async def noshop_button(self, interaction: discord.Interaction, button: ui.Button):
-                    pass
-            await ctx.send(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE), view=NoShopView())
+            await ctx.send(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE))
             return
 
         desc = "\n\n".join(f"**{section}**\n" + "\n".join(items) for section, items in sections.items())
-        shop_embed = emb("🛒 Shop", desc, C_PURPLE)
-
-        class ShopView(ui.View):
-            @ui.button(label="Show Shop", style=discord.ButtonStyle.primary)
-            async def shop_button(self, interaction: discord.Interaction, button: ui.Button):
-                await interaction.response.send_message(embed=shop_embed, ephemeral=True)
-
-        await ctx.send("Click the button below to see the shop:", view=ShopView())
+        await ctx.send(embed=emb("🛒 Shop", desc, C_PURPLE))
         return
 
     _shop_cfg = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
