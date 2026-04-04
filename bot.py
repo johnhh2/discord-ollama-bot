@@ -2865,6 +2865,50 @@ async def cmd_rule34(ctx: commands.Context, *, tags: str = ""):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Commands — Dog & Cat
+# ─────────────────────────────────────────────────────────────────────────────
+
+@bot.command(name="dog")
+async def cmd_dog(ctx: commands.Context):
+    await ctx.typing()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://dog.ceo/api/breeds/image/random", timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    await ctx.send(embed=emb("🐕 Dog", "Failed to fetch dog image.", C_RED))
+                    return
+                data = await resp.json()
+                if data.get("status") != "success" or not data.get("message"):
+                    await ctx.send(embed=emb("🐕 Dog", "No dog image available.", C_GREY))
+                    return
+                embed = discord.Embed(title="🐕 Random Dog", color=C_BLUE)
+                embed.set_image(url=data["message"])
+                await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(embed=emb("🐕 Dog", f"Failed to fetch: {e}", C_RED))
+
+
+@bot.command(name="cat")
+async def cmd_cat(ctx: commands.Context):
+    await ctx.typing()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get("https://api.thecatapi.com/v1/images/search", timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    await ctx.send(embed=emb("🐱 Cat", "Failed to fetch cat image.", C_RED))
+                    return
+                data = await resp.json()
+                if not data or not isinstance(data, list) or not data[0].get("url"):
+                    await ctx.send(embed=emb("🐱 Cat", "No cat image available.", C_GREY))
+                    return
+                embed = discord.Embed(title="🐱 Random Cat", color=C_BLUE)
+                embed.set_image(url=data[0]["url"])
+                await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(embed=emb("🐱 Cat", f"Failed to fetch: {e}", C_RED))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
