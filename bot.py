@@ -6,6 +6,7 @@ import json
 import time
 import random
 from discord.ext import commands
+from discord import ui
 from dotenv import load_dotenv
 from collections import defaultdict, deque
 
@@ -2072,6 +2073,31 @@ async def cmd_say(ctx: commands.Context, *, text: str = None):
         pass
     # Send the message
     await ctx.send(text)
+
+
+@bot.command(name="botinvite")
+async def cmd_botinvite(ctx: commands.Context):
+    if not can_manage_settings(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        return
+
+    invite_url = "https://discord.com/oauth2/authorize?client_id=1489403251303518322&permissions=6192724835560529&integration_type=0&scope=bot"
+
+    # Create a view with a button
+    class InviteView(ui.View):
+        @ui.button(label="Copy Invite URL", style=discord.ButtonStyle.primary)
+        async def copy_button(self, interaction: discord.Interaction, button: ui.Button):
+            await interaction.response.send_message(f"```\n{invite_url}\n```", ephemeral=True)
+
+    embed = discord.Embed(
+        title="🤖 Bot Invite Link",
+        description="Click the button below to get a copy of the bot invite URL",
+        color=discord.Color(0x9932CC)
+    )
+    embed.add_field(name="Client ID", value="1489403251303518322", inline=False)
+    embed.add_field(name="Permissions", value="6192724835560529", inline=False)
+
+    await ctx.send(embed=embed, view=InviteView())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
