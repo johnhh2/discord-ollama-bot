@@ -1367,7 +1367,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             await channel.send(embed=emb("❌ Wrong Letter", build_hangman_display(game), C_ORANGE))
 
 
-@bot.command(name="hangman")
+@bot.command(name="hangman", aliases=["hang"])
 async def cmd_hangman(ctx: commands.Context, *args):
     cid = ctx.channel.id
     if cid in active_hangman_games:
