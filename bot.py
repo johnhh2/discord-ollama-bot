@@ -1846,8 +1846,15 @@ async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
     event = active_events[reaction.message.id]
     if user.id in event["rewarded"]:
         return
-    event["rewarded"].add(user.id)
-    add_balance(user.id, event["amount"])
+    try:
+        event["rewarded"].add(user.id)
+        add_balance(user.id, event["amount"])
+        await reaction.message.channel.send(
+            f"✅ **{user.display_name}** earned **{event['amount']} 🪙**!"
+        )
+    except Exception as e:
+        print(f"[event] Error rewarding {user.id}: {e}")
+        event["rewarded"].discard(user.id)
 
 
 @bot.command(name="give")
