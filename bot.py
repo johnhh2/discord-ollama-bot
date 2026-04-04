@@ -1308,6 +1308,9 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             _items.append("`!shop role <name> <hex>` — Create a custom colored role — **10,000 🪙**")
         if _si.get("removerole", True):
             _items.append("`!shop removerole <name>` — Delete a bot-created role — **2,000 🪙**")
+        if _si.get("channel", True):
+            _items.append("`!shop channel <name>` — Create a new text channel — **20,000 🪙**")
+            _items.append("`!shop removechannel <name>` — Delete a bot-created channel — **20,000 🪙**")
         if _si.get("ragebait", True):
             _items.append("`!shop ragebait @user [topic]` — Ragebait someone for 10 messages — **5,000 🪙**")
         _items.append("`!shop mock @user` — Mock someone's messages for 5 minutes — **3,000 🪙**")
@@ -1472,6 +1475,97 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             if cost > 0:
                 add_balance(uid, cost)
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete that role.", C_RED))
+        except Exception as e:
+            if cost > 0:
+                add_balance(uid, cost)
+            await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
+        return
+
+    # ── !shop channel ─────────────────────────────────────────────────────────
+    if subcommand == "channel":
+        if not _shop_cfg.get("channel", True):
+            await ctx.send(embed=emb("🛒 Disabled", "The channel shop item is disabled in this server.", C_GREY))
+            return
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+            return
+        if not args:
+            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop channel <name>`", C_PURPLE))
+            return
+        channel_name = " ".join(args).lower()
+        # Validate channel name (Discord requirements: 2-100 chars, no spaces converted to hyphens)
+        channel_name = channel_name.replace(" ", "-")[:100]
+        if len(channel_name) < 2:
+            await ctx.send(embed=emb("❌ Invalid Name", "Channel name must be at least 2 characters.", C_RED))
+            return
+        cost = 0 if godmode else 20000
+        if cost > 0 and not deduct_balance(uid, cost):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **20,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
+        try:
+            # Create channel with topic indicating it's a bot-created channel
+            new_channel = await ctx.guild.create_text_channel(
+                channel_name,
+                topic=f"Created by {ctx.author.display_name}"
+            )
+            # Track channel in guild settings
+            cfg = get_guild_cfg(ctx.guild.id)
+            if "bot_channels" not in cfg:
+                cfg["bot_channels"] = []
+            cfg["bot_channels"].append(new_channel.id)
+            save_guild_settings()
+            await ctx.send(embed=emb("✅ Channel Created", f"Channel {new_channel.mention} created!", C_GREEN))
+        except discord.Forbidden:
+            if cost > 0:
+                add_balance(uid, cost)
+            await ctx.send(embed=emb("❌ No Permission", "I don't have permission to create channels.", C_RED))
+        except Exception as e:
+            if cost > 0:
+                add_balance(uid, cost)
+            await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
+        return
+
+    # ── !shop removechannel ────────────────────────────────────────────────────
+    if subcommand == "removechannel":
+        if not _shop_cfg.get("channel", True):
+            await ctx.send(embed=emb("🛒 Disabled", "The channel shop item is disabled in this server.", C_GREY))
+            return
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+            return
+        if not args:
+            # List bot-created channels
+            cfg = get_guild_cfg(ctx.guild.id)
+            bot_channel_ids = cfg.get("bot_channels", [])
+            existing = [ch for ch in ctx.guild.channels if ch.id in bot_channel_ids]
+            if not existing:
+                await ctx.send(embed=emb("🛒 Bot Channels", "No bot-created channels found in this server.", C_PURPLE))
+            else:
+                lines = "\n".join(f"• {ch.mention}" for ch in existing)
+                await ctx.send(embed=emb("🛒 Bot Channels", f"Removable channels:\n{lines}\n\nUse `!shop removechannel <name>` to delete one.", C_PURPLE))
+            return
+        channel_name = " ".join(args).lower()
+        cfg = get_guild_cfg(ctx.guild.id)
+        bot_channel_ids = cfg.get("bot_channels", [])
+        # Find channel by name
+        channel = discord.utils.find(lambda ch: ch.name.lower() == channel_name and ch.id in bot_channel_ids, ctx.guild.channels)
+        if channel is None:
+            await ctx.send(embed=emb("❌ Not Found", f"No bot-created channel named **{channel_name}** exists.", C_RED))
+            return
+        cost = 0 if godmode else 20000
+        if cost > 0 and not deduct_balance(uid, cost):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **20,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
+        try:
+            channel_name = channel.name
+            await channel.delete()
+            cfg["bot_channels"].remove(channel.id)
+            save_guild_settings()
+            await ctx.send(embed=emb("✅ Channel Removed", f"Channel **{channel_name}** has been deleted.", C_GREEN))
+        except discord.Forbidden:
+            if cost > 0:
+                add_balance(uid, cost)
+            await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete that channel.", C_RED))
         except Exception as e:
             if cost > 0:
                 add_balance(uid, cost)
