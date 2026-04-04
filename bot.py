@@ -950,6 +950,7 @@ async def cmd_help(ctx: commands.Context):
     help_embed.add_field(name="🎮 Games", inline=False, value=(
         "`!hangman [@user1 @user2]` — Start hangman (type guesses directly, invite others with mentions)\n"
         "`!guess <letter or word>` — Explicit hangman guess (full words only via command)\n"
+        "`!race @user1 [@user2 ...] [amount]` — Start a race (optional bet)"
         "`!ttt @user [amount]` — Tic-Tac-Toe (use !m <1-9> to place)\n"
         "`!c4 @user [amount]` — Connect 4 (use !m <1-7> to drop)\n"
         "`!m <number>` — Make a move in tic-tac-toe or connect 4"
@@ -968,7 +969,6 @@ async def cmd_help(ctx: commands.Context):
     help_embed.add_field(name="🎉 Fun", inline=False, value=(
         "`!dog` — Random dog picture\n"
         "`!cat` — Random cat picture\n"
-        "`!race @user1 [@user2 ...] [amount]` — Race to type a word (optional bet)"
     ))
     help_embed.add_field(name="🔧 Utility", inline=False, value=(
         "`!stats` — Show bot statistics\n"
