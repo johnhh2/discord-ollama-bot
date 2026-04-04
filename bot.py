@@ -2077,7 +2077,7 @@ async def cmd_say(ctx: commands.Context, *, text: str = None):
 
 @bot.command(name="botinvite")
 async def cmd_botinvite(ctx: commands.Context):
-    if not can_manage_settings(ctx):
+    if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
         return
 
@@ -2085,7 +2085,7 @@ async def cmd_botinvite(ctx: commands.Context):
 
     # Create a view with a button
     class InviteView(ui.View):
-        @ui.button(label="Copy Invite URL", style=discord.ButtonStyle.primary)
+        @ui.button(label="Get Invite URL", style=discord.ButtonStyle.primary)
         async def copy_button(self, interaction: discord.Interaction, button: ui.Button):
             await interaction.response.send_message(f"```\n{invite_url}\n```", ephemeral=True)
 
@@ -2098,6 +2098,42 @@ async def cmd_botinvite(ctx: commands.Context):
     embed.add_field(name="Permissions", value="6192724835560529", inline=False)
 
     await ctx.send(embed=embed, view=InviteView())
+
+
+@bot.command(name="invite")
+async def cmd_invite(ctx: commands.Context):
+    if ctx.guild is None:
+        await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+        return
+
+    try:
+        # Try to get vanity URL first (if server has one)
+        if ctx.guild.vanity_url:
+            invite_url = str(ctx.guild.vanity_url)
+        else:
+            # Create an invite link
+            invite = await ctx.channel.create_invite(max_age=0, max_uses=0)
+            invite_url = invite.url
+
+        # Create a view with a button
+        class ServerInviteView(ui.View):
+            @ui.button(label="Copy Server Invite", style=discord.ButtonStyle.primary)
+            async def copy_button(self, interaction: discord.Interaction, button: ui.Button):
+                await interaction.response.send_message(f"```\n{invite_url}\n```", ephemeral=True)
+
+        embed = discord.Embed(
+            title=f"📩 Invite to {ctx.guild.name}",
+            description="Click the button below to get a copy of the server invite URL",
+            color=discord.Color(0x9932CC)
+        )
+        if ctx.guild.icon:
+            embed.set_thumbnail(url=ctx.guild.icon.url)
+
+        await ctx.send(embed=embed, view=ServerInviteView())
+    except discord.Forbidden:
+        await ctx.send(embed=emb("❌ No Permission", "I don't have permission to create invites in this channel.", C_RED))
+    except Exception as e:
+        await ctx.send(embed=emb("❌ Error", f"Failed to generate invite: {str(e)}", C_RED))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
