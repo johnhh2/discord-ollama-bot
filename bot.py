@@ -1327,8 +1327,12 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
         else:
             game["wrong_guesses"] += 1
             if game["wrong_guesses"] >= 6:
+                word = game["word"]
+                total_reward = calculate_hangman_reward(word)
+                active_player_count = len(game["active_players"])
+                per_player = total_reward // active_player_count
                 del active_hangman_games[cid]
-                await channel.send(embed=emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{game['word']}`.", C_RED))
+                await channel.send(embed=emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n💰 You would've split **{total_reward} 🪙** ({per_player} each)", C_RED))
             else:
                 await channel.send(embed=emb("❌ Wrong Word", build_hangman_display(game), C_RED))
         return
@@ -1362,8 +1366,12 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
     else:
         game["wrong_guesses"] += 1
         if game["wrong_guesses"] >= 6:
+            word = game["word"]
+            total_reward = calculate_hangman_reward(word)
+            active_player_count = len(game["active_players"])
+            per_player = total_reward // active_player_count
             del active_hangman_games[cid]
-            await channel.send(embed=emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{game['word']}`.", C_RED))
+            await channel.send(embed=emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n💰 You would've split **{total_reward} 🪙** ({per_player} each)", C_RED))
         else:
             await channel.send(embed=emb("❌ Wrong Letter", build_hangman_display(game), C_ORANGE))
 
