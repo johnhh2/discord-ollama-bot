@@ -849,12 +849,7 @@ async def cmd_help(ctx: commands.Context):
         "`!stats` — Show bot statistics\n"
         "`!clearhistory` — Reset AI chat history for this channel"
     ))
-    msg = await ctx.send(embed=embed)
-    await asyncio.sleep(300)  # 5 minutes
-    try:
-        await msg.delete()
-    except discord.NotFound:
-        pass
+    await ctx.author.send(embed=embed)
 
 
 @bot.command(name="stats", aliases=["stat"])
@@ -921,12 +916,7 @@ async def cmd_adminhelp(ctx: commands.Context):
             "`!godmode` — Toggle free costs on/off\n"
             "`!vramtext [text]` — View or set the vRAM display text in !stats"
         ))
-    msg = await ctx.send(embed=embed)
-    await asyncio.sleep(300)  # 5 minutes
-    try:
-        await msg.delete()
-    except discord.NotFound:
-        pass
+    await ctx.author.send(embed=embed)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1360,21 +1350,11 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
         if not sections:
-            msg = await ctx.send(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE))
-            await asyncio.sleep(300)  # 5 minutes
-            try:
-                await msg.delete()
-            except discord.NotFound:
-                pass
+            await ctx.author.send(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE))
             return
 
         desc = "\n\n".join(f"**{section}**\n" + "\n".join(items) for section, items in sections.items())
-        msg = await ctx.send(embed=emb("🛒 Shop", desc, C_PURPLE))
-        await asyncio.sleep(300)  # 5 minutes
-        try:
-            await msg.delete()
-        except discord.NotFound:
-            pass
+        await ctx.author.send(embed=emb("🛒 Shop", desc, C_PURPLE))
         return
 
     _shop_cfg = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
