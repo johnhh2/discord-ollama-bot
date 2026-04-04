@@ -5,6 +5,7 @@ import discord
 import json
 import time
 import random
+import datetime
 from discord.ext import commands
 from discord import ui
 from dotenv import load_dotenv
@@ -50,6 +51,12 @@ SLOT_MAX_BET = 270
 SLOT_JACKPOT_SEED = 5_000
 SLOT_JACKPOT_CONTRIB = 0.01
 INITIAL_BOT_ADMIN_ID = 139928946044174336
+
+# Scratchoff lottery configuration
+SCRATCHOFF_FILE = "data/scratchoff.json"
+SCRATCH_SYMBOLS = ["🌟", "🎰", "💎", "🍒", "🍀", "🔔", "🍋", "🍇", "🃏", "🎲"]
+SCRATCHOFF_MAX_DAILY = 3
+SCRATCHOFF_PAYOUTS = {1: 200, 2: 1000, 3: 10000}
 
 
 def load_channel_prompts() -> dict[int, str]:
@@ -1119,6 +1126,59 @@ async def cmd_leaderboard(ctx: commands.Context):
     await ctx.send(embed=emb("🪙 Leaderboard", "\n".join(lines), C_GREEN))
 
 
+def _get_daily_scratch_goals() -> list[str]:
+    """Get or generate today's shared scratchoff goal symbols."""
+    today = datetime.date.today().isoformat()
+    try:
+        with open(SCRATCHOFF_FILE) as f:
+            data = json.load(f)
+        if data.get("date") == today:
+            return data["symbols"]
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        pass
+    # New day or missing file — pick 3 new symbols
+    symbols = random.sample(SCRATCH_SYMBOLS, 3)
+    os.makedirs("data", exist_ok=True)
+    with open(SCRATCHOFF_FILE, "w") as f:
+        json.dump({"date": today, "symbols": symbols}, f, indent=2)
+    return symbols
+
+
+def _scratch_result(goals: list[str]) -> tuple[list[str], int]:
+    """Generate scratchoff result with rigged odds.
+
+    Returns (card_symbols, match_count) where:
+    - P(3 matches) = 1/81
+    - P(2 matches) = 1/9
+    - P(1 match) = 1/3
+    - P(0 matches) = remainder
+    """
+    r = random.random()
+    # Determine match count using probability buckets
+    if r < 1/81:
+        match_count = 3
+    elif r < 1/81 + 1/9:
+        match_count = 2
+    elif r < 1/81 + 1/9 + 1/3:
+        match_count = 1
+    else:
+        match_count = 0
+
+    # Generate card symbols
+    non_goal_symbols = [s for s in SCRATCH_SYMBOLS if s not in goals]
+    if match_count == 0:
+        # All non-matching
+        card_symbols = random.sample(non_goal_symbols, 3)
+    else:
+        # Mix matching and non-matching
+        matching = random.sample(goals, match_count)
+        non_matching = random.sample(non_goal_symbols, 3 - match_count)
+        card_symbols = matching + non_matching
+        random.shuffle(card_symbols)
+
+    return card_symbols, match_count
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Commands — Gambling
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1144,6 +1204,66 @@ async def cmd_flip(ctx: commands.Context, amount: str = None):
         await ctx.send(embed=emb("🪙 Heads!", f"You won **{amount} 🪙**! Balance: {get_balance(uid)} 🪙", C_GREEN))
     else:
         await ctx.send(embed=emb("🪙 Tails!", f"You lost **{amount} 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+
+
+@bot.command(name="scratchoff", aliases=["scratch"])
+async def cmd_scratchoff(ctx: commands.Context):
+    uid = ctx.author.id
+    _ensure_user(uid)
+
+    # Get today's date and goal symbols
+    today = datetime.date.today().isoformat()
+    goals = _get_daily_scratch_goals()
+
+    # Check/reset per-user attempt counter
+    user = economy["users"][str(uid)]
+    if user.get("scratchoff_date") != today:
+        user["scratchoff_date"] = today
+        user["scratchoff_used"] = 0
+
+    # Check if user has attempts left
+    if user["scratchoff_used"] >= SCRATCHOFF_MAX_DAILY:
+        save_economy()
+        await ctx.send(embed=emb(
+            "🎫 No Attempts Left",
+            f"You've used all **{SCRATCHOFF_MAX_DAILY}** daily scratchoffs.\nCome back tomorrow!",
+            C_GOLD
+        ))
+        return
+
+    # Increment attempt counter
+    user["scratchoff_used"] += 1
+    save_economy()
+
+    # Generate result
+    card_symbols, match_count = _scratch_result(goals)
+
+    # Award payout if matched
+    payout = SCRATCHOFF_PAYOUTS.get(match_count, 0)
+    if payout > 0:
+        add_balance(uid, payout)
+
+    # Format goal and card display
+    goal_str = " ".join(goals)
+    card_str = " ".join(card_symbols)
+
+    # Build result message
+    if match_count == 3:
+        result_msg = f"🎉 **3 MATCHES!** You won **{payout} 🪙**!"
+        color = C_GREEN
+    elif match_count == 2:
+        result_msg = f"✨ **2 Matches!** You won **{payout} 🪙**!"
+        color = C_GREEN
+    elif match_count == 1:
+        result_msg = f"⭐ **1 Match!** You won **{payout} 🪙**!"
+        color = C_GREEN
+    else:
+        result_msg = "No matches — better luck next time!"
+        color = C_RED
+
+    attempts_left = SCRATCHOFF_MAX_DAILY - user["scratchoff_used"]
+    desc = f"**Daily Goal:** {goal_str}\n**Your Card:** {card_str}\n\n{result_msg}\n\n**Attempts left:** {attempts_left}/{SCRATCHOFF_MAX_DAILY}"
+    await ctx.send(embed=emb("🎫 Scratchoff", desc, color))
 
 
 def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
@@ -1228,6 +1348,18 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         ))
         return
 
+    # Money Back (cherry retention)
+    if label == "1cherry":
+        add_balance(uid, amount)
+        await ctx.send(embed=emb(
+            "🎰 Money Back!",
+            f"{display}\n\n🍒 **One Cherry — Money Back!**\n"
+            f"Got **{amount} 🪙** back | Balance: {get_balance(uid):,} 🪙\n"
+            f"Progressive Jackpot: **{slot_jackpot:,} 🪙**",
+            C_GOLD,
+        ))
+        return
+
     if mult == 0:
         await ctx.send(embed=emb(
             "🎰 No Win",
@@ -1247,7 +1379,6 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         "3lemon":  f"🍋🍋🍋 — **{mult}x**",
         "3cherry": f"🍒🍒🍒 — **{mult}x**",
         "2cherry": f"Two Cherries — **{mult}x**",
-        "1cherry": f"One Cherry — **Money Back**",
     }
     desc_line = result_labels.get(label, f"**{mult}x**")
 
