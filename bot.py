@@ -819,37 +819,43 @@ async def cmd_clearhistory(ctx: commands.Context):
 
 @bot.command(name="help", aliases=["h"])
 async def cmd_help(ctx: commands.Context):
-    embed = discord.Embed(title="📖 Commands", color=0x3498db)
-    embed.add_field(name="💰 Economy", inline=False, value=(
+    help_embed = discord.Embed(title="📖 Commands", color=0x3498db)
+    help_embed.add_field(name="💰 Economy", inline=False, value=(
         "`!daily` — Claim 200 🪙 (24h cooldown)\n"
         "`!balance [@user]` — Check balance\n"
         "`!leaderboard` — Top 10 richest users"
     ))
-    embed.add_field(name="🎲 Gambling", inline=False, value=(
+    help_embed.add_field(name="🎲 Gambling", inline=False, value=(
         "`!flip <amount>` — 50/50 coinflip\n"
         "`!slots <amount>` — 3-reel slot machine\n"
         "`!blackjack <amount>` — Interactive blackjack (type `hit` / `stand`)"
     ))
-    embed.add_field(name="🎮 Games", inline=False, value=(
+    help_embed.add_field(name="🎮 Games", inline=False, value=(
         "`!hangman` — Start hangman (type guesses directly)\n"
         "`!guess <letter or word>` — Explicit hangman guess"
     ))
-    embed.add_field(name="🤖 AI", inline=False, value=(
+    help_embed.add_field(name="🤖 AI", inline=False, value=(
         "`!ask <question>` — Ask the AI a question\n"
-        "`!roleplay <character prompt>` — Start a roleplay (costs 100 🪙)\n"
+        "`!roleplay <character prompt>` — Start a roleplay (costs 50 🪙)\n"
         "`!stop` — Stop roleplay / forfeit active game"
     ))
-    embed.add_field(name="🛒 Shop", inline=False, value=(
+    help_embed.add_field(name="🛒 Shop", inline=False, value=(
         "`!shop` — Browse items\n"
     ))
-    embed.add_field(name="🔞 NSFW", inline=False, value=(
+    help_embed.add_field(name="🔞 NSFW", inline=False, value=(
         "`!rule34 [tags]` — Random image from rule34 (alias: `!r34`)"
     ))
-    embed.add_field(name="🔧 Utility", inline=False, value=(
+    help_embed.add_field(name="🔧 Utility", inline=False, value=(
         "`!stats` — Show bot statistics\n"
         "`!clearhistory` — Reset AI chat history for this channel"
     ))
-    await ctx.author.send(embed=embed)
+
+    class HelpView(ui.View):
+        @ui.button(label="Show Help", style=discord.ButtonStyle.primary)
+        async def help_button(self, interaction: discord.Interaction, button: ui.Button):
+            await interaction.response.send_message(embed=help_embed, ephemeral=True)
+
+    await ctx.send("Click the button below to see the help menu:", view=HelpView())
 
 
 @bot.command(name="stats", aliases=["stat"])
@@ -889,34 +895,40 @@ async def cmd_adminhelp(ctx: commands.Context):
     if not can_manage_settings(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
         return
-    embed = discord.Embed(title="⚙️ Admin Commands", color=C_GOLD)
-    embed.add_field(name="🔧 Server Settings", inline=False, value=(
+    admin_embed = discord.Embed(title="⚙️ Admin Commands", color=C_GOLD)
+    admin_embed.add_field(name="🔧 Server Settings", inline=False, value=(
         "`!settings` — View current server settings\n"
         "`!settings ai-channels #ch... / clear` — Restrict AI commands to channels\n"
         "`!settings cmd-channels #ch... / clear` — Restrict all commands to channels\n"
         "`!settings shop <item> on|off` — Toggle shop items\n"
         "`!settings rule34 on|off / ban <tag> / unban <tag> / banned` — rule34 config"
     ))
-    embed.add_field(name="🔍 Moderation", inline=False, value=(
+    admin_embed.add_field(name="🔍 Moderation", inline=False, value=(
         "`!audit` — Last 5 failed command attempts\n"
         "`!clear [n]` — Delete last n bot messages (default 50)"
     ))
     if is_admin(ctx):
-        embed.add_field(name="🪙 Economy", inline=False, value=(
+        admin_embed.add_field(name="🪙 Economy", inline=False, value=(
             "`!give @user <amount>` — Add or remove coins from a user\n"
             "`!event <amount> [hours]` — Start a reaction event"
         ))
-        embed.add_field(name="🤖 AI", inline=False, value=(
+        admin_embed.add_field(name="🤖 AI", inline=False, value=(
             "`!model [name]` — View or change the AI model\n"
             "`!roleplaymodel [name]` — View or change the roleplay model"
         ))
-        embed.add_field(name="⚙️ Config", inline=False, value=(
+        admin_embed.add_field(name="⚙️ Config", inline=False, value=(
             "`!setprompt <prompt>` — Set a custom system prompt for this channel\n"
             "`!clearprompt` — Reset this channel's prompt to default\n"
             "`!godmode` — Toggle free costs on/off\n"
             "`!vramtext [text]` — View or set the vRAM display text in !stats"
         ))
-    await ctx.author.send(embed=embed)
+
+    class AdminHelpView(ui.View):
+        @ui.button(label="Show Admin Help", style=discord.ButtonStyle.danger)
+        async def adminhelp_button(self, interaction: discord.Interaction, button: ui.Button):
+            await interaction.response.send_message(embed=admin_embed, ephemeral=True)
+
+    await ctx.send("Click the button below to see admin commands:", view=AdminHelpView())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1350,11 +1362,22 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
         if not sections:
-            await ctx.author.send(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE))
+            class NoShopView(ui.View):
+                @ui.button(label="Shop", style=discord.ButtonStyle.primary, disabled=True)
+                async def noshop_button(self, interaction: discord.Interaction, button: ui.Button):
+                    pass
+            await ctx.send(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE), view=NoShopView())
             return
 
         desc = "\n\n".join(f"**{section}**\n" + "\n".join(items) for section, items in sections.items())
-        await ctx.author.send(embed=emb("🛒 Shop", desc, C_PURPLE))
+        shop_embed = emb("🛒 Shop", desc, C_PURPLE)
+
+        class ShopView(ui.View):
+            @ui.button(label="Show Shop", style=discord.ButtonStyle.primary)
+            async def shop_button(self, interaction: discord.Interaction, button: ui.Button):
+                await interaction.response.send_message(embed=shop_embed, ephemeral=True)
+
+        await ctx.send("Click the button below to see the shop:", view=ShopView())
         return
 
     _shop_cfg = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
