@@ -530,7 +530,7 @@ async def respond(
         await finalize(placeholder, channel, full_response)
     except aiohttp.ClientError as e:
         history.pop()
-        await placeholder.edit(content="", embed=emb("The AI is currently offline", "", C_RED))
+        await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
     except Exception as e:
         history.pop()
         await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
@@ -567,7 +567,7 @@ async def respond_roleplay(
         await finalize(placeholder, channel, full_response)
     except aiohttp.ClientError as e:
         history.pop()
-        await placeholder.edit(content="", embed=emb("The AI is currently offline", "", C_RED))
+        await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
     except Exception as e:
         history.pop()
         await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
@@ -872,24 +872,24 @@ async def cmd_stats(ctx: commands.Context):
     vram_text = bot_settings.get("vram_text", "16GB")
 
     embed = discord.Embed(title="📊 Bot Stats", color=C_BLUE)
-    embed.add_field(name="🤖 Bot", value=str(bot.user), inline=True)
-    embed.add_field(name="🆔 Bot ID", value=str(bot.user.id), inline=True)
-    embed.add_field(name="⚙️ Shard", value="#0 / 1", inline=True)
-    embed.add_field(name="💬 Commands Ran", value=str(stats_commands_ran), inline=True)
-    embed.add_field(name="📨 Messages", value=f"{stats_messages_seen} ({msg_rate:.2f}/sec)", inline=True)
-    embed.add_field(name="🧠 Memory", value=f"{get_memory_mb():.2f} MB", inline=True)
-    embed.add_field(name="⏱️ Uptime", value=format_uptime(), inline=True)
+    embed.add_field(name="🤖 Bot", value=f"  {bot.user}", inline=True)
+    embed.add_field(name="🆔 Bot ID", value=f"  {bot.user.id}", inline=True)
+    embed.add_field(name="⚙️ Shard", value="  #0 / 1", inline=True)
+    embed.add_field(name="💬 Commands Ran", value=f"  {stats_commands_ran}", inline=True)
+    embed.add_field(name="📨 Messages", value=f"  {stats_messages_seen} ({msg_rate:.2f}/sec)", inline=True)
+    embed.add_field(name="🧠 Memory", value=f"  {get_memory_mb():.2f} MB", inline=True)
+    embed.add_field(name="⏱️ Uptime", value=f"  {format_uptime()}", inline=True)
     embed.add_field(name="🌐 Presence", value=(
-        f"{len(bot.guilds)} Servers\n"
-        f"{text_channels} Text Channels\n"
-        f"{voice_channels} Voice Channels"
+        f"  {len(bot.guilds)} Servers\n"
+        f"  {text_channels} Text Channels\n"
+        f"  {voice_channels} Voice Channels"
     ), inline=True)
     ai_status = "🟢 Connected" if ai_connected else "🔴 Disconnected"
     embed.add_field(name="🧠 AI Status", value=(
-        f"{ai_status}\n"
-        f"Ask model: `{current_model}`\n"
-        f"Roleplay model: `{current_roleplay_model}`\n"
-        f"vRAM: {vram_text}"
+        f"  {ai_status}\n"
+        f"  Ask model: `{current_model}`\n"
+        f"  Roleplay model: `{current_roleplay_model}`\n"
+        f"  vRAM: {vram_text}"
     ), inline=True)
     await ctx.send(embed=embed)
 
