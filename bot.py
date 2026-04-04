@@ -46,8 +46,6 @@ SLOT_REEL = (
     ["🎰"] * 3 +
     ["7️⃣"] * 1
 )
-SLOT_DENOMS = [9, 18, 36, 45, 90, 135, 270]
-SLOT_MAX_BET = 270
 SLOT_JACKPOT_SEED = 5_000
 SLOT_JACKPOT_CONTRIB = 0.01
 INITIAL_BOT_ADMIN_ID = 139928946044174336
@@ -1301,11 +1299,9 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
     uid = ctx.author.id
 
     if amount is None:
-        denom_str = " | ".join(str(d) for d in SLOT_DENOMS)
         await ctx.send(embed=emb(
             "🎰 Slots",
-            f"Usage: `!slots <bet>`\nValid bets: {denom_str} 🪙\n"
-            f"Bet **{SLOT_MAX_BET} 🪙** to be eligible for the "
+            f"Usage: `!slots <amount>`\n"
             f"**Progressive Jackpot: {slot_jackpot:,} 🪙**",
             C_GOLD,
         ))
@@ -1313,10 +1309,9 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
 
     try:
         amount = int(amount)
-        assert amount in SLOT_DENOMS
+        assert amount > 0
     except (ValueError, AssertionError):
-        denom_str = ", ".join(str(d) for d in SLOT_DENOMS)
-        await ctx.send(embed=emb("❌ Invalid Bet", f"Valid bets: {denom_str} 🪙", C_RED))
+        await ctx.send(embed=emb("❌ Invalid Bet", f"Please provide a positive amount.", C_RED))
         return
 
     if not godmode and not deduct_balance(uid, amount):
@@ -1333,8 +1328,8 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
     display = " | ".join(reels)
     label, mult = eval_slots(reels, amount)
 
-    # Progressive jackpot: only at max bet
-    if label == "jackpot" and amount == SLOT_MAX_BET:
+    # Progressive jackpot: hit 3 sevens
+    if label == "jackpot":
         prize = slot_jackpot
         slot_jackpot = SLOT_JACKPOT_SEED
         save_jackpot(slot_jackpot)
@@ -1364,7 +1359,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         await ctx.send(embed=emb(
             "🎰 No Win",
             f"{display}\n\nYou lost **{amount} 🪙**. Balance: {get_balance(uid):,} 🪙\n"
-            f"Progressive Jackpot: **{slot_jackpot:,} 🪙** (bet {SLOT_MAX_BET} 🪙 to enter)",
+            f"Progressive Jackpot: **{slot_jackpot:,} 🪙**",
             C_RED,
         ))
         return
