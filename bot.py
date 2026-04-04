@@ -38,6 +38,7 @@ INSURANCE_FILE = "data/insurance.json"
 MODELS_FILE = "data/models.json"
 SLOT_JACKPOT_FILE = "data/slots_jackpot.json"
 GODMODE_USERS_FILE = "data/godmode_users.json"
+CHESS_GAMES_FILE = "data/chess_games.json"
 
 # Slot machine configuration
 SLOT_REEL = (
@@ -155,6 +156,22 @@ def save_godmode_users():
         json.dump(list(godmode_users), f)
 
 
+def load_chess_games() -> dict:
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(CHESS_GAMES_FILE):
+        with open(CHESS_GAMES_FILE) as f:
+            data = json.load(f)
+            # Convert string keys back to ints (JSON requires string keys)
+            return {int(k): v for k, v in data.items()}
+    return {}
+
+
+def save_chess_games():
+    os.makedirs("data", exist_ok=True)
+    with open(CHESS_GAMES_FILE, "w") as f:
+        json.dump(active_chess_games, f)
+
+
 def load_guild_settings() -> dict:
     os.makedirs("data", exist_ok=True)
     if os.path.exists(GUILD_SETTINGS_FILE):
@@ -239,6 +256,7 @@ active_ragebaits: dict[int, dict] = {} # user_id → {remaining: int, history: l
 active_ttt_games: dict[int, dict] = {}  # channel_id → {board, players, marks, current}
 active_c4_games: dict[int, dict] = {}   # channel_id → {board, players, marks, current}
 active_race_games: dict[int, dict] = {} # channel_id → {players, names, positions, amount}
+active_chess_games: dict[int, dict] = load_chess_games() # channel_id → {board, players, current, moves, amount}
 
 # ── Misc state ────────────────────────────────────────────────────────────────
 channel_histories: dict[int, deque] = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
@@ -1004,6 +1022,7 @@ async def cmd_help(ctx: commands.Context):
         "`!m <number>` — Make a move in tic-tac-toe or connect 4"
     ))
     help_embed.add_field(name="🤖 AI", inline=False, value=(
+        "`!ai` — View AI connection status and command info\n"
         "`!ask <question>` — Ask the AI a question\n"
         "`!roleplay <character prompt> [@user1 @user2]` — Start a roleplay (costs 50 🪙, invite others with mentions)\n"
         "`!stop` — Stop roleplay / forfeit active game"
@@ -1011,15 +1030,26 @@ async def cmd_help(ctx: commands.Context):
     help_embed.add_field(name="🛒 Shop", inline=False, value=(
         "`!shop` — Browse items\n"
     ))
-    help_embed.add_field(name="🔞 NSFW", inline=False, value=(
-        "`!rule34 [tags]` — Random image from rule34 (alias: `!r34`)"
-    ))
+
+    # Only show rule34 if enabled in guild
+    if ctx.guild:
+        cfg = get_guild_cfg(ctx.guild.id)
+        r34_enabled = cfg.get("rule34_enabled", True)
+    else:
+        r34_enabled = True
+
+    if r34_enabled:
+        help_embed.add_field(name="🔞 NSFW", inline=False, value=(
+            "`!rule34 [tags]` — Random image from rule34 (alias: `!r34`)"
+        ))
+
     help_embed.add_field(name="🎉 Fun", inline=False, value=(
         "`!dog` — Random dog picture\n"
         "`!cat` — Random cat picture\n"
     ))
     help_embed.add_field(name="🔧 Utility", inline=False, value=(
         "`!stats` — Show bot statistics\n"
+        "`!game` — View all games and gambling commands\n"
         "`!clearhistory` — Reset AI chat history for this channel"
     ))
     await ctx.send(embed=help_embed)
@@ -1061,6 +1091,88 @@ async def cmd_stats(ctx: commands.Context):
     await ctx.send(embed=embed)
 
 
+@bot.command(name="ai")
+async def cmd_ai(ctx: commands.Context):
+    ai_connected = await check_ollama_connected()
+    ask_model = get_guild_ask_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
+    roleplay_model = get_guild_roleplay_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
+
+    ai_status = "Online" if ai_connected else "Offline"
+    ai_status_emoji = "🟢" if ai_connected else "🔴"
+
+    embed = discord.Embed(title="🤖 AI Commands", color=C_BLUE)
+
+    embed.add_field(
+        name=f"{ai_status_emoji} Connection",
+        value=f"Status: **{ai_status}**",
+        inline=False
+    )
+
+    embed.add_field(
+        name="💬 !ask",
+        value=(
+            f"Ask the AI a question\n"
+            f"Cost: **10 🪙**\n"
+            f"Model: `{ask_model}`\n"
+            f"Usage: `!ask <question>`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎭 !roleplay",
+        value=(
+            f"Start an AI roleplay session\n"
+            f"Cost: **50 🪙**\n"
+            f"Model: `{roleplay_model}`\n"
+            f"Usage: `!roleplay <character> [@user1 @user2 ...]`"
+        ),
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="game", aliases=["games"])
+async def cmd_game(ctx: commands.Context):
+    embed = discord.Embed(title="🎮 Games & Gambling", color=C_BLUE)
+
+    embed.add_field(
+        name="💰 Gambling",
+        value=(
+            "`!flip <amount>` — 50/50 coinflip\n"
+            "`!slots <amount>` — 3-reel slot machine with progressive jackpot\n"
+            "`!scratchoff` — Daily lottery (3 attempts/day)\n"
+            "`!blackjack <amount>` — Interactive blackjack (type `hit` / `stand`)"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎯 Competitive",
+        value=(
+            "`!hangman [@user1 @user2]` — Start hangman\n"
+            "`!guess <letter or word>` — Explicit hangman guess\n"
+            "`!race @user1 [@user2 ...] [amount]` — Race against others (optional bet)\n"
+            "`!ttt @user [amount]` — Tic-Tac-Toe (use `!m <1-9>`)\n"
+            "`!c4 @user [amount]` — Connect 4 (use `!m <1-7>`)\n"
+            "`!chess @user [amount]` — Correspondence chess (use `!move <e2e4>`)\n"
+            "`!m <number>` — Make a move in tic-tac-toe or connect 4"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🏁 Utility",
+        value=(
+            "`!stop` — Forfeit/stop active game"
+        ),
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
+
+
 @bot.command(name="adminhelp", aliases=["helpadmin"])
 async def cmd_adminhelp(ctx: commands.Context):
     if not can_manage_settings(ctx):
@@ -1072,6 +1184,7 @@ async def cmd_adminhelp(ctx: commands.Context):
         "`!settings ai-channels #ch... / clear` — Restrict AI commands to channels\n"
         "`!settings cmd-whitelist #ch... / clear` — Allow commands only in channels\n"
         "`!settings cmd-blacklist #ch... / clear` — Disallow commands in channels\n"
+        "`!settings chess-channels #ch... / clear` — Restrict chess to channels\n"
         "`!settings shop <item> on|off` — Toggle shop items\n"
         "`!settings rule34 on|off / ban <tag> / unban <tag> / banned` — rule34 config"
     ))
@@ -1494,6 +1607,122 @@ def check_c4_winner(board: list) -> str | None:
     return None
 
 
+def create_chess_board() -> list:
+    """Create a standard chess board with pieces in starting position.
+    Using Unicode chess symbols. Index 0 = rank 8 (black's side), Index 7 = rank 1 (white's side)."""
+    return [
+        ['♜', '♞', '♝', '♛', '♚', '♝', '♞', '♜'],  # Black pieces (rank 8)
+        ['♟'] * 8,                                    # Black pawns (rank 7)
+        [None] * 8,                                   # Rank 6
+        [None] * 8,                                   # Rank 5
+        [None] * 8,                                   # Rank 4
+        [None] * 8,                                   # Rank 3
+        ['♙'] * 8,                                    # White pawns (rank 2)
+        ['♖', '♘', '♗', '♕', '♔', '♗', '♘', '♖'],  # White pieces (rank 1)
+    ]
+
+
+def build_chess_display(board: list, is_black_perspective: bool = False) -> str:
+    """Build a chess board display from game state. Shows the board from the current player's perspective."""
+    FILE_LABELS = ["a", "b", "c", "d", "e", "f", "g", "h"]
+    RANK_LABELS = ["8", "7", "6", "5", "4", "3", "2", "1"]
+
+    # Build file label line with dots on both sides
+    files_to_show = list(reversed(FILE_LABELS)) if is_black_perspective else FILE_LABELS
+    file_labels_str = " . ".join(files_to_show)
+    file_line = f"... {file_labels_str} .\n"
+    display = file_line
+
+    # Determine which rows to iterate based on perspective
+    if is_black_perspective:
+        board_to_display = list(reversed(board))
+        rank_labels_order = list(reversed(RANK_LABELS))
+    else:
+        board_to_display = board
+        rank_labels_order = RANK_LABELS
+
+    for rank_idx, row in enumerate(board_to_display):
+        rank_num = rank_labels_order[rank_idx]
+
+        line = f"{rank_num} "
+
+        # Reverse row order for black perspective
+        row_to_display = list(reversed(row)) if is_black_perspective else row
+
+        for piece in row_to_display:
+            if piece:
+                line += piece + " "
+            else:
+                line += ".... "
+
+        line += f"{rank_num}"
+        display += line + "\n"
+
+    display += file_line
+    return display
+
+
+def parse_chess_move(move_str: str) -> tuple[int, int, int, int] | None:
+    """Parse chess move in algebraic notation (e.g., 'e2e4', 'e2 e4').
+    Returns (from_row, from_col, to_row, to_col) or None if invalid."""
+    move_str = move_str.lower().strip().replace(" ", "")
+
+    if len(move_str) == 4:  # e2e4 format
+        try:
+            from_col = ord(move_str[0]) - ord('a')
+            from_row = 8 - int(move_str[1])
+            to_col = ord(move_str[2]) - ord('a')
+            to_row = 8 - int(move_str[3])
+
+            if all(0 <= x <= 7 for x in [from_row, from_col, to_row, to_col]):
+                return (from_row, from_col, to_row, to_col)
+        except (ValueError, IndexError):
+            pass
+
+    return None
+
+
+def is_white_piece(piece: str | None) -> bool:
+    """Check if piece is white (lowercase unicode symbols)."""
+    if not piece:
+        return False
+    # White pieces: ♔♕♖♗♘♙
+    return piece in '♔♕♖♗♘♙'
+
+
+def is_black_piece(piece: str | None) -> bool:
+    """Check if piece is black (uppercase unicode symbols)."""
+    if not piece:
+        return False
+    # Black pieces: ♚♛♜♝♞♟
+    return piece in '♚♛♜♝♞♟'
+
+
+def is_valid_chess_move(board: list, from_r: int, from_c: int, to_r: int, to_c: int, is_white: bool) -> bool:
+    """Basic chess move validation."""
+    if not (0 <= from_r <= 7 and 0 <= from_c <= 7 and 0 <= to_r <= 7 and 0 <= to_c <= 7):
+        return False
+
+    piece = board[from_r][from_c]
+    target = board[to_r][to_c]
+
+    # Can't move empty square
+    if not piece:
+        return False
+
+    # Check piece ownership
+    if is_white and not is_white_piece(piece):
+        return False
+    if not is_white and not is_black_piece(piece):
+        return False
+
+    # Can't capture own pieces
+    if target and ((is_white and is_white_piece(target)) or (not is_white and is_black_piece(target))):
+        return False
+
+    return True
+
+
 def calculate_hangman_reward(word: str) -> int:
     """Calculate hangman reward based on word difficulty.
 
@@ -1696,124 +1925,254 @@ async def cmd_guess(ctx: commands.Context, *, guess: str = None):
 
 
 @bot.command(name="ttt")
-async def cmd_ttt(ctx: commands.Context, *args):
+async def cmd_ttt(ctx: commands.Context, opponent: discord.User = None, amount: int = 0):
     cid = ctx.channel.id
     uid = ctx.author.id
     if cid in active_ttt_games or cid in active_c4_games:
         await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
         return
-    if not ctx.message.mentions:
+    if opponent is None:
         await ctx.send("Usage: `!ttt @user [amount]`")
         return
-    invited = ctx.message.mentions[0]
-    if invited.id == uid:
+    if opponent.id == uid:
         await ctx.send(embed=emb("❌ Can't Invite Yourself", "Pick a different opponent.", C_RED))
         return
 
-    # Parse optional amount
-    amount = 0
-    if args:
-        try:
-            amount = int(args[0])
-            if amount <= 0:
-                await ctx.send("Amount must be positive.")
-                return
-        except ValueError:
-            await ctx.send("Invalid amount. Usage: `!ttt @user [amount]`")
-            return
+    # Validate amount
+    if amount < 0:
+        await ctx.send("Amount must be positive.")
+        return
 
     # Deduct from both players if betting
     if amount > 0:
         if not deduct_balance(uid, amount):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"You need {amount} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
             return
-        if not deduct_balance(invited.id, amount):
+        if not deduct_balance(opponent.id, amount):
             add_balance(uid, amount)  # Refund host
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"{invited.display_name} needs {amount} 🪙. Balance: {get_balance(invited.id)} 🪙", C_RED))
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"{opponent.display_name} needs {amount} 🪙. Balance: {get_balance(opponent.id)} 🪙", C_RED))
             return
 
     wager_text = f" for {amount} 🪙" if amount > 0 else ""
-    confirmed = await _wait_for_confirmations(ctx, [invited], title=f"📨 Tic-Tac-Toe Invite{wager_text}")
+    confirmed = await _wait_for_confirmations(ctx, [opponent], title=f"📨 Tic-Tac-Toe Invite{wager_text}")
     if not confirmed:
         if amount > 0:
             add_balance(uid, amount)
-            add_balance(invited.id, amount)
-            msg = f"{invited.display_name} didn't accept. Coins refunded ({amount} 🪙 each)."
+            add_balance(opponent.id, amount)
+            msg = f"{opponent.display_name} didn't accept. Coins refunded ({amount} 🪙 each)."
         else:
-            msg = f"{invited.display_name} didn't accept."
+            msg = f"{opponent.display_name} didn't accept."
         await ctx.send(embed=emb("❌ Invite Declined", msg, C_RED))
         return
 
     active_ttt_games[cid] = {
         "board": [None]*9,
-        "players": [uid, invited.id],
-        "marks": {uid: "❌", invited.id: "⭕"},
+        "players": [uid, opponent.id],
+        "marks": {uid: "❌", opponent.id: "⭕"},
         "current": uid,
         "amount": amount,
     }
     game = active_ttt_games[cid]
     wager_info = f"\nWager: {amount} 🪙 each" if amount > 0 else ""
-    await ctx.send(embed=emb("🎮 Tic-Tac-Toe Started", build_ttt_display(game) + f"\n\n{ctx.author.mention} (❌) vs {invited.mention} (⭕){wager_info}\n{ctx.author.mention}'s turn. Use `!m <1-9>`", C_BLUE))
+    await ctx.send(embed=emb("🎮 Tic-Tac-Toe Started", build_ttt_display(game) + f"\n\n{ctx.author.mention} (❌) vs {opponent.mention} (⭕){wager_info}\n{ctx.author.mention}'s turn. Use `!m <1-9>`", C_BLUE))
 
 
 @bot.command(name="c4")
-async def cmd_c4(ctx: commands.Context, *args):
+async def cmd_c4(ctx: commands.Context, opponent: discord.User = None, amount: int = 0):
     cid = ctx.channel.id
     uid = ctx.author.id
     if cid in active_ttt_games or cid in active_c4_games:
         await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
         return
-    if not ctx.message.mentions:
+    if opponent is None:
         await ctx.send("Usage: `!c4 @user [amount]`")
         return
-    invited = ctx.message.mentions[0]
-    if invited.id == uid:
+    if opponent.id == uid:
         await ctx.send(embed=emb("❌ Can't Invite Yourself", "Pick a different opponent.", C_RED))
         return
 
-    # Parse optional amount
-    amount = 0
-    if args:
-        try:
-            amount = int(args[0])
-            if amount <= 0:
-                await ctx.send("Amount must be positive.")
-                return
-        except ValueError:
-            await ctx.send("Invalid amount. Usage: `!c4 @user [amount]`")
-            return
+    # Validate amount
+    if amount < 0:
+        await ctx.send("Amount must be positive.")
+        return
 
     # Deduct from both players if betting
     if amount > 0:
         if not deduct_balance(uid, amount):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"You need {amount} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
             return
-        if not deduct_balance(invited.id, amount):
+        if not deduct_balance(opponent.id, amount):
             add_balance(uid, amount)  # Refund host
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"{invited.display_name} needs {amount} 🪙. Balance: {get_balance(invited.id)} 🪙", C_RED))
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"{opponent.display_name} needs {amount} 🪙. Balance: {get_balance(opponent.id)} 🪙", C_RED))
             return
 
     wager_text = f" for {amount} 🪙" if amount > 0 else ""
-    confirmed = await _wait_for_confirmations(ctx, [invited], title=f"📨 Connect 4 Invite{wager_text}")
+    confirmed = await _wait_for_confirmations(ctx, [opponent], title=f"📨 Connect 4 Invite{wager_text}")
     if not confirmed:
         if amount > 0:
             add_balance(uid, amount)
-            add_balance(invited.id, amount)
-            msg = f"{invited.display_name} didn't accept. Coins refunded ({amount} 🪙 each)."
+            add_balance(opponent.id, amount)
+            msg = f"{opponent.display_name} didn't accept. Coins refunded ({amount} 🪙 each)."
         else:
-            msg = f"{invited.display_name} didn't accept."
+            msg = f"{opponent.display_name} didn't accept."
         await ctx.send(embed=emb("❌ Invite Declined", msg, C_RED))
         return
     active_c4_games[cid] = {
         "board": [[None]*7 for _ in range(6)],
-        "players": [uid, invited.id],
-        "marks": {uid: "🔴", invited.id: "🟡"},
+        "players": [uid, opponent.id],
+        "marks": {uid: "🔴", opponent.id: "🟡"},
         "current": uid,
         "amount": amount,
     }
     game = active_c4_games[cid]
     wager_info = f"\nWager: {amount} 🪙 each" if amount > 0 else ""
-    await ctx.send(embed=emb("🟡 Connect 4 Started", build_c4_display(game) + f"\n\n{ctx.author.mention} (🔴) vs {invited.mention} (🟡){wager_info}\n{ctx.author.mention}'s turn. Use `!m <1-7>`", C_BLUE))
+    await ctx.send(embed=emb("🟡 Connect 4 Started", build_c4_display(game) + f"\n\n{ctx.author.mention} (🔴) vs {opponent.mention} (🟡){wager_info}\n{ctx.author.mention}'s turn. Use `!m <1-7>`", C_BLUE))
+
+
+@bot.command(name="chess")
+async def cmd_chess(ctx: commands.Context, *args):
+    # Special admin preview commands
+    if args and args[0].lower() == "preview":
+        if not is_admin(ctx):
+            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+            return
+        preview_board = create_chess_board()
+        await ctx.send(embed=emb("♟️ Chess Board Preview (White)", build_chess_display(preview_board, is_black_perspective=False), C_BLUE))
+        return
+
+    if args and args[0].lower() == "blackpreview":
+        if not is_admin(ctx):
+            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+            return
+        preview_board = create_chess_board()
+        await ctx.send(embed=emb("♟️ Chess Board Preview (Black)", build_chess_display(preview_board, is_black_perspective=True), C_BLUE))
+        return
+
+    # Parse opponent and amount from args
+    opponent = None
+    amount = 0
+    if ctx.message.mentions:
+        opponent = ctx.message.mentions[0]
+    if args:
+        try:
+            amount = int(args[-1])
+        except (ValueError, IndexError):
+            pass
+
+    if ctx.guild:
+        cfg = get_guild_cfg(ctx.guild.id)
+        chess_channels = cfg.get("chess_channels", [])
+        if chess_channels and ctx.channel.id not in chess_channels:
+            names = " ".join(f"<#{cid}>" for cid in chess_channels)
+            await ctx.send(embed=emb("❌ Wrong Channel", f"Chess is only allowed in: {names}", C_RED))
+            return
+
+    cid = ctx.channel.id
+    uid = ctx.author.id
+
+    if cid in active_ttt_games or cid in active_c4_games or cid in active_chess_games:
+        await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
+        return
+
+    if opponent is None:
+        await ctx.send("Usage: `!chess @user [amount]`")
+        return
+    if opponent.id == uid:
+        await ctx.send(embed=emb("❌ Can't Invite Yourself", "Pick a different opponent.", C_RED))
+        return
+
+    # Validate amount
+    if amount < 0:
+        await ctx.send("Amount must be positive.")
+        return
+
+    # Deduct from both players if betting
+    if amount > 0:
+        if not deduct_balance(uid, amount):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"You need {amount} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
+        if not deduct_balance(opponent.id, amount):
+            add_balance(uid, amount)  # Refund host
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"{opponent.display_name} needs {amount} 🪙. Balance: {get_balance(opponent.id)} 🪙", C_RED))
+            return
+
+    wager_text = f" for {amount} 🪙" if amount > 0 else ""
+    confirmed = await _wait_for_confirmations(ctx, [opponent], title=f"♟️ Chess Invite{wager_text}")
+    if not confirmed:
+        if amount > 0:
+            add_balance(uid, amount)
+            add_balance(opponent.id, amount)
+            msg = f"{opponent.display_name} didn't accept. Coins refunded ({amount} 🪙 each)."
+        else:
+            msg = f"{opponent.display_name} didn't accept."
+        await ctx.send(embed=emb("❌ Invite Declined", msg, C_RED))
+        return
+
+    active_chess_games[cid] = {
+        "board": create_chess_board(),
+        "players": [uid, opponent.id],  # [white, black]
+        "current": uid,  # white moves first
+        "moves": [],
+        "amount": amount,
+    }
+    game = active_chess_games[cid]
+    save_chess_games()
+    wager_info = f"\nWager: {amount} 🪙 each" if amount > 0 else ""
+    await ctx.send(embed=emb("♟️ Chess Started", build_chess_display(game["board"], is_black_perspective=False) + f"\n\n{ctx.author.mention} (White ♙) vs {opponent.mention} (Black ♟){wager_info}\n{ctx.author.mention}'s turn. Use `!move <e2e4>`", C_BLUE))
+
+
+@bot.command(name="move")
+async def cmd_move_chess(ctx: commands.Context, *args):
+    cid = ctx.channel.id
+    uid = ctx.author.id
+
+    if cid not in active_chess_games:
+        await ctx.send("No active chess game in this channel. Start one with `!chess @user [amount]`")
+        return
+
+    game = active_chess_games[cid]
+    if uid != game["current"]:
+        opponent_id = game["current"]
+        opponent = ctx.guild.get_member(opponent_id) if ctx.guild else None
+        await ctx.send(embed=emb("⏳ Not Your Turn", f"Waiting for {opponent.mention if opponent else 'opponent'}.", C_GOLD))
+        return
+
+    if not args:
+        await ctx.send("Usage: `!move <e2e4>` or `!move e2 e4` (from square to square in algebraic notation)")
+        return
+
+    move = " ".join(args)
+
+    parsed = parse_chess_move(move)
+    if not parsed:
+        await ctx.send("Invalid move format. Use algebraic notation like `e2e4`")
+        return
+
+    from_r, from_c, to_r, to_c = parsed
+    is_white = uid == game["players"][0]
+
+    if not is_valid_chess_move(game["board"], from_r, from_c, to_r, to_c, is_white):
+        await ctx.send("Invalid move. The piece can't move there or it's not your piece.")
+        return
+
+    # Make the move
+    board = game["board"]
+    piece = board[from_r][from_c]
+    board[to_r][to_c] = piece
+    board[from_r][from_c] = None
+
+    game["moves"].append(f"{move}")
+
+    # Switch turns
+    game["current"] = game["players"][1] if uid == game["players"][0] else game["players"][0]
+    next_player = ctx.guild.get_member(game["current"]) if ctx.guild else None
+
+    save_chess_games()
+
+    move_notation = f"{chr(ord('a') + from_c)}{8 - from_r}{chr(ord('a') + to_c)}{8 - to_r}"
+    # Display from the next player's perspective
+    is_black_perspective = game["current"] == game["players"][1]  # True if it's black's turn next
+    await ctx.send(embed=emb("♟️ Move Made", build_chess_display(board, is_black_perspective) + f"\n\nMove: {move_notation}\nNext: {next_player.mention if next_player else 'opponent'}", C_BLUE))
 
 
 @bot.command(name="m")
@@ -1955,7 +2314,7 @@ async def _wait_for_confirmations(
     ctx: commands.Context,
     invited_users: list,
     title: str = "📨 Game Invite",
-    timeout: float = 10.0,
+    timeout: float = 20.0,
 ) -> set:
     """Wait for invited users to react with ✅ within timeout. Returns set of confirmed user IDs."""
     if not invited_users:
@@ -1964,7 +2323,7 @@ async def _wait_for_confirmations(
     mentions = " ".join(u.mention for u in invited_users)
     invite_msg = await ctx.send(embed=emb(
         title,
-        f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ within 10 seconds to join!",
+        f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ within 20 seconds to join!",
         C_BLUE,
     ))
     await invite_msg.add_reaction("✅")
@@ -2197,6 +2556,18 @@ async def cmd_stop(ctx: commands.Context):
         else:
             stopped.append("🟡 Connect 4 (forfeited)")
 
+    if cid in active_chess_games and uid in active_chess_games[cid]["players"]:
+        game = active_chess_games[cid]
+        amount = game.get("amount", 0)
+        opponent_uid = [p for p in game["players"] if p != uid][0]
+        del active_chess_games[cid]
+        if amount > 0:
+            winnings = amount * 2
+            add_balance(opponent_uid, winnings)
+            stopped.append(f"♟️ Chess (forfeited, opponent wins {winnings} 🪙)")
+        else:
+            stopped.append("♟️ Chess (forfeited)")
+
     if cid in active_race_games and uid in active_race_games[cid]["players"]:
         game = active_race_games[cid]
         amount = game.get("amount", 0)
@@ -2211,9 +2582,10 @@ async def cmd_stop(ctx: commands.Context):
             stopped.append("🏇 Race (forfeited)")
 
     if not stopped:
-        await ctx.send(embed=emb("⏹️ Nothing to Stop", "No active roleplay, blackjack, or hangman game.", C_GREY))
+        await ctx.send(embed=emb("⏹️ Nothing to Stop", "No active game or roleplay.", C_GREY))
         return
 
+    save_chess_games()
     await ctx.send(embed=emb("⏹️ Stopped", "\n".join(stopped), C_GREY))
 
 
@@ -2652,6 +3024,7 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         ai_channels = cfg.get("ai_channels", [])
         cmd_whitelist = cfg.get("command_whitelist", [])
         cmd_blacklist = cfg.get("command_blacklist", [])
+        chess_channels = cfg.get("chess_channels", [])
         shop_items = cfg.get("shop_items", {})
         r34_enabled = cfg.get("rule34_enabled", True)
         r34_banned = cfg.get("rule34_banned_tags", [])
@@ -2659,6 +3032,7 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         ai_val = " ".join(f"<#{c}>" for c in ai_channels) if ai_channels else "all channels"
         whitelist_val = " ".join(f"<#{c}>" for c in cmd_whitelist) if cmd_whitelist else "none (all allowed)"
         blacklist_val = " ".join(f"<#{c}>" for c in cmd_blacklist) if cmd_blacklist else "none"
+        chess_val = " ".join(f"<#{c}>" for c in chess_channels) if chess_channels else "all channels"
         item_names = ["nickname", "role", "removerole", "ragebait"]
         shop_val = "  ".join(
             f"{n} {'✅' if shop_items.get(n, True) else '❌'}" for n in item_names
@@ -2671,11 +3045,12 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         embed.add_field(name="🤖 AI channels", value=ai_val, inline=False)
         embed.add_field(name="✅ Channel whitelist", value=whitelist_val, inline=False)
         embed.add_field(name="❌ Channel blacklist", value=blacklist_val, inline=False)
+        embed.add_field(name="♟️ Chess channels", value=chess_val, inline=False)
         embed.add_field(name="🛒 Shop items", value=shop_val, inline=False)
         embed.add_field(name="🔞 rule34", value=r34_val, inline=False)
         footer_text = (
             "Subcommands:\n"
-            "`ai-channels #ch... / clear` • `cmd-whitelist #ch... / clear` • `cmd-blacklist #ch... / clear`\n"
+            "`ai-channels #ch... / clear` • `cmd-whitelist #ch... / clear` • `cmd-blacklist #ch... / clear` • `chess-channels #ch... / clear`\n"
             "`shop <item> on|off` • `rule34 on|off / ban <tag> / unban <tag> / banned`"
         )
         embed.set_footer(text=footer_text)
@@ -2725,6 +3100,21 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("❌ Channel Blacklist", f"Commands blocked in: {names}", C_GREEN))
         else:
             await ctx.send(embed=emb("❌ Channel Blacklist", "Usage: `!settings cmd-blacklist #channel ...` or `!settings cmd-blacklist clear`", C_GREY))
+        return
+
+    # ── chess-channels ────────────────────────────────────────────────────────
+    if subcommand == "chess-channels":
+        if args and args[0].lower() == "clear":
+            cfg["chess_channels"] = []
+            save_guild_settings()
+            await ctx.send(embed=emb("♟️ Chess Channels", "Chess channel restriction removed — all channels allowed.", C_GREEN))
+        elif ctx.message.channel_mentions:
+            cfg["chess_channels"] = [c.id for c in ctx.message.channel_mentions]
+            save_guild_settings()
+            names = " ".join(c.mention for c in ctx.message.channel_mentions)
+            await ctx.send(embed=emb("♟️ Chess Channels", f"Chess restricted to: {names}", C_GREEN))
+        else:
+            await ctx.send(embed=emb("♟️ Chess Channels", "Usage: `!settings chess-channels #channel ...` or `!settings chess-channels clear`", C_GREY))
         return
 
     # ── shop ──────────────────────────────────────────────────────────────────
