@@ -530,7 +530,7 @@ async def respond(
         await finalize(placeholder, channel, full_response)
     except aiohttp.ClientError as e:
         history.pop()
-        await placeholder.edit(content="The AI is currently offline :red_circle:")
+        await placeholder.edit(content="", embed=emb("The AI is currently offline", "", C_RED))
     except Exception as e:
         history.pop()
         await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
@@ -567,7 +567,7 @@ async def respond_roleplay(
         await finalize(placeholder, channel, full_response)
     except aiohttp.ClientError as e:
         history.pop()
-        await placeholder.edit(content="The AI is currently offline :red_circle:")
+        await placeholder.edit(content="", embed=emb("The AI is currently offline", "", C_RED))
     except Exception as e:
         history.pop()
         await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
