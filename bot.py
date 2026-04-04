@@ -1301,38 +1301,45 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         _si = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
         sections = {}
 
-        # Nicknames
+        # Nicknames (sorted by cost)
         if _si.get("nickname", True):
-            sections["🎭 Nicknames"] = [
-                "`!shop nickname <new_name>` — Change your own nickname — **2,000 🪙**",
-                "`!shop nickname @user <new_name>` — Nickname user — **10,000 🪙**",
-                "`!shop removenickname` — Remove your own nickname — **2,000 🪙**",
+            nickname_items = [
+                (2000, "`!shop nickname <new_name>` — Change your own nickname — **2,000 🪙**"),
+                (2000, "`!shop removenickname` — Remove your own nickname — **2,000 🪙**"),
+                (10000, "`!shop nickname @user <new_name>` — Nickname user — **10,000 🪙**"),
             ]
+            nickname_items.sort(key=lambda x: x[0])
+            sections["🎭 Nicknames"] = [item[1] for item in nickname_items]
 
-        # Roles
+        # Roles (sorted by cost)
         role_items = []
-        if _si.get("role", True):
-            role_items.append("`!shop role <name> <hex>` — Create a custom colored role — **10,000 🪙**")
         if _si.get("removerole", True):
-            role_items.append("`!shop removerole <name>` — Delete a bot-created role — **2,000 🪙**")
+            role_items.append((2000, "`!shop removerole <name>` — Delete a bot-created role — **2,000 🪙**"))
+        if _si.get("role", True):
+            role_items.append((10000, "`!shop role <name> <hex>` — Create a custom colored role — **10,000 🪙**"))
         if role_items:
-            sections["👑 Roles"] = role_items
+            role_items.sort(key=lambda x: x[0])
+            sections["👑 Roles"] = [item[1] for item in role_items]
 
-        # Channels
+        # Channels (sorted by cost)
         channel_items = []
         if _si.get("channel", True):
-            channel_items.append("`!shop channel <name>` — Create a new text channel — **20,000 🪙**")
-            channel_items.append("`!shop removechannel <name>` — Delete a bot-created channel — **20,000 🪙**")
+            channel_items.append((20000, "`!shop channel <name>` — Create a new text channel — **20,000 🪙**"))
+        if _si.get("channel", True):
+            channel_items.append((20000, "`!shop removechannel <name>` — Delete a bot-created channel — **20,000 🪙**"))
         if channel_items:
-            sections["📢 Channels"] = channel_items
+            channel_items.sort(key=lambda x: x[0])
+            sections["📢 Channels"] = [item[1] for item in channel_items]
 
-        # Fun & Social
-        fun_items = []
+        # Fun & Social (sorted by cost)
+        fun_items = [
+            (1000, "`!shop insurance` — Protect yourself for 24 hours — **1,000 🪙**"),
+            (3000, "`!shop mock @user` — Mock someone's messages for 5 minutes — **3,000 🪙**"),
+        ]
         if _si.get("ragebait", True):
-            fun_items.append("`!shop ragebait @user [topic]` — Ragebait for 10 messages — **5,000 🪙**")
-        fun_items.append("`!shop mock @user` — Mock someone's messages for 5 minutes — **3,000 🪙**")
-        fun_items.append("`!shop insurance` — Protect yourself for 24 hours — **1,000 🪙**")
-        sections["🎉 Fun & Social"] = fun_items
+            fun_items.append((5000, "`!shop ragebait @user [topic]` — Ragebait for 10 messages — **5,000 🪙**"))
+        fun_items.sort(key=lambda x: x[0])
+        sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
         if not sections:
             await ctx.send(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE))
