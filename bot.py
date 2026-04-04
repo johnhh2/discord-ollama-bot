@@ -520,7 +520,7 @@ async def respond(
         await finalize(placeholder, channel, full_response)
     except aiohttp.ClientError as e:
         history.pop()
-        await placeholder.edit(content=f"⚠️ Could not reach Ollama: `{e}`")
+        await placeholder.edit(content="The AI is currently offline :red_circle:")
     except Exception as e:
         history.pop()
         await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
@@ -557,7 +557,7 @@ async def respond_roleplay(
         await finalize(placeholder, channel, full_response)
     except aiohttp.ClientError as e:
         history.pop()
-        await placeholder.edit(content=f"⚠️ Could not reach Ollama: `{e}`")
+        await placeholder.edit(content="The AI is currently offline :red_circle:")
     except Exception as e:
         history.pop()
         await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
