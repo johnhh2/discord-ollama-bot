@@ -1302,7 +1302,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         _items = []
         if _si.get("nickname", True):
             _items.append((2000, "`!shop nickname <new_name>` — Change your own nickname — **2,000 🪙**"))
-            _items.append((10000, "`!shop nickname @user <new_name>` — Change someone else's nickname — **10,000 🪙**"))
+            _items.append((10000, "`!shop nickname @user <new_name>` — Rename user — **10,000 🪙**"))
             _items.append((2000, "`!shop removenickname` — Remove your own nickname — **2,000 🪙**"))
         if _si.get("role", True):
             _items.append((10000, "`!shop role <name> <hex>` — Create a custom colored role — **10,000 🪙**"))
@@ -1317,26 +1317,8 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         _items.append((1000, "`!shop insurance` — Protect yourself for 24 hours — **1,000 🪙**"))
         # Sort by price (lowest to highest)
         _items.sort(key=lambda x: x[0])
-
-        if not _items:
-            await ctx.send(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE))
-            return
-
-        # Group items by price tier for wider display
-        cheap = [item[1] for item in _items if item[0] <= 3000]
-        mid = [item[1] for item in _items if 5000 <= item[0] <= 10000]
-        expensive = [item[1] for item in _items if item[0] >= 20000]
-
-        shop_embed = discord.Embed(title="🛒 Shop", color=discord.Color(0x9932CC))
-
-        if cheap:
-            shop_embed.add_field(name="💰 Affordable (1k-3k)", value="\n".join(cheap), inline=False)
-        if mid:
-            shop_embed.add_field(name="💸 Mid-Range (5k-10k)", value="\n".join(mid), inline=False)
-        if expensive:
-            shop_embed.add_field(name="💎 Premium (20k)", value="\n".join(expensive), inline=False)
-
-        await ctx.send(embed=shop_embed)
+        desc = "\n".join(item[1] for item in _items) if _items else "No shop items are currently available."
+        await ctx.send(embed=emb("🛒 Shop", desc, C_PURPLE))
         return
 
     _shop_cfg = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
