@@ -1454,8 +1454,8 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if role is None:
             await ctx.send(embed=emb("❌ Not Found", f"No bot-created role named **{name}** exists.", C_RED))
             return
-        # Check if user is the only one with this role
-        if len(role.members) != 1 or role.members[0].id != uid:
+        # Check if user is the only one with this role (allow if 0 or 1 member who is user)
+        if len(role.members) > 1 or (len(role.members) == 1 and role.members[0].id != uid):
             member_count = len(role.members)
             await ctx.send(embed=emb("❌ Not Alone", f"This role has **{member_count}** member(s). You must be the only one with this role to remove it.", C_RED))
             return
@@ -1908,6 +1908,8 @@ async def cmd_give(ctx: commands.Context, target: discord.Member = None, amount:
     try:
         amount = int(amount)
         assert amount != 0
+        if amount < 0:
+            amount = max(amount, -1*get_balance(target.id))
     except (ValueError, AssertionError):
         await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a non-zero whole number.", C_RED))
         return
