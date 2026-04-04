@@ -37,6 +37,7 @@ GUILD_SETTINGS_FILE = "data/guild_settings.json"
 INSURANCE_FILE = "data/insurance.json"
 MODELS_FILE = "data/models.json"
 SLOT_JACKPOT_FILE = "data/slots_jackpot.json"
+GODMODE_USERS_FILE = "data/godmode_users.json"
 
 # Slot machine configuration
 SLOT_REEL = (
@@ -140,6 +141,20 @@ def save_bot_settings():
         json.dump(bot_settings, f, indent=2)
 
 
+def load_godmode_users() -> set[int]:
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(GODMODE_USERS_FILE):
+        with open(GODMODE_USERS_FILE) as f:
+            return set(json.load(f))
+    return set()
+
+
+def save_godmode_users():
+    os.makedirs("data", exist_ok=True)
+    with open(GODMODE_USERS_FILE, "w") as f:
+        json.dump(list(godmode_users), f)
+
+
 def load_guild_settings() -> dict:
     os.makedirs("data", exist_ok=True)
     if os.path.exists(GUILD_SETTINGS_FILE):
@@ -205,6 +220,7 @@ economy = load_economy()
 slot_jackpot = load_jackpot()
 bot_roles: set[int] = load_bot_roles()
 bot_admins: set[int] = load_bot_admins()
+godmode_users: set[int] = load_godmode_users()
 bot_settings: dict = load_bot_settings()
 guild_settings: dict = load_guild_settings()
 insurance: dict = load_insurance()
@@ -212,9 +228,6 @@ insurance: dict = load_insurance()
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
-
-# ── Admin state ───────────────────────────────────────────────────────────────
-godmode = False
 
 # ── In-memory game state ──────────────────────────────────────────────────────
 active_blackjack_games: dict[int, dict] = {}
@@ -709,12 +722,20 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
 async def global_command_channel_check(ctx: commands.Context) -> bool:
     if ctx.guild is None:
         return True
-    if ctx.command and ctx.command.name == "settings":
-        return True  # always allow !settings so admins can't lock themselves out
+    if ctx.command and ctx.command.name in ("settings", "clear"):
+        return True  # always allow !settings and !clear in any channel
     cfg = get_guild_cfg(ctx.guild.id)
-    command_channels = cfg.get("command_channels", [])
-    if command_channels and ctx.channel.id not in command_channels:
+
+    # Check blacklist first (deny)
+    command_blacklist = cfg.get("command_blacklist", [])
+    if ctx.channel.id in command_blacklist:
         return False
+
+    # Check whitelist (allow only if specified)
+    command_whitelist = cfg.get("command_whitelist", [])
+    if command_whitelist and ctx.channel.id not in command_whitelist:
+        return False
+
     return True
 
 
@@ -894,6 +915,33 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
+    # Check channel restrictions for mentions (AI channels and blacklist)
+    if is_mentioned and not is_dm and message.guild:
+        cfg = get_guild_cfg(message.guild.id)
+        ai_channels = cfg.get("ai_channels", [])
+        command_blacklist = cfg.get("command_blacklist", [])
+
+        # Determine if channel is allowed for AI
+        channel_allowed = True
+        if ai_channels:
+            # If AI channels configured, must be in one of them
+            channel_allowed = message.channel.id in ai_channels
+        elif message.channel.id in command_blacklist:
+            # If no AI channels but channel is blacklisted, not allowed
+            channel_allowed = False
+
+        if not channel_allowed:
+            if ai_channels:
+                names = " ".join(f"<#{cid}>" for cid in ai_channels)
+                await message.reply(embed=emb("❌ Wrong Channel", f"AI commands are only allowed in: {names}", C_RED))
+            else:
+                # Show where AI IS allowed (inverse of blacklist)
+                all_channels = [ch.id for ch in message.guild.text_channels if ch.id not in command_blacklist]
+                names = " ".join(f"<#{cid}>" for cid in all_channels) if all_channels else "no channels"
+                await message.reply(embed=emb("❌ Wrong Channel", f"AI commands are only allowed in: {names}", C_RED))
+            await bot.process_commands(message)
+            return
+
     if not (is_dm or is_mentioned or in_roleplay):
         await bot.process_commands(message)
         return
@@ -1022,7 +1070,8 @@ async def cmd_adminhelp(ctx: commands.Context):
     admin_embed.add_field(name="🔧 Server Settings", inline=False, value=(
         "`!settings` — View current server settings\n"
         "`!settings ai-channels #ch... / clear` — Restrict AI commands to channels\n"
-        "`!settings cmd-channels #ch... / clear` — Restrict all commands to channels\n"
+        "`!settings cmd-whitelist #ch... / clear` — Allow commands only in channels\n"
+        "`!settings cmd-blacklist #ch... / clear` — Disallow commands in channels\n"
         "`!settings shop <item> on|off` — Toggle shop items\n"
         "`!settings rule34 on|off / ban <tag> / unban <tag> / banned` — rule34 config"
     ))
@@ -1042,7 +1091,7 @@ async def cmd_adminhelp(ctx: commands.Context):
         admin_embed.add_field(name="⚙️ Config", inline=False, value=(
             "`!setprompt <prompt>` — Set a custom system prompt for this channel\n"
             "`!clearprompt` — Reset this channel's prompt to default\n"
-            "`!godmode` — Toggle free costs on/off\n"
+            "`!godmode [user]` — Toggle free costs on/off (for yourself or a user)\n"
             "`!vramtext [text]` — View or set the vRAM display text in !stats"
         ))
         admin_embed.add_field(name="📢 Bot Control", inline=False, value=(
@@ -1076,14 +1125,14 @@ async def cmd_daily(ctx: commands.Context):
     await ctx.send(embed=emb("🪙 Daily Reward", f"+200 🪙 claimed! Balance: **{get_balance(uid)} 🪙**", C_GREEN))
 
 
-@bot.command(name="balance", aliases=["bal"])
+@bot.command(name="balance", aliases=["bal", "b", "!", "$"])
 async def cmd_balance(ctx: commands.Context):
     target = ctx.message.mentions[0] if ctx.message.mentions else ctx.author
     bal = get_balance(target.id)
     await ctx.send(embed=emb("💰 Balance", f"**{target.display_name}**: {bal} 🪙", C_GREEN))
 
 
-@bot.command(name="leaderboard", aliases=["leaderboards"])
+@bot.command(name="leaderboard", aliases=["leaderboards", "lb"])
 async def cmd_leaderboard(ctx: commands.Context):
     if ctx.guild is None:
         await ctx.send("Leaderboard is only available in servers.")
@@ -1194,7 +1243,7 @@ async def cmd_flip(ctx: commands.Context, amount: str = None):
     except (ValueError, AssertionError):
         await ctx.send("Please provide a positive whole number amount.")
         return
-    if not godmode and not deduct_balance(uid, amount):
+    if uid not in godmode_users and not deduct_balance(uid, amount):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Balance: {get_balance(uid)} 🪙", C_RED))
         return
     win = random.random() < 0.5
@@ -1315,7 +1364,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         await ctx.send(embed=emb("❌ Invalid Bet", f"Please provide a positive amount.", C_RED))
         return
 
-    if not godmode and not deduct_balance(uid, amount):
+    if uid not in godmode_users and not deduct_balance(uid, amount):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Balance: {get_balance(uid)} 🪙", C_RED))
         return
 
@@ -1487,7 +1536,7 @@ async def cmd_blackjack(ctx: commands.Context, amount: str = None):
     if uid in active_blackjack_games:
         await ctx.send(embed=emb("🃏 Already Playing", "Just type `hit` or `stand`.", C_GOLD))
         return
-    if not godmode and not deduct_balance(uid, amount):
+    if uid not in godmode_users and not deduct_balance(uid, amount):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Balance: {get_balance(uid)} 🪙", C_RED))
         return
     deck = new_deck()
@@ -1873,7 +1922,7 @@ async def cmd_ask(ctx: commands.Context, *, question: str = None):
 
     # Check cost
     uid = ctx.author.id
-    cost = 0 if godmode else 10
+    cost = 0 if uid in godmode_users else 10
     if cost > 0 and not deduct_balance(uid, cost):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Asking costs **10 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
         return
@@ -1967,7 +2016,7 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
         await ctx.send("Usage: `!roleplay <character prompt> [@user1 @user2 ...]`")
         return
 
-    cost = 0 if godmode else 50
+    cost = 0 if uid in godmode_users else 50
     if cost > 0 and not deduct_balance(uid, cost):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Starting a roleplay costs **50 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
         return
@@ -2243,12 +2292,12 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if ctx.message.mentions and args[0].startswith("<@"):
             target = ctx.message.mentions[0]
             new_name = " ".join(args[1:])
-            cost = 0 if godmode else 10000
+            cost = 0 if uid in godmode_users else 10000
             cost_label = "10,000"
         else:
             target = ctx.author
             new_name = " ".join(args)
-            cost = 0 if godmode else 2000
+            cost = 0 if uid in godmode_users else 2000
             cost_label = "2,000"
 
         if not new_name:
@@ -2279,7 +2328,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if not _shop_cfg.get("nickname", True):
             await ctx.send(embed=emb("🛒 Disabled", "The nickname shop item is disabled in this server.", C_GREY))
             return
-        cost = 0 if godmode else 2000
+        cost = 0 if uid in godmode_users else 2000
         if is_insured(uid, "nickname"):
             await ctx.send(embed=emb("🛡️ Protected", "You have insurance and can't have your nickname changed.", C_GOLD))
             return
@@ -2325,7 +2374,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if is_insured(uid, "role"):
             await ctx.send(embed=emb("🛡️ Protected", "You have insurance and can't be given new roles.", C_GOLD))
             return
-        cost = 0 if godmode else 10000
+        cost = 0 if uid in godmode_users else 10000
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **10,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
@@ -2373,7 +2422,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             member_count = len(role.members)
             await ctx.send(embed=emb("❌ Not Alone", f"This role has **{member_count}** member(s). You must be the only one with this role to remove it.", C_RED))
             return
-        cost = 0 if godmode else 2000
+        cost = 0 if uid in godmode_users else 2000
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **2,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
@@ -2410,7 +2459,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if len(channel_name) < 2:
             await ctx.send(embed=emb("❌ Invalid Name", "Channel name must be at least 2 characters.", C_RED))
             return
-        cost = 0 if godmode else 20000
+        cost = 0 if uid in godmode_users else 20000
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **20,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
@@ -2471,7 +2520,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if channel is None:
             await ctx.send(embed=emb("❌ Not Found", f"No bot-created channel named **{channel_name}** exists.", C_RED))
             return
-        cost = 0 if godmode else 20000
+        cost = 0 if uid in godmode_users else 20000
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **20,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
@@ -2505,7 +2554,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against ragebait.", C_GOLD))
             return
         topic = " ".join(a for a in args if not a.startswith("<@"))
-        cost = 0 if godmode else 5000
+        cost = 0 if uid in godmode_users else 5000
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **5,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
@@ -2547,7 +2596,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mock @user`", C_PURPLE))
             return
         target = ctx.message.mentions[0]
-        cost = 0 if godmode else 3000
+        cost = 0 if uid in godmode_users else 3000
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **3,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
@@ -2563,7 +2612,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
     # ── !shop insurance ───────────────────────────────────────────────────────
     if subcommand == "insurance":
         key = str(uid)
-        cost = 0 if godmode else 1000
+        cost = 0 if uid in godmode_users else 1000
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"Insurance costs **1,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
@@ -2601,13 +2650,15 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
     # ── Show current settings ─────────────────────────────────────────────────
     if subcommand is None:
         ai_channels = cfg.get("ai_channels", [])
-        cmd_channels = cfg.get("command_channels", [])
+        cmd_whitelist = cfg.get("command_whitelist", [])
+        cmd_blacklist = cfg.get("command_blacklist", [])
         shop_items = cfg.get("shop_items", {})
         r34_enabled = cfg.get("rule34_enabled", True)
         r34_banned = cfg.get("rule34_banned_tags", [])
 
         ai_val = " ".join(f"<#{c}>" for c in ai_channels) if ai_channels else "all channels"
-        cmd_val = " ".join(f"<#{c}>" for c in cmd_channels) if cmd_channels else "all channels"
+        whitelist_val = " ".join(f"<#{c}>" for c in cmd_whitelist) if cmd_whitelist else "none (all allowed)"
+        blacklist_val = " ".join(f"<#{c}>" for c in cmd_blacklist) if cmd_blacklist else "none"
         item_names = ["nickname", "role", "removerole", "ragebait"]
         shop_val = "  ".join(
             f"{n} {'✅' if shop_items.get(n, True) else '❌'}" for n in item_names
@@ -2618,10 +2669,16 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
 
         embed = discord.Embed(title="⚙️ Server Settings", color=C_BLUE)
         embed.add_field(name="🤖 AI channels", value=ai_val, inline=False)
-        embed.add_field(name="💬 Command channels", value=cmd_val, inline=False)
+        embed.add_field(name="✅ Channel whitelist", value=whitelist_val, inline=False)
+        embed.add_field(name="❌ Channel blacklist", value=blacklist_val, inline=False)
         embed.add_field(name="🛒 Shop items", value=shop_val, inline=False)
         embed.add_field(name="🔞 rule34", value=r34_val, inline=False)
-        embed.set_footer(text="Use !settings <subcommand> to change. Subcommands: ai-channels, cmd-channels, shop, rule34")
+        footer_text = (
+            "Subcommands:\n"
+            "`ai-channels #ch... / clear` • `cmd-whitelist #ch... / clear` • `cmd-blacklist #ch... / clear`\n"
+            "`shop <item> on|off` • `rule34 on|off / ban <tag> / unban <tag> / banned`"
+        )
+        embed.set_footer(text=footer_text)
         await ctx.send(embed=embed)
         return
 
@@ -2640,19 +2697,34 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("⚙️ AI Channels", "Usage: `!settings ai-channels #channel ...` or `!settings ai-channels clear`", C_GREY))
         return
 
-    # ── cmd-channels ──────────────────────────────────────────────────────────
-    if subcommand == "cmd-channels":
+    # ── cmd-whitelist ─────────────────────────────────────────────────────────
+    if subcommand == "cmd-whitelist":
         if args and args[0].lower() == "clear":
-            cfg["command_channels"] = []
+            cfg["command_whitelist"] = []
             save_guild_settings()
-            await ctx.send(embed=emb("⚙️ Command Channels", "Command channel restriction removed — all channels allowed.", C_GREEN))
+            await ctx.send(embed=emb("✅ Channel Whitelist", "Whitelist removed — commands allowed in all channels.", C_GREEN))
         elif ctx.message.channel_mentions:
-            cfg["command_channels"] = [c.id for c in ctx.message.channel_mentions]
+            cfg["command_whitelist"] = [c.id for c in ctx.message.channel_mentions]
             save_guild_settings()
             names = " ".join(c.mention for c in ctx.message.channel_mentions)
-            await ctx.send(embed=emb("⚙️ Command Channels", f"All commands restricted to: {names}\n(Note: `!settings` always works everywhere)", C_GREEN))
+            await ctx.send(embed=emb("✅ Channel Whitelist", f"Commands restricted to: {names}\n(Note: `!settings` always works everywhere)", C_GREEN))
         else:
-            await ctx.send(embed=emb("⚙️ Command Channels", "Usage: `!settings cmd-channels #channel ...` or `!settings cmd-channels clear`", C_GREY))
+            await ctx.send(embed=emb("✅ Channel Whitelist", "Usage: `!settings cmd-whitelist #channel ...` or `!settings cmd-whitelist clear`", C_GREY))
+        return
+
+    # ── cmd-blacklist ─────────────────────────────────────────────────────────
+    if subcommand == "cmd-blacklist":
+        if args and args[0].lower() == "clear":
+            cfg["command_blacklist"] = []
+            save_guild_settings()
+            await ctx.send(embed=emb("❌ Channel Blacklist", "Blacklist cleared — commands allowed in all channels.", C_GREEN))
+        elif ctx.message.channel_mentions:
+            cfg["command_blacklist"] = [c.id for c in ctx.message.channel_mentions]
+            save_guild_settings()
+            names = " ".join(c.mention for c in ctx.message.channel_mentions)
+            await ctx.send(embed=emb("❌ Channel Blacklist", f"Commands blocked in: {names}", C_GREEN))
+        else:
+            await ctx.send(embed=emb("❌ Channel Blacklist", "Usage: `!settings cmd-blacklist #channel ...` or `!settings cmd-blacklist clear`", C_GREY))
         return
 
     # ── shop ──────────────────────────────────────────────────────────────────
@@ -2755,14 +2827,22 @@ async def cmd_clear(ctx: commands.Context, n: int = 50):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @bot.command(name="godmode")
-async def cmd_godmode(ctx: commands.Context):
-    global godmode
+async def cmd_godmode(ctx: commands.Context, user: discord.User = None):
+    global godmode_users
     if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
         return
-    godmode = not godmode
-    state = "ON" if godmode else "OFF"
-    await ctx.send(embed=emb("👑 Godmode", f"Godmode is now **{state}**.", C_GOLD))
+
+    target_user = user if user else ctx.author
+    if target_user.id in godmode_users:
+        godmode_users.remove(target_user.id)
+        state = "disabled"
+    else:
+        godmode_users.add(target_user.id)
+        state = "enabled"
+
+    save_godmode_users()
+    await ctx.send(embed=emb("👑 Godmode", f"Godmode **{state}** for {target_user.mention}.", C_GOLD))
 
 
 
