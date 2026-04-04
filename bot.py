@@ -544,7 +544,8 @@ async def respond_roleplay(
     reply_to: discord.Message,
 ):
     rp = active_roleplays[user_id]
-    history = roleplay_histories.setdefault(user_id, [])
+    history_key = rp.get("history_owner", user_id)
+    history = roleplay_histories.setdefault(history_key, [])
     system_prompt = (
         f"You are roleplaying as the following character and must stay in character "
         f"for every response, no matter what: {rp['character_prompt']}. "
@@ -848,12 +849,12 @@ async def cmd_help(ctx: commands.Context):
         "`!blackjack <amount>` — Interactive blackjack (type `hit` / `stand`)"
     ))
     help_embed.add_field(name="🎮 Games", inline=False, value=(
-        "`!hangman` — Start hangman (type guesses directly)\n"
-        "`!guess <letter or word>` — Explicit hangman guess"
+        "`!hangman [@user1 @user2]` — Start hangman (type guesses directly, invite others with mentions)\n"
+        "`!guess <letter or word>` — Explicit hangman guess (full words only via command)"
     ))
     help_embed.add_field(name="🤖 AI", inline=False, value=(
         "`!ask <question>` — Ask the AI a question\n"
-        "`!roleplay <character prompt>` — Start a roleplay (costs 50 🪙)\n"
+        "`!roleplay <character prompt> [@user1 @user2]` — Start a roleplay (costs 50 🪙, invite others with mentions)\n"
         "`!stop` — Stop roleplay / forfeit active game"
     ))
     help_embed.add_field(name="🛒 Shop", inline=False, value=(
@@ -1268,6 +1269,46 @@ async def cmd_ask(ctx: commands.Context, *, question: str = None):
     guild_id = ctx.guild.id if ctx.guild else None
     await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id)
 
+async def _wait_for_confirmations(
+    ctx: commands.Context,
+    invited_users: list,
+    title: str = "📨 Game Invite",
+    timeout: float = 10.0,
+) -> set:
+    """Wait for invited users to react with ✅ within timeout. Returns set of confirmed user IDs."""
+    if not invited_users:
+        return set()
+    invited_ids = {u.id for u in invited_users}
+    mentions = " ".join(u.mention for u in invited_users)
+    invite_msg = await ctx.send(embed=emb(
+        title,
+        f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ within 10 seconds to join!",
+        C_BLUE,
+    ))
+    await invite_msg.add_reaction("✅")
+
+    def check(reaction, user):
+        return (
+            reaction.message.id == invite_msg.id
+            and str(reaction.emoji) == "✅"
+            and user.id in invited_ids
+        )
+
+    confirmed_ids: set = set()
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            _, user = await bot.wait_for("reaction_add", check=check, timeout=remaining)
+            confirmed_ids.add(user.id)
+            if confirmed_ids == invited_ids:
+                break
+        except asyncio.TimeoutError:
+            break
+    return confirmed_ids
+
 
 @bot.command(name="roleplay")
 async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
@@ -1280,15 +1321,57 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
             return
     uid = ctx.author.id
     if character_prompt is None:
-        await ctx.send("Usage: `!roleplay <character prompt>`")
+        await ctx.send("Usage: `!roleplay <character prompt> [@user1 @user2 ...]`")
         return
+
+    # Parse mentions and clean prompt
+    invited_users = [m for m in ctx.message.mentions if m.id != uid]
+    clean_prompt = character_prompt
+    for m in ctx.message.mentions:
+        clean_prompt = clean_prompt.replace(f"<@{m.id}>", "").replace(f"<@!{m.id}>", "")
+    clean_prompt = clean_prompt.strip()
+    if not clean_prompt:
+        await ctx.send("Usage: `!roleplay <character prompt> [@user1 @user2 ...]`")
+        return
+
     cost = 0 if godmode else 50
     if cost > 0 and not deduct_balance(uid, cost):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Starting a roleplay costs **50 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
         return
-    active_roleplays[uid] = {"character_prompt": character_prompt, "channel_id": ctx.channel.id, "guild_id": ctx.guild.id if ctx.guild else None}
+
+    # Register host with participants set
+    active_roleplays[uid] = {
+        "character_prompt": clean_prompt,
+        "channel_id": ctx.channel.id,
+        "guild_id": ctx.guild.id if ctx.guild else None,
+        "participants": {uid},
+    }
     roleplay_histories[uid] = []
-    preview = character_prompt[:100] + ("..." if len(character_prompt) > 100 else "")
+
+    # Invite flow and confirmation
+    if invited_users:
+        confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="📨 Roleplay Invite")
+        for inv_uid in confirmed_ids:
+            if inv_uid not in active_roleplays:
+                active_roleplays[inv_uid] = {
+                    "character_prompt": clean_prompt,
+                    "channel_id": ctx.channel.id,
+                    "guild_id": ctx.guild.id if ctx.guild else None,
+                    "history_owner": uid,
+                }
+        active_roleplays[uid]["participants"].update(confirmed_ids)
+
+        # Show confirmation of who joined
+        if confirmed_ids:
+            confirmed_names = []
+            for cid in confirmed_ids:
+                member = ctx.guild.get_member(cid) if ctx.guild else None
+                if member:
+                    confirmed_names.append(member.display_name)
+            joined_text = ", ".join(confirmed_names) if confirmed_names else f"{len(confirmed_ids)} user(s)"
+            await ctx.send(embed=emb("✅ Joined", f"{joined_text} joined the roleplay!", C_GREEN))
+
+    preview = clean_prompt[:100] + ("..." if len(clean_prompt) > 100 else "")
     await ctx.send(embed=emb(
         "🎭 Roleplay Started",
         f"Responding as: *{preview}*\nType freely — no @mention needed. Use `!stop` to end.",
@@ -1303,9 +1386,20 @@ async def cmd_stop(ctx: commands.Context):
     stopped = []
 
     if uid in active_roleplays:
-        del active_roleplays[uid]
-        roleplay_histories.pop(uid, None)
-        stopped.append("🎭 Roleplay")
+        rp = active_roleplays[uid]
+        history_owner = rp.get("history_owner", uid)
+        if "history_owner" in rp:
+            # Participant leaving the group
+            del active_roleplays[uid]
+            if history_owner in active_roleplays:
+                active_roleplays[history_owner]["participants"].discard(uid)
+            stopped.append("🎭 Roleplay (left group)")
+        else:
+            # Host stopping — remove all participants and shared history
+            for pid in list(rp.get("participants", {uid})):
+                active_roleplays.pop(pid, None)
+            roleplay_histories.pop(uid, None)
+            stopped.append("🎭 Roleplay")
 
     if uid in active_blackjack_games:
         amount = active_blackjack_games[uid]["amount"]
