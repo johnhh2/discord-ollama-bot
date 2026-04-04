@@ -1665,12 +1665,28 @@ async def cmd_stop(ctx: commands.Context):
         stopped.append(f"🔤 Hangman (the word was `{word}`)")
 
     if cid in active_ttt_games and uid in active_ttt_games[cid]["players"]:
+        game = active_ttt_games[cid]
+        amount = game.get("amount", 0)
+        opponent_uid = [p for p in game["players"] if p != uid][0]
         del active_ttt_games[cid]
-        stopped.append("🎮 Tic-Tac-Toe")
+        if amount > 0:
+            winnings = amount * 2
+            add_balance(opponent_uid, winnings)
+            stopped.append(f"🎮 Tic-Tac-Toe (forfeited, opponent wins {winnings} 🪙)")
+        else:
+            stopped.append("🎮 Tic-Tac-Toe (forfeited)")
 
     if cid in active_c4_games and uid in active_c4_games[cid]["players"]:
+        game = active_c4_games[cid]
+        amount = game.get("amount", 0)
+        opponent_uid = [p for p in game["players"] if p != uid][0]
         del active_c4_games[cid]
-        stopped.append("🟡 Connect 4")
+        if amount > 0:
+            winnings = amount * 2
+            add_balance(opponent_uid, winnings)
+            stopped.append(f"🟡 Connect 4 (forfeited, opponent wins {winnings} 🪙)")
+        else:
+            stopped.append("🟡 Connect 4 (forfeited)")
 
     if not stopped:
         await ctx.send(embed=emb("⏹️ Nothing to Stop", "No active roleplay, blackjack, or hangman game.", C_GREY))
