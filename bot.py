@@ -853,8 +853,8 @@ async def cmd_help(ctx: commands.Context):
     help_embed.add_field(name="🎮 Games", inline=False, value=(
         "`!hangman [@user1 @user2]` — Start hangman (type guesses directly, invite others with mentions)\n"
         "`!guess <letter or word>` — Explicit hangman guess (full words only via command)\n"
-        "`!ttt @user [amount]` — Tic-Tac-Toe (use !m <1-9> to place; wins 100 🪙 or 2x wager if betting)\n"
-        "`!c4 @user [amount]` — Connect 4 (use !m <1-7> to drop; wins 100 🪙 or 2x wager if betting)\n"
+        "`!ttt @user [amount]` — Tic-Tac-Toe (use !m <1-9> to place)\n"
+        "`!c4 @user [amount]` — Connect 4 (use !m <1-7> to drop)\n"
         "`!m <number>` — Make a move in tic-tac-toe or connect 4"
     ))
     help_embed.add_field(name="🤖 AI", inline=False, value=(
@@ -1424,8 +1424,9 @@ async def cmd_move(ctx: commands.Context, pos: int = None):
             del active_ttt_games[cid]
             winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
             amount = game.get("amount", 0)
-            winnings = amount * 2 if amount > 0 else 100
-            add_balance(winner_uid, winnings)
+            winnings = amount * 2
+            if winnings > 0:
+                add_balance(winner_uid, winnings)
             await ctx.send(embed=emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{ctx.guild.get_member(winner_uid).mention} wins! **+{winnings} 🪙**", C_GREEN))
         elif all(c is not None for c in game["board"]):
             del active_ttt_games[cid]
@@ -1455,8 +1456,9 @@ async def cmd_move(ctx: commands.Context, pos: int = None):
             del active_c4_games[cid]
             winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
             amount = game.get("amount", 0)
-            winnings = amount * 2 if amount > 0 else 100
-            add_balance(winner_uid, winnings)
+            winnings = amount * 2
+            if winnings > 0:
+                add_balance(winner_uid, winnings)
             await ctx.send(embed=emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{ctx.guild.get_member(winner_uid).mention} wins! **+{winnings} 🪙**", C_GREEN))
         elif all(game["board"][r][c] is not None for r in range(6) for c in range(7)):
             del active_c4_games[cid]
