@@ -963,19 +963,28 @@ async def cmd_leaderboard(ctx: commands.Context):
     lines = []
     for i, (uid_str, data) in enumerate(sorted_users):
         uid_int = int(uid_str)
+        name = None
+        # Try guild cache first
         member = ctx.guild.get_member(uid_int)
         if member:
             name = member.display_name
-        else:
+        # Try fetching from guild if not cached
+        if name is None:
             try:
                 member = await ctx.guild.fetch_member(uid_int)
                 name = member.display_name
-            except discord.NotFound:
-                try:
-                    user = await bot.fetch_user(uid_int)
-                    name = user.display_name
-                except discord.NotFound:
-                    name = f"User {uid_str}"
+            except (discord.NotFound, discord.HTTPException):
+                pass
+        # Try global user lookup
+        if name is None:
+            try:
+                user = await bot.fetch_user(uid_int)
+                name = user.display_name
+            except (discord.NotFound, discord.HTTPException):
+                pass
+        # Fallback name
+        if name is None:
+            name = f"User {uid_str}"
         prefix = medals[i] if i < 3 else f"{i + 1}."
         lines.append(f"{prefix} **{name}** — {data['balance']} 🪙")
     await ctx.send(embed=emb("🪙 Leaderboard", "\n".join(lines), C_GREEN))
