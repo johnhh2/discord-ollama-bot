@@ -724,8 +724,8 @@ async def on_message(message: discord.Message):
         rage["remaining"] -= 1
         if rage["remaining"] <= 0:
             del active_ragebaits[uid]
-        if random.random() < 0.5:
-            asyncio.create_task(_passive_ragebait(message, list(rage["history"])))
+        
+        asyncio.create_task(_passive_ragebait(message, list(rage["history"])))
 
     # Mock: track mocked users and repeat their messages in mocking font
     if uid in active_mocks and not message.content.startswith("!"):
@@ -789,6 +789,11 @@ async def on_message(message: discord.Message):
     is_dm = isinstance(message.channel, discord.DMChannel)
     is_mentioned = bot.user in message.mentions
     in_roleplay = uid in active_roleplays and active_roleplays[uid].get("channel_id") == message.channel.id
+
+    # Ragebait and mock take precedence over normal mentions
+    if uid in active_ragebaits or uid in active_mocks:
+        await bot.process_commands(message)
+        return
 
     if not (is_dm or is_mentioned or in_roleplay):
         await bot.process_commands(message)
@@ -1362,7 +1367,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             (3000, "`!shop mock @user` — Mock someone's messages for 5 minutes — **3,000 🪙**"),
         ]
         if _si.get("ragebait", True):
-            fun_items.append((5000, "`!shop ragebait @user [topic]` — Ragebait for 10 messages — **5,000 🪙**"))
+            fun_items.append((5000, "`!shop ragebait @user [topic]` — Ragebait for 5 messages — **5,000 🪙**"))
         fun_items.sort(key=lambda x: x[0])
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
@@ -1678,7 +1683,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
                     {"role": "user", "content": prompt},
                 ], placeholder)
             await finalize(placeholder, ctx.channel, f"{target.mention} {full_response}")
-            active_ragebaits[target.id] = {"remaining": 10, "history": []}
+            active_ragebaits[target.id] = {"remaining": 4, "history": []}
         except Exception as e:
             if cost > 0:
                 add_balance(uid, cost)
