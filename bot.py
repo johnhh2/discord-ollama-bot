@@ -97,6 +97,11 @@ active_ragebaits: dict[int, dict] = {} # user_id → {remaining: int, history: l
 channel_histories: dict[int, deque] = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
 user_last_request: dict[int, float] = {}
 
+# ── Stats ─────────────────────────────────────────────────────────────────────
+bot_start_time = time.monotonic()
+stats_commands_ran: int = 0
+stats_messages_seen: int = 0
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Economy helpers
@@ -149,6 +154,25 @@ def check_rate_limit(user_id: int) -> bool:
 
 def get_system_prompt(channel_id: int) -> str:
     return channel_prompts.get(channel_id, SYSTEM_PROMPT)
+
+
+def get_memory_mb() -> float:
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except Exception:
+        pass
+    return 0.0
+
+
+def format_uptime() -> str:
+    seconds = int(time.monotonic() - bot_start_time)
+    days, r = divmod(seconds, 86400)
+    hours, r = divmod(r, 3600)
+    minutes = r // 60
+    return f"{days}d {hours}h {minutes}m"
 
 
 # ── Blackjack helpers ─────────────────────────────────────────────────────────
@@ -439,6 +463,12 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
 
 
 @bot.event
+async def on_command_completion(ctx: commands.Context):
+    global stats_commands_ran
+    stats_commands_ran += 1
+
+
+@bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     if ACTIVE_CHANNEL_IDS:
@@ -470,14 +500,18 @@ async def _auto_daily(message: discord.Message):
 async def _passive_ragebait(message: discord.Message, history: list[str]):
     context = "\n".join(history)
     ragebait_system = (
-        "You are a master provocateur. Generate a short, sharp, witty message "
-        "specifically designed to annoy and provoke the target user into an emotional "
-        "reaction. Be creative and targeted. Stay under 200 characters."
+        "You are an expert at crafting ragebait — messages specifically engineered to provoke "
+        "an emotional reaction. Your goal is to write something that will genuinely irritate, "
+        "annoy, or get under the skin of the target. "
+        "Rules: be specific to the target by name, be witty and cutting rather than just insulting, "
+        "use irony or condescension where effective, keep it under 200 characters, "
+        "and make it feel natural — like something a person would actually say. "
+        "Output only the ragebait message with no preamble, explanation, or quotation marks."
     )
     prompt = (
-        f"Generate a ragebait reply targeting {message.author.display_name} "
-        f"based on what they just said. Their recent messages for context:\n{context}\n"
-        "Just the message, no preamble."
+        f"Write a ragebait reply aimed at {message.author.display_name} based on what they just said. "
+        f"Their recent messages for context:\n{context}\n"
+        "Make it personal, pointed, and reactive to what they actually wrote."
     )
     placeholder = await message.reply("...")
     typing_task = asyncio.create_task(keep_typing(message.channel))
@@ -501,6 +535,9 @@ async def on_message(message: discord.Message):
 
     uid = message.author.id
     content_lower = message.content.strip().lower()
+
+    global stats_messages_seen
+    stats_messages_seen += 1
 
     # Passive ragebait: track targeted users and fire at 50% chance
     if uid in active_ragebaits and not message.content.startswith("!"):
@@ -604,7 +641,7 @@ async def cmd_clearhistory(ctx: commands.Context):
     await ctx.send(embed=emb("🔧 History Cleared", "Conversation history cleared for this channel.", C_GREY))
 
 
-@bot.command(name="help", aliases=["llama"])
+@bot.command(name="help", aliases=["llama", "h"])
 async def cmd_help(ctx: commands.Context):
     embed = discord.Embed(title="📖 Commands", color=0x3498db)
     embed.add_field(name="💰 Economy", inline=False, value=(
@@ -628,15 +665,34 @@ async def cmd_help(ctx: commands.Context):
     ))
     embed.add_field(name="🛒 Shop", inline=False, value=(
         "`!shop` — Browse items\n"
-        "`!shop nickname <name>` — Change own nickname (2,000 🪙)\n"
-        "`!shop nickname @user <name>` — Change someone's nickname (10,000 🪙)\n"
-        "`!shop role <name> <hex>` — Custom colored role (10,000 🪙)\n"
-        "`!shop removerole <name>` — Delete a bot-created role (2,000 🪙)\n"
-        "`!shop ragebait @user [topic]` — Ragebait someone for 10 messages (5,000 🪙)"
     ))
     embed.add_field(name="🔧 Utility", inline=False, value=(
+        "`!stats` — Show bot statistics\n"
         "`!clearhistory` — Reset AI chat history for this channel"
     ))
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="stats", aliases=["stat"])
+async def cmd_stats(ctx: commands.Context):
+    elapsed = time.monotonic() - bot_start_time
+    msg_rate = stats_messages_seen / elapsed if elapsed > 0 else 0
+    text_channels = sum(len(g.text_channels) for g in bot.guilds)
+    voice_channels = sum(len(g.voice_channels) for g in bot.guilds)
+
+    embed = discord.Embed(title="📊 Bot Stats", color=C_BLUE)
+    embed.add_field(name="🤖 Bot", value=str(bot.user), inline=True)
+    embed.add_field(name="🆔 Bot ID", value=str(bot.user.id), inline=True)
+    embed.add_field(name="⚙️ Shard", value=f"#0 / 1", inline=True)
+    embed.add_field(name="💬 Commands Ran", value=str(stats_commands_ran), inline=True)
+    embed.add_field(name="📨 Messages", value=f"{stats_messages_seen} ({msg_rate:.2f}/sec)", inline=True)
+    embed.add_field(name="🧠 Memory", value=f"{get_memory_mb():.2f} MB", inline=True)
+    embed.add_field(name="⏱️ Uptime", value=format_uptime(), inline=True)
+    embed.add_field(name="🌐 Presence", value=(
+        f"{len(bot.guilds)} Servers\n"
+        f"{text_channels} Text Channels\n"
+        f"{voice_channels} Voice Channels"
+    ), inline=True)
     await ctx.send(embed=embed)
 
 
@@ -652,8 +708,7 @@ async def cmd_adminhelp(ctx: commands.Context):
     ))
     embed.add_field(name="🤖 AI", inline=False, value=(
         "`!model [name]` — View or change the AI model\n"
-        "`!roleplaymodel [name]` — View or change the roleplay model\n"
-        "`!ragebait @user [topic]` — Generate targeted ragebait"
+        "`!roleplaymodel [name]` — View or change the roleplay model"
     ))
     embed.add_field(name="⚙️ Config", inline=False, value=(
         "`!setprompt <prompt>` — Set a custom system prompt for this channel\n"
@@ -686,14 +741,14 @@ async def cmd_daily(ctx: commands.Context):
     await ctx.send(embed=emb("🪙 Daily Reward", f"+200 🪙 claimed! Balance: **{get_balance(uid)} 🪙**", C_GREEN))
 
 
-@bot.command(name="balance")
+@bot.command(name="balance", aliases=["bal"])
 async def cmd_balance(ctx: commands.Context):
     target = ctx.message.mentions[0] if ctx.message.mentions else ctx.author
     bal = get_balance(target.id)
     await ctx.send(embed=emb("💰 Balance", f"**{target.display_name}**: {bal} 🪙", C_GREEN))
 
 
-@bot.command(name="leaderboard")
+@bot.command(name="leaderboard", aliases=["leaderboards"])
 async def cmd_leaderboard(ctx: commands.Context):
     if ctx.guild is None:
         await ctx.send("Leaderboard is only available in servers.")
@@ -707,8 +762,20 @@ async def cmd_leaderboard(ctx: commands.Context):
     medals = ["🥇", "🥈", "🥉"]
     lines = []
     for i, (uid_str, data) in enumerate(sorted_users):
-        member = ctx.guild.get_member(int(uid_str))
-        name = member.display_name if member else f"User {uid_str}"
+        uid_int = int(uid_str)
+        member = ctx.guild.get_member(uid_int)
+        if member:
+            name = member.display_name
+        else:
+            try:
+                member = await ctx.guild.fetch_member(uid_int)
+                name = member.display_name
+            except discord.NotFound:
+                try:
+                    user = await bot.fetch_user(uid_int)
+                    name = user.display_name
+                except discord.NotFound:
+                    name = f"User {uid_str}"
         prefix = medals[i] if i < 3 else f"{i + 1}."
         lines.append(f"{prefix} **{name}** — {data['balance']} 🪙")
     await ctx.send(embed=emb("🪙 Leaderboard", "\n".join(lines), C_GREEN))
@@ -718,7 +785,7 @@ async def cmd_leaderboard(ctx: commands.Context):
 # Commands — Gambling
 # ─────────────────────────────────────────────────────────────────────────────
 
-@bot.command(name="flip")
+@bot.command(name="flip", aliases=["coinflip"])
 async def cmd_flip(ctx: commands.Context, amount: str = None):
     uid = ctx.author.id
     if amount is None:
@@ -899,7 +966,7 @@ async def cmd_hangman(ctx: commands.Context):
         "wrong_guesses": 0,
         "user_id": ctx.author.id,
     }
-    await ctx.send(embed=emb("🔤 Hangman", build_hangman_display(active_hangman_games[cid]) + "\n\nJust type a letter or word to guess!", C_ORANGE))
+    await ctx.send(embed=emb("🔤 Hangman", build_hangman_display(active_hangman_games[cid]) + "\n\nJust type a letter or use `!guess` to guess the full word!", C_ORANGE))
 
 
 @bot.command(name="guess")
@@ -987,7 +1054,7 @@ async def cmd_stop(ctx: commands.Context):
         del active_blackjack_games[uid]
         stopped.append(f"🃏 Blackjack (forfeited {amount} 🪙)")
 
-    if cid in active_hangman_games:
+    if cid in active_hangman_games and active_hangman_games[cid]["user_id"] == uid:
         word = active_hangman_games[cid]["word"]
         del active_hangman_games[cid]
         stopped.append(f"🔤 Hangman (the word was `{word}`)")
@@ -1145,15 +1212,19 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **5,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
-        topic_clause = f" about {topic}" if topic else ""
+        topic_clause = f" The topic should be specifically about: {topic}." if topic else ""
         ragebait_system = (
-            "You are a master provocateur. Generate a short, sharp, witty message "
-            "specifically designed to annoy and provoke the target user into an emotional "
-            "reaction. Be creative and targeted. Stay under 200 characters."
+            "You are an expert at crafting ragebait — messages specifically engineered to provoke "
+            "an emotional reaction. Your goal is to write something that will genuinely irritate, "
+            "annoy, or get under the skin of the target. "
+            "Rules: be specific to the target by name, be witty and cutting rather than just insulting, "
+            "use irony or condescension where effective, keep it under 200 characters, "
+            "and make it feel natural — like something a person would actually say. "
+            "Output only the ragebait message with no preamble, explanation, or quotation marks."
         )
         prompt = (
-            f"Generate a ragebait message targeted at {target.display_name}{topic_clause}. "
-            "Just the message, no preamble."
+            f"Write a ragebait message aimed at {target.display_name}.{topic_clause} "
+            "Make it personal, pointed, and likely to provoke a reaction."
         )
         placeholder = await ctx.send("...")
         typing_task = asyncio.create_task(keep_typing(ctx.channel))
@@ -1190,41 +1261,6 @@ async def cmd_godmode(ctx: commands.Context):
     state = "ON" if godmode else "OFF"
     await ctx.send(embed=emb("👑 Godmode", f"Godmode is now **{state}**.", C_GOLD))
 
-
-@bot.command(name="ragebait")
-async def cmd_ragebait(ctx: commands.Context, target: discord.Member = None, *, topic: str = ""):
-    if not is_admin(ctx):
-        await ctx.send(embed=emb("❌ No Permission", "", C_RED))
-        return
-    if target is None:
-        await ctx.send("Usage: `!ragebait @user [optional topic]`")
-        return
-    topic_clause = f" about {topic}" if topic else ""
-    ragebait_system = (
-        "You are a master provocateur. Generate a short, sharp, witty message "
-        "specifically designed to annoy and provoke the target user into an emotional "
-        "reaction. Be creative and targeted. Stay under 200 characters."
-    )
-    prompt = (
-        f"Generate a ragebait message targeted at {target.display_name}{topic_clause}. "
-        "Just the message, no preamble."
-    )
-    placeholder = await ctx.send("...")
-    typing_task = asyncio.create_task(keep_typing(ctx.channel))
-    try:
-        messages = [
-            {"role": "system", "content": ragebait_system},
-            {"role": "user", "content": prompt},
-        ]
-        async with aiohttp.ClientSession() as session:
-            full_response = await stream_ollama(session, messages, placeholder)
-        await finalize(placeholder, ctx.channel, f"{target.mention} {full_response}")
-        # Register passive ragebait — 50% chance per message for next 10 messages
-        active_ragebaits[target.id] = {"remaining": 10, "history": []}
-    except Exception as e:
-        await placeholder.edit(content=f"⚠️ {e}")
-    finally:
-        typing_task.cancel()
 
 
 @bot.command(name="model")
