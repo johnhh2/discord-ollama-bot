@@ -1503,10 +1503,16 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **20,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
         try:
+            # Find or create the "bot-channels" category
+            bot_category = discord.utils.find(lambda c: isinstance(c, discord.CategoryChannel) and c.name.lower() == "bot-channels", ctx.guild.channels)
+            if bot_category is None:
+                bot_category = await ctx.guild.create_category("bot-channels")
+
             # Create channel with topic indicating it's a bot-created channel
             new_channel = await ctx.guild.create_text_channel(
                 channel_name,
-                topic=f"Created by {ctx.author.display_name}"
+                topic=f"Created by {ctx.author.display_name}",
+                category=bot_category
             )
             # Track channel in guild settings
             cfg = get_guild_cfg(ctx.guild.id)
@@ -1514,7 +1520,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
                 cfg["bot_channels"] = []
             cfg["bot_channels"].append(new_channel.id)
             save_guild_settings()
-            await ctx.send(embed=emb("✅ Channel Created", f"Channel {new_channel.mention} created!", C_GREEN))
+            await ctx.send(embed=emb("✅ Channel Created", f"Channel {new_channel.mention} created in #bot-channels!", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
                 add_balance(uid, cost)
@@ -1983,9 +1989,6 @@ async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
     try:
         event["rewarded"].add(user.id)
         add_balance(user.id, event["amount"])
-        await reaction.message.channel.send(
-            f"✅ **{user.display_name}** earned **{event['amount']} 🪙**!"
-        )
     except Exception as e:
         print(f"[event] Error rewarding {user.id}: {e}")
         event["rewarded"].discard(user.id)
