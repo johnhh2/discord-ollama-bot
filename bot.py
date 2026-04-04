@@ -1303,6 +1303,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if _si.get("nickname", True):
             _items.append("`!shop nickname <new_name>` — Change your own nickname — **2,000 🪙**")
             _items.append("`!shop nickname @user <new_name>` — Change someone else's nickname — **10,000 🪙**")
+            _items.append("`!shop removenickname` — Remove your own nickname — **2,000 🪙**")
         if _si.get("role", True):
             _items.append("`!shop role <name> <hex>` — Create a custom colored role — **10,000 🪙**")
         if _si.get("removerole", True):
@@ -1354,6 +1355,31 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             if cost > 0:
                 add_balance(uid, cost)
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to change that nickname.", C_RED))
+        except discord.HTTPException as e:
+            if cost > 0:
+                add_balance(uid, cost)
+            await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
+        return
+
+    # ── !shop removenickname ──────────────────────────────────────────────────
+    if subcommand == "removenickname":
+        if not _shop_cfg.get("nickname", True):
+            await ctx.send(embed=emb("🛒 Disabled", "The nickname shop item is disabled in this server.", C_GREY))
+            return
+        cost = 0 if godmode else 2000
+        if is_insured(uid, "nickname"):
+            await ctx.send(embed=emb("🛡️ Protected", "You have insurance and can't have your nickname changed.", C_GOLD))
+            return
+        if cost > 0 and not deduct_balance(uid, cost):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **2,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
+        try:
+            await ctx.author.edit(nick=None)
+            await ctx.send(embed=emb("✅ Nickname Removed", "Your nickname has been reset to your username.", C_GREEN))
+        except discord.Forbidden:
+            if cost > 0:
+                add_balance(uid, cost)
+            await ctx.send(embed=emb("❌ No Permission", "I don't have permission to change your nickname.", C_RED))
         except discord.HTTPException as e:
             if cost > 0:
                 add_balance(uid, cost)
