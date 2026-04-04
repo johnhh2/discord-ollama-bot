@@ -1430,7 +1430,13 @@ async def cmd_move(ctx: commands.Context, pos: int = None):
             await ctx.send(embed=emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{ctx.guild.get_member(winner_uid).mention} wins! **+{winnings} 🪙**", C_GREEN))
         elif all(c is not None for c in game["board"]):
             del active_ttt_games[cid]
-            await ctx.send(embed=emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + "\n\nIt's a draw!", C_GOLD))
+            amount = game.get("amount", 0)
+            if amount > 0:
+                for player_uid in game["players"]:
+                    add_balance(player_uid, amount)
+                await ctx.send(embed=emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + f"\n\nIt's a draw! Each player gets {amount} 🪙 back.", C_GOLD))
+            else:
+                await ctx.send(embed=emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + "\n\nIt's a draw!", C_GOLD))
         else:
             players = game["players"]
             game["current"] = players[1] if uid == players[0] else players[0]
@@ -1462,7 +1468,13 @@ async def cmd_move(ctx: commands.Context, pos: int = None):
             await ctx.send(embed=emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{ctx.guild.get_member(winner_uid).mention} wins! **+{winnings} 🪙**", C_GREEN))
         elif all(game["board"][r][c] is not None for r in range(6) for c in range(7)):
             del active_c4_games[cid]
-            await ctx.send(embed=emb("🤝 Connect 4 Draw", build_c4_display(game) + "\n\nIt's a draw!", C_GOLD))
+            amount = game.get("amount", 0)
+            if amount > 0:
+                for player_uid in game["players"]:
+                    add_balance(player_uid, amount)
+                await ctx.send(embed=emb("🤝 Connect 4 Draw", build_c4_display(game) + f"\n\nIt's a draw! Each player gets {amount} 🪙 back.", C_GOLD))
+            else:
+                await ctx.send(embed=emb("🤝 Connect 4 Draw", build_c4_display(game) + "\n\nIt's a draw!", C_GOLD))
         else:
             players = game["players"]
             game["current"] = players[1] if uid == players[0] else players[0]
