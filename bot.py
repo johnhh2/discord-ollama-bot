@@ -187,6 +187,8 @@ active_roleplays: dict[int, dict] = {}
 roleplay_histories: dict[int, list] = {}
 active_events: dict[int, dict] = {}     # message_id → {amount, rewarded: set}
 active_ragebaits: dict[int, dict] = {} # user_id → {remaining: int, history: list[str]}
+active_ttt_games: dict[int, dict] = {}  # channel_id → {board, players, marks, current}
+active_c4_games: dict[int, dict] = {}   # channel_id → {board, players, marks, current}
 
 # ── Misc state ────────────────────────────────────────────────────────────────
 channel_histories: dict[int, deque] = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
@@ -850,7 +852,10 @@ async def cmd_help(ctx: commands.Context):
     ))
     help_embed.add_field(name="🎮 Games", inline=False, value=(
         "`!hangman [@user1 @user2]` — Start hangman (type guesses directly, invite others with mentions)\n"
-        "`!guess <letter or word>` — Explicit hangman guess (full words only via command)"
+        "`!guess <letter or word>` — Explicit hangman guess (full words only via command)\n"
+        "`!ttt @user` — Tic-Tac-Toe (use !m <1-9> to place, wins 100 🪙)\n"
+        "`!c4 @user` — Connect 4 (use !m <1-7> to drop, wins 100 🪙)\n"
+        "`!m <number>` — Make a move in tic-tac-toe or connect 4"
     ))
     help_embed.add_field(name="🤖 AI", inline=False, value=(
         "`!ask <question>` — Ask the AI a question\n"
@@ -1085,6 +1090,64 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         ))
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# Tic-Tac-Toe & Connect 4 Helpers
+# ─────────────────────────────────────────────────────────────────────────
+
+def build_ttt_display(game: dict) -> str:
+    """Build a tic-tac-toe board display from game state."""
+    NUM_EMOJIS = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣"]
+    board = game["board"]
+    row1 = (board[0] or NUM_EMOJIS[0]) + (board[1] or NUM_EMOJIS[1]) + (board[2] or NUM_EMOJIS[2])
+    row2 = (board[3] or NUM_EMOJIS[3]) + (board[4] or NUM_EMOJIS[4]) + (board[5] or NUM_EMOJIS[5])
+    row3 = (board[6] or NUM_EMOJIS[6]) + (board[7] or NUM_EMOJIS[7]) + (board[8] or NUM_EMOJIS[8])
+    return f"{row1}\n{row2}\n{row3}"
+
+
+def build_c4_display(game: dict) -> str:
+    """Build a connect 4 board display from game state."""
+    COL_EMOJIS = "1️⃣2️⃣3️⃣4️⃣5️⃣6️⃣7️⃣"
+    board = game["board"]
+    display = COL_EMOJIS + "\n"
+    for row in board:
+        display += "".join(cell or "⚫" for cell in row) + "\n"
+    return display.strip()
+
+
+def check_ttt_winner(board: list) -> str | None:
+    """Check if there's a winner in tic-tac-toe. Return winning mark or None."""
+    LINES = [(0,1,2),(3,4,5),(6,7,8),(0,3,6),(1,4,7),(2,5,8),(0,4,8),(2,4,6)]
+    for a, b, c in LINES:
+        if board[a] and board[a] == board[b] == board[c]:
+            return board[a]
+    return None
+
+
+def check_c4_winner(board: list) -> str | None:
+    """Check if there's a winner in connect 4. Return winning mark or None."""
+    # Check horizontal
+    for r in range(6):
+        for c in range(4):
+            if board[r][c] and board[r][c] == board[r][c+1] == board[r][c+2] == board[r][c+3]:
+                return board[r][c]
+    # Check vertical
+    for r in range(3):
+        for c in range(7):
+            if board[r][c] and board[r][c] == board[r+1][c] == board[r+2][c] == board[r+3][c]:
+                return board[r][c]
+    # Check diagonal (↗)
+    for r in range(3):
+        for c in range(4):
+            if board[r][c] and board[r][c] == board[r+1][c+1] == board[r+2][c+2] == board[r+3][c+3]:
+                return board[r][c]
+    # Check diagonal (↖)
+    for r in range(3, 6):
+        for c in range(4):
+            if board[r][c] and board[r][c] == board[r-1][c+1] == board[r-2][c+2] == board[r-3][c+3]:
+                return board[r][c]
+    return None
+
+
 @bot.command(name="blackjack")
 async def cmd_blackjack(ctx: commands.Context, amount: str = None):
     uid = ctx.author.id
@@ -1221,6 +1284,128 @@ async def cmd_guess(ctx: commands.Context, *, guess: str = None):
         await ctx.send(embed=emb("🔤 Hangman", "Usage: `!guess <letter or word>`", C_ORANGE))
         return
     await _process_hangman_guess(ctx.channel, ctx.author.id, cid, guess.lower().strip())
+
+
+@bot.command(name="ttt")
+async def cmd_ttt(ctx: commands.Context, *args):
+    cid = ctx.channel.id
+    uid = ctx.author.id
+    if cid in active_ttt_games or cid in active_c4_games:
+        await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
+        return
+    if not ctx.message.mentions:
+        await ctx.send("Usage: `!ttt @user`")
+        return
+    invited = ctx.message.mentions[0]
+    if invited.id == uid:
+        await ctx.send(embed=emb("❌ Can't Invite Yourself", "Pick a different opponent.", C_RED))
+        return
+    confirmed = await _wait_for_confirmations(ctx, [invited], title="📨 Tic-Tac-Toe Invite")
+    if not confirmed:
+        await ctx.send(embed=emb("❌ Invite Declined", f"{invited.display_name} didn't accept.", C_RED))
+        return
+    active_ttt_games[cid] = {
+        "board": [None]*9,
+        "players": [uid, invited.id],
+        "marks": {uid: "❌", invited.id: "⭕"},
+        "current": uid,
+    }
+    game = active_ttt_games[cid]
+    await ctx.send(embed=emb("🎮 Tic-Tac-Toe Started", build_ttt_display(game) + f"\n\n{ctx.author.mention} (❌) vs {invited.mention} (⭕)\n{ctx.author.mention}'s turn. Use `!m <1-9>`", C_BLUE))
+
+
+@bot.command(name="c4")
+async def cmd_c4(ctx: commands.Context, *args):
+    cid = ctx.channel.id
+    uid = ctx.author.id
+    if cid in active_ttt_games or cid in active_c4_games:
+        await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
+        return
+    if not ctx.message.mentions:
+        await ctx.send("Usage: `!c4 @user`")
+        return
+    invited = ctx.message.mentions[0]
+    if invited.id == uid:
+        await ctx.send(embed=emb("❌ Can't Invite Yourself", "Pick a different opponent.", C_RED))
+        return
+    confirmed = await _wait_for_confirmations(ctx, [invited], title="📨 Connect 4 Invite")
+    if not confirmed:
+        await ctx.send(embed=emb("❌ Invite Declined", f"{invited.display_name} didn't accept.", C_RED))
+        return
+    active_c4_games[cid] = {
+        "board": [[None]*7 for _ in range(6)],
+        "players": [uid, invited.id],
+        "marks": {uid: "🔴", invited.id: "🟡"},
+        "current": uid,
+    }
+    game = active_c4_games[cid]
+    await ctx.send(embed=emb("🟡 Connect 4 Started", build_c4_display(game) + f"\n\n{ctx.author.mention} (🔴) vs {invited.mention} (🟡)\n{ctx.author.mention}'s turn. Use `!m <1-7>`", C_BLUE))
+
+
+@bot.command(name="m")
+async def cmd_move(ctx: commands.Context, pos: int = None):
+    cid = ctx.channel.id
+    uid = ctx.author.id
+
+    if cid in active_ttt_games:
+        game = active_ttt_games[cid]
+        if uid != game["current"]:
+            await ctx.send(embed=emb("⏳ Not Your Turn", f"Waiting for {ctx.guild.get_member(game['current']).mention if ctx.guild else 'opponent'}.", C_GOLD))
+            return
+        if pos is None or not 1 <= pos <= 9:
+            await ctx.send("Use `!m <1-9>` to place your mark.")
+            return
+        idx = pos - 1
+        if game["board"][idx] is not None:
+            await ctx.send(embed=emb("❌ Taken", "That square is already taken.", C_RED))
+            return
+        game["board"][idx] = game["marks"][uid]
+        winner = check_ttt_winner(game["board"])
+        if winner:
+            del active_ttt_games[cid]
+            winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
+            add_balance(winner_uid, 100)
+            await ctx.send(embed=emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{ctx.guild.get_member(winner_uid).mention} wins! **+100 🪙**", C_GREEN))
+        elif all(c is not None for c in game["board"]):
+            del active_ttt_games[cid]
+            await ctx.send(embed=emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + "\n\nIt's a draw!", C_GOLD))
+        else:
+            players = game["players"]
+            game["current"] = players[1] if uid == players[0] else players[0]
+            next_player = ctx.guild.get_member(game["current"]) if ctx.guild else None
+            await ctx.send(embed=emb("🎮 Tic-Tac-Toe", build_ttt_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn.", C_BLUE))
+
+    elif cid in active_c4_games:
+        game = active_c4_games[cid]
+        if uid != game["current"]:
+            await ctx.send(embed=emb("⏳ Not Your Turn", f"Waiting for {ctx.guild.get_member(game['current']).mention if ctx.guild else 'opponent'}.", C_GOLD))
+            return
+        if pos is None or not 1 <= pos <= 7:
+            await ctx.send("Use `!m <1-7>` to drop a piece.")
+            return
+        col = pos - 1
+        row = next((r for r in range(5, -1, -1) if game["board"][r][col] is None), None)
+        if row is None:
+            await ctx.send(embed=emb("❌ Column Full", "That column is full.", C_RED))
+            return
+        game["board"][row][col] = game["marks"][uid]
+        winner = check_c4_winner(game["board"])
+        if winner:
+            del active_c4_games[cid]
+            winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
+            add_balance(winner_uid, 100)
+            await ctx.send(embed=emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{ctx.guild.get_member(winner_uid).mention} wins! **+100 🪙**", C_GREEN))
+        elif all(game["board"][r][c] is not None for r in range(6) for c in range(7)):
+            del active_c4_games[cid]
+            await ctx.send(embed=emb("🤝 Connect 4 Draw", build_c4_display(game) + "\n\nIt's a draw!", C_GOLD))
+        else:
+            players = game["players"]
+            game["current"] = players[1] if uid == players[0] else players[0]
+            next_player = ctx.guild.get_member(game["current"]) if ctx.guild else None
+            await ctx.send(embed=emb("🟡 Connect 4", build_c4_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn.", C_BLUE))
+
+    else:
+        await ctx.send(embed=emb("❌ No Game", "No active tic-tac-toe or connect 4 game in this channel.", C_GREY))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1415,6 +1600,14 @@ async def cmd_stop(ctx: commands.Context):
         word = active_hangman_games[cid]["word"]
         del active_hangman_games[cid]
         stopped.append(f"🔤 Hangman (the word was `{word}`)")
+
+    if cid in active_ttt_games and uid in active_ttt_games[cid]["players"]:
+        del active_ttt_games[cid]
+        stopped.append("🎮 Tic-Tac-Toe")
+
+    if cid in active_c4_games and uid in active_c4_games[cid]["players"]:
+        del active_c4_games[cid]
+        stopped.append("🟡 Connect 4")
 
     if not stopped:
         await ctx.send(embed=emb("⏹️ Nothing to Stop", "No active roleplay, blackjack, or hangman game.", C_GREY))
