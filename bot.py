@@ -1608,12 +1608,15 @@ async def cmd_rig(ctx: commands.Context):
         await ctx.send(embed=emb("❌ No Permission", "Only bot admins can use this command.", C_RED))
         return
 
-    uid = ctx.author.id
+    # Use mentioned user or default to command author
+    target = ctx.message.mentions[0] if ctx.message.mentions else ctx.author
+    uid = target.id
     rigged_slots.add(uid)
 
+    target_text = f"{target.mention}'s" if ctx.message.mentions else "Your"
     await ctx.send(embed=emb(
         "🎰 Slots Rigged",
-        f"Your next `!slots` spin will hit the **7️⃣7️⃣7️⃣ jackpot**!",
+        f"{target_text} next `!slots` spin will hit the **7️⃣7️⃣7️⃣ jackpot**!",
         C_GOLD,
     ))
 
