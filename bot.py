@@ -1263,6 +1263,7 @@ async def cmd_adminhelp(ctx: commands.Context):
         "`!settings cmd-blacklist #ch... / clear` — Disallow commands in channels\n"
         "`!settings chess-channels #ch... / clear` — Restrict chess to channels\n"
         "`!settings shop <item> on|off` — Toggle shop items\n"
+        "`!settings quote bypass on|off` — Allow quote in any channel (bypass restrictions)\n"
         "`!settings rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` — rule34 config"
     ))
     admin_embed.add_field(name="🔍 Moderation", inline=False, value=(
@@ -3336,7 +3337,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
 # Commands — Settings
 # ─────────────────────────────────────────────────────────────────────────────
 
-@bot.command(name="settings")
+@bot.command(name="settings", aliases=["setting"])
 async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
     if ctx.guild is None:
         await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
@@ -3529,6 +3530,28 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("⚙️ rule34 Banned Tags", val, C_GREY))
         else:
             await ctx.send(embed=emb("⚙️ rule34", "Usage: `!settings rule34 on|off` / `channels <add|remove|list> [#channel]` / `ban <tag>` / `unban <tag>` / `banned`", C_GREY))
+        return
+
+    # ── quote ────────────────────────────────────────────────────────────────
+    if subcommand == "quote":
+        if not args:
+            await ctx.send(embed=emb("⚙️ quote", "Usage: `!settings quote bypass on|off`", C_GREY))
+            return
+        action = args[0].lower()
+        if action == "bypass":
+            if len(args) < 2:
+                await ctx.send(embed=emb("⚙️ quote", "Usage: `!settings quote bypass on|off`", C_GREY))
+                return
+            bypass_action = args[1].lower()
+            if bypass_action in ("on", "off"):
+                cfg["quote_bypass_restrictions"] = (bypass_action == "on")
+                save_guild_settings()
+                status = "✅ enabled" if bypass_action == "on" else "❌ disabled"
+                await ctx.send(embed=emb("⚙️ quote", f"Quote bypass is now {status} (quote works in any channel).", C_GREEN))
+            else:
+                await ctx.send(embed=emb("⚙️ quote", "Usage: `!settings quote bypass on|off`", C_GREY))
+        else:
+            await ctx.send(embed=emb("⚙️ quote", "Usage: `!settings quote bypass on|off`", C_GREY))
         return
 
     await ctx.send(embed=emb("⚙️ Settings", "Unknown subcommand. Use `!settings` to see options.", C_GREY))
@@ -4120,6 +4143,30 @@ async def cmd_quote(ctx: commands.Context, channel: discord.TextChannel = None, 
     - !quote @user — search quotes from user in current channel
     - !quote #channel @user — search quotes from user in specific channel
     """
+    # Check if quote should bypass channel restrictions
+    if ctx.guild:
+        cfg = get_guild_cfg(ctx.guild.id)
+        bypass_enabled = cfg.get("quote_bypass_restrictions", False)
+
+        # If bypass is not enabled, check channel restrictions
+        if not bypass_enabled:
+            ai_channels = cfg.get("ai_channels", [])
+            command_blacklist = cfg.get("command_blacklist", [])
+
+            channel_allowed = True
+            if ai_channels:
+                channel_allowed = ctx.channel.id in ai_channels
+            elif ctx.channel.id in command_blacklist:
+                channel_allowed = False
+
+            if not channel_allowed:
+                if ai_channels:
+                    names = " ".join(f"<#{cid}>" for cid in ai_channels)
+                    await ctx.send(embed=emb("❌ Wrong Channel", f"Quote is only allowed in: {names}", C_RED))
+                else:
+                    await ctx.send(embed=emb("❌ Wrong Channel", "Quote is not allowed in this channel.", C_RED))
+                return
+
     await ctx.typing()
 
     try:
