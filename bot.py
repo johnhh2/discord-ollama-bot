@@ -1111,7 +1111,7 @@ async def cmd_help(ctx: commands.Context):
     help_embed.add_field(name="🎉 Fun", inline=False, value=(
         "`!dog` — Random dog picture\n"
         "`!cat` — Random cat picture\n"
-        "`!quote` — Find a funny/controversial message to quote"
+        "`!quote [#channel] [@user]` — Find spicy/volatile messages to quote"
     ))
     help_embed.add_field(name="🔧 Utility", inline=False, value=(
         "`!stats` — Show bot statistics\n"
@@ -1269,7 +1269,7 @@ async def cmd_adminhelp(ctx: commands.Context):
         "`!audit` — Last 5 failed command attempts\n"
         "`!clear [n]` — Delete last n bot messages (default 50)\n"
         "`!clearall <n>` — Delete last n messages (any author)\n"
-        "`!saves` — Show persistent data (admin-only)"
+        "`!persistent` — Show persistent data (admin-only)"
     ))
     if is_admin(ctx):
         admin_embed.add_field(name="🪙 Economy", inline=False, value=(
@@ -3620,8 +3620,8 @@ async def cmd_clearall(ctx: commands.Context, n: str = None):
         await ctx.send(embed=emb("❌ Error", f"Failed to delete messages: {str(e)}", C_RED))
 
 
-@bot.command(name="saves")
-async def cmd_saves(ctx: commands.Context):
+@bot.command(name="persistent")
+async def cmd_persistent(ctx: commands.Context):
     if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
         return
@@ -4146,14 +4146,14 @@ async def cmd_quote(ctx: commands.Context, channel: discord.TextChannel = None, 
             return
 
         # Use AI to identify funny/controversial messages
-        prompt = f"""Given these {len(messages)} chat messages, identify the most funny and/or controversial one that would make a good quote. Consider humor, absurdity, controversial takes, and memorable moments.
+        prompt = f"""Given these {len(messages)} chat messages, identify the most volatile and entertaining one to quote. Prioritize messages with strong emotional language, bold opinions, spicy takes, or wild claims. Look for messages that spark reactions or controversy.
 
 Messages:
 {chr(10).join(f'{i+1}. [{m["author"]}]: {m["content"]}' for i, m in enumerate(messages[:50]))}
 
-Respond with ONLY the message number (just the number, nothing else) of the funniest/most controversial message."""
+Respond with ONLY the message number (just the number, nothing else) of the most volatile/entertaining message."""
 
-        system_prompt = "You are an expert at identifying funny and controversial messages in chat. Be objective and pick based on what would be entertaining to quote."
+        system_prompt = "You are an expert at identifying volatile, spicy, and entertaining messages in chat. Prioritize messages with strong emotions, controversial opinions, and bold claims. Pick messages that would generate reactions if quoted."
 
         placeholder = await ctx.send("🔍 Searching for quotes...")
         typing_task = asyncio.create_task(keep_typing(ctx.channel))
