@@ -3632,18 +3632,14 @@ async def cmd_adminragebait(ctx: commands.Context, user_input: str = None, n: st
 
     # Determine target user ID
     uid = None
-    user_name = "user"
 
     if ctx.message.mentions:
         # Priority: use mention if present
-        target = ctx.message.mentions[0]
-        uid = target.id
-        user_name = target.display_name
+        uid = ctx.message.mentions[0].id
     else:
         # Try to parse as user ID
         try:
             uid = int(user_input)
-            user_name = f"user {uid}"
         except ValueError:
             await ctx.send(embed=emb("❌ Invalid Input", f"Could not parse `{user_input}` as a user ID or mention.", C_RED))
             return
@@ -3660,11 +3656,6 @@ async def cmd_adminragebait(ctx: commands.Context, user_input: str = None, n: st
 
     active_ragebaits[uid] = {"remaining": count, "history": []}
     save_ragebait()
-    await ctx.send(embed=emb(
-        "🎭 Ragebait Activated",
-        f"**{user_name}** will be ragebait'd for the next **{count}** message(s)!",
-        C_PURPLE,
-    ))
 
 
 @bot.command(name="model")
