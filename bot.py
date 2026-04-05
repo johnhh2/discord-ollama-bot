@@ -1507,6 +1507,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         await ctx.send(embed=emb(
             "🎰 Slots",
             f"Usage: `!slots <amount>`\n"
+            f"Minimum bet: 25 🪙"
             f"**Progressive Jackpot: {slot_jackpot:,} 🪙**",
             C_GOLD,
         ))
