@@ -1186,7 +1186,7 @@ async def cmd_adminhelp(ctx: commands.Context):
         "`!settings cmd-blacklist #ch... / clear` — Disallow commands in channels\n"
         "`!settings chess-channels #ch... / clear` — Restrict chess to channels\n"
         "`!settings shop <item> on|off` — Toggle shop items\n"
-        "`!settings rule34 on|off / ban <tag> / unban <tag> / banned` — rule34 config"
+        "`!settings rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` — rule34 config"
     ))
     admin_embed.add_field(name="🔍 Moderation", inline=False, value=(
         "`!audit` — Last 5 failed command attempts\n"
@@ -3027,6 +3027,7 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         chess_channels = cfg.get("chess_channels", [])
         shop_items = cfg.get("shop_items", {})
         r34_enabled = cfg.get("rule34_enabled", True)
+        r34_channels = cfg.get("rule34_channels", [])
         r34_banned = cfg.get("rule34_banned_tags", [])
 
         ai_val = " ".join(f"<#{c}>" for c in ai_channels) if ai_channels else "all channels"
@@ -3038,6 +3039,8 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
             f"{n} {'✅' if shop_items.get(n, True) else '❌'}" for n in item_names
         )
         r34_val = ("✅ enabled" if r34_enabled else "❌ disabled")
+        r34_ch_val = " ".join(f"<#{c}>" for c in r34_channels) if r34_channels else "all channels"
+        r34_val += f"\nChannels: {r34_ch_val}"
         if r34_banned:
             r34_val += f"\nBanned tags: {', '.join(r34_banned)}"
 
@@ -3051,7 +3054,7 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         footer_text = (
             "Subcommands:\n"
             "`ai-channels #ch... / clear` • `cmd-whitelist #ch... / clear` • `cmd-blacklist #ch... / clear` • `chess-channels #ch... / clear`\n"
-            "`shop <item> on|off` • `rule34 on|off / ban <tag> / unban <tag> / banned`"
+            "`shop <item> on|off` • `rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned`"
         )
         embed.set_footer(text=footer_text)
         await ctx.send(embed=embed)
@@ -3136,7 +3139,7 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
     # ── rule34 ────────────────────────────────────────────────────────────────
     if subcommand == "rule34":
         if not args:
-            await ctx.send(embed=emb("⚙️ rule34", "Usage: `!settings rule34 on|off` / `ban <tag>` / `unban <tag>` / `banned`", C_GREY))
+            await ctx.send(embed=emb("⚙️ rule34", "Usage: `!settings rule34 on|off` / `channels <add|remove|list> [#channel]` / `ban <tag>` / `unban <tag>` / `banned`", C_GREY))
             return
         action = args[0].lower()
         if action in ("on", "off"):
@@ -3144,6 +3147,38 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
             save_guild_settings()
             status = "✅ enabled" if action == "on" else "❌ disabled"
             await ctx.send(embed=emb("⚙️ rule34", f"rule34 is now {status}.", C_GREEN))
+        elif action == "channels":
+            if len(args) < 2:
+                await ctx.send(embed=emb("⚙️ rule34", "Usage: `!settings rule34 channels <add|remove|list> [#channel]`", C_GREY))
+                return
+            channel_action = args[1].lower()
+            r34_channels = cfg.setdefault("rule34_channels", [])
+
+            if channel_action == "add":
+                if not ctx.message.channel_mentions:
+                    await ctx.send(embed=emb("⚙️ rule34", "Please mention a channel to add.", C_GREY))
+                    return
+                for channel in ctx.message.channel_mentions:
+                    if channel.id not in r34_channels:
+                        r34_channels.append(channel.id)
+                save_guild_settings()
+                names = " ".join(f"<#{cid}>" for cid in ctx.message.channel_mentions)
+                await ctx.send(embed=emb("⚙️ rule34 Channels", f"Added {names} to whitelist.", C_GREEN))
+            elif channel_action == "remove":
+                if not ctx.message.channel_mentions:
+                    await ctx.send(embed=emb("⚙️ rule34", "Please mention a channel to remove.", C_GREY))
+                    return
+                for channel in ctx.message.channel_mentions:
+                    if channel.id in r34_channels:
+                        r34_channels.remove(channel.id)
+                save_guild_settings()
+                names = " ".join(f"<#{cid}>" for cid in ctx.message.channel_mentions)
+                await ctx.send(embed=emb("⚙️ rule34 Channels", f"Removed {names} from whitelist.", C_GREEN))
+            elif channel_action == "list":
+                val = " ".join(f"<#{cid}>" for cid in r34_channels) if r34_channels else "none"
+                await ctx.send(embed=emb("⚙️ rule34 Channels", val, C_GREY))
+            else:
+                await ctx.send(embed=emb("⚙️ rule34", "Usage: `!settings rule34 channels <add|remove|list> [#channel]`", C_GREY))
         elif action == "ban" and len(args) >= 2:
             tag = args[1].lower()
             banned = cfg.setdefault("rule34_banned_tags", [])
@@ -3165,7 +3200,7 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
             val = ", ".join(f"`{t}`" for t in banned) if banned else "none"
             await ctx.send(embed=emb("⚙️ rule34 Banned Tags", val, C_GREY))
         else:
-            await ctx.send(embed=emb("⚙️ rule34", "Usage: `!settings rule34 on|off` / `ban <tag>` / `unban <tag>` / `banned`", C_GREY))
+            await ctx.send(embed=emb("⚙️ rule34", "Usage: `!settings rule34 on|off` / `channels <add|remove|list> [#channel]` / `ban <tag>` / `unban <tag>` / `banned`", C_GREY))
         return
 
     await ctx.send(embed=emb("⚙️ Settings", "Unknown subcommand. Use `!settings` to see options.", C_GREY))
@@ -3538,6 +3573,14 @@ async def cmd_rule34(ctx: commands.Context, *, tags: str = ""):
     if not cfg.get("rule34_enabled", False):
         await ctx.send(embed=emb("🔞 Disabled", "rule34 is disabled in this server.", C_GREY))
         return
+
+    # Check channel whitelist
+    if ctx.guild:
+        r34_channels = cfg.get("rule34_channels", [])
+        if r34_channels and ctx.channel.id not in r34_channels:
+            names = " ".join(f"<#{cid}>" for cid in r34_channels)
+            await ctx.send(embed=emb("❌ Wrong Channel", f"rule34 is only allowed in: {names}", C_RED))
+            return
     await ctx.typing()
     _STOP = {"and", "or", "with", "the", "a", "an"}
     tag_parts = [w for w in tags.strip().split() if w.lower() not in _STOP]
