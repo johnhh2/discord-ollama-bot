@@ -3825,7 +3825,9 @@ async def cmd_rule34(ctx: commands.Context, *, tags: str = ""):
         await ctx.send(embed=emb("🔞 rule34", f"No results for `{label}`.", C_GREY))
         return
 
-    post = random.choice(posts)
+    # Shuffle and pick a random result from the first page
+    random.shuffle(posts)
+    post = posts[0]
     file_url = post["file_url"]
     display = search_tags.replace("+", " ") if tag_parts else "random"
 
