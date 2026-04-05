@@ -1267,7 +1267,9 @@ async def cmd_adminhelp(ctx: commands.Context):
     ))
     admin_embed.add_field(name="🔍 Moderation", inline=False, value=(
         "`!audit` — Last 5 failed command attempts\n"
-        "`!clear [n]` — Delete last n bot messages (default 50)"
+        "`!clear [n]` — Delete last n bot messages (default 50)\n"
+        "`!clearall <n>` — Delete last n messages (any author)\n"
+        "`!saves` — Show persistent data (admin-only)"
     ))
     if is_admin(ctx):
         admin_embed.add_field(name="🪙 Economy", inline=False, value=(
@@ -3616,6 +3618,68 @@ async def cmd_clearall(ctx: commands.Context, n: str = None):
         await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete messages.", C_RED))
     except Exception as e:
         await ctx.send(embed=emb("❌ Error", f"Failed to delete messages: {str(e)}", C_RED))
+
+
+@bot.command(name="saves")
+async def cmd_saves(ctx: commands.Context):
+    if not is_admin(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        return
+
+    embed = discord.Embed(title="💾 Persistent Data", color=C_GOLD)
+
+    # Insurance data
+    embed.add_field(
+        name="🛡️ Insurance",
+        value=f"**{len(insurance)}** users with active insurance",
+        inline=False
+    )
+
+    # Mock data
+    embed.add_field(
+        name="🎭 Mock",
+        value=f"**{len(active_mocks)}** users being mocked",
+        inline=False
+    )
+
+    # Ragebait data
+    embed.add_field(
+        name="🎯 Ragebait",
+        value=f"**{len(active_ragebaits)}** users with ragebait active",
+        inline=False
+    )
+
+    # Rigged slots
+    embed.add_field(
+        name="🎰 Rigged Slots",
+        value=f"**{len(rigged_slots)}** users rigged for jackpot",
+        inline=False
+    )
+
+    # Godmode users
+    embed.add_field(
+        name="👑 Godmode",
+        value=f"**{len(godmode_users)}** users with godmode",
+        inline=False
+    )
+
+    # Slot jackpot
+    embed.add_field(
+        name="💰 Slot Jackpot",
+        value=f"**{slot_jackpot:,} 🪙** in jackpot",
+        inline=False
+    )
+
+    # Economy stats
+    total_users = len(economy.get("users", {}))
+    total_balance = sum(u.get("balance", 0) for u in economy.get("users", {}).values())
+    embed.add_field(
+        name="🪙 Economy",
+        value=f"**{total_users}** users with **{total_balance:,} 🪙** total balance",
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
