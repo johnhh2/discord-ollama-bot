@@ -3393,6 +3393,51 @@ async def cmd_clear(ctx: commands.Context, n: int = 50):
     await confirm.delete()
 
 
+@bot.command(name="clearall")
+async def cmd_clearall(ctx: commands.Context, n: str = None):
+    if not is_admin(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        return
+
+    if n is None:
+        await ctx.send(embed=emb("❌ Missing Argument", "Usage: `!clearall <n>` — Delete last n messages", C_RED))
+        return
+
+    try:
+        n = int(n)
+        if n <= 0:
+            await ctx.send(embed=emb("❌ Invalid Number", "Please provide a positive integer.", C_RED))
+            return
+        if n > 100:
+            await ctx.send(embed=emb("❌ Too Many", "Maximum 100 messages at a time.", C_RED))
+            return
+    except ValueError:
+        await ctx.send(embed=emb("❌ Invalid Input", "Please provide a valid number.", C_RED))
+        return
+
+    try:
+        messages = []
+        async for message in ctx.channel.history(limit=n):
+            messages.append(message)
+
+        if not messages:
+            await ctx.send(embed=emb("❌ No Messages", "No messages found to delete.", C_RED))
+            return
+
+        await ctx.channel.delete_messages(messages)
+        confirm = await ctx.send(embed=emb(
+            "🗑️ Cleared All",
+            f"Deleted {len(messages)} message{'s' if len(messages) != 1 else ''}.",
+            C_GREY,
+        ))
+        await asyncio.sleep(5)
+        await confirm.delete()
+    except discord.Forbidden:
+        await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete messages.", C_RED))
+    except Exception as e:
+        await ctx.send(embed=emb("❌ Error", f"Failed to delete messages: {str(e)}", C_RED))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Commands — Admin (.xeph only)
 # ─────────────────────────────────────────────────────────────────────────────
