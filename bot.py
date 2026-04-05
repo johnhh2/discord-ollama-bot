@@ -42,6 +42,7 @@ SLOT_JACKPOT_FILE = "data/slots_jackpot.json"
 GODMODE_USERS_FILE = "data/godmode_users.json"
 CHESS_GAMES_FILE = "data/chess_games.json"
 RAGEBAIT_FILE = "data/ragebait.json"
+MOCK_FILE = "data/mock.json"
 
 # Slot machine configuration
 SLOT_REEL = (
@@ -229,6 +230,23 @@ def save_ragebait():
         json.dump(active_ragebaits, f, indent=2)
 
 
+def load_mock() -> dict:
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(MOCK_FILE):
+        try:
+            with open(MOCK_FILE) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+    return {}
+
+
+def save_mock():
+    os.makedirs("data", exist_ok=True)
+    with open(MOCK_FILE, "w") as f:
+        json.dump(active_mocks, f, indent=2)
+
+
 def is_insured(uid: int, against: str) -> bool:
     if str(uid) not in insurance:
         return False
@@ -292,7 +310,7 @@ stats_messages_seen: int = 0
 audit_log: deque = deque(maxlen=20)
 
 # ── Mock state ────────────────────────────────────────────────────────────────
-active_mocks: dict[int, dict] = {}  # user_id → {expires_at: float, started_by: int}
+active_mocks: dict[int, dict] = load_mock() # user_id → {remaining: int, started_by: int}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -894,11 +912,12 @@ async def on_message(message: discord.Message):
     # Mock: track mocked users and repeat their messages in mocking font
     if uid in active_mocks and not message.content.startswith("!"):
         mock = active_mocks[uid]
-        if mock["expires_at"] <= time.time():
+        mocked = mocking_font(message.content)
+        await message.channel.send(mocked)
+        mock["remaining"] -= 1
+        if mock["remaining"] <= 0:
             del active_mocks[uid]
-        else:
-            mocked = mocking_font(message.content)
-            await message.channel.send(mocked)
+        save_mock()
 
     # Auto-award daily on any bot interaction
     if (
@@ -2803,10 +2822,12 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         # Fun & Social (sorted by cost)
         fun_items = [
             (500, "`!shop insurance` — Protect yourself for 24 hours — **500 🪙**"),
-            (1500, "`!shop mock @user` — Mock someone's messages for 5 minutes — **1,500 🪙**"),
+            (1500, "`!shop mock @user` — Mock someone's next 5 messages — **1,500 🪙**"),
+            (2000, "`!shop rolecolor @user <color>` — Change someone's role color — **2,000 🪙**"),
         ]
         if _si.get("ragebait", True):
             fun_items.append((2500, "`!shop ragebait @user [topic]` — Ragebait for 5 messages — **2,500 🪙**"))
+        fun_items.append((5000, "`!shop mute @user` — Server mute for 5 minutes — **5,000 🪙**"))
         fun_items.sort(key=lambda x: x[0])
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
@@ -3142,11 +3163,11 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **1,500 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
-        expires_at = int(time.time() + 300)
-        active_mocks[target.id] = {"expires_at": expires_at, "started_by": uid}
+        active_mocks[target.id] = {"remaining": 5, "started_by": uid}
+        save_mock()
         await ctx.send(embed=emb(
             "🎭 Mock Activated",
-            f"**{target.display_name}** will be mocked until <t:{expires_at}:R>!",
+            f"**{target.display_name}** will have their next 5 messages mocked!",
             C_PURPLE,
         ))
         return
@@ -3169,6 +3190,102 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             f"Protected until <t:{expires_at}:R> against ragebait, mock, nickname, and role changes!",
             C_GREEN,
         ))
+        return
+
+    # ── !shop rolecolor ───────────────────────────────────────────────────────
+    if subcommand == "rolecolor":
+        if len(args) < 2:
+            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop rolecolor @user <color>`", C_PURPLE))
+            return
+        if not ctx.message.mentions:
+            await ctx.send(embed=emb("🛒 Shop", "Please mention a user.", C_PURPLE))
+            return
+        target = ctx.message.mentions[0]
+        color_name = " ".join(args[1:])
+
+        cost = 0 if uid in godmode_users else 2000
+        if cost > 0 and not deduct_balance(uid, cost):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **2,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
+
+        # Parse color
+        try:
+            color = discord.Color.from_str(color_name)
+        except ValueError:
+            await ctx.send(embed=emb("❌ Invalid Color", f"Could not parse color: `{color_name}`. Try hex codes like `#FF0000` or color names.", C_RED))
+            return
+
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
+
+        # Find or create role for the user
+        try:
+            member = ctx.guild.get_member(target.id)
+            if not member:
+                await ctx.send(embed=emb("❌ User Not Found", f"Could not find **{target.display_name}** in this server.", C_RED))
+                return
+
+            # Look for existing color role for this user, or use their highest role
+            role_to_color = None
+            for r in member.roles:
+                if r.name.startswith(f"color-{target.id}"):
+                    role_to_color = r
+                    break
+
+            if not role_to_color and member.roles:
+                role_to_color = member.roles[-1]  # Highest role
+
+            if role_to_color:
+                await role_to_color.edit(color=color)
+                await ctx.send(embed=emb(
+                    "🎨 Role Color Changed",
+                    f"**{target.display_name}**'s role color has been changed!",
+                    C_PURPLE,
+                ))
+            else:
+                await ctx.send(embed=emb("❌ No Role", f"**{target.display_name}** has no roles to recolor.", C_RED))
+        except discord.Forbidden:
+            log_bot_permission_error(ctx, "edit roles")
+            await ctx.send(embed=emb("❌ No Permission", "I don't have permission to edit roles.", C_RED))
+        except Exception as e:
+            await ctx.send(embed=emb("❌ Error", f"Failed to change role color: {str(e)}", C_RED))
+        return
+
+    # ── !shop mute ────────────────────────────────────────────────────────────
+    if subcommand == "mute":
+        if not ctx.message.mentions:
+            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mute @user`", C_PURPLE))
+            return
+        target = ctx.message.mentions[0]
+
+        cost = 0 if uid in godmode_users else 5000
+        if cost > 0 and not deduct_balance(uid, cost):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **5,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
+
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
+
+        try:
+            member = ctx.guild.get_member(target.id)
+            if not member:
+                await ctx.send(embed=emb("❌ User Not Found", f"Could not find **{target.display_name}** in this server.", C_RED))
+                return
+
+            # Mute for 5 minutes
+            await member.edit(timed_out_until=discord.utils.utcnow() + datetime.timedelta(minutes=5))
+            await ctx.send(embed=emb(
+                "🔕 Muted",
+                f"**{target.display_name}** has been muted for 5 minutes!",
+                C_PURPLE,
+            ))
+        except discord.Forbidden:
+            log_bot_permission_error(ctx, "timeout members")
+            await ctx.send(embed=emb("❌ No Permission", "I don't have permission to timeout members.", C_RED))
+        except Exception as e:
+            await ctx.send(embed=emb("❌ Error", f"Failed to mute: {str(e)}", C_RED))
         return
 
     await ctx.send(embed=emb("🛒 Unknown Item", "Try `!shop` to see what's available.", C_PURPLE))
