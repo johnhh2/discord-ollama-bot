@@ -3670,6 +3670,13 @@ async def cmd_persistent(ctx: commands.Context):
         inline=False
     )
 
+    # Chess games
+    embed.add_field(
+        name="♟️ Chess Games",
+        value=f"**{len(active_chess_games)}** active correspondence chess games",
+        inline=False
+    )
+
     # Economy stats
     total_users = len(economy.get("users", {}))
     total_balance = sum(u.get("balance", 0) for u in economy.get("users", {}).values())
