@@ -1623,21 +1623,38 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
 
 
 @bot.command(name="rig", hidden=True)
-async def cmd_rig(ctx: commands.Context):
+async def cmd_rig(ctx: commands.Context, target_input: str = None):
     """Hidden admin-only command: rig the next slots spin to hit 7 7 7."""
     if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "Only bot admins can use this command.", C_RED))
         return
 
-    # Use mentioned user or default to command author
-    target = ctx.message.mentions[0] if ctx.message.mentions else ctx.author
-    uid = target.id
-    rigged_slots.add(uid)
+    # Determine target user
+    uid = None
+    target_name = "you"
 
-    target_text = f"{target.mention}'s" if ctx.message.mentions else "Your"
+    if ctx.message.mentions:
+        # Priority: use mention if present
+        target = ctx.message.mentions[0]
+        uid = target.id
+        target_name = target.display_name
+    elif target_input:
+        # Try to parse as user ID
+        try:
+            uid = int(target_input)
+            target_name = f"user {uid}"
+        except ValueError:
+            await ctx.send(embed=emb("❌ Invalid Input", f"Could not parse `{target_input}` as a user ID.", C_RED))
+            return
+    else:
+        # Default to command author
+        uid = ctx.author.id
+        target_name = "you"
+
+    rigged_slots.add(uid)
     await ctx.send(embed=emb(
         "🎰 Slots Rigged",
-        f"{target_text} next `!slots` spin will hit the **7️⃣7️⃣7️⃣ jackpot**!",
+        f"{target_name.capitalize()}'s next `!slots` spin will hit the **7️⃣7️⃣7️⃣ jackpot**!",
         C_GOLD,
     ))
 
@@ -3604,14 +3621,32 @@ async def cmd_godmode(ctx: commands.Context, user: discord.User = None):
 
 
 @bot.command(name="adminragebait")
-async def cmd_adminragebait(ctx: commands.Context, user: discord.User = None, n: str = None):
+async def cmd_adminragebait(ctx: commands.Context, user_input: str = None, n: str = None):
     if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
         return
 
-    if user is None:
-        await ctx.send(embed=emb("❌ Missing User", "Usage: `!adminragebait @user [n]`", C_RED))
+    if user_input is None:
+        await ctx.send(embed=emb("❌ Missing User", "Usage: `!adminragebait @user [n]` or `!adminragebait <userid> [n]`", C_RED))
         return
+
+    # Determine target user ID
+    uid = None
+    user_name = "user"
+
+    if ctx.message.mentions:
+        # Priority: use mention if present
+        target = ctx.message.mentions[0]
+        uid = target.id
+        user_name = target.display_name
+    else:
+        # Try to parse as user ID
+        try:
+            uid = int(user_input)
+            user_name = f"user {uid}"
+        except ValueError:
+            await ctx.send(embed=emb("❌ Invalid Input", f"Could not parse `{user_input}` as a user ID or mention.", C_RED))
+            return
 
     # Parse optional message count (default 5)
     try:
@@ -3623,11 +3658,11 @@ async def cmd_adminragebait(ctx: commands.Context, user: discord.User = None, n:
         await ctx.send(embed=emb("❌ Invalid Count", f"Could not parse `{n}` as a number.", C_RED))
         return
 
-    active_ragebaits[user.id] = {"remaining": count, "history": []}
+    active_ragebaits[uid] = {"remaining": count, "history": []}
     save_ragebait()
     await ctx.send(embed=emb(
         "🎭 Ragebait Activated",
-        f"**{user.display_name}** will be ragebait'd for the next **{count}** message(s)!",
+        f"**{user_name}** will be ragebait'd for the next **{count}** message(s)!",
         C_PURPLE,
     ))
 
