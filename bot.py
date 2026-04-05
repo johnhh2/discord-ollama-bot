@@ -44,6 +44,7 @@ CHESS_GAMES_FILE = "data/chess_games.json"
 RAGEBAIT_FILE = "data/ragebait.json"
 MOCK_FILE = "data/mock.json"
 RIGGED_SLOTS_FILE = "data/rigged_slots.json"
+QUOTE_LOG_FILE = "data/quote_log.json"
 
 # Slot machine configuration
 SLOT_REEL = (
@@ -265,6 +266,25 @@ def save_rigged_slots():
         json.dump(list(rigged_slots), f, indent=2)
 
 
+def load_quote_log() -> list[str]:
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(QUOTE_LOG_FILE):
+        try:
+            with open(QUOTE_LOG_FILE) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
+    return []
+
+
+def save_quote_log(log: list[str]):
+    os.makedirs("data", exist_ok=True)
+    # Keep only the last 10 quotes
+    log = log[-10:]
+    with open(QUOTE_LOG_FILE, "w") as f:
+        json.dump(log, f, indent=2)
+
+
 def is_insured(uid: int, against: str) -> bool:
     if str(uid) not in insurance:
         return False
@@ -314,6 +334,7 @@ active_c4_games: dict[int, dict] = {}   # channel_id → {board, players, marks,
 active_race_games: dict[int, dict] = {} # channel_id → {players, names, positions, amount}
 active_chess_games: dict[int, dict] = load_chess_games() # channel_id → {board, players, current, moves, amount}
 rigged_slots: set[int] = load_rigged_slots() # user_id → will hit jackpot on next spin
+quote_log: list[str] = load_quote_log() # last 10 quotes used
 
 # ── Misc state ────────────────────────────────────────────────────────────────
 channel_histories: dict[int, deque] = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
@@ -4161,35 +4182,56 @@ async def cmd_quote(ctx: commands.Context, channel: discord.TextChannel = None, 
             # If mentions exist but user param wasn't parsed, check if there's a mention
             target_user = ctx.message.mentions[0]
 
-        # Fetch last 1000 messages
-        messages = []
-        async for msg in target_channel.history(limit=1000):
-            # Filter: no bot messages, no commands, reasonable length
-            if msg.author == bot.user or msg.content.startswith("!"):
+        # Fetch ALL messages from entire history
+        all_messages = []
+        async for msg in target_channel.history():
+            # Filter: no bot messages, no commands, reasonable length, no URLs
+            if msg.author == bot.user or msg.content.startswith("!") or msg.content.startswith("http"):
                 continue
             if len(msg.content) < 10 or len(msg.content) > 500:
                 continue
             # Filter by user if specified
             if target_user and msg.author.id != target_user.id:
                 continue
-            messages.append({
+            # Skip if already in recent quotes log
+            if msg.content in quote_log:
+                continue
+            all_messages.append({
                 "author": msg.author.display_name,
                 "content": msg.content,
             })
 
-        if not messages:
+        if not all_messages:
             await ctx.send(embed=emb("📜 Quote", "No messages found to quote.", C_GREY))
             return
 
-        # Use AI to identify funny/controversial messages
-        prompt = f"""Given these {len(messages)} chat messages, identify the most volatile and entertaining one to quote. Prioritize messages with strong emotional language, bold opinions, spicy takes, or wild claims. Look for messages that spark reactions or controversy.
+        # Randomly sample up to 1000 messages from all available messages
+        if len(all_messages) > 1000:
+            messages = random.sample(all_messages, 1000)
+        else:
+            messages = all_messages
+
+        # Use AI to rank messages by entertainment/volatility value
+        # Show a sample of messages and ask AI to pick the best one
+        prompt = f"""Rank these {len(messages)} chat messages by how entertaining, volatile, and funny they are. Consider:
+- Strong emotional language (good)
+- Controversial opinions (good)
+- Spicy/bold takes (good)
+- Inflammatory statements (good)
+- Wild or absurd claims (good)
+- Bland or neutral messages (bad)
+
+Example: "I don't even know" would be ranked 3/10 (bland)
+Example: "He said he's gay and he wants you to be his little fuck boy." would be ranked 9/10 (emotional, bold, spicy)
+
+From this sample, pick the SINGLE message with the HIGHEST entertainment/volatility rank:
 
 Messages:
 {chr(10).join(f'{i+1}. [{m["author"]}]: {m["content"]}' for i, m in enumerate(messages[:50]))}
 
-Respond with ONLY the message number (just the number, nothing else) of the most volatile/entertaining message."""
+Respond with ONLY the message number of the highest-ranked message (just the number)."""
 
-        system_prompt = "You are an expert at identifying volatile, spicy, and entertaining messages in chat. Prioritize messages with strong emotions, controversial opinions, and bold claims. Pick messages that would generate reactions if quoted."
+        system_prompt = "You are an expert at ranking messages by entertainment value and volatility. Focus on emotional impact, boldness, and controversy. Pick messages that would get reactions if quoted."
 
         placeholder = await ctx.send("🔍 Searching for quotes...")
         typing_task = asyncio.create_task(keep_typing(ctx.channel))
@@ -4214,6 +4256,11 @@ Respond with ONLY the message number (just the number, nothing else) of the most
                 msg_num = random.randint(0, len(messages) - 1)
 
             selected = messages[msg_num]
+            # Add to quote log to prevent reuse
+            global quote_log
+            quote_log.append(selected['content'])
+            save_quote_log(quote_log)
+
             await placeholder.delete()
             await ctx.send(f"> {selected['content']}\n— **{selected['author']}**")
 
