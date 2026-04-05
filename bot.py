@@ -43,6 +43,7 @@ GODMODE_USERS_FILE = "data/godmode_users.json"
 CHESS_GAMES_FILE = "data/chess_games.json"
 RAGEBAIT_FILE = "data/ragebait.json"
 MOCK_FILE = "data/mock.json"
+RIGGED_SLOTS_FILE = "data/rigged_slots.json"
 
 # Slot machine configuration
 SLOT_REEL = (
@@ -247,6 +248,23 @@ def save_mock():
         json.dump(active_mocks, f, indent=2)
 
 
+def load_rigged_slots() -> set[int]:
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(RIGGED_SLOTS_FILE):
+        try:
+            with open(RIGGED_SLOTS_FILE) as f:
+                return set(json.load(f))
+        except (FileNotFoundError, json.JSONDecodeError):
+            return set()
+    return set()
+
+
+def save_rigged_slots():
+    os.makedirs("data", exist_ok=True)
+    with open(RIGGED_SLOTS_FILE, "w") as f:
+        json.dump(list(rigged_slots), f, indent=2)
+
+
 def is_insured(uid: int, against: str) -> bool:
     if str(uid) not in insurance:
         return False
@@ -295,7 +313,7 @@ active_ttt_games: dict[int, dict] = {}  # channel_id → {board, players, marks,
 active_c4_games: dict[int, dict] = {}   # channel_id → {board, players, marks, current}
 active_race_games: dict[int, dict] = {} # channel_id → {players, names, positions, amount}
 active_chess_games: dict[int, dict] = load_chess_games() # channel_id → {board, players, current, moves, amount}
-rigged_slots: set[int] = set() # user_id → will hit jackpot on next spin
+rigged_slots: set[int] = load_rigged_slots() # user_id → will hit jackpot on next spin
 
 # ── Misc state ────────────────────────────────────────────────────────────────
 channel_histories: dict[int, deque] = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
@@ -1556,6 +1574,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
     # Spin (or use rigged result)
     if uid in rigged_slots:
         rigged_slots.discard(uid)
+        save_rigged_slots()
         reels = ["7️⃣", "7️⃣", "7️⃣"]
     else:
         reels = [random.choice(SLOT_REEL) for _ in range(3)]
@@ -1652,6 +1671,7 @@ async def cmd_rig(ctx: commands.Context, target_input: str = None):
         target_name = "you"
 
     rigged_slots.add(uid)
+    save_rigged_slots()
     await ctx.send(embed=emb(
         "🎰 Slots Rigged",
         f"{target_name.capitalize()}'s next `!slots` spin will hit the **7️⃣7️⃣7️⃣ jackpot**!",
