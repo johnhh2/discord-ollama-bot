@@ -1145,7 +1145,6 @@ async def cmd_ai(ctx: commands.Context):
             f"Cost: **50 🪙**\n"
             f"Model: `{roleplay_model}`\n"
             f"Usage: `!rpg [@user1 @user2 ...]`\n"
-            f"Configure your realm, character type, and companion creature!"
         ),
         inline=False
     )
@@ -1575,6 +1574,31 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         f"Won **{winnings} 🪙** | Balance: {get_balance(uid):,} 🪙\n"
         f"Progressive Jackpot: **{slot_jackpot:,} 🪙**",
         C_GREEN,
+    ))
+
+
+@bot.command(name="rig", hidden=True)
+async def cmd_rig(ctx: commands.Context):
+    """Hidden admin-only command: rig the next slots win."""
+    if not is_admin(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "Only bot admins can use this command.", C_RED))
+        return
+
+    uid = ctx.author.id
+    global slot_jackpot
+
+    # Give admin the current jackpot
+    prize = slot_jackpot
+    slot_jackpot = SLOT_JACKPOT_SEED
+    save_jackpot(slot_jackpot)
+    add_balance(uid, prize)
+
+    await ctx.send(embed=emb(
+        "🎰 RIGGED!",
+        f"You've been granted the jackpot: **{prize:,} 🪙**\n"
+        f"Balance: {get_balance(uid):,} 🪙\n"
+        f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*",
+        C_GOLD,
     ))
 
 
