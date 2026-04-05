@@ -804,7 +804,13 @@ async def global_command_channel_check(ctx: commands.Context) -> bool:
         return True
     if ctx.command and ctx.command.name in ("settings", "clear"):
         return True  # always allow !settings and !clear in any channel
+
     cfg = get_guild_cfg(ctx.guild.id)
+
+    # Allow quote if bypass is enabled
+    if ctx.command and ctx.command.name == "quote":
+        if cfg.get("quote_bypass_restrictions", False):
+            return True
 
     # Check blacklist first (deny)
     command_blacklist = cfg.get("command_blacklist", [])
@@ -4143,30 +4149,6 @@ async def cmd_quote(ctx: commands.Context, channel: discord.TextChannel = None, 
     - !quote @user — search quotes from user in current channel
     - !quote #channel @user — search quotes from user in specific channel
     """
-    # Check if quote should bypass channel restrictions
-    if ctx.guild:
-        cfg = get_guild_cfg(ctx.guild.id)
-        bypass_enabled = cfg.get("quote_bypass_restrictions", False)
-
-        # If bypass is not enabled, check channel restrictions
-        if not bypass_enabled:
-            ai_channels = cfg.get("ai_channels", [])
-            command_blacklist = cfg.get("command_blacklist", [])
-
-            channel_allowed = True
-            if ai_channels:
-                channel_allowed = ctx.channel.id in ai_channels
-            elif ctx.channel.id in command_blacklist:
-                channel_allowed = False
-
-            if not channel_allowed:
-                if ai_channels:
-                    names = " ".join(f"<#{cid}>" for cid in ai_channels)
-                    await ctx.send(embed=emb("❌ Wrong Channel", f"Quote is only allowed in: {names}", C_RED))
-                else:
-                    await ctx.send(embed=emb("❌ Wrong Channel", "Quote is not allowed in this channel.", C_RED))
-                return
-
     await ctx.typing()
 
     try:
