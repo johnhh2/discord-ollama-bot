@@ -19,6 +19,8 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "dolphin3:8b")
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant.")
 HISTORY_LIMIT = int(os.getenv("HISTORY_LIMIT", "20"))
 RATE_LIMIT_SECONDS = float(os.getenv("RATE_LIMIT_SECONDS", "5.0"))
+RULE34_API_KEY = os.getenv("RULE34_API_KEY")
+RULE34_USER_ID = os.getenv("RULE34_USER_ID")
 RACE_TRACK_LEN = 20
 
 _raw_channels = os.getenv("ACTIVE_CHANNEL_IDS", "")
@@ -3544,6 +3546,8 @@ async def _r34_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[d
         f"https://api.rule34.xxx/index.php"
         f"?page=dapi&s=post&q=index&json=1&limit=100&tags={search_tags}"
     )
+    if RULE34_API_KEY and RULE34_USER_ID:
+        url += f"&api_key={RULE34_API_KEY}&user_id={RULE34_USER_ID}"
     headers = {"User-Agent": "Mozilla/5.0"}
     async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
         if resp.status != 200:
