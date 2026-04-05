@@ -41,6 +41,7 @@ MODELS_FILE = "data/models.json"
 SLOT_JACKPOT_FILE = "data/slots_jackpot.json"
 GODMODE_USERS_FILE = "data/godmode_users.json"
 CHESS_GAMES_FILE = "data/chess_games.json"
+RAGEBAIT_FILE = "data/ragebait.json"
 
 # Slot machine configuration
 SLOT_REEL = (
@@ -211,6 +212,23 @@ def save_insurance():
         json.dump(insurance, f, indent=2)
 
 
+def load_ragebait() -> dict:
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(RAGEBAIT_FILE):
+        try:
+            with open(RAGEBAIT_FILE) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+    return {}
+
+
+def save_ragebait():
+    os.makedirs("data", exist_ok=True)
+    with open(RAGEBAIT_FILE, "w") as f:
+        json.dump(active_ragebaits, f, indent=2)
+
+
 def is_insured(uid: int, against: str) -> bool:
     if str(uid) not in insurance:
         return False
@@ -254,7 +272,7 @@ active_hangman_games: dict[int, dict] = {}
 active_roleplays: dict[int, dict] = {}
 roleplay_histories: dict[int, list] = {}
 active_events: dict[int, dict] = {}     # message_id → {amount, rewarded: set}
-active_ragebaits: dict[int, dict] = {} # user_id → {remaining: int, history: list[str]}
+active_ragebaits: dict[int, dict] = load_ragebait() # user_id → {remaining: int, history: list[str]}
 active_ttt_games: dict[int, dict] = {}  # channel_id → {board, players, marks, current}
 active_c4_games: dict[int, dict] = {}   # channel_id → {board, players, marks, current}
 active_race_games: dict[int, dict] = {} # channel_id → {players, names, positions, amount}
@@ -869,7 +887,8 @@ async def on_message(message: discord.Message):
         rage["remaining"] -= 1
         if rage["remaining"] <= 0:
             del active_ragebaits[uid]
-        
+        save_ragebait()
+
         asyncio.create_task(_passive_ragebait(message, list(rage["history"])))
 
     # Mock: track mocked users and repeat their messages in mocking font
@@ -3100,6 +3119,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
                 ], placeholder)
             await finalize(placeholder, ctx.channel, f"{target.mention} {full_response}")
             active_ragebaits[target.id] = {"remaining": 4, "history": []}
+            save_ragebait()
         except Exception as e:
             if cost > 0:
                 add_balance(uid, cost)
