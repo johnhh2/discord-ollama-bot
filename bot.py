@@ -3656,6 +3656,11 @@ async def cmd_adminragebait(ctx: commands.Context, user_input: str = None, n: st
 
     active_ragebaits[uid] = {"remaining": count, "history": []}
     save_ragebait()
+    await ctx.send(embed=emb(
+        "🎭 Ragebait Activated",
+        f"Ragebait enabled for user `{uid}` (next **{count}** message(s))",
+        C_PURPLE,
+    ))
 
 
 @bot.command(name="model")
