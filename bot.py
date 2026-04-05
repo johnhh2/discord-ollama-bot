@@ -51,7 +51,7 @@ SLOT_REEL = (
     ["7️⃣"] * 1
 )
 SLOT_JACKPOT_SEED = 5_000
-SLOT_JACKPOT_CONTRIB = 0.01
+SLOT_JACKPOT_CONTRIB = 0.20
 INITIAL_BOT_ADMIN_ID = 139928946044174336
 
 # Scratchoff lottery configuration
@@ -1483,7 +1483,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Balance: {get_balance(uid)} 🪙", C_RED))
         return
 
-    # Jackpot contribution (1% of every bet, rounded up)
+    # Jackpot contribution (20% of every bet, rounded up)
     contrib = max(1, int(amount * SLOT_JACKPOT_CONTRIB))
     slot_jackpot += contrib
     save_jackpot(slot_jackpot)
@@ -2635,11 +2635,11 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
 
         # Fun & Social (sorted by cost)
         fun_items = [
-            (1000, "`!shop insurance` — Protect yourself for 24 hours — **1,000 🪙**"),
-            (3000, "`!shop mock @user` — Mock someone's messages for 5 minutes — **3,000 🪙**"),
+            (500, "`!shop insurance` — Protect yourself for 24 hours — **500 🪙**"),
+            (1500, "`!shop mock @user` — Mock someone's messages for 5 minutes — **1,500 🪙**"),
         ]
         if _si.get("ragebait", True):
-            fun_items.append((5000, "`!shop ragebait @user [topic]` — Ragebait for 5 messages — **5,000 🪙**"))
+            fun_items.append((2500, "`!shop ragebait @user [topic]` — Ragebait for 5 messages — **2,500 🪙**"))
         fun_items.sort(key=lambda x: x[0])
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
@@ -2928,9 +2928,9 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against ragebait.", C_GOLD))
             return
         topic = " ".join(a for a in args if not a.startswith("<@"))
-        cost = 0 if uid in godmode_users else 5000
+        cost = 0 if uid in godmode_users else 2500
         if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **5,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **2,500 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
         topic_clause = f" The topic should be specifically about: {topic}." if topic else ""
         ragebait_system = (
@@ -2970,9 +2970,9 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mock @user`", C_PURPLE))
             return
         target = ctx.message.mentions[0]
-        cost = 0 if uid in godmode_users else 3000
+        cost = 0 if uid in godmode_users else 1500
         if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **3,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **1,500 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
         expires_at = int(time.time() + 300)
         active_mocks[target.id] = {"expires_at": expires_at, "started_by": uid}
@@ -2986,9 +2986,9 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
     # ── !shop insurance ───────────────────────────────────────────────────────
     if subcommand == "insurance":
         key = str(uid)
-        cost = 0 if uid in godmode_users else 1000
+        cost = 0 if uid in godmode_users else 500
         if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"Insurance costs **1,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"Insurance costs **500 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
         expires_at = int(time.time() + 86400)
         insurance[key] = {
