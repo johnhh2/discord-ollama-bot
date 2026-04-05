@@ -1111,6 +1111,7 @@ async def cmd_help(ctx: commands.Context):
     help_embed.add_field(name="🎉 Fun", inline=False, value=(
         "`!dog` — Random dog picture\n"
         "`!cat` — Random cat picture\n"
+        "`!quote` — Find a funny/controversial message to quote"
     ))
     help_embed.add_field(name="🔧 Utility", inline=False, value=(
         "`!stats` — Show bot statistics\n"
@@ -3225,7 +3226,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         save_insurance()
         await ctx.send(embed=emb(
             "🛡️ Insurance Purchased",
-            f"Protected until <t:{expires_at}:R> against ragebait, mock, nickname, and role changes!",
+            f"Protected against ragebait, mock, nickname, and role changes! (expires <t:{expires_at}:R>)",
             C_GREEN,
         ))
         return
@@ -4032,6 +4033,97 @@ async def cmd_rule34(ctx: commands.Context, *, tags: str = ""):
     embed.set_image(url=file_url)
     embed.set_footer(text=f"Score: {post.get('score', '?')} | Rating: {post.get('rating', '?')}")
     await ctx.send(embed=embed)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Commands — Quote
+# ─────────────────────────────────────────────────────────────────────────────
+
+@bot.command(name="quote")
+async def cmd_quote(ctx: commands.Context, channel: discord.TextChannel = None, user: discord.User = None):
+    """Find a funny and controversial message from recent chat history.
+
+    Usage:
+    - !quote — search current channel
+    - !quote #channel — search specific channel
+    - !quote @user — search quotes from user in current channel
+    - !quote #channel @user — search quotes from user in specific channel
+    """
+    await ctx.typing()
+
+    try:
+        # Determine target channel
+        target_channel = channel if channel else ctx.channel
+
+        # Determine target user
+        target_user = user if user else None
+        if ctx.message.mentions and not user:
+            # If mentions exist but user param wasn't parsed, check if there's a mention
+            target_user = ctx.message.mentions[0]
+
+        # Fetch last 1000 messages
+        messages = []
+        async for msg in target_channel.history(limit=1000):
+            # Filter: no bot messages, no commands, reasonable length
+            if msg.author == bot.user or msg.content.startswith("!"):
+                continue
+            if len(msg.content) < 10 or len(msg.content) > 500:
+                continue
+            # Filter by user if specified
+            if target_user and msg.author.id != target_user.id:
+                continue
+            messages.append({
+                "author": msg.author.display_name,
+                "content": msg.content,
+            })
+
+        if not messages:
+            await ctx.send(embed=emb("📜 Quote", "No messages found to quote.", C_GREY))
+            return
+
+        # Use AI to identify funny/controversial messages
+        prompt = f"""Given these {len(messages)} chat messages, identify the most funny and/or controversial one that would make a good quote. Consider humor, absurdity, controversial takes, and memorable moments.
+
+Messages:
+{chr(10).join(f'{i+1}. [{m["author"]}]: {m["content"]}' for i, m in enumerate(messages[:50]))}
+
+Respond with ONLY the message number (just the number, nothing else) of the funniest/most controversial message."""
+
+        system_prompt = "You are an expert at identifying funny and controversial messages in chat. Be objective and pick based on what would be entertaining to quote."
+
+        placeholder = await ctx.send("🔍 Searching for quotes...")
+        typing_task = asyncio.create_task(keep_typing(ctx.channel))
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                guild_id = ctx.guild.id if ctx.guild else None
+                model = get_guild_ask_model(guild_id) if guild_id else OLLAMA_MODEL
+                response = await stream_ollama(
+                    session,
+                    [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
+                    placeholder,
+                    model=model
+                )
+
+            # Parse the response to get message number
+            try:
+                msg_num = int(response.strip()) - 1
+                if msg_num < 0 or msg_num >= len(messages):
+                    msg_num = random.randint(0, len(messages) - 1)
+            except ValueError:
+                msg_num = random.randint(0, len(messages) - 1)
+
+            selected = messages[msg_num]
+            await placeholder.delete()
+            await ctx.send(f"> {selected['content']}\n— **{selected['author']}**")
+
+        except Exception as e:
+            await placeholder.edit(content=f"⚠️ {e}")
+        finally:
+            typing_task.cancel()
+
+    except Exception as e:
+        await ctx.send(embed=emb("❌ Error", f"Failed to find quote: {str(e)}", C_RED))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
