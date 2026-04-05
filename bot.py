@@ -6,7 +6,8 @@ import json
 import time
 import random
 import datetime
-from discord.ext import commands
+import re
+from discord.ext import commands, tasks
 from discord import ui
 from dotenv import load_dotenv
 from collections import defaultdict, deque
@@ -45,6 +46,9 @@ RAGEBAIT_FILE = "data/ragebait.json"
 MOCK_FILE = "data/mock.json"
 RIGGED_SLOTS_FILE = "data/rigged_slots.json"
 QUOTE_LOG_FILE = "data/quote_log.json"
+SIMP_FILE = "data/simp.json"
+CURSE_FILE = "data/curse.json"
+LOTTERY_FILE = "data/lottery.json"
 
 # Slot machine configuration
 SLOT_REEL = (
@@ -63,6 +67,10 @@ SCRATCHOFF_FILE = "data/scratchoff.json"
 SCRATCH_SYMBOLS = ["🌟", "🎰", "💎", "🍒", "🍀", "🔔", "🍋", "🍇", "🃏", "🎲"]
 SCRATCHOFF_MAX_DAILY = 3
 SCRATCHOFF_PAYOUTS = {1: 100, 2: 1000, 3: 10000}
+
+# Soundboard rate-limiting
+SOUNDBOARD_WINDOW_SECS = 3.0
+SOUNDBOARD_MAX_SOUNDS  = 5
 
 
 def load_channel_prompts() -> dict[int, str]:
@@ -285,6 +293,87 @@ def save_quote_log(log: list[str]):
         json.dump(log, f, indent=2)
 
 
+def load_simp() -> dict:
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(SIMP_FILE):
+        try:
+            with open(SIMP_FILE) as f:
+                data = json.load(f)
+                # Convert string keys back to ints
+                return {int(k): v for k, v in data.items()}
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+    return {}
+
+
+def save_simp(simp_data: dict):
+    os.makedirs("data", exist_ok=True)
+    with open(SIMP_FILE, "w") as f:
+        json.dump(simp_data, f, indent=2)
+
+
+def load_curse() -> dict:
+    os.makedirs("data", exist_ok=True)
+    if os.path.exists(CURSE_FILE):
+        try:
+            with open(CURSE_FILE) as f:
+                data = json.load(f)
+                # Convert string keys back to ints
+                return {int(k): v for k, v in data.items()}
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+    return {}
+
+
+def save_curse(curse_data: dict):
+    os.makedirs("data", exist_ok=True)
+    with open(CURSE_FILE, "w") as f:
+        json.dump(curse_data, f, indent=2)
+
+
+def load_lottery(guild_id: int) -> dict:
+    os.makedirs("data", exist_ok=True)
+    lottery_file = f"data/lottery_{guild_id}.json"
+    if os.path.exists(lottery_file):
+        try:
+            with open(lottery_file) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {"prize_pool": 0, "players": {}, "last_posted_week": 0}
+    return {"prize_pool": 0, "players": {}, "last_posted_week": 0}
+
+
+def save_lottery(guild_id: int, lottery_data: dict):
+    os.makedirs("data", exist_ok=True)
+    lottery_file = f"data/lottery_{guild_id}.json"
+    with open(lottery_file, "w") as f:
+        json.dump(lottery_data, f, indent=2)
+
+
+async def announce_new_lottery(channel: discord.TextChannel, prize_pool: int = 2000, now: datetime.datetime = None):
+    """Announce a new lottery week to the specified channel."""
+    if now is None:
+        now = datetime.datetime.now()
+
+    # Calculate next Saturday 6pm CST
+    days_until_saturday = (5 - now.weekday()) % 7
+    if days_until_saturday == 0:
+        days_until_saturday = 7
+    next_saturday = now + datetime.timedelta(days=days_until_saturday)
+    next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
+    next_saturday_utc = next_saturday - datetime.timedelta(hours=6)  # CST is UTC-6
+    timestamp = int(next_saturday_utc.timestamp())
+
+    embed = discord.Embed(title="🎰 New Lottery Week", color=C_PURPLE)
+    embed.description = (
+        "A new lottery has started! Buy tickets with `!lottery <n>`\n\n"
+        f"**Prize Pool:** {prize_pool:,} 🪙 (+1,000 🪙 per player)\n"
+        f"**Ticket Cost:** 10 🪙 for 1 🎟️\n"
+        f"**Ends:** <t:{timestamp}:R>"
+    )
+    await channel.send(embed=embed)
+
+
 def is_insured(uid: int, against: str) -> bool:
     if str(uid) not in insurance:
         return False
@@ -350,6 +439,19 @@ audit_log: deque = deque(maxlen=20)
 
 # ── Mock state ────────────────────────────────────────────────────────────────
 active_mocks: dict[int, dict] = load_mock() # user_id → {remaining: int, started_by: int}
+
+# ── Simp state ────────────────────────────────────────────────────────────────
+active_simps: dict[int, int] = load_simp() # user_id → simped_by_user_id
+
+# ── Curse state ───────────────────────────────────────────────────────────────
+active_curses: dict[int, dict] = load_curse() # user_id → {cursed_by: int, remaining: int}
+
+# ── Soundboard rate-limit tracking ───────────────────────────────────────────
+# (guild_id, user_id) → list of float timestamps (time.monotonic())
+_soundboard_timestamps: dict[tuple[int, int], list[float]] = {}
+
+# ── Lottery state ─────────────────────────────────────────────────────────────
+# Lotteries are per-guild, loaded on demand from data/lottery_{guild_id}.json
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -427,6 +529,19 @@ def mocking_font(text: str) -> str:
     """Convert text to mocking alternating case: LiKe ThIs."""
     result = []
     uppercase = False
+    for char in text:
+        if char.isalpha():
+            result.append(char.upper() if uppercase else char.lower())
+            uppercase = not uppercase
+        else:
+            result.append(char)
+    return "".join(result)
+
+
+def curse_font(text: str) -> str:
+    """Convert text to cursed alternating case but reversed: tHiS iS cUrSeD."""
+    result = []
+    uppercase = True  # Start with uppercase for curse effect
     for char in text:
         if char.isalpha():
             result.append(char.upper() if uppercase else char.lower())
@@ -881,6 +996,117 @@ async def on_ready():
         print("Listening in all channels")
 
 
+async def _roast_soundboard_spam(guild_id: int, user_id: int):
+    """Generate a roast for soundboard spam using the ragebait system."""
+    guild = bot.get_guild(guild_id)
+    if guild is None:
+        return
+    member = guild.get_member(user_id)
+    if member is None:
+        return
+
+    roast_system = (
+        "You are an expert at crafting witty, cutting roasts. Your goal is to roast someone "
+        "for spamming soundboard sounds in a voice channel. "
+        "Rules: be specific to the target by referring to them by name, be witty and sarcastic rather than just mean, "
+        "make fun of them for the spam/spam in general, keep it under 150 characters, "
+        "and make it feel natural — like something a friend would say. "
+        "Output only the roast with no preamble, explanation, or quotation marks."
+    )
+    prompt = (
+        f"Write a witty roast for {member.display_name} for spamming soundboard sounds in voice chat. "
+        "Be sarcastic and funny. Do not use @ symbols."
+    )
+
+    try:
+        # Create a fake channel/message context for the streaming function
+        voice_channel = member.voice.channel if member.voice else None
+        if voice_channel is None:
+            return
+
+        # Find the first AI channel in the guild to send the roast to
+        cfg = get_guild_cfg(guild_id)
+        ai_channels = cfg.get("ai_channels", [])
+        text_channel = None
+        if ai_channels:
+            for ch_id in ai_channels:
+                ch = guild.get_channel(ch_id)
+                if ch and ch.permissions_for(guild.me).send_messages:
+                    text_channel = ch
+                    break
+        if text_channel is None:
+            return
+
+        placeholder = await text_channel.send("...")
+        typing_task = asyncio.create_task(keep_typing(text_channel))
+        try:
+            async with aiohttp.ClientSession() as session:
+                full_response = await stream_ollama(session, [
+                    {"role": "system", "content": roast_system},
+                    {"role": "user", "content": prompt},
+                ], placeholder)
+            await finalize(placeholder, text_channel, f"{member.mention} {full_response}")
+        except Exception as e:
+            await placeholder.edit(content=f"⚠️ {e}")
+        finally:
+            typing_task.cancel()
+    except Exception:
+        pass
+
+
+async def _handle_soundboard_ratelimit(guild_id: int, user_id: int):
+    """Check if user exceeded soundboard rate limit; kick if so."""
+    now = time.monotonic()
+    key = (guild_id, user_id)
+    timestamps = _soundboard_timestamps.setdefault(key, [])
+    cutoff = now - SOUNDBOARD_WINDOW_SECS
+    _soundboard_timestamps[key] = [t for t in timestamps if t >= cutoff]
+    timestamps = _soundboard_timestamps[key]
+    timestamps.append(now)
+    if len(timestamps) <= SOUNDBOARD_MAX_SOUNDS:
+        return
+    # Threshold exceeded — clear so the same burst doesn't re-trigger
+    _soundboard_timestamps[key] = []
+    guild = bot.get_guild(guild_id)
+    if guild is None:
+        return
+    member = guild.get_member(user_id)
+    if member is None or member.voice is None:
+        return
+
+    # Generate roast
+    asyncio.create_task(_roast_soundboard_spam(guild_id, user_id))
+
+    # Kick from voice channel
+    try:
+        await member.move_to(None)  # kick from voice channel
+    except (discord.Forbidden, Exception):
+        return
+
+
+@bot.event
+async def on_socket_raw_receive(msg):
+    """Handle raw Discord gateway events; intercept VOICE_CHANNEL_EFFECT_SEND for soundboard rate-limiting."""
+    try:
+        data = json.loads(msg.decode("utf-8") if isinstance(msg, bytes) else msg)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return
+    if data.get("t") != "VOICE_CHANNEL_EFFECT_SEND":
+        return
+    d = data.get("d", {})
+    if "sound_id" not in d:   # emoji reactions have no sound_id
+        return
+    try:
+        guild_id = int(d["guild_id"])
+        user_id  = int(d["user_id"])
+    except (KeyError, ValueError, TypeError):
+        return
+    cfg = get_guild_cfg(guild_id)
+    if user_id not in cfg.get("soundboard_ratelimit", []):
+        return
+    await _handle_soundboard_ratelimit(guild_id, user_id)
+
+
 async def _auto_daily(message: discord.Message):
     """Award daily coins on first interaction of the day. Sends a short message if awarded."""
     uid = message.author.id
@@ -940,7 +1166,7 @@ async def on_message(message: discord.Message):
     uid = message.author.id
     content_lower = message.content.strip().lower()
 
-    global stats_messages_seen
+    global stats_messages_seen, active_simps, active_curses
     stats_messages_seen += 1
 
     # Passive ragebait: track targeted users and fire at 50% chance
@@ -963,6 +1189,42 @@ async def on_message(message: discord.Message):
         if mock["remaining"] <= 0:
             del active_mocks[uid]
         save_mock()
+
+    # Simp/Concubine tax: deduct coins from users who have a tax on them
+    if uid in active_simps and not message.content.startswith("!"):
+        simp_data = active_simps[uid]
+        tax_type = simp_data["type"]
+
+        # Check if concubine has expired (24h)
+        if tax_type == "concubine" and "activated_at" in simp_data:
+            time_elapsed = time.time() - simp_data["activated_at"]
+            if time_elapsed > 86400:  # 24 hours in seconds
+                del active_simps[uid]
+                save_simp(active_simps)
+            else:
+                # Apply tax
+                simp_master_id = simp_data["master"]
+                simp_tax = 10
+                if deduct_balance(uid, simp_tax):
+                    add_balance(simp_master_id, simp_tax)
+                    await message.channel.send(f"You paid a **{simp_tax} 🪙** Concubine tax to <@{simp_master_id}>")
+        else:
+            # Regular simp (permanent)
+            simp_master_id = simp_data["master"]
+            simp_tax = 10
+            if deduct_balance(uid, simp_tax):
+                add_balance(simp_master_id, simp_tax)
+                await message.channel.send(f"You paid a **{simp_tax} 🪙** Simp tax to <@{simp_master_id}>")
+
+    # Curse: corrupt cursed users' messages
+    if uid in active_curses and not message.content.startswith("!"):
+        curse = active_curses[uid]
+        cursed = curse_font(message.content)
+        await message.channel.send(cursed)
+        curse["remaining"] -= 1
+        if curse["remaining"] <= 0:
+            del active_curses[uid]
+        save_curse(active_curses)
 
     # Auto-award daily on any bot interaction
     if (
@@ -1291,7 +1553,8 @@ async def cmd_adminhelp(ctx: commands.Context):
         "`!settings chess-channels #ch... / clear` — Restrict chess to channels\n"
         "`!settings shop <item> on|off` — Toggle shop items\n"
         "`!settings quote bypass on|off` — Allow quote in any channel (bypass restrictions)\n"
-        "`!settings rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` — rule34 config"
+        "`!settings rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` — rule34 config\n"
+        "`!settings soundboard-ratelimit add|remove @user|<userid> / list` — Soundboard rate-limit list"
     ))
     admin_embed.add_field(name="🔍 Moderation", inline=False, value=(
         "`!audit` — Last 5 failed command attempts\n"
@@ -1395,59 +1658,6 @@ async def cmd_leaderboard(ctx: commands.Context):
     await ctx.send(embed=emb("🪙 Leaderboard", "\n".join(lines), C_GREEN))
 
 
-def _get_daily_scratch_goals() -> list[str]:
-    """Get or generate today's shared scratchoff goal symbols."""
-    today = datetime.date.today().isoformat()
-    try:
-        with open(SCRATCHOFF_FILE) as f:
-            data = json.load(f)
-        if data.get("date") == today:
-            return data["symbols"]
-    except (FileNotFoundError, json.JSONDecodeError, KeyError):
-        pass
-    # New day or missing file — pick 3 new symbols
-    symbols = random.sample(SCRATCH_SYMBOLS, 3)
-    os.makedirs("data", exist_ok=True)
-    with open(SCRATCHOFF_FILE, "w") as f:
-        json.dump({"date": today, "symbols": symbols}, f, indent=2)
-    return symbols
-
-
-def _scratch_result(goals: list[str]) -> tuple[list[str], int]:
-    """Generate scratchoff result with rigged odds.
-
-    Returns (card_symbols, match_count) where:
-    - P(3 matches) = 1/81
-    - P(2 matches) = 1/9
-    - P(1 match) = 1/3
-    - P(0 matches) = remainder
-    """
-    r = random.random()
-    # Determine match count using probability buckets
-    if r < 1/81:
-        match_count = 3
-    elif r < 1/81 + 1/9:
-        match_count = 2
-    elif r < 1/81 + 1/9 + 1/3:
-        match_count = 1
-    else:
-        match_count = 0
-
-    # Generate card symbols
-    non_goal_symbols = [s for s in SCRATCH_SYMBOLS if s not in goals]
-    if match_count == 0:
-        # All non-matching
-        card_symbols = random.sample(non_goal_symbols, 3)
-    else:
-        # Mix matching and non-matching
-        matching = random.sample(goals, match_count)
-        non_matching = random.sample(non_goal_symbols, 3 - match_count)
-        card_symbols = matching + non_matching
-        random.shuffle(card_symbols)
-
-    return card_symbols, match_count
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Commands — Gambling
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1475,65 +1685,162 @@ async def cmd_flip(ctx: commands.Context, amount: str = None):
         await ctx.send(embed=emb("🪙 Tails!", f"You lost **{amount} 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
 
 
+# Mini Cactpot payout table
+CACTPOT_PAYOUTS = {
+    6: 10000, 7: 36, 8: 720, 9: 360, 10: 80, 11: 252, 12: 108, 13: 72, 14: 54, 15: 180,
+    16: 72, 17: 180, 18: 119, 19: 36, 20: 306, 21: 1080, 22: 144, 23: 1800, 24: 3600
+}
+
+class MiniCactpotGame:
+    def __init__(self, user_id: int):
+        self.user_id = user_id
+        self.grid = list(range(1, 10))
+        random.shuffle(self.grid)
+        self.revealed = set()
+        # Reveal one random cell initially
+        self.revealed.add(random.randint(0, 8))
+        self.selections = []
+        self.selected_line = None
+
+    def get_grid_display(self):
+        """Return a 3x3 grid display with numbers or letters A-I"""
+        letters = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
+        lines = []
+        for row in range(3):
+            row_str = ""
+            for col in range(3):
+                idx = row * 3 + col
+                if idx in self.revealed:
+                    row_str += str(self.grid[idx]).rjust(2) + " "
+                else:
+                    row_str += f" {letters[idx]} "
+            lines.append(row_str)
+        return "\n".join(lines)
+
+    def get_line_sum(self, line_type: str, line_idx: int) -> int:
+        """Get sum of a line. Types: row, col, diag1, diag2"""
+        cells = []
+        if line_type == "row":
+            cells = [line_idx * 3, line_idx * 3 + 1, line_idx * 3 + 2]
+        elif line_type == "col":
+            cells = [line_idx, line_idx + 3, line_idx + 6]
+        elif line_type == "diag1":
+            cells = [0, 4, 8]
+        elif line_type == "diag2":
+            cells = [2, 4, 6]
+        return sum(self.grid[i] for i in cells)
+
+    def calculate_payout(self, line_type: str, line_idx: int) -> int:
+        total = self.get_line_sum(line_type, line_idx)
+        return CACTPOT_PAYOUTS.get(total, 0)
+
+# Store active games
 @bot.command(name="scratchoff", aliases=["scratch"])
 async def cmd_scratchoff(ctx: commands.Context):
     uid = ctx.author.id
     _ensure_user(uid)
 
-    # Get today's date and goal symbols
+    # Check daily limit
     today = datetime.date.today().isoformat()
-    goals = _get_daily_scratch_goals()
-
-    # Check/reset per-user attempt counter
     user = economy["users"][str(uid)]
-    if user.get("scratchoff_date") != today:
-        user["scratchoff_date"] = today
-        user["scratchoff_used"] = 0
+    if user.get("scratch_date") != today:
+        user["scratch_date"] = today
+        user["scratch_used"] = 0
 
-    # Check if user has attempts left
-    if user["scratchoff_used"] >= SCRATCHOFF_MAX_DAILY:
+    if user["scratch_used"] >= 1:
         save_economy()
-        await ctx.send(embed=emb(
-            "🎫 No Attempts Left",
-            f"You've used all **{SCRATCHOFF_MAX_DAILY}** daily scratchoffs.\nCome back tomorrow!",
-            C_GOLD
-        ))
+        await ctx.send(embed=emb("🎰 Daily Limit", "You've used your **1** daily scratchoff.\nCome back tomorrow!", C_GOLD))
         return
 
-    # Increment attempt counter
-    user["scratchoff_used"] += 1
+    user["scratch_used"] += 1
     save_economy()
 
-    # Generate result
-    card_symbols, match_count = _scratch_result(goals)
+    # Auto-play: select cells and line automatically
+    game = MiniCactpotGame(uid)
+    y_shape = [1, 3, 5, 7]
+    for cell in y_shape:
+        if cell not in game.revealed and len(game.selections) < 3:
+            game.revealed.add(cell)
+            game.selections.append(cell)
 
-    # Award payout if matched
-    payout = SCRATCHOFF_PAYOUTS.get(match_count, 0)
-    if payout > 0:
+    if len(game.selections) < 3:
+        for i in range(9):
+            if i not in game.revealed and len(game.selections) < 3:
+                game.revealed.add(i)
+                game.selections.append(i)
+
+    # Find best line
+    best_line = None
+    best_payout = -1
+    lines = [("row", 0), ("row", 1), ("row", 2), ("col", 0), ("col", 1), ("col", 2), ("diag1", 0), ("diag2", 0)]
+    for line_type, line_idx in lines:
+        payout = game.calculate_payout(line_type, line_idx)
+        line_sum = game.get_line_sum(line_type, line_idx)
+        if line_sum == 6 or line_sum == 24:
+            best_line = (line_type, line_idx)
+            break
+        elif best_line is None or payout > best_payout:
+            best_line = (line_type, line_idx)
+            best_payout = payout
+
+    if best_line:
+        line_type, line_idx = best_line
+        payout = game.calculate_payout(line_type, line_idx)
+        line_sum = game.get_line_sum(line_type, line_idx)
         add_balance(uid, payout)
 
-    # Format goal and card display
-    goal_str = " ".join(goals)
-    card_str = " ".join(card_symbols)
+        # First-time message
+        first_time = not user.get("scratchoff_seen_rewards", False)
+        if first_time:
+            user["scratchoff_seen_rewards"] = True
+            save_economy()
 
-    # Build result message
-    if match_count == 3:
-        result_msg = f"🎉 **3 MATCHES!** You won **{payout} 🪙**!"
-        color = C_GREEN
-    elif match_count == 2:
-        result_msg = f"✨ **2 Matches!** You won **{payout} 🪙**!"
-        color = C_GREEN
-    elif match_count == 1:
-        result_msg = f"⭐ **1 Match!** You won **{payout} 🪙**!"
-        color = C_GREEN
-    else:
-        result_msg = "No matches — better luck next time!"
-        color = C_RED
+        embed = discord.Embed(title="🎰 Scratchoff", color=C_GREEN if payout > 0 else C_RED)
+        embed.description = f"```\n{game.get_grid_display()}\n```\n**Sum:** {line_sum} | **Payout:** **{payout} 🪙**"
+        embed.add_field(name="Balance", value=f"**{get_balance(uid)} 🪙**", inline=False)
 
-    attempts_left = SCRATCHOFF_MAX_DAILY - user["scratchoff_used"]
-    desc = f"**Daily Goal:** {goal_str}\n**Your Card:** {card_str}\n\n{result_msg}\n\n**Attempts left:** {attempts_left}/{SCRATCHOFF_MAX_DAILY}"
-    await ctx.send(embed=emb("🎫 Scratchoff", desc, color))
+        if first_time:
+            embed.add_field(name="📊 Payout Info", value="Use `!scratchoffrewards` to see all payouts!", inline=False)
+        else:
+            embed.add_field(name="Help", value="Use `!scratchoffrewards` to see payouts", inline=False)
 
+        await ctx.send(embed=embed)
+
+@bot.command(name="scratchoffrewards", aliases=["scratchrewards", "scratchoffreward", "scratchreward"])
+async def cmd_scratchoff_rewards(ctx: commands.Context):
+    embed = discord.Embed(title="🎰 Scratchoff Payouts", color=C_PURPLE)
+    embed.description = "**Scratchoff** — Select 3 cells, system picks best line"
+
+    table = "```\nSum  Payout\n─────────────\n"
+    payouts = [
+        ("6*", "10,000"),
+        ("7", "36"),
+        ("8", "720"),
+        ("9", "360"),
+        ("10", "80"),
+        ("11", "252"),
+        ("12", "108"),
+        ("13", "72"),
+        ("14", "54"),
+        ("15", "180"),
+        ("16", "72"),
+        ("17", "180"),
+        ("18", "119"),
+        ("19", "36"),
+        ("20", "306"),
+        ("21", "1,080"),
+        ("22", "144"),
+        ("23", "1,800"),
+        ("24*", "3,600"),
+    ]
+
+    for sum_val, payout in payouts:
+        table += f"{sum_val:<4} {payout:>6} 🪙\n"
+
+    table += "─────────────\n* Jackpots```"
+
+    embed.add_field(name="Limit", value="**1 per day**", inline=False)
+    await ctx.send(embed=embed)
 
 def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
     """Returns (result_label, multiplier). Caller applies multiplier to bet."""
@@ -1547,13 +1854,13 @@ def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
             # Jackpot requires minimum bet of 25
             if bet < 25:
                 return ("nothing", 0)
-            return ("jackpot", 100)
+            return ("jackpot", 75)
         if sym == "🎰":
-            return ("3bar", 20)
+            return ("3bar", 15)
         if sym == "🔔":
-            return ("3bell", 10)
+            return ("3bell", 7)
         if sym == "🍋":
-            return ("3lemon", 5)
+            return ("3lemon", 4)
         if sym == cherry:
             return ("3cherry", 3)
 
@@ -1571,6 +1878,14 @@ def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
 async def cmd_slots(ctx: commands.Context, amount: str = None):
     global slot_jackpot
     uid = ctx.author.id
+    _ensure_user(uid)
+
+    # Track first-time usage
+    user = economy["users"][str(uid)]
+    first_time_slots = not user.get("slots_seen_rewards", False)
+    if first_time_slots:
+        user["slots_seen_rewards"] = True
+        save_economy()
 
     if amount is None:
         await ctx.send(embed=emb(
@@ -1620,34 +1935,31 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         slot_jackpot = SLOT_JACKPOT_SEED
         save_jackpot(slot_jackpot)
         add_balance(uid, prize)
-        await ctx.send(embed=emb(
-            "🎰 PROGRESSIVE JACKPOT!",
-            f"{display}\n\n🏆 **You hit the Progressive Jackpot!**\n"
-            f"**Won: {prize:,} 🪙** (Bet: {amount} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {get_balance(uid):,} 🪙\n"
-            f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*",
-            C_GOLD,
-        ))
+        desc = (f"{display}\n\n🏆 **You hit the Progressive Jackpot!**\n"
+                f"**Won: {prize:,} 🪙** (Bet: {amount} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {get_balance(uid):,} 🪙\n"
+                f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*")
+        if first_time_slots:
+            desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
+        await ctx.send(embed=emb("🎰 PROGRESSIVE JACKPOT!", desc, C_GOLD))
         return
 
     # Money Back (cherry retention)
     if label == "1cherry":
         add_balance(uid, amount)
-        await ctx.send(embed=emb(
-            "🎰 Money Back!",
-            f"{display}\n\n🍒 **One Cherry — Money Back!**\n"
-            f"Got **{amount} 🪙** back | Balance: {get_balance(uid):,} 🪙\n"
-            f"Progressive Jackpot: **{slot_jackpot:,} 🪙**",
-            C_GOLD,
-        ))
+        desc = (f"{display}\n\n🍒 **One Cherry — Money Back!**\n"
+                f"Got **{amount} 🪙** back | Balance: {get_balance(uid):,} 🪙\n"
+                f"Progressive Jackpot: **{slot_jackpot:,} 🪙**")
+        if first_time_slots:
+            desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
+        await ctx.send(embed=emb("🎰 Money Back!", desc, C_GOLD))
         return
 
     if mult == 0:
-        await ctx.send(embed=emb(
-            "🎰 No Win",
-            f"{display}\n\nYou lost **{amount} 🪙**. Balance: {get_balance(uid):,} 🪙\n"
-            f"Progressive Jackpot: **{slot_jackpot:,} 🪙**",
-            C_RED,
-        ))
+        desc = (f"{display}\n\nYou lost **{amount} 🪙**. Balance: {get_balance(uid):,} 🪙\n"
+                f"Progressive Jackpot: **{slot_jackpot:,} 🪙**")
+        if first_time_slots:
+            desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
+        await ctx.send(embed=emb("🎰 No Win", desc, C_RED))
         return
 
     winnings = amount * mult
@@ -1663,13 +1975,39 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
     }
     desc_line = result_labels.get(label, f"**{mult}x**")
 
-    await ctx.send(embed=emb(
-        "🎰 Winner!",
-        f"{display}\n\n{desc_line}\n"
-        f"Won **{winnings} 🪙** | Balance: {get_balance(uid):,} 🪙\n"
-        f"Progressive Jackpot: **{slot_jackpot:,} 🪙**",
-        C_GREEN,
-    ))
+    desc = (f"{display}\n\n{desc_line}\n"
+            f"Won **{winnings} 🪙** | Balance: {get_balance(uid):,} 🪙\n"
+            f"Progressive Jackpot: **{slot_jackpot:,} 🪙**")
+    if first_time_slots:
+        desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
+    await ctx.send(embed=emb("🎰 Winner!", desc, C_GREEN))
+
+
+@bot.command(name="slotsrewards", aliases=["slotrewards", "slotreward"])
+async def cmd_slots_rewards(ctx: commands.Context):
+    embed = discord.Embed(title="🎰 Slots Payouts", color=C_PURPLE)
+    embed.description = "**Spin 3 reels and match symbols for payouts!**\n\n"
+
+    embed.add_field(name="Three of a Kind", value=
+        "🌟 **7️⃣7️⃣7️⃣** (Jackpot) — 75x\n"
+        "   *(Min bet 25 🪙, bonus scales to 5x at bet 500+)*\n"
+        "🌟 **🎰🎰🎰** (3 Slots) — 15x\n"
+        "🌟 **🔔🔔🔔** (3 Bells) — 7x\n"
+        "🌟 **🍋🍋🍋** (3 Lemons) — 4x\n"
+        "🌟 **🍒🍒🍒** (3 Cherries) — 3x",
+        inline=False)
+
+    embed.add_field(name="Cherry Bonuses", value=
+        "🍒 **Two Cherries** — 2x (Get your bet back)\n"
+        "🍒 **One Cherry** — 1x (Money Back)",
+        inline=False)
+
+    embed.add_field(name="Other", value=
+        "❌ **No Match** — 0x (Lose bet)\n\n"
+        "**Progressive Jackpot:** Grows by 20% of every bet!",
+        inline=False)
+
+    await ctx.send(embed=embed)
 
 
 @bot.command(name="rig", hidden=True)
@@ -2891,12 +3229,14 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         # Fun & Social (sorted by cost)
         fun_items = [
             (500, "`!shop insurance` — Protect yourself for 24 hours — **500 🪙**"),
+            (1000, "`!shop simp @user` — Simp for a user (alias: concubine) — **1,000 🪙**"),
             (1500, "`!shop mock @user` — Mock someone's next 5 messages — **1,500 🪙**"),
             (2000, "`!shop rolecolor @user <color>` — Change someone's role color — **2,000 🪙**"),
         ]
         if _si.get("ragebait", True):
             fun_items.append((2500, "`!shop ragebait @user [topic]` — Ragebait for 5 messages — **2,500 🪙**"))
         fun_items.append((5000, "`!shop mute @user` — Server mute for 5 minutes — **5,000 🪙**"))
+        fun_items.append((10000, "`!shop curse @user` — Curse someone's messages for 5 messages — **10,000 🪙**"))
         fun_items.sort(key=lambda x: x[0])
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
@@ -3357,6 +3697,66 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("❌ Error", f"Failed to mute: {str(e)}", C_RED))
         return
 
+    # ── !shop simp / concubine ────────────────────────────────────────────────
+    if subcommand in ("simp", "concubine"):
+        if not ctx.message.mentions:
+            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop simp @user`", C_PURPLE))
+            return
+        target = ctx.message.mentions[0]
+
+        if target.id == uid:
+            await ctx.send(embed=emb("❌ Self Simp", "You can't simp for yourself!", C_RED))
+            return
+
+        cost = 0 if uid in godmode_users else 1000
+        if cost > 0 and not deduct_balance(uid, cost):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **1,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
+
+        global active_simps
+        tax_type = "concubine" if subcommand == "concubine" else "simp"
+        simp_data = {"master": uid, "type": tax_type}
+        # Add timestamp for concubine to expire after 24h
+        if tax_type == "concubine":
+            simp_data["activated_at"] = time.time()
+        active_simps[target.id] = simp_data
+        save_simp(active_simps)
+
+        title = "🍆 Concubine Tax Activated" if tax_type == "concubine" else "🍆 Simp Tax Activated"
+        await ctx.send(embed=emb(
+            title,
+            f"**{target.display_name}** now owes **{ctx.author.display_name}** **10 🪙** per message!",
+            C_PURPLE,
+        ))
+        return
+
+    # ── !shop curse ───────────────────────────────────────────────────────────
+    if subcommand == "curse":
+        if not ctx.message.mentions:
+            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop curse @user`", C_PURPLE))
+            return
+        target = ctx.message.mentions[0]
+
+        if target.id == uid:
+            await ctx.send(embed=emb("❌ Self Curse", "You can't curse yourself!", C_RED))
+            return
+
+        cost = 0 if uid in godmode_users else 10000
+        if cost > 0 and not deduct_balance(uid, cost):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **10,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
+
+        global active_curses
+        active_curses[target.id] = {"cursed_by": uid, "remaining": 5}
+        save_curse(active_curses)
+
+        await ctx.send(embed=emb(
+            "🔮 Curse Activated",
+            f"**{target.display_name}** is now cursed for the next **5** messages!",
+            C_PURPLE,
+        ))
+        return
+
     await ctx.send(embed=emb("🛒 Unknown Item", "Try `!shop` to see what's available.", C_PURPLE))
 
 
@@ -3385,6 +3785,7 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         r34_enabled = cfg.get("rule34_enabled", True)
         r34_channels = cfg.get("rule34_channels", [])
         r34_banned = cfg.get("rule34_banned_tags", [])
+        lottery_channel_id = cfg.get("lottery_channel")
 
         ai_val = " ".join(f"<#{c}>" for c in ai_channels) if ai_channels else "all channels"
         whitelist_val = " ".join(f"<#{c}>" for c in cmd_whitelist) if cmd_whitelist else "none (all allowed)"
@@ -3399,6 +3800,9 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         r34_val += f"\nChannels: {r34_ch_val}"
         if r34_banned:
             r34_val += f"\nBanned tags: {', '.join(r34_banned)}"
+        lottery_val = f"<#{lottery_channel_id}>" if lottery_channel_id else "❌ disabled"
+        soundboard_rl = cfg.get("soundboard_ratelimit", [])
+        rl_val = " ".join(f"<@{uid}>" for uid in soundboard_rl) if soundboard_rl else "none"
 
         embed = discord.Embed(title="⚙️ Server Settings", color=C_BLUE)
         embed.add_field(name="🤖 AI channels", value=ai_val, inline=False)
@@ -3407,10 +3811,12 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         embed.add_field(name="♟️ Chess channels", value=chess_val, inline=False)
         embed.add_field(name="🛒 Shop items", value=shop_val, inline=False)
         embed.add_field(name="🔞 rule34", value=r34_val, inline=False)
+        embed.add_field(name="🎰 Lottery channel", value=lottery_val, inline=False)
+        embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
         footer_text = (
             "Subcommands:\n"
             "`ai-channels #ch... / clear` • `cmd-whitelist #ch... / clear` • `cmd-blacklist #ch... / clear` • `chess-channels #ch... / clear`\n"
-            "`shop <item> on|off` • `rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned`"
+            "`shop <item> on|off` • `rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` • `lottery-channel #channel / clear` • `soundboard-ratelimit add|remove @user|<userid> / list`"
         )
         embed.set_footer(text=footer_text)
         await ctx.send(embed=embed)
@@ -3581,6 +3987,106 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("⚙️ quote", "Usage: `!settings quote bypass on|off`", C_GREY))
         return
 
+    # ── lottery-channel ───────────────────────────────────────────────────────
+    if subcommand == "lottery-channel":
+        if args and args[0].lower() == "clear":
+            cfg["lottery_channel"] = None
+            save_guild_settings()
+            await ctx.send(embed=emb("🎰 Lottery Channel", "Lottery disabled.", C_GREEN))
+        elif ctx.message.channel_mentions:
+            channel = ctx.message.channel_mentions[0]
+            cfg["lottery_channel"] = channel.id
+            save_guild_settings()
+
+            # Start first lottery if none is active
+            current_week = datetime.datetime.now().isocalendar()[1]
+            lottery = load_lottery(ctx.guild.id)
+            if lottery.get("last_posted_week", 0) != current_week:
+                lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
+                save_lottery(ctx.guild.id, lottery)
+
+                # Announce to lottery channel
+                try:
+                    await announce_new_lottery(channel, lottery["prize_pool"])
+                except:
+                    pass
+
+            await ctx.send(embed=emb("🎰 Lottery Channel", f"Lottery channel set to {channel.mention}\n🎟️ Lottery ready!", C_GREEN))
+        else:
+            await ctx.send(embed=emb("🎰 Lottery Channel", "Usage: `!settings lottery-channel #channel` or `!settings lottery-channel clear`", C_GREY))
+        return
+
+    # ── soundboard-ratelimit ──────────────────────────────────────────────────
+    if subcommand == "soundboard-ratelimit":
+        action = args[0].lower() if args else ""
+        rl_list = cfg.setdefault("soundboard_ratelimit", [])
+
+        if action == "add":
+            # Collect user IDs from mentions and/or numeric arguments
+            user_ids = []
+            if ctx.message.mentions:
+                user_ids.extend([m.id for m in ctx.message.mentions])
+            # Also check remaining args for numeric IDs
+            for arg in args[1:]:
+                try:
+                    user_ids.append(int(arg))
+                except ValueError:
+                    pass
+
+            if not user_ids:
+                await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", "Usage: `!settings soundboard-ratelimit add @user` or `!settings soundboard-ratelimit add <userid>`", C_GREY))
+                return
+
+            added = []
+            for uid in user_ids:
+                if uid not in rl_list:
+                    rl_list.append(uid)
+                    added.append(f"`{uid}`")
+
+            if added:
+                save_guild_settings()
+                await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", f"Added: {' '.join(added)}", C_GREEN))
+            else:
+                await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", "All users already in the list.", C_GREY))
+
+        elif action == "remove":
+            # Collect user IDs from mentions and/or numeric arguments
+            user_ids = []
+            if ctx.message.mentions:
+                user_ids.extend([m.id for m in ctx.message.mentions])
+            # Also check remaining args for numeric IDs
+            for arg in args[1:]:
+                try:
+                    user_ids.append(int(arg))
+                except ValueError:
+                    pass
+
+            if not user_ids:
+                await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", "Usage: `!settings soundboard-ratelimit remove @user` or `!settings soundboard-ratelimit remove <userid>`", C_GREY))
+                return
+
+            removed = []
+            for uid in user_ids:
+                if uid in rl_list:
+                    rl_list.remove(uid)
+                    removed.append(f"`{uid}`")
+
+            if removed:
+                save_guild_settings()
+                await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", f"Removed: {' '.join(removed)}", C_RED))
+            else:
+                await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", "None of those users were in the list.", C_GREY))
+
+        elif action == "list":
+            if not rl_list:
+                await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", "No users on the list.", C_GREY))
+            else:
+                await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", f"**{len(rl_list)} user(s):**\n" + " ".join(f"`{uid}`" for uid in rl_list), C_GOLD))
+
+        else:
+            await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", "Usage: `!settings soundboard-ratelimit add|remove @user|<userid>` or `list`", C_GREY))
+        return
+
     await ctx.send(embed=emb("⚙️ Settings", "Unknown subcommand. Use `!settings` to see options.", C_GREY))
 
 
@@ -3699,6 +4205,20 @@ async def cmd_persistent(ctx: commands.Context):
         inline=False
     )
 
+    # Simp data
+    embed.add_field(
+        name="🍆 Simp Tax",
+        value=f"**{len(active_simps)}** users with simp tax active",
+        inline=False
+    )
+
+    # Curse data
+    embed.add_field(
+        name="🔮 Curse",
+        value=f"**{len(active_curses)}** users with curse active",
+        inline=False
+    )
+
     # Rigged slots
     embed.add_field(
         name="🎰 Rigged Slots",
@@ -3724,6 +4244,13 @@ async def cmd_persistent(ctx: commands.Context):
     embed.add_field(
         name="♟️ Chess Games",
         value=f"**{len(active_chess_games)}** active correspondence chess games",
+        inline=False
+    )
+
+    # Quote log
+    embed.add_field(
+        name="📜 Quotes",
+        value=f"**{len(quote_log)}** quotes in recent log (max 10)",
         inline=False
     )
 
@@ -4161,7 +4688,7 @@ async def cmd_rule34(ctx: commands.Context, *, tags: str = ""):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @bot.command(name="quote")
-async def cmd_quote(ctx: commands.Context, channel: discord.TextChannel = None, user: discord.User = None):
+async def cmd_quote(ctx: commands.Context):
     """Find a funny and controversial message from recent chat history.
 
     Usage:
@@ -4171,22 +4698,23 @@ async def cmd_quote(ctx: commands.Context, channel: discord.TextChannel = None, 
     - !quote #channel @user — search quotes from user in specific channel
     """
     await ctx.typing()
+    global quote_log
 
     try:
-        # Determine target channel
-        target_channel = channel if channel else ctx.channel
+        # Parse arguments (could be channel, user, or both)
+        target_channel = ctx.channel
+        target_user = None
 
-        # Determine target user
-        target_user = user if user else None
-        if ctx.message.mentions and not user:
-            # If mentions exist but user param wasn't parsed, check if there's a mention
+        if ctx.message.channel_mentions:
+            target_channel = ctx.message.channel_mentions[0]
+        if ctx.message.mentions:
             target_user = ctx.message.mentions[0]
 
         # Fetch ALL messages from entire history
         all_messages = []
         async for msg in target_channel.history():
             # Filter: no bot messages, no commands, reasonable length, no URLs
-            if msg.author == bot.user or msg.content.startswith("!") or msg.content.startswith("http"):
+            if msg.author == bot.user or msg.content.startswith("!") or "http" in msg.content.lower():
                 continue
             if len(msg.content) < 10 or len(msg.content) > 500:
                 continue
@@ -4195,6 +4723,10 @@ async def cmd_quote(ctx: commands.Context, channel: discord.TextChannel = None, 
                 continue
             # Skip if already in recent quotes log
             if msg.content in quote_log:
+                continue
+            # Skip if message is only mentions
+            clean_content = re.sub(r'<@!?\d+>', '', msg.content).strip()
+            if not clean_content:
                 continue
             all_messages.append({
                 "author": msg.author.display_name,
@@ -4205,33 +4737,43 @@ async def cmd_quote(ctx: commands.Context, channel: discord.TextChannel = None, 
             await ctx.send(embed=emb("📜 Quote", "No messages found to quote.", C_GREY))
             return
 
-        # Randomly sample up to 1000 messages from all available messages
-        if len(all_messages) > 1000:
-            messages = random.sample(all_messages, 1000)
-        else:
-            messages = all_messages
+        # Split messages: 100 with "fuck"/"ass"/"bitch"/"gay", 900 random
+        spicy_keywords = {"fuck", "ass", "bitch", "gay"}
+        spicy_msgs = [m for m in all_messages if any(kw in m["content"].lower() for kw in spicy_keywords)]
+        regular_msgs = [m for m in all_messages if m not in spicy_msgs]
+
+        # Sample: up to 100 from spicy, up to 900 from regular
+        spicy_sample = spicy_msgs[:100]  # Take up to 100 spicy messages
+        regular_sample = random.sample(regular_msgs, min(900, len(regular_msgs))) if regular_msgs else []
+        messages = spicy_sample + regular_sample
 
         # Use AI to rank messages by entertainment/volatility value
         # Show a sample of messages and ask AI to pick the best one
-        prompt = f"""Rank these {len(messages)} chat messages by how entertaining, volatile, and funny they are. Consider:
-- Strong emotional language (good)
-- Controversial opinions (good)
-- Spicy/bold takes (good)
-- Inflammatory statements (good)
-- Wild or absurd claims (good)
+        prompt = f"""Rank these {len(messages)} chat messages by how entertaining and funny they are. Consider:
+- Absurd or ridiculous claims that are genuinely funny (good)
+- Self-aware humor or witty comebacks (good)
+- Unexpected punchlines or plot twists (good)
+- Strong emotional language paired with humor (good)
+- Spicy/bold takes that land well (good)
+- Messages that made people laugh or got strong reactions (good)
+- Absurd/funny/goofy statements that would make people laugh (good)
+- Inflammatory statements with "gay" in them are usually decently funny jokes (good)
+- Random absurd/funny/goofy statements without context (bad if not funny)
+- Generic statements about being angry/sad (bad)
 - Bland or neutral messages (bad)
 
-Example: "I don't even know" would be ranked 3/10 (bland)
-Example: "He said he's gay and he wants you to be his little fuck boy." would be ranked 9/10 (emotional, bold, spicy)
+Example: "I don't even know" = 2/10 (bland)
+Example: "He said he's gay and he wants you to be his little fuck boy." = 9/10 (bold, emotional, absurd, would get laughs)
+Example: "I hate everyone" = 1/10 (just venting, no humor)
 
-From this sample, pick the SINGLE message with the HIGHEST entertainment/volatility rank:
+From this sample, pick the SINGLE message with the HIGHEST entertainment/humor value:
 
 Messages:
-{chr(10).join(f'{i+1}. [{m["author"]}]: {m["content"]}' for i, m in enumerate(messages[:50]))}
+{chr(10).join(f'{i+1}. [{m["author"]}]: {m["content"]}' for i, m in enumerate(messages))}
 
 Respond with ONLY the message number of the highest-ranked message (just the number)."""
 
-        system_prompt = "You are an expert at ranking messages by entertainment value and volatility. Focus on emotional impact, boldness, and controversy. Pick messages that would get reactions if quoted."
+        system_prompt = "You are an expert at finding genuinely funny and entertaining messages. Prioritize absurdity, wit, and unexpected humor over just strong language. Pick messages that would make people laugh when quoted."
 
         placeholder = await ctx.send("🔍 Searching for quotes...")
         typing_task = asyncio.create_task(keep_typing(ctx.channel))
@@ -4257,12 +4799,14 @@ Respond with ONLY the message number of the highest-ranked message (just the num
 
             selected = messages[msg_num]
             # Add to quote log to prevent reuse
-            global quote_log
             quote_log.append(selected['content'])
             save_quote_log(quote_log)
 
+            # Remove mentions from displayed quote
+            clean_content = re.sub(r'<@!?\d+>', '', selected['content']).strip()
+
             await placeholder.delete()
-            await ctx.send(f"> {selected['content']}\n— **{selected['author']}**")
+            await ctx.send(f"> {clean_content}\n— **{selected['author']}**")
 
         except Exception as e:
             await placeholder.edit(content=f"⚠️ {e}")
@@ -4315,6 +4859,211 @@ async def cmd_cat(ctx: commands.Context):
                 await ctx.send(embed=embed)
     except Exception as e:
         await ctx.send(embed=emb("🐱 Cat", f"Failed to fetch: {e}", C_RED))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lottery System
+# ─────────────────────────────────────────────────────────────────────────────
+
+@bot.command(name="lottery")
+async def cmd_lottery(ctx: commands.Context, n: str = None):
+    uid = ctx.author.id
+    _ensure_user(uid)
+
+    # Check if lottery channel is configured
+    if ctx.guild is None:
+        await ctx.send(embed=emb("🎰 Lottery", "Lottery only works in servers.", C_RED))
+        return
+
+    cfg = get_guild_cfg(ctx.guild.id)
+    lottery_channel_id = cfg.get("lottery_channel")
+    if not lottery_channel_id:
+        await ctx.send(embed=emb("🎰 Lottery Disabled", "Lottery channel not configured.", C_GREY))
+        return
+
+    lottery = load_lottery(ctx.guild.id)
+
+    if n is None:
+        # Show lottery info
+        now = datetime.datetime.now()
+        pool = lottery.get("prize_pool", 0)
+        players_dict = lottery.get("players", {})
+        user_tickets = int(players_dict.get(str(uid), 0))
+
+        # Calculate next Saturday 6pm CST
+        days_until_saturday = (5 - now.weekday()) % 7
+        if days_until_saturday == 0:
+            days_until_saturday = 7
+        next_saturday = now + datetime.timedelta(days=days_until_saturday)
+        next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
+        next_saturday_utc = next_saturday - datetime.timedelta(hours=6)  # CST is UTC-6
+        timestamp = int(next_saturday_utc.timestamp())
+
+        info = f"**Prize Pool:** {pool:,} 🪙 (+1,000 🪙 per player)\n"
+        info += f"**Players:** {len(players_dict)}\n"
+        info += f"**Ticket Cost:** 10 🪙 for 1 🎟️\n\n"
+        info += f"**Your Tickets:** {user_tickets}\n"
+        info += f"Use `!lottery <n>` to buy more tickets"
+
+        await ctx.send(embed=emb(f"🎰 Current Lottery • ends in <t:{timestamp}:R>", info, C_PURPLE))
+        return
+
+    try:
+        tickets = int(n)
+        assert tickets > 0
+    except (ValueError, AssertionError):
+        await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a positive number.", C_RED))
+        return
+
+    cost = tickets * 10
+    if not deduct_balance(uid, cost):
+        await ctx.send(embed=emb("💸 Insufficient Funds", f"Need {cost} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
+        return
+
+    # Add to lottery
+    players = lottery.setdefault("players", {})
+    was_new_player = str(uid) not in players
+
+    players[str(uid)] = players.get(str(uid), 0) + tickets
+    lottery.setdefault("prize_pool", 0)
+    lottery["prize_pool"] += cost
+    if was_new_player:
+        lottery["prize_pool"] += 1000
+
+    save_lottery(ctx.guild.id, lottery)
+
+    bonus_msg = " (+1,000 bonus as new player)" if was_new_player else ""
+    embed_msg = emb(
+        "🎰 Tickets Purchased",
+        f"Bought **{tickets}** 🎟️ for **{cost} 🪙**{bonus_msg}\n\n"
+        f"**Prize Pool:** {lottery['prize_pool']:,} 🪙\n"
+        f"**Your Tickets:** {players[str(uid)]}\n"
+        f"**Total Players:** {len(players)}",
+        C_GREEN
+    )
+    await ctx.send(embed=embed_msg)
+
+
+@tasks.loop(minutes=1)
+async def lottery_scheduler():
+    """Check every minute if it's Saturday 6pm CST for lottery tasks."""
+    now = datetime.datetime.now()
+    # Saturday = 5 (Monday = 0)
+    is_saturday = now.weekday() == 5
+
+    if not is_saturday:
+        return
+
+    # Get all guilds with lottery channel configured
+    for guild in bot.guilds:
+        cfg = get_guild_cfg(guild.id)
+        lottery_channel_id = cfg.get("lottery_channel")
+        if not lottery_channel_id:
+            continue
+
+        try:
+            channel = await bot.fetch_channel(lottery_channel_id)
+        except:
+            continue
+
+        # Saturday 6pm CST - post results and start new lottery
+        if now.hour == 18 and now.minute == 0:
+            lottery = load_lottery(guild.id)
+            current_week = now.isocalendar()[1]
+            last_posted = lottery.get("last_posted_week", 0)
+
+            if current_week != last_posted:
+                # Post results
+                pool = lottery.get("prize_pool", 0)
+                players = lottery.get("players", {})
+
+                if players and pool > 0:
+                    winner_id = random.choice(list(players.keys()))
+                    winner = await bot.fetch_user(int(winner_id))
+                    add_balance(int(winner_id), pool)
+
+                    embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
+                    embed.description = (
+                        f"**Winner:** {winner.mention}\n"
+                        f"**Prize:** {pool:,} 🪙\n"
+                        f"**Players:** {len(players)}\n"
+                        f"**Tickets Sold:** {sum(players.values())}"
+                    )
+                    await channel.send(embed=embed)
+
+                # Reset lottery immediately for next week
+                lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
+                save_lottery(guild.id, lottery)
+
+                await announce_new_lottery(channel, lottery["prize_pool"], now)
+
+
+@bot.event
+async def on_ready():
+    """Check on startup if lottery results need posting and resetting."""
+    if not lottery_scheduler.is_running():
+        lottery_scheduler.start()
+
+    # Check if results need posting or lottery needs resetting
+    now = datetime.datetime.now()
+    current_week = now.isocalendar()[1]
+
+    # Initialize/reset lottery for each guild
+    await asyncio.sleep(1)  # Wait for guilds to fully load
+    for guild in bot.guilds:
+        cfg = get_guild_cfg(guild.id)
+        lottery_channel_id = cfg.get("lottery_channel")
+        if not lottery_channel_id:
+            continue
+
+        lottery = load_lottery(guild.id)
+        last_posted = lottery.get("last_posted_week", 0)
+
+        # If not Saturday, initialize if no active lottery
+        if now.weekday() != 5 and last_posted != current_week:
+            lottery = {"prize_pool": 0, "players": {}, "last_posted_week": current_week}
+            save_lottery(guild.id, lottery)
+
+            try:
+                channel = await bot.fetch_channel(lottery_channel_id)
+                await announce_new_lottery(channel, lottery["prize_pool"], now)
+                print(f"[LOTTERY] Initialized lottery for {guild.name}")
+            except Exception as e:
+                print(f"[LOTTERY] Error initializing lottery in {guild.name}: {e}")
+
+        # If Saturday 6pm+, always reset and announce
+        elif now.weekday() == 5 and now.hour >= 18:
+            try:
+                channel = await bot.fetch_channel(lottery_channel_id)
+
+                # Only post results if there were players and we haven't posted yet this week
+                if last_posted != current_week:
+                    pool = lottery.get("prize_pool", 0)
+                    players = lottery.get("players", {})
+
+                    if players and pool > 0:
+                        winner_id = random.choice(list(players.keys()))
+                        winner = await bot.fetch_user(int(winner_id))
+                        add_balance(int(winner_id), pool)
+
+                        embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
+                        embed.description = (
+                            f"**Winner:** {winner.mention}\n"
+                            f"**Prize:** {pool:,} 🪙\n"
+                            f"**Players:** {len(players)}\n"
+                            f"**Tickets Sold:** {sum(players.values())}"
+                        )
+                        await channel.send(embed=embed)
+
+                # Always reset lottery for new week on Saturday 6pm+
+                lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
+                save_lottery(guild.id, lottery)
+
+                await announce_new_lottery(channel, lottery["prize_pool"], now)
+                print(f"[LOTTERY] Reset lottery for {guild.name}")
+            except Exception as e:
+                print(f"[LOTTERY] Error resetting lottery in {guild.name}: {e}")
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
