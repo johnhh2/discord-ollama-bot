@@ -628,11 +628,16 @@ async def respond_roleplay(
     rp = active_roleplays[user_id]
     history_key = rp.get("history_owner", user_id)
     history = roleplay_histories.setdefault(history_key, [])
-    system_prompt = (
-        f"You are roleplaying as the following character and must stay in character "
-        f"for every response, no matter what: {rp['character_prompt']}. "
-        f"Never break character or acknowledge that you are an AI."
-    )
+
+    # Use custom system prompt for RPG adventures, standard roleplay prompt otherwise
+    if rp.get("is_rpg"):
+        system_prompt = rp.get("system_prompt")
+    else:
+        system_prompt = (
+            f"You are roleplaying as the following character and must stay in character "
+            f"for every response, no matter what: {rp['character_prompt']}. "
+            f"Never break character or acknowledge that you are an AI."
+        )
 
     formatted_content = f"{author_name}: {content}" if author_name else content
     history.append({"role": "user", "content": formatted_content})
@@ -1027,6 +1032,7 @@ async def cmd_help(ctx: commands.Context):
         "`!ai` — View AI connection status and command info\n"
         "`!ask <question>` — Ask the AI a question\n"
         "`!roleplay <character prompt> [@user1 @user2]` — Start a roleplay (costs 50 🪙, invite others with mentions)\n"
+        "`!rpg [@user1 @user2]` — Start an interactive RPG adventure (costs 50 🪙, invite others with mentions)\n"
         "`!stop` — Stop roleplay / forfeit active game"
     ))
     help_embed.add_field(name="🛒 Shop", inline=False, value=(
@@ -1128,6 +1134,18 @@ async def cmd_ai(ctx: commands.Context):
             f"Cost: **50 🪙**\n"
             f"Model: `{roleplay_model}`\n"
             f"Usage: `!roleplay <character> [@user1 @user2 ...]`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🗺️ !rpg",
+        value=(
+            f"Start an interactive text adventure game\n"
+            f"Cost: **50 🪙**\n"
+            f"Model: `{roleplay_model}`\n"
+            f"Usage: `!rpg [@user1 @user2 ...]`\n"
+            f"Configure your realm, character type, and companion creature!"
         ),
         inline=False
     )
@@ -1438,6 +1456,9 @@ def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
     if a == b == c:
         sym = a
         if sym == "7️⃣":
+            # Jackpot requires minimum bet of 25
+            if bet < 25:
+                return ("nothing", 0)
             return ("jackpot", 100)
         if sym == "🎰":
             return ("3bar", 20)
@@ -1479,6 +1500,10 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         await ctx.send(embed=emb("❌ Invalid Bet", f"Please provide a positive amount.", C_RED))
         return
 
+    if amount < 25:
+        await ctx.send(embed=emb("❌ Minimum Bet", f"Minimum bet is **25 🪙**.", C_RED))
+        return
+
     if uid not in godmode_users and not deduct_balance(uid, amount):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Balance: {get_balance(uid)} 🪙", C_RED))
         return
@@ -1495,14 +1520,16 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
 
     # Progressive jackpot: hit 3 sevens
     if label == "jackpot":
-        prize = slot_jackpot
+        # Calculate bonus multiplier: 1x at bet 25, scaling to 5x at bet 500+
+        bet_bonus = min(5.0, 1.0 + max(0, amount - 25) / 475.0 * 4.0)
+        prize = int(slot_jackpot * bet_bonus)
         slot_jackpot = SLOT_JACKPOT_SEED
         save_jackpot(slot_jackpot)
         add_balance(uid, prize)
         await ctx.send(embed=emb(
             "🎰 PROGRESSIVE JACKPOT!",
             f"{display}\n\n🏆 **You hit the Progressive Jackpot!**\n"
-            f"**Won: {prize:,} 🪙** | Balance: {get_balance(uid):,} 🪙\n"
+            f"**Won: {prize:,} 🪙** (Bet: {amount} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {get_balance(uid):,} 🪙\n"
             f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*",
             C_GOLD,
         ))
@@ -1533,7 +1560,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
     add_balance(uid, winnings)
 
     result_labels = {
-        "jackpot": f"7️⃣7️⃣7️⃣ — **{mult}x** (max bet for jackpot)",
+        "jackpot": f"7️⃣7️⃣7️⃣ — **{mult}x** (min bet 25, bonus scales to 5x at bet 500+)",
         "3bar":    f"🎰🎰🎰 — **{mult}x**",
         "3bell":   f"🔔🔔🔔 — **{mult}x**",
         "3lemon":  f"🍋🍋🍋 — **{mult}x**",
@@ -2420,6 +2447,102 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
         f"Responding as: *{preview}*\nType freely — no @mention needed. Use `!stop` to end.",
         C_BLUE,
     ))
+
+
+@bot.command(name="rpg")
+async def cmd_rpg(ctx: commands.Context):
+    if ctx.guild:
+        cfg = get_guild_cfg(ctx.guild.id)
+        ai_channels = cfg.get("ai_channels", [])
+        if ai_channels and ctx.channel.id not in ai_channels:
+            names = " ".join(f"<#{cid}>" for cid in ai_channels)
+            await ctx.send(embed=emb("❌ Wrong Channel", f"AI commands are only allowed in: {names}", C_RED))
+            return
+    uid = ctx.author.id
+
+    # Parse mentions for multiplayer
+    invited_users = [m for m in ctx.message.mentions if m.id != uid]
+
+    cost = 0 if uid in godmode_users else 50
+    if cost > 0 and not deduct_balance(uid, cost):
+        await ctx.send(embed=emb("💸 Insufficient Funds", f"Starting an RPG adventure costs **50 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        return
+
+    # Register host with participants set
+    rpg_system_prompt = (
+        "You are a multi-turn text adventure game bot. Start by asking the player to configure their game by choosing:\n\n"
+        "1. A realm\n"
+        "2. A character type\n"
+        "3. A companion creature\n\n"
+        "Provide a couple random suggestions to each and have the player enter their chosen realm, character type, and companion as a comma-separated list, "
+        "e.g.: \"Cyberpunk megacity, Stealthy rogue, Wise-cracking dragon\".\n\n"
+        "Parse the player's input to configure the game, then begin the adventure in the chosen setting as the specified character accompanied by the selected "
+        "creature companion. The game will progress as follows:\n\n"
+        "1. Immerse the player in a detailed setting and introduce a main quest or goal.\n"
+        "2. Include interactive NPCs, objects, and events that offer information, assistance, or challenges related to the main quest.\n"
+        "3. Present diverse characters, encounters, and subplots within the location, allowing for side quests and activities that impact the main storyline.\n"
+        "4. Provide the player with four distinct choices on each turn, balancing expected and unexpected options leading to different outcomes or paths.\n"
+        "5. Include morally ambiguous choices that significantly impact the story and endings.\n"
+        "6. Allow players to shape their character's moral alignment through decisions, influencing the narrative.\n"
+        "7. Provide the option to play as morally complex or villainous characters.\n\n"
+        "Keep the story engaging, descriptive, and open-ended to allow for player choice and agency."
+    )
+
+    active_roleplays[uid] = {
+        "character_prompt": "RPG Adventure",
+        "channel_id": ctx.channel.id,
+        "guild_id": ctx.guild.id if ctx.guild else None,
+        "participants": {uid},
+        "is_rpg": True,
+        "system_prompt": rpg_system_prompt,
+    }
+    roleplay_histories[uid] = []
+
+    # Invite flow and confirmation
+    if invited_users:
+        confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="📨 RPG Adventure Invite")
+        for inv_uid in confirmed_ids:
+            if inv_uid not in active_roleplays:
+                active_roleplays[inv_uid] = {
+                    "character_prompt": "RPG Adventure",
+                    "channel_id": ctx.channel.id,
+                    "guild_id": ctx.guild.id if ctx.guild else None,
+                    "history_owner": uid,
+                    "is_rpg": True,
+                    "system_prompt": rpg_system_prompt,
+                }
+        active_roleplays[uid]["participants"].update(confirmed_ids)
+
+        # Show confirmation of who joined
+        if confirmed_ids:
+            confirmed_names = []
+            for cid in confirmed_ids:
+                member = ctx.guild.get_member(cid) if ctx.guild else None
+                if member:
+                    confirmed_names.append(member.display_name)
+            joined_text = ", ".join(confirmed_names) if confirmed_names else f"{len(confirmed_ids)} user(s)"
+            await ctx.send(embed=emb("✅ Joined", f"{joined_text} joined the adventure!", C_GREEN))
+
+    # Send initial AI message asking for character configuration
+    placeholder = await ctx.send("🗺️ Starting your adventure...")
+    typing_task = asyncio.create_task(keep_typing(ctx.channel))
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            guild_id = ctx.guild.id if ctx.guild else None
+            model = get_guild_roleplay_model(guild_id) if guild_id else OLLAMA_MODEL
+            messages = [{"role": "system", "content": rpg_system_prompt}]
+            full_response = await stream_ollama(session, messages, placeholder, model=model)
+
+        # Add to history
+        roleplay_histories[uid].append({"role": "assistant", "content": full_response})
+        await finalize(placeholder, ctx.channel, full_response)
+    except aiohttp.ClientError as e:
+        await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
+    except Exception as e:
+        await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
+    finally:
+        typing_task.cancel()
 
 
 @bot.command(name="race")
