@@ -259,6 +259,7 @@ active_ttt_games: dict[int, dict] = {}  # channel_id → {board, players, marks,
 active_c4_games: dict[int, dict] = {}   # channel_id → {board, players, marks, current}
 active_race_games: dict[int, dict] = {} # channel_id → {players, names, positions, amount}
 active_chess_games: dict[int, dict] = load_chess_games() # channel_id → {board, players, current, moves, amount}
+rigged_slots: set[int] = set() # user_id → will hit jackpot on next spin
 
 # ── Misc state ────────────────────────────────────────────────────────────────
 channel_histories: dict[int, deque] = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
@@ -1512,8 +1513,12 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
     slot_jackpot += contrib
     save_jackpot(slot_jackpot)
 
-    # Spin
-    reels = [random.choice(SLOT_REEL) for _ in range(3)]
+    # Spin (or use rigged result)
+    if uid in rigged_slots:
+        rigged_slots.discard(uid)
+        reels = ["7️⃣", "7️⃣", "7️⃣"]
+    else:
+        reels = [random.choice(SLOT_REEL) for _ in range(3)]
     display = " | ".join(reels)
     label, mult = eval_slots(reels, amount)
 
@@ -1579,25 +1584,17 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
 
 @bot.command(name="rig", hidden=True)
 async def cmd_rig(ctx: commands.Context):
-    """Hidden admin-only command: rig the next slots win."""
+    """Hidden admin-only command: rig the next slots spin to hit 7 7 7."""
     if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "Only bot admins can use this command.", C_RED))
         return
 
     uid = ctx.author.id
-    global slot_jackpot
-
-    # Give admin the current jackpot
-    prize = slot_jackpot
-    slot_jackpot = SLOT_JACKPOT_SEED
-    save_jackpot(slot_jackpot)
-    add_balance(uid, prize)
+    rigged_slots.add(uid)
 
     await ctx.send(embed=emb(
-        "🎰 RIGGED!",
-        f"You've been granted the jackpot: **{prize:,} 🪙**\n"
-        f"Balance: {get_balance(uid):,} 🪙\n"
-        f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*",
+        "🎰 Slots Rigged",
+        f"Your next `!slots` spin will hit the **7️⃣7️⃣7️⃣ jackpot**!",
         C_GOLD,
     ))
 
