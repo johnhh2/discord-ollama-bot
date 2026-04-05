@@ -1253,7 +1253,8 @@ async def cmd_adminhelp(ctx: commands.Context):
     if is_admin(ctx):
         admin_embed.add_field(name="🪙 Economy", inline=False, value=(
             "`!give @user <amount>` — Add or remove coins from a user\n"
-            "`!event <amount> [hours]` — Start a reaction event"
+            "`!event <amount> [hours]` — Start a reaction event\n"
+            "`!adminragebait @user [n]` — Force ragebait on user (default 5 messages)"
         ))
         admin_embed.add_field(name="🤖 AI", inline=False, value=(
             "`!model [name]` — View or change the AI model\n"
@@ -3601,6 +3602,34 @@ async def cmd_godmode(ctx: commands.Context, user: discord.User = None):
     save_godmode_users()
     await ctx.send(embed=emb("👑 Godmode", f"Godmode **{state}** for {target_user.mention}.", C_GOLD))
 
+
+@bot.command(name="adminragebait")
+async def cmd_adminragebait(ctx: commands.Context, user: discord.User = None, n: str = None):
+    if not is_admin(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        return
+
+    if user is None:
+        await ctx.send(embed=emb("❌ Missing User", "Usage: `!adminragebait @user [n]`", C_RED))
+        return
+
+    # Parse optional message count (default 5)
+    try:
+        count = int(n) if n else 5
+        if count <= 0:
+            await ctx.send(embed=emb("❌ Invalid Count", "Please provide a positive number.", C_RED))
+            return
+    except ValueError:
+        await ctx.send(embed=emb("❌ Invalid Count", f"Could not parse `{n}` as a number.", C_RED))
+        return
+
+    active_ragebaits[user.id] = {"remaining": count, "history": []}
+    save_ragebait()
+    await ctx.send(embed=emb(
+        "🎭 Ragebait Activated",
+        f"**{user.display_name}** will be ragebait'd for the next **{count}** message(s)!",
+        C_PURPLE,
+    ))
 
 
 @bot.command(name="model")
