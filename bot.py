@@ -1340,7 +1340,7 @@ async def cmd_help(ctx: commands.Context):
 @bot.command(name="stats", aliases=["stat"])
 async def cmd_stats(ctx: commands.Context):
     elapsed = time.monotonic() - bot_start_time
-    msg_rate = stats_messages_seen / elapsed if elapsed > 0 else 0
+    msg_rate = stats_messages_seen / (elapsed / 60) if elapsed > 0 else 0
     text_channels = sum(len(g.text_channels) for g in bot.guilds)
     voice_channels = sum(len(g.voice_channels) for g in bot.guilds)
     ai_connected = await check_ollama_connected()
@@ -1351,7 +1351,7 @@ async def cmd_stats(ctx: commands.Context):
     embed.add_field(name="🤖 Bot", value=f"{indent}{bot.user}\n{bot.user.id}", inline=True)
     embed.add_field(name="⚙️ Shard", value=f"{indent}#0 / 1", inline=True)
     embed.add_field(name="💬 Commands Ran", value=f"{indent}{stats_commands_ran} Commands", inline=True)
-    embed.add_field(name="📨 Messages", value=f"{indent}{stats_messages_seen} ({msg_rate:.2f}/sec)", inline=True)
+    embed.add_field(name="📨 Messages", value=f"{indent}{stats_messages_seen} ({msg_rate:.2f}/min)", inline=True)
     embed.add_field(name="🧠 Memory", value=f"{indent}{get_memory_mb():.2f} MB", inline=True)
     embed.add_field(name="⏱️ Uptime", value=f"{indent}{format_uptime()}", inline=True)
     embed.add_field(name="🌐 Presence", value=(
