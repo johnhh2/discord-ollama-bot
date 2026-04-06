@@ -1193,14 +1193,16 @@ async def on_message(message: discord.Message):
 
     # Passive ragebait: track targeted users and fire at 50% chance
     if uid in active_ragebaits and not message.content.startswith("!"):
-        rage = active_ragebaits[uid]
-        rage["history"].append(f"[{message.author.display_name}]: {message.content[:200]}")
-        rage["remaining"] -= 1
-        if rage["remaining"] <= 0:
-            del active_ragebaits[uid]
-        save_ragebait()
+        # Only proceed if AI is online
+        if await check_ollama_connected():
+            rage = active_ragebaits[uid]
+            rage["history"].append(f"[{message.author.display_name}]: {message.content[:200]}")
+            rage["remaining"] -= 1
+            if rage["remaining"] <= 0:
+                del active_ragebaits[uid]
+            save_ragebait()
 
-        asyncio.create_task(_passive_ragebait(message, list(rage["history"])))
+            asyncio.create_task(_passive_ragebait(message, list(rage["history"])))
 
     # Mock: track mocked users and repeat their messages in mocking font
     if uid in active_mocks and not message.content.startswith("!"):
