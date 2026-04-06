@@ -1014,9 +1014,11 @@ async def _auto_daily(message: discord.Message):
     user_data = economy["users"][str(uid)]
     if user_data.get("daily_date") == today:
         return
-    is_new = user_data.get("daily_date") is None
+    is_new = user_data.get("last_daily", 0.0) == 0.0
     add_balance(uid, 200)
     user_data["daily_date"] = today
+    if is_new:
+        user_data["last_daily"] = time.time()  # marks as no longer a new user
     save_economy()
     greeting = f"Welcome, **{message.author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
     await message.channel.send(embed=emb(
