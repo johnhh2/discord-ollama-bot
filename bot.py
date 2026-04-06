@@ -64,7 +64,7 @@ INITIAL_BOT_ADMIN_ID = 139928946044174336
 
 # Scratchoff lottery configuration
 SCRATCHOFF_FILE = "data/scratchoff.json"
-SCRATCH_SYMBOLS = ["🌟", "🎰", "💎", "🍒", "🍀", "🔔", "🍋", "🍇", "🃏", "🎲"]
+SCRATCH_SYMBOLS = ["🍒", "🍋", "🍇"]
 SCRATCHOFF_MAX_DAILY = 3
 SCRATCHOFF_PAYOUTS = {1: 100, 2: 1000, 3: 10000}
 
@@ -1748,99 +1748,89 @@ async def cmd_scratchoff(ctx: commands.Context):
         user["scratch_date"] = today
         user["scratch_used"] = 0
 
-    if user["scratch_used"] >= 1:
+    if user["scratch_used"] >= 3:
         save_economy()
-        await ctx.send(embed=emb("🎰 Daily Limit", "You've used your **1** daily scratchoff.\nCome back tomorrow!", C_GOLD))
+        await ctx.send(embed=emb("🎰 Daily Limit", "You've used your **3** daily scratchoffs.\nCome back tomorrow!", C_GOLD))
         return
 
     user["scratch_used"] += 1
     save_economy()
 
-    # Auto-play: select cells and line automatically
-    game = MiniCactpotGame(uid)
-    y_shape = [1, 3, 5, 7]
-    for cell in y_shape:
-        if cell not in game.revealed and len(game.selections) < 3:
-            game.revealed.add(cell)
-            game.selections.append(cell)
+    # Generate daily goal seeded by uid + date (consistent if called twice)
+    seed_str = f"{uid}{today}"
+    seed_val = hash(seed_str) % (2**31)
+    random.seed(seed_val)
+    goal = random.choices(SCRATCH_SYMBOLS, k=3)
 
-    if len(game.selections) < 3:
-        for i in range(9):
-            if i not in game.revealed and len(game.selections) < 3:
-                game.revealed.add(i)
-                game.selections.append(i)
+    # Reset seed and generate player's card
+    random.seed()
+    card = random.choices(SCRATCH_SYMBOLS, k=3)
 
-    # Find best line
-    best_line = None
-    best_payout = -1
-    lines = [("row", 0), ("row", 1), ("row", 2), ("col", 0), ("col", 1), ("col", 2), ("diag1", 0), ("diag2", 0)]
-    for line_type, line_idx in lines:
-        payout = game.calculate_payout(line_type, line_idx)
-        line_sum = game.get_line_sum(line_type, line_idx)
-        if line_sum == 6 or line_sum == 24:
-            best_line = (line_type, line_idx)
-            break
-        elif best_line is None or payout > best_payout:
-            best_line = (line_type, line_idx)
-            best_payout = payout
+    # Weighted odds: 1/3 for 1x, 1/9 for 2x, 1/81 for 3x, 44/81 for 0x
+    rand_val = random.random()
+    if rand_val < 27/81:  # 1/3 = 27/81
+        matches = 1
+    elif rand_val < 36/81:  # 1/3 + 1/9 = 27/81 + 9/81 = 36/81
+        matches = 2
+    elif rand_val < 37/81:  # 1/3 + 1/9 + 1/81 = 37/81
+        matches = 3
+    else:
+        matches = 0
 
-    if best_line:
-        line_type, line_idx = best_line
-        payout = game.calculate_payout(line_type, line_idx)
-        line_sum = game.get_line_sum(line_type, line_idx)
-        add_balance(uid, payout)
+    # Determine payout
+    payout = 0
+    match_text = ""
+    if matches == 0:
+        match_text = "❌ No matches."
+    elif matches == 1:
+        payout = 100
+        match_text = "⭐ 1 Match! You won 100 🪙!"
+    elif matches == 2:
+        payout = 1000
+        match_text = "🎉 2 Matches! You won 1,000 🪙!"
+    elif matches == 3:
+        payout = 10000
+        match_text = "🏆 3 Matches! You won 10,000 🪙!"
 
-        # First-time message
-        first_time = not user.get("scratchoff_seen_rewards", False)
-        if first_time:
-            user["scratchoff_seen_rewards"] = True
-            save_economy()
+    add_balance(uid, payout)
 
-        embed = discord.Embed(title="🎰 Scratchoff", color=C_GREEN if payout > 0 else C_RED)
-        embed.description = f"```\n{game.get_grid_display()}\n```\n**Sum:** {line_sum} | **Payout:** **{payout} 🪙**"
-        embed.add_field(name="Balance", value=f"**{get_balance(uid)} 🪙**", inline=False)
+    # First-time message
+    first_time = not user.get("scratchoff_seen_rewards", False)
+    if first_time:
+        user["scratchoff_seen_rewards"] = True
+        save_economy()
 
-        if first_time:
-            embed.add_field(name="📊 Payout Info", value="Use `!scratchoffrewards` to see all payouts!", inline=False)
-        else:
-            embed.add_field(name="Help", value="Use `!scratchoffrewards` to see payouts", inline=False)
+    goal_str = " ".join(goal)
+    card_str = " ".join(card)
+    attempts_left = 3 - user["scratch_used"]
 
-        await ctx.send(embed=embed)
+    embed = discord.Embed(title="🎫 Scratchoff", color=C_GREEN if payout > 0 else C_RED)
+    embed.description = f"Daily Goal: {goal_str}\nYour Card:  {card_str}\n\n{match_text}\n\nAttempts left: {attempts_left}/3"
+
+    if first_time:
+        embed.add_field(name="📊 Payout Info", value="Use `!scratchoffrewards` to see all payouts!", inline=False)
+
+    await ctx.send(embed=embed)
 
 @bot.command(name="scratchoffrewards", aliases=["scratchrewards", "scratchoffreward", "scratchreward"])
 async def cmd_scratchoff_rewards(ctx: commands.Context):
-    embed = discord.Embed(title="🎰 Scratchoff Payouts", color=C_PURPLE)
-    embed.description = "**Scratchoff** — Select 3 cells, system picks best line"
+    embed = discord.Embed(title="🎫 Scratchoff Payouts", color=C_PURPLE)
+    embed.description = "**Scratchoff** — Match symbols to your daily goal"
 
-    table = "```\nSum  Payout\n─────────────\n"
+    table = "```\nMatches  Payout\n─────────────────\n"
     payouts = [
-        ("6*", "10,000"),
-        ("7", "36"),
-        ("8", "720"),
-        ("9", "360"),
-        ("10", "80"),
-        ("11", "252"),
-        ("12", "108"),
-        ("13", "72"),
-        ("14", "54"),
-        ("15", "180"),
-        ("16", "72"),
-        ("17", "180"),
-        ("18", "119"),
-        ("19", "36"),
-        ("20", "306"),
-        ("21", "1,080"),
-        ("22", "144"),
-        ("23", "1,800"),
-        ("24*", "3,600"),
+        ("0", "0 🪙"),
+        ("1", "100 🪙"),
+        ("2", "1,000 🪙"),
+        ("3", "10,000 🪙"),
     ]
 
-    for sum_val, payout in payouts:
-        table += f"{sum_val:<4} {payout:>6} 🪙\n"
+    for matches, payout in payouts:
+        table += f"{matches}        {payout}\n"
 
-    table += "─────────────\n* Jackpots```"
+    table += "─────────────────```"
 
-    embed.add_field(name="Limit", value="**1 per day**", inline=False)
+    embed.add_field(name="Limit", value="**3 per day**", inline=False)
     await ctx.send(embed=embed)
 
 def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
