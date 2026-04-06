@@ -1580,7 +1580,7 @@ async def cmd_leaderboard(ctx: commands.Context):
     await ctx.send(embed=emb("🪙 Leaderboard", "\n".join(lines), C_GREEN))
 
 
-@bot.command(name="pay", aliases=["give"])
+@bot.command(name="pay", aliases=["give", "gift", "donate"])
 async def cmd_pay(ctx: commands.Context, recipient: discord.Member = None, amount: str = None):
     if recipient is None or amount is None:
         await ctx.send("Usage: `!pay @user <amount>`")
@@ -2040,10 +2040,12 @@ def is_ttt_stalemate(board: list) -> bool:
     """Return True if neither player can possibly win — forced draw."""
     LINES = [(0,1,2),(3,4,5),(6,7,8),(0,3,6),(1,4,7),(2,5,8),(0,4,8),(2,4,6)]
     marks = {c for c in board if c is not None}
+    if len(marks) < 2:
+        return False
     for mark in marks:
-        opponent = (marks - {mark}).pop() if len(marks) == 2 else None
+        opponent = (marks - {mark}).pop()
         for line in LINES:
-            if opponent is None or not any(board[i] == opponent for i in line):
+            if not any(board[i] == opponent for i in line):
                 return False  # this mark can still win via this line
     return True
 
@@ -4475,7 +4477,7 @@ async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
         event["rewarded"].discard(user.id)
 
 
-@bot.command(name="give")
+@bot.command(name="admingive")
 async def cmd_give(ctx: commands.Context, target: discord.Member = None, amount: str = None):
     if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))

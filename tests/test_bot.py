@@ -292,6 +292,51 @@ class TestCheckTttWinner:
         assert bot.check_ttt_winner(board) is None
 
 
+class TestIsTttStalemate:
+    def test_empty_board_not_stalemate(self):
+        assert not bot.is_ttt_stalemate(_empty_ttt_board())
+
+    def test_one_move_not_stalemate(self):
+        board = ["❌", None, None, None, None, None, None, None, None]
+        assert not bot.is_ttt_stalemate(board)
+
+    def test_full_draw_board_is_stalemate(self):
+        # Classic draw: no three in a row for either
+        board = ["❌", "⭕", "❌", "⭕", "❌", "⭕", "⭕", "❌", "⭕"]
+        assert bot.is_ttt_stalemate(board)
+
+    def test_mid_game_forced_draw(self):
+        # X and O each block every winning line but board isn't full
+        # ❌ ⭕ ❌
+        # ⭕ ⭕ ❌
+        # ❌ ❌ ⭕  <- no winner, and no open winning line possible
+        # Actually let's pick a real mid-game forced draw:
+        # ❌ ⭕ ❌
+        # ❌ ⭕ ⭕
+        # ⭕ ❌  _   <- last square can't help either player win
+        board = ["❌", "⭕", "❌",
+                 "❌", "⭕", "⭕",
+                 "⭕", "❌", None]
+        # col0: ❌❌⭕ — ⭕ present, ❌ blocked; col1: ⭕⭕❌ — ❌ present, ⭕ blocked
+        # row2: ⭕❌_ — both marks present, blocked for both
+        # diag(0,4,8): ❌⭕_ — both marks present, blocked
+        # anti-diag(2,4,6): ❌⭕⭕ — ❌ present, ⭕ blocked; but ❌ also blocked (⭕ there)
+        assert bot.is_ttt_stalemate(board)
+
+    def test_open_winning_line_not_stalemate(self):
+        # ❌ can still win on bottom row (indices 6,7,8)
+        board = ["❌", "⭕", "❌",
+                 "⭕", "⭕", "❌",
+                 None, None, None]
+        assert not bot.is_ttt_stalemate(board)
+
+    def test_winner_on_board_not_reported_as_stalemate(self):
+        # check_ttt_winner is called first in the game loop, but stalemate
+        # should also return False when a winning line exists
+        board = ["❌", "❌", "❌", "⭕", "⭕", None, None, None, None]
+        assert not bot.is_ttt_stalemate(board)
+
+
 class TestBuildTttDisplay:
     def test_empty_board_shows_numbers(self):
         game = {"board": _empty_ttt_board()}
