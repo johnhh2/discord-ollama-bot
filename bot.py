@@ -2036,6 +2036,18 @@ def check_ttt_winner(board: list) -> str | None:
     return None
 
 
+def is_ttt_stalemate(board: list) -> bool:
+    """Return True if neither player can possibly win — forced draw."""
+    LINES = [(0,1,2),(3,4,5),(6,7,8),(0,3,6),(1,4,7),(2,5,8),(0,4,8),(2,4,6)]
+    marks = {c for c in board if c is not None}
+    for mark in marks:
+        opponent = (marks - {mark}).pop() if len(marks) == 2 else None
+        for line in LINES:
+            if opponent is None or not any(board[i] == opponent for i in line):
+                return False  # this mark can still win via this line
+    return True
+
+
 def check_c4_winner(board: list) -> str | None:
     """Check if there's a winner in connect 4. Return winning mark or None."""
     # Check horizontal
@@ -2643,7 +2655,7 @@ async def cmd_move(ctx: commands.Context, pos: int = None):
             winner_mention = ctx.guild.get_member(winner_uid).mention if ctx.guild else str(winner_uid)
             await _edit_board(ctx.channel, game, emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
             del active_ttt_games[cid]
-        elif all(c is not None for c in game["board"]):
+        elif all(c is not None for c in game["board"]) or is_ttt_stalemate(game["board"]):
             amount = game.get("amount", 0)
             if amount > 0:
                 for player_uid in game["players"]:
