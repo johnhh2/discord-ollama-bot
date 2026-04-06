@@ -92,8 +92,10 @@ def load_economy() -> dict:
     os.makedirs("data", exist_ok=True)
     if os.path.exists(ECONOMY_FILE):
         with open(ECONOMY_FILE) as f:
-            return json.load(f)
-    return {"users": {}}
+            data = json.load(f)
+        data.setdefault("last_daily_reset", None)
+        return data
+    return {"users": {}, "last_daily_reset": None}
 
 
 def save_economy():
@@ -1133,13 +1135,13 @@ async def _auto_daily(message: discord.Message):
     """Award daily coins on first interaction of the day. Sends a short message if awarded."""
     uid = message.author.id
     _ensure_user(uid)
-    now = time.time()
+    today = datetime.date.today().isoformat()
     user_data = economy["users"][str(uid)]
-    if now - user_data["last_daily"] < 86400:
+    if user_data.get("daily_date") == today:
         return
-    is_new = user_data["last_daily"] == 0.0
+    is_new = user_data.get("daily_date") is None
     add_balance(uid, 200)
-    user_data["last_daily"] = now
+    user_data["daily_date"] = today
     save_economy()
     greeting = f"Welcome, **{message.author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
     await message.channel.send(embed=emb(
@@ -1757,6 +1759,18 @@ class MiniCactpotGame:
     def calculate_payout(self, line_type: str, line_idx: int) -> int:
         total = self.get_line_sum(line_type, line_idx)
         return CACTPOT_PAYOUTS.get(total, 0)
+
+def do_daily_reset():
+    """Reset all users' daily reward and scratchoff counts at 5am."""
+    today = datetime.date.today().isoformat()
+    for user in economy["users"].values():
+        user["daily_date"] = None
+        user["scratch_used"] = 0
+        user["scratch_date"] = today
+    economy["last_daily_reset"] = today
+    save_economy()
+    print(f"[DAILY] Reset daily reward and scratchoff counts for {today}")
+
 
 # Store active games
 @bot.command(name="scratchoff", aliases=["scratch"])
@@ -5039,11 +5053,30 @@ async def lottery_scheduler():
                 await announce_new_lottery(channel, lottery["prize_pool"], now)
 
 
+@tasks.loop(minutes=1)
+async def scratchoff_scheduler():
+    """Reset daily scratchoff counts at 5am every day."""
+    now = datetime.datetime.now()
+    if now.hour != 5 or now.minute != 0:
+        return
+    today = datetime.date.today().isoformat()
+    if economy.get("last_daily_reset") != today:
+        do_daily_reset()
+
+
 @bot.event
 async def on_ready():
     """Check on startup if lottery results need posting and resetting."""
     if not lottery_scheduler.is_running():
         lottery_scheduler.start()
+    if not scratchoff_scheduler.is_running():
+        scratchoff_scheduler.start()
+
+    # If it's past 5am and the scratchoff reset hasn't happened today, do it now
+    now = datetime.datetime.now()
+    today = datetime.date.today().isoformat()
+    if now.hour >= 5 and economy.get("last_daily_reset") != today:
+        do_daily_reset()
 
     # Check if results need posting or lottery needs resetting
     now = datetime.datetime.now()
