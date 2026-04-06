@@ -1280,6 +1280,7 @@ async def cmd_help(ctx: commands.Context):
     help_embed.add_field(name="💰 Economy", inline=False, value=(
         "`!daily` — Claim 200 🪙 (24h cooldown)\n"
         "`!balance [@user]` — Check balance\n"
+        "`!pay @user <amount>` — Send coins to another user\n"
         "`!leaderboard` — Top 10 richest users"
     ))
     help_embed.add_field(name="🎲 Gambling", inline=False, value=(
@@ -1577,6 +1578,35 @@ async def cmd_leaderboard(ctx: commands.Context):
         prefix = medals[i] if i < 3 else f"{i + 1}."
         lines.append(f"{prefix} **{name}** — {data['balance']} 🪙")
     await ctx.send(embed=emb("🪙 Leaderboard", "\n".join(lines), C_GREEN))
+
+
+@bot.command(name="pay", aliases=["give"])
+async def cmd_pay(ctx: commands.Context, recipient: discord.Member = None, amount: str = None):
+    if recipient is None or amount is None:
+        await ctx.send("Usage: `!pay @user <amount>`")
+        return
+    if recipient.bot:
+        await ctx.send("You can't pay a bot.")
+        return
+    if recipient.id == ctx.author.id:
+        await ctx.send("You can't pay yourself.")
+        return
+    try:
+        amount = int(amount)
+        assert amount > 0
+    except (ValueError, AssertionError):
+        await ctx.send("Please provide a positive whole number amount.")
+        return
+    if not deduct_balance(ctx.author.id, amount):
+        await ctx.send(embed=emb("💸 Insufficient Funds", f"Balance: {get_balance(ctx.author.id)} 🪙", C_RED))
+        return
+    add_balance(recipient.id, amount)
+    await ctx.send(embed=emb(
+        "💸 Payment Sent",
+        f"**{ctx.author.display_name}** paid **{recipient.display_name}** {amount} 🪙\n"
+        f"Your balance: **{get_balance(ctx.author.id)} 🪙**",
+        C_GREEN,
+    ))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4112,7 +4142,7 @@ async def cmd_clearall(ctx: commands.Context, n: str = None):
         await ctx.channel.delete_messages(messages)
         confirm = await ctx.send(embed=emb(
             "🗑️ Cleared All",
-            f"Deleted {len(messages)} message{'s' if len(messages) != 1 else ''}.",
+            f"Deleted {len(messages)-1} message{'s' if len(messages) != 1 else ''}.",
             C_GREY,
         ))
         await asyncio.sleep(5)
