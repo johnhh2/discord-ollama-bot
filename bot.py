@@ -12,8 +12,6 @@ from discord import ui
 from dotenv import load_dotenv
 from collections import defaultdict, deque
 
-load_dotenv()
-
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "dolphin3:8b")
