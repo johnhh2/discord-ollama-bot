@@ -2302,8 +2302,9 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
     if len(guess) > 1:
         if guess == game["word"]:
             game["last_move"] = f"{name} guessed the word! 🎉"
+            game["guessed_letters"].update(game["word"])  # reveal full word for display
             reward_msg = _distribute_hangman_rewards(cid, game)
-            await _edit_board(channel, game, emb("🎉 Correct!", reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
+            await _edit_board(channel, game, emb("🎉 Correct!", build_hangman_display(game) + "\n\n" + reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         elif guess in game["guessed_words"]:
             game["last_move"] = f"{name} guessed `{guess}` ❌ (already tried)"
             await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
@@ -2334,7 +2335,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
         if all(c in game["guessed_letters"] for c in game["word"]):
             game["last_move"] = f"{name} guessed `{guess}` ✅ — word complete! 🎉"
             reward_msg = _distribute_hangman_rewards(cid, game)
-            await _edit_board(channel, game, emb("🎉 You Got It!", reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
+            await _edit_board(channel, game, emb("🎉 You Got It!", build_hangman_display(game) + "\n\n" + reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         else:
             game["last_move"] = f"{name} guessed `{guess}` ✅"
             await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** {game['last_move']}", C_GREEN))
