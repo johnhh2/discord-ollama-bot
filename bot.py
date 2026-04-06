@@ -701,6 +701,11 @@ ASK_SYSTEM_PROMPT = (
 )
 
 
+def _norm_puzzle_answer(s: str) -> str:
+    """Normalize a puzzle answer for comparison: lowercase, collapse whitespace."""
+    return " ".join(s.lower().split())
+
+
 async def _delete_after(message: discord.Message, delay: float = 5.0):
     await asyncio.sleep(delay)
     try:
@@ -1208,10 +1213,7 @@ async def on_message(message: discord.Message):
         puzzle = active_puzzles[cid]
         guess = message.content.strip()
         expected = puzzle["answer"]
-        # Normalize: strip whitespace, lowercase, collapse internal whitespace
-        def _norm(s):
-            return " ".join(s.lower().split())
-        if _norm(guess) == _norm(expected):
+        if _norm_puzzle_answer(guess) == _norm_puzzle_answer(expected):
             reward = puzzle["reward"]
             del active_puzzles[cid]
             add_balance(uid, reward)

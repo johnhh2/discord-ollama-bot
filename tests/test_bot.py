@@ -733,6 +733,83 @@ class TestJsonIO:
         assert loaded == data
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Puzzle helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestPuzzleRewards:
+    def test_easy(self):
+        assert bot.PUZZLE_REWARDS["easy"] == 25
+
+    def test_medium(self):
+        assert bot.PUZZLE_REWARDS["medium"] == 50
+
+    def test_hard(self):
+        assert bot.PUZZLE_REWARDS["hard"] == 100
+
+    def test_expert(self):
+        assert bot.PUZZLE_REWARDS["expert"] == 100
+
+    def test_extreme(self):
+        assert bot.PUZZLE_REWARDS["extreme"] == 100
+
+    def test_all_difficulties_present(self):
+        assert set(bot.PUZZLE_REWARDS.keys()) == {"easy", "medium", "hard", "expert", "extreme"}
+
+
+class TestNormPuzzleAnswer:
+    def test_lowercase(self):
+        assert bot._norm_puzzle_answer("Hello") == "hello"
+
+    def test_strips_leading_trailing_whitespace(self):
+        assert bot._norm_puzzle_answer("  42  ") == "42"
+
+    def test_collapses_internal_whitespace(self):
+        assert bot._norm_puzzle_answer("foo  bar\tbaz") == "foo bar baz"
+
+    def test_exact_match(self):
+        assert bot._norm_puzzle_answer("True") == bot._norm_puzzle_answer("true")
+
+    def test_whitespace_only(self):
+        assert bot._norm_puzzle_answer("   ") == ""
+
+    def test_empty_string(self):
+        assert bot._norm_puzzle_answer("") == ""
+
+    def test_multiline_output(self):
+        # newlines count as whitespace and get collapsed
+        assert bot._norm_puzzle_answer("1\n2\n3") == "1 2 3"
+
+
+class TestGetGuildCodingModel:
+    def test_default_falls_back_to_ollama_model(self):
+        assert bot.get_guild_coding_model(42) == bot.OLLAMA_MODEL
+
+    def test_custom_model_returned(self, monkeypatch):
+        monkeypatch.setattr(bot, "guild_settings", {"42": {"coding_model": "deepseek-coder:6.7b"}})
+        assert bot.get_guild_coding_model(42) == "deepseek-coder:6.7b"
+
+    def test_missing_key_falls_back(self, monkeypatch):
+        # Guild exists but coding_model not set
+        monkeypatch.setattr(bot, "guild_settings", {"42": {"ask_model": "llama3:8b"}})
+        assert bot.get_guild_coding_model(42) == bot.OLLAMA_MODEL
+
+    def test_independent_from_ask_model(self, monkeypatch):
+        monkeypatch.setattr(bot, "guild_settings", {
+            "42": {"ask_model": "llama3:8b", "coding_model": "deepseek-coder:6.7b"}
+        })
+        assert bot.get_guild_coding_model(42) == "deepseek-coder:6.7b"
+        assert bot.get_guild_ask_model(42) == "llama3:8b"
+
+    def test_different_guilds_independent(self, monkeypatch):
+        monkeypatch.setattr(bot, "guild_settings", {
+            "1": {"coding_model": "model-a"},
+            "2": {"coding_model": "model-b"},
+        })
+        assert bot.get_guild_coding_model(1) == "model-a"
+        assert bot.get_guild_coding_model(2) == "model-b"
+
+
 class TestSaveQuoteLog:
     def test_trims_to_last_10(self, tmp_path, monkeypatch):
         # Point QUOTE_LOG_FILE at a temp path and use real _save_json
