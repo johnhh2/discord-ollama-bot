@@ -2026,7 +2026,7 @@ async def cmd_slots_rewards(ctx: commands.Context):
         inline=False)
 
     embed.add_field(name="Cherry Bonuses", value=
-        "🍒 **Two Cherries** — 2x (Get your bet back)\n"
+        "🍒 **Two Cherries** — 2x\n"
         "🍒 **One Cherry** — 1x (Money Back)",
         inline=False)
 
@@ -2265,7 +2265,8 @@ def calculate_hangman_reward(word: str) -> int:
     - 5-letter average word (APPLE): ~25 coins
     - 10-letter hard word with rare letters: ~150 coins
     """
-    RARE_LETTERS = {'z', 'q', 'x', 'j', 'k', 'w', 'v'}
+    ULTRA_RARE_LETTERS = {'q', 'x', 'z'}
+    RARE_LETTERS = {'y', 'j', 'k', 'w', 'v'}
 
     word_lower = word.lower()
     base = 10
@@ -2273,7 +2274,8 @@ def calculate_hangman_reward(word: str) -> int:
     unique_count = len(set(word_lower))
     unique_bonus = unique_count * 3
     rare_count = sum(1 for c in word_lower if c in RARE_LETTERS)
-    rare_bonus = rare_count * 15
+    ultra_rare_count = sum(1 for c in word_lower if c in ULTRA_RARE_LETTERS)
+    rare_bonus = (rare_count * 25) + (ultra_rare_count * 50)
 
     total = base + length_bonus + unique_bonus + rare_bonus
     return total
@@ -2337,6 +2339,9 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
     """Shared hangman guess logic used by both !guess command and free-text intercept."""
     game = active_hangman_games[cid]
 
+    if author_id not in game["invited_players"]:
+        return
+
     if not guess.isalpha():
         return  # silently ignore non-alpha free-text; cmd_guess shows an error
 
@@ -2355,7 +2360,10 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             del active_hangman_games[cid]
 
             # Distribute rewards
-            reward_msg = f"The word was `{word}`!\n\n**Total: {total_reward} 🪙** split among {len(active_players)} player(s)\n"
+            if len(active_players) == 1:
+                reward_msg = f"The word was `{word}`!\n\n"
+            else:
+                reward_msg = f"The word was `{word}`!\n\n**Total: {total_reward} 🪙** split among {len(active_players)} players\n"
             for i, player_id in enumerate(active_players):
                 bonus = 1 if i < remainder else 0
                 player_reward = per_player + bonus
@@ -2374,7 +2382,8 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
                 active_player_count = len(game["active_players"])
                 per_player = total_reward // active_player_count
                 del active_hangman_games[cid]
-                await channel.send(embed=emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n💰 You would've split **{total_reward} 🪙** ({per_player} each)", C_RED))
+                pot_msg = f"💰 You would've won **{total_reward} 🪙**" if active_player_count == 1 else f"💰 You would've split **{total_reward} 🪙** ({per_player} each)"
+                await channel.send(embed=emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n{pot_msg}", C_RED))
             else:
                 await channel.send(embed=emb("❌ Wrong Word", build_hangman_display(game), C_RED))
         return
@@ -2395,7 +2404,10 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             del active_hangman_games[cid]
 
             # Distribute rewards
-            reward_msg = f"The word was `{word}`!\n\n**Total: {total_reward} 🪙** split among {len(active_players)} player(s)\n"
+            if len(active_players) == 1:
+                reward_msg = f"The word was `{word}`!\n\n"
+            else:
+                reward_msg = f"The word was `{word}`!\n\n**Total: {total_reward} 🪙** split among {len(active_players)} players\n"
             for i, player_id in enumerate(active_players):
                 bonus = 1 if i < remainder else 0
                 player_reward = per_player + bonus
@@ -2413,7 +2425,8 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             active_player_count = len(game["active_players"])
             per_player = total_reward // active_player_count
             del active_hangman_games[cid]
-            await channel.send(embed=emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n💰 You would've split **{total_reward} 🪙** ({per_player} each)", C_RED))
+            pot_msg = f"💰 You would've won **{total_reward} 🪙**" if active_player_count == 1 else f"💰 You would've split **{total_reward} 🪙** ({per_player} each)"
+            await channel.send(embed=emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n{pot_msg}", C_RED))
         else:
             await channel.send(embed=emb("❌ Wrong Letter", build_hangman_display(game), C_ORANGE))
 
@@ -2431,13 +2444,14 @@ async def cmd_hangman(ctx: commands.Context, *args):
         "guessed_words": set(),  # Track full word guesses to prevent repeats
         "wrong_guesses": 0,
         "user_id": ctx.author.id,
-        "active_players": {ctx.author.id},  # Track who's actively guessing
+        "active_players": {ctx.author.id},  # Track who's actively guessing (for rewards)
+        "invited_players": {ctx.author.id},  # Only these users may guess
     }
     # Invite flow for mentioned users
     invited_users = [m for m in ctx.message.mentions if m.id != ctx.author.id]
     if invited_users:
-        await _wait_for_confirmations(ctx, invited_users, title="📨 Hangman Invite")
-        # No state changes needed — hangman is already open to all channel users
+        confirmed = await _wait_for_confirmations(ctx, invited_users, title="📨 Hangman Invite")
+        active_hangman_games[cid]["invited_players"].update(confirmed)
     await ctx.send(embed=emb("🔤 Hangman", build_hangman_display(active_hangman_games[cid]) + "\n\nJust type a letter or use `!guess` to guess the full word!", C_ORANGE))
 
 
@@ -3272,7 +3286,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         # Fun & Social (sorted by cost)
         fun_items = [
             (500, "`!shop insurance` — Protect yourself for 24 hours — **500 🪙**"),
-            (1000, "`!shop simp @user` — Simp for a user (alias: concubine) — **1,000 🪙**"),
+            (1000, "`!shop simp @user` — Make a user simp for you — **1,000 🪙**"),
             (1500, "`!shop mock @user` — Mock someone's next 5 messages — **1,500 🪙**"),
             (2000, "`!shop rolecolor @user <color>` — Change someone's role color — **2,000 🪙**"),
         ]
