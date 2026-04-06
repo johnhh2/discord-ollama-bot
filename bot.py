@@ -3191,7 +3191,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         # Nicknames (sorted by cost)
         if _si.get("nickname", True):
             nickname_items = [
-                (2000, "`!shop nickname <new_name>` — Change your own nickname — **2,000 🪙**"),
+                (5000, "`!shop nickname <new_name>` — Change your own nickname — **5,000 🪙**"),
                 (2000, "`!shop removenickname` — Remove your own nickname — **2,000 🪙**"),
                 (10000, "`!shop nickname @user <new_name>` — Nickname user — **10,000 🪙**"),
             ]
@@ -3223,7 +3223,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             (500, "`!shop insurance` — Protect yourself for 24 hours — **500 🪙**"),
             (1000, "`!shop simp @user` — Make a user simp for you — **1,000 🪙**"),
             (1500, "`!shop mock @user` — Mock someone's next 5 messages — **1,500 🪙**"),
-            (2000, "`!shop rolecolor @user <color>` — Change someone's role color — **2,000 🪙**"),
+            (2000, "`!shop rolecolor <role name> <color>` — Change a role's color — **2,000 🪙**"),
         ]
         if _si.get("ragebait", True):
             fun_items.append((2500, "`!shop ragebait @user [topic]` — Ragebait for 5 messages — **2,500 🪙**"))
@@ -3260,8 +3260,8 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         else:
             target = ctx.author
             new_name = " ".join(args)
-            cost = 0 if uid in godmode_users else 2000
-            cost_label = "2,000"
+            cost = 0 if uid in godmode_users else 5000
+            cost_label = "5,000"
 
         if not new_name:
             await ctx.send(embed=emb("🛒 Shop", "Please provide a new nickname.", C_PURPLE))
@@ -3596,56 +3596,36 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
     # ── !shop rolecolor ───────────────────────────────────────────────────────
     if subcommand == "rolecolor":
         if len(args) < 2:
-            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop rolecolor @user <color>`", C_PURPLE))
-            return
-        if not ctx.message.mentions:
-            await ctx.send(embed=emb("🛒 Shop", "Please mention a user.", C_PURPLE))
-            return
-        target = ctx.message.mentions[0]
-        color_name = " ".join(args[1:])
-
-        cost = 0 if uid in godmode_users else 2000
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **2,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
-            return
-
-        # Parse color
-        try:
-            color = discord.Color.from_str(color_name)
-        except ValueError:
-            await ctx.send(embed=emb("❌ Invalid Color", f"Could not parse color: `{color_name}`. Try hex codes like `#FF0000` or color names.", C_RED))
+            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop rolecolor <role name> <color>`", C_PURPLE))
             return
 
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
 
-        # Find or create role for the user
+        # Last token is the color; everything before is the role name
+        role_name = " ".join(args[:-1])
+        color_str = args[-1]
+
+        role = discord.utils.find(lambda r: r.name.lower() == role_name.lower(), ctx.guild.roles)
+        if role is None:
+            await ctx.send(embed=emb("❌ Not Found", f"No role named **{role_name}** exists.", C_RED))
+            return
+
         try:
-            member = ctx.guild.get_member(target.id)
-            if not member:
-                await ctx.send(embed=emb("❌ User Not Found", f"Could not find **{target.display_name}** in this server.", C_RED))
-                return
+            color = discord.Color.from_str(color_str)
+        except ValueError:
+            await ctx.send(embed=emb("❌ Invalid Color", f"Could not parse color: `{color_str}`. Try hex codes like `#FF0000` or color names.", C_RED))
+            return
 
-            # Look for existing color role for this user, or use their highest role
-            role_to_color = None
-            for r in member.roles:
-                if r.name.startswith(f"color-{target.id}"):
-                    role_to_color = r
-                    break
+        cost = 0 if uid in godmode_users else 2000
+        if cost > 0 and not deduct_balance(uid, cost):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **2,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
 
-            if not role_to_color and member.roles:
-                role_to_color = member.roles[-1]  # Highest role
-
-            if role_to_color:
-                await role_to_color.edit(color=color)
-                await ctx.send(embed=emb(
-                    "🎨 Role Color Changed",
-                    f"**{target.display_name}**'s role color has been changed!",
-                    C_PURPLE,
-                ))
-            else:
-                await ctx.send(embed=emb("❌ No Role", f"**{target.display_name}** has no roles to recolor.", C_RED))
+        try:
+            await role.edit(color=color)
+            await ctx.send(embed=emb("🎨 Role Color Changed", f"**{role.name}** color set to `{color_str}`.", C_PURPLE))
         except discord.Forbidden:
             log_bot_permission_error(ctx, "edit roles")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to edit roles.", C_RED))
