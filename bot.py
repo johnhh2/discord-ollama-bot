@@ -1521,20 +1521,22 @@ PUZZLE_REWARDS = {
 }
 
 PUZZLE_CODING_PROMPT = (
-    "Generate a coding puzzle where the user must determine the exact output of a short code snippet. "
-    "Choose a language appropriate for the difficulty. "
-    "Return ONLY a JSON object with exactly two keys: \"question\" and \"answer\". "
-    "\"question\" should be the full puzzle text including the code snippet (use markdown code blocks). "
-    "\"answer\" should be the exact output the code produces (just the output string, nothing else). "
-    "Do not include any explanation outside the JSON object."
+    "You are a coding puzzle generator. Your response must be a single raw JSON object — no markdown, no code fences, no explanation before or after.\n"
+    "The JSON object must have exactly these three keys:\n"
+    "  \"language\": the programming language (\"Python\", \"JavaScript\", or \"C\")\n"
+    "  \"question\": the puzzle text, including the code snippet inside a markdown code block with the language tag\n"
+    "  \"answer\": the exact stdout output of the snippet as a plain string — nothing else, no trailing newline unless the code actually prints one\n"
+    "Example format:\n"
+    "{\"language\": \"Python\", \"question\": \"What does this print?\\n```python\\nprint(1+1)\\n```\", \"answer\": \"2\"}\n"
+    "Output ONLY the JSON object. Any text outside the JSON will break the parser."
 )
 
 PUZZLE_DIFFICULTY_GUIDANCE = {
-    "easy":   "Use a trivial snippet (e.g. basic arithmetic, string concat, simple loop) in Python or JavaScript. The output should be obvious to a beginner.",
-    "medium": "Use a moderately tricky snippet involving type coercion, simple recursion, or list operations.",
-    "hard":   "Use a tricky snippet involving closures, scoping, reference semantics, or unexpected operator behavior.",
-    "expert": "Use a very tricky snippet that requires deep knowledge of the language (e.g. Python descriptors, JS prototype chain, bitwise quirks).",
-    "extreme": "Use an extremely difficult snippet requiring expert-level language knowledge — multiple interacting edge cases, undefined-adjacent behavior, or deep runtime internals.",
+    "easy":   "Use Python or JavaScript only. Use a trivial snippet (e.g. basic arithmetic, string concat, simple loop). The output should be obvious to a beginner.",
+    "medium": "Use Python or JavaScript only. Use a moderately tricky snippet involving type coercion, simple recursion, or list operations.",
+    "hard":   "Use Python, JavaScript, or C. Use a tricky snippet involving closures, scoping, reference semantics, or unexpected operator behavior.",
+    "expert": "Use Python, JavaScript, or C. Use a very tricky snippet that requires deep knowledge of the language (e.g. Python descriptors, JS prototype chain, C pointer arithmetic).",
+    "extreme": "Use Python, JavaScript, or C. Use an extremely difficult snippet requiring expert-level language knowledge — multiple interacting edge cases, undefined-adjacent behavior, or deep runtime internals.",
 }
 
 
@@ -1584,7 +1586,7 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
     system_prompt = PUZZLE_CODING_PROMPT + f"\n\nDifficulty: {difficulty}. {guidance}"
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Generate a {difficulty} coding output puzzle."},
+        {"role": "user", "content": f"Generate a {difficulty} coding output puzzle. Respond with the JSON object only."},
     ]
 
     guild_id = ctx.guild.id if ctx.guild else None
@@ -1614,6 +1616,7 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
         puzzle_data = json.loads(json_match.group())
         question = puzzle_data["question"]
         answer = str(puzzle_data["answer"])
+        language = puzzle_data.get("language", "Unknown")
     except (json.JSONDecodeError, KeyError):
         await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
         return
@@ -1627,7 +1630,7 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
 
     await thinking_msg.delete()
     embed = discord.Embed(
-        title=f"🧩 Coding Puzzle — {difficulty.capitalize()}",
+        title=f"🧩 Coding Puzzle — {difficulty.capitalize()} · {language}",
         description=question + f"\n\nType the **exact output** to win **{reward} 🪙**!",
         color=C_GOLD,
     )
