@@ -4167,11 +4167,11 @@ async def cmd_clearall(ctx: commands.Context, n: str = None):
         return
 
     try:
-        n = int(n)
-        if n <= 0:
+        n = int(n) + 1
+        if n <= 1:
             await ctx.send(embed=emb("❌ Invalid Number", "Please provide a positive integer.", C_RED))
             return
-        if n > 100:
+        if n > 101:
             await ctx.send(embed=emb("❌ Too Many", "Maximum 100 messages at a time.", C_RED))
             return
     except ValueError:
@@ -4957,7 +4957,7 @@ async def cmd_lottery(ctx: commands.Context, n: str = None):
 
     save_lottery(ctx.guild.id, lottery)
 
-    bonus_msg = " (+1,000 bonus as new player)" if was_new_player else ""
+    bonus_msg = "(+1,000 bonus as new player)" if was_new_player else ""
 
     # Calculate when lottery ends (reuse logic from info display above)
     now = datetime.datetime.now()
@@ -4971,8 +4971,8 @@ async def cmd_lottery(ctx: commands.Context, n: str = None):
 
     embed_msg = emb(
         "🎰 Tickets Purchased",
-        f"Bought **{tickets}** 🎟️ for **{cost} 🪙**{bonus_msg}\n\n"
-        f"**Prize Pool:** {lottery['prize_pool']:,} 🪙\n"
+        f"Bought **{tickets}** 🎟️ for **{cost} 🪙**\n\n"
+        f"**Prize Pool:** {lottery['prize_pool']:,} 🪙 {bonus_msg}\n"
         f"**Your Tickets:** {players[str(uid)]}\n"
         f"**Total Players:** {len(players)}\n"
         f"**Ends:** <t:{timestamp}:R>",
