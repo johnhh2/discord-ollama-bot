@@ -4,7 +4,6 @@ services:
     restart: unless-stopped
     env_file:
       - .config
-      - .env
     # Allows the bot container to reach Ollama running on the host machine
     extra_hosts:
       - "host.docker.internal:host-gateway"

@@ -31,7 +31,7 @@ ACTIVE_CHANNEL_IDS = (
     else set()
 )
 
-CHANNEL_PROMPTS_FILE = "channel_prompts.json"
+CHANNEL_PROMPTS_FILE = "data/channel_prompts.json"
 ECONOMY_FILE = "data/economy.json"
 BOT_ROLES_FILE = "data/bot_roles.json"
 BOT_ADMINS_FILE = "data/bot_admins.json"
