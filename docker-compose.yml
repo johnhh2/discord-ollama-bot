@@ -6,9 +6,10 @@ services:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
       RULE34_API_KEY: ${RULE34_API_KEY}
       RULE34_USER_ID: ${RULE34_USER_ID}
-    # Allows the bot container to reach Ollama running on the host machine
+    # Allows the bot container to reach Ollama and other services
     extra_hosts:
       - "host.docker.internal:host-gateway"
+      - "ollama:192.168.68.82"
     volumes:
       - /volume1/docker/ollama_discord_bot:/app/data
     deploy:
