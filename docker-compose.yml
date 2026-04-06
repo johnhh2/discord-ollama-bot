@@ -1,13 +1,4 @@
 services:
-  watchtower:
-    image: containrrr/watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    command: --interval 300 bot
-    environment:
-      - WATCHTOWER_CLEANUP=true
-
   bot:
     build: .
     restart: unless-stopped
