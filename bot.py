@@ -1536,7 +1536,7 @@ PUZZLE_DIFFICULTY_GUIDANCE = {
     "medium": "Use Python or JavaScript only. Use a moderately tricky snippet involving type coercion, simple recursion, or list operations.",
     "hard":   "Use Python, JavaScript, or C. Use a tricky snippet involving closures, scoping, reference semantics, or unexpected operator behavior.",
     "expert": "Use Python, JavaScript, or C. Use a very tricky snippet that requires deep knowledge of the language (e.g. Python descriptors, JS prototype chain, C pointer arithmetic).",
-    "extreme": "Use Python, JavaScript, or C. Use an extremely difficult snippet requiring expert-level language knowledge — multiple interacting edge cases, undefined-adjacent behavior, or deep runtime internals.",
+    "extreme": "Use Python, JavaScript, or C. This must be brutally hard — combine multiple interacting edge cases in a single snippet. Examples: C undefined behavior with pointer casts and sequence points, Python metaclass/descriptor interactions with __slots__ or __getattribute__, JS with prototype mutation + closure + async ordering. The snippet should be plausibly valid but deeply unintuitive. Even experienced developers should struggle.",
 }
 
 
@@ -1614,7 +1614,7 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
         return
     try:
         puzzle_data = json.loads(json_match.group())
-        question = puzzle_data["question"]
+        question = puzzle_data["question"].replace("\\n", "\n").replace("\\t", "\t")
         answer = str(puzzle_data["answer"])
         language = puzzle_data.get("language", "Unknown")
     except (json.JSONDecodeError, KeyError):
