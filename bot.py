@@ -291,6 +291,17 @@ def get_guild_roleplay_model(guild_id: int) -> str:
     return cfg.get("roleplay_model", OLLAMA_MODEL)
 
 
+def get_game_channels_redirect(ctx) -> str | None:
+    """Return a channel-mention string if the current channel is not a game channel, else None."""
+    if not ctx.guild:
+        return None
+    cfg = get_guild_cfg(ctx.guild.id)
+    game_channels = cfg.get("game_channels", [])
+    if game_channels and ctx.channel.id not in game_channels:
+        return " ".join(f"<#{cid}>" for cid in game_channels)
+    return None
+
+
 channel_prompts = load_channel_prompts()
 economy = load_economy()
 slot_jackpot = load_jackpot()
@@ -550,16 +561,9 @@ def build_blackjack_display(
 
 # ── Hangman helpers ───────────────────────────────────────────────────────────
 
-HANGMAN_WORDS = [
-    "python", "discord", "hangman", "wizard", "quantum", "jungle", "oxygen",
-    "breeze", "falcon", "sphinx", "goblin", "mystic", "planet", "silver",
-    "knight", "dragon", "zombie", "voyage", "castle", "frozen", "marble",
-    "mitten", "candle", "fossil", "gravel", "hollow", "jigsaw", "lizard",
-    "muffin", "napkin", "oyster", "parrot", "quartz", "riddle", "saddle",
-    "tandem", "velvet", "walnut", "yellow", "zipper", "abacus", "bamboo",
-    "clover", "dagger", "feline", "goblet", "hermit", "ignite", "jackal",
-    "kernel",
-]
+_hangman_words_path = os.path.join(os.path.dirname(__file__), "hangman_words.txt")
+with open(_hangman_words_path) as _f:
+    HANGMAN_WORDS = [w.strip() for w in _f if w.strip()]
 
 HANGMAN_ART = [
     "```\n  +---+\n  |   |\n      |\n      |\n      |\n      |\n=========```",
@@ -1330,7 +1334,7 @@ async def cmd_help(ctx: commands.Context):
         "`!game` — View all games and gambling commands\n"
         "`!clearhistory` — Reset AI chat history for this channel"
     ))
-    await ctx.send(embed=help_embed)
+    await ctx.send(embed=help_embed, delete_after=60)
 
 
 @bot.command(name="stats", aliases=["stat"])
@@ -1505,7 +1509,7 @@ async def cmd_adminhelp(ctx: commands.Context):
             "`!botinvite` — Display bot invite link\n"
             "`!invite` — Display server invite link"
         ))
-    await ctx.send(embed=admin_embed)
+    await ctx.send(embed=admin_embed, delete_after=60)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1615,6 +1619,10 @@ async def cmd_pay(ctx: commands.Context, recipient: discord.Member = None, amoun
 
 @bot.command(name="flip", aliases=["coinflip"])
 async def cmd_flip(ctx: commands.Context, amount: str = None):
+    redirect = get_game_channels_redirect(ctx)
+    if redirect:
+        await ctx.send(embed=emb("❌ Wrong Channel", f"Gambling is only allowed in: {redirect}", C_RED))
+        return
     uid = ctx.author.id
     if amount is None:
         await ctx.send("Usage: `!flip <amount>`")
@@ -1700,6 +1708,10 @@ def do_daily_reset():
 # Store active games
 @bot.command(name="scratchoff", aliases=["scratch"])
 async def cmd_scratchoff(ctx: commands.Context):
+    redirect = get_game_channels_redirect(ctx)
+    if redirect:
+        await ctx.send(embed=emb("❌ Wrong Channel", f"Gambling is only allowed in: {redirect}", C_RED))
+        return
     uid = ctx.author.id
     _ensure_user(uid)
 
@@ -1829,6 +1841,10 @@ def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
 
 @bot.command(name="slots", aliases=["slot"])
 async def cmd_slots(ctx: commands.Context, amount: str = None):
+    redirect = get_game_channels_redirect(ctx)
+    if redirect:
+        await ctx.send(embed=emb("❌ Wrong Channel", f"Gambling is only allowed in: {redirect}", C_RED))
+        return
     global slot_jackpot
     uid = ctx.author.id
     _ensure_user(uid)
@@ -2222,6 +2238,10 @@ def calculate_hangman_reward(word: str) -> int:
 
 @bot.command(name="blackjack")
 async def cmd_blackjack(ctx: commands.Context, amount: str = None):
+    redirect = get_game_channels_redirect(ctx)
+    if redirect:
+        await ctx.send(embed=emb("❌ Wrong Channel", f"Gambling is only allowed in: {redirect}", C_RED))
+        return
     uid = ctx.author.id
     if amount is None:
         await ctx.send("Usage: `!blackjack <amount>`")
@@ -2371,6 +2391,10 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
 
 @bot.command(name="hangman", aliases=["hang", "hm"])
 async def cmd_hangman(ctx: commands.Context, *args):
+    redirect = get_game_channels_redirect(ctx)
+    if redirect:
+        await ctx.send(embed=emb("❌ Wrong Channel", f"Games are only allowed in: {redirect}", C_RED))
+        return
     cid = ctx.channel.id
     if cid in active_hangman_games:
         await ctx.send(embed=emb("🔤 Already Playing", "Just type your guess directly!", C_ORANGE))
@@ -2450,6 +2474,10 @@ async def _setup_pvp_game(ctx, opponent, amount, invite_title):
 
 @bot.command(name="ttt")
 async def cmd_ttt(ctx: commands.Context, opponent: discord.User = None, amount: int = 0):
+    redirect = get_game_channels_redirect(ctx)
+    if redirect:
+        await ctx.send(embed=emb("❌ Wrong Channel", f"Games are only allowed in: {redirect}", C_RED))
+        return
     cid = ctx.channel.id
     uid = ctx.author.id
     if cid in active_ttt_games or cid in active_c4_games:
@@ -2474,6 +2502,10 @@ async def cmd_ttt(ctx: commands.Context, opponent: discord.User = None, amount: 
 
 @bot.command(name="c4")
 async def cmd_c4(ctx: commands.Context, opponent: discord.User = None, amount: int = 0):
+    redirect = get_game_channels_redirect(ctx)
+    if redirect:
+        await ctx.send(embed=emb("❌ Wrong Channel", f"Games are only allowed in: {redirect}", C_RED))
+        return
     cid = ctx.channel.id
     uid = ctx.author.id
     if cid in active_ttt_games or cid in active_c4_games:
@@ -2529,8 +2561,9 @@ async def cmd_chess(ctx: commands.Context, *args):
     if ctx.guild:
         cfg = get_guild_cfg(ctx.guild.id)
         chess_channels = cfg.get("chess_channels", [])
-        if chess_channels and ctx.channel.id not in chess_channels:
-            names = " ".join(f"<#{cid}>" for cid in chess_channels)
+        effective_channels = chess_channels or cfg.get("game_channels", [])
+        if effective_channels and ctx.channel.id not in effective_channels:
+            names = " ".join(f"<#{cid}>" for cid in effective_channels)
             await ctx.send(embed=emb("❌ Wrong Channel", f"Chess is only allowed in: {names}", C_RED))
             return
 
@@ -2983,6 +3016,10 @@ async def cmd_rpg(ctx: commands.Context):
 
 @bot.command(name="race")
 async def cmd_race(ctx: commands.Context, *args):
+    redirect = get_game_channels_redirect(ctx)
+    if redirect:
+        await ctx.send(embed=emb("❌ Wrong Channel", f"Games are only allowed in: {redirect}", C_RED))
+        return
     cid = ctx.channel.id
     uid = ctx.author.id
 
@@ -3182,6 +3219,12 @@ async def cmd_stop(ctx: commands.Context):
 
 @bot.command(name="shop", aliases=["store"])
 async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
+    if ctx.guild:
+        cfg = get_guild_cfg(ctx.guild.id)
+        lottery_channel_id = cfg.get("lottery_channel")
+        if lottery_channel_id and ctx.channel.id == lottery_channel_id:
+            await ctx.send(embed=emb("❌ Wrong Channel", "Shop commands are not allowed in the lottery channel.", C_RED))
+            return
     uid = ctx.author.id
 
     if subcommand is None:
@@ -3233,11 +3276,11 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
         if not sections:
-            await ctx.send(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE))
+            await ctx.send(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE), delete_after=60)
             return
 
         desc = "\n\n".join(f"**{section}**\n" + "\n".join(items) for section, items in sections.items())
-        await ctx.send(embed=emb("🛒 Shop", desc, C_PURPLE))
+        await ctx.send(embed=emb("🛒 Shop", desc, C_PURPLE), delete_after=60)
         return
 
     _shop_cfg = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
@@ -3752,6 +3795,7 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         ai_channels = cfg.get("ai_channels", [])
         cmd_whitelist = cfg.get("command_whitelist", [])
         cmd_blacklist = cfg.get("command_blacklist", [])
+        game_channels = cfg.get("game_channels", [])
         chess_channels = cfg.get("chess_channels", [])
         shop_items = cfg.get("shop_items", {})
         r34_enabled = cfg.get("rule34_enabled", True)
@@ -3762,7 +3806,8 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         ai_val = " ".join(f"<#{c}>" for c in ai_channels) if ai_channels else "all channels"
         whitelist_val = " ".join(f"<#{c}>" for c in cmd_whitelist) if cmd_whitelist else "none (all allowed)"
         blacklist_val = " ".join(f"<#{c}>" for c in cmd_blacklist) if cmd_blacklist else "none"
-        chess_val = " ".join(f"<#{c}>" for c in chess_channels) if chess_channels else "all channels"
+        game_val = " ".join(f"<#{c}>" for c in game_channels) if game_channels else "all channels"
+        chess_val = " ".join(f"<#{c}>" for c in chess_channels) if chess_channels else "game channels (or all)"
         item_names = ["nickname", "role", "removerole", "ragebait"]
         shop_val = "  ".join(
             f"{n} {'✅' if shop_items.get(n, True) else '❌'}" for n in item_names
@@ -3787,6 +3832,7 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         embed.add_field(name="🤖 AI channels", value=ai_val, inline=False)
         embed.add_field(name="✅ Channel whitelist", value=whitelist_val, inline=False)
         embed.add_field(name="❌ Channel blacklist", value=blacklist_val, inline=False)
+        embed.add_field(name="🎮 Game channels", value=game_val, inline=False)
         embed.add_field(name="♟️ Chess channels", value=chess_val, inline=False)
         embed.add_field(name="🛒 Shop items", value=shop_val, inline=False)
         embed.add_field(name="🔞 rule34", value=r34_val, inline=False)
@@ -3794,11 +3840,11 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
         footer_text = (
             "Subcommands:\n"
-            "`ai-channels #ch... / clear` • `cmd-whitelist #ch... / clear` • `cmd-blacklist #ch... / clear` • `chess-channels #ch... / clear`\n"
+            "`ai-channels #ch... / clear` • `cmd-whitelist #ch... / clear` • `cmd-blacklist #ch... / clear` • `game-channels #ch... / clear` • `chess-channels #ch... / clear`\n"
             "`shop <item> on|off` • `rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` • `lottery-channel #channel / clear` • `soundboard-ratelimit add|remove @user|<userid> / list`"
         )
         embed.set_footer(text=footer_text)
-        await ctx.send(embed=embed)
+        await ctx.send(embed=embed, delete_after=60)
         return
 
     # ── ai-channels ───────────────────────────────────────────────────────────
@@ -3859,6 +3905,21 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("♟️ Chess Channels", f"Chess restricted to: {names}", C_GREEN))
         else:
             await ctx.send(embed=emb("♟️ Chess Channels", "Usage: `!settings chess-channels #channel ...` or `!settings chess-channels clear`", C_GREY))
+        return
+
+    # ── game-channels ─────────────────────────────────────────────────────────
+    if subcommand == "game-channels":
+        if args and args[0].lower() == "clear":
+            cfg["game_channels"] = []
+            save_guild_settings()
+            await ctx.send(embed=emb("🎮 Game Channels", "Game channel restriction removed — games and gambling allowed everywhere.", C_GREEN))
+        elif ctx.message.channel_mentions:
+            cfg["game_channels"] = [c.id for c in ctx.message.channel_mentions]
+            save_guild_settings()
+            names = " ".join(c.mention for c in ctx.message.channel_mentions)
+            await ctx.send(embed=emb("🎮 Game Channels", f"Games and gambling restricted to: {names}", C_GREEN))
+        else:
+            await ctx.send(embed=emb("🎮 Game Channels", "Usage: `!settings game-channels #channel ...` or `!settings game-channels clear`", C_GREY))
         return
 
     # ── shop ──────────────────────────────────────────────────────────────────
@@ -4579,6 +4640,9 @@ async def cmd_invite(ctx: commands.Context):
 # Commands — Rule34
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Tracks the last rule34 bot message per (channel_id, user_id)
+_r34_last_msg: dict[tuple[int, int], discord.Message] = {}
+
 async def _r34_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[dict]:
     url = (
         f"https://api.rule34.xxx/index.php"
@@ -4659,7 +4723,20 @@ async def cmd_rule34(ctx: commands.Context, *, tags: str = ""):
     embed = discord.Embed(title=f"🔞 rule34: {display}", color=C_PURPLE)
     embed.set_image(url=file_url)
     embed.set_footer(text=f"Score: {post.get('score', '?')} | Rating: {post.get('rating', '?')}")
-    await ctx.send(embed=embed)
+    msg = await ctx.send(embed=embed)
+    _r34_last_msg[(ctx.channel.id, ctx.author.id)] = msg
+
+
+@bot.command(name="ew")
+async def cmd_ew(ctx: commands.Context):
+    key = (ctx.channel.id, ctx.author.id)
+    msg = _r34_last_msg.pop(key, None)
+    if msg is None:
+        return
+    try:
+        await msg.delete()
+    except discord.NotFound:
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
