@@ -1278,7 +1278,8 @@ async def on_message(message: discord.Message):
             return
 
     is_dm = isinstance(message.channel, discord.DMChannel)
-    is_mentioned = bot.user in message.mentions
+    # Only respond to mentions if the message starts with the mention
+    is_mentioned = bot.user in message.mentions and message.content.strip().startswith(f"<@{bot.user.id}>")
     in_roleplay = uid in active_roleplays and active_roleplays[uid].get("channel_id") == message.channel.id
 
     # Ragebait and mock take precedence over normal mentions
@@ -3056,7 +3057,11 @@ async def cmd_race(ctx: commands.Context, *args):
                 return
             paid.append(player_uid)
 
-    confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="🏇 Race Invite")
+    # Skip confirmation if no bet
+    if amount == 0:
+        confirmed_ids = set(u.id for u in invited_users)
+    else:
+        confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="🏇 Race Invite")
 
     # Refund anyone who didn't confirm
     declined = set(u.id for u in invited_users) - confirmed_ids
@@ -3076,11 +3081,20 @@ async def cmd_race(ctx: commands.Context, *args):
     # Build final player list (host + confirmed)
     final_players = [uid] + list(confirmed_ids)
 
-    # Build names map
+    # Build names map using known member objects where available
     names = {}
-    for p_uid in final_players:
-        member = ctx.guild.get_member(p_uid) if ctx.guild else None
-        names[p_uid] = member.display_name if member else str(p_uid)
+    # Host is always ctx.author
+    names[uid] = ctx.author.display_name
+    # Confirmed players come from invited_users
+    for player_uid in confirmed_ids:
+        # Find the member from invited_users
+        member = next((u for u in invited_users if u.id == player_uid), None)
+        if member:
+            names[player_uid] = member.display_name
+        else:
+            # Fallback to lookup (shouldn't happen)
+            member = ctx.guild.get_member(player_uid) if ctx.guild else None
+            names[player_uid] = member.display_name if member else str(player_uid)
 
     active_race_games[cid] = {
         "players": final_players,
@@ -4905,7 +4919,7 @@ async def cmd_lottery(ctx: commands.Context, n: str = None):
         info += f"**Your Tickets:** {user_tickets}\n"
         info += f"Use `!lottery <n>` to buy more tickets"
 
-        await ctx.send(embed=emb(f"🎰 Current Lottery • ends in <t:{timestamp}:R>", info, C_PURPLE))
+        await ctx.send(embed=emb(f"🎰 Current Lottery • ends <t:{timestamp}:R>", info, C_PURPLE))
         return
 
     try:
@@ -4933,12 +4947,24 @@ async def cmd_lottery(ctx: commands.Context, n: str = None):
     save_lottery(ctx.guild.id, lottery)
 
     bonus_msg = " (+1,000 bonus as new player)" if was_new_player else ""
+
+    # Calculate when lottery ends (reuse logic from info display above)
+    now = datetime.datetime.now()
+    days_until_saturday = (5 - now.weekday()) % 7
+    if days_until_saturday == 0:
+        days_until_saturday = 7
+    next_saturday = now + datetime.timedelta(days=days_until_saturday)
+    next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
+    next_saturday_utc = next_saturday - datetime.timedelta(hours=6)  # CST is UTC-6
+    timestamp = int(next_saturday_utc.timestamp())
+
     embed_msg = emb(
         "🎰 Tickets Purchased",
         f"Bought **{tickets}** 🎟️ for **{cost} 🪙**{bonus_msg}\n\n"
         f"**Prize Pool:** {lottery['prize_pool']:,} 🪙\n"
         f"**Your Tickets:** {players[str(uid)]}\n"
-        f"**Total Players:** {len(players)}",
+        f"**Total Players:** {len(players)}\n"
+        f"**Ends:** <t:{timestamp}:R>",
         C_GREEN
     )
     await ctx.send(embed=embed_msg)
@@ -5021,7 +5047,7 @@ async def on_ready():
 
         # If not Saturday, initialize if no active lottery
         if now.weekday() != 5 and last_posted != current_week:
-            lottery = {"prize_pool": 0, "players": {}, "last_posted_week": current_week}
+            lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
             save_lottery(guild.id, lottery)
 
             try:
