@@ -687,6 +687,23 @@ ASK_SYSTEM_PROMPT = (
 )
 
 
+async def _delete_after(message: discord.Message, delay: float = 5.0):
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except (discord.NotFound, discord.Forbidden):
+        pass
+
+
+async def _edit_board(channel: discord.abc.Messageable, game: dict, embed: discord.Embed):
+    """Edit the persistent board message in-place; falls back to a new send if deleted."""
+    try:
+        msg = await channel.fetch_message(game["board_msg_id"])
+        await msg.edit(embed=embed)
+    except (discord.NotFound, discord.HTTPException):
+        await channel.send(embed=embed)
+
+
 async def _execute_ollama_stream(channel, reply_to, messages, history, guild_id=None, model=None):
     placeholder = await reply_to.reply("...")
     typing_task = asyncio.create_task(keep_typing(channel))
@@ -1177,6 +1194,7 @@ async def on_message(message: discord.Message):
     if cid in active_hangman_games and not message.content.startswith("!"):
         guess = message.content.lower().strip()
         if guess and guess.isalpha() and len(guess) == 1:
+            asyncio.create_task(_delete_after(message))
             await _process_hangman_guess(message.channel, uid, cid, guess)
             return
 
@@ -2242,15 +2260,23 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
     if not guess.isalpha():
         return  # silently ignore non-alpha free-text; cmd_guess shows an error
 
+    # Resolve display name for last_move attribution
+    guild = getattr(channel, "guild", None)
+    member = guild.get_member(author_id) if guild else None
+    name = member.display_name if member else str(author_id)
+
     # Track this player as active
     game["active_players"].add(author_id)
 
     # Full word guess
     if len(guess) > 1:
         if guess == game["word"]:
-            await channel.send(embed=emb("🎉 Correct!", _distribute_hangman_rewards(cid, game), C_GREEN))
+            game["last_move"] = f"{name} guessed the word! 🎉"
+            reward_msg = _distribute_hangman_rewards(cid, game)
+            await _edit_board(channel, game, emb("🎉 Correct!", reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         elif guess in game["guessed_words"]:
-            await channel.send(embed=emb("⚠️ Already Guessed", f"You already guessed `{guess}`!", C_GOLD))
+            game["last_move"] = f"{name} guessed `{guess}` ❌ (already tried)"
+            await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
         else:
             game["guessed_words"].add(guess)
             game["wrong_guesses"] += 1
@@ -2259,23 +2285,29 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
                 total_reward = calculate_hangman_reward(word)
                 active_player_count = len(game["active_players"])
                 per_player = total_reward // active_player_count
-                del active_hangman_games[cid]
+                game["last_move"] = f"{name} guessed `{guess}` — Game over! The word was `{word}`"
                 pot_msg = f"💰 You would've won **{total_reward} 🪙**" if active_player_count == 1 else f"💰 You would've split **{total_reward} 🪙** ({per_player} each)"
-                await channel.send(embed=emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n{pot_msg}", C_RED))
+                await _edit_board(channel, game, emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n{pot_msg}\n\n**Last move:** {game['last_move']}", C_RED))
+                del active_hangman_games[cid]
             else:
-                await channel.send(embed=emb("❌ Wrong Word", build_hangman_display(game), C_RED))
+                game["last_move"] = f"{name} guessed `{guess}` ❌"
+                await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** {game['last_move']}", C_RED))
         return
 
     # Single letter guess
     if guess in game["guessed_letters"]:
-        await channel.send(embed=emb("⚠️ Already Guessed", f"You already guessed `{guess}`!", C_GOLD))
+        game["last_move"] = f"{name} guessed `{guess}` (already tried)"
+        await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
         return
     game["guessed_letters"].add(guess)
     if guess in game["word"]:
         if all(c in game["guessed_letters"] for c in game["word"]):
-            await channel.send(embed=emb("🎉 You Got It!", _distribute_hangman_rewards(cid, game), C_GREEN))
+            game["last_move"] = f"{name} guessed `{guess}` ✅ — word complete! 🎉"
+            reward_msg = _distribute_hangman_rewards(cid, game)
+            await _edit_board(channel, game, emb("🎉 You Got It!", reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         else:
-            await channel.send(embed=emb("✅ Good Guess!", build_hangman_display(game), C_GREEN))
+            game["last_move"] = f"{name} guessed `{guess}` ✅"
+            await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** {game['last_move']}", C_GREEN))
     else:
         game["wrong_guesses"] += 1
         if game["wrong_guesses"] >= 6:
@@ -2283,11 +2315,13 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             total_reward = calculate_hangman_reward(word)
             active_player_count = len(game["active_players"])
             per_player = total_reward // active_player_count
-            del active_hangman_games[cid]
+            game["last_move"] = f"{name} guessed `{guess}` — Game over! The word was `{word}`"
             pot_msg = f"💰 You would've won **{total_reward} 🪙**" if active_player_count == 1 else f"💰 You would've split **{total_reward} 🪙** ({per_player} each)"
-            await channel.send(embed=emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n{pot_msg}", C_RED))
+            await _edit_board(channel, game, emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n{pot_msg}\n\n**Last move:** {game['last_move']}", C_RED))
+            del active_hangman_games[cid]
         else:
-            await channel.send(embed=emb("❌ Wrong Letter", build_hangman_display(game), C_ORANGE))
+            game["last_move"] = f"{name} guessed `{guess}` ❌"
+            await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
 
 
 @bot.command(name="hangman", aliases=["hang", "hm"])
@@ -2305,23 +2339,30 @@ async def cmd_hangman(ctx: commands.Context, *args):
         "user_id": ctx.author.id,
         "active_players": {ctx.author.id},  # Track who's actively guessing (for rewards)
         "invited_players": {ctx.author.id},  # Only these users may guess
+        "board_msg_id": None,
+        "last_move": "Game started!",
     }
     # Invite flow for mentioned users
     invited_users = [m for m in ctx.message.mentions if m.id != ctx.author.id]
     if invited_users:
         confirmed = await _wait_for_confirmations(ctx, invited_users, title="📨 Hangman Invite")
         active_hangman_games[cid]["invited_players"].update(confirmed)
-    await ctx.send(embed=emb("🔤 Hangman", build_hangman_display(active_hangman_games[cid]) + "\n\nJust type a letter or use `!guess` to guess the full word!", C_ORANGE))
+    game = active_hangman_games[cid]
+    board_msg = await ctx.send(embed=emb("🔤 Hangman", build_hangman_display(game) + "\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** Game started!", C_ORANGE))
+    game["board_msg_id"] = board_msg.id
 
 
 @bot.command(name="guess")
 async def cmd_guess(ctx: commands.Context, *, guess: str = None):
     cid = ctx.channel.id
+    asyncio.create_task(_delete_after(ctx.message))
     if cid not in active_hangman_games:
-        await ctx.send(embed=emb("🔤 No Game", "No active hangman game. Start one with `!hangman`.", C_ORANGE))
+        err = await ctx.send(embed=emb("🔤 No Game", "No active hangman game. Start one with `!hangman`.", C_ORANGE))
+        asyncio.create_task(_delete_after(err))
         return
     if guess is None:
-        await ctx.send(embed=emb("🔤 Hangman", "Usage: `!guess <letter or word>`", C_ORANGE))
+        err = await ctx.send(embed=emb("🔤 Hangman", "Usage: `!guess <letter or word>`", C_ORANGE))
+        asyncio.create_task(_delete_after(err))
         return
     await _process_hangman_guess(ctx.channel, ctx.author.id, cid, guess.lower().strip())
 
@@ -2376,10 +2417,13 @@ async def cmd_ttt(ctx: commands.Context, opponent: discord.User = None, amount: 
         "marks": {uid: "❌", opponent.id: "⭕"},
         "current": uid,
         "amount": amount,
+        "board_msg_id": None,
+        "last_move": f"{ctx.author.display_name}'s turn",
     }
     game = active_ttt_games[cid]
     wager_info = f"\nWager: {amount} 🪙 each" if amount > 0 else ""
-    await ctx.send(embed=emb("🎮 Tic-Tac-Toe Started", build_ttt_display(game) + f"\n\n{ctx.author.mention} (❌) vs {opponent.mention} (⭕){wager_info}\n{ctx.author.mention}'s turn. Use `!m <1-9>`", C_BLUE))
+    board_msg = await ctx.send(embed=emb("🎮 Tic-Tac-Toe", build_ttt_display(game) + f"\n\n{ctx.author.mention} (❌) vs {opponent.mention} (⭕){wager_info}\n{ctx.author.mention}'s turn. Use `!m <1-9>`\n\n**Last move:** {game['last_move']}", C_BLUE))
+    game["board_msg_id"] = board_msg.id
 
 
 @bot.command(name="c4")
@@ -2397,10 +2441,13 @@ async def cmd_c4(ctx: commands.Context, opponent: discord.User = None, amount: i
         "marks": {uid: "🔴", opponent.id: "🟡"},
         "current": uid,
         "amount": amount,
+        "board_msg_id": None,
+        "last_move": f"{ctx.author.display_name}'s turn",
     }
     game = active_c4_games[cid]
     wager_info = f"\nWager: {amount} 🪙 each" if amount > 0 else ""
-    await ctx.send(embed=emb("🟡 Connect 4 Started", build_c4_display(game) + f"\n\n{ctx.author.mention} (🔴) vs {opponent.mention} (🟡){wager_info}\n{ctx.author.mention}'s turn. Use `!m <1-7>`", C_BLUE))
+    board_msg = await ctx.send(embed=emb("🟡 Connect 4", build_c4_display(game) + f"\n\n{ctx.author.mention} (🔴) vs {opponent.mention} (🟡){wager_info}\n{ctx.author.mention}'s turn. Use `!m <1-7>`\n\n**Last move:** {game['last_move']}", C_BLUE))
+    game["board_msg_id"] = board_msg.id
 
 
 @bot.command(name="chess")
@@ -2457,11 +2504,14 @@ async def cmd_chess(ctx: commands.Context, *args):
         "current": uid,  # white moves first
         "moves": [],
         "amount": amount,
+        "board_msg_id": None,
+        "last_move": f"{ctx.author.display_name}'s turn (White)",
     }
     game = active_chess_games[cid]
-    save_chess_games()
     wager_info = f"\nWager: {amount} 🪙 each" if amount > 0 else ""
-    await ctx.send(embed=emb("♟️ Chess Started", build_chess_display(game["board"], is_black_perspective=False) + f"\n\n{ctx.author.mention} (White ♙) vs {opponent.mention} (Black ♟){wager_info}\n{ctx.author.mention}'s turn. Use `!move <e2e4>`", C_BLUE))
+    board_msg = await ctx.send(embed=emb("♟️ Chess", build_chess_display(game["board"], is_black_perspective=False) + f"\n\n{ctx.author.mention} (White ♙) vs {opponent.mention} (Black ♟){wager_info}\n{ctx.author.mention}'s turn. Use `!move <e2e4>`\n\n**Last move:** {game['last_move']}", C_BLUE))
+    game["board_msg_id"] = board_msg.id
+    save_chess_games()
 
 
 @bot.command(name="move")
@@ -2469,33 +2519,40 @@ async def cmd_move_chess(ctx: commands.Context, *args):
     cid = ctx.channel.id
     uid = ctx.author.id
 
+    asyncio.create_task(_delete_after(ctx.message))
+
     if cid not in active_chess_games:
-        await ctx.send("No active chess game in this channel. Start one with `!chess @user [amount]`")
+        err = await ctx.send("No active chess game in this channel. Start one with `!chess @user [amount]`")
+        asyncio.create_task(_delete_after(err))
         return
 
     game = active_chess_games[cid]
     if uid != game["current"]:
         opponent_id = game["current"]
         opponent = ctx.guild.get_member(opponent_id) if ctx.guild else None
-        await ctx.send(embed=emb("⏳ Not Your Turn", f"Waiting for {opponent.mention if opponent else 'opponent'}.", C_GOLD))
+        err = await ctx.send(embed=emb("⏳ Not Your Turn", f"Waiting for {opponent.mention if opponent else 'opponent'}.", C_GOLD))
+        asyncio.create_task(_delete_after(err))
         return
 
     if not args:
-        await ctx.send("Usage: `!move <e2e4>` or `!move e2 e4` (from square to square in algebraic notation)")
+        err = await ctx.send("Usage: `!move <e2e4>` or `!move e2 e4` (from square to square in algebraic notation)")
+        asyncio.create_task(_delete_after(err))
         return
 
     move = " ".join(args)
 
     parsed = parse_chess_move(move)
     if not parsed:
-        await ctx.send("Invalid move format. Use algebraic notation like `e2e4`")
+        err = await ctx.send("Invalid move format. Use algebraic notation like `e2e4`")
+        asyncio.create_task(_delete_after(err))
         return
 
     from_r, from_c, to_r, to_c = parsed
     is_white = uid == game["players"][0]
 
     if not is_valid_chess_move(game["board"], from_r, from_c, to_r, to_c, is_white):
-        await ctx.send("Invalid move. The piece can't move there or it's not your piece.")
+        err = await ctx.send("Invalid move. The piece can't move there or it's not your piece.")
+        asyncio.create_task(_delete_after(err))
         return
 
     # Make the move
@@ -2504,102 +2561,121 @@ async def cmd_move_chess(ctx: commands.Context, *args):
     board[to_r][to_c] = piece
     board[from_r][from_c] = None
 
-    game["moves"].append(f"{move}")
+    move_notation = f"{chr(ord('a') + from_c)}{8 - from_r}{chr(ord('a') + to_c)}{8 - to_r}"
+    game["moves"].append(move_notation)
 
     # Switch turns
     game["current"] = game["players"][1] if uid == game["players"][0] else game["players"][0]
     next_player = ctx.guild.get_member(game["current"]) if ctx.guild else None
 
+    game["last_move"] = f"{ctx.author.display_name} played {move_notation}"
     save_chess_games()
 
-    move_notation = f"{chr(ord('a') + from_c)}{8 - from_r}{chr(ord('a') + to_c)}{8 - to_r}"
     # Display from the next player's perspective
     is_black_perspective = game["current"] == game["players"][1]  # True if it's black's turn next
-    await ctx.send(embed=emb("♟️ Move Made", build_chess_display(board, is_black_perspective) + f"\n\nMove: {move_notation}\nNext: {next_player.mention if next_player else 'opponent'}", C_BLUE))
+    await _edit_board(ctx.channel, game, emb("♟️ Chess", build_chess_display(board, is_black_perspective) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!move <e2e4>`\n\n**Last move:** {game['last_move']}", C_BLUE))
 
 
 @bot.command(name="m")
 async def cmd_move(ctx: commands.Context, pos: int = None):
     cid = ctx.channel.id
     uid = ctx.author.id
+    name = ctx.author.display_name
 
     if cid in active_ttt_games:
         game = active_ttt_games[cid]
+        asyncio.create_task(_delete_after(ctx.message))
         if uid != game["current"]:
-            await ctx.send(embed=emb("⏳ Not Your Turn", f"Waiting for {ctx.guild.get_member(game['current']).mention if ctx.guild else 'opponent'}.", C_GOLD))
+            err = await ctx.send(embed=emb("⏳ Not Your Turn", f"Waiting for {ctx.guild.get_member(game['current']).mention if ctx.guild else 'opponent'}.", C_GOLD))
+            asyncio.create_task(_delete_after(err))
             return
         if pos is None or not 1 <= pos <= 9:
-            await ctx.send("Use `!m <1-9>` to place your mark.")
+            err = await ctx.send("Use `!m <1-9>` to place your mark.")
+            asyncio.create_task(_delete_after(err))
             return
         idx = pos - 1
         if game["board"][idx] is not None:
-            await ctx.send(embed=emb("❌ Taken", "That square is already taken.", C_RED))
+            err = await ctx.send(embed=emb("❌ Taken", "That square is already taken.", C_RED))
+            asyncio.create_task(_delete_after(err))
             return
         game["board"][idx] = game["marks"][uid]
         winner = check_ttt_winner(game["board"])
         if winner:
-            del active_ttt_games[cid]
             winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
             amount = game.get("amount", 0)
             winnings = amount * 2
             if winnings > 0:
                 add_balance(winner_uid, winnings)
-            await ctx.send(embed=emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{ctx.guild.get_member(winner_uid).mention} wins! **+{winnings} 🪙**", C_GREEN))
-        elif all(c is not None for c in game["board"]):
+            winner_name = ctx.guild.get_member(winner_uid).display_name if ctx.guild else str(winner_uid)
+            game["last_move"] = f"{name} played position {pos} — {winner_name} wins!" + (f" **+{winnings} 🪙**" if winnings > 0 else "")
+            winner_mention = ctx.guild.get_member(winner_uid).mention if ctx.guild else str(winner_uid)
+            await _edit_board(ctx.channel, game, emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
             del active_ttt_games[cid]
+        elif all(c is not None for c in game["board"]):
             amount = game.get("amount", 0)
             if amount > 0:
                 for player_uid in game["players"]:
                     add_balance(player_uid, amount)
-                await ctx.send(embed=emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + f"\n\nIt's a draw! Each player gets {amount} 🪙 back.", C_GOLD))
-            else:
-                await ctx.send(embed=emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + "\n\nIt's a draw!", C_GOLD))
+            game["last_move"] = f"{name} played position {pos} — It's a draw!"
+            draw_text = f"\n\nIt's a draw!" + (f" Each player gets {amount} 🪙 back." if amount > 0 else "")
+            await _edit_board(ctx.channel, game, emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
+            del active_ttt_games[cid]
         else:
             players = game["players"]
             game["current"] = players[1] if uid == players[0] else players[0]
             next_player = ctx.guild.get_member(game["current"]) if ctx.guild else None
-            await ctx.send(embed=emb("🎮 Tic-Tac-Toe", build_ttt_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn.", C_BLUE))
+            game["last_move"] = f"{name} played position {pos}"
+            await _edit_board(ctx.channel, game, emb("🎮 Tic-Tac-Toe", build_ttt_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!m <1-9>`\n\n**Last move:** {game['last_move']}", C_BLUE))
 
     elif cid in active_c4_games:
         game = active_c4_games[cid]
+        asyncio.create_task(_delete_after(ctx.message))
         if uid != game["current"]:
-            await ctx.send(embed=emb("⏳ Not Your Turn", f"Waiting for {ctx.guild.get_member(game['current']).mention if ctx.guild else 'opponent'}.", C_GOLD))
+            err = await ctx.send(embed=emb("⏳ Not Your Turn", f"Waiting for {ctx.guild.get_member(game['current']).mention if ctx.guild else 'opponent'}.", C_GOLD))
+            asyncio.create_task(_delete_after(err))
             return
         if pos is None or not 1 <= pos <= 7:
-            await ctx.send("Use `!m <1-7>` to drop a piece.")
+            err = await ctx.send("Use `!m <1-7>` to drop a piece.")
+            asyncio.create_task(_delete_after(err))
             return
         col = pos - 1
         row = next((r for r in range(5, -1, -1) if game["board"][r][col] is None), None)
         if row is None:
-            await ctx.send(embed=emb("❌ Column Full", "That column is full.", C_RED))
+            err = await ctx.send(embed=emb("❌ Column Full", "That column is full.", C_RED))
+            asyncio.create_task(_delete_after(err))
             return
         game["board"][row][col] = game["marks"][uid]
         winner = check_c4_winner(game["board"])
         if winner:
-            del active_c4_games[cid]
             winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
             amount = game.get("amount", 0)
             winnings = amount * 2
             if winnings > 0:
                 add_balance(winner_uid, winnings)
-            await ctx.send(embed=emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{ctx.guild.get_member(winner_uid).mention} wins! **+{winnings} 🪙**", C_GREEN))
-        elif all(game["board"][r][c] is not None for r in range(6) for c in range(7)):
+            winner_name = ctx.guild.get_member(winner_uid).display_name if ctx.guild else str(winner_uid)
+            game["last_move"] = f"{name} dropped in column {pos} — {winner_name} wins!" + (f" **+{winnings} 🪙**" if winnings > 0 else "")
+            winner_mention = ctx.guild.get_member(winner_uid).mention if ctx.guild else str(winner_uid)
+            await _edit_board(ctx.channel, game, emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
             del active_c4_games[cid]
+        elif all(game["board"][r][c] is not None for r in range(6) for c in range(7)):
             amount = game.get("amount", 0)
             if amount > 0:
                 for player_uid in game["players"]:
                     add_balance(player_uid, amount)
-                await ctx.send(embed=emb("🤝 Connect 4 Draw", build_c4_display(game) + f"\n\nIt's a draw! Each player gets {amount} 🪙 back.", C_GOLD))
-            else:
-                await ctx.send(embed=emb("🤝 Connect 4 Draw", build_c4_display(game) + "\n\nIt's a draw!", C_GOLD))
+            game["last_move"] = f"{name} dropped in column {pos} — It's a draw!"
+            draw_text = f"\n\nIt's a draw!" + (f" Each player gets {amount} 🪙 back." if amount > 0 else "")
+            await _edit_board(ctx.channel, game, emb("🤝 Connect 4 Draw", build_c4_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
+            del active_c4_games[cid]
         else:
             players = game["players"]
             game["current"] = players[1] if uid == players[0] else players[0]
             next_player = ctx.guild.get_member(game["current"]) if ctx.guild else None
-            await ctx.send(embed=emb("🟡 Connect 4", build_c4_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn.", C_BLUE))
+            game["last_move"] = f"{name} dropped in column {pos}"
+            await _edit_board(ctx.channel, game, emb("🟡 Connect 4", build_c4_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!m <1-7>`\n\n**Last move:** {game['last_move']}", C_BLUE))
 
     else:
-        await ctx.send(embed=emb("❌ No Game", "No active tic-tac-toe or connect 4 game in this channel.", C_GREY))
+        err = await ctx.send(embed=emb("❌ No Game", "No active tic-tac-toe or connect 4 game in this channel.", C_GREY))
+        asyncio.create_task(_delete_after(err))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2980,7 +3056,10 @@ async def cmd_stop(ctx: commands.Context):
         stopped.append(f"🃏 Blackjack (forfeited {amount} 🪙)")
 
     if cid in active_hangman_games and active_hangman_games[cid]["user_id"] == uid:
-        word = active_hangman_games[cid]["word"]
+        game = active_hangman_games[cid]
+        word = game["word"]
+        game["last_move"] = f"{ctx.author.display_name} forfeited. The word was `{word}`"
+        asyncio.create_task(_edit_board(ctx.channel, game, emb("🏳️ Hangman Forfeited", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n**Last move:** {game['last_move']}", C_RED)))
         del active_hangman_games[cid]
         stopped.append(f"🔤 Hangman (the word was `{word}`)")
 
@@ -2988,37 +3067,47 @@ async def cmd_stop(ctx: commands.Context):
         game = active_ttt_games[cid]
         amount = game.get("amount", 0)
         opponent_uid = [p for p in game["players"] if p != uid][0]
-        del active_ttt_games[cid]
         if amount > 0:
             winnings = amount * 2
             add_balance(opponent_uid, winnings)
+            game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings} 🪙"
             stopped.append(f"🎮 Tic-Tac-Toe (forfeited, opponent wins {winnings} 🪙)")
         else:
+            game["last_move"] = f"{ctx.author.display_name} forfeited"
             stopped.append("🎮 Tic-Tac-Toe (forfeited)")
+        asyncio.create_task(_edit_board(ctx.channel, game, emb("🏳️ Tic-Tac-Toe Forfeited", build_ttt_display(game) + f"\n\n**Last move:** {game['last_move']}", C_RED)))
+        del active_ttt_games[cid]
 
     if cid in active_c4_games and uid in active_c4_games[cid]["players"]:
         game = active_c4_games[cid]
         amount = game.get("amount", 0)
         opponent_uid = [p for p in game["players"] if p != uid][0]
-        del active_c4_games[cid]
         if amount > 0:
             winnings = amount * 2
             add_balance(opponent_uid, winnings)
+            game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings} 🪙"
             stopped.append(f"🟡 Connect 4 (forfeited, opponent wins {winnings} 🪙)")
         else:
+            game["last_move"] = f"{ctx.author.display_name} forfeited"
             stopped.append("🟡 Connect 4 (forfeited)")
+        asyncio.create_task(_edit_board(ctx.channel, game, emb("🏳️ Connect 4 Forfeited", build_c4_display(game) + f"\n\n**Last move:** {game['last_move']}", C_RED)))
+        del active_c4_games[cid]
 
     if cid in active_chess_games and uid in active_chess_games[cid]["players"]:
         game = active_chess_games[cid]
         amount = game.get("amount", 0)
         opponent_uid = [p for p in game["players"] if p != uid][0]
-        del active_chess_games[cid]
+        is_black = uid == game["players"][1]
         if amount > 0:
             winnings = amount * 2
             add_balance(opponent_uid, winnings)
+            game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings} 🪙"
             stopped.append(f"♟️ Chess (forfeited, opponent wins {winnings} 🪙)")
         else:
+            game["last_move"] = f"{ctx.author.display_name} forfeited"
             stopped.append("♟️ Chess (forfeited)")
+        asyncio.create_task(_edit_board(ctx.channel, game, emb("🏳️ Chess Forfeited", build_chess_display(game["board"], is_black_perspective=is_black) + f"\n\n**Last move:** {game['last_move']}", C_RED)))
+        del active_chess_games[cid]
 
     if cid in active_race_games and uid in active_race_games[cid]["players"]:
         game = active_race_games[cid]
