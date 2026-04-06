@@ -67,9 +67,9 @@ INITIAL_BOT_ADMIN_ID = 139928946044174336
 
 # Scratchoff lottery configuration
 SCRATCHOFF_FILE = "data/scratchoff.json"
-SCRATCH_SYMBOLS = ["🍒", "🍋", "🍇"]
+SCRATCH_SYMBOLS = ["🍒", "🍋", "🍇", "🍊"]
 SCRATCHOFF_MAX_DAILY = 3
-SCRATCHOFF_PAYOUTS = {1: 100, 2: 1000, 3: 10000}
+SCRATCHOFF_PAYOUTS = {1: 100, 2: 1000, 3: 10000, 4: 100000}
 
 # Soundboard rate-limiting
 SOUNDBOARD_WINDOW_SECS = 3.0
@@ -247,16 +247,19 @@ def save_lottery(guild_id: int, lottery_data: dict):
 async def announce_new_lottery(channel: discord.TextChannel, prize_pool: int = 2000, now: datetime.datetime = None):
     """Announce a new lottery week to the specified channel."""
     if now is None:
-        now = datetime.datetime.now()
+        now = datetime.datetime.now(datetime.timezone.utc)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=datetime.timezone.utc)
 
-    # Calculate next Saturday 6pm CST
-    days_until_saturday = (5 - now.weekday()) % 7
+    # Calculate next Saturday 6pm CST (UTC-6)
+    cst = datetime.timezone(datetime.timedelta(hours=-6))
+    now_cst = now.astimezone(cst)
+    days_until_saturday = (5 - now_cst.weekday()) % 7
     if days_until_saturday == 0:
         days_until_saturday = 7
-    next_saturday = now + datetime.timedelta(days=days_until_saturday)
+    next_saturday = now_cst + datetime.timedelta(days=days_until_saturday)
     next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
-    next_saturday_utc = next_saturday - datetime.timedelta(hours=6)  # CST is UTC-6
-    timestamp = int(next_saturday_utc.timestamp())
+    timestamp = int(next_saturday.timestamp())
 
     embed = discord.Embed(title="🎰 New Lottery Week", color=C_PURPLE)
     embed.description = (
@@ -1520,17 +1523,22 @@ async def cmd_adminhelp(ctx: commands.Context):
 async def cmd_daily(ctx: commands.Context):
     uid = ctx.author.id
     _ensure_user(uid)
-    now = time.time()
-    last = economy["users"][str(uid)]["last_daily"]
-    elapsed = now - last
-    if elapsed < 86400:
-        remaining = int(86400 - elapsed)
+    today = datetime.date.today().isoformat()
+    user_data = economy["users"][str(uid)]
+    if user_data.get("daily_date") == today:
+        now = datetime.datetime.now()
+        next_reset = datetime.datetime.combine(
+            now.date() if now.hour < 5 else now.date() + datetime.timedelta(days=1),
+            datetime.time(5, 0),
+        )
+        remaining = int((next_reset - now).total_seconds())
         hours, rem = divmod(remaining, 3600)
         minutes = rem // 60
-        await ctx.send(embed=emb("⏳ Already Claimed", f"Come back in **{hours}h {minutes}m**.", C_GOLD))
+        await ctx.send(embed=emb("⏳ Already Claimed", f"Resets at **5am** — come back in **{hours}h {minutes}m**.", C_GOLD))
         return
     add_balance(uid, 200)
-    economy["users"][str(uid)]["last_daily"] = now
+    user_data["daily_date"] = today
+    user_data["last_daily"] = time.time()
     save_economy()
     await ctx.send(embed=emb("🪙 Daily Reward", f"+200 🪙 claimed! Balance: **{get_balance(uid)} 🪙**", C_GREEN))
 
@@ -1734,22 +1742,14 @@ async def cmd_scratchoff(ctx: commands.Context):
     seed_str = f"{uid}{today}"
     seed_val = hash(seed_str) % (2**31)
     random.seed(seed_val)
-    goal = random.choices(SCRATCH_SYMBOLS, k=3)
+    goal = random.choices(SCRATCH_SYMBOLS, k=4)
 
     # Reset seed and generate player's card
     random.seed()
-    card = random.choices(SCRATCH_SYMBOLS, k=3)
+    card = random.choices(SCRATCH_SYMBOLS, k=4)
 
-    # Weighted odds: 1/3 for 1x, 1/9 for 2x, 1/81 for 3x, 44/81 for 0x
-    rand_val = random.random()
-    if rand_val < 27/81:  # 1/3 = 27/81
-        matches = 1
-    elif rand_val < 36/81:  # 1/3 + 1/9 = 27/81 + 9/81 = 36/81
-        matches = 2
-    elif rand_val < 37/81:  # 1/3 + 1/9 + 1/81 = 37/81
-        matches = 3
-    else:
-        matches = 0
+    # Count how many card symbols match the goal at each position
+    matches = sum(c == g for c, g in zip(card, goal))
 
     # Determine payout
     payout = 0
@@ -1765,6 +1765,9 @@ async def cmd_scratchoff(ctx: commands.Context):
     elif matches == 3:
         payout = 10000
         match_text = "🏆 3 Matches! You won 10,000 🪙!"
+    elif matches == 4:
+        payout = 100000
+        match_text = "💎 4 Matches! You won 100,000 🪙!"
 
     add_balance(uid, payout)
 
@@ -1797,6 +1800,7 @@ async def cmd_scratchoff_rewards(ctx: commands.Context):
         ("1", "100 🪙"),
         ("2", "1,000 🪙"),
         ("3", "10,000 🪙"),
+        ("4", "100,000 🪙"),
     ]
 
     for matches, payout in payouts:
