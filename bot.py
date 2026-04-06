@@ -3018,6 +3018,10 @@ async def _wait_for_confirmations(
                 break
         except asyncio.TimeoutError:
             break
+    try:
+        await invite_msg.delete()
+    except Exception:
+        pass
     return confirmed_ids
 
 
