@@ -76,6 +76,22 @@ SOUNDBOARD_WINDOW_SECS = 3.0
 SOUNDBOARD_MAX_SOUNDS  = 5
 
 
+def _load_json(filepath, default):
+    os.makedirs("data", exist_ok=True)
+    try:
+        with open(filepath) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+
+def _save_json(filepath, data):
+    os.makedirs("data", exist_ok=True)
+    with open(filepath, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+
 def load_channel_prompts() -> dict[int, str]:
     if os.path.exists(CHANNEL_PROMPTS_FILE):
         with open(CHANNEL_PROMPTS_FILE) as f:
@@ -89,120 +105,70 @@ def save_channel_prompts(prompts: dict[int, str]):
 
 
 def load_economy() -> dict:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(ECONOMY_FILE):
-        with open(ECONOMY_FILE) as f:
-            data = json.load(f)
-        data.setdefault("last_daily_reset", None)
-        return data
-    return {"users": {}, "last_daily_reset": None}
+    data = _load_json(ECONOMY_FILE, {"users": {}, "last_daily_reset": None})
+    data.setdefault("last_daily_reset", None)
+    return data
 
 
 def save_economy():
-    os.makedirs("data", exist_ok=True)
-    with open(ECONOMY_FILE, "w") as f:
-        json.dump(economy, f, indent=2)
+    _save_json(ECONOMY_FILE, economy)
 
 
 def load_jackpot() -> int:
-    os.makedirs("data", exist_ok=True)
-    try:
-        with open(SLOT_JACKPOT_FILE) as f:
-            return max(SLOT_JACKPOT_SEED, json.load(f).get("jackpot", SLOT_JACKPOT_SEED))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return SLOT_JACKPOT_SEED
+    return max(SLOT_JACKPOT_SEED, _load_json(SLOT_JACKPOT_FILE, {}).get("jackpot", SLOT_JACKPOT_SEED))
 
 
 def save_jackpot(value: int):
-    os.makedirs("data", exist_ok=True)
-    with open(SLOT_JACKPOT_FILE, "w") as f:
-        json.dump({"jackpot": value}, f)
+    _save_json(SLOT_JACKPOT_FILE, {"jackpot": value})
 
 
 def load_bot_roles() -> set[int]:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(BOT_ROLES_FILE):
-        with open(BOT_ROLES_FILE) as f:
-            return set(json.load(f))
-    return set()
+    return set(_load_json(BOT_ROLES_FILE, []))
 
 
 def save_bot_roles():
-    os.makedirs("data", exist_ok=True)
-    with open(BOT_ROLES_FILE, "w") as f:
-        json.dump(list(bot_roles), f)
+    _save_json(BOT_ROLES_FILE, list(bot_roles))
 
 
 def load_bot_admins() -> set[int]:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(BOT_ADMINS_FILE):
-        with open(BOT_ADMINS_FILE) as f:
-            return set(json.load(f))
-    return {INITIAL_BOT_ADMIN_ID}
+    return set(_load_json(BOT_ADMINS_FILE, [INITIAL_BOT_ADMIN_ID]))
 
 
 def save_bot_admins():
-    os.makedirs("data", exist_ok=True)
-    with open(BOT_ADMINS_FILE, "w") as f:
-        json.dump(list(bot_admins), f)
+    _save_json(BOT_ADMINS_FILE, list(bot_admins))
 
 
 def load_bot_settings() -> dict:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(BOT_SETTINGS_FILE):
-        with open(BOT_SETTINGS_FILE) as f:
-            return json.load(f)
-    return {"vram_text": "16GB"}
+    return _load_json(BOT_SETTINGS_FILE, {"vram_text": "16GB"})
 
 
 def save_bot_settings():
-    os.makedirs("data", exist_ok=True)
-    with open(BOT_SETTINGS_FILE, "w") as f:
-        json.dump(bot_settings, f, indent=2)
+    _save_json(BOT_SETTINGS_FILE, bot_settings)
 
 
 def load_godmode_users() -> set[int]:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(GODMODE_USERS_FILE):
-        with open(GODMODE_USERS_FILE) as f:
-            return set(json.load(f))
-    return set()
+    return set(_load_json(GODMODE_USERS_FILE, []))
 
 
 def save_godmode_users():
-    os.makedirs("data", exist_ok=True)
-    with open(GODMODE_USERS_FILE, "w") as f:
-        json.dump(list(godmode_users), f)
+    _save_json(GODMODE_USERS_FILE, list(godmode_users))
 
 
 def load_chess_games() -> dict:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(CHESS_GAMES_FILE):
-        with open(CHESS_GAMES_FILE) as f:
-            data = json.load(f)
-            # Convert string keys back to ints (JSON requires string keys)
-            return {int(k): v for k, v in data.items()}
-    return {}
+    # JSON requires string keys; convert back to ints on load
+    return {int(k): v for k, v in _load_json(CHESS_GAMES_FILE, {}).items()}
 
 
 def save_chess_games():
-    os.makedirs("data", exist_ok=True)
-    with open(CHESS_GAMES_FILE, "w") as f:
-        json.dump(active_chess_games, f)
+    _save_json(CHESS_GAMES_FILE, active_chess_games)
 
 
 def load_guild_settings() -> dict:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(GUILD_SETTINGS_FILE):
-        with open(GUILD_SETTINGS_FILE) as f:
-            return json.load(f)
-    return {}
+    return _load_json(GUILD_SETTINGS_FILE, {})
 
 
 def save_guild_settings():
-    os.makedirs("data", exist_ok=True)
-    with open(GUILD_SETTINGS_FILE, "w") as f:
-        json.dump(guild_settings, f, indent=2)
+    _save_json(GUILD_SETTINGS_FILE, guild_settings)
 
 
 def get_guild_cfg(guild_id: int) -> dict:
@@ -213,146 +179,69 @@ def get_guild_cfg(guild_id: int) -> dict:
 
 
 def load_insurance() -> dict:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(INSURANCE_FILE):
-        with open(INSURANCE_FILE) as f:
-            data = json.load(f)
-            now = time.time()
-            return {k: v for k, v in data.items() if v.get("expires_at", 0) > now}
-    return {}
+    data = _load_json(INSURANCE_FILE, {})
+    now = time.time()
+    return {k: v for k, v in data.items() if v.get("expires_at", 0) > now}
 
 
 def save_insurance():
-    os.makedirs("data", exist_ok=True)
-    with open(INSURANCE_FILE, "w") as f:
-        json.dump(insurance, f, indent=2)
+    _save_json(INSURANCE_FILE, insurance)
 
 
 def load_ragebait() -> dict:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(RAGEBAIT_FILE):
-        try:
-            with open(RAGEBAIT_FILE) as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
-    return {}
+    return _load_json(RAGEBAIT_FILE, {})
 
 
 def save_ragebait():
-    os.makedirs("data", exist_ok=True)
-    with open(RAGEBAIT_FILE, "w") as f:
-        json.dump(active_ragebaits, f, indent=2)
+    _save_json(RAGEBAIT_FILE, active_ragebaits)
 
 
 def load_mock() -> dict:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(MOCK_FILE):
-        try:
-            with open(MOCK_FILE) as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
-    return {}
+    return _load_json(MOCK_FILE, {})
 
 
 def save_mock():
-    os.makedirs("data", exist_ok=True)
-    with open(MOCK_FILE, "w") as f:
-        json.dump(active_mocks, f, indent=2)
+    _save_json(MOCK_FILE, active_mocks)
 
 
 def load_rigged_slots() -> set[int]:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(RIGGED_SLOTS_FILE):
-        try:
-            with open(RIGGED_SLOTS_FILE) as f:
-                return set(json.load(f))
-        except (FileNotFoundError, json.JSONDecodeError):
-            return set()
-    return set()
+    return set(_load_json(RIGGED_SLOTS_FILE, []))
 
 
 def save_rigged_slots():
-    os.makedirs("data", exist_ok=True)
-    with open(RIGGED_SLOTS_FILE, "w") as f:
-        json.dump(list(rigged_slots), f, indent=2)
+    _save_json(RIGGED_SLOTS_FILE, list(rigged_slots))
 
 
 def load_quote_log() -> list[str]:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(QUOTE_LOG_FILE):
-        try:
-            with open(QUOTE_LOG_FILE) as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return []
-    return []
+    return _load_json(QUOTE_LOG_FILE, [])
 
 
 def save_quote_log(log: list[str]):
-    os.makedirs("data", exist_ok=True)
-    # Keep only the last 10 quotes
-    log = log[-10:]
-    with open(QUOTE_LOG_FILE, "w") as f:
-        json.dump(log, f, indent=2)
+    _save_json(QUOTE_LOG_FILE, log[-10:])
 
 
 def load_simp() -> dict:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(SIMP_FILE):
-        try:
-            with open(SIMP_FILE) as f:
-                data = json.load(f)
-                # Convert string keys back to ints
-                return {int(k): v for k, v in data.items()}
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
-    return {}
+    return {int(k): v for k, v in _load_json(SIMP_FILE, {}).items()}
 
 
 def save_simp(simp_data: dict):
-    os.makedirs("data", exist_ok=True)
-    with open(SIMP_FILE, "w") as f:
-        json.dump(simp_data, f, indent=2)
+    _save_json(SIMP_FILE, simp_data)
 
 
 def load_curse() -> dict:
-    os.makedirs("data", exist_ok=True)
-    if os.path.exists(CURSE_FILE):
-        try:
-            with open(CURSE_FILE) as f:
-                data = json.load(f)
-                # Convert string keys back to ints
-                return {int(k): v for k, v in data.items()}
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {}
-    return {}
+    return {int(k): v for k, v in _load_json(CURSE_FILE, {}).items()}
 
 
 def save_curse(curse_data: dict):
-    os.makedirs("data", exist_ok=True)
-    with open(CURSE_FILE, "w") as f:
-        json.dump(curse_data, f, indent=2)
+    _save_json(CURSE_FILE, curse_data)
 
 
 def load_lottery(guild_id: int) -> dict:
-    os.makedirs("data", exist_ok=True)
-    lottery_file = f"data/lottery_{guild_id}.json"
-    if os.path.exists(lottery_file):
-        try:
-            with open(lottery_file) as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return {"prize_pool": 0, "players": {}, "last_posted_week": 0}
-    return {"prize_pool": 0, "players": {}, "last_posted_week": 0}
+    return _load_json(f"data/lottery_{guild_id}.json", {"prize_pool": 0, "players": {}, "last_posted_week": 0})
 
 
 def save_lottery(guild_id: int, lottery_data: dict):
-    os.makedirs("data", exist_ok=True)
-    lottery_file = f"data/lottery_{guild_id}.json"
-    with open(lottery_file, "w") as f:
-        json.dump(lottery_data, f, indent=2)
+    _save_json(f"data/lottery_{guild_id}.json", lottery_data)
 
 
 async def announce_new_lottery(channel: discord.TextChannel, prize_pool: int = 2000, now: datetime.datetime = None):
@@ -798,6 +687,24 @@ ASK_SYSTEM_PROMPT = (
 )
 
 
+async def _execute_ollama_stream(channel, reply_to, messages, history, guild_id=None, model=None):
+    placeholder = await reply_to.reply("...")
+    typing_task = asyncio.create_task(keep_typing(channel))
+    try:
+        async with aiohttp.ClientSession() as session:
+            full_response = await stream_ollama(session, messages, placeholder, guild_id=guild_id, model=model)
+        history.append({"role": "assistant", "content": full_response})
+        await finalize(placeholder, channel, full_response)
+    except aiohttp.ClientError:
+        history.pop()
+        await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
+    except Exception as e:
+        history.pop()
+        await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
+    finally:
+        typing_task.cancel()
+
+
 async def respond(
     channel: discord.abc.Messageable,
     user_id: int,
@@ -815,22 +722,7 @@ async def respond(
     history.append({"role": "user", "content": formatted_content})
     messages = [{"role": "system", "content": system_prompt}] + list(history)
 
-    placeholder = await reply_to.reply("...")
-    typing_task = asyncio.create_task(keep_typing(channel))
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            full_response = await stream_ollama(session, messages, placeholder, guild_id=guild_id)
-        history.append({"role": "assistant", "content": full_response})
-        await finalize(placeholder, channel, full_response)
-    except aiohttp.ClientError as e:
-        history.pop()
-        await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
-    except Exception as e:
-        history.pop()
-        await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
-    finally:
-        typing_task.cancel()
+    await _execute_ollama_stream(channel, reply_to, messages, history, guild_id=guild_id)
 
 
 async def respond_roleplay(
@@ -858,26 +750,9 @@ async def respond_roleplay(
     history.append({"role": "user", "content": formatted_content})
     messages = [{"role": "system", "content": system_prompt}] + history
 
-    placeholder = await reply_to.reply("...")
-    typing_task = asyncio.create_task(keep_typing(channel))
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            guild_id = rp.get("guild_id")
-            model = get_guild_roleplay_model(guild_id) if guild_id else OLLAMA_MODEL
-            full_response = await stream_ollama(
-                session, messages, placeholder, model=model
-            )
-        history.append({"role": "assistant", "content": full_response})
-        await finalize(placeholder, channel, full_response)
-    except aiohttp.ClientError as e:
-        history.pop()
-        await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
-    except Exception as e:
-        history.pop()
-        await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
-    finally:
-        typing_task.cancel()
+    guild_id = rp.get("guild_id")
+    model = get_guild_roleplay_model(guild_id) if guild_id else OLLAMA_MODEL
+    await _execute_ollama_stream(channel, reply_to, messages, history, model=model)
 
 
 async def _run_race(channel, cid: int, race_msg: discord.Message):
@@ -2335,6 +2210,26 @@ async def cmd_blackjack(ctx: commands.Context, amount: str = None):
 # Commands — Games
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _distribute_hangman_rewards(cid: int, game: dict) -> str:
+    """Distributes win rewards, deletes the game, and returns the reward message."""
+    word = game["word"]
+    total_reward = calculate_hangman_reward(word)
+    active_players = list(game["active_players"])
+    per_player = total_reward // len(active_players)
+    remainder = total_reward % len(active_players)
+    del active_hangman_games[cid]
+    if len(active_players) == 1:
+        msg = f"The word was `{word}`!\n\n"
+    else:
+        msg = f"The word was `{word}`!\n\n**Total: {total_reward} 🪙** split among {len(active_players)} players\n"
+    for i, pid in enumerate(active_players):
+        bonus = 1 if i < remainder else 0
+        reward = per_player + bonus
+        add_balance(pid, reward)
+        msg += f"<@{pid}>: +{reward} 🪙 | Balance: {get_balance(pid)} 🪙\n"
+    return msg.strip()
+
+
 async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: int, cid: int, guess: str):
     """Shared hangman guess logic used by both !guess command and free-text intercept."""
     game = active_hangman_games[cid]
@@ -2351,26 +2246,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
     # Full word guess
     if len(guess) > 1:
         if guess == game["word"]:
-            word = game["word"]
-            total_reward = calculate_hangman_reward(word)
-            active_players = list(game["active_players"])
-            per_player = total_reward // len(active_players)
-            remainder = total_reward % len(active_players)
-
-            del active_hangman_games[cid]
-
-            # Distribute rewards
-            if len(active_players) == 1:
-                reward_msg = f"The word was `{word}`!\n\n"
-            else:
-                reward_msg = f"The word was `{word}`!\n\n**Total: {total_reward} 🪙** split among {len(active_players)} players\n"
-            for i, player_id in enumerate(active_players):
-                bonus = 1 if i < remainder else 0
-                player_reward = per_player + bonus
-                add_balance(player_id, player_reward)
-                reward_msg += f"<@{player_id}>: +{player_reward} 🪙 | Balance: {get_balance(player_id)} 🪙\n"
-
-            await channel.send(embed=emb("🎉 Correct!", reward_msg.strip(), C_GREEN))
+            await channel.send(embed=emb("🎉 Correct!", _distribute_hangman_rewards(cid, game), C_GREEN))
         elif guess in game["guessed_words"]:
             await channel.send(embed=emb("⚠️ Already Guessed", f"You already guessed `{guess}`!", C_GOLD))
         else:
@@ -2395,26 +2271,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
     game["guessed_letters"].add(guess)
     if guess in game["word"]:
         if all(c in game["guessed_letters"] for c in game["word"]):
-            word = game["word"]
-            total_reward = calculate_hangman_reward(word)
-            active_players = list(game["active_players"])
-            per_player = total_reward // len(active_players)
-            remainder = total_reward % len(active_players)
-
-            del active_hangman_games[cid]
-
-            # Distribute rewards
-            if len(active_players) == 1:
-                reward_msg = f"The word was `{word}`!\n\n"
-            else:
-                reward_msg = f"The word was `{word}`!\n\n**Total: {total_reward} 🪙** split among {len(active_players)} players\n"
-            for i, player_id in enumerate(active_players):
-                bonus = 1 if i < remainder else 0
-                player_reward = per_player + bonus
-                add_balance(player_id, player_reward)
-                reward_msg += f"<@{player_id}>: +{player_reward} 🪙 | Balance: {get_balance(player_id)} 🪙\n"
-
-            await channel.send(embed=emb("🎉 You Got It!", reward_msg.strip(), C_GREEN))
+            await channel.send(embed=emb("🎉 You Got It!", _distribute_hangman_rewards(cid, game), C_GREEN))
         else:
             await channel.send(embed=emb("✅ Good Guess!", build_hangman_display(game), C_GREEN))
     else:
@@ -2467,37 +2324,29 @@ async def cmd_guess(ctx: commands.Context, *, guess: str = None):
     await _process_hangman_guess(ctx.channel, ctx.author.id, cid, guess.lower().strip())
 
 
-@bot.command(name="ttt")
-async def cmd_ttt(ctx: commands.Context, opponent: discord.User = None, amount: int = 0):
-    cid = ctx.channel.id
+async def _setup_pvp_game(ctx, opponent, amount, invite_title):
+    """Validates opponent, deducts wagers, waits for confirmation.
+    Returns True if game should proceed; False if an error was already sent."""
     uid = ctx.author.id
-    if cid in active_ttt_games or cid in active_c4_games:
-        await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
-        return
     if opponent is None:
-        await ctx.send("Usage: `!ttt @user [amount]`")
-        return
+        await ctx.send(f"Usage: `!{ctx.invoked_with} @user [amount]`")
+        return False
     if opponent.id == uid:
         await ctx.send(embed=emb("❌ Can't Invite Yourself", "Pick a different opponent.", C_RED))
-        return
-
-    # Validate amount
+        return False
     if amount < 0:
         await ctx.send("Amount must be positive.")
-        return
-
-    # Deduct from both players if betting
+        return False
     if amount > 0:
         if not deduct_balance(uid, amount):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"You need {amount} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
-            return
+            return False
         if not deduct_balance(opponent.id, amount):
-            add_balance(uid, amount)  # Refund host
+            add_balance(uid, amount)
             await ctx.send(embed=emb("💸 Insufficient Funds", f"{opponent.display_name} needs {amount} 🪙. Balance: {get_balance(opponent.id)} 🪙", C_RED))
-            return
-
+            return False
     wager_text = f" for {amount} 🪙" if amount > 0 else ""
-    confirmed = await _wait_for_confirmations(ctx, [opponent], title=f"📨 Tic-Tac-Toe Invite{wager_text}")
+    confirmed = await _wait_for_confirmations(ctx, [opponent], title=f"{invite_title}{wager_text}")
     if not confirmed:
         if amount > 0:
             add_balance(uid, amount)
@@ -2506,8 +2355,19 @@ async def cmd_ttt(ctx: commands.Context, opponent: discord.User = None, amount: 
         else:
             msg = f"{opponent.display_name} didn't accept."
         await ctx.send(embed=emb("❌ Invite Declined", msg, C_RED))
-        return
+        return False
+    return True
 
+
+@bot.command(name="ttt")
+async def cmd_ttt(ctx: commands.Context, opponent: discord.User = None, amount: int = 0):
+    cid = ctx.channel.id
+    uid = ctx.author.id
+    if cid in active_ttt_games or cid in active_c4_games:
+        await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
+        return
+    if not await _setup_pvp_game(ctx, opponent, amount, "📨 Tic-Tac-Toe Invite"):
+        return
     active_ttt_games[cid] = {
         "board": [None]*9,
         "players": [uid, opponent.id],
@@ -2527,38 +2387,7 @@ async def cmd_c4(ctx: commands.Context, opponent: discord.User = None, amount: i
     if cid in active_ttt_games or cid in active_c4_games:
         await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
         return
-    if opponent is None:
-        await ctx.send("Usage: `!c4 @user [amount]`")
-        return
-    if opponent.id == uid:
-        await ctx.send(embed=emb("❌ Can't Invite Yourself", "Pick a different opponent.", C_RED))
-        return
-
-    # Validate amount
-    if amount < 0:
-        await ctx.send("Amount must be positive.")
-        return
-
-    # Deduct from both players if betting
-    if amount > 0:
-        if not deduct_balance(uid, amount):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"You need {amount} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
-            return
-        if not deduct_balance(opponent.id, amount):
-            add_balance(uid, amount)  # Refund host
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"{opponent.display_name} needs {amount} 🪙. Balance: {get_balance(opponent.id)} 🪙", C_RED))
-            return
-
-    wager_text = f" for {amount} 🪙" if amount > 0 else ""
-    confirmed = await _wait_for_confirmations(ctx, [opponent], title=f"📨 Connect 4 Invite{wager_text}")
-    if not confirmed:
-        if amount > 0:
-            add_balance(uid, amount)
-            add_balance(opponent.id, amount)
-            msg = f"{opponent.display_name} didn't accept. Coins refunded ({amount} 🪙 each)."
-        else:
-            msg = f"{opponent.display_name} didn't accept."
-        await ctx.send(embed=emb("❌ Invite Declined", msg, C_RED))
+    if not await _setup_pvp_game(ctx, opponent, amount, "📨 Connect 4 Invite"):
         return
     active_c4_games[cid] = {
         "board": [[None]*7 for _ in range(6)],
@@ -2617,38 +2446,7 @@ async def cmd_chess(ctx: commands.Context, *args):
         await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
         return
 
-    if opponent is None:
-        await ctx.send("Usage: `!chess @user [amount]`")
-        return
-    if opponent.id == uid:
-        await ctx.send(embed=emb("❌ Can't Invite Yourself", "Pick a different opponent.", C_RED))
-        return
-
-    # Validate amount
-    if amount < 0:
-        await ctx.send("Amount must be positive.")
-        return
-
-    # Deduct from both players if betting
-    if amount > 0:
-        if not deduct_balance(uid, amount):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"You need {amount} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
-            return
-        if not deduct_balance(opponent.id, amount):
-            add_balance(uid, amount)  # Refund host
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"{opponent.display_name} needs {amount} 🪙. Balance: {get_balance(opponent.id)} 🪙", C_RED))
-            return
-
-    wager_text = f" for {amount} 🪙" if amount > 0 else ""
-    confirmed = await _wait_for_confirmations(ctx, [opponent], title=f"♟️ Chess Invite{wager_text}")
-    if not confirmed:
-        if amount > 0:
-            add_balance(uid, amount)
-            add_balance(opponent.id, amount)
-            msg = f"{opponent.display_name} didn't accept. Coins refunded ({amount} 🪙 each)."
-        else:
-            msg = f"{opponent.display_name} didn't accept."
-        await ctx.send(embed=emb("❌ Invite Declined", msg, C_RED))
+    if not await _setup_pvp_game(ctx, opponent, amount, "♟️ Chess Invite"):
         return
 
     active_chess_games[cid] = {
@@ -4865,6 +4663,8 @@ Respond with ONLY the message number of the highest-ranked message (just the num
             await placeholder.delete()
             await ctx.send(f"> {clean_content}\n— **{selected['author']}**")
 
+        except aiohttp.ClientError:
+            await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
         except Exception as e:
             await placeholder.edit(content=f"⚠️ {e}")
         finally:
