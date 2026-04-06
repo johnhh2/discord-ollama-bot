@@ -7,10 +7,15 @@ import time
 import random
 import datetime
 import re
+from pathlib import Path
 from discord.ext import commands, tasks
 from discord import ui
 from dotenv import load_dotenv
 from collections import defaultdict, deque
+
+# Load .env only in dev (not in Docker)
+if not os.getenv("ENV_TYPE"):
+    load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
