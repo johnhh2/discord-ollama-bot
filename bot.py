@@ -7,6 +7,7 @@ import time
 import random
 import datetime
 import re
+import subprocess
 from pathlib import Path
 from discord.ext import commands, tasks
 from discord import ui
@@ -570,6 +571,25 @@ def format_uptime() -> str:
     hours, r = divmod(r, 3600)
     minutes = r // 60
     return f"{days}d {hours}h {minutes}m"
+
+
+def get_version() -> str:
+    try:
+        commit_hash = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        commit_count = subprocess.check_output(
+            ["git", "rev-list", "--count", "HEAD"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        return f"{commit_count} ({commit_hash})"
+    except Exception:
+        return "unknown"
 
 
 async def check_ollama_connected() -> bool:
@@ -1424,8 +1444,8 @@ async def cmd_stats(ctx: commands.Context):
 
     embed = discord.Embed(title="📊 Bot Stats", color=C_BLUE)
     indent = "⠀ "  # Invisible character + space for indentation that Discord preserves
-    embed.add_field(name="🤖 Bot", value=f"{indent}{bot.user}", inline=True)
-    embed.add_field(name="🆔 Bot ID", value=f"{indent}{bot.user.id}", inline=True)
+    embed.add_field(name="🤖 Bot", value=f"{indent}{bot.user}\n{bot.user.id}", inline=True)
+    embed.add_field(name="📜 Version", value=f"{indent}{"v1"}", inline=True)
     embed.add_field(name="⚙️ Shard", value=f"{indent}#0 / 1", inline=True)
     embed.add_field(name="💬 Commands Ran", value=f"{indent}{stats_commands_ran} Commands", inline=True)
     embed.add_field(name="📨 Messages", value=f"{indent}{stats_messages_seen} ({msg_rate:.2f}/sec)", inline=True)
