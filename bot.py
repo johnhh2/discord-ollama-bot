@@ -294,6 +294,12 @@ def get_guild_roleplay_model(guild_id: int) -> str:
     return cfg.get("roleplay_model", OLLAMA_MODEL)
 
 
+def get_guild_coding_model(guild_id: int) -> str:
+    """Get the coding puzzle model for a guild, with fallback to default."""
+    cfg = get_guild_cfg(guild_id)
+    return cfg.get("coding_model", OLLAMA_MODEL)
+
+
 def get_game_channels_redirect(ctx) -> str | None:
     """Return a channel-mention string if the current channel is not a game channel, else None."""
     if not ctx.guild:
@@ -1388,10 +1394,12 @@ async def cmd_stats(ctx: commands.Context):
     ai_status_emoji = "🟢" if ai_connected else "🔴"
     ask_model = get_guild_ask_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
     roleplay_model = get_guild_roleplay_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
+    coding_model = get_guild_coding_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
     embed.add_field(name=f"{ai_status_emoji} AI Status", value=(
         f"{indent}Status: {ai_status}\n"
         f"{indent}Ask model: `{ask_model}`\n"
         f"{indent}Roleplay model: `{roleplay_model}`\n"
+        f"{indent}Coding model: `{coding_model}`\n"
         f"{indent}vRAM: {vram_text}"
     ), inline=True)
     await ctx.send(embed=embed)
@@ -1402,6 +1410,7 @@ async def cmd_ai(ctx: commands.Context):
     ai_connected = await check_ollama_connected()
     ask_model = get_guild_ask_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
     roleplay_model = get_guild_roleplay_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
+    coding_model = get_guild_coding_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
 
     ai_status = "Online" if ai_connected else "Offline"
     ai_status_emoji = "🟢" if ai_connected else "🔴"
@@ -1443,6 +1452,17 @@ async def cmd_ai(ctx: commands.Context):
             f"Cost: **50 🪙**\n"
             f"Model: `{roleplay_model}`\n"
             f"Usage: `!rpg [@user1 @user2 ...]`\n"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🧩 !puzzle coding",
+        value=(
+            f"AI-generated coding output puzzle\n"
+            f"Reward: **25–100 🪙**\n"
+            f"Model: `{coding_model}`\n"
+            f"Usage: `!puzzle coding [easy|medium|hard|expert|extreme]`"
         ),
         inline=False
     )
@@ -1565,15 +1585,16 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
         {"role": "user", "content": f"Generate a {difficulty} coding output puzzle."},
     ]
 
+    guild_id = ctx.guild.id if ctx.guild else None
+    coding_model = get_guild_coding_model(guild_id) if guild_id else OLLAMA_MODEL
     thinking_msg = await ctx.send(embed=emb("🧩 Generating puzzle...", f"Difficulty: **{difficulty}** · Reward: **{reward} 🪙**", C_BLUE))
 
-    guild_id = ctx.guild.id if ctx.guild else None
     try:
         async with aiohttp.ClientSession() as session:
             placeholder = await ctx.send("...")
             typing_task = asyncio.create_task(keep_typing(ctx.channel))
             try:
-                raw = await stream_ollama(session, messages, placeholder, guild_id=guild_id)
+                raw = await stream_ollama(session, messages, placeholder, model=coding_model)
             finally:
                 typing_task.cancel()
             await placeholder.delete()
@@ -1643,7 +1664,8 @@ async def cmd_adminhelp(ctx: commands.Context):
         ))
         admin_embed.add_field(name="🤖 AI", inline=False, value=(
             "`!model [name]` — View or change the AI model\n"
-            "`!roleplaymodel [name]` — View or change the roleplay model"
+            "`!roleplaymodel [name]` — View or change the roleplay model\n"
+            "`!codingmodel [name]` — View or change the coding puzzle model"
         ))
         admin_embed.add_field(name="⚙️ Config", inline=False, value=(
             "`!setprompt <prompt>` — Set a custom system prompt for this channel\n"
@@ -4558,6 +4580,24 @@ async def cmd_roleplaymodel(ctx: commands.Context, model_name: str = None):
     cfg["roleplay_model"] = model_name
     save_guild_settings()
     await ctx.send(embed=emb("⚙️ Roleplay Model", f"Switched to `{model_name}`", C_GREY))
+
+
+@bot.command(name="codingmodel")
+async def cmd_codingmodel(ctx: commands.Context, model_name: str = None):
+    if not is_admin(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        return
+    if ctx.guild is None:
+        await ctx.send(embed=emb("❌ Error", "This command only works in servers.", C_RED))
+        return
+    cfg = get_guild_cfg(ctx.guild.id)
+    if model_name is None:
+        current = cfg.get("coding_model", OLLAMA_MODEL)
+        await ctx.send(embed=emb("⚙️ Coding Model", f"Current coding puzzle model: `{current}`", C_GREY))
+        return
+    cfg["coding_model"] = model_name
+    save_guild_settings()
+    await ctx.send(embed=emb("⚙️ Coding Model", f"Switched to `{model_name}`", C_GREY))
 
 
 @bot.command(name="vramtext")
