@@ -2014,9 +2014,11 @@ async def cmd_slots_rewards(ctx: commands.Context):
         "🍒 **One Cherry** — 1x (Money Back)",
         inline=False)
 
+    jackpot = load_jackpot()
     embed.add_field(name="Other", value=
         "❌ **No Match** — 0x (Lose bet)\n\n"
-        "**Progressive Jackpot:** Grows by 20% of every bet!",
+        f"**Progressive Jackpot:** Grows by 20% of every bet!\n"
+        f"**Current Jackpot: {jackpot:,} 🪙**",
         inline=False)
 
     await ctx.send(embed=embed)
