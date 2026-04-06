@@ -1486,7 +1486,7 @@ async def cmd_adminhelp(ctx: commands.Context):
     ))
     if is_admin(ctx):
         admin_embed.add_field(name="🪙 Economy", inline=False, value=(
-            "`!give @user <amount>` — Add or remove coins from a user\n"
+            "`!admingive @user <amount>` — Add or remove coins from a user\n"
             "`!event <amount> [hours]` — Start a reaction event\n"
             "`!adminragebait @user [n]` — Force ragebait on user (default 5 messages)"
         ))
@@ -4477,7 +4477,7 @@ async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
         event["rewarded"].discard(user.id)
 
 
-@bot.command(name="admingive")
+@bot.command(name="admingive", aliases=["adminpay"])
 async def cmd_give(ctx: commands.Context, target: discord.Member = None, amount: str = None):
     if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
