@@ -1195,7 +1195,7 @@ async def on_message(message: discord.Message):
         guess = message.content.lower().strip()
         if guess and guess.isalpha() and len(guess) == 1:
             asyncio.create_task(_delete_after(message))
-            await _process_hangman_guess(message.channel, uid, cid, guess)
+            await _process_hangman_guess(message.channel, uid, cid, guess, message.author.display_name)
             return
 
     is_dm = isinstance(message.channel, discord.DMChannel)
@@ -2242,15 +2242,17 @@ def _distribute_hangman_rewards(cid: int, game: dict) -> str:
         msg = f"The word was `{word}`!\n\n"
     else:
         msg = f"The word was `{word}`!\n\n**Total: {total_reward} 🪙** split among {len(active_players)} players\n"
+    names = game.get("player_names", {})
     for i, pid in enumerate(active_players):
         bonus = 1 if i < remainder else 0
         reward = per_player + bonus
         add_balance(pid, reward)
-        msg += f"<@{pid}>: +{reward} 🪙 | Balance: {get_balance(pid)} 🪙\n"
+        name = names.get(pid, f"<@{pid}>")
+        msg += f"**{name}**: +{reward} 🪙 | Balance: {get_balance(pid)} 🪙\n"
     return msg.strip()
 
 
-async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: int, cid: int, guess: str):
+async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: int, cid: int, guess: str, author_name: str):
     """Shared hangman guess logic used by both !guess command and free-text intercept."""
     game = active_hangman_games[cid]
 
@@ -2260,10 +2262,8 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
     if not guess.isalpha():
         return  # silently ignore non-alpha free-text; cmd_guess shows an error
 
-    # Resolve display name for last_move attribution
-    guild = getattr(channel, "guild", None)
-    member = guild.get_member(author_id) if guild else None
-    name = member.display_name if member else str(author_id)
+    name = author_name
+    game["player_names"][author_id] = author_name
 
     # Track this player as active
     game["active_players"].add(author_id)
@@ -2339,6 +2339,7 @@ async def cmd_hangman(ctx: commands.Context, *args):
         "user_id": ctx.author.id,
         "active_players": {ctx.author.id},  # Track who's actively guessing (for rewards)
         "invited_players": {ctx.author.id},  # Only these users may guess
+        "player_names": {ctx.author.id: ctx.author.display_name},
         "board_msg_id": None,
         "last_move": "Game started!",
     }
@@ -2364,7 +2365,7 @@ async def cmd_guess(ctx: commands.Context, *, guess: str = None):
         err = await ctx.send(embed=emb("🔤 Hangman", "Usage: `!guess <letter or word>`", C_ORANGE))
         asyncio.create_task(_delete_after(err))
         return
-    await _process_hangman_guess(ctx.channel, ctx.author.id, cid, guess.lower().strip())
+    await _process_hangman_guess(ctx.channel, ctx.author.id, cid, guess.lower().strip(), ctx.author.display_name)
 
 
 async def _setup_pvp_game(ctx, opponent, amount, invite_title):
