@@ -1445,7 +1445,6 @@ async def cmd_stats(ctx: commands.Context):
     embed = discord.Embed(title="📊 Bot Stats", color=C_BLUE)
     indent = "⠀ "  # Invisible character + space for indentation that Discord preserves
     embed.add_field(name="🤖 Bot", value=f"{indent}{bot.user}\n{bot.user.id}", inline=True)
-    embed.add_field(name="📜 Version", value=f"{indent}{"v1"}", inline=True)
     embed.add_field(name="⚙️ Shard", value=f"{indent}#0 / 1", inline=True)
     embed.add_field(name="💬 Commands Ran", value=f"{indent}{stats_commands_ran} Commands", inline=True)
     embed.add_field(name="📨 Messages", value=f"{indent}{stats_messages_seen} ({msg_rate:.2f}/sec)", inline=True)
@@ -1583,7 +1582,7 @@ async def cmd_adminhelp(ctx: commands.Context):
         "`!audit` — Last 5 failed command attempts\n"
         "`!clear [n]` — Delete last n bot messages (default 50)\n"
         "`!clearall <n>` — Delete last n messages (any author)\n"
-        "`!persistent` — Show persistent data (admin-only)"
+        "`!saved` — Show saved data (admin-only)"
     ))
     if is_admin(ctx):
         admin_embed.add_field(name="🪙 Economy", inline=False, value=(
@@ -4202,13 +4201,13 @@ async def cmd_clearall(ctx: commands.Context, n: str = None):
         await ctx.send(embed=emb("❌ Error", f"Failed to delete messages: {str(e)}", C_RED))
 
 
-@bot.command(name="persistent")
-async def cmd_persistent(ctx: commands.Context):
+@bot.command(name="saved", aliases=["persistent", "saves"])
+async def cmd_saved(ctx: commands.Context):
     if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
         return
 
-    embed = discord.Embed(title="💾 Persistent Data", color=C_GOLD)
+    embed = discord.Embed(title="💾 Saved Data", color=C_GOLD)
 
     # Insurance data
     embed.add_field(
