@@ -1480,7 +1480,7 @@ async def cmd_adminhelp(ctx: commands.Context):
     ))
     admin_embed.add_field(name="🔍 Moderation", inline=False, value=(
         "`!audit` — Last 5 failed command attempts\n"
-        "`!clear [n]` — Delete last n bot messages (default 50)\n"
+        "`!clearbot [n]` — Delete last n bot messages (default 50)\n"
         "`!clearall <n>` — Delete last n messages (any author)\n"
         "`!saved` — Show saved data (admin-only)"
     ))
@@ -3794,7 +3794,14 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
             r34_val += f"\nBanned tags: {', '.join(r34_banned)}"
         lottery_val = f"<#{lottery_channel_id}>" if lottery_channel_id else "❌ disabled"
         soundboard_rl = cfg.get("soundboard_ratelimit", [])
-        rl_val = " ".join(f"<@{uid}>" for uid in soundboard_rl) if soundboard_rl else "none"
+        if soundboard_rl:
+            rl_names = []
+            for uid in soundboard_rl:
+                member = ctx.guild.get_member(uid)
+                rl_names.append(member.display_name if member else str(uid))
+            rl_val = ", ".join(rl_names)
+        else:
+            rl_val = "none"
 
         embed = discord.Embed(title="⚙️ Server Settings", color=C_BLUE)
         embed.add_field(name="🤖 AI channels", value=ai_val, inline=False)
@@ -4102,7 +4109,7 @@ async def cmd_audit(ctx: commands.Context):
     await ctx.send(embed=emb("🔍 Audit Log", "\n\n".join(lines), C_GOLD))
 
 
-@bot.command(name="clear")
+@bot.command(name="clearbot")
 async def cmd_clear(ctx: commands.Context, n: int = 50):
     if not can_manage_settings(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
