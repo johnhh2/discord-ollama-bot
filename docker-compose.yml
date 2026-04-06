@@ -2,8 +2,10 @@ services:
   bot:
     build: .
     restart: unless-stopped
-    env_file:
-      - .env
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      RULE34_API_KEY: ${RULE34_API_KEY}
+      RULE34_USER_ID: ${RULE34_USER_ID}
     # Allows the bot container to reach Ollama running on the host machine
     extra_hosts:
       - "host.docker.internal:host-gateway"
