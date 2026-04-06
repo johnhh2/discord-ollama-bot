@@ -330,6 +330,7 @@ active_ttt_games: dict[int, dict] = {}  # channel_id → {board, players, marks,
 active_c4_games: dict[int, dict] = {}   # channel_id → {board, players, marks, current}
 active_race_games: dict[int, dict] = {} # channel_id → {players, names, positions, amount}
 active_chess_games: dict[int, dict] = load_chess_games() # channel_id → {board, players, current, moves, amount}
+active_puzzles: dict[int, dict] = {}  # channel_id → {question, answer, reward, user_id}
 rigged_slots: set[int] = load_rigged_slots() # user_id → will hit jackpot on next spin
 quote_log: list[str] = load_quote_log() # last 10 quotes used
 
@@ -1195,6 +1196,26 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
+    # Intercept puzzle answers
+    cid = message.channel.id
+    if cid in active_puzzles and not message.content.startswith("!"):
+        puzzle = active_puzzles[cid]
+        guess = message.content.strip()
+        expected = puzzle["answer"]
+        # Normalize: strip whitespace, lowercase, collapse internal whitespace
+        def _norm(s):
+            return " ".join(s.lower().split())
+        if _norm(guess) == _norm(expected):
+            reward = puzzle["reward"]
+            del active_puzzles[cid]
+            add_balance(uid, reward)
+            await message.channel.send(embed=emb(
+                "✅ Correct!",
+                f"{message.author.mention} got it!\n**Answer:** `{expected}`\n+**{reward} 🪙** (Balance: {get_balance(uid)} 🪙)",
+                C_GREEN,
+            ))
+            return
+
     # Intercept free-text hangman guesses (no prefix needed when game is active)
     # Only single-letter guesses via free-text; full words require !guess command
     cid = message.channel.id
@@ -1302,7 +1323,8 @@ async def cmd_help(ctx: commands.Context):
         "`!race @user1 [@user2 ...] [amount]` — Start a race (optional bet)"
         "`!ttt @user [amount]` — Tic-Tac-Toe (use !m <1-9> to place)\n"
         "`!c4 @user [amount]` — Connect 4 (use !m <1-7> to drop)\n"
-        "`!m <number>` — Make a move in tic-tac-toe or connect 4"
+        "`!m <number>` — Make a move in tic-tac-toe or connect 4\n"
+        "`!puzzle` — AI-generated puzzles (see `!puzzle` for subcommands)"
     ))
     help_embed.add_field(name="🤖 AI", inline=False, value=(
         "`!ai` — View AI connection status and command info\n"
@@ -1465,6 +1487,128 @@ async def cmd_game(ctx: commands.Context):
         inline=False
     )
 
+    await ctx.send(embed=embed)
+
+
+PUZZLE_REWARDS = {
+    "easy":   25,
+    "medium": 50,
+    "hard":   100,
+    "expert": 100,
+    "extreme": 100,
+}
+
+PUZZLE_CODING_PROMPT = (
+    "Generate a coding puzzle where the user must determine the exact output of a short code snippet. "
+    "Choose a language appropriate for the difficulty. "
+    "Return ONLY a JSON object with exactly two keys: \"question\" and \"answer\". "
+    "\"question\" should be the full puzzle text including the code snippet (use markdown code blocks). "
+    "\"answer\" should be the exact output the code produces (just the output string, nothing else). "
+    "Do not include any explanation outside the JSON object."
+)
+
+PUZZLE_DIFFICULTY_GUIDANCE = {
+    "easy":   "Use a trivial snippet (e.g. basic arithmetic, string concat, simple loop) in Python or JavaScript. The output should be obvious to a beginner.",
+    "medium": "Use a moderately tricky snippet involving type coercion, simple recursion, or list operations.",
+    "hard":   "Use a tricky snippet involving closures, scoping, reference semantics, or unexpected operator behavior.",
+    "expert": "Use a very tricky snippet that requires deep knowledge of the language (e.g. Python descriptors, JS prototype chain, bitwise quirks).",
+    "extreme": "Use an extremely difficult snippet requiring expert-level language knowledge — multiple interacting edge cases, undefined-adjacent behavior, or deep runtime internals.",
+}
+
+
+@bot.command(name="puzzle")
+async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: str = None):
+    if subcommand is None:
+        embed = discord.Embed(title="🧩 Puzzle Commands", color=C_BLUE)
+        embed.add_field(
+            name="!puzzle coding [difficulty]",
+            value=(
+                "AI generates a code snippet — figure out its output!\n"
+                "**Difficulties:** `easy` (25 🪙) · `medium` (50 🪙) · `hard` / `expert` / `extreme` (100 🪙)\n"
+                "Default difficulty: `medium`\n"
+                "First person to type the correct output wins the reward."
+            ),
+            inline=False,
+        )
+        await ctx.send(embed=embed)
+        return
+
+    if subcommand.lower() != "coding":
+        await ctx.send(f"Unknown puzzle type `{subcommand}`. Try `!puzzle coding`.")
+        return
+
+    # Resolve difficulty
+    difficulty = (difficulty or "medium").lower()
+    if difficulty not in PUZZLE_REWARDS:
+        await ctx.send(f"Unknown difficulty `{difficulty}`. Choose: {', '.join(PUZZLE_REWARDS)}")
+        return
+
+    # AI channel check
+    if ctx.guild:
+        cfg = get_guild_cfg(ctx.guild.id)
+        ai_channels = cfg.get("ai_channels", [])
+        if ai_channels and ctx.channel.id not in ai_channels:
+            names = " ".join(f"<#{cid}>" for cid in ai_channels)
+            await ctx.send(embed=emb("❌ Wrong Channel", f"AI commands are only allowed in: {names}", C_RED))
+            return
+
+    cid = ctx.channel.id
+    if cid in active_puzzles:
+        await ctx.send(embed=emb("⚠️ Puzzle Active", "A puzzle is already running in this channel! Solve it first.", C_GOLD))
+        return
+
+    reward = PUZZLE_REWARDS[difficulty]
+    guidance = PUZZLE_DIFFICULTY_GUIDANCE[difficulty]
+    system_prompt = PUZZLE_CODING_PROMPT + f"\n\nDifficulty: {difficulty}. {guidance}"
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Generate a {difficulty} coding output puzzle."},
+    ]
+
+    thinking_msg = await ctx.send(embed=emb("🧩 Generating puzzle...", f"Difficulty: **{difficulty}** · Reward: **{reward} 🪙**", C_BLUE))
+
+    guild_id = ctx.guild.id if ctx.guild else None
+    try:
+        async with aiohttp.ClientSession() as session:
+            placeholder = await ctx.send("...")
+            typing_task = asyncio.create_task(keep_typing(ctx.channel))
+            try:
+                raw = await stream_ollama(session, messages, placeholder, guild_id=guild_id)
+            finally:
+                typing_task.cancel()
+            await placeholder.delete()
+    except aiohttp.ClientError:
+        await thinking_msg.edit(embed=emb("❌ AI Offline", "Could not connect to the AI.", C_RED))
+        return
+
+    # Parse JSON from the response
+    import re as _re
+    json_match = _re.search(r'\{.*\}', raw, _re.DOTALL)
+    if not json_match:
+        await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
+        return
+    try:
+        puzzle_data = json.loads(json_match.group())
+        question = puzzle_data["question"]
+        answer = str(puzzle_data["answer"])
+    except (json.JSONDecodeError, KeyError):
+        await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
+        return
+
+    active_puzzles[cid] = {
+        "question": question,
+        "answer": answer,
+        "reward": reward,
+        "user_id": ctx.author.id,
+    }
+
+    await thinking_msg.delete()
+    embed = discord.Embed(
+        title=f"🧩 Coding Puzzle — {difficulty.capitalize()}",
+        description=question + f"\n\nType the **exact output** to win **{reward} 🪙**!",
+        color=C_GOLD,
+    )
+    embed.set_footer(text="First correct answer wins · Use !stop to cancel")
     await ctx.send(embed=embed)
 
 
@@ -3120,6 +3264,10 @@ async def cmd_stop(ctx: commands.Context):
     uid = ctx.author.id
     cid = ctx.channel.id
     stopped = []
+
+    if cid in active_puzzles and (active_puzzles[cid]["user_id"] == uid or is_admin(ctx)):
+        puzzle = active_puzzles.pop(cid)
+        stopped.append(f"🧩 Puzzle (answer was `{puzzle['answer']}`)")
 
     if uid in active_roleplays:
         rp = active_roleplays[uid]
