@@ -55,6 +55,7 @@ SIMP_FILE = "data/simp.json"
 CURSE_FILE = "data/curse.json"
 LOTTERY_FILE = "data/lottery.json"
 GAMBLER_STREAK_FILE = "data/gambler_streak.json"
+RESTART_MSG_FILE = "data/restart_msg.json"
 
 # Slot machine configuration
 SLOT_REEL = (
@@ -1085,6 +1086,16 @@ async def on_ready():
         print(f"Listening in channels: {ACTIVE_CHANNEL_IDS}")
     else:
         print("Listening in all channels")
+
+    restart_info = _load_json(RESTART_MSG_FILE, None)
+    if restart_info:
+        os.remove(RESTART_MSG_FILE)
+        try:
+            channel = await bot.fetch_channel(restart_info["channel_id"])
+            msg = await channel.fetch_message(restart_info["message_id"])
+            await msg.edit(embed=emb("✅ Restarted", "Bot has restarted.", discord.Color.green()))
+        except Exception:
+            pass
 
 
 async def _roast_soundboard_spam(guild_id: int, user_id: int):
@@ -5201,7 +5212,8 @@ async def cmd_restart(ctx: commands.Context):
     if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "Only bot admins can use this command.", C_RED))
         return
-    await ctx.send(embed=emb("🔄 Restarting", "Bot is restarting...", C_GOLD))
+    msg = await ctx.send(embed=emb("🔄 Restarting", "Bot is restarting...", C_GOLD))
+    _save_json(RESTART_MSG_FILE, {"channel_id": msg.channel.id, "message_id": msg.id})
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
