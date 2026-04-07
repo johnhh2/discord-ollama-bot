@@ -480,6 +480,16 @@ def log_bot_permission_error(ctx: commands.Context, error_msg: str):
     })
 
 
+def _log_audit(user: str, command: str, error: str):
+    """Log an error to the audit log without a ctx object."""
+    audit_log.append({
+        "time": time.time(),
+        "user": user,
+        "command": command,
+        "error": error,
+    })
+
+
 def get_system_prompt(channel_id: int) -> str:
     return channel_prompts.get(channel_id, SYSTEM_PROMPT)
 
@@ -770,16 +780,20 @@ async def _edit_board(channel: discord.abc.Messageable, game: dict, embed: disco
 async def _execute_ollama_stream(channel, reply_to, messages, history, guild_id=None, model=None):
     placeholder = await reply_to.reply("...")
     typing_task = asyncio.create_task(keep_typing(channel))
+    author = f"{reply_to.author.display_name} ({reply_to.author.id})"
+    command = reply_to.content[:100]
     try:
         async with aiohttp.ClientSession() as session:
             full_response = await stream_ollama(session, messages, placeholder, guild_id=guild_id, model=model)
         history.append({"role": "assistant", "content": full_response})
         await finalize(placeholder, channel, full_response)
-    except aiohttp.ClientError:
+    except aiohttp.ClientError as e:
         history.pop()
+        _log_audit(author, command, f"Ollama offline: {e}")
         await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
     except Exception as e:
         history.pop()
+        _log_audit(author, command, f"{type(e).__name__}: {e}")
         await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
     finally:
         typing_task.cancel()
@@ -1653,7 +1667,8 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
             finally:
                 typing_task.cancel()
             await placeholder.delete()
-    except aiohttp.ClientError:
+    except aiohttp.ClientError as e:
+        _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
         await thinking_msg.edit(embed=emb("❌ AI Offline", "Could not connect to the AI.", C_RED))
         return
 
@@ -1661,6 +1676,7 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
     import re as _re
     json_match = _re.search(r'\{.*\}', raw, _re.DOTALL)
     if not json_match:
+        _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI malformed response (no JSON): {raw[:200]}")
         await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
         return
     try:
@@ -1668,7 +1684,8 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
         code_snippet = puzzle_data["code"].replace("\\n", "\n").replace("\\t", "\t")
         answer = str(puzzle_data["answer"])
         language = puzzle_data.get("language", "Unknown")
-    except (json.JSONDecodeError, KeyError):
+    except (json.JSONDecodeError, KeyError) as e:
+        _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI malformed response ({type(e).__name__}): {raw[:200]}")
         await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
         return
 
@@ -3210,8 +3227,10 @@ async def cmd_rpg(ctx: commands.Context):
         roleplay_histories[uid].append({"role": "assistant", "content": full_response})
         await finalize(placeholder, ctx.channel, full_response)
     except aiohttp.ClientError as e:
+        _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
         await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
     except Exception as e:
+        _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"{type(e).__name__}: {e}")
         await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
     finally:
         typing_task.cancel()
@@ -5087,9 +5106,11 @@ Respond with ONLY the message number of the highest-ranked message (just the num
             await placeholder.delete()
             await ctx.send(f"> {clean_content}\n— **{selected['author']}**")
 
-        except aiohttp.ClientError:
+        except aiohttp.ClientError as e:
+            _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
             await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
         except Exception as e:
+            _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"{type(e).__name__}: {e}")
             await placeholder.edit(content=f"⚠️ {e}")
         finally:
             typing_task.cancel()
