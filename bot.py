@@ -759,6 +759,10 @@ async def maybe_assign_gambler_role(guild: discord.Guild, member: discord.Member
 # Async infrastructure
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Global semaphore — only one Ollama request runs at a time to avoid GPU overload.
+ollama_semaphore = asyncio.Semaphore(1)
+
+
 async def keep_typing(channel: discord.abc.Messageable):
     try:
         while True:
@@ -787,28 +791,35 @@ async def stream_ollama(
     last_edit = 0.0
     EDIT_INTERVAL = 0.8
 
-    async with session.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload) as resp:
-        resp.raise_for_status()
-        async for raw_line in resp.content:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            token = data.get("message", {}).get("content", "")
-            full_response += token
-            now = time.monotonic()
-            if now - last_edit >= EDIT_INTERVAL and full_response:
-                display = full_response[-1997:] if len(full_response) > 1997 else full_response
+    if ollama_semaphore.locked():
+        try:
+            await placeholder.edit(content="⏳ Another AI request is running. You're next...")
+        except Exception:
+            pass
+
+    async with ollama_semaphore:
+        async with session.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload) as resp:
+            resp.raise_for_status()
+            async for raw_line in resp.content:
+                line = raw_line.strip()
+                if not line:
+                    continue
                 try:
-                    await placeholder.edit(content=display + "▌")
-                    last_edit = now
-                except discord.HTTPException:
-                    pass
-            if data.get("done"):
-                break
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                token = data.get("message", {}).get("content", "")
+                full_response += token
+                now = time.monotonic()
+                if now - last_edit >= EDIT_INTERVAL and full_response:
+                    display = full_response[-1997:] if len(full_response) > 1997 else full_response
+                    try:
+                        await placeholder.edit(content=display + "▌")
+                        last_edit = now
+                    except discord.HTTPException:
+                        pass
+                if data.get("done"):
+                    break
 
     return full_response
 
@@ -1808,15 +1819,19 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
 
     try:
         async with aiohttp.ClientSession() as session:
-            typing_task = asyncio.create_task(keep_typing(ctx.channel))
-            try:
-                payload = {"model": coding_model, "messages": messages, "stream": False}
-                async with session.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload) as resp:
-                    resp.raise_for_status()
-                    data = await resp.json()
-                    raw = data.get("message", {}).get("content", "")
-            finally:
-                typing_task.cancel()
+            if ollama_semaphore.locked():
+                await thinking_msg.edit(embed=emb("⏳ Queued", "Another AI request is running. Your puzzle will generate next...", C_BLUE))
+            async with ollama_semaphore:
+                await thinking_msg.edit(embed=emb("🧩 Generating puzzle...", f"Difficulty: **{difficulty}** · Reward: **{reward} 🪙**", C_BLUE))
+                typing_task = asyncio.create_task(keep_typing(ctx.channel))
+                try:
+                    payload = {"model": coding_model, "messages": messages, "stream": False}
+                    async with session.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload) as resp:
+                        resp.raise_for_status()
+                        data = await resp.json()
+                        raw = data.get("message", {}).get("content", "")
+                finally:
+                    typing_task.cancel()
     except aiohttp.ClientError as e:
         _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
         await thinking_msg.edit(embed=emb("❌ AI Offline", "Could not connect to the AI.", C_RED))
