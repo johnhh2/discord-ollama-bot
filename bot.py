@@ -49,6 +49,7 @@ RAGEBAIT_FILE = "data/ragebait.json"
 MOCK_FILE = "data/mock.json"
 RIGGED_SLOTS_FILE = "data/rigged_slots.json"
 QUOTE_LOG_FILE = "data/quote_log.json"
+SAVED_QUOTES_FILE = "data/saved_quotes.json"
 SIMP_FILE = "data/simp.json"
 CURSE_FILE = "data/curse.json"
 LOTTERY_FILE = "data/lottery.json"
@@ -220,6 +221,14 @@ def load_quote_log() -> list[str]:
 
 def save_quote_log(log: list[str]):
     _save_json(QUOTE_LOG_FILE, log[-10:])
+
+
+def load_saved_quotes() -> list[dict]:
+    return _load_json(SAVED_QUOTES_FILE, [])
+
+
+def save_saved_quotes(quotes: list[dict]):
+    _save_json(SAVED_QUOTES_FILE, quotes)
 
 
 def load_simp() -> dict:
@@ -936,8 +945,8 @@ async def global_command_channel_check(ctx: commands.Context) -> bool:
 
     cfg = get_guild_cfg(ctx.guild.id)
 
-    # Allow quote if bypass is enabled
-    if ctx.command and ctx.command.name == "quote":
+    # Allow searchquote if bypass is enabled
+    if ctx.command and ctx.command.name == "searchquote":
         if cfg.get("quote_bypass_restrictions", False):
             return True
 
@@ -1431,7 +1440,8 @@ async def cmd_help(ctx: commands.Context):
     help_embed.add_field(name="🎉 Fun", inline=False, value=(
         "`!dog` — Random dog picture\n"
         "`!cat` — Random cat picture\n"
-        "`!quote [#channel] [@user]` — Find spicy/volatile messages to quote"
+        "`!quote` — Save a quoted message (reply) or display a random saved quote\n"
+        "`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote"
     ))
     help_embed.add_field(name="🔧 Utility", inline=False, value=(
         "`!stats` — Show bot statistics\n"
@@ -1719,7 +1729,7 @@ async def cmd_adminhelp(ctx: commands.Context):
         "`!settings cmd-blacklist #ch... / clear` — Disallow commands in channels\n"
         "`!settings chess-channels #ch... / clear` — Restrict chess to channels\n"
         "`!settings shop <item> on|off` — Toggle shop items\n"
-        "`!settings quote bypass on|off` — Allow quote in any channel (bypass restrictions)\n"
+        "`!settings quote bypass on|off` — Allow searchquote in any channel (bypass restrictions)\n"
         "`!settings rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` — rule34 config\n"
         "`!settings soundboard-ratelimit add|remove @user|<userid> / list` — Soundboard rate-limit list"
     ))
@@ -4512,9 +4522,10 @@ async def cmd_saved(ctx: commands.Context):
     )
 
     # Quote log
+    saved_quotes_count = len(load_saved_quotes())
     embed.add_field(
         name="📜 Quotes",
-        value=f"**{len(quote_log)}** quotes in recent log (max 10)",
+        value=f"**{saved_quotes_count}** saved quotes | **{len(quote_log)}** in searchquote log (max 10)",
         inline=False
     )
 
@@ -4987,13 +4998,59 @@ async def cmd_ew(ctx: commands.Context):
 
 @bot.command(name="quote")
 async def cmd_quote(ctx: commands.Context):
+    """Save a replied-to message as a persistent quote, or display a random saved quote.
+
+    Usage:
+    - !quote (reply) — save the replied-to message as a quote
+    - !quote — display a random saved quote
+    """
+    saved_quotes = load_saved_quotes()
+
+    if ctx.message.reference:
+        # Save the replied-to message as a quote
+        try:
+            replied_msg = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+        except Exception:
+            await ctx.send(embed=emb("❌ Error", "Could not fetch the replied-to message.", C_RED))
+            return
+
+        if replied_msg.author == bot.user:
+            await ctx.send(embed=emb("📜 Quote", "You can't save the bot's messages as quotes.", C_GREY))
+            return
+
+        quote_entry = {
+            "content": replied_msg.content,
+            "author": replied_msg.author.display_name,
+            "author_id": replied_msg.author.id,
+            "saved_by": ctx.author.display_name,
+            "saved_by_id": ctx.author.id,
+            "timestamp": replied_msg.created_at.isoformat(),
+        }
+        saved_quotes.append(quote_entry)
+        save_saved_quotes(saved_quotes)
+
+        clean_content = re.sub(r'<@!?\d+>', '', replied_msg.content).strip()
+        await ctx.send(embed=emb("📜 Quote Saved", f"> {clean_content}\n— **{replied_msg.author.display_name}**", C_GREEN))
+    else:
+        # Display a random saved quote
+        if not saved_quotes:
+            await ctx.send(embed=emb("📜 Quote", "No saved quotes yet. Reply to a message with `!quote` to save one.", C_GREY))
+            return
+
+        entry = random.choice(saved_quotes)
+        clean_content = re.sub(r'<@!?\d+>', '', entry["content"]).strip()
+        await ctx.send(f"> {clean_content}\n— **{entry['author']}**")
+
+
+@bot.command(name="searchquote", aliases=["quotesearch"])
+async def cmd_searchquote(ctx: commands.Context):
     """Find a funny and controversial message from recent chat history.
 
     Usage:
-    - !quote — search current channel
-    - !quote #channel — search specific channel
-    - !quote @user — search quotes from user in current channel
-    - !quote #channel @user — search quotes from user in specific channel
+    - !searchquote — search current channel
+    - !searchquote #channel — search specific channel
+    - !searchquote @user — search quotes from user in current channel
+    - !searchquote #channel @user — search quotes from user in specific channel
     """
     await ctx.typing()
     global quote_log
