@@ -5476,34 +5476,31 @@ async def cmd_restart(ctx: commands.Context):
 _r34_last_msg: dict[tuple[int, int], discord.Message] = {}
 
 async def _r34_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[dict]:
-    pid = random.randint(0, 9)
-    url = (
-        f"https://api.rule34.xxx/index.php"
-        f"?page=dapi&s=post&q=index&json=1&limit=100&pid={pid}&tags={search_tags}"
-    )
-    if RULE34_API_KEY and RULE34_USER_ID:
-        url += f"&api_key={RULE34_API_KEY}&user_id={RULE34_USER_ID}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-        if resp.status != 200:
+    async def _fetch_pid(pid: int) -> list[dict]:
+        url = (
+            f"https://api.rule34.xxx/index.php"
+            f"?page=dapi&s=post&q=index&json=1&limit=100&pid={pid}&tags={search_tags}"
+        )
+        if RULE34_API_KEY and RULE34_USER_ID:
+            url += f"&api_key={RULE34_API_KEY}&user_id={RULE34_USER_ID}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status != 200:
+                return []
+            text = (await resp.text()).strip()
+        if not text or text == "0" or text.startswith("<"):
             return []
-        text = await resp.text()
-    # API returns "0\n" or XML when no results instead of []
-    text = text.strip()
-    if not text or text == "0" or text.startswith("<"):
-        return []
-    try:
-        import json as _json
-        data = _json.loads(text)
-    except Exception:
-        print(f"[rule34] JSON parse failed for tags={search_tags!r}, body={text[:200]!r}")
-        return []
-    print(f"[rule34] tags={search_tags!r} data type={type(data).__name__} len={len(data) if isinstance(data, list) else 'N/A'}")
-    if isinstance(data, list) and data:
-        print(f"[rule34] first item type={type(data[0]).__name__} val={str(data[0])[:200]}")
-    if not isinstance(data, list):
-        return []
-    return [p for p in data if isinstance(p, dict) and p.get("file_url")]
+        try:
+            import json as _json
+            data = _json.loads(text)
+        except Exception:
+            return []
+        if not isinstance(data, list):
+            return []
+        return [p for p in data if isinstance(p, dict) and p.get("file_url")]
+
+    return await _fetch_pid(0)
+
 
 
 @bot.command(name="rule34", aliases=["r34"])
