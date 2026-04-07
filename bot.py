@@ -2814,7 +2814,7 @@ def _distribute_hangman_rewards(cid: int, game: dict) -> str:
 
 
 async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: int, cid: int, guess: str, author_name: str):
-    """Shared hangman guess logic used by both !guess command and free-text intercept."""
+    """Shared hangman guess logic used by both `!guess`/`!g` command and free-text intercept."""
     game = active_hangman_games[cid]
 
     if author_id not in game["invited_players"]:
@@ -2838,7 +2838,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             await _edit_board(channel, game, emb("🎉 Correct!", build_hangman_display(game) + "\n\n" + reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         elif guess in game["guessed_words"]:
             game["last_move"] = f"{name} guessed `{guess}` ❌ (already tried)"
-            await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
+            await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
         else:
             game["guessed_words"].add(guess)
             game["wrong_guesses"] += 1
@@ -2853,13 +2853,13 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
                 del active_hangman_games[cid]
             else:
                 game["last_move"] = f"{name} guessed `{guess}` ❌"
-                await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** {game['last_move']}", C_RED))
+                await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_RED))
         return
 
     # Single letter guess
     if guess in game["guessed_letters"]:
         game["last_move"] = f"{name} guessed `{guess}` (already tried)"
-        await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
+        await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
         return
     game["guessed_letters"].add(guess)
     if guess in game["word"]:
@@ -2869,7 +2869,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             await _edit_board(channel, game, emb("🎉 You Got It!", build_hangman_display(game) + "\n\n" + reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         else:
             game["last_move"] = f"{name} guessed `{guess}` ✅"
-            await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** {game['last_move']}", C_GREEN))
+            await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_GREEN))
     else:
         game["wrong_guesses"] += 1
         if game["wrong_guesses"] >= 6:
@@ -2883,7 +2883,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             del active_hangman_games[cid]
         else:
             game["last_move"] = f"{name} guessed `{guess}` ❌"
-            await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
+            await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
 
 
 @bot.command(name="hangman", aliases=["hang", "hm"])
@@ -2913,7 +2913,7 @@ async def cmd_hangman(ctx: commands.Context, *args):
         confirmed = await _wait_for_confirmations(ctx, invited_users, title="📨 Hangman Invite")
         active_hangman_games[cid]["invited_players"].update(confirmed)
     game = active_hangman_games[cid]
-    board_msg = await ctx.send(embed=emb("🔤 Hangman", build_hangman_display(game) + "\n\nJust type a letter or use `!guess` to guess the full word!\n\n**Last move:** Game started!", C_ORANGE))
+    board_msg = await ctx.send(embed=emb("🔤 Hangman", build_hangman_display(game) + "\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** Game started!", C_ORANGE))
     game["board_msg_id"] = board_msg.id
 
 
@@ -3140,7 +3140,7 @@ async def cmd_move_chess(ctx: commands.Context, *args):
     await _edit_board(ctx.channel, game, emb("♟️ Chess", build_chess_display(board, is_black_perspective) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!move <e2e4>`\n\n**Last move:** {game['last_move']}", C_BLUE))
 
 
-@bot.command(name="m", aliases=["move"])
+@bot.command(name="m",)
 async def cmd_move(ctx: commands.Context, pos: int = None):
     cid = ctx.channel.id
     uid = ctx.author.id
