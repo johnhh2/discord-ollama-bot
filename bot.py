@@ -1367,17 +1367,7 @@ async def on_message(message: discord.Message):
             await _blackjack_stand(message, uid, game)
         return
 
-    # AI enabled guard
-    if not bot_settings.get("ai_enabled", True):
-        await bot.process_commands(message)
-        return
-
-    # Channel guard
-    if ACTIVE_CHANNEL_IDS and message.channel.id not in ACTIVE_CHANNEL_IDS:
-        await bot.process_commands(message)
-        return
-
-    # Intercept puzzle answers
+    # Intercept puzzle answers (must run before channel/AI guards)
     cid = message.channel.id
     if cid in active_puzzles and not message.content.startswith("!"):
         puzzle = active_puzzles[cid]
@@ -1405,6 +1395,16 @@ async def on_message(message: discord.Message):
             asyncio.create_task(_delete_after(message))
             await _process_hangman_guess(message.channel, uid, cid, guess, message.author.display_name)
             return
+
+    # AI enabled guard
+    if not bot_settings.get("ai_enabled", True):
+        await bot.process_commands(message)
+        return
+
+    # Channel guard
+    if ACTIVE_CHANNEL_IDS and message.channel.id not in ACTIVE_CHANNEL_IDS:
+        await bot.process_commands(message)
+        return
 
     is_dm = isinstance(message.channel, discord.DMChannel)
     # Only respond to mentions if the message starts with the mention
