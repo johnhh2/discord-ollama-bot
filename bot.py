@@ -1087,17 +1087,6 @@ async def on_ready():
     else:
         print("Listening in all channels")
 
-    restart_info = _load_json(RESTART_MSG_FILE, None)
-    if restart_info:
-        os.remove(RESTART_MSG_FILE)
-        try:
-            channel = await bot.fetch_channel(restart_info["channel_id"])
-            msg = await channel.fetch_message(restart_info["message_id"])
-            await msg.edit(embed=emb("✅ Restarted", "Bot has restarted.", 0x2ecc71))
-        except Exception as e:
-            print(f"[RESTART] Failed to edit restart message: {e}")
-
-
 async def _roast_soundboard_spam(guild_id: int, user_id: int):
     """Generate a roast for soundboard spam using the ragebait system."""
     guild = bot.get_guild(guild_id)
@@ -5714,10 +5703,26 @@ async def scratchoff_scheduler():
 @bot.event
 async def on_ready():
     """Check on startup if lottery results need posting and resetting."""
+    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    if ACTIVE_CHANNEL_IDS:
+        print(f"Listening in channels: {ACTIVE_CHANNEL_IDS}")
+    else:
+        print("Listening in all channels")
+
     if not lottery_scheduler.is_running():
         lottery_scheduler.start()
     if not scratchoff_scheduler.is_running():
         scratchoff_scheduler.start()
+
+    restart_info = _load_json(RESTART_MSG_FILE, None)
+    if restart_info:
+        os.remove(RESTART_MSG_FILE)
+        try:
+            channel = await bot.fetch_channel(restart_info["channel_id"])
+            msg = await channel.fetch_message(restart_info["message_id"])
+            await msg.edit(embed=emb("✅ Restarted", "Bot has restarted.", 0x2ecc71))
+        except Exception as e:
+            print(f"[RESTART] Failed to edit restart message: {e}")
 
     # If it's past 5am and the scratchoff reset hasn't happened today, do it now
     now = datetime.datetime.now()
