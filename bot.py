@@ -5499,6 +5499,12 @@ async def _r34_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[d
             return []
         return [p for p in data if isinstance(p, dict) and p.get("file_url")]
 
+    # Try a random page first (pages 0–19 = up to 2000 posts), fall back to page 0
+    rand_pid = random.randint(0, 19)
+    if rand_pid > 0:
+        posts = await _fetch_pid(rand_pid)
+        if posts:
+            return posts
     return await _fetch_pid(0)
 
 
@@ -5558,8 +5564,12 @@ async def cmd_rule34(ctx: commands.Context, *, tags: str = ""):
         await ctx.send(embed=emb("🔞 rule34", f"No results for `{label}`.", C_GREY))
         return
 
+    print(f"[rule34] {len(posts)} posts after filtering")
     post = random.choice(posts)
     file_url = post["file_url"]
+    print(f"[rule34] picked id={post.get('id')} url={file_url}")
+    # Bust Discord's embed image cache
+    file_url = f"{file_url}?v={post.get('id', random.randint(0, 999999))}"
     display = search_tags.replace("+", " ") if tag_parts else "random"
 
     embed = discord.Embed(title=f"🔞 rule34: {display}", color=C_PURPLE)
