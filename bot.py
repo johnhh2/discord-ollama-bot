@@ -1647,12 +1647,12 @@ async def cmd_ai(ctx: commands.Context):
     )
 
     embed.add_field(
-        name="🧩 !puzzle coding",
+        name="🧩 !puzzle coding / riddle",
         value=(
-            f"AI-generated coding output puzzle\n"
-            f"Reward: **10–50 🪙**\n"
+            f"AI-generated puzzles\n"
+            f"`!puzzle coding [easy|medium|hard|extreme] [@user …]` — figure out the code output · **10–50 🪙**\n"
+            f"`!puzzle riddle [@user …]` — one-word riddle · **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
             f"Model: `{coding_model}`\n"
-            f"Usage: `!puzzle coding [easy|medium|hard|extreme] [@user …]`\n"
             f"Only the creator can answer by default; mention users to invite them."
         ),
         inline=False
@@ -1692,7 +1692,9 @@ async def cmd_game(ctx: commands.Context):
         name="🧩 AI Puzzles",
         value=(
             "`!puzzle coding [easy|medium|hard|extreme] [@user …]` — AI-generated coding puzzle\n"
-            "Reward: **10–50 🪙** depending on difficulty. Only the creator can answer by default; mention users to invite them."
+            "Reward: **10–50 🪙** depending on difficulty.\n"
+            f"`!puzzle riddle [@user …]` — AI-generated one-word riddle · Reward: **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
+            "Only the creator can answer by default; mention users to invite them."
         ),
         inline=False
     )
@@ -1714,6 +1716,25 @@ PUZZLE_REWARDS = {
     "hard":   35,
     "extreme": 50,
 }
+
+PUZZLE_RIDDLE_REWARD = 15
+
+PUZZLE_RIDDLE_PROMPT = (
+    "You are a riddle generator. Your ONLY output must be a single raw JSON object — no markdown, no code fences, no prose before or after.\n"
+    "\n"
+    "Generate a classic, creative riddle that satisfies ALL of these rules:\n"
+    "  • The riddle must be a genuine riddle — a poetic or metaphorical description of a concrete, familiar object, concept, or phenomenon\n"
+    "  • Do NOT generate math problems, arithmetic, number puzzles, trivia questions, or factual quiz questions\n"
+    "  • Do NOT generate puzzles that ask 'what number am I thinking of', 'calculate X', or 'which year did X happen'\n"
+    "  • The answer must be a single common English word (no phrases, no numbers, no abbreviations)\n"
+    "  • The riddle text should be 1–4 sentences and use vivid, imaginative language\n"
+    "  • The answer must be unambiguous — there should be only one reasonable word that fits\n"
+    "\n"
+    "Output EXACTLY this JSON and nothing else:\n"
+    "  {\"riddle\": \"<the riddle text>\", \"answer\": \"<single lowercase word>\"}\n"
+    "\n"
+    "Output ONLY the JSON object. Any text outside the JSON will break the parser."
+)
 
 PUZZLE_CODING_PROMPT = (
     "You are a coding puzzle generator. Your ONLY output must be a single raw JSON object — no markdown, no code fences, no prose before or after.\n"
@@ -1797,17 +1818,21 @@ async def cmd_puzzle(ctx: commands.Context, *args):
             ),
             inline=False,
         )
+        embed.add_field(
+            name="!puzzle riddle [@user …]",
+            value=(
+                "AI generates a classic riddle — answer in one word!\n"
+                f"Reward: **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
+                "Only you can answer by default. Mention users to invite them too.\n"
+                "Example: `!puzzle riddle @Alice`"
+            ),
+            inline=False,
+        )
         await ctx.send(embed=embed)
         return
 
-    if subcommand.lower() != "coding":
-        await ctx.send(f"Unknown puzzle type `{subcommand}`. Try `!puzzle coding`.")
-        return
-
-    # Resolve difficulty
-    difficulty = (difficulty or "medium").lower()
-    if difficulty not in PUZZLE_REWARDS:
-        await ctx.send(f"Unknown difficulty `{difficulty}`. Choose: {', '.join(PUZZLE_REWARDS)}")
+    if subcommand.lower() not in ("coding", "riddle"):
+        await ctx.send(f"Unknown puzzle type `{subcommand}`. Try `!puzzle coding` or `!puzzle riddle`.")
         return
 
     uid = ctx.author.id
@@ -1818,6 +1843,106 @@ async def cmd_puzzle(ctx: commands.Context, *args):
     cid = ctx.channel.id
     if cid in active_puzzles:
         await ctx.send(embed=emb("⚠️ Puzzle Active", "A puzzle is already running in this channel! Solve it first.", C_GOLD))
+        return
+
+    import re as _re
+
+    # ── Riddle branch ──────────────────────────────────────────────────────────
+    if subcommand.lower() == "riddle":
+        reward = PUZZLE_RIDDLE_REWARD
+        messages = [
+            {"role": "system", "content": PUZZLE_RIDDLE_PROMPT},
+            {"role": "user", "content": "Generate a riddle. Output the JSON object only."},
+        ]
+        guild_id = ctx.guild.id if ctx.guild else None
+        coding_model = get_guild_coding_model(guild_id) if guild_id else OLLAMA_MODEL
+        thinking_msg = await ctx.send(embed=emb("🧩 Generating riddle...", f"Reward: **{reward} 🪙**", C_BLUE))
+        active_puzzles[cid] = {"generating": True, "user_id": uid, "reward": reward, "invited_ids": invited_ids}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                if ollama_semaphore.locked():
+                    await thinking_msg.edit(embed=emb("⏳ Queued", "Another AI request is running. Your riddle will generate next...", C_BLUE))
+                async with ollama_semaphore:
+                    if cid not in active_puzzles:
+                        await thinking_msg.edit(embed=emb("🚫 Cancelled", "Puzzle generation was cancelled.", C_RED))
+                        return
+                    await thinking_msg.edit(embed=emb("🧩 Generating riddle...", f"Reward: **{reward} 🪙**", C_BLUE))
+                    typing_task = asyncio.create_task(keep_typing(ctx.channel))
+                    try:
+                        payload = {"model": coding_model, "messages": messages, "stream": False}
+                        async with session.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload) as resp:
+                            resp.raise_for_status()
+                            data = await resp.json()
+                            raw = data.get("message", {}).get("content", "")
+                    finally:
+                        typing_task.cancel()
+        except aiohttp.ClientError as e:
+            active_puzzles.pop(cid, None)
+            _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
+            await thinking_msg.edit(embed=emb("❌ AI Offline", "Could not connect to the AI.", C_RED))
+            return
+
+        if cid not in active_puzzles:
+            await thinking_msg.edit(embed=emb("🚫 Cancelled", "Puzzle generation was cancelled.", C_RED))
+            return
+
+        json_match = _re.search(r'\{.*\}', raw, _re.DOTALL)
+        if not json_match:
+            active_puzzles.pop(cid, None)
+            _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI malformed response (no JSON): {raw[:200]}")
+            await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
+            return
+        try:
+            puzzle_data = json.loads(json_match.group())
+            riddle_text = str(puzzle_data["riddle"])
+            answer = str(puzzle_data["answer"]).lower().strip()
+        except (json.JSONDecodeError, KeyError) as e:
+            active_puzzles.pop(cid, None)
+            _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI malformed response ({type(e).__name__}): {raw[:200]}")
+            await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
+            return
+
+        if " " in answer or not answer.isalpha():
+            active_puzzles.pop(cid, None)
+            _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI generated non-single-word answer: {answer[:200]}")
+            await thinking_msg.edit(embed=emb("❌ Bad Riddle", "The AI generated a multi-word answer. Try again.", C_RED))
+            return
+
+        active_puzzles[cid] = {
+            "answer": answer,
+            "reward": reward,
+            "user_id": uid,
+            "invited_ids": invited_ids,
+        }
+
+        guests = invited_ids - {uid}
+        if guests:
+            invite_line = "\nInvited: " + " ".join(f"<@{i}>" for i in guests)
+            footer = f"Only {ctx.author.display_name} and invited users can answer · Use !stop to cancel"
+        else:
+            invite_line = ""
+            footer = f"Only {ctx.author.display_name} can answer · Use !stop to cancel"
+        embed = discord.Embed(
+            title="🧩 Riddle",
+            description=f"{riddle_text}\n\nType the **one-word answer** to win **{reward} 🪙**!{invite_line}",
+            color=C_GOLD,
+        )
+        embed.set_footer(text=footer)
+        try:
+            await ctx.send(embed=embed)
+            await thinking_msg.delete()
+        except discord.HTTPException as e:
+            active_puzzles.pop(cid, None)
+            _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Discord error sending riddle: {e}")
+            await thinking_msg.edit(embed=emb("❌ Discord Error", "Failed to send the riddle. Please try again.", C_RED))
+        return
+
+    # ── Coding branch ──────────────────────────────────────────────────────────
+    # Resolve difficulty
+    difficulty = (difficulty or "medium").lower()
+    if difficulty not in PUZZLE_REWARDS:
+        await ctx.send(f"Unknown difficulty `{difficulty}`. Choose: {', '.join(PUZZLE_REWARDS)}")
         return
 
     reward = PUZZLE_REWARDS[difficulty]
@@ -1871,7 +1996,6 @@ async def cmd_puzzle(ctx: commands.Context, *args):
         return
 
     # Parse JSON from the response
-    import re as _re
     json_match = _re.search(r'\{.*\}', raw, _re.DOTALL)
     if not json_match:
         active_puzzles.pop(cid, None)
