@@ -2168,7 +2168,11 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
                 f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*")
         if first_time_slots:
             desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
-        await ctx.send(embed=emb("🎰 PROGRESSIVE JACKPOT!", desc, C_GOLD))
+        msg = await ctx.send(embed=emb("🎰 PROGRESSIVE JACKPOT!", desc, C_GOLD))
+        try:
+            await msg.pin()
+        except Exception:
+            pass
         return
 
     # Money Back (cherry retention)
