@@ -3536,7 +3536,7 @@ async def cmd_fanfic(ctx: commands.Context, *, prompt: str = None):
         return
 
     guild_id = ctx.guild.id if ctx.guild else None
-    await respond(ctx.channel, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id, author_name=ctx.author.display_name)
+    await respond(ctx.channel, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
 
 
 async def _wait_for_confirmations(
@@ -6113,4 +6113,5 @@ async def on_ready():
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
         raise RuntimeError("DISCORD_TOKEN is not set. Copy .env.example to .env and fill it in.")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     bot.run(DISCORD_TOKEN)
