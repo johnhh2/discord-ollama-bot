@@ -1,5 +1,6 @@
 import os
 import sys
+import logging
 import asyncio
 import aiohttp
 import discord
@@ -1069,7 +1070,7 @@ async def global_command_channel_check(ctx: commands.Context) -> bool:
 @bot.event
 async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     if isinstance(error, commands.CommandNotFound):
-        print(f"[debug] {error}")
+        logging.debug(f"[debug] {error}")
         return
     if isinstance(error, commands.CheckFailure):
         cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
@@ -1098,11 +1099,11 @@ async def on_command_completion(ctx: commands.Context):
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    logging.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
     if ACTIVE_CHANNEL_IDS:
-        print(f"Listening in channels: {ACTIVE_CHANNEL_IDS}")
+        logging.info(f"Listening in channels: {ACTIVE_CHANNEL_IDS}")
     else:
-        print("Listening in all channels")
+        logging.info("Listening in all channels")
 
 async def _roast_soundboard_spam(guild_id: int, user_id: int):
     """Generate a roast for soundboard spam using the ragebait system."""
@@ -2394,7 +2395,7 @@ def do_daily_reset():
         user["scratch_date"] = today
     economy["last_daily_reset"] = today
     save_economy()
-    print(f"[DAILY] Reset daily reward and scratchoff counts for {today}")
+    logging.info(f"[DAILY] Reset daily reward and scratchoff counts for {today}")
 
 
 # Store active games
@@ -5271,9 +5272,9 @@ async def cmd_event(ctx: commands.Context, amount: str = None, duration: str = N
     try:
         await ctx.message.delete()
     except discord.Forbidden:
-        print(f"[event] No permission to delete command message in {ctx.channel}")
+        logging.warning(f"[event] No permission to delete command message in {ctx.channel}")
     except Exception as e:
-        print(f"[event] Failed to delete command message: {e}")
+        logging.warning(f"[event] Failed to delete command message: {e}")
     if amount is None:
         await ctx.send(embed=emb("⚙️ Event", "Usage: `!event <amount> [duration_hours] [#channel]`", C_GREY))
         return
@@ -5343,7 +5344,7 @@ async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
         event["rewarded"].add(user.id)
         add_balance(user.id, event["amount"])
     except Exception as e:
-        print(f"[event] Error rewarding {user.id}: {e}")
+        logging.error(f"[event] Error rewarding {user.id}: {e}")
         event["rewarded"].discard(user.id)
 
 
@@ -5564,10 +5565,10 @@ async def cmd_rule34(ctx: commands.Context, *, tags: str = ""):
         await ctx.send(embed=emb("🔞 rule34", f"No results for `{label}`.", C_GREY))
         return
 
-    print(f"[rule34] {len(posts)} posts after filtering")
+    logging.info(f"[rule34] {len(posts)} posts after filtering")
     post = random.choice(posts)
     file_url = post["file_url"]
-    print(f"[rule34] picked id={post.get('id')} url={file_url}")
+    logging.info(f"[rule34] picked id={post.get('id')} url={file_url}")
     # Bust Discord's embed image cache
     file_url = f"{file_url}?v={post.get('id', random.randint(0, 999999))}"
     display = search_tags.replace("+", " ") if tag_parts else "random"
@@ -5985,11 +5986,11 @@ async def scratchoff_scheduler():
 @bot.event
 async def on_ready():
     """Check on startup if lottery results need posting and resetting."""
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    logging.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
     if ACTIVE_CHANNEL_IDS:
-        print(f"Listening in channels: {ACTIVE_CHANNEL_IDS}")
+        logging.info(f"Listening in channels: {ACTIVE_CHANNEL_IDS}")
     else:
-        print("Listening in all channels")
+        logging.info("Listening in all channels")
 
     if not lottery_scheduler.is_running():
         lottery_scheduler.start()
@@ -6004,7 +6005,7 @@ async def on_ready():
             msg = await channel.fetch_message(restart_info["message_id"])
             await msg.edit(embed=emb("✅ Restarted", "Bot has restarted.", 0x2ecc71))
         except Exception as e:
-            print(f"[RESTART] Failed to edit restart message: {e}")
+            logging.warning(f"[RESTART] Failed to edit restart message: {e}")
 
     # If it's past 5am and the scratchoff reset hasn't happened today, do it now
     now = datetime.datetime.now()
@@ -6035,9 +6036,9 @@ async def on_ready():
             try:
                 channel = await bot.fetch_channel(lottery_channel_id)
                 await announce_new_lottery(channel, lottery["prize_pool"], now)
-                print(f"[LOTTERY] Initialized lottery for {guild.name}")
+                logging.info(f"[LOTTERY] Initialized lottery for {guild.name}")
             except Exception as e:
-                print(f"[LOTTERY] Error initializing lottery in {guild.name}: {e}")
+                logging.error(f"[LOTTERY] Error initializing lottery in {guild.name}: {e}")
 
         # If Saturday 6pm+, always reset and announce
         elif now.weekday() == 5 and now.hour >= 18:
@@ -6068,16 +6069,16 @@ async def on_ready():
                 save_lottery(guild.id, lottery)
 
                 await announce_new_lottery(channel, lottery["prize_pool"], now)
-                print(f"[LOTTERY] Reset lottery for {guild.name}")
+                logging.info(f"[LOTTERY] Reset lottery for {guild.name}")
             except Exception as e:
-                print(f"[LOTTERY] Error resetting lottery in {guild.name}: {e}")
+                logging.error(f"[LOTTERY] Error resetting lottery in {guild.name}: {e}")
 
     # Clean up any ephemeral bot messages that weren't deleted before last shutdown.
     EPHEMERAL_TITLES = {"📖 Commands", "⚙️ Admin Commands", "🛒 Shop", "⚙️ Server Settings", "🤖 AI Commands", "🎮 Games & Gambling", "🔍 Audit Log", "🎰 Slots", "🎰 Slots Payouts", "📊 Bot Stats", "💾 Saved Data"}
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     scan_after = now_utc - datetime.timedelta(minutes=10)
     deleted = 0
-    print(f"[STARTUP] Ephemeral cleanup: {len(bot.guilds)} guild(s), {sum(len(g.text_channels) for g in bot.guilds)} text channel(s)")
+    logging.info(f"[STARTUP] Ephemeral cleanup: {len(bot.guilds)} guild(s), {sum(len(g.text_channels) for g in bot.guilds)} text channel(s)")
     for guild in bot.guilds:
         for channel in guild.text_channels:
             try:
@@ -6091,18 +6092,18 @@ async def on_ready():
                             try:
                                 await msg.delete()
                                 deleted += 1
-                                print(f"[STARTUP] Deleted leftover '{embed.title}' in #{channel.name} ({guild.name})")
+                                logging.info(f"[STARTUP] Deleted leftover '{embed.title}' in #{channel.name} ({guild.name})")
                             except discord.NotFound:
                                 pass
                             except discord.Forbidden:
-                                print(f"[STARTUP] No permission to delete in #{channel.name} ({guild.name})")
+                                logging.warning(f"[STARTUP] No permission to delete in #{channel.name} ({guild.name})")
                             break
             except discord.Forbidden:
                 pass
             except discord.HTTPException as e:
-                print(f"[STARTUP] HTTP error scanning #{channel.name} ({guild.name}): {e}")
+                logging.warning(f"[STARTUP] HTTP error scanning #{channel.name} ({guild.name}): {e}")
     if deleted:
-        print(f"[STARTUP] Cleaned up {deleted} leftover ephemeral message(s).")
+        logging.info(f"[STARTUP] Cleaned up {deleted} leftover ephemeral message(s).")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
