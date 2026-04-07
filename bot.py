@@ -5781,19 +5781,19 @@ async def cmd_lottery(ctx: commands.Context, n: str = None):
 
     if n is None:
         # Show lottery info
-        now = datetime.datetime.now()
         pool = lottery.get("prize_pool", 0)
         players_dict = lottery.get("players", {})
         user_tickets = int(players_dict.get(str(uid), 0))
 
         # Calculate next Saturday 6pm CST
-        days_until_saturday = (5 - now.weekday()) % 7
+        cst = datetime.timezone(datetime.timedelta(hours=-6))
+        now_cst = datetime.datetime.now(datetime.timezone.utc).astimezone(cst)
+        days_until_saturday = (5 - now_cst.weekday()) % 7
         if days_until_saturday == 0:
             days_until_saturday = 7
-        next_saturday = now + datetime.timedelta(days=days_until_saturday)
+        next_saturday = now_cst + datetime.timedelta(days=days_until_saturday)
         next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
-        next_saturday_utc = next_saturday - datetime.timedelta(hours=6)  # CST is UTC-6
-        timestamp = int(next_saturday_utc.timestamp())
+        timestamp = int(next_saturday.timestamp())
 
         info = f"**Prize Pool:** {pool:,} 🪙 (+1,000 🪙 per player)\n"
         info += f"**Players:** {len(players_dict)}\n"
@@ -5830,15 +5830,15 @@ async def cmd_lottery(ctx: commands.Context, n: str = None):
 
     bonus_msg = "(+1,000 bonus as new player)" if was_new_player else ""
 
-    # Calculate when lottery ends (reuse logic from info display above)
-    now = datetime.datetime.now()
-    days_until_saturday = (5 - now.weekday()) % 7
+    # Calculate when lottery ends
+    cst = datetime.timezone(datetime.timedelta(hours=-6))
+    now_cst = datetime.datetime.now(datetime.timezone.utc).astimezone(cst)
+    days_until_saturday = (5 - now_cst.weekday()) % 7
     if days_until_saturday == 0:
         days_until_saturday = 7
-    next_saturday = now + datetime.timedelta(days=days_until_saturday)
+    next_saturday = now_cst + datetime.timedelta(days=days_until_saturday)
     next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
-    next_saturday_utc = next_saturday - datetime.timedelta(hours=6)  # CST is UTC-6
-    timestamp = int(next_saturday_utc.timestamp())
+    timestamp = int(next_saturday.timestamp())
 
     embed_msg = emb(
         "🎰 Tickets Purchased",
