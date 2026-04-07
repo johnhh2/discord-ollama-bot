@@ -1715,29 +1715,32 @@ PUZZLE_REWARDS = {
 PUZZLE_CODING_PROMPT = (
     "You are a coding puzzle generator. Your ONLY output must be a single raw JSON object — no markdown, no code fences, no prose before or after.\n"
     "\n"
-    "STEP 1 — Write a self-contained code snippet that:\n"
+    "STEP 1 — Write a self-contained code snippet that satisfies ALL of these:\n"
     "  • Uses only the standard library (no third-party imports)\n"
-    "  • Produces a finite, deterministic stdout output (no input(), no random, no time-dependent values)\n"
-    "  • Has no syntax errors, no NameErrors, no TypeErrors, no ZeroDivisionError, no infinite loops or recursion\n"
-    "  • The output must not be empty — the code must actually print something\n"
+    "  • No input(), no random, no time-dependent values — output must be fully deterministic\n"
+    "  • No unhandled exceptions of ANY kind — no AttributeError, TypeError, ZeroDivisionError, NameError, IndexError, KeyError, RecursionError, or any other exception that would terminate the program without being caught\n"
+    "  • No infinite loops or unbounded recursion\n"
+    "  • Must produce at least one line of stdout output via print() or equivalent\n"
+    "  • The puzzle's difficulty should come from surprising but VALID behavior — not from errors\n"
     "\n"
-    "STEP 2 — Mentally execute the code line-by-line, tracking every variable mutation. "
-    "Identify the exact bytes that would be written to stdout. "
-    "If you find ANY error or if the output would be empty, rewrite the snippet and repeat STEP 2.\n"
+    "STEP 2 — Simulate a Python/JS/C interpreter in your head. Execute every line in order:\n"
+    "  a) Track the value of every variable after each assignment\n"
+    "  b) For every function call, trace what it returns\n"
+    "  c) For every exception that could be raised — even inside try/except blocks — verify it is caught and handled\n"
+    "  d) List only the lines that call print() (or printf/console.log). Write down exactly what each prints.\n"
+    "  e) Ask: 'Is there any line that could raise an UNCAUGHT exception?' If yes → go back to STEP 1 and rewrite.\n"
+    "  f) Ask: 'Is the stdout list from step (d) non-empty?' If empty → go back to STEP 1 and rewrite.\n"
     "\n"
-    "STEP 3 — Format your final answer as EXACTLY this JSON schema:\n"
+    "STEP 3 — Output EXACTLY this JSON and nothing else:\n"
     "  {\"language\": \"<Python|JavaScript|C>\", "
     "\"code\": \"```<lang>\\n<snippet>\\n```\", "
-    "\"answer\": \"<exact stdout, no trailing newline unless the code prints one>\"}\n"
+    "\"answer\": \"<exact stdout>\"}\n"
     "\n"
     "Rules for the answer field:\n"
-    "  • Must exactly match what a real interpreter would print, character-for-character\n"
-    "  • If the code prints multiple lines, join them with \\n\n"
-    "  • Do NOT include a trailing newline unless print() itself adds one on the last line and that newline would appear in the captured output\n"
-    "  • For C: assume printf/puts behavior on a standard Linux system\n"
-    "\n"
-    "Self-check before outputting: ask yourself — 'If I ran this code right now, would it crash or hang?' "
-    "If yes, fix it. Ask yourself — 'Does my answer field match the stdout exactly?' If no, fix it.\n"
+    "  • Copy character-for-character from your stdout list in STEP 2d\n"
+    "  • Multiple printed lines are joined with a literal \\n in the JSON string\n"
+    "  • No trailing newline (Python's print() newline is not part of the output string)\n"
+    "  • For C: use standard Linux printf/puts behavior\n"
     "\n"
     "Output ONLY the JSON object. Any text outside the JSON will break the parser."
 )
@@ -1746,7 +1749,7 @@ PUZZLE_DIFFICULTY_GUIDANCE = {
     "easy":   "Use Python or JavaScript only. Use a trivial snippet (e.g. basic arithmetic, string concat, simple loop). The output should be obvious to a beginner.",
     "medium": "Use Python or JavaScript only. Use a moderately tricky snippet involving type coercion, simple recursion, or list operations.",
     "hard":   "Use Python, JavaScript, or C. Use a tricky snippet involving closures, scoping, reference semantics, or unexpected operator behavior.",
-    "extreme": "Use Python, JavaScript, or C. This must be brutally hard — combine multiple interacting edge cases in a single snippet. Examples: C undefined behavior with pointer casts and sequence points, Python metaclass/descriptor interactions with __slots__ or __getattribute__, JS with prototype mutation + closure + async ordering. The snippet should be plausibly valid but deeply unintuitive. Even experienced developers should struggle.",
+    "extreme": "Use Python, JavaScript, or C. This must be brutally hard — combine multiple interacting edge cases in a single snippet. The difficulty MUST come from surprising but valid output, NOT from exceptions or crashes. Examples: Python integer caching edge cases, JS implicit type coercion chains, C integer promotion and signed/unsigned arithmetic, closure + mutation interactions, surprising operator precedence. The code must run to completion and print something — the puzzle is figuring out exactly what.",
 }
 
 
