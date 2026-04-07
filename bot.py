@@ -1589,13 +1589,15 @@ async def cmd_stats(ctx: commands.Context):
         f"{indent}{text_channels} Text Channels\n"
         f"{indent}{voice_channels} Voice Channels"
     ), inline=True)
+    ai_enabled = bot_settings.get("ai_enabled", True)
     ai_status = "Online" if ai_connected else "Offline"
-    ai_status_emoji = "🟢" if ai_connected else "🔴"
+    ai_status_emoji = "🟢" if (ai_connected and ai_enabled) else "🔴"
+    passive_status = "Enabled" if ai_enabled else "**Disabled**"
     ask_model = get_guild_ask_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
     roleplay_model = get_guild_roleplay_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
     coding_model = get_guild_coding_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
     embed.add_field(name=f"{ai_status_emoji} AI Status", value=(
-        f"{indent}Status: {ai_status}\n"
+        f"{indent}Status: {ai_status} · Passive: {passive_status}\n"
         f"{indent}Ask model: `{ask_model}`\n"
         f"{indent}Roleplay model: `{roleplay_model}`\n"
         f"{indent}Coding model: `{coding_model}`\n"
@@ -1631,10 +1633,11 @@ async def cmd_ai(ctx: commands.Context, state: str = None):
 
     ai_enabled = bot_settings.get("ai_enabled", True)
     ai_status = "Online" if ai_connected else "Offline"
-    ai_status_emoji = "🟢" if ai_connected else "🔴"
+    ai_status_emoji = "🟢" if (ai_connected and ai_enabled) else "🔴"
     passive_status = "Enabled" if ai_enabled else "**Disabled**"
+    embed_color = C_BLUE if ai_enabled else C_RED
 
-    embed = discord.Embed(title="🤖 AI Commands", color=C_BLUE)
+    embed = discord.Embed(title="🤖 AI Commands", color=embed_color)
 
     embed.add_field(
         name=f"{ai_status_emoji} Connection",
