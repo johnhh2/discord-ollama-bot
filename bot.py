@@ -1925,7 +1925,7 @@ async def cmd_puzzle(ctx: commands.Context, *args):
         footer = f"Only {ctx.author.display_name} can answer · Use !stop to cancel"
     embed = discord.Embed(
         title=f"🧩 Coding Puzzle — {difficulty.capitalize()} · {language}",
-        description=f"What will the output of this code be?\n{code_snippet}\n\nType the **exact output** to win **{reward} 🪙**!{invite_line}",
+        description=f"What will the output of this code be?\n```{language.lower()}\n{code_snippet}\n```\nType the **exact output** to win **{reward} 🪙**!{invite_line}",
         color=C_GOLD,
     )
     embed.set_footer(text=footer)
