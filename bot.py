@@ -1657,6 +1657,7 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
         return
     try:
         puzzle_data = json.loads(json_match.group())
+        code_snippet = puzzle_data["question"].replace("\\n", "\n").replace("\\t", "\t")
         answer = str(puzzle_data["answer"])
         language = puzzle_data.get("language", "Unknown")
     except (json.JSONDecodeError, KeyError):
@@ -1665,6 +1666,7 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
 
     active_puzzles[cid] = {
         "answer": answer,
+        "code_snippet": code_snippet,
         "reward": reward,
         "user_id": ctx.author.id,
     }
@@ -1672,7 +1674,7 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
     await thinking_msg.delete()
     embed = discord.Embed(
         title=f"🧩 Coding Puzzle — {difficulty.capitalize()} · {language}",
-        description="What will the output of this code be?" + f"\n\nType the **exact output** to win **{reward} 🪙**!",
+        description=f"What will the output of this code be?\n{code_snippet}\n\nType the **exact output** to win **{reward} 🪙**!",
         color=C_GOLD,
     )
     embed.set_footer(text="First correct answer wins · Use !stop to cancel")
