@@ -2324,13 +2324,26 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         save_economy()
 
     if amount is None:
-        await ctx.send(embed=emb(
-            "🎰 Slots",
-            f"Usage: `!slots <amount>`\n"
-            f"Minimum bet: 25 🪙"
-            f"**Progressive Jackpot: {slot_jackpot:,} 🪙**",
-            C_GOLD,
-        ))
+        embed = discord.Embed(title="🎰 Slots", color=C_GOLD)
+        embed.description = "**Usage:** `!slots <amount>` — Minimum bet: **25 🪙**"
+        embed.add_field(name="Three of a Kind", value=(
+            "🌟 **7️⃣7️⃣7️⃣** (Jackpot) — 75x\n"
+            "   *(Min bet 25 🪙, bonus scales to 4x at bet 1000+)*\n"
+            "🌟 **🎰🎰🎰** (3 Slots) — 15x\n"
+            "🌟 **🔔🔔🔔** (3 Bells) — 7x\n"
+            "🌟 **🍋🍋🍋** (3 Lemons) — 4x\n"
+            "🌟 **🍒🍒🍒** (3 Cherries) — 3x"
+        ), inline=False)
+        embed.add_field(name="Cherry Bonuses", value=(
+            "🍒 **Two Cherries** — 2x\n"
+            "🍒 **One Cherry** — 1x (Money Back)"
+        ), inline=False)
+        embed.add_field(name="Other", value=(
+            "❌ **No Match** — 0x (Lose bet)\n\n"
+            f"**Progressive Jackpot:** Grows by 2% of every bet!\n"
+            f"**Current Jackpot: {slot_jackpot:,} 🪙**"
+        ), inline=False)
+        await ctx.send(embed=embed, delete_after=60)
         return
 
     try:
@@ -2467,7 +2480,7 @@ async def cmd_slots_rewards(ctx: commands.Context):
         f"**Current Jackpot: {jackpot:,} 🪙**",
         inline=False)
 
-    await ctx.send(embed=embed)
+    await ctx.send(embed=embed, delete_after=60)
 
 
 @bot.command(name="rig", hidden=True)
@@ -5794,7 +5807,7 @@ async def on_ready():
 
     # Clean up any ephemeral bot messages (help/adminhelp/shop) that weren't
     # deleted before the last shutdown.
-    EPHEMERAL_TITLES = {"📖 Commands", "⚙️ Admin Commands", "🛒 Shop", "⚙️ Server Settings", "🤖 AI Commands", "🎮 Games & Gambling", "🔍 Audit Log"}
+    EPHEMERAL_TITLES = {"📖 Commands", "⚙️ Admin Commands", "🛒 Shop", "⚙️ Server Settings", "🤖 AI Commands", "🎮 Games & Gambling", "🔍 Audit Log", "🎰 Slots", "🎰 Slots Payouts"}
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     deleted = 0
     for guild in bot.guilds:
