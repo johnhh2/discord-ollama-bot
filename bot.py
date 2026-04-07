@@ -223,11 +223,11 @@ def save_quote_log(log: list[str]):
     _save_json(QUOTE_LOG_FILE, log[-10:])
 
 
-def load_saved_quotes() -> list[dict]:
-    return _load_json(SAVED_QUOTES_FILE, [])
+def load_saved_quotes() -> dict:
+    return _load_json(SAVED_QUOTES_FILE, {})
 
 
-def save_saved_quotes(quotes: list[dict]):
+def save_saved_quotes(quotes: dict):
     _save_json(SAVED_QUOTES_FILE, quotes)
 
 
@@ -949,6 +949,10 @@ async def global_command_channel_check(ctx: commands.Context) -> bool:
     if ctx.command and ctx.command.name == "searchquote":
         if cfg.get("quote_bypass_restrictions", False):
             return True
+
+    # !quote (save/display) always allowed in any channel
+    if ctx.command and ctx.command.name == "quote":
+        return True
 
     # Check blacklist first (deny)
     command_blacklist = cfg.get("command_blacklist", [])
@@ -4522,10 +4526,12 @@ async def cmd_saved(ctx: commands.Context):
     )
 
     # Quote log
-    saved_quotes_count = len(load_saved_quotes())
+    _all_saved = load_saved_quotes()
+    _guild_id = str(ctx.guild.id) if ctx.guild else "dm"
+    saved_quotes_count = len(_all_saved.get(_guild_id, []))
     embed.add_field(
         name="📜 Quotes",
-        value=f"**{saved_quotes_count}** saved quotes | **{len(quote_log)}** in searchquote log (max 10)",
+        value=f"**{saved_quotes_count}** saved quotes (this server) | **{len(quote_log)}** in searchquote log (max 10)",
         inline=False
     )
 
@@ -5004,7 +5010,9 @@ async def cmd_quote(ctx: commands.Context):
     - !quote (reply) — save the replied-to message as a quote
     - !quote — display a random saved quote
     """
-    saved_quotes = load_saved_quotes()
+    guild_id = str(ctx.guild.id) if ctx.guild else "dm"
+    all_quotes = load_saved_quotes()
+    guild_quotes = all_quotes.get(guild_id, [])
 
     if ctx.message.reference:
         # Save the replied-to message as a quote
@@ -5026,18 +5034,19 @@ async def cmd_quote(ctx: commands.Context):
             "saved_by_id": ctx.author.id,
             "timestamp": replied_msg.created_at.isoformat(),
         }
-        saved_quotes.append(quote_entry)
-        save_saved_quotes(saved_quotes)
+        guild_quotes.append(quote_entry)
+        all_quotes[guild_id] = guild_quotes
+        save_saved_quotes(all_quotes)
 
         clean_content = re.sub(r'<@!?\d+>', '', replied_msg.content).strip()
         await ctx.send(embed=emb("📜 Quote Saved", f"> {clean_content}\n— **{replied_msg.author.display_name}**", C_GREEN))
     else:
         # Display a random saved quote
-        if not saved_quotes:
+        if not guild_quotes:
             await ctx.send(embed=emb("📜 Quote", "No saved quotes yet. Reply to a message with `!quote` to save one.", C_GREY))
             return
 
-        entry = random.choice(saved_quotes)
+        entry = random.choice(guild_quotes)
         clean_content = re.sub(r'<@!?\d+>', '', entry["content"]).strip()
         await ctx.send(f"> {clean_content}\n— **{entry['author']}**")
 
