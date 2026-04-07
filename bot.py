@@ -8,6 +8,7 @@ import time
 import random
 import datetime
 import re
+from zoneinfo import ZoneInfo
 import subprocess
 from pathlib import Path
 from discord.ext import commands, tasks
@@ -274,9 +275,9 @@ async def announce_new_lottery(channel: discord.TextChannel, prize_pool: int = 2
     elif now.tzinfo is None:
         now = now.replace(tzinfo=datetime.timezone.utc)
 
-    # Calculate next Saturday 6pm CST (UTC-6)
-    cst = datetime.timezone(datetime.timedelta(hours=-6))
-    now_cst = now.astimezone(cst)
+    # Calculate next Saturday 6pm CT (handles CST/CDT automatically)
+    ct = ZoneInfo("America/Chicago")
+    now_cst = now.astimezone(ct)
     days_until_saturday = (5 - now_cst.weekday()) % 7
     if days_until_saturday == 0:
         days_until_saturday = 7
@@ -5785,9 +5786,9 @@ async def cmd_lottery(ctx: commands.Context, n: str = None):
         players_dict = lottery.get("players", {})
         user_tickets = int(players_dict.get(str(uid), 0))
 
-        # Calculate next Saturday 6pm CST
-        cst = datetime.timezone(datetime.timedelta(hours=-6))
-        now_cst = datetime.datetime.now(datetime.timezone.utc).astimezone(cst)
+        # Calculate next Saturday 6pm CT (handles CST/CDT automatically)
+        ct = ZoneInfo("America/Chicago")
+        now_cst = datetime.datetime.now(datetime.timezone.utc).astimezone(ct)
         days_until_saturday = (5 - now_cst.weekday()) % 7
         if days_until_saturday == 0:
             days_until_saturday = 7
@@ -5831,8 +5832,8 @@ async def cmd_lottery(ctx: commands.Context, n: str = None):
     bonus_msg = "(+1,000 bonus as new player)" if was_new_player else ""
 
     # Calculate when lottery ends
-    cst = datetime.timezone(datetime.timedelta(hours=-6))
-    now_cst = datetime.datetime.now(datetime.timezone.utc).astimezone(cst)
+    ct = ZoneInfo("America/Chicago")
+    now_cst = datetime.datetime.now(datetime.timezone.utc).astimezone(ct)
     days_until_saturday = (5 - now_cst.weekday()) % 7
     if days_until_saturday == 0:
         days_until_saturday = 7
