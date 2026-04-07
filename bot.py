@@ -1717,7 +1717,7 @@ PUZZLE_REWARDS = {
     "extreme": 50,
 }
 
-PUZZLE_RIDDLE_REWARD = 15
+PUZZLE_RIDDLE_REWARD = 25
 
 PUZZLE_RIDDLE_PROMPT = (
     "You are a riddle generator. Your ONLY output must be a single raw JSON object — no markdown, no code fences, no prose before or after.\n"
