@@ -5796,6 +5796,32 @@ async def on_ready():
             except Exception as e:
                 print(f"[LOTTERY] Error resetting lottery in {guild.name}: {e}")
 
+    # Clean up any ephemeral bot messages (help/adminhelp/shop) that weren't
+    # deleted before the last shutdown.
+    EPHEMERAL_TITLES = {"📖 Commands", "⚙️ Admin Commands", "🛒 Shop", "⚙️ Server Settings"}
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    deleted = 0
+    for guild in bot.guilds:
+        for channel in guild.text_channels:
+            try:
+                async for msg in channel.history(limit=100):
+                    if msg.author != bot.user:
+                        continue
+                    age = (now_utc - msg.created_at).total_seconds()
+                    if age < 60:
+                        continue
+                    for embed in msg.embeds:
+                        if embed.title in EPHEMERAL_TITLES:
+                            try:
+                                await msg.delete()
+                                deleted += 1
+                            except (discord.NotFound, discord.Forbidden):
+                                pass
+                            break
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+    if deleted:
+        print(f"[STARTUP] Cleaned up {deleted} leftover ephemeral message(s).")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
