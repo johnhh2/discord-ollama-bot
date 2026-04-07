@@ -3638,6 +3638,10 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             role_items.append((2000, "`!shop removerole <name>` — Delete a bot-created role — **2,000 🪙**"))
         if _si.get("role", True):
             role_items.append((10000, "`!shop role <name> <hex>` — Create a custom colored role — **10,000 🪙**"))
+        if _si.get("roleup", True):
+            role_items.append((20000, "`!shop roleup <role name>` — Move a bot-created role up one position — **20,000 🪙**"))
+        if _si.get("roledown", True):
+            role_items.append((20000, "`!shop roledown <role name>` — Move a bot-created role down one position — **20,000 🪙**"))
         if role_items:
             role_items.sort(key=lambda x: x[0])
             sections["👑 Roles"] = [item[1] for item in role_items]
@@ -4163,6 +4167,46 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         ))
         return
 
+    # ── !shop roleup / roledown ───────────────────────────────────────────────
+    if subcommand in ("roleup", "roledown"):
+        direction = subcommand  # "roleup" or "roledown"
+        cfg_key = "roleup" if direction == "roleup" else "roledown"
+        if not _shop_cfg.get(cfg_key, True):
+            await ctx.send(embed=emb("🛒 Disabled", f"The {direction} shop item is disabled in this server.", C_GREY))
+            return
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+            return
+        if not args:
+            await ctx.send(embed=emb("🛒 Shop", f"Usage: `!shop {direction} <role name>`", C_PURPLE))
+            return
+        name = " ".join(args)
+        role = discord.utils.find(lambda r: r.name.lower() == name.lower() and r.id in bot_roles, ctx.guild.roles)
+        if role is None:
+            await ctx.send(embed=emb("❌ Not Found", f"No bot-created role named **{name}** exists.", C_RED))
+            return
+        cost = 0 if uid in godmode_users else 20000
+        if cost > 0 and not deduct_balance(uid, cost):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **20,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+            return
+        # Roles are ordered lowest position (bottom) to highest; "up" = higher position value
+        new_pos = role.position + (1 if direction == "roleup" else -1)
+        new_pos = max(1, min(new_pos, ctx.guild.me.top_role.position - 1))
+        try:
+            await role.edit(position=new_pos)
+            label = "up" if direction == "roleup" else "down"
+            await ctx.send(embed=emb("✅ Role Moved", f"Role **{role.name}** moved {label} to position {new_pos}.", C_GREEN))
+        except discord.Forbidden:
+            if cost > 0:
+                add_balance(uid, cost)
+            log_bot_permission_error(ctx, "manage roles")
+            await ctx.send(embed=emb("❌ No Permission", "I don't have permission to manage roles.", C_RED))
+        except Exception as e:
+            if cost > 0:
+                add_balance(uid, cost)
+            await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
+        return
+
     await ctx.send(embed=emb("🛒 Unknown Item", "Try `!shop` to see what's available.", C_PURPLE))
 
 
@@ -4199,7 +4243,7 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         blacklist_val = " ".join(f"<#{c}>" for c in cmd_blacklist) if cmd_blacklist else "none"
         game_val = " ".join(f"<#{c}>" for c in game_channels) if game_channels else "all channels"
         chess_val = " ".join(f"<#{c}>" for c in chess_channels) if chess_channels else "game channels (or all)"
-        item_names = ["nickname", "role", "removerole", "ragebait"]
+        item_names = ["nickname", "role", "removerole", "roleup", "roledown", "ragebait"]
         shop_val = "  ".join(
             f"{n} {'✅' if shop_items.get(n, True) else '❌'}" for n in item_names
         )
@@ -4318,7 +4362,7 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
 
     # ── shop ──────────────────────────────────────────────────────────────────
     if subcommand == "shop":
-        valid_items = {"nickname", "role", "removerole", "ragebait"}
+        valid_items = {"nickname", "role", "removerole", "roleup", "roledown", "ragebait"}
         if len(args) < 2 or args[0].lower() not in valid_items or args[1].lower() not in ("on", "off"):
             await ctx.send(embed=emb("⚙️ Shop", f"Usage: `!settings shop <item> on|off`\nItems: {', '.join(valid_items)}", C_GREY))
             return
