@@ -3515,7 +3515,12 @@ async def cmd_ask(ctx: commands.Context, *, question: str = None):
         system_prompt = ASK_SYSTEM_PROMPT
 
     guild_id = ctx.guild.id if ctx.guild else None
-    await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
+    if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
+        thread = await ctx.message.create_thread(name=f"ask: {question[:80]}")
+        seed_msg = await thread.send(f"**{ctx.author.display_name}:** {question}")
+        await respond(thread, ctx.author.id, question, seed_msg, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
+    else:
+        await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
 
 
 @bot.command(name="fanfic")
@@ -3536,7 +3541,12 @@ async def cmd_fanfic(ctx: commands.Context, *, prompt: str = None):
         return
 
     guild_id = ctx.guild.id if ctx.guild else None
-    await respond(ctx.channel, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
+    if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
+        thread = await ctx.message.create_thread(name=f"fanfic: {prompt[:75]}")
+        seed_msg = await thread.send(f"**{ctx.author.display_name}:** {prompt}")
+        await respond(thread, ctx.author.id, prompt, seed_msg, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
+    else:
+        await respond(ctx.channel, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
 
 
 async def _wait_for_confirmations(
@@ -3608,11 +3618,20 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Starting a roleplay costs **50 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
         return
 
+    # Create a thread to contain the roleplay
+    guild_id = ctx.guild.id if ctx.guild else None
+    if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
+        thread = await ctx.message.create_thread(name=f"roleplay: {clean_prompt[:70]}")
+        rp_channel_id = thread.id
+    else:
+        thread = None
+        rp_channel_id = ctx.channel.id
+
     # Register host with participants set
     active_roleplays[uid] = {
         "character_prompt": clean_prompt,
-        "channel_id": ctx.channel.id,
-        "guild_id": ctx.guild.id if ctx.guild else None,
+        "channel_id": rp_channel_id,
+        "guild_id": guild_id,
         "participants": {uid},
     }
     roleplay_histories[uid] = []
@@ -3624,8 +3643,8 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
             if inv_uid not in active_roleplays:
                 active_roleplays[inv_uid] = {
                     "character_prompt": clean_prompt,
-                    "channel_id": ctx.channel.id,
-                    "guild_id": ctx.guild.id if ctx.guild else None,
+                    "channel_id": rp_channel_id,
+                    "guild_id": guild_id,
                     "history_owner": uid,
                 }
         active_roleplays[uid]["participants"].update(confirmed_ids)
@@ -3641,7 +3660,8 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
             await ctx.send(embed=emb("✅ Joined", f"{joined_text} joined the roleplay!", C_GREEN))
 
     preview = clean_prompt[:100] + ("..." if len(clean_prompt) > 100 else "")
-    await ctx.send(embed=emb(
+    dest = thread or ctx.channel
+    await dest.send(embed=emb(
         "🎭 Roleplay Started",
         f"Responding as: *{preview}*\nType freely — no @mention needed. Use `!stop` to end.",
         C_BLUE,
@@ -3682,10 +3702,19 @@ async def cmd_rpg(ctx: commands.Context):
         "Keep the story engaging, descriptive, and open-ended to allow for player choice and agency."
     )
 
+    # Create a thread to contain the RPG session
+    guild_id = ctx.guild.id if ctx.guild else None
+    if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
+        thread = await ctx.message.create_thread(name=f"rpg: {ctx.author.display_name}'s adventure")
+        rpg_channel_id = thread.id
+    else:
+        thread = None
+        rpg_channel_id = ctx.channel.id
+
     active_roleplays[uid] = {
         "character_prompt": "RPG Adventure",
-        "channel_id": ctx.channel.id,
-        "guild_id": ctx.guild.id if ctx.guild else None,
+        "channel_id": rpg_channel_id,
+        "guild_id": guild_id,
         "participants": {uid},
         "is_rpg": True,
         "system_prompt": rpg_system_prompt,
@@ -3699,8 +3728,8 @@ async def cmd_rpg(ctx: commands.Context):
             if inv_uid not in active_roleplays:
                 active_roleplays[inv_uid] = {
                     "character_prompt": "RPG Adventure",
-                    "channel_id": ctx.channel.id,
-                    "guild_id": ctx.guild.id if ctx.guild else None,
+                    "channel_id": rpg_channel_id,
+                    "guild_id": guild_id,
                     "history_owner": uid,
                     "is_rpg": True,
                     "system_prompt": rpg_system_prompt,
@@ -3718,19 +3747,19 @@ async def cmd_rpg(ctx: commands.Context):
             await ctx.send(embed=emb("✅ Joined", f"{joined_text} joined the adventure!", C_GREEN))
 
     # Send initial AI message asking for character configuration
-    placeholder = await ctx.send("🗺️ Starting your adventure...")
-    typing_task = asyncio.create_task(keep_typing(ctx.channel))
+    dest = thread or ctx.channel
+    placeholder = await dest.send("🗺️ Starting your adventure...")
+    typing_task = asyncio.create_task(keep_typing(dest))
 
     try:
         async with aiohttp.ClientSession() as session:
-            guild_id = ctx.guild.id if ctx.guild else None
             model = get_guild_roleplay_model(guild_id) if guild_id else OLLAMA_MODEL
             messages = [{"role": "system", "content": rpg_system_prompt}]
             full_response = await stream_ollama(session, messages, placeholder, model=model)
 
         # Add to history
         roleplay_histories[uid].append({"role": "assistant", "content": full_response})
-        await finalize(placeholder, ctx.channel, full_response)
+        await finalize(placeholder, dest, full_response)
     except aiohttp.ClientError as e:
         _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
         await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
