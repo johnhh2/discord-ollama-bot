@@ -1598,7 +1598,7 @@ async def cmd_stats(ctx: commands.Context):
         f"{indent}Coding model: `{coding_model}`\n"
         f"{indent}vRAM: {vram_text}"
     ), inline=True)
-    await ctx.send(embed=embed)
+    await ctx.send(embed=embed, delete_after=60)
 
 
 @bot.command(name="ai")
@@ -4860,7 +4860,7 @@ async def cmd_saved(ctx: commands.Context):
         inline=False
     )
 
-    await ctx.send(embed=embed)
+    await ctx.send(embed=embed, delete_after=60)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5815,7 +5815,7 @@ async def on_ready():
 
     # Clean up any ephemeral bot messages (help/adminhelp/shop) that weren't
     # deleted before the last shutdown.
-    EPHEMERAL_TITLES = {"📖 Commands", "⚙️ Admin Commands", "🛒 Shop", "⚙️ Server Settings", "🤖 AI Commands", "🎮 Games & Gambling", "🔍 Audit Log", "🎰 Slots", "🎰 Slots Payouts"}
+    EPHEMERAL_TITLES = {"📖 Commands", "⚙️ Admin Commands", "🛒 Shop", "⚙️ Server Settings", "🤖 AI Commands", "🎮 Games & Gambling", "🔍 Audit Log", "🎰 Slots", "🎰 Slots Payouts", "📊 Bot Stats", "💾 Saved Data"}
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     deleted = 0
     for guild in bot.guilds:
