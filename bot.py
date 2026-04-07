@@ -710,7 +710,7 @@ async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | No
     role = discord.utils.get(guild.roles, name="Gamblers")
     if role is None:
         try:
-            role = await guild.create_role(name="Gamblers", reason="Auto-created for gambler role tracking")
+            role = await guild.create_role(name="Gamblers", hoist=True, reason="Auto-created for gambler role tracking")
         except Exception:
             return None
     return role
@@ -3733,7 +3733,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **10,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
             return
         try:
-            new_role = await ctx.guild.create_role(name=name, color=discord.Color(color_int))
+            new_role = await ctx.guild.create_role(name=name, color=discord.Color(color_int), hoist=True)
             await ctx.author.add_roles(new_role)
             bot_roles.add(new_role.id)
             save_bot_roles()
