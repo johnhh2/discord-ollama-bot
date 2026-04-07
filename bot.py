@@ -5429,9 +5429,10 @@ async def cmd_restart(ctx: commands.Context):
 _r34_last_msg: dict[tuple[int, int], discord.Message] = {}
 
 async def _r34_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[dict]:
+    pid = random.randint(0, 9)
     url = (
         f"https://api.rule34.xxx/index.php"
-        f"?page=dapi&s=post&q=index&json=1&limit=100&tags={search_tags}"
+        f"?page=dapi&s=post&q=index&json=1&limit=100&pid={pid}&tags={search_tags}"
     )
     if RULE34_API_KEY and RULE34_USER_ID:
         url += f"&api_key={RULE34_API_KEY}&user_id={RULE34_USER_ID}"
@@ -5507,9 +5508,7 @@ async def cmd_rule34(ctx: commands.Context, *, tags: str = ""):
         await ctx.send(embed=emb("🔞 rule34", f"No results for `{label}`.", C_GREY))
         return
 
-    # Shuffle and pick a random result from the first page
-    random.shuffle(posts)
-    post = posts[0]
+    post = random.choice(posts)
     file_url = post["file_url"]
     display = search_tags.replace("+", " ") if tag_parts else "random"
 
