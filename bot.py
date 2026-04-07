@@ -1522,27 +1522,14 @@ async def cmd_help(ctx: commands.Context):
         "`!pay @user <amount>` — Send coins to another user\n"
         "`!leaderboard` — Top 10 richest users"
     ))
-    help_embed.add_field(name="🎲 Gambling", inline=False, value=(
-        "`!flip <amount>` — 50/50 coinflip\n"
-        "`!slots <amount>` — 3-reel slot machine\n"
-        "`!scratchoff` — Daily scratchoff lottery (3 attempts/day)\n"
-        "`!blackjack <amount>` — Interactive blackjack (type `hit` / `stand`)"
-    ))
-    help_embed.add_field(name="🎮 Games", inline=False, value=(
-        "`!hangman [@user1 @user2]` — Start hangman (type guesses directly, invite others with mentions)\n"
-        "`!guess <letter or word>` — Explicit hangman guess (full words only via command)\n"
-        "`!race @user1 [@user2 ...] [amount]` — Start a race (optional bet)"
-        "`!ttt @user [amount]` — Tic-Tac-Toe (use !m <1-9> to place)\n"
-        "`!c4 @user [amount]` — Connect 4 (use !m <1-7> to drop)\n"
-        "`!m <number>` — Make a move in tic-tac-toe or connect 4\n"
-        "`!puzzle coding [difficulty] [@user …]` — AI-generated coding puzzle (only you + invited users can answer)"
+    help_embed.add_field(name="🎮 Games / Gambling", inline=False, value=(
+        "`!games` — View all games and gambling commands"
     ))
     help_embed.add_field(name="🤖 AI", inline=False, value=(
         "`!ai` — View AI connection status and command info\n"
         "`!ask <question>` — Ask the AI a question\n"
         "`!roleplay <character prompt> [@user1 @user2]` — Start a roleplay (costs 50 🪙, invite others with mentions)\n"
-        "`!rpg [@user1 @user2]` — Start an interactive RPG adventure (costs 50 🪙, invite others with mentions)\n"
-        "`!stop` — Stop roleplay / forfeit active game"
+        "`!rpg [@user1 @user2]` — Start an interactive RPG adventure (costs 50 🪙, invite others with mentions)"
     ))
     help_embed.add_field(name="🛒 Shop", inline=False, value=(
         "`!shop` — Browse items\n"
@@ -1568,7 +1555,7 @@ async def cmd_help(ctx: commands.Context):
     ))
     utility_val = (
         "`!stats` — Show bot statistics\n"
-        "`!game` — View all games and gambling commands\n"
+        "`!stop` — Stop roleplay / forfeit active game\n"
         "`!clearhistory` — Reset AI chat history for this channel"
     )
     if ctx.guild and get_guild_cfg(ctx.guild.id).get("gambler_role_enabled", False):
@@ -1705,6 +1692,15 @@ async def cmd_game(ctx: commands.Context):
             "`!c4 @user [amount]` — Connect 4 (use `!m <1-7>`)\n"
             "`!chess @user [amount]` — Correspondence chess (use `!move <e2e4>`)\n"
             "`!m <number>` — Make a move in tic-tac-toe or connect 4"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🧩 AI Puzzles",
+        value=(
+            "`!puzzle coding [easy|medium|hard|extreme] [@user …]` — AI-generated coding puzzle\n"
+            "Reward: **10–50 🪙** depending on difficulty. Only the creator can answer by default; mention users to invite them."
         ),
         inline=False
     )
