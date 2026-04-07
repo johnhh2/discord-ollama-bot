@@ -6016,9 +6016,9 @@ async def on_ready():
     # Clean up any ephemeral bot messages that weren't deleted before last shutdown.
     EPHEMERAL_TITLES = {"📖 Commands", "⚙️ Admin Commands", "🛒 Shop", "⚙️ Server Settings", "🤖 AI Commands", "🎮 Games & Gambling", "🔍 Audit Log", "🎰 Slots", "🎰 Slots Payouts", "📊 Bot Stats", "💾 Saved Data"}
     now_utc = datetime.datetime.now(datetime.timezone.utc)
-    # Only look back far enough to catch messages that could still be lingering
     scan_after = now_utc - datetime.timedelta(minutes=10)
     deleted = 0
+    print(f"[STARTUP] Ephemeral cleanup: {len(bot.guilds)} guild(s), {sum(len(g.text_channels) for g in bot.guilds)} text channel(s)")
     for guild in bot.guilds:
         for channel in guild.text_channels:
             try:
