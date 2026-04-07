@@ -360,6 +360,21 @@ async def check_ai_channel(ctx: commands.Context) -> bool:
     return False
 
 
+async def check_puzzle_channel(ctx: commands.Context) -> bool:
+    """Return True (and send a timed reply) if the current channel is not an AI, game, or gambling channel."""
+    if not ctx.guild:
+        return False
+    cfg = get_guild_cfg(ctx.guild.id)
+    ai_channels = cfg.get("ai_channels", [])
+    game_channels = cfg.get("game_channels", [])
+    allowed = set(ai_channels) | set(game_channels)
+    if allowed and ctx.channel.id not in allowed:
+        names = " ".join(f"<#{cid}>" for cid in allowed)
+        await _wrong_channel_reply(ctx, f"Puzzle commands are only allowed in: {names}")
+        return True
+    return False
+
+
 async def check_chess_channel(ctx: commands.Context) -> bool:
     """Return True (and send a timed reply) if the current channel is not a chess/game channel."""
     if not ctx.guild:
@@ -1737,7 +1752,7 @@ PUZZLE_DIFFICULTY_GUIDANCE = {
 
 @bot.command(name="puzzle")
 async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: str = None):
-    if await global_command_channel_check(ctx):
+    if await check_puzzle_channel(ctx):
         return
 
     if subcommand is None:
