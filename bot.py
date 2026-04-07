@@ -1467,11 +1467,6 @@ async def on_message(message: discord.Message):
 # Commands — Utility
 # ─────────────────────────────────────────────────────────────────────────────
 
-@bot.command(name="clearhistory")
-async def cmd_clearhistory(ctx: commands.Context):
-    channel_histories[ctx.channel.id].clear()
-    await ctx.send(embed=emb("🔧 History Cleared", "Conversation history cleared for this channel.", C_GREY))
-
 
 @bot.command(name="gambler-role", aliases=["gamblerole", "gamblers"])
 async def cmd_gambler_role(ctx: commands.Context, toggle: str = None):
@@ -1555,8 +1550,7 @@ async def cmd_help(ctx: commands.Context):
     ))
     utility_val = (
         "`!stats` — Show bot statistics\n"
-        "`!stop` — Stop roleplay / forfeit active game\n"
-        "`!clearhistory` — Reset AI chat history for this channel"
+        "`!stop` — Stop roleplay / forfeit active game"
     )
     if ctx.guild and get_guild_cfg(ctx.guild.id).get("gambler_role_enabled", False):
         utility_val += "\n`!gambler-role on|off` — Opt in/out of the Gamblers role"
