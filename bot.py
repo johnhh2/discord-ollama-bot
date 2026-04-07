@@ -1749,8 +1749,10 @@ PUZZLE_CODING_PROMPT = (
     "\n"
     "STEP 3 — Output EXACTLY this JSON and nothing else:\n"
     "  {\"language\": \"<Python|JavaScript|C>\", "
-    "\"code\": \"```<lang>\\n<snippet>\\n```\", "
+    "\"code\": \"<snippet as a plain string — no backticks, no markdown, no code fences>\", "
     "\"answer\": \"<exact stdout>\"}\n"
+    "\n"
+    "CRITICAL: The 'code' field must be a plain JSON string. Do NOT wrap it in backticks or markdown fences (no ```python, no ``` at all). Embed newlines as \\n.\n"
     "\n"
     "Rules for the answer field:\n"
     "  • Copy character-for-character from your stdout list in STEP 2d\n"
@@ -1890,7 +1892,11 @@ async def cmd_puzzle(ctx: commands.Context, *args):
         return
     try:
         puzzle_data = json.loads(json_match.group())
-        code_snippet = puzzle_data["code"].replace("\\n", "\n").replace("\\t", "\t")
+        code_raw = puzzle_data["code"]
+        # Strip markdown code fences if the model ignored the prompt instructions
+        code_raw = _re.sub(r'^```[a-zA-Z]*\n?', '', code_raw.strip())
+        code_raw = _re.sub(r'\n?```$', '', code_raw)
+        code_snippet = code_raw.replace("\\n", "\n").replace("\\t", "\t")
         answer = str(puzzle_data["answer"])
         language = puzzle_data.get("language", "Unknown")
     except (json.JSONDecodeError, KeyError) as e:
