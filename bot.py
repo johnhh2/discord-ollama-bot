@@ -4230,6 +4230,16 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if role is None:
             await ctx.send(embed=emb("❌ Not Found", f"No bot-created role named **{name}** exists.", C_RED))
             return
+        # Check boundary relative to other bot-created roles only
+        bot_role_positions = sorted(
+            r.position for r in ctx.guild.roles if r.id in bot_roles
+        )
+        if direction == "roleup" and role.position == bot_role_positions[-1]:
+            await ctx.send(embed=emb("❌ Already Highest", f"**{role.name}** is already the highest bot-created role.", C_RED))
+            return
+        if direction == "roledown" and role.position == bot_role_positions[0]:
+            await ctx.send(embed=emb("❌ Already Lowest", f"**{role.name}** is already the lowest bot-created role.", C_RED))
+            return
         cost = 0 if uid in godmode_users else 20000
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **20,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
