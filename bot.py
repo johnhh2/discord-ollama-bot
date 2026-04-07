@@ -1657,7 +1657,7 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
         return
     try:
         puzzle_data = json.loads(json_match.group())
-        code_snippet = puzzle_data["question"].replace("\\n", "\n").replace("\\t", "\t")
+        code_snippet = puzzle_data["code"].replace("\\n", "\n").replace("\\t", "\t")
         answer = str(puzzle_data["answer"])
         language = puzzle_data.get("language", "Unknown")
     except (json.JSONDecodeError, KeyError):
