@@ -1717,11 +1717,11 @@ async def cmd_game(ctx: commands.Context):
     )
 
     embed.add_field(
-        name="🧩 AI Puzzles",
+        name="🧩 Puzzles",
         value=(
             "`!puzzle coding [easy|medium|hard|extreme] [@user …]` — AI-generated coding puzzle\n"
             "Reward: **10–50 🪙** depending on difficulty.\n"
-            f"`!puzzle riddle [@user …]` — AI-generated one-word riddle · Reward: **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
+            f"`!puzzle riddle [@user …]` — one-word riddle · Reward: **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
             "Only the creator can answer by default; mention users to invite them."
         ),
         inline=False
@@ -1761,6 +1761,7 @@ PUZZLE_RIDDLE_PROMPT = (
     "  • Do NOT generate math problems, arithmetic, number puzzles, trivia questions, or factual quiz questions\n"
     "  • Do NOT use these banned overused answers: echo, mirror, shadow, silence, time, fire, wind, darkness, light, water, breath, death, balloon\n"
     "  • Do NOT write a riddle that reads like a checklist of the answer's traits (shape + property + action = answer). That is not a riddle, it is a description.\n"
+    "  • Every statement in the riddle must be UNIVERSALLY TRUE of the answer — no exceptions. Do not invent false constraints (e.g. 'I have no lock' for a door) to make the answer harder to guess. If a clue is only sometimes true, or sometimes false, remove it.\n"
     "  • A good riddle makes the solver think of something UNRELATED before the answer clicks. If someone could guess the answer from the second sentence alone, rewrite it.\n"
     "  • The answer must be a single common English word (no phrases, no numbers, no abbreviations)\n"
     "  • The answer must be unambiguous — there should be only one reasonable word that fits\n"
@@ -1892,6 +1893,11 @@ async def cmd_puzzle(ctx: commands.Context, *args):
         guild_id = ctx.guild.id if ctx.guild else None
         coding_model = get_guild_coding_model(guild_id) if guild_id else OLLAMA_MODEL
         thinking_msg = await ctx.send(embed=emb("🧩 Generating riddle...", f"Reward: **{reward} 🪙**", C_BLUE))
+
+        if not bot_settings.get("ai_enabled", True):
+            await thinking_msg.edit(embed=emb("🤖 AI Offline", "Passive AI responses are currently disabled.", C_RED))
+            return
+
         active_puzzles[cid] = {"generating": True, "user_id": uid, "reward": reward, "invited_ids": invited_ids}
 
         try:
@@ -1996,6 +2002,10 @@ async def cmd_puzzle(ctx: commands.Context, *args):
     guild_id = ctx.guild.id if ctx.guild else None
     coding_model = get_guild_coding_model(guild_id) if guild_id else OLLAMA_MODEL
     thinking_msg = await ctx.send(embed=emb("🧩 Generating puzzle...", f"Difficulty: **{difficulty}** · Reward: **{reward} 🪙**", C_BLUE))
+
+    if not bot_settings.get("ai_enabled", True):
+        await thinking_msg.edit(embed=emb("🤖 AI Offline", "Passive AI responses are currently disabled.", C_RED))
+        return
 
     # Register immediately so !stop can cancel during generation
     active_puzzles[cid] = {"generating": True, "user_id": uid, "reward": reward, "invited_ids": invited_ids}
