@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import aiohttp
 import discord
@@ -1941,7 +1942,8 @@ async def cmd_adminhelp(ctx: commands.Context):
         admin_embed.add_field(name="📢 Bot Control", inline=False, value=(
             "`!say <text>` — Make the bot repeat text in channel\n"
             "`!botinvite` — Display bot invite link\n"
-            "`!invite` — Display server invite link"
+            "`!invite` — Display server invite link\n"
+            "`!restart` — Restart the bot process"
         ))
     await ctx.send(embed=admin_embed, delete_after=60)
 
@@ -5161,6 +5163,15 @@ async def cmd_invite(ctx: commands.Context):
         await ctx.send(embed=emb("❌ No Permission", "I don't have permission to create invites in this channel.", C_RED))
     except Exception as e:
         await ctx.send(embed=emb("❌ Error", f"Failed to generate invite: {str(e)}", C_RED))
+
+
+@bot.command(name="restart")
+async def cmd_restart(ctx: commands.Context):
+    if not is_admin(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "Only bot admins can use this command.", C_RED))
+        return
+    await ctx.send(embed=emb("🔄 Restarting", "Bot is restarting...", C_GOLD))
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
