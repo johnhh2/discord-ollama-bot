@@ -1093,9 +1093,9 @@ async def on_ready():
         try:
             channel = await bot.fetch_channel(restart_info["channel_id"])
             msg = await channel.fetch_message(restart_info["message_id"])
-            await msg.edit(embed=emb("✅ Restarted", "Bot has restarted.", discord.Color.green()))
-        except Exception:
-            pass
+            await msg.edit(embed=emb("✅ Restarted", "Bot has restarted.", 0x2ecc71))
+        except Exception as e:
+            print(f"[RESTART] Failed to edit restart message: {e}")
 
 
 async def _roast_soundboard_spam(guild_id: int, user_id: int):
