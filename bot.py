@@ -1664,7 +1664,7 @@ async def cmd_ai(ctx: commands.Context):
         inline=False
     )
 
-    await ctx.send(embed=embed)
+    await ctx.send(embed=embed, delete_after=60)
 
 
 @bot.command(name="game", aliases=["games"])
@@ -1713,7 +1713,7 @@ async def cmd_game(ctx: commands.Context):
         inline=False
     )
 
-    await ctx.send(embed=embed)
+    await ctx.send(embed=embed, delete_after=60)
 
 
 PUZZLE_REWARDS = {
@@ -4681,14 +4681,14 @@ async def cmd_audit(ctx: commands.Context):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
         return
     if not audit_log:
-        await ctx.send(embed=emb("🔍 Audit Log", "No failed attempts recorded.", C_GREY))
+        await ctx.send(embed=emb("🔍 Audit Log", "No failed attempts recorded.", C_GREY), delete_after=60)
         return
     recent = list(audit_log)[-5:]
     lines = []
     for e in reversed(recent):
         ts = time.strftime("%H:%M:%S", time.localtime(e["time"]))
         lines.append(f"**{ts}** — {e['user']}\n`{e['command']}`\n_{e['error']}_")
-    await ctx.send(embed=emb("🔍 Audit Log", "\n\n".join(lines), C_GOLD))
+    await ctx.send(embed=emb("🔍 Audit Log", "\n\n".join(lines), C_GOLD), delete_after=60)
 
 
 @bot.command(name="clearbot")
@@ -5794,7 +5794,7 @@ async def on_ready():
 
     # Clean up any ephemeral bot messages (help/adminhelp/shop) that weren't
     # deleted before the last shutdown.
-    EPHEMERAL_TITLES = {"📖 Commands", "⚙️ Admin Commands", "🛒 Shop", "⚙️ Server Settings"}
+    EPHEMERAL_TITLES = {"📖 Commands", "⚙️ Admin Commands", "🛒 Shop", "⚙️ Server Settings", "🤖 AI Commands", "🎮 Games & Gambling", "🔍 Audit Log"}
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     deleted = 0
     for guild in bot.guilds:
