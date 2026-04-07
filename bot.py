@@ -1680,12 +1680,10 @@ async def cmd_game(ctx: commands.Context):
         name="🎯 Competitive",
         value=(
             "`!hangman [@user1 @user2]` — Start hangman\n"
-            "`!guess <letter or word>` — Explicit hangman guess\n"
             "`!race @user1 [@user2 ...] [amount]` — Race against others (optional bet)\n"
             "`!ttt @user [amount]` — Tic-Tac-Toe (use `!m <1-9>`)\n"
             "`!c4 @user [amount]` — Connect 4 (use `!m <1-7>`)\n"
             "`!chess @user [amount]` — Correspondence chess (use `!move <e2e4>`)\n"
-            "`!m <number>` — Make a move in tic-tac-toe or connect 4"
         ),
         inline=False
     )
@@ -1909,7 +1907,6 @@ async def cmd_puzzle(ctx: commands.Context, *args):
         "invited_ids": invited_ids,
     }
 
-    await thinking_msg.delete()
     guests = invited_ids - {uid}
     if guests:
         invite_line = "\nInvited: " + " ".join(f"<@{i}>" for i in guests)
@@ -1923,7 +1920,13 @@ async def cmd_puzzle(ctx: commands.Context, *args):
         color=C_GOLD,
     )
     embed.set_footer(text=footer)
-    await ctx.send(embed=embed)
+    try:
+        await ctx.send(embed=embed)
+        await thinking_msg.delete()
+    except discord.HTTPException as e:
+        active_puzzles.pop(cid, None)
+        _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Discord error sending puzzle: {e}")
+        await thinking_msg.edit(embed=emb("❌ Discord Error", "Failed to send the puzzle. Please try again.", C_RED))
 
 
 @bot.command(name="adminhelp", aliases=["helpadmin"])
@@ -2914,7 +2917,7 @@ async def cmd_hangman(ctx: commands.Context, *args):
     game["board_msg_id"] = board_msg.id
 
 
-@bot.command(name="guess")
+@bot.command(name="guess", aliases=["g"])
 async def cmd_guess(ctx: commands.Context, *, guess: str = None):
     cid = ctx.channel.id
     asyncio.create_task(_delete_after(ctx.message))
@@ -3137,7 +3140,7 @@ async def cmd_move_chess(ctx: commands.Context, *args):
     await _edit_board(ctx.channel, game, emb("♟️ Chess", build_chess_display(board, is_black_perspective) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!move <e2e4>`\n\n**Last move:** {game['last_move']}", C_BLUE))
 
 
-@bot.command(name="m")
+@bot.command(name="m", aliases=["move"])
 async def cmd_move(ctx: commands.Context, pos: int = None):
     cid = ctx.channel.id
     uid = ctx.author.id
