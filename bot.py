@@ -2521,13 +2521,15 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
     if amount is None:
         embed = discord.Embed(title="🎰 Slots", color=C_GOLD)
         embed.description = "**Usage:** `!slots <amount>` — Minimum bet: **25 🪙**"
+        embed.add_field(name="Jackpot", value=(
+            "**7️⃣7️⃣7️⃣** (Jackpot) — 75x + Progressive Jackpot\n"
+            "The Progressive Jackpot bonus scales to 4x at bet 1000 🪙 or above)*"
+        ), inline=False)
         embed.add_field(name="Three of a Kind", value=(
-            "🌟 **7️⃣7️⃣7️⃣** (Jackpot) — 75x\n"
-            "   *(Min bet 25 🪙, bonus scales to 4x at bet 1000+)*\n"
-            "🌟 **🎰🎰🎰** (3 Slots) — 15x\n"
-            "🌟 **🔔🔔🔔** (3 Bells) — 7x\n"
-            "🌟 **🍋🍋🍋** (3 Lemons) — 4x\n"
-            "🌟 **🍒🍒🍒** (3 Cherries) — 3x"
+            "**🎰🎰🎰** (3 Slots) — 15x\n"
+            "**🔔🔔🔔** (3 Bells) — 7x\n"
+            "**🍋🍋🍋** (3 Lemons) — 4x\n"
+            "**🍒🍒🍒** (3 Cherries) — 3x"
         ), inline=False)
         embed.add_field(name="Cherry Bonuses", value=(
             "🍒 **Two Cherries** — 2x\n"
