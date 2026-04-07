@@ -781,6 +781,9 @@ async def stream_ollama(
     model: str = None,
     guild_id: int = None,
 ) -> str:
+    if not bot_settings.get("ai_enabled", True):
+        await placeholder.edit(content="", embed=emb("🤖 AI Offline", "Passive AI responses are currently disabled.", C_RED))
+        return ""
     if model:
         used_model = model
     elif guild_id:
@@ -1364,6 +1367,11 @@ async def on_message(message: discord.Message):
             await _blackjack_stand(message, uid, game)
         return
 
+    # AI enabled guard
+    if not bot_settings.get("ai_enabled", True):
+        await bot.process_commands(message)
+        return
+
     # Channel guard
     if ACTIVE_CHANNEL_IDS and message.channel.id not in ACTIVE_CHANNEL_IDS:
         await bot.process_commands(message)
@@ -1596,20 +1604,40 @@ async def cmd_stats(ctx: commands.Context):
 
 
 @bot.command(name="ai")
-async def cmd_ai(ctx: commands.Context):
+async def cmd_ai(ctx: commands.Context, state: str = None):
+    # Bot-admin subcommands: on/online/off/offline
+    if state is not None:
+        if not is_admin(ctx):
+            await ctx.send(embed=emb("❌ No Permission", "Only bot admins can use this command.", C_RED))
+            return
+        normalized = state.lower()
+        if normalized in ("on", "online"):
+            bot_settings["ai_enabled"] = True
+            save_bot_settings()
+            await ctx.send(embed=emb("🤖 AI Enabled", "Passive AI responses are now **online**.", C_GREEN))
+        elif normalized in ("off", "offline"):
+            bot_settings["ai_enabled"] = False
+            save_bot_settings()
+            await ctx.send(embed=emb("🤖 AI Disabled", "Passive AI responses are now **offline**.", C_RED))
+        else:
+            await ctx.send(embed=emb("❌ Invalid Option", "Use `!ai on`, `!ai online`, `!ai off`, or `!ai offline`.", C_RED))
+        return
+
     ai_connected = await check_ollama_connected()
     ask_model = get_guild_ask_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
     roleplay_model = get_guild_roleplay_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
     coding_model = get_guild_coding_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
 
+    ai_enabled = bot_settings.get("ai_enabled", True)
     ai_status = "Online" if ai_connected else "Offline"
     ai_status_emoji = "🟢" if ai_connected else "🔴"
+    passive_status = "Enabled" if ai_enabled else "**Disabled**"
 
     embed = discord.Embed(title="🤖 AI Commands", color=C_BLUE)
 
     embed.add_field(
         name=f"{ai_status_emoji} Connection",
-        value=f"Status: **{ai_status}**",
+        value=f"Status: **{ai_status}** · Passive responses: {passive_status}",
         inline=False
     )
 
@@ -1731,8 +1759,9 @@ PUZZLE_RIDDLE_PROMPT = (
     "\n"
     "HARD RULES:\n"
     "  • Do NOT generate math problems, arithmetic, number puzzles, trivia questions, or factual quiz questions\n"
-    "  • Do NOT use these banned overused answers: echo, mirror, shadow, silence, time, fire, wind, darkness, light, water, breath, death\n"
-    "  • Do NOT write a riddle that just describes the answer's physical appearance or literal function in order\n"
+    "  • Do NOT use these banned overused answers: echo, mirror, shadow, silence, time, fire, wind, darkness, light, water, breath, death, balloon\n"
+    "  • Do NOT write a riddle that reads like a checklist of the answer's traits (shape + property + action = answer). That is not a riddle, it is a description.\n"
+    "  • A good riddle makes the solver think of something UNRELATED before the answer clicks. If someone could guess the answer from the second sentence alone, rewrite it.\n"
     "  • The answer must be a single common English word (no phrases, no numbers, no abbreviations)\n"
     "  • The answer must be unambiguous — there should be only one reasonable word that fits\n"
     "\n"
