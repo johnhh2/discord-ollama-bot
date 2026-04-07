@@ -1797,7 +1797,11 @@ PUZZLE_CODING_PROMPT = (
     "\"code\": \"<snippet as a plain string — no backticks, no markdown, no code fences>\", "
     "\"answer\": \"<exact stdout>\"}\n"
     "\n"
-    "CRITICAL: The 'code' field must be a plain JSON string. Do NOT wrap it in backticks or markdown fences (no ```python, no ``` at all). Embed newlines as \\n.\n"
+    "CRITICAL: The 'code' field must be a valid JSON string value.\n"
+    "  • Do NOT wrap it in backticks or markdown fences (no ```python, no ``` at all)\n"
+    "  • Embed newlines as \\n and tabs as \\t\n"
+    "  • Any double-quote character inside the code MUST be escaped as \\\". Example: s = \\\"hello\\\" not s = \"hello\"\n"
+    "  • Prefer single quotes for string literals in the code where the language allows it (Python, JS) to avoid escaping\n"
     "\n"
     "Rules for the answer field:\n"
     "  • Copy character-for-character from your stdout list in STEP 2d\n"
@@ -2041,14 +2045,38 @@ async def cmd_puzzle(ctx: commands.Context, *args):
         return
 
     # Parse JSON from the response
-    json_match = _re.search(r'\{.*\}', raw, _re.DOTALL)
-    if not json_match:
+    def _extract_puzzle_fields(text: str):
+        """Try json.loads first, then fall back to per-field regex extraction."""
+        json_match = _re.search(r'\{.*\}', text, _re.DOTALL)
+        if not json_match:
+            return None
+        blob = json_match.group()
+        try:
+            return json.loads(blob)
+        except json.JSONDecodeError:
+            pass
+        # Fallback: extract each field individually via regex.
+        # language and answer are simple quoted strings; code is everything between
+        # "code": " and the last closing quote before "answer" or end of object.
+        lang_m = _re.search(r'"language"\s*:\s*"([^"]+)"', blob)
+        ans_m  = _re.search(r'"answer"\s*:\s*"([^"]*)"', blob)
+        # code spans from after `"code": "` to just before `", "answer"` or `"}`
+        code_m = _re.search(r'"code"\s*:\s*"(.*?)"\s*(?:,\s*"answer"|,\s*"language"|\})', blob, _re.DOTALL)
+        if lang_m and ans_m and code_m:
+            return {
+                "language": lang_m.group(1),
+                "code":     code_m.group(1),
+                "answer":   ans_m.group(1),
+            }
+        return None
+
+    puzzle_data = _extract_puzzle_fields(raw)
+    if puzzle_data is None:
         active_puzzles.pop(cid, None)
         _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI malformed response (no JSON): {raw[:200]}")
         await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
         return
     try:
-        puzzle_data = json.loads(json_match.group())
         code_raw = puzzle_data["code"]
         # Strip markdown code fences if the model ignored the prompt instructions
         code_raw = _re.sub(r'^```[a-zA-Z]*\n?', '', code_raw.strip())
@@ -2056,7 +2084,7 @@ async def cmd_puzzle(ctx: commands.Context, *args):
         code_snippet = code_raw.replace("\\n", "\n").replace("\\t", "\t")
         answer = str(puzzle_data["answer"])
         language = puzzle_data.get("language", "Unknown")
-    except (json.JSONDecodeError, KeyError) as e:
+    except KeyError as e:
         active_puzzles.pop(cid, None)
         _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI malformed response ({type(e).__name__}): {raw[:200]}")
         await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
