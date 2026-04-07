@@ -1698,16 +1698,33 @@ PUZZLE_REWARDS = {
 }
 
 PUZZLE_CODING_PROMPT = (
-    "You are a coding puzzle generator. Your response must be a single raw JSON object — no markdown, no code fences, no explanation before or after.\n"
-    "In this JSON object you are going to write a coding problem that should generate a specific output which should be stored in the answer"
-    "The JSON object must have exactly these three keys:\n"
-    "  \"language\": the programming language (\"Python\", \"JavaScript\", or \"C\")\n"
-    "  \"code\": the code snippet inside a markdown code block with the language tag\n"
-    "  \"answer\": the exact stdout output of the snippet as a plain string — nothing else, no trailing newline unless the code actually prints one\n"
-    "Example format:\n"
-    "{\"language\": \"Python\", \"code\": \"```python\\nprint(1+1)\\n```\", \"answer\": \"2\"}\n"
-    "Output ONLY the JSON object. Any text outside the JSON will break the parser.\n"
-    "FINAL CHECK: Before submitting the coding problem, fix any syntax errors, reference errors, type errors, infinite recursion, or any exceptions that are not intended to be the result of the problem"
+    "You are a coding puzzle generator. Your ONLY output must be a single raw JSON object — no markdown, no code fences, no prose before or after.\n"
+    "\n"
+    "STEP 1 — Write a self-contained code snippet that:\n"
+    "  • Uses only the standard library (no third-party imports)\n"
+    "  • Produces a finite, deterministic stdout output (no input(), no random, no time-dependent values)\n"
+    "  • Has no syntax errors, no NameErrors, no TypeErrors, no ZeroDivisionError, no infinite loops or recursion\n"
+    "  • The output must not be empty — the code must actually print something\n"
+    "\n"
+    "STEP 2 — Mentally execute the code line-by-line, tracking every variable mutation. "
+    "Identify the exact bytes that would be written to stdout. "
+    "If you find ANY error or if the output would be empty, rewrite the snippet and repeat STEP 2.\n"
+    "\n"
+    "STEP 3 — Format your final answer as EXACTLY this JSON schema:\n"
+    "  {\"language\": \"<Python|JavaScript|C>\", "
+    "\"code\": \"```<lang>\\n<snippet>\\n```\", "
+    "\"answer\": \"<exact stdout, no trailing newline unless the code prints one>\"}\n"
+    "\n"
+    "Rules for the answer field:\n"
+    "  • Must exactly match what a real interpreter would print, character-for-character\n"
+    "  • If the code prints multiple lines, join them with \\n\n"
+    "  • Do NOT include a trailing newline unless print() itself adds one on the last line and that newline would appear in the captured output\n"
+    "  • For C: assume printf/puts behavior on a standard Linux system\n"
+    "\n"
+    "Self-check before outputting: ask yourself — 'If I ran this code right now, would it crash or hang?' "
+    "If yes, fix it. Ask yourself — 'Does my answer field match the stdout exactly?' If no, fix it.\n"
+    "\n"
+    "Output ONLY the JSON object. Any text outside the JSON will break the parser."
 )
 
 PUZZLE_DIFFICULTY_GUIDANCE = {
@@ -1720,6 +1737,9 @@ PUZZLE_DIFFICULTY_GUIDANCE = {
 
 @bot.command(name="puzzle")
 async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: str = None):
+    if await global_command_channel_check(ctx):
+        return
+
     if subcommand is None:
         embed = discord.Embed(title="🧩 Puzzle Commands", color=C_BLUE)
         embed.add_field(
@@ -1745,8 +1765,6 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
         await ctx.send(f"Unknown difficulty `{difficulty}`. Choose: {', '.join(PUZZLE_REWARDS)}")
         return
 
-    if await check_ai_channel(ctx):
-        return
 
     cid = ctx.channel.id
     if cid in active_puzzles:
@@ -1755,10 +1773,15 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
 
     reward = PUZZLE_REWARDS[difficulty]
     guidance = PUZZLE_DIFFICULTY_GUIDANCE[difficulty]
-    system_prompt = f"\n\nCODING PROBLEM DIFFICULTY: {difficulty}. {guidance}\n\n" + PUZZLE_CODING_PROMPT
+    system_prompt = PUZZLE_CODING_PROMPT + f"\n\nDIFFICULTY: {difficulty}. {guidance}"
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Generate a {difficulty} coding output puzzle. Respond with the JSON object only."},
+        {"role": "user", "content": (
+            f"Generate a {difficulty} coding output puzzle. "
+            "Follow STEP 1, STEP 2, and STEP 3 from the instructions. "
+            "Mentally trace execution before writing the answer field. "
+            "Output the JSON object only."
+        )},
     ]
 
     guild_id = ctx.guild.id if ctx.guild else None
