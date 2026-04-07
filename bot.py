@@ -1217,11 +1217,17 @@ async def on_message(message: discord.Message):
             del active_curses[uid]
         save_curse(active_curses)
 
-    # Auto-award daily on any bot interaction
-    if (
+    # Auto-award daily on any bot interaction (skip blacklisted channels)
+    _is_dm = isinstance(message.channel, discord.DMChannel)
+    _blacklisted = (
+        not _is_dm
+        and message.guild
+        and message.channel.id in get_guild_cfg(message.guild.id).get("command_blacklist", [])
+    )
+    if not _blacklisted and (
         message.content.startswith("!")
         or bot.user in message.mentions
-        or isinstance(message.channel, discord.DMChannel)
+        or _is_dm
         or message.channel.id in active_hangman_games
         or uid in active_blackjack_games
     ):
