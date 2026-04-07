@@ -1373,18 +1373,20 @@ async def on_message(message: discord.Message):
     cid = message.channel.id
     if cid in active_puzzles and not message.content.startswith("!"):
         puzzle = active_puzzles[cid]
-        guess = message.content.strip()
-        expected = puzzle["answer"]
-        if _norm_puzzle_answer(guess) == _norm_puzzle_answer(expected):
-            reward = puzzle["reward"]
-            del active_puzzles[cid]
-            add_balance(uid, reward)
-            await message.channel.send(embed=emb(
-                "✅ Correct!",
-                f"{message.author.mention} got it!\n**Answer:** `{expected}`\n+**{reward} 🪙** (Balance: {get_balance(uid)} 🪙)",
-                C_GREEN,
-            ))
-            return
+        invited = puzzle.get("invited_ids")
+        if not invited or uid in invited:
+            guess = message.content.strip()
+            expected = puzzle["answer"]
+            if _norm_puzzle_answer(guess) == _norm_puzzle_answer(expected):
+                reward = puzzle["reward"]
+                del active_puzzles[cid]
+                add_balance(uid, reward)
+                await message.channel.send(embed=emb(
+                    "✅ Correct!",
+                    f"{message.author.mention} got it!\n**Answer:** `{expected}`\n+**{reward} 🪙** (Balance: {get_balance(uid)} 🪙)",
+                    C_GREEN,
+                ))
+                return
 
     # Intercept free-text hangman guesses (no prefix needed when game is active)
     # Only single-letter guesses via free-text; full words require !guess command
@@ -1533,7 +1535,7 @@ async def cmd_help(ctx: commands.Context):
         "`!ttt @user [amount]` — Tic-Tac-Toe (use !m <1-9> to place)\n"
         "`!c4 @user [amount]` — Connect 4 (use !m <1-7> to drop)\n"
         "`!m <number>` — Make a move in tic-tac-toe or connect 4\n"
-        "`!puzzle` — AI-generated puzzles (see `!puzzle` for subcommands)"
+        "`!puzzle coding [difficulty] [@user …]` — AI-generated coding puzzle (only you + invited users can answer)"
     ))
     help_embed.add_field(name="🤖 AI", inline=False, value=(
         "`!ai` — View AI connection status and command info\n"
@@ -1669,7 +1671,8 @@ async def cmd_ai(ctx: commands.Context):
             f"AI-generated coding output puzzle\n"
             f"Reward: **10–50 🪙**\n"
             f"Model: `{coding_model}`\n"
-            f"Usage: `!puzzle coding [easy|medium|hard|extreme]`"
+            f"Usage: `!puzzle coding [easy|medium|hard|extreme] [@user …]`\n"
+            f"Only the creator can answer by default; mention users to invite them."
         ),
         inline=False
     )
@@ -1767,19 +1770,40 @@ PUZZLE_DIFFICULTY_GUIDANCE = {
 
 
 @bot.command(name="puzzle")
-async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: str = None):
+async def cmd_puzzle(ctx: commands.Context, *args):
     if await check_puzzle_channel(ctx):
         return
+
+    # Parse args: subcommand, optional difficulty, optional @mentions (in any order after subcommand)
+    subcommand = None
+    difficulty = None
+    invited_ids: set[int] = {ctx.author.id}
+
+    pos_args = []
+    for arg in args:
+        # Mentions come through as <@123> or <@!123>
+        if arg.startswith("<@") and arg.endswith(">"):
+            uid_str = arg.strip("<@!>")
+            if uid_str.isdigit():
+                invited_ids.add(int(uid_str))
+        else:
+            pos_args.append(arg)
+
+    if pos_args:
+        subcommand = pos_args[0]
+    if len(pos_args) > 1:
+        difficulty = pos_args[1]
 
     if subcommand is None:
         embed = discord.Embed(title="🧩 Puzzle Commands", color=C_BLUE)
         embed.add_field(
-            name="!puzzle coding [difficulty]",
+            name="!puzzle coding [difficulty] [@user …]",
             value=(
                 "AI generates a code snippet — figure out its output!\n"
                 "**Difficulties:** `easy` (10 🪙) · `medium` (20 🪙) · `hard` (35 🪙) · `extreme` (50 🪙)\n"
                 "Default difficulty: `medium`\n"
-                "First person to type the correct output wins the reward."
+                "Only you can answer by default. Mention users to invite them too.\n"
+                "Example: `!puzzle coding hard @Alice @Bob`"
             ),
             inline=False,
         )
@@ -1795,7 +1819,6 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
     if difficulty not in PUZZLE_REWARDS:
         await ctx.send(f"Unknown difficulty `{difficulty}`. Choose: {', '.join(PUZZLE_REWARDS)}")
         return
-
 
     uid = ctx.author.id
     if any(p["user_id"] == uid for p in active_puzzles.values()):
@@ -1825,7 +1848,7 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
     thinking_msg = await ctx.send(embed=emb("🧩 Generating puzzle...", f"Difficulty: **{difficulty}** · Reward: **{reward} 🪙**", C_BLUE))
 
     # Register immediately so !stop can cancel during generation
-    active_puzzles[cid] = {"generating": True, "user_id": uid, "reward": reward}
+    active_puzzles[cid] = {"generating": True, "user_id": uid, "reward": reward, "invited_ids": invited_ids}
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -1887,15 +1910,23 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
         "code_snippet": code_snippet,
         "reward": reward,
         "user_id": uid,
+        "invited_ids": invited_ids,
     }
 
     await thinking_msg.delete()
+    guests = invited_ids - {uid}
+    if guests:
+        invite_line = "\nInvited: " + " ".join(f"<@{i}>" for i in guests)
+        footer = f"Only {ctx.author.display_name} and invited users can answer · Use !stop to cancel"
+    else:
+        invite_line = ""
+        footer = f"Only {ctx.author.display_name} can answer · Use !stop to cancel"
     embed = discord.Embed(
         title=f"🧩 Coding Puzzle — {difficulty.capitalize()} · {language}",
-        description=f"What will the output of this code be?\n{code_snippet}\n\nType the **exact output** to win **{reward} 🪙**!",
+        description=f"What will the output of this code be?\n{code_snippet}\n\nType the **exact output** to win **{reward} 🪙**!{invite_line}",
         color=C_GOLD,
     )
-    embed.set_footer(text="First correct answer wins · Use !stop to cancel")
+    embed.set_footer(text=footer)
     await ctx.send(embed=embed)
 
 
