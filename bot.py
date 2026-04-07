@@ -1570,13 +1570,15 @@ PUZZLE_REWARDS = {
 
 PUZZLE_CODING_PROMPT = (
     "You are a coding puzzle generator. Your response must be a single raw JSON object — no markdown, no code fences, no explanation before or after.\n"
+    "In this JSON object you are going to write a coding problem that should generate a specific output which should be stored in the answer"
     "The JSON object must have exactly these three keys:\n"
     "  \"language\": the programming language (\"Python\", \"JavaScript\", or \"C\")\n"
-    "  \"question\": the puzzle text, including the code snippet inside a markdown code block with the language tag\n"
+    "  \"code\": the code snippet inside a markdown code block with the language tag\n"
     "  \"answer\": the exact stdout output of the snippet as a plain string — nothing else, no trailing newline unless the code actually prints one\n"
     "Example format:\n"
     "{\"language\": \"Python\", \"question\": \"What does this print?\\n```python\\nprint(1+1)\\n```\", \"answer\": \"2\"}\n"
-    "Output ONLY the JSON object. Any text outside the JSON will break the parser."
+    "Output ONLY the JSON object. Any text outside the JSON will break the parser.\n"
+    "FINAL CHECK: Before submitting the coding problem, fix any syntax errors, reference errors, type errors, infinite recursion, or any exceptions that are not intended to be the result of the problem"
 )
 
 PUZZLE_DIFFICULTY_GUIDANCE = {
@@ -1624,7 +1626,7 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
 
     reward = PUZZLE_REWARDS[difficulty]
     guidance = PUZZLE_DIFFICULTY_GUIDANCE[difficulty]
-    system_prompt = PUZZLE_CODING_PROMPT + f"\n\nDifficulty: {difficulty}. {guidance}"
+    system_prompt = f"\n\nCODING PROBLEM DIFFICULTY: {difficulty}. {guidance}\n\n" + PUZZLE_CODING_PROMPT
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Generate a {difficulty} coding output puzzle. Respond with the JSON object only."},
