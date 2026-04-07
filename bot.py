@@ -300,15 +300,57 @@ def get_guild_coding_model(guild_id: int) -> str:
     return cfg.get("coding_model", OLLAMA_MODEL)
 
 
-def get_game_channels_redirect(ctx) -> str | None:
-    """Return a channel-mention string if the current channel is not a game channel, else None."""
+async def _wrong_channel_reply(ctx_or_msg, text: str) -> None:
+    """Send a ❌ Wrong Channel embed and delete both the trigger and the reply after 10 s."""
+    if isinstance(ctx_or_msg, commands.Context):
+        message = ctx_or_msg.message
+        reply_fn = ctx_or_msg.reply
+    else:
+        message = ctx_or_msg
+        reply_fn = ctx_or_msg.reply
+    reply = await reply_fn(embed=emb("❌ Wrong Channel", text, C_RED), mention_author=False)
+    asyncio.create_task(_delete_after(message, 10.0))
+    asyncio.create_task(_delete_after(reply, 10.0))
+
+
+async def check_game_channel(ctx: commands.Context, label: str = "Games") -> bool:
+    """Return True (and send a timed reply) if the current channel is not a game channel."""
     if not ctx.guild:
-        return None
+        return False
     cfg = get_guild_cfg(ctx.guild.id)
     game_channels = cfg.get("game_channels", [])
     if game_channels and ctx.channel.id not in game_channels:
-        return " ".join(f"<#{cid}>" for cid in game_channels)
-    return None
+        names = " ".join(f"<#{cid}>" for cid in game_channels)
+        await _wrong_channel_reply(ctx, f"{label} are only allowed in: {names}")
+        return True
+    return False
+
+
+async def check_ai_channel(ctx: commands.Context) -> bool:
+    """Return True (and send a timed reply) if the current channel is not an AI channel."""
+    if not ctx.guild:
+        return False
+    cfg = get_guild_cfg(ctx.guild.id)
+    ai_channels = cfg.get("ai_channels", [])
+    if ai_channels and ctx.channel.id not in ai_channels:
+        names = " ".join(f"<#{cid}>" for cid in ai_channels)
+        await _wrong_channel_reply(ctx, f"AI commands are only allowed in: {names}")
+        return True
+    return False
+
+
+async def check_chess_channel(ctx: commands.Context) -> bool:
+    """Return True (and send a timed reply) if the current channel is not a chess/game channel."""
+    if not ctx.guild:
+        return False
+    cfg = get_guild_cfg(ctx.guild.id)
+    chess_channels = cfg.get("chess_channels", [])
+    effective = chess_channels or cfg.get("game_channels", [])
+    if effective and ctx.channel.id not in effective:
+        names = " ".join(f"<#{cid}>" for cid in effective)
+        await _wrong_channel_reply(ctx, f"Chess is only allowed in: {names}")
+        return True
+    return False
 
 
 channel_prompts = load_channel_prompts()
@@ -906,7 +948,15 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
         print(f"[debug] {error}")
         return
     if isinstance(error, commands.CheckFailure):
-        return  # silently ignore — command blocked by channel restriction
+        cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
+        command_whitelist = cfg.get("command_whitelist", [])
+        if command_whitelist:
+            names = " ".join(f"<#{cid}>" for cid in command_whitelist)
+            msg = f"Commands are only allowed in: {names}"
+        else:
+            msg = "Commands are not allowed in this channel."
+        await _wrong_channel_reply(ctx, msg)
+        return
     audit_log.append({
         "time": time.time(),
         "user": f"{ctx.author.display_name} ({ctx.author.id})",
@@ -1262,12 +1312,11 @@ async def on_message(message: discord.Message):
         if not channel_allowed:
             if ai_channels:
                 names = " ".join(f"<#{cid}>" for cid in ai_channels)
-                await message.reply(embed=emb("❌ Wrong Channel", f"AI commands are only allowed in: {names}", C_RED))
             else:
                 # Show where AI IS allowed (inverse of blacklist)
                 all_channels = [ch.id for ch in message.guild.text_channels if ch.id not in command_blacklist]
                 names = " ".join(f"<#{cid}>" for cid in all_channels) if all_channels else "no channels"
-                await message.reply(embed=emb("❌ Wrong Channel", f"AI commands are only allowed in: {names}", C_RED))
+            await _wrong_channel_reply(message, f"AI commands are only allowed in: {names}")
             await bot.process_commands(message)
             return
 
@@ -1567,14 +1616,8 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
         await ctx.send(f"Unknown difficulty `{difficulty}`. Choose: {', '.join(PUZZLE_REWARDS)}")
         return
 
-    # AI channel check
-    if ctx.guild:
-        cfg = get_guild_cfg(ctx.guild.id)
-        ai_channels = cfg.get("ai_channels", [])
-        if ai_channels and ctx.channel.id not in ai_channels:
-            names = " ".join(f"<#{cid}>" for cid in ai_channels)
-            await ctx.send(embed=emb("❌ Wrong Channel", f"AI commands are only allowed in: {names}", C_RED))
-            return
+    if await check_ai_channel(ctx):
+        return
 
     cid = ctx.channel.id
     if cid in active_puzzles:
@@ -1798,9 +1841,7 @@ async def cmd_pay(ctx: commands.Context, recipient: discord.Member = None, amoun
 
 @bot.command(name="flip", aliases=["coinflip"])
 async def cmd_flip(ctx: commands.Context, amount: str = None):
-    redirect = get_game_channels_redirect(ctx)
-    if redirect:
-        await ctx.send(embed=emb("❌ Wrong Channel", f"Gambling is only allowed in: {redirect}", C_RED))
+    if await check_game_channel(ctx, "Gambling"):
         return
     uid = ctx.author.id
     if amount is None:
@@ -1887,9 +1928,7 @@ def do_daily_reset():
 # Store active games
 @bot.command(name="scratchoff", aliases=["scratch"])
 async def cmd_scratchoff(ctx: commands.Context):
-    redirect = get_game_channels_redirect(ctx)
-    if redirect:
-        await ctx.send(embed=emb("❌ Wrong Channel", f"Gambling is only allowed in: {redirect}", C_RED))
+    if await check_game_channel(ctx, "Gambling"):
         return
     uid = ctx.author.id
     _ensure_user(uid)
@@ -2016,9 +2055,7 @@ def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
 
 @bot.command(name="slots", aliases=["slot"])
 async def cmd_slots(ctx: commands.Context, amount: str = None):
-    redirect = get_game_channels_redirect(ctx)
-    if redirect:
-        await ctx.send(embed=emb("❌ Wrong Channel", f"Gambling is only allowed in: {redirect}", C_RED))
+    if await check_game_channel(ctx, "Gambling"):
         return
     global slot_jackpot
     uid = ctx.author.id
@@ -2413,9 +2450,7 @@ def calculate_hangman_reward(word: str) -> int:
 
 @bot.command(name="blackjack")
 async def cmd_blackjack(ctx: commands.Context, amount: str = None):
-    redirect = get_game_channels_redirect(ctx)
-    if redirect:
-        await ctx.send(embed=emb("❌ Wrong Channel", f"Gambling is only allowed in: {redirect}", C_RED))
+    if await check_game_channel(ctx, "Gambling"):
         return
     uid = ctx.author.id
     if amount is None:
@@ -2566,9 +2601,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
 
 @bot.command(name="hangman", aliases=["hang", "hm"])
 async def cmd_hangman(ctx: commands.Context, *args):
-    redirect = get_game_channels_redirect(ctx)
-    if redirect:
-        await ctx.send(embed=emb("❌ Wrong Channel", f"Games are only allowed in: {redirect}", C_RED))
+    if await check_game_channel(ctx):
         return
     cid = ctx.channel.id
     if cid in active_hangman_games:
@@ -2649,9 +2682,7 @@ async def _setup_pvp_game(ctx, opponent, amount, invite_title):
 
 @bot.command(name="ttt")
 async def cmd_ttt(ctx: commands.Context, opponent: discord.User = None, amount: int = 0):
-    redirect = get_game_channels_redirect(ctx)
-    if redirect:
-        await ctx.send(embed=emb("❌ Wrong Channel", f"Games are only allowed in: {redirect}", C_RED))
+    if await check_game_channel(ctx):
         return
     cid = ctx.channel.id
     uid = ctx.author.id
@@ -2677,9 +2708,7 @@ async def cmd_ttt(ctx: commands.Context, opponent: discord.User = None, amount: 
 
 @bot.command(name="c4")
 async def cmd_c4(ctx: commands.Context, opponent: discord.User = None, amount: int = 0):
-    redirect = get_game_channels_redirect(ctx)
-    if redirect:
-        await ctx.send(embed=emb("❌ Wrong Channel", f"Games are only allowed in: {redirect}", C_RED))
+    if await check_game_channel(ctx):
         return
     cid = ctx.channel.id
     uid = ctx.author.id
@@ -2733,14 +2762,8 @@ async def cmd_chess(ctx: commands.Context, *args):
         except (ValueError, IndexError):
             pass
 
-    if ctx.guild:
-        cfg = get_guild_cfg(ctx.guild.id)
-        chess_channels = cfg.get("chess_channels", [])
-        effective_channels = chess_channels or cfg.get("game_channels", [])
-        if effective_channels and ctx.channel.id not in effective_channels:
-            names = " ".join(f"<#{cid}>" for cid in effective_channels)
-            await ctx.send(embed=emb("❌ Wrong Channel", f"Chess is only allowed in: {names}", C_RED))
-            return
+    if await check_chess_channel(ctx):
+        return
 
     cid = ctx.channel.id
     uid = ctx.author.id
@@ -2938,13 +2961,8 @@ async def cmd_move(ctx: commands.Context, pos: int = None):
 
 @bot.command(name="ask")
 async def cmd_ask(ctx: commands.Context, *, question: str = None):
-    if ctx.guild:
-        cfg = get_guild_cfg(ctx.guild.id)
-        ai_channels = cfg.get("ai_channels", [])
-        if ai_channels and ctx.channel.id not in ai_channels:
-            names = " ".join(f"<#{cid}>" for cid in ai_channels)
-            await ctx.send(embed=emb("❌ Wrong Channel", f"AI commands are only allowed in: {names}", C_RED))
-            return
+    if await check_ai_channel(ctx):
+        return
     if question is None:
         await ctx.send("Usage: `!ask <question>`")
         return
@@ -3030,13 +3048,8 @@ async def _wait_for_confirmations(
 
 @bot.command(name="roleplay")
 async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
-    if ctx.guild:
-        cfg = get_guild_cfg(ctx.guild.id)
-        ai_channels = cfg.get("ai_channels", [])
-        if ai_channels and ctx.channel.id not in ai_channels:
-            names = " ".join(f"<#{cid}>" for cid in ai_channels)
-            await ctx.send(embed=emb("❌ Wrong Channel", f"AI commands are only allowed in: {names}", C_RED))
-            return
+    if await check_ai_channel(ctx):
+        return
     uid = ctx.author.id
     if character_prompt is None:
         await ctx.send("Usage: `!roleplay <character prompt> [@user1 @user2 ...]`")
@@ -3099,13 +3112,8 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
 
 @bot.command(name="rpg")
 async def cmd_rpg(ctx: commands.Context):
-    if ctx.guild:
-        cfg = get_guild_cfg(ctx.guild.id)
-        ai_channels = cfg.get("ai_channels", [])
-        if ai_channels and ctx.channel.id not in ai_channels:
-            names = " ".join(f"<#{cid}>" for cid in ai_channels)
-            await ctx.send(embed=emb("❌ Wrong Channel", f"AI commands are only allowed in: {names}", C_RED))
-            return
+    if await check_ai_channel(ctx):
+        return
     uid = ctx.author.id
 
     # Parse mentions for multiplayer
@@ -3195,9 +3203,7 @@ async def cmd_rpg(ctx: commands.Context):
 
 @bot.command(name="race")
 async def cmd_race(ctx: commands.Context, *args):
-    redirect = get_game_channels_redirect(ctx)
-    if redirect:
-        await ctx.send(embed=emb("❌ Wrong Channel", f"Games are only allowed in: {redirect}", C_RED))
+    if await check_game_channel(ctx):
         return
     cid = ctx.channel.id
     uid = ctx.author.id
@@ -3406,7 +3412,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         cfg = get_guild_cfg(ctx.guild.id)
         lottery_channel_id = cfg.get("lottery_channel")
         if lottery_channel_id and ctx.channel.id == lottery_channel_id:
-            await ctx.send(embed=emb("❌ Wrong Channel", "Shop commands are not allowed in the lottery channel.", C_RED))
+            await _wrong_channel_reply(ctx, "Shop commands are not allowed in the lottery channel.")
             return
     uid = ctx.author.id
 
@@ -4886,7 +4892,7 @@ async def cmd_rule34(ctx: commands.Context, *, tags: str = ""):
         r34_channels = cfg.get("rule34_channels", [])
         if r34_channels and ctx.channel.id not in r34_channels:
             names = " ".join(f"<#{cid}>" for cid in r34_channels)
-            await ctx.send(embed=emb("❌ Wrong Channel", f"rule34 is only allowed in: {names}", C_RED))
+            await _wrong_channel_reply(ctx, f"rule34 is only allowed in: {names}")
             return
     await ctx.typing()
     _STOP = {"and", "or", "with", "the", "a", "an"}
