@@ -62,7 +62,7 @@ SLOT_REEL = (
     ["7️⃣"] * 1
 )
 SLOT_JACKPOT_SEED = 5_000
-SLOT_JACKPOT_CONTRIB = 0.20
+SLOT_JACKPOT_CONTRIB = 0.05
 INITIAL_BOT_ADMIN_ID = 139928946044174336
 
 # Scratchoff lottery configuration
@@ -321,7 +321,7 @@ async def check_game_channel(ctx: commands.Context, label: str = "Games") -> boo
     game_channels = cfg.get("game_channels", [])
     if game_channels and ctx.channel.id not in game_channels:
         names = " ".join(f"<#{cid}>" for cid in game_channels)
-        await _wrong_channel_reply(ctx, f"{label} are only allowed in: {names}")
+        await _wrong_channel_reply(ctx, f"{label} commands are only allowed in: {names}")
         return True
     return False
 
@@ -1511,9 +1511,9 @@ async def cmd_ai(ctx: commands.Context):
         name="🧩 !puzzle coding",
         value=(
             f"AI-generated coding output puzzle\n"
-            f"Reward: **25–100 🪙**\n"
+            f"Reward: **10–50 🪙**\n"
             f"Model: `{coding_model}`\n"
-            f"Usage: `!puzzle coding [easy|medium|hard|expert|extreme]`"
+            f"Usage: `!puzzle coding [easy|medium|hard|extreme]`"
         ),
         inline=False
     )
@@ -1562,11 +1562,10 @@ async def cmd_game(ctx: commands.Context):
 
 
 PUZZLE_REWARDS = {
-    "easy":   25,
-    "medium": 50,
-    "hard":   100,
-    "expert": 100,
-    "extreme": 100,
+    "easy":   10,
+    "medium": 20,
+    "hard":   35,
+    "extreme": 50,
 }
 
 PUZZLE_CODING_PROMPT = (
@@ -1584,7 +1583,6 @@ PUZZLE_DIFFICULTY_GUIDANCE = {
     "easy":   "Use Python or JavaScript only. Use a trivial snippet (e.g. basic arithmetic, string concat, simple loop). The output should be obvious to a beginner.",
     "medium": "Use Python or JavaScript only. Use a moderately tricky snippet involving type coercion, simple recursion, or list operations.",
     "hard":   "Use Python, JavaScript, or C. Use a tricky snippet involving closures, scoping, reference semantics, or unexpected operator behavior.",
-    "expert": "Use Python, JavaScript, or C. Use a very tricky snippet that requires deep knowledge of the language (e.g. Python descriptors, JS prototype chain, C pointer arithmetic).",
     "extreme": "Use Python, JavaScript, or C. This must be brutally hard — combine multiple interacting edge cases in a single snippet. Examples: C undefined behavior with pointer casts and sequence points, Python metaclass/descriptor interactions with __slots__ or __getattribute__, JS with prototype mutation + closure + async ordering. The snippet should be plausibly valid but deeply unintuitive. Even experienced developers should struggle.",
 }
 
@@ -1597,7 +1595,7 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
             name="!puzzle coding [difficulty]",
             value=(
                 "AI generates a code snippet — figure out its output!\n"
-                "**Difficulties:** `easy` (25 🪙) · `medium` (50 🪙) · `hard` / `expert` / `extreme` (100 🪙)\n"
+                "**Difficulties:** `easy` (10 🪙) · `medium` (20 🪙) · `hard` (35 🪙) · `extreme` (50 🪙)\n"
                 "Default difficulty: `medium`\n"
                 "First person to type the correct output wins the reward."
             ),
@@ -2093,7 +2091,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Balance: {get_balance(uid)} 🪙", C_RED))
         return
 
-    # Jackpot contribution (20% of every bet, rounded up)
+    # Jackpot contribution (5% of every bet, rounded up)
     contrib = max(1, int(amount * SLOT_JACKPOT_CONTRIB))
     slot_jackpot += contrib
     save_jackpot(slot_jackpot)
@@ -2186,7 +2184,7 @@ async def cmd_slots_rewards(ctx: commands.Context):
     jackpot = load_jackpot()
     embed.add_field(name="Other", value=
         "❌ **No Match** — 0x (Lose bet)\n\n"
-        f"**Progressive Jackpot:** Grows by 20% of every bet!\n"
+        f"**Progressive Jackpot:** Grows by 5% of every bet!\n"
         f"**Current Jackpot: {jackpot:,} 🪙**",
         inline=False)
 
