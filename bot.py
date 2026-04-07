@@ -845,6 +845,19 @@ ASK_SYSTEM_PROMPT = (
     "Do not make up information."
 )
 
+FANFIC_SYSTEM_PROMPT = (
+    "You are a bold, creative fiction writer specializing in steamy, adult romantic fan fiction. "
+    "Your stories are imaginative, dramatic, and elaborately detailed — never timid or vague. "
+    "When given a topic, subject, characters, or scenario, write an original, self-contained short story "
+    "(roughly 400–700 words) that is sensual, emotionally charged, and engaging from start to finish. "
+    "Use vivid descriptive language, charged dialogue, and strong narrative momentum. "
+    "Build tension before the payoff. Give characters distinct voices and desires. "
+    "The story should feel complete — with a beginning that hooks the reader, a middle that escalates, "
+    "and a satisfying, steamy conclusion. "
+    "Do not summarize or describe what you are about to write — just write the story directly. "
+    "Do not add disclaimers, caveats, or author's notes."
+)
+
 
 def _norm_puzzle_answer(s: str) -> str:
     """Normalize a puzzle answer for comparison: lowercase, collapse whitespace."""
@@ -1532,6 +1545,7 @@ async def cmd_help(ctx: commands.Context):
     help_embed.add_field(name="🤖 AI", inline=False, value=(
         "`!ai` — View AI connection status and command info\n"
         "`!ask <question>` — Ask the AI a question\n"
+        "`!fanfic <prompt>` — Generate a steamy fan fiction story (costs 20 🪙)\n"
         "`!roleplay <character prompt> [@user1 @user2]` — Start a roleplay (costs 50 🪙, invite others with mentions)\n"
         "`!rpg [@user1 @user2]` — Start an interactive RPG adventure (costs 50 🪙, invite others with mentions)"
     ))
@@ -1652,6 +1666,17 @@ async def cmd_ai(ctx: commands.Context, state: str = None):
             f"Cost: **10 🪙**\n"
             f"Model: `{ask_model}`\n"
             f"Usage: `!ask <question>`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="📖 !fanfic",
+        value=(
+            f"Generate a steamy fan fiction story on any topic\n"
+            f"Cost: **20 🪙**\n"
+            f"Model: `{ask_model}`\n"
+            f"Usage: `!fanfic <prompt>`"
         ),
         inline=False
     )
@@ -3490,6 +3515,28 @@ async def cmd_ask(ctx: commands.Context, *, question: str = None):
 
     guild_id = ctx.guild.id if ctx.guild else None
     await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
+
+
+@bot.command(name="fanfic")
+async def cmd_fanfic(ctx: commands.Context, *, prompt: str = None):
+    if await check_ai_channel(ctx):
+        return
+    if prompt is None:
+        await ctx.send("Usage: `!fanfic <prompt>` — e.g. `!fanfic Batman and Superman stuck in an elevator`")
+        return
+    if check_rate_limit(ctx.author.id):
+        await ctx.send("⚠️ Slow down! Please wait a moment before sending another message.")
+        return
+
+    uid = ctx.author.id
+    cost = 0 if uid in godmode_users else 20
+    if cost > 0 and not deduct_balance(uid, cost):
+        await ctx.send(embed=emb("💸 Insufficient Funds", f"Fan fiction costs **20 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        return
+
+    guild_id = ctx.guild.id if ctx.guild else None
+    await respond(ctx.channel, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id, author_name=ctx.author.display_name)
+
 
 async def _wait_for_confirmations(
     ctx: commands.Context,
