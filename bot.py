@@ -1576,7 +1576,7 @@ PUZZLE_CODING_PROMPT = (
     "  \"code\": the code snippet inside a markdown code block with the language tag\n"
     "  \"answer\": the exact stdout output of the snippet as a plain string — nothing else, no trailing newline unless the code actually prints one\n"
     "Example format:\n"
-    "{\"language\": \"Python\", \"question\": \"What does this print?\\n```python\\nprint(1+1)\\n```\", \"answer\": \"2\"}\n"
+    "{\"language\": \"Python\", \"code\": \"```python\\nprint(1+1)\\n```\", \"answer\": \"2\"}\n"
     "Output ONLY the JSON object. Any text outside the JSON will break the parser.\n"
     "FINAL CHECK: Before submitting the coding problem, fix any syntax errors, reference errors, type errors, infinite recursion, or any exceptions that are not intended to be the result of the problem"
 )
@@ -1657,7 +1657,6 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
         return
     try:
         puzzle_data = json.loads(json_match.group())
-        question = puzzle_data["question"].replace("\\n", "\n").replace("\\t", "\t")
         answer = str(puzzle_data["answer"])
         language = puzzle_data.get("language", "Unknown")
     except (json.JSONDecodeError, KeyError):
@@ -1665,7 +1664,6 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
         return
 
     active_puzzles[cid] = {
-        "question": question,
         "answer": answer,
         "reward": reward,
         "user_id": ctx.author.id,
@@ -1674,7 +1672,7 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
     await thinking_msg.delete()
     embed = discord.Embed(
         title=f"🧩 Coding Puzzle — {difficulty.capitalize()} · {language}",
-        description=question + f"\n\nType the **exact output** to win **{reward} 🪙**!",
+        description="What will the output of this code be?" + f"\n\nType the **exact output** to win **{reward} 🪙**!",
         color=C_GOLD,
     )
     embed.set_footer(text="First correct answer wins · Use !stop to cancel")
