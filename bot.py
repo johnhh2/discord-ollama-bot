@@ -5278,15 +5278,23 @@ async def cmd_rule34(ctx: commands.Context, *, tags: str = ""):
     banned = [t.lower() for t in cfg.get("rule34_banned_tags", [])]
     tag_parts = [w for w in tag_parts if w.lower() not in banned]
 
+    def _filter_banned(posts: list[dict]) -> list[dict]:
+        if not banned:
+            return posts
+        return [
+            p for p in posts
+            if not any(bt in p.get("tags", "").lower().split() for bt in banned)
+        ]
+
     try:
         async with aiohttp.ClientSession() as session:
             # Try all tags combined first, then fall back to each tag alone
             search_tags = "+".join(tag_parts) if tag_parts else "solo"
-            posts = await _r34_fetch(session, search_tags)
+            posts = _filter_banned(await _r34_fetch(session, search_tags))
 
             if not posts and len(tag_parts) > 1:
                 for part in tag_parts:
-                    posts = await _r34_fetch(session, part)
+                    posts = _filter_banned(await _r34_fetch(session, part))
                     if posts:
                         search_tags = part
                         break
