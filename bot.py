@@ -6013,30 +6013,35 @@ async def on_ready():
             except Exception as e:
                 print(f"[LOTTERY] Error resetting lottery in {guild.name}: {e}")
 
-    # Clean up any ephemeral bot messages (help/adminhelp/shop) that weren't
-    # deleted before the last shutdown.
+    # Clean up any ephemeral bot messages that weren't deleted before last shutdown.
     EPHEMERAL_TITLES = {"📖 Commands", "⚙️ Admin Commands", "🛒 Shop", "⚙️ Server Settings", "🤖 AI Commands", "🎮 Games & Gambling", "🔍 Audit Log", "🎰 Slots", "🎰 Slots Payouts", "📊 Bot Stats", "💾 Saved Data"}
     now_utc = datetime.datetime.now(datetime.timezone.utc)
+    # Only look back far enough to catch messages that could still be lingering
+    scan_after = now_utc - datetime.timedelta(minutes=10)
     deleted = 0
     for guild in bot.guilds:
         for channel in guild.text_channels:
             try:
-                async for msg in channel.history(limit=100):
+                async for msg in channel.history(limit=50, after=scan_after, oldest_first=False):
                     if msg.author != bot.user:
                         continue
-                    age = (now_utc - msg.created_at).total_seconds()
-                    if age < 60:
+                    if (now_utc - msg.created_at).total_seconds() < 60:
                         continue
                     for embed in msg.embeds:
                         if embed.title in EPHEMERAL_TITLES:
                             try:
                                 await msg.delete()
                                 deleted += 1
-                            except (discord.NotFound, discord.Forbidden):
+                                print(f"[STARTUP] Deleted leftover '{embed.title}' in #{channel.name} ({guild.name})")
+                            except discord.NotFound:
                                 pass
+                            except discord.Forbidden:
+                                print(f"[STARTUP] No permission to delete in #{channel.name} ({guild.name})")
                             break
-            except (discord.Forbidden, discord.HTTPException):
+            except discord.Forbidden:
                 pass
+            except discord.HTTPException as e:
+                print(f"[STARTUP] HTTP error scanning #{channel.name} ({guild.name}): {e}")
     if deleted:
         print(f"[STARTUP] Cleaned up {deleted} leftover ephemeral message(s).")
 
