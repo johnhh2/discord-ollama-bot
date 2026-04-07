@@ -53,6 +53,7 @@ SAVED_QUOTES_FILE = "data/saved_quotes.json"
 SIMP_FILE = "data/simp.json"
 CURSE_FILE = "data/curse.json"
 LOTTERY_FILE = "data/lottery.json"
+GAMBLER_STREAK_FILE = "data/gambler_streak.json"
 
 # Slot machine configuration
 SLOT_REEL = (
@@ -213,6 +214,15 @@ def load_rigged_slots() -> set[int]:
 
 def save_rigged_slots():
     _save_json(RIGGED_SLOTS_FILE, list(rigged_slots))
+
+
+def load_gambler_streak() -> dict:
+    """Map of str(user_id) -> last date they used all 3 scratchoffs (ISO format)."""
+    return _load_json(GAMBLER_STREAK_FILE, {})
+
+
+def save_gambler_streak():
+    _save_json(GAMBLER_STREAK_FILE, gambler_streak)
 
 
 def load_quote_log() -> list[str]:
@@ -391,6 +401,7 @@ active_race_games: dict[int, dict] = {} # channel_id → {players, names, positi
 active_chess_games: dict[int, dict] = load_chess_games() # channel_id → {board, players, current, moves, amount}
 active_puzzles: dict[int, dict] = {}  # channel_id → {question, answer, reward, user_id}
 rigged_slots: set[int] = load_rigged_slots() # user_id → will hit jackpot on next spin
+gambler_streak: dict = load_gambler_streak() # str(user_id) → last date they used all 3 scratchoffs
 quote_log: list[str] = load_quote_log() # last 10 quotes used
 
 # ── Misc state ────────────────────────────────────────────────────────────────
@@ -688,6 +699,45 @@ def _render_race(game: dict) -> str:
         track = "▓" * pos + "🏇" + "░" * (RACE_TRACK_LEN - pos)
         lines.append(f"`{track}` **{name}**")
     return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gambler role helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | None:
+    """Return the 'Gamblers' role, creating it if it doesn't exist."""
+    role = discord.utils.get(guild.roles, name="Gamblers")
+    if role is None:
+        try:
+            role = await guild.create_role(name="Gamblers", reason="Auto-created for gambler role tracking")
+        except Exception:
+            return None
+    return role
+
+
+async def maybe_assign_gambler_role(guild: discord.Guild, member: discord.Member, channel: discord.abc.Messageable):
+    """Assign the Gamblers role if the user used all 3 scratchoffs 2 days in a row."""
+    cfg = get_guild_cfg(guild.id)
+    if not cfg.get("gambler_role_enabled", False):
+        return
+
+    uid_key = str(member.id)
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+
+    last_full_day = gambler_streak.get(uid_key)
+    if last_full_day == yesterday:
+        role = await get_or_create_gamblers_role(guild)
+        if role and role not in member.roles:
+            try:
+                await member.add_roles(role, reason="Used all 3 scratchoffs 2 days in a row")
+                await channel.send(
+                    f"🎲 {member.mention} You've been automatically added to the **Gamblers** role for using all 3 scratchoffs 2 days in a row! "
+                    f"You'll be pinged whenever a progressive jackpot is won. "
+                    f"Use `!gambler-role off` to opt out."
+                )
+            except Exception:
+                pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1394,6 +1444,46 @@ async def cmd_clearhistory(ctx: commands.Context):
     await ctx.send(embed=emb("🔧 History Cleared", "Conversation history cleared for this channel.", C_GREY))
 
 
+@bot.command(name="gambler-role", aliases=["gamblerole", "gamblers"])
+async def cmd_gambler_role(ctx: commands.Context, toggle: str = None):
+    if not ctx.guild:
+        return
+    cfg = get_guild_cfg(ctx.guild.id)
+    if not cfg.get("gambler_role_enabled", False):
+        await ctx.send(embed=emb("🎲 Gambler Role", "The gambler role feature is not enabled on this server.", C_GREY))
+        return
+
+    if toggle is None or toggle.lower() not in ("on", "off"):
+        has_role = discord.utils.get(ctx.author.roles, name="Gamblers") is not None
+        status = "✅ you have it" if has_role else "❌ you don't have it"
+        await ctx.send(embed=emb("🎲 Gambler Role", f"Gamblers role: {status}\nUse `!gambler-role on` or `!gambler-role off` to opt in/out.", C_GOLD))
+        return
+
+    role = await get_or_create_gamblers_role(ctx.guild)
+    if role is None:
+        await ctx.send(embed=emb("❌ Error", "Could not find or create the Gamblers role.", C_RED))
+        return
+
+    if toggle.lower() == "on":
+        if role in ctx.author.roles:
+            await ctx.send(embed=emb("🎲 Gambler Role", "You already have the Gamblers role.", C_GREY))
+        else:
+            try:
+                await ctx.author.add_roles(role, reason="User opted in via !gambler-role")
+                await ctx.send(embed=emb("🎲 Gambler Role", "✅ You've been added to the **Gamblers** role. You'll be pinged when a progressive jackpot is won!", C_GREEN))
+            except Exception:
+                await ctx.send(embed=emb("❌ Error", "Failed to add the role.", C_RED))
+    else:
+        if role not in ctx.author.roles:
+            await ctx.send(embed=emb("🎲 Gambler Role", "You don't have the Gamblers role.", C_GREY))
+        else:
+            try:
+                await ctx.author.remove_roles(role, reason="User opted out via !gambler-role")
+                await ctx.send(embed=emb("🎲 Gambler Role", "✅ You've been removed from the **Gamblers** role.", C_GREEN))
+            except Exception:
+                await ctx.send(embed=emb("❌ Error", "Failed to remove the role.", C_RED))
+
+
 @bot.command(name="help", aliases=["h"])
 async def cmd_help(ctx: commands.Context):
     help_embed = discord.Embed(title="📖 Commands", color=0x3498db)
@@ -1447,11 +1537,14 @@ async def cmd_help(ctx: commands.Context):
         "`!quote` — Save a quoted message (reply) or display a random saved quote\n"
         "`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote"
     ))
-    help_embed.add_field(name="🔧 Utility", inline=False, value=(
+    utility_val = (
         "`!stats` — Show bot statistics\n"
         "`!game` — View all games and gambling commands\n"
         "`!clearhistory` — Reset AI chat history for this channel"
-    ))
+    )
+    if ctx.guild and get_guild_cfg(ctx.guild.id).get("gambler_role_enabled", False):
+        utility_val += "\n`!gambler-role on|off` — Opt in/out of the Gamblers role"
+    help_embed.add_field(name="🔧 Utility", inline=False, value=utility_val)
     await ctx.send(embed=help_embed, delete_after=60)
 
 
@@ -1984,6 +2077,12 @@ async def cmd_scratchoff(ctx: commands.Context):
     user["scratch_used"] += 1
     save_economy()
 
+    # Track full-day scratchoff streak for Gamblers role
+    if user["scratch_used"] >= 3 and ctx.guild:
+        gambler_streak[str(uid)] = today
+        save_gambler_streak()
+        await maybe_assign_gambler_role(ctx.guild, ctx.author, ctx.channel)
+
     # Generate daily goal seeded by uid + date (consistent if called twice)
     seed_str = f"{uid}{today}"
     seed_val = hash(seed_str) % (2**31)
@@ -2173,6 +2272,13 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
             await msg.pin()
         except Exception:
             pass
+        # Ping Gamblers role if enabled
+        if ctx.guild:
+            cfg = get_guild_cfg(ctx.guild.id)
+            if cfg.get("gambler_role_enabled", False):
+                role = discord.utils.get(ctx.guild.roles, name="Gamblers")
+                if role:
+                    await ctx.send(f"{role.mention} 🎰 A progressive jackpot was just won!")
         return
 
     # Money Back (cherry retention)
@@ -4070,6 +4176,8 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         else:
             rl_val = "none"
 
+        gambler_role_val = "✅ enabled" if cfg.get("gambler_role_enabled", False) else "❌ disabled"
+
         embed = discord.Embed(title="⚙️ Server Settings", color=C_BLUE)
         embed.add_field(name="🤖 AI channels", value=ai_val, inline=False)
         embed.add_field(name="✅ Channel whitelist", value=whitelist_val, inline=False)
@@ -4080,10 +4188,11 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
         embed.add_field(name="🔞 rule34", value=r34_val, inline=False)
         embed.add_field(name="🎰 Lottery channel", value=lottery_val, inline=False)
         embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
+        embed.add_field(name="🎲 Gambler role", value=gambler_role_val, inline=False)
         footer_text = (
             "Subcommands:\n"
             "`ai-channels #ch... / clear` • `cmd-whitelist #ch... / clear` • `cmd-blacklist #ch... / clear` • `game-channels #ch... / clear` • `chess-channels #ch... / clear`\n"
-            "`shop <item> on|off` • `rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` • `lottery-channel #channel / clear` • `soundboard-ratelimit add|remove @user|<userid> / list`"
+            "`shop <item> on|off` • `rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` • `lottery-channel #channel / clear` • `soundboard-ratelimit add|remove @user|<userid> / list` • `gambler-role on|off`"
         )
         embed.set_footer(text=footer_text)
         await ctx.send(embed=embed, delete_after=60)
@@ -4367,6 +4476,19 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
 
         else:
             await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", "Usage: `!settings soundboard-ratelimit add|remove @user|<userid>` or `list`", C_GREY))
+        return
+
+    # ── gambler-role ──────────────────────────────────────────────────────────
+    if subcommand == "gambler-role":
+        if not args or args[0].lower() not in ("on", "off"):
+            await ctx.send(embed=emb("⚙️ Gambler Role", "Usage: `!settings gambler-role on|off`", C_GREY))
+            return
+        enabled = args[0].lower() == "on"
+        cfg["gambler_role_enabled"] = enabled
+        save_guild_settings()
+        status = "✅ enabled" if enabled else "❌ disabled"
+        detail = "\nThe **Gamblers** role will be auto-created and assigned to users who use all 3 scratchoffs 2 days in a row. They will be pinged when a progressive jackpot is won." if enabled else ""
+        await ctx.send(embed=emb("⚙️ Gambler Role", f"Gambler role tracking is now {status}.{detail}", C_GREEN))
         return
 
     await ctx.send(embed=emb("⚙️ Settings", "Unknown subcommand. Use `!settings` to see options.", C_GREY))
