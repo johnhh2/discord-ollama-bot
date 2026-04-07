@@ -3517,7 +3517,8 @@ async def cmd_ask(ctx: commands.Context, *, question: str = None):
     guild_id = ctx.guild.id if ctx.guild else None
     if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
         thread = await ctx.message.create_thread(name=f"ask: {question[:80]}")
-        await respond(thread, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
+        seed_msg = await thread.send(f"**{ctx.author.display_name}:** {question}")
+        await respond(thread, ctx.author.id, question, seed_msg, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
     else:
         await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
 
@@ -3542,44 +3543,10 @@ async def cmd_fanfic(ctx: commands.Context, *, prompt: str = None):
     guild_id = ctx.guild.id if ctx.guild else None
     if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
         thread = await ctx.message.create_thread(name=f"fanfic: {prompt[:75]}")
-        await respond(thread, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
-        await thread.send(embed=emb("📖 Continue?", "Use `!continue` in this thread to generate the next chapter.", C_BLUE))
+        seed_msg = await thread.send(f"**{ctx.author.display_name}:** {prompt}")
+        await respond(thread, ctx.author.id, prompt, seed_msg, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
     else:
         await respond(ctx.channel, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
-
-
-@bot.command(name="continue")
-async def cmd_continue(ctx: commands.Context):
-    if not isinstance(ctx.channel, discord.Thread):
-        await ctx.send(embed=emb("❌ Threads Only", "`!continue` only works inside a fanfic or roleplay thread.", C_RED))
-        return
-    if check_rate_limit(ctx.author.id):
-        await ctx.send("⚠️ Slow down! Please wait a moment before sending another message.")
-        return
-
-    uid = ctx.author.id
-    guild_id = ctx.guild.id if ctx.guild else None
-
-    # Roleplay thread
-    if uid in active_roleplays and active_roleplays[uid].get("channel_id") == ctx.channel.id:
-        cost = 0 if uid in godmode_users else 10
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"Continuing costs **10 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
-            return
-        await respond_roleplay(ctx.channel, uid, "Continue the story.", ctx.message, author_name=ctx.author.display_name)
-        return
-
-    # Fanfic thread — channel history must exist for this thread
-    if channel_histories[ctx.channel.id]:
-        cost = 0 if uid in godmode_users else 10
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"Continuing costs **10 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
-            return
-        await respond(ctx.channel, uid, "Continue the story.", ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
-        await ctx.send(embed=emb("📖 Continue?", "Use `!continue` again for another chapter.", C_BLUE))
-        return
-
-    await ctx.send(embed=emb("❌ Nothing to Continue", "No fanfic or roleplay found in this thread.", C_RED))
 
 
 async def _wait_for_confirmations(
@@ -3696,7 +3663,7 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
     dest = thread or ctx.channel
     await dest.send(embed=emb(
         "🎭 Roleplay Started",
-        f"Responding as: *{preview}*\nType freely — no @mention needed. Use `!continue` for the next chapter. Use `!stop` to end.",
+        f"Responding as: *{preview}*\nType freely — no @mention needed. Use `!stop` to end.",
         C_BLUE,
     ))
 
