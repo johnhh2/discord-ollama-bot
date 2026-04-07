@@ -1731,7 +1731,7 @@ PUZZLE_CODING_PROMPT = (
     "  • No input(), no random, no time-dependent values — output must be fully deterministic\n"
     "  • No unhandled exceptions of ANY kind — no AttributeError, TypeError, ZeroDivisionError, NameError, IndexError, KeyError, RecursionError, or any other exception that would terminate the program without being caught\n"
     "  • No infinite loops or unbounded recursion\n"
-    "  • Must produce at least one line of stdout output via print() or equivalent\n"
+    "  • Must produce exactly ONE line of stdout output — the entire output must fit on a single line with no newline characters\n"
     "  • The puzzle's difficulty should come from surprising but VALID behavior — not from errors\n"
     "\n"
     "STEP 2 — Simulate a Python/JS/C interpreter in your head. Execute every line in order:\n"
@@ -1741,6 +1741,7 @@ PUZZLE_CODING_PROMPT = (
     "  d) List only the lines that call print() (or printf/console.log). Write down exactly what each prints.\n"
     "  e) Ask: 'Is there any line that could raise an UNCAUGHT exception?' If yes → go back to STEP 1 and rewrite.\n"
     "  f) Ask: 'Is the stdout list from step (d) non-empty?' If empty → go back to STEP 1 and rewrite.\n"
+    "  g) Ask: 'Does the stdout list from step (d) contain more than one line of output?' If yes → go back to STEP 1 and rewrite the snippet so it only prints once.\n"
     "\n"
     "STEP 3 — Output EXACTLY this JSON and nothing else:\n"
     "  {\"language\": \"<Python|JavaScript|C>\", "
@@ -1795,6 +1796,11 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
         return
 
 
+    uid = ctx.author.id
+    if any(p["user_id"] == uid for p in active_puzzles.values()):
+        await ctx.send(embed=emb("⚠️ Puzzle Active", "You already have a puzzle running! Solve it or use `!stop` to cancel.", C_GOLD))
+        return
+
     cid = ctx.channel.id
     if cid in active_puzzles:
         await ctx.send(embed=emb("⚠️ Puzzle Active", "A puzzle is already running in this channel! Solve it first.", C_GOLD))
@@ -1817,11 +1823,18 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
     coding_model = get_guild_coding_model(guild_id) if guild_id else OLLAMA_MODEL
     thinking_msg = await ctx.send(embed=emb("🧩 Generating puzzle...", f"Difficulty: **{difficulty}** · Reward: **{reward} 🪙**", C_BLUE))
 
+    # Register immediately so !stop can cancel during generation
+    active_puzzles[cid] = {"generating": True, "user_id": uid, "reward": reward}
+
     try:
         async with aiohttp.ClientSession() as session:
             if ollama_semaphore.locked():
                 await thinking_msg.edit(embed=emb("⏳ Queued", "Another AI request is running. Your puzzle will generate next...", C_BLUE))
             async with ollama_semaphore:
+                if cid not in active_puzzles:
+                    # Cancelled while waiting in queue
+                    await thinking_msg.edit(embed=emb("🚫 Cancelled", "Puzzle generation was cancelled.", C_RED))
+                    return
                 await thinking_msg.edit(embed=emb("🧩 Generating puzzle...", f"Difficulty: **{difficulty}** · Reward: **{reward} 🪙**", C_BLUE))
                 typing_task = asyncio.create_task(keep_typing(ctx.channel))
                 try:
@@ -1833,14 +1846,21 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
                 finally:
                     typing_task.cancel()
     except aiohttp.ClientError as e:
+        active_puzzles.pop(cid, None)
         _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
         await thinking_msg.edit(embed=emb("❌ AI Offline", "Could not connect to the AI.", C_RED))
+        return
+
+    if cid not in active_puzzles:
+        # Cancelled after generation completed but before we parsed
+        await thinking_msg.edit(embed=emb("🚫 Cancelled", "Puzzle generation was cancelled.", C_RED))
         return
 
     # Parse JSON from the response
     import re as _re
     json_match = _re.search(r'\{.*\}', raw, _re.DOTALL)
     if not json_match:
+        active_puzzles.pop(cid, None)
         _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI malformed response (no JSON): {raw[:200]}")
         await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
         return
@@ -1850,15 +1870,22 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
         answer = str(puzzle_data["answer"])
         language = puzzle_data.get("language", "Unknown")
     except (json.JSONDecodeError, KeyError) as e:
+        active_puzzles.pop(cid, None)
         _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI malformed response ({type(e).__name__}): {raw[:200]}")
         await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
+        return
+
+    if "\n" in answer:
+        active_puzzles.pop(cid, None)
+        _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI generated multi-line answer: {answer[:200]}")
+        await thinking_msg.edit(embed=emb("❌ Bad Puzzle", "The AI generated a multi-line answer. Try again.", C_RED))
         return
 
     active_puzzles[cid] = {
         "answer": answer,
         "code_snippet": code_snippet,
         "reward": reward,
-        "user_id": ctx.author.id,
+        "user_id": uid,
     }
 
     await thinking_msg.delete()
@@ -3521,7 +3548,10 @@ async def cmd_stop(ctx: commands.Context):
 
     if cid in active_puzzles and (active_puzzles[cid]["user_id"] == uid or is_admin(ctx)):
         puzzle = active_puzzles.pop(cid)
-        stopped.append(f"🧩 Puzzle (answer was `{puzzle['answer']}`)")
+        if puzzle.get("generating"):
+            stopped.append("🧩 Puzzle (cancelled during generation)")
+        else:
+            stopped.append(f"🧩 Puzzle (answer was `{puzzle['answer']}`)")
 
     if uid in active_roleplays:
         rp = active_roleplays[uid]
