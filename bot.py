@@ -62,7 +62,7 @@ SLOT_REEL = (
     ["7️⃣"] * 1
 )
 SLOT_JACKPOT_SEED = 5_000
-SLOT_JACKPOT_CONTRIB = 0.05
+SLOT_JACKPOT_CONTRIB = 0.02
 INITIAL_BOT_ADMIN_ID = 139928946044174336
 
 # Scratchoff lottery configuration
@@ -1811,9 +1811,6 @@ async def cmd_pay(ctx: commands.Context, recipient: discord.Member = None, amoun
     if recipient is None or amount is None:
         await ctx.send("Usage: `!pay @user <amount>`")
         return
-    if recipient.bot:
-        await ctx.send("You can't pay a bot.")
-        return
     if recipient.id == ctx.author.id:
         await ctx.send("You can't pay yourself.")
         return
@@ -2093,7 +2090,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         await ctx.send(embed=emb("💸 Insufficient Funds", f"Balance: {get_balance(uid)} 🪙", C_RED))
         return
 
-    # Jackpot contribution (5% of every bet, rounded up)
+    # Jackpot contribution (2% of every bet, rounded up)
     contrib = max(1, int(amount * SLOT_JACKPOT_CONTRIB))
     slot_jackpot += contrib
     save_jackpot(slot_jackpot)
@@ -2110,8 +2107,8 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
 
     # Progressive jackpot: hit 3 sevens
     if label == "jackpot":
-        # Calculate bonus multiplier: 1x at bet 25, scaling to 5x at bet 500+
-        bet_bonus = min(5.0, 1.0 + max(0, amount - 25) / 475.0 * 4.0)
+        # Calculate bonus multiplier: 1x at bet 25, scaling to 4x at bet 1000+
+        bet_bonus = min(4.0, 1.0 + max(0, amount - 25) / 975.0 * 3.0)
         prize = int(slot_jackpot * bet_bonus)
         slot_jackpot = SLOT_JACKPOT_SEED
         save_jackpot(slot_jackpot)
@@ -2147,7 +2144,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
     add_balance(uid, winnings)
 
     result_labels = {
-        "jackpot": f"7️⃣7️⃣7️⃣ — **{mult}x** (min bet 25, bonus scales to 5x at bet 500+)",
+        "jackpot": f"7️⃣7️⃣7️⃣ — **{mult}x** (min bet 25, bonus scales to 4x at bet 1000+)",
         "3bar":    f"🎰🎰🎰 — **{mult}x**",
         "3bell":   f"🔔🔔🔔 — **{mult}x**",
         "3lemon":  f"🍋🍋🍋 — **{mult}x**",
@@ -2171,7 +2168,7 @@ async def cmd_slots_rewards(ctx: commands.Context):
 
     embed.add_field(name="Three of a Kind", value=
         "🌟 **7️⃣7️⃣7️⃣** (Jackpot) — 75x\n"
-        "   *(Min bet 25 🪙, bonus scales to 5x at bet 500+)*\n"
+        "   *(Min bet 25 🪙, bonus scales to 4x at bet 1000+)*\n"
         "🌟 **🎰🎰🎰** (3 Slots) — 15x\n"
         "🌟 **🔔🔔🔔** (3 Bells) — 7x\n"
         "🌟 **🍋🍋🍋** (3 Lemons) — 4x\n"
@@ -2186,7 +2183,7 @@ async def cmd_slots_rewards(ctx: commands.Context):
     jackpot = load_jackpot()
     embed.add_field(name="Other", value=
         "❌ **No Match** — 0x (Lose bet)\n\n"
-        f"**Progressive Jackpot:** Grows by 5% of every bet!\n"
+        f"**Progressive Jackpot:** Grows by 2% of every bet!\n"
         f"**Current Jackpot: {jackpot:,} 🪙**",
         inline=False)
 
