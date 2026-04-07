@@ -1767,13 +1767,15 @@ async def cmd_puzzle(ctx: commands.Context, subcommand: str = None, difficulty: 
 
     try:
         async with aiohttp.ClientSession() as session:
-            placeholder = await ctx.send("...")
             typing_task = asyncio.create_task(keep_typing(ctx.channel))
             try:
-                raw = await stream_ollama(session, messages, placeholder, model=coding_model)
+                payload = {"model": coding_model, "messages": messages, "stream": False}
+                async with session.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+                    raw = data.get("message", {}).get("content", "")
             finally:
                 typing_task.cancel()
-            await placeholder.delete()
     except aiohttp.ClientError as e:
         _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
         await thinking_msg.edit(embed=emb("❌ AI Offline", "Could not connect to the AI.", C_RED))
