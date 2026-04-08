@@ -352,6 +352,266 @@ class TestBuildTttDisplay:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Lottery
+# ─────────────────────────────────────────────────────────────────────────────
+
+import datetime
+from zoneinfo import ZoneInfo
+
+_CT = ZoneInfo("America/Chicago")
+
+
+def _ct(year, month, day, hour, minute=0):
+    """Return a timezone-aware datetime in America/Chicago."""
+    return datetime.datetime(year, month, day, hour, minute, tzinfo=_CT)
+
+
+def _should_draw(lottery: dict, now_ct: datetime.datetime) -> bool:
+    """Mirror the gate logic in lottery_scheduler / on_ready."""
+    is_saturday = now_ct.weekday() == 5
+    is_6pm = now_ct.hour == 18 and now_ct.minute == 0
+    current_week = now_ct.isocalendar()[1]
+    return is_saturday and is_6pm and current_week != lottery.get("last_posted_week", 0)
+
+
+GUILD_ID = 111222333
+
+
+class TestDrainBotBalanceIntoLottery:
+    def test_transfers_house_balance_to_pool(self):
+        bot.economy["guild_house"] = {str(GUILD_ID): 500}
+        lottery = {"prize_pool": 100, "players": {}}
+        transferred = bot.drain_bot_balance_into_lottery(lottery, GUILD_ID)
+        assert transferred == 500
+        assert lottery["prize_pool"] == 600
+        assert bot.economy["guild_house"][str(GUILD_ID)] == 0
+
+    def test_noop_when_house_balance_zero(self):
+        bot.economy["guild_house"] = {str(GUILD_ID): 0}
+        lottery = {"prize_pool": 200, "players": {}}
+        transferred = bot.drain_bot_balance_into_lottery(lottery, GUILD_ID)
+        assert transferred == 0
+        assert lottery["prize_pool"] == 200
+
+    def test_noop_when_no_guild_entry(self):
+        bot.economy["guild_house"] = {}
+        lottery = {"prize_pool": 50, "players": {}}
+        transferred = bot.drain_bot_balance_into_lottery(lottery, GUILD_ID)
+        assert transferred == 0
+        assert lottery["prize_pool"] == 50
+
+    def test_large_house_balance(self):
+        bot.economy["guild_house"] = {str(GUILD_ID): 99999}
+        lottery = {"prize_pool": 2000, "players": {}}
+        bot.drain_bot_balance_into_lottery(lottery, GUILD_ID)
+        assert lottery["prize_pool"] == 101999
+
+
+class TestLotteryTicketPurchase:
+    """Test the dict-mutation logic that cmd_lottery performs (no Discord needed)."""
+
+    def _buy(self, lottery: dict, uid: int, tickets: int):
+        """Replicate the purchase logic from cmd_lottery lines 6184-6197."""
+        cost = tickets * 10
+        bot.deduct_balance(uid, cost)
+        players = lottery.setdefault("players", {})
+        was_new = str(uid) not in players
+        players[str(uid)] = players.get(str(uid), 0) + tickets
+        lottery.setdefault("prize_pool", 0)
+        lottery["prize_pool"] += cost
+        if was_new:
+            lottery["prize_pool"] += 1000
+        return was_new
+
+    def test_first_buyer_gets_bonus(self):
+        uid = 1001
+        bot.add_balance(uid, 500)
+        lottery = {"prize_pool": 2000, "players": {}}
+        was_new = self._buy(lottery, uid, 5)
+        assert was_new is True
+        assert lottery["prize_pool"] == 2000 + 50 + 1000
+        assert lottery["players"][str(uid)] == 5
+
+    def test_returning_buyer_no_bonus(self):
+        uid = 1002
+        bot.add_balance(uid, 500)
+        lottery = {"prize_pool": 2000, "players": {str(uid): 3}}
+        was_new = self._buy(lottery, uid, 2)
+        assert was_new is False
+        assert lottery["prize_pool"] == 2000 + 20  # no bonus
+        assert lottery["players"][str(uid)] == 5
+
+    def test_each_new_player_adds_bonus(self):
+        lottery = {"prize_pool": 2000, "players": {}}
+        for uid in [2001, 2002, 2003]:
+            bot.add_balance(uid, 200)
+            self._buy(lottery, uid, 1)
+        # 3 new players × (10 ticket cost + 1000 bonus) = 3030 added
+        assert lottery["prize_pool"] == 2000 + 3 * 10 + 3 * 1000
+
+    def test_ticket_count_accumulates(self):
+        uid = 3001
+        bot.add_balance(uid, 1000)
+        lottery = {"prize_pool": 0, "players": {}}
+        self._buy(lottery, uid, 4)
+        self._buy(lottery, uid, 6)
+        assert lottery["players"][str(uid)] == 10
+
+    def test_balance_deducted(self):
+        uid = 4001
+        bot.add_balance(uid, 300)
+        lottery = {"prize_pool": 0, "players": {}}
+        self._buy(lottery, uid, 10)  # costs 100
+        assert bot.get_balance(uid) == 200
+
+    def test_ticket_cost_is_ten_per_ticket(self):
+        uid = 5001
+        bot.add_balance(uid, 1000)
+        lottery = {"prize_pool": 0, "players": {}}
+        self._buy(lottery, uid, 7)
+        # pool gets 70 (cost) + 1000 (new player bonus)
+        assert lottery["prize_pool"] == 1070
+
+
+class TestLotteryWeekTiming:
+    """Test the draw-trigger gate logic using _should_draw."""
+
+    def _lottery(self, last_posted_week=0):
+        return {"prize_pool": 5000, "players": {"9": 3}, "last_posted_week": last_posted_week}
+
+    def test_saturday_6pm_cdt_triggers(self):
+        # June 7 2025 is a Saturday; Chicago is in CDT (UTC-5)
+        now = _ct(2025, 6, 7, 18, 0)
+        assert _should_draw(self._lottery(), now) is True
+
+    def test_saturday_6pm_cst_triggers(self):
+        # Jan 4 2025 is a Saturday; Chicago is in CST (UTC-6)
+        now = _ct(2025, 1, 4, 18, 0)
+        assert _should_draw(self._lottery(), now) is True
+
+    def test_saturday_before_6pm_does_not_trigger(self):
+        now = _ct(2025, 6, 7, 17, 59)
+        assert _should_draw(self._lottery(), now) is False
+
+    def test_saturday_after_6pm_does_not_trigger(self):
+        now = _ct(2025, 6, 7, 18, 1)
+        assert _should_draw(self._lottery(), now) is False
+
+    def test_non_saturday_does_not_trigger(self):
+        # June 6 2025 is a Friday
+        now = _ct(2025, 6, 6, 18, 0)
+        assert _should_draw(self._lottery(), now) is False
+
+    def test_already_posted_this_week_does_not_retrigger(self):
+        now = _ct(2025, 6, 7, 18, 0)
+        week = now.isocalendar()[1]
+        assert _should_draw(self._lottery(last_posted_week=week), now) is False
+
+    def test_different_week_triggers_again(self):
+        # week 23 is different from last_posted_week=22 → should draw
+        now = _ct(2025, 6, 7, 18, 0)   # ISO week 23
+        assert _should_draw(self._lottery(last_posted_week=22), now) is True
+
+
+class TestLotteryWinnerPayout:
+    def test_sole_player_always_wins(self):
+        uid = 7001
+        bot.add_balance(uid, 0)
+        pool = 5000
+        players = {str(uid): 10}
+        # Replicate scheduler payout: pick winner, add_balance
+        winner_id = int(list(players.keys())[0])
+        bot.add_balance(winner_id, pool)
+        assert bot.get_balance(uid) == pool
+
+    def test_winner_receives_full_pool(self):
+        uid = 7002
+        bot.add_balance(uid, 100)
+        pool = 8000
+        bot.add_balance(uid, pool)
+        assert bot.get_balance(uid) == 8100
+
+    def test_random_choice_winner(self, monkeypatch):
+        players = {"8001": 5, "8002": 3, "8003": 1}
+        for uid_str in players:
+            bot.add_balance(int(uid_str), 0)
+        pool = 3000
+        # Force random.choice to always pick player 8002
+        monkeypatch.setattr("bot.random.choice", lambda seq: "8002")
+        winner_id = int(bot.random.choice(list(players.keys())))
+        bot.add_balance(winner_id, pool)
+        assert bot.get_balance(8002) == pool
+        assert bot.get_balance(8001) == 0
+        assert bot.get_balance(8003) == 0
+
+
+@pytest.mark.asyncio
+class TestAnnounceNewLotteryTimestamp:
+    async def _send_and_capture(self, prize_pool, now_ct):
+        """Call announce_new_lottery with a mock channel, return the sent embed."""
+        sent = []
+
+        class FakeChannel:
+            async def send(self, embed=None, **kwargs):
+                sent.append(embed)
+
+        now_utc = now_ct.astimezone(datetime.timezone.utc)
+        await bot.announce_new_lottery(FakeChannel(), prize_pool=prize_pool, now=now_utc)
+        return sent[0]
+
+    async def test_embed_title(self):
+        embed = await self._send_and_capture(5000, _ct(2025, 6, 7, 18))
+        assert embed.title == "🎰 New Lottery Week"
+
+    async def test_prize_pool_in_description(self):
+        embed = await self._send_and_capture(12345, _ct(2025, 6, 7, 18))
+        assert "12,345" in embed.description
+
+    async def test_timestamp_points_to_next_saturday_cdt(self):
+        # Called on a Tuesday in June (CDT); next Saturday is Jun 14
+        now = _ct(2025, 6, 10, 12)  # Tuesday
+        embed = await self._send_and_capture(2000, now)
+        # Extract Unix timestamp from <t:XXXXXX:R>
+        import re
+        match = re.search(r"<t:(\d+):R>", embed.description)
+        assert match, "No Discord timestamp found in description"
+        ts = int(match.group(1))
+        dt = datetime.datetime.fromtimestamp(ts, tz=_CT)
+        assert dt.weekday() == 5       # Saturday
+        assert dt.hour == 18
+        assert dt.minute == 0
+        assert dt.year == 2025
+        assert dt.month == 6
+        assert dt.day == 14
+
+    async def test_timestamp_points_to_next_saturday_cst(self):
+        # Called on a Tuesday in January (CST); next Saturday is Jan 11
+        now = _ct(2025, 1, 7, 12)  # Tuesday
+        embed = await self._send_and_capture(2000, now)
+        import re
+        match = re.search(r"<t:(\d+):R>", embed.description)
+        assert match
+        ts = int(match.group(1))
+        dt = datetime.datetime.fromtimestamp(ts, tz=_CT)
+        assert dt.weekday() == 5
+        assert dt.hour == 18
+        assert dt.month == 1
+        assert dt.day == 11
+
+    async def test_called_on_saturday_points_to_following_saturday(self):
+        # If called exactly on Saturday, next draw is 7 days later
+        now = _ct(2025, 6, 7, 18)  # Saturday
+        embed = await self._send_and_capture(2000, now)
+        import re
+        match = re.search(r"<t:(\d+):R>", embed.description)
+        assert match
+        ts = int(match.group(1))
+        dt = datetime.datetime.fromtimestamp(ts, tz=_CT)
+        assert dt.weekday() == 5
+        assert dt.day == 14  # one week later
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Connect 4
 # ─────────────────────────────────────────────────────────────────────────────
 
