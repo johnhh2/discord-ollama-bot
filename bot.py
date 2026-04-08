@@ -882,8 +882,9 @@ async def _edit_board(channel: discord.abc.Messageable, game: dict, embed: disco
         await channel.send(embed=embed)
 
 
-async def _execute_ollama_stream(channel, reply_to, messages, history, guild_id=None, model=None):
-    placeholder = await reply_to.reply("...")
+async def _execute_ollama_stream(channel, reply_to, messages, history, guild_id=None, model=None, placeholder=None):
+    if placeholder is None:
+        placeholder = await reply_to.reply("...")
     typing_task = asyncio.create_task(keep_typing(channel))
     author = f"{reply_to.author.display_name} ({reply_to.author.id})"
     command = reply_to.content[:100]
@@ -921,7 +922,8 @@ async def respond(
     history.append({"role": "user", "content": formatted_content})
     messages = [{"role": "system", "content": system_prompt}] + list(history)
 
-    await _execute_ollama_stream(channel, reply_to, messages, history, guild_id=guild_id)
+    placeholder = await channel.send("...") if isinstance(channel, discord.Thread) else None
+    await _execute_ollama_stream(channel, reply_to, messages, history, guild_id=guild_id, placeholder=placeholder)
 
 
 async def respond_roleplay(
@@ -951,7 +953,8 @@ async def respond_roleplay(
 
     guild_id = rp.get("guild_id")
     model = get_guild_roleplay_model(guild_id) if guild_id else OLLAMA_MODEL
-    await _execute_ollama_stream(channel, reply_to, messages, history, model=model)
+    placeholder = await channel.send("...") if isinstance(channel, discord.Thread) else None
+    await _execute_ollama_stream(channel, reply_to, messages, history, model=model, placeholder=placeholder)
 
 
 async def _run_race(channel, cid: int, race_msg: discord.Message):
@@ -3517,8 +3520,7 @@ async def cmd_ask(ctx: commands.Context, *, question: str = None):
     guild_id = ctx.guild.id if ctx.guild else None
     if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
         thread = await ctx.message.create_thread(name=f"ask: {question[:80]}")
-        seed_msg = await thread.send(f"**{ctx.author.display_name}:** {question}")
-        await respond(thread, ctx.author.id, question, seed_msg, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
+        await respond(thread, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
     else:
         await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
 
@@ -3543,10 +3545,36 @@ async def cmd_fanfic(ctx: commands.Context, *, prompt: str = None):
     guild_id = ctx.guild.id if ctx.guild else None
     if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
         thread = await ctx.message.create_thread(name=f"Fanfic: {prompt[:75]}")
-        seed_msg = await thread.send(f"**{ctx.author.display_name}:** {prompt}")
-        await respond(thread, ctx.author.id, prompt, seed_msg, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
+        await respond(thread, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
+        await thread.send(embed=emb("📖 Continue?", "Use `!continue` in this thread for the next chapter.", C_BLUE))
     else:
         await respond(ctx.channel, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
+
+
+@bot.command(name="continue")
+async def cmd_continue(ctx: commands.Context):
+    if not isinstance(ctx.channel, discord.Thread):
+        await ctx.send(embed=emb("❌ Threads Only", "`!continue` only works inside a fanfic thread.", C_RED))
+        return
+    if check_rate_limit(ctx.author.id):
+        await ctx.send("⚠️ Slow down! Please wait a moment before sending another message.")
+        return
+
+    uid = ctx.author.id
+    guild_id = ctx.guild.id if ctx.guild else None
+    history = channel_histories[ctx.channel.id]
+
+    if not history:
+        await ctx.send(embed=emb("❌ Nothing to Continue", "No fanfic found in this thread.", C_RED))
+        return
+
+    cost = 0 if uid in godmode_users else 10
+    if cost > 0 and not deduct_balance(uid, cost):
+        await ctx.send(embed=emb("💸 Insufficient Funds", f"Continuing costs **10 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        return
+
+    await respond(ctx.channel, uid, "Continue the story.", ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
+    await ctx.channel.send(embed=emb("📖 Continue?", "Use `!continue` again for another chapter.", C_BLUE))
 
 
 async def _wait_for_confirmations(
