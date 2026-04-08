@@ -155,6 +155,7 @@ def save_fanfic_histories():
 def load_economy() -> dict:
     data = _load_json(ECONOMY_FILE, {"users": {}, "last_daily_reset": None})
     data.setdefault("last_daily_reset", None)
+    data.setdefault("guild_house", {})
     return data
 
 
@@ -307,6 +308,29 @@ def load_lottery(guild_id: int) -> dict:
 
 def save_lottery(guild_id: int, lottery_data: dict):
     _save_json(f"data/lottery_{guild_id}.json", lottery_data)
+
+
+def get_guild_house_balance(guild_id: int) -> int:
+    return economy.get("guild_house", {}).get(str(guild_id), 0)
+
+
+def add_guild_house(guild_id: int, amount: int):
+    economy.setdefault("guild_house", {})
+    key = str(guild_id)
+    economy["guild_house"][key] = economy["guild_house"].get(key, 0) + amount
+    save_economy()
+
+
+def drain_bot_balance_into_lottery(lottery: dict, guild_id: int) -> int:
+    """Transfer this guild's house balance into the lottery prize pool. Returns the amount transferred."""
+    economy.setdefault("guild_house", {})
+    key = str(guild_id)
+    house_balance = economy["guild_house"].get(key, 0)
+    if house_balance > 0:
+        economy["guild_house"][key] = 0
+        save_economy()
+        lottery["prize_pool"] = lottery.get("prize_pool", 0) + house_balance
+    return house_balance
 
 
 async def announce_new_lottery(channel: discord.TextChannel, prize_pool: int = 2000, now: datetime.datetime = None):
@@ -5084,6 +5108,7 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
             lottery = load_lottery(ctx.guild.id)
             if lottery.get("last_posted_week", 0) != current_week:
                 lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
+                drain_bot_balance_into_lottery(lottery, ctx.guild.id)
                 save_lottery(ctx.guild.id, lottery)
 
                 # Announce to lottery channel
@@ -5612,18 +5637,31 @@ async def cmd_give(ctx: commands.Context, target: discord.Member = None, amount:
         amount = int(amount)
         assert amount != 0
         if amount < 0:
-            amount = max(amount, -1*get_balance(target.id))
+            if bot.user and target.id == bot.user.id:
+                amount = max(amount, -1 * get_guild_house_balance(ctx.guild.id if ctx.guild else 0))
+            else:
+                amount = max(amount, -1*get_balance(target.id))
     except (ValueError, AssertionError):
         await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a non-zero whole number.", C_RED))
         return
-    add_balance(target.id, amount)
-    action = "given" if amount > 0 else "removed"
-    await ctx.send(embed=emb(
-        "💸 Give",
-        f"**{abs(amount)} 🪙** {action} {'to' if amount > 0 else 'from'} **{target.display_name}**. "
-        f"New balance: {get_balance(target.id)} 🪙",
-        C_GOLD,
-    ))
+    if bot.user and target.id == bot.user.id and ctx.guild:
+        add_guild_house(ctx.guild.id, amount)
+        action = "given to" if amount > 0 else "removed from"
+        await ctx.send(embed=emb(
+            "💸 Give",
+            f"**{abs(amount)} 🪙** {action} the **house pot** for this server. "
+            f"House pot: {get_guild_house_balance(ctx.guild.id)} 🪙",
+            C_GOLD,
+        ))
+    else:
+        add_balance(target.id, amount)
+        action = "given" if amount > 0 else "removed"
+        await ctx.send(embed=emb(
+            "💸 Give",
+            f"**{abs(amount)} 🪙** {action} {'to' if amount > 0 else 'from'} **{target.display_name}**. "
+            f"New balance: {get_balance(target.id)} 🪙",
+            C_GOLD,
+        ))
 
 
 @bot.command(name="say")
@@ -6219,6 +6257,7 @@ async def lottery_scheduler():
 
                 # Reset lottery immediately for next week
                 lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
+                drain_bot_balance_into_lottery(lottery, guild.id)
                 save_lottery(guild.id, lottery)
 
                 await announce_new_lottery(channel, lottery["prize_pool"], now)
@@ -6290,6 +6329,7 @@ async def on_ready():
         # If not Saturday, initialize if no active lottery
         if now.weekday() != 5 and last_posted != current_week:
             lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
+            drain_bot_balance_into_lottery(lottery, guild.id)
             save_lottery(guild.id, lottery)
 
             try:
@@ -6325,6 +6365,7 @@ async def on_ready():
 
                 # Always reset lottery for new week on Saturday 6pm+
                 lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
+                drain_bot_balance_into_lottery(lottery, guild.id)
                 save_lottery(guild.id, lottery)
 
                 await announce_new_lottery(channel, lottery["prize_pool"], now)
