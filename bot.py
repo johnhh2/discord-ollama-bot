@@ -2404,8 +2404,12 @@ async def cmd_daily(ctx: commands.Context):
 @bot.command(name="balance", aliases=["bal", "b", "!", "$"])
 async def cmd_balance(ctx: commands.Context, target: discord.Member = None):
     target = target or ctx.author
-    bal = get_balance(target.id)
-    await ctx.send(embed=emb("💰 Balance", f"**{target.display_name}**: {bal} 🪙", C_GREEN))
+    if bot.user and target.id == bot.user.id and ctx.guild:
+        bal = get_guild_house_balance(ctx.guild.id)
+        await ctx.send(embed=emb("🏦 House Pot", f"**{ctx.guild.name}**: {bal} 🪙", C_GOLD))
+    else:
+        bal = get_balance(target.id)
+        await ctx.send(embed=emb("💰 Balance", f"**{target.display_name}**: {bal} 🪙", C_GREEN))
 
 
 @bot.command(name="leaderboard", aliases=["leaderboards", "lb"])
