@@ -3542,7 +3542,7 @@ async def cmd_fanfic(ctx: commands.Context, *, prompt: str = None):
 
     guild_id = ctx.guild.id if ctx.guild else None
     if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
-        thread = await ctx.message.create_thread(name=f"fanfic: {prompt[:75]}")
+        thread = await ctx.message.create_thread(name=f"Fanfic: {prompt[:75]}")
         seed_msg = await thread.send(f"**{ctx.author.display_name}:** {prompt}")
         await respond(thread, ctx.author.id, prompt, seed_msg, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
     else:
