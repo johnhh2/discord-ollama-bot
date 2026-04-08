@@ -59,6 +59,7 @@ LOTTERY_FILE = "data/lottery.json"
 GAMBLER_STREAK_FILE = "data/gambler_streak.json"
 RESTART_MSG_FILE = "data/restart_msg.json"
 FANFIC_HISTORIES_FILE = "data/fanfic_histories.json"
+ROLEPLAY_STATE_FILE = "data/roleplay_state.json"
 
 # Slot machine configuration
 SLOT_REEL = (
@@ -111,6 +112,25 @@ def load_channel_prompts() -> dict[int, str]:
 def save_channel_prompts(prompts: dict[int, str]):
     with open(CHANNEL_PROMPTS_FILE, "w") as f:
         json.dump({str(k): v for k, v in prompts.items()}, f, indent=2)
+
+
+def load_roleplay_state():
+    raw = _load_json(ROLEPLAY_STATE_FILE, {"roleplays": {}, "histories": {}})
+    roleplays = {}
+    for k, v in raw.get("roleplays", {}).items():
+        v["participants"] = set(v.get("participants", []))
+        roleplays[int(k)] = v
+    histories = {int(k): v for k, v in raw.get("histories", {}).items()}
+    return roleplays, histories
+
+def save_roleplay_state():
+    _save_json(ROLEPLAY_STATE_FILE, {
+        "roleplays": {
+            str(k): {**v, "participants": list(v.get("participants", set()))}
+            for k, v in active_roleplays.items()
+        },
+        "histories": {str(k): v for k, v in roleplay_histories.items()},
+    })
 
 
 def load_fanfic_histories() -> dict[int, list]:
@@ -965,6 +985,7 @@ async def respond_roleplay(
     model = get_guild_roleplay_model(guild_id) if guild_id else OLLAMA_MODEL
     placeholder = await channel.send("...") if isinstance(channel, discord.Thread) else None
     await _execute_ollama_stream(channel, reply_to, messages, history, model=model, placeholder=placeholder)
+    save_roleplay_state()
 
 
 async def _run_race(channel, cid: int, race_msg: discord.Message):
@@ -1120,6 +1141,9 @@ async def on_ready():
     for thread_id, messages in load_fanfic_histories().items():
         fanfic_thread_ids.add(thread_id)
         channel_histories[thread_id].extend(messages)
+    saved_roleplays, saved_rp_histories = load_roleplay_state()
+    active_roleplays.update(saved_roleplays)
+    roleplay_histories.update(saved_rp_histories)
 
 async def _roast_soundboard_spam(guild_id: int, user_id: int):
     """Generate a roast for soundboard spam using the ragebait system."""
@@ -3678,6 +3702,7 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
         "participants": {uid},
     }
     roleplay_histories[uid] = []
+    save_roleplay_state()
 
     # Invite flow and confirmation
     if invited_users:
@@ -3763,6 +3788,7 @@ async def cmd_rpg(ctx: commands.Context):
         "system_prompt": rpg_system_prompt,
     }
     roleplay_histories[uid] = []
+    save_roleplay_state()
 
     # Invite flow and confirmation
     if invited_users:
@@ -3929,12 +3955,14 @@ async def cmd_stop(ctx: commands.Context):
             del active_roleplays[uid]
             if history_owner in active_roleplays:
                 active_roleplays[history_owner]["participants"].discard(uid)
+            save_roleplay_state()
             stopped.append("🎭 Roleplay (left group)")
         else:
             # Host stopping — remove all participants and shared history
             for pid in list(rp.get("participants", {uid})):
                 active_roleplays.pop(pid, None)
             roleplay_histories.pop(uid, None)
+            save_roleplay_state()
             stopped.append("🎭 Roleplay")
 
     if uid in active_blackjack_games:
