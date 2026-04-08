@@ -806,6 +806,18 @@ async def insufficient_funds(ctx_or_send, uid: int, *, label: str = "") -> None:
         await ctx_or_send.send(embed=e)
 
 
+def resolve_role(guild: discord.Guild, token: str) -> discord.Role | None:
+    """Resolve a role from a mention (<@&ID>) or plain name string."""
+    token = token.strip()
+    if token.startswith("<@&") and token.endswith(">"):
+        try:
+            role_id = int(token[3:-1])
+            return guild.get_role(role_id)
+        except ValueError:
+            return None
+    return discord.utils.get(guild.roles, name=token)
+
+
 async def fetch_member(guild: discord.Guild, user_id: int) -> discord.Member | None:
     """Return a guild member by ID, falling back to an API fetch if not cached."""
     member = guild.get_member(user_id)
@@ -4397,7 +4409,11 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
                 await ctx.send(embed=emb("🛒 Bot Roles", f"Removable roles:\n{lines}\n\nUse `!shop removerole <name>` to delete one.", C_PURPLE))
             return
         name = " ".join(args)
-        role = discord.utils.find(lambda r: r.name.lower() == name.lower() and r.id in bot_roles, ctx.guild.roles)
+        role = resolve_role(ctx.guild, name) if len(args) == 1 else None
+        if role is None:
+            role = discord.utils.find(lambda r: r.name.lower() == name.lower() and r.id in bot_roles, ctx.guild.roles)
+        elif role.id not in bot_roles:
+            role = None
         if role is None:
             await ctx.send(embed=emb("❌ Not Found", f"No bot-created role named **{name}** exists.", C_RED))
             return
@@ -4619,12 +4635,13 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             return
 
         # Last token is the color; everything before is the role name
-        role_name = " ".join(args[:-1])
         color_str = args[-1]
-
-        role = discord.utils.find(lambda r: r.name.lower() == role_name.lower(), ctx.guild.roles)
+        role_token = " ".join(args[:-1])
+        role = resolve_role(ctx.guild, role_token) if len(args) == 2 else None
         if role is None:
-            await ctx.send(embed=emb("❌ Not Found", f"No role named **{role_name}** exists.", C_RED))
+            role = discord.utils.find(lambda r: r.name.lower() == role_token.lower(), ctx.guild.roles)
+        if role is None:
+            await ctx.send(embed=emb("❌ Not Found", f"No role named **{role_token}** exists.", C_RED))
             return
 
         try:
@@ -4754,7 +4771,11 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("🛒 Shop", f"Usage: `!shop {direction} <role name>`", C_PURPLE))
             return
         name = " ".join(args)
-        role = discord.utils.find(lambda r: r.name.lower() == name.lower() and r.id in bot_roles, ctx.guild.roles)
+        role = resolve_role(ctx.guild, name) if len(args) == 1 else None
+        if role is None:
+            role = discord.utils.find(lambda r: r.name.lower() == name.lower() and r.id in bot_roles, ctx.guild.roles)
+        elif role.id not in bot_roles:
+            role = None
         if role is None:
             await ctx.send(embed=emb("❌ Not Found", f"No bot-created role named **{name}** exists.", C_RED))
             return
