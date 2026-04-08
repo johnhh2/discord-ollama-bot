@@ -58,6 +58,7 @@ CURSE_FILE = "data/curse.json"
 LOTTERY_FILE = "data/lottery.json"
 GAMBLER_STREAK_FILE = "data/gambler_streak.json"
 RESTART_MSG_FILE = "data/restart_msg.json"
+EPHEMERAL_MSG_FILE = "data/ephemeral_msgs.json"
 FANFIC_HISTORIES_FILE = "data/fanfic_histories.json"
 ROLEPLAY_STATE_FILE = "data/roleplay_state.json"
 
@@ -100,6 +101,16 @@ def _save_json(filepath, data):
     with open(filepath, "w") as f:
         json.dump(data, f, indent=2)
 
+
+
+async def send_ephemeral(ctx: commands.Context, *args, **kwargs) -> discord.Message:
+    """Send a message with delete_after=60 and register it for cleanup on restart."""
+    kwargs["delete_after"] = 60
+    msg = await ctx.send(*args, **kwargs)
+    records = _load_json(EPHEMERAL_MSG_FILE, [])
+    records.append({"channel_id": msg.channel.id, "message_id": msg.id})
+    _save_json(EPHEMERAL_MSG_FILE, records)
+    return msg
 
 
 def load_channel_prompts() -> dict[int, str]:
@@ -1607,7 +1618,7 @@ async def cmd_help(ctx: commands.Context):
     if ctx.guild and get_guild_cfg(ctx.guild.id).get("gambler_role_enabled", False):
         utility_val += "\n`!gambler-role on|off` — Opt in/out of the Gamblers role"
     help_embed.add_field(name="🔧 Utility", inline=False, value=utility_val)
-    await ctx.send(embed=help_embed, delete_after=60)
+    await send_ephemeral(ctx, embed=help_embed)
 
 
 @bot.command(name="stats", aliases=["stat"])
@@ -1646,7 +1657,7 @@ async def cmd_stats(ctx: commands.Context):
         f"{indent}Coding model: `{coding_model}`\n"
         f"{indent}vRAM: {vram_text}"
     ), inline=True)
-    await ctx.send(embed=embed, delete_after=60)
+    await send_ephemeral(ctx, embed=embed)
 
 
 @bot.command(name="ai")
@@ -1744,7 +1755,7 @@ async def cmd_ai(ctx: commands.Context, state: str = None):
         inline=False
     )
 
-    await ctx.send(embed=embed, delete_after=60)
+    await send_ephemeral(ctx, embed=embed)
 
 
 @bot.command(name="game", aliases=["games"])
@@ -1793,7 +1804,7 @@ async def cmd_game(ctx: commands.Context):
         inline=False
     )
 
-    await ctx.send(embed=embed, delete_after=60)
+    await send_ephemeral(ctx, embed=embed)
 
 
 PUZZLE_REWARDS = {
@@ -2230,7 +2241,7 @@ async def cmd_adminhelp(ctx: commands.Context):
             "`!invite` — Display server invite link\n"
             "`!restart` — Restart the bot process"
         ))
-    await ctx.send(embed=admin_embed, delete_after=60)
+    await send_ephemeral(ctx, embed=admin_embed)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2597,7 +2608,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
             f"**Progressive Jackpot:** Grows by 2% of every bet!\n"
             f"**Current Jackpot: {slot_jackpot:,} 🪙**"
         ), inline=False)
-        await ctx.send(embed=embed, delete_after=60)
+        await send_ephemeral(ctx, embed=embed)
         return
 
     try:
@@ -2734,7 +2745,7 @@ async def cmd_slots_rewards(ctx: commands.Context):
         f"**Current Jackpot: {jackpot:,} 🪙**",
         inline=False)
 
-    await ctx.send(embed=embed, delete_after=60)
+    await send_ephemeral(ctx, embed=embed)
 
 
 @bot.command(name="rig", hidden=True)
@@ -4153,11 +4164,11 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
         if not sections:
-            await ctx.send(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE), delete_after=60)
+            await send_ephemeral(ctx, embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE))
             return
 
         desc = "\n\n".join(f"**{section}**\n" + "\n".join(items) for section, items in sections.items())
-        await ctx.send(embed=emb("🛒 Shop", desc, C_PURPLE), delete_after=60)
+        await send_ephemeral(ctx, embed=emb("🛒 Shop", desc, C_PURPLE))
         return
 
     _shop_cfg = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
@@ -4791,7 +4802,7 @@ async def cmd_settings(ctx: commands.Context, subcommand: str = None, *args):
             "`shop <item> on|off` • `rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` • `lottery-channel #channel / clear` • `soundboard-ratelimit add|remove @user|<userid> / list` • `gambler-role on|off`"
         )
         embed.set_footer(text=footer_text)
-        await ctx.send(embed=embed, delete_after=60)
+        await send_ephemeral(ctx, embed=embed)
         return
 
     # ── ai-channels ───────────────────────────────────────────────────────────
@@ -5100,14 +5111,14 @@ async def cmd_audit(ctx: commands.Context):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
         return
     if not audit_log:
-        await ctx.send(embed=emb("🔍 Audit Log", "No failed attempts recorded.", C_GREY), delete_after=60)
+        await send_ephemeral(ctx, embed=emb("🔍 Audit Log", "No failed attempts recorded.", C_GREY))
         return
     recent = list(audit_log)[-5:]
     lines = []
     for e in reversed(recent):
         ts = time.strftime("%H:%M:%S", time.localtime(e["time"]))
         lines.append(f"**{ts}** — {e['user']}\n`{e['command']}`\n_{e['error']}_")
-    await ctx.send(embed=emb("🔍 Audit Log", "\n\n".join(lines), C_GOLD), delete_after=60)
+    await send_ephemeral(ctx, embed=emb("🔍 Audit Log", "\n\n".join(lines), C_GOLD))
 
 
 @bot.command(name="clearbot")
@@ -5266,7 +5277,7 @@ async def cmd_saved(ctx: commands.Context):
         inline=False
     )
 
-    await ctx.send(embed=embed, delete_after=60)
+    await send_ephemeral(ctx, embed=embed)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -6239,36 +6250,22 @@ async def on_ready():
                 logging.error(f"[LOTTERY] Error resetting lottery in {guild.name}: {e}")
 
     # Clean up any ephemeral bot messages that weren't deleted before last shutdown.
-    EPHEMERAL_TITLES = {"📖 Commands", "⚙️ Admin Commands", "🛒 Shop", "⚙️ Server Settings", "🤖 AI Commands", "🎮 Games & Gambling", "🔍 Audit Log", "🎰 Slots", "🎰 Slots Payouts", "📊 Bot Stats", "💾 Saved Data"}
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
-    scan_after = now_utc - datetime.timedelta(minutes=10)
-    deleted = 0
-    logging.info(f"[STARTUP] Ephemeral cleanup: {len(bot.guilds)} guild(s), {sum(len(g.text_channels) for g in bot.guilds)} text channel(s)")
-    for guild in bot.guilds:
-        for channel in guild.text_channels:
+    records = _load_json(EPHEMERAL_MSG_FILE, [])
+    if records:
+        os.remove(EPHEMERAL_MSG_FILE)
+        deleted = 0
+        for record in records:
             try:
-                async for msg in channel.history(limit=50, after=scan_after, oldest_first=False):
-                    if msg.author != bot.user:
-                        continue
-                    if (now_utc - msg.created_at).total_seconds() < 60:
-                        continue
-                    for embed in msg.embeds:
-                        if embed.title in EPHEMERAL_TITLES:
-                            try:
-                                await msg.delete()
-                                deleted += 1
-                                logging.info(f"[STARTUP] Deleted leftover '{embed.title}' in #{channel.name} ({guild.name})")
-                            except discord.NotFound:
-                                pass
-                            except discord.Forbidden:
-                                logging.warning(f"[STARTUP] No permission to delete in #{channel.name} ({guild.name})")
-                            break
-            except discord.Forbidden:
+                channel = await bot.fetch_channel(record["channel_id"])
+                msg = await channel.fetch_message(record["message_id"])
+                await msg.delete()
+                deleted += 1
+            except (discord.NotFound, discord.Forbidden):
                 pass
-            except discord.HTTPException as e:
-                logging.warning(f"[STARTUP] HTTP error scanning #{channel.name} ({guild.name}): {e}")
-    if deleted:
-        logging.info(f"[STARTUP] Cleaned up {deleted} leftover ephemeral message(s).")
+            except Exception as e:
+                print(f"[STARTUP] Failed to delete ephemeral message: {e}")
+        if deleted:
+            print(f"[STARTUP] Cleaned up {deleted} leftover ephemeral message(s).")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
