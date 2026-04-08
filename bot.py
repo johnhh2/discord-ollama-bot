@@ -58,6 +58,7 @@ CURSE_FILE = "data/curse.json"
 LOTTERY_FILE = "data/lottery.json"
 GAMBLER_STREAK_FILE = "data/gambler_streak.json"
 RESTART_MSG_FILE = "data/restart_msg.json"
+FANFIC_HISTORIES_FILE = "data/fanfic_histories.json"
 
 # Slot machine configuration
 SLOT_REEL = (
@@ -110,6 +111,14 @@ def load_channel_prompts() -> dict[int, str]:
 def save_channel_prompts(prompts: dict[int, str]):
     with open(CHANNEL_PROMPTS_FILE, "w") as f:
         json.dump({str(k): v for k, v in prompts.items()}, f, indent=2)
+
+
+def load_fanfic_histories() -> dict[int, list]:
+    raw = _load_json(FANFIC_HISTORIES_FILE, {})
+    return {int(k): v for k, v in raw.items()}
+
+def save_fanfic_histories():
+    _save_json(FANFIC_HISTORIES_FILE, {str(k): list(v) for k, v in channel_histories.items() if k in fanfic_thread_ids})
 
 
 def load_economy() -> dict:
@@ -425,6 +434,7 @@ quote_log: list[str] = load_quote_log() # last 10 quotes used
 
 # ── Misc state ────────────────────────────────────────────────────────────────
 channel_histories: dict[int, deque] = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
+fanfic_thread_ids: set[int] = set()
 user_last_request: dict[int, float] = {}
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
@@ -1107,6 +1117,9 @@ async def on_ready():
         logging.info(f"Listening in channels: {ACTIVE_CHANNEL_IDS}")
     else:
         logging.info("Listening in all channels")
+    for thread_id, messages in load_fanfic_histories().items():
+        fanfic_thread_ids.add(thread_id)
+        channel_histories[thread_id].extend(messages)
 
 async def _roast_soundboard_spam(guild_id: int, user_id: int):
     """Generate a roast for soundboard spam using the ragebait system."""
@@ -3545,7 +3558,9 @@ async def cmd_fanfic(ctx: commands.Context, *, prompt: str = None):
     guild_id = ctx.guild.id if ctx.guild else None
     if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
         thread = await ctx.message.create_thread(name=f"Fanfic: {prompt[:75]}")
+        fanfic_thread_ids.add(thread.id)
         await respond(thread, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
+        save_fanfic_histories()
         await thread.send(embed=emb("📖 Continue?", "Use `!continue` in this thread for the next chapter.", C_BLUE))
     else:
         await respond(ctx.channel, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
@@ -3574,7 +3589,7 @@ async def cmd_continue(ctx: commands.Context):
         return
 
     await respond(ctx.channel, uid, "Continue the story.", ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
-    await ctx.channel.send(embed=emb("📖 Continue?", "Use `!continue` again for another chapter.", C_BLUE))
+    save_fanfic_histories()
 
 
 async def _wait_for_confirmations(
