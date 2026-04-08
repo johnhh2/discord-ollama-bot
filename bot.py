@@ -4254,9 +4254,6 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
             return
-        if is_insured(uid, "role"):
-            await ctx.send(embed=emb("🛡️ Protected", "You have insurance and can't be given new roles.", C_GOLD))
-            return
         cost = 0 if uid in godmode_users else 10000
         if cost > 0 and not deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **10,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
@@ -4503,7 +4500,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         expires_at = int(time.time() + 86400)
         insurance[key] = {
             "expires_at": expires_at,
-            "protected_from": ["ragebait", "mock", "nickname", "role"],
+            "protected_from": ["ragebait", "mock", "nickname"],
         }
         save_insurance()
         await ctx.send(embed=emb(
