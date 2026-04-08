@@ -2459,6 +2459,15 @@ async def cmd_pay(ctx: commands.Context, recipient: discord.Member = None, amoun
         return
     if not await shop_charge(ctx, ctx.author.id, amount):
         return
+    if bot.user and recipient.id == bot.user.id and ctx.guild:
+        add_guild_house(ctx.guild.id, amount)
+        await ctx.send(embed=emb(
+            "💸 Payment Sent",
+            f"**{ctx.author.display_name}** paid **{amount} 🪙** to the house pot.\n"
+            f"Your balance: **{get_balance(ctx.author.id)} 🪙**",
+            C_GREEN,
+        ))
+        return
     add_balance(recipient.id, amount)
     await ctx.send(embed=emb(
         "💸 Payment Sent",
