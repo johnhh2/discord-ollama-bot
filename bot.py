@@ -72,7 +72,7 @@ SLOT_REEL = (
 )
 SLOT_JACKPOT_SEED = 5_000
 SLOT_JACKPOT_CONTRIB = 0.02
-SLOT_HOUSE_CHANCE = 0.1
+SLOT_HOUSE_CHANCE = 0.05
 
 INITIAL_BOT_ADMIN_ID = 139928946044174336
 
@@ -2761,18 +2761,11 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         save_rigged_slots()
         reels = ["7️⃣", "7️⃣", "7️⃣"]
     else:
-        if random.random() < SLOT_HOUSE_CHANCE: # 10% back to house
-            remaining_types = SLOT_REEL[1:]
-            reels = []
-            for i in range(3):
-                choice = random.choice(remaining_types)
-                remaining_types.remove(choice)
-                reels += choice
+        if random.random() < SLOT_HOUSE_CHANCE: # 5% back to house
+            symbol_types = list(dict.fromkeys(SLOT_REEL))  # unique symbols, preserving order
+            reels = random.sample(symbol_types, 3)
         else: # normal
-            reels = [random.choice(SLOT_REEL[1:]) for _ in range(3)]
-
-            
-        reels = [random.choice(SLOT_REEL) for _ in range(3)]
+            reels = [random.choice(SLOT_REEL) for _ in range(3)]
     display = " | ".join(reels)
     label, mult = eval_slots(reels, amount)
 
