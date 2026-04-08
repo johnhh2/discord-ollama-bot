@@ -2418,7 +2418,8 @@ async def cmd_leaderboard(ctx: commands.Context):
         await ctx.send("Leaderboard is only available in servers.")
         return
     sorted_users = sorted(
-        economy["users"].items(), key=lambda x: x[1]["balance"], reverse=True
+        ((k, v) for k, v in economy["users"].items() if v["balance"] > 0),
+        key=lambda x: x[1]["balance"], reverse=True
     )[:10]
     if not sorted_users:
         await ctx.send(embed=emb("🪙 Leaderboard", "No users yet.", C_GREEN))
