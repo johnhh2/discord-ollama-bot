@@ -1573,6 +1573,8 @@ async def cmd_help(ctx: commands.Context):
         "`!ai` — View AI connection status and command info\n"
         "`!ask <question>` — Ask the AI a question\n"
         "`!fanfic <prompt>` — Generate a steamy fan fiction story (costs 20 🪙)\n"
+        "`!continue` — Generate the next chapter in a fanfic thread (costs 10 🪙)\n"
+        "`!tldr` — Summarize the last AI response in a fanfic or roleplay thread\n"
         "`!roleplay <character prompt> [@user1 @user2]` — Start a roleplay (costs 50 🪙, invite others with mentions)\n"
         "`!rpg [@user1 @user2]` — Start an interactive RPG adventure (costs 50 🪙, invite others with mentions)"
     ))
@@ -1701,7 +1703,7 @@ async def cmd_ai(ctx: commands.Context, state: str = None):
         name="📖 !fanfic",
         value=(
             f"Generate a steamy fan fiction story on any topic\n"
-            f"Cost: **20 🪙**\n"
+            f"Cost: **20 🪙** · `!continue` for next chapter (10 🪙) · `!tldr` to summarize\n"
             f"Model: `{ask_model}`\n"
             f"Usage: `!fanfic <prompt>`"
         ),
@@ -1712,7 +1714,7 @@ async def cmd_ai(ctx: commands.Context, state: str = None):
         name="🎭 !roleplay",
         value=(
             f"Start an AI roleplay session\n"
-            f"Cost: **50 🪙**\n"
+            f"Cost: **50 🪙** · `!tldr` to summarize the last response\n"
             f"Model: `{roleplay_model}`\n"
             f"Usage: `!roleplay <character> [@user1 @user2 ...]`"
         ),
@@ -3571,7 +3573,7 @@ async def cmd_fanfic(ctx: commands.Context, *, prompt: str = None):
         fanfic_thread_ids.add(thread.id)
         await respond(thread, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
         save_fanfic_histories()
-        await thread.send(embed=emb("📖 Continue?", "Use `!continue` in this thread for the next chapter.", C_BLUE))
+        await thread.send(embed=emb("📖 Continue?", "Use `!continue` for the next chapter · `!tldr` to summarize.", C_BLUE))
     else:
         await respond(ctx.channel, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
 
@@ -3600,6 +3602,57 @@ async def cmd_continue(ctx: commands.Context):
 
     await respond(ctx.channel, uid, "Continue the story.", ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
     save_fanfic_histories()
+
+
+@bot.command(name="tldr")
+async def cmd_tldr(ctx: commands.Context):
+    if not isinstance(ctx.channel, discord.Thread):
+        await ctx.send(embed=emb("❌ Threads Only", "`!tldr` only works inside a fanfic or roleplay thread.", C_RED))
+        return
+
+    uid = ctx.author.id
+    guild_id = ctx.guild.id if ctx.guild else None
+    last_text = None
+
+    # Roleplay/RPG thread
+    if uid in active_roleplays and active_roleplays[uid].get("channel_id") == ctx.channel.id:
+        history_key = active_roleplays[uid].get("history_owner", uid)
+        history = roleplay_histories.get(history_key, [])
+        for entry in reversed(history):
+            if entry["role"] == "assistant":
+                last_text = entry["content"]
+                break
+
+    # Fanfic thread
+    if last_text is None:
+        history = channel_histories[ctx.channel.id]
+        for entry in reversed(history):
+            if entry["role"] == "assistant":
+                last_text = entry["content"]
+                break
+
+    if not last_text:
+        await ctx.send(embed=emb("❌ Nothing to Summarize", "No AI response found in this thread yet.", C_RED))
+        return
+
+    tldr_prompt = [
+        {"role": "system", "content": "You are a concise summarizer. Summarize the following story excerpt in 2-3 sentences, capturing the key events and mood. Do not editorialize or add commentary — just summarize."},
+        {"role": "user", "content": f"Summarize this:\n\n{last_text}"},
+    ]
+
+    placeholder = await ctx.channel.send("📝 Summarizing...")
+    typing_task = asyncio.create_task(keep_typing(ctx.channel))
+    try:
+        async with aiohttp.ClientSession() as session:
+            model = get_guild_ask_model(guild_id) if guild_id else OLLAMA_MODEL
+            summary = await stream_ollama(session, tldr_prompt, placeholder, guild_id=guild_id, model=model)
+        await finalize(placeholder, ctx.channel, f"**TL;DR:** {summary}")
+    except aiohttp.ClientError:
+        await placeholder.edit(content="", embed=emb("", "The AI is currently offline.", C_RED))
+    except Exception as e:
+        await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
+    finally:
+        typing_task.cancel()
 
 
 async def _wait_for_confirmations(
