@@ -1131,20 +1131,6 @@ async def on_command_completion(ctx: commands.Context):
     stats_commands_ran += 1
 
 
-@bot.event
-async def on_ready():
-    logging.info(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    if ACTIVE_CHANNEL_IDS:
-        logging.info(f"Listening in channels: {ACTIVE_CHANNEL_IDS}")
-    else:
-        logging.info("Listening in all channels")
-    for thread_id, messages in load_fanfic_histories().items():
-        fanfic_thread_ids.add(thread_id)
-        channel_histories[thread_id].extend(messages)
-    saved_roleplays, saved_rp_histories = load_roleplay_state()
-    active_roleplays.update(saved_roleplays)
-    roleplay_histories.update(saved_rp_histories)
-
 async def _roast_soundboard_spam(guild_id: int, user_id: int):
     """Generate a roast for soundboard spam using the ragebait system."""
     guild = bot.get_guild(guild_id)
@@ -3826,8 +3812,10 @@ async def cmd_rpg(ctx: commands.Context):
             messages = [{"role": "system", "content": rpg_system_prompt}]
             full_response = await stream_ollama(session, messages, placeholder, model=model)
 
-        # Add to history
+        # Add to history with a synthetic user turn so the conversation structure is valid
+        roleplay_histories[uid].append({"role": "user", "content": "Begin the adventure."})
         roleplay_histories[uid].append({"role": "assistant", "content": full_response})
+        save_roleplay_state()
         await finalize(placeholder, dest, full_response)
     except aiohttp.ClientError as e:
         _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
@@ -6091,6 +6079,13 @@ async def on_ready():
         logging.info(f"Listening in channels: {ACTIVE_CHANNEL_IDS}")
     else:
         logging.info("Listening in all channels")
+
+    for thread_id, messages in load_fanfic_histories().items():
+        fanfic_thread_ids.add(thread_id)
+        channel_histories[thread_id].extend(messages)
+    saved_roleplays, saved_rp_histories = load_roleplay_state()
+    active_roleplays.update(saved_roleplays)
+    roleplay_histories.update(saved_rp_histories)
 
     if not lottery_scheduler.is_running():
         lottery_scheduler.start()
