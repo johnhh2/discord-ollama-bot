@@ -806,6 +806,17 @@ async def insufficient_funds(ctx_or_send, uid: int, *, label: str = "") -> None:
         await ctx_or_send.send(embed=e)
 
 
+async def fetch_member(guild: discord.Guild, user_id: int) -> discord.Member | None:
+    """Return a guild member by ID, falling back to an API fetch if not cached."""
+    member = guild.get_member(user_id)
+    if member is None:
+        try:
+            member = await guild.fetch_member(user_id)
+        except (discord.NotFound, discord.HTTPException):
+            return None
+    return member
+
+
 async def toggle_member_role(member: discord.Member, role: discord.Role,
                              add: bool, reason: str = "") -> bool:
     """Add or remove *role* from *member*.  Returns True on success, False on Discord error.
@@ -1234,7 +1245,7 @@ async def _roast_soundboard_spam(guild_id: int, user_id: int):
     guild = bot.get_guild(guild_id)
     if guild is None:
         return
-    member = guild.get_member(user_id)
+    member = await fetch_member(guild, user_id)
     if member is None:
         return
 
@@ -1303,7 +1314,7 @@ async def _handle_soundboard_ratelimit(guild_id: int, user_id: int):
     guild = bot.get_guild(guild_id)
     if guild is None:
         return
-    member = guild.get_member(user_id)
+    member = await fetch_member(guild, user_id)
     if member is None or member.voice is None:
         return
 
@@ -2377,17 +2388,9 @@ async def cmd_leaderboard(ctx: commands.Context):
     for i, (uid_str, data) in enumerate(sorted_users):
         uid_int = int(uid_str)
         name = None
-        # Try guild cache first
-        member = ctx.guild.get_member(uid_int)
+        member = await fetch_member(ctx.guild, uid_int)
         if member:
             name = member.display_name
-        # Try fetching from guild if not cached
-        if name is None:
-            try:
-                member = await ctx.guild.fetch_member(uid_int)
-                name = member.display_name
-            except (discord.NotFound, discord.HTTPException):
-                pass
         # Try global user lookup
         if name is None:
             try:
@@ -4337,16 +4340,10 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if target_id is None:
             await ctx.send(embed=emb("❌ Invalid User", "First argument must be a @mention or user ID.", C_RED))
             return
-        target = ctx.guild.get_member(target_id)
+        target = await fetch_member(ctx.guild, target_id)
         if target is None:
-            try:
-                target = await ctx.guild.fetch_member(target_id)
-            except discord.NotFound:
-                await ctx.send(embed=emb("❌ User Not Found", "That user isn't in this server.", C_RED))
-                return
-            except discord.HTTPException:
-                await ctx.send(embed=emb("❌ User Not Found", "That user isn't in this server.", C_RED))
-                return
+            await ctx.send(embed=emb("❌ User Not Found", "That user isn't in this server.", C_RED))
+            return
         hex_color = args[-1].lstrip("#")
         name = " ".join(args[1:-1])
         if "admin" in name.lower():
@@ -4666,7 +4663,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             return
 
         try:
-            member = ctx.guild.get_member(target.id)
+            member = await fetch_member(ctx.guild, target.id)
             if not member:
                 await ctx.send(embed=emb("❌ User Not Found", f"Could not find **{target.display_name}** in this server.", C_RED))
                 return
