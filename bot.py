@@ -378,56 +378,47 @@ async def _wrong_channel_reply(ctx_or_msg, text: str) -> None:
     asyncio.create_task(_delete_after(reply, 10.0))
 
 
-async def check_game_channel(ctx: commands.Context, label: str = "Games") -> bool:
-    """Return True (and send a timed reply) if the current channel is not a game channel."""
+async def check_channel(ctx: commands.Context, *config_keys: str, label: str = "These") -> bool:
+    """Return True (and send a timed reply) if the current channel is not in any of the configured channel lists.
+
+    Checks each config_key in order, unions all resulting channel IDs.  If the
+    union is non-empty and the current channel is not in it, the user gets a
+    'wrong channel' reply and True is returned (caller should ``return``).
+    Passing multiple keys is used when a command is valid in multiple channel
+    types (e.g. puzzle = ai_channels | game_channels).
+    A fallback key can be expressed by passing two keys where the second is only
+    checked when the first is empty — callers that need that behaviour pass both.
+    """
     if not ctx.guild:
         return False
     cfg = get_guild_cfg(ctx.guild.id)
-    game_channels = cfg.get("game_channels", [])
-    if game_channels and ctx.channel.id not in game_channels:
-        names = " ".join(f"<#{cid}>" for cid in game_channels)
+    allowed: set[int] = set()
+    for key in config_keys:
+        allowed |= set(cfg.get(key, []))
+    if allowed and ctx.channel.id not in allowed:
+        names = " ".join(f"<#{cid}>" for cid in allowed)
         await _wrong_channel_reply(ctx, f"{label} commands are only allowed in: {names}")
         return True
     return False
 
 
+async def check_game_channel(ctx: commands.Context, label: str = "Games") -> bool:
+    return await check_channel(ctx, "game_channels", label=label)
+
+
 async def check_ai_channel(ctx: commands.Context) -> bool:
-    """Return True (and send a timed reply) if the current channel is not an AI channel."""
-    if not ctx.guild:
-        return False
-    cfg = get_guild_cfg(ctx.guild.id)
-    ai_channels = cfg.get("ai_channels", [])
-    if ai_channels and ctx.channel.id not in ai_channels:
-        names = " ".join(f"<#{cid}>" for cid in ai_channels)
-        await _wrong_channel_reply(ctx, f"AI commands are only allowed in: {names}")
-        return True
-    return False
+    return await check_channel(ctx, "ai_channels", label="AI")
 
 
 async def check_puzzle_channel(ctx: commands.Context) -> bool:
-    """Return True (and send a timed reply) if the current channel is not an AI, game, or gambling channel."""
-    if not ctx.guild:
-        return False
-    cfg = get_guild_cfg(ctx.guild.id)
-    ai_channels = cfg.get("ai_channels", [])
-    game_channels = cfg.get("game_channels", [])
-    allowed = set(ai_channels) | set(game_channels)
-    if allowed and ctx.channel.id not in allowed:
-        names = " ".join(f"<#{cid}>" for cid in allowed)
-        await _wrong_channel_reply(ctx, f"Puzzle commands are only allowed in: {names}")
-        return True
-    return False
+    return await check_channel(ctx, "ai_channels", "game_channels", label="Puzzle")
 
 
 async def check_chess_channel(ctx: commands.Context) -> bool:
-    """Return True (and send a timed reply) if the current channel is not a chess/game channel."""
-    if not ctx.guild:
-        return False
-    cfg = get_guild_cfg(ctx.guild.id)
-    chess_channels = cfg.get("chess_channels", [])
-    effective = chess_channels or cfg.get("game_channels", [])
-    if effective and ctx.channel.id not in effective:
-        names = " ".join(f"<#{cid}>" for cid in effective)
+    cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
+    chess_channels = cfg.get("chess_channels", []) or cfg.get("game_channels", [])
+    if chess_channels and ctx.channel.id not in chess_channels:
+        names = " ".join(f"<#{cid}>" for cid in chess_channels)
         await _wrong_channel_reply(ctx, f"Chess is only allowed in: {names}")
         return True
     return False
@@ -750,6 +741,105 @@ def emb(title: str, description: str, color: int) -> discord.Embed:
     return discord.Embed(title=title, description=description, color=color)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared command helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def parse_amount(ctx: commands.Context, value: str, min_val: int = 1,
+                       error_msg: str = "Please provide a positive whole number amount.") -> int | None:
+    """Parse a string as a positive integer >= min_val.  Sends error_msg (if non-empty) and returns None on failure."""
+    try:
+        amount = int(value)
+        assert amount >= min_val
+        return amount
+    except (ValueError, AssertionError):
+        if error_msg:
+            await ctx.send(error_msg)
+        return None
+
+
+# AI feature costs (coins).  0 = free.
+FEATURE_COSTS: dict[str, int] = {
+    "ask": 10,
+    "fanfic": 20,
+    "continue": 10,
+    "roleplay": 50,
+    "rpg": 50,
+}
+
+_FEATURE_LABELS: dict[str, str] = {
+    "ask": "Asking",
+    "fanfic": "Fan fiction",
+    "continue": "Continuing",
+    "roleplay": "Starting a roleplay",
+    "rpg": "Starting an RPG adventure",
+}
+
+
+async def enforce_cost(ctx: commands.Context, feature: str) -> bool:
+    """Deduct the coin cost for *feature*.  Returns True if the user can proceed.
+    Godmode users are never charged.  Sends an 'Insufficient Funds' embed and
+    returns False when the user can't afford it."""
+    uid = ctx.author.id
+    cost = 0 if uid in godmode_users else FEATURE_COSTS.get(feature, 0)
+    if cost == 0:
+        return True
+    if not deduct_balance(uid, cost):
+        label = _FEATURE_LABELS.get(feature, feature.title())
+        await ctx.send(embed=emb(
+            "💸 Insufficient Funds",
+            f"{label} costs **{cost} 🪙**. Balance: {get_balance(uid)} 🪙",
+            C_RED,
+        ))
+        return False
+    return True
+
+
+async def insufficient_funds(ctx_or_send, uid: int, *, label: str = "") -> None:
+    """Send a standard Insufficient Funds embed.  *ctx_or_send* may be a
+    ``commands.Context`` or any callable that accepts an ``embed=`` kwarg."""
+    desc = f"{label + ' ' if label else ''}Balance: {get_balance(uid)} 🪙"
+    e = emb("💸 Insufficient Funds", desc, C_RED)
+    if callable(ctx_or_send) and not isinstance(ctx_or_send, commands.Context):
+        await ctx_or_send(embed=e)
+    else:
+        await ctx_or_send.send(embed=e)
+
+
+async def toggle_member_role(member: discord.Member, role: discord.Role,
+                             add: bool, reason: str = "") -> bool:
+    """Add or remove *role* from *member*.  Returns True on success, False on Discord error.
+    No-ops silently if the member already has / doesn't have the role."""
+    try:
+        if add:
+            if role not in member.roles:
+                await member.add_roles(role, reason=reason)
+        else:
+            if role in member.roles:
+                await member.remove_roles(role, reason=reason)
+        return True
+    except Exception:
+        return False
+
+
+async def shop_charge(ctx: commands.Context, uid: int, cost: int,
+                      cost_label: str | None = None) -> bool:
+    """Check and deduct *cost* coins for a shop action.  Godmode users are free.
+    Returns True if the user can proceed; sends an Insufficient Funds embed and
+    returns False otherwise."""
+    if uid in godmode_users or cost == 0:
+        return True
+    if not deduct_balance(uid, cost):
+        label_str = f"This costs **{cost_label or f'{cost:,}'} 🪙**. "
+        await ctx.send(embed=emb(
+            "💸 Insufficient Funds",
+            f"{label_str}Balance: {get_balance(uid)} 🪙",
+            C_RED,
+        ))
+        return False
+    return True
+
+
 def _render_race(game: dict) -> str:
     """Render the race board with each player's lane."""
     lines = []
@@ -771,6 +861,8 @@ async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | No
     if role is None:
         try:
             role = await guild.create_role(name="Gamblers", hoist=True, reason="Auto-created for gambler role tracking")
+            bot_top = guild.me.top_role.position
+            await guild.edit_role_positions({role: max(1, bot_top - 1)})
         except Exception:
             return None
     return role
@@ -789,15 +881,12 @@ async def maybe_assign_gambler_role(guild: discord.Guild, member: discord.Member
     if last_full_day == yesterday:
         role = await get_or_create_gamblers_role(guild)
         if role and role not in member.roles:
-            try:
-                await member.add_roles(role, reason="Used all 3 scratchoffs 2 days in a row")
+            if await toggle_member_role(member, role, True, reason="Used all 3 scratchoffs 2 days in a row"):
                 await channel.send(
                     f"🎲 {member.mention} You've been automatically added to the **Gamblers** role for using all 3 scratchoffs 2 days in a row! "
                     f"You'll be pinged whenever a progressive jackpot is won. "
                     f"Use `!gambler-role off` to opt out."
                 )
-            except Exception:
-                pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1548,24 +1637,19 @@ async def cmd_gambler_role(ctx: commands.Context, toggle: str = None):
         await ctx.send(embed=emb("❌ Error", "Could not find or create the Gamblers role.", C_RED))
         return
 
-    if toggle.lower() == "on":
-        if role in ctx.author.roles:
-            await ctx.send(embed=emb("🎲 Gambler Role", "You already have the Gamblers role.", C_GREY))
-        else:
-            try:
-                await ctx.author.add_roles(role, reason="User opted in via !gambler-role")
-                await ctx.send(embed=emb("🎲 Gambler Role", "✅ You've been added to the **Gamblers** role. You'll be pinged when a progressive jackpot is won!", C_GREEN))
-            except Exception:
-                await ctx.send(embed=emb("❌ Error", "Failed to add the role.", C_RED))
+    adding = toggle.lower() == "on"
+    already = role in ctx.author.roles
+    if adding and already:
+        await ctx.send(embed=emb("🎲 Gambler Role", "You already have the Gamblers role.", C_GREY))
+    elif not adding and not already:
+        await ctx.send(embed=emb("🎲 Gambler Role", "You don't have the Gamblers role.", C_GREY))
     else:
-        if role not in ctx.author.roles:
-            await ctx.send(embed=emb("🎲 Gambler Role", "You don't have the Gamblers role.", C_GREY))
+        reason = "User opted in via !gambler-role" if adding else "User opted out via !gambler-role"
+        if await toggle_member_role(ctx.author, role, adding, reason=reason):
+            msg = "✅ You've been added to the **Gamblers** role. You'll be pinged when a progressive jackpot is won!" if adding else "✅ You've been removed from the **Gamblers** role."
+            await ctx.send(embed=emb("🎲 Gambler Role", msg, C_GREEN))
         else:
-            try:
-                await ctx.author.remove_roles(role, reason="User opted out via !gambler-role")
-                await ctx.send(embed=emb("🎲 Gambler Role", "✅ You've been removed from the **Gamblers** role.", C_GREEN))
-            except Exception:
-                await ctx.send(embed=emb("❌ Error", "Failed to remove the role.", C_RED))
+            await ctx.send(embed=emb("❌ Error", f"Failed to {'add' if adding else 'remove'} the role.", C_RED))
 
 
 @bot.command(name="help", aliases=["h"])
@@ -2329,14 +2413,10 @@ async def cmd_pay(ctx: commands.Context, recipient: discord.Member = None, amoun
     if recipient.id == ctx.author.id:
         await ctx.send("You can't pay yourself.")
         return
-    try:
-        amount = int(amount)
-        assert amount > 0
-    except (ValueError, AssertionError):
-        await ctx.send("Please provide a positive whole number amount.")
+    amount = await parse_amount(ctx, amount)
+    if amount is None:
         return
-    if not deduct_balance(ctx.author.id, amount):
-        await ctx.send(embed=emb("💸 Insufficient Funds", f"Balance: {get_balance(ctx.author.id)} 🪙", C_RED))
+    if not await shop_charge(ctx, ctx.author.id, amount):
         return
     add_balance(recipient.id, amount)
     await ctx.send(embed=emb(
@@ -2359,14 +2439,10 @@ async def cmd_flip(ctx: commands.Context, amount: str = None):
     if amount is None:
         await ctx.send("Usage: `!flip <amount>`")
         return
-    try:
-        amount = int(amount)
-        assert amount > 0
-    except (ValueError, AssertionError):
-        await ctx.send("Please provide a positive whole number amount.")
+    amount = await parse_amount(ctx, amount)
+    if amount is None:
         return
-    if uid not in godmode_users and not deduct_balance(uid, amount):
-        await ctx.send(embed=emb("💸 Insufficient Funds", f"Balance: {get_balance(uid)} 🪙", C_RED))
+    if not await shop_charge(ctx, uid, amount):
         return
     win = random.random() < 0.5
     if win:
@@ -2611,19 +2687,16 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         await send_ephemeral(ctx, embed=embed)
         return
 
-    try:
-        amount = int(amount)
-        assert amount > 0
-    except (ValueError, AssertionError):
-        await ctx.send(embed=emb("❌ Invalid Bet", f"Please provide a positive amount.", C_RED))
+    amount = await parse_amount(ctx, amount, error_msg="")  # slots sends its own embed below
+    if amount is None:
+        await ctx.send(embed=emb("❌ Invalid Bet", "Please provide a positive amount.", C_RED))
         return
 
     if amount < 25:
         await ctx.send(embed=emb("❌ Minimum Bet", f"Minimum bet is **25 🪙**.", C_RED))
         return
 
-    if uid not in godmode_users and not deduct_balance(uid, amount):
-        await ctx.send(embed=emb("💸 Insufficient Funds", f"Balance: {get_balance(uid)} 🪙", C_RED))
+    if not await shop_charge(ctx, uid, amount):
         return
 
     # Jackpot contribution (2% of every bet, rounded up)
@@ -2974,6 +3047,15 @@ def is_valid_chess_move(board: list, from_r: int, from_c: int, to_r: int, to_c: 
     return True
 
 
+def hangman_pot_msg(word: str, player_count: int) -> str:
+    """Return a human-readable 'you would've won/split X' string for hangman game-over."""
+    total = calculate_hangman_reward(word)
+    per = total // player_count
+    if player_count == 1:
+        return f"💰 You would've won **{total} 🪙**"
+    return f"💰 You would've split **{total} 🪙** ({per} each)"
+
+
 def calculate_hangman_reward(word: str) -> int:
     """Calculate hangman reward based on word difficulty.
 
@@ -3011,17 +3093,13 @@ async def cmd_blackjack(ctx: commands.Context, amount: str = None):
     if amount is None:
         await ctx.send("Usage: `!blackjack <amount>`")
         return
-    try:
-        amount = int(amount)
-        assert amount > 0
-    except (ValueError, AssertionError):
-        await ctx.send("Please provide a positive whole number amount.")
+    amount = await parse_amount(ctx, amount)
+    if amount is None:
         return
     if uid in active_blackjack_games:
         await ctx.send(embed=emb("🃏 Already Playing", "Just type `hit` or `stand`.", C_GOLD))
         return
-    if uid not in godmode_users and not deduct_balance(uid, amount):
-        await ctx.send(embed=emb("💸 Insufficient Funds", f"Balance: {get_balance(uid)} 🪙", C_RED))
+    if not await shop_charge(ctx, uid, amount):
         return
     deck = new_deck()
     player = [draw_card(deck), draw_card(deck)]
@@ -3112,11 +3190,8 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             game["wrong_guesses"] += 1
             if game["wrong_guesses"] >= 6:
                 word = game["word"]
-                total_reward = calculate_hangman_reward(word)
-                active_player_count = len(game["active_players"])
-                per_player = total_reward // active_player_count
                 game["last_move"] = f"{name} guessed `{guess}` — Game over! The word was `{word}`"
-                pot_msg = f"💰 You would've won **{total_reward} 🪙**" if active_player_count == 1 else f"💰 You would've split **{total_reward} 🪙** ({per_player} each)"
+                pot_msg = hangman_pot_msg(word, len(game["active_players"]))
                 await _edit_board(channel, game, emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n{pot_msg}\n\n**Last move:** {game['last_move']}", C_RED))
                 del active_hangman_games[cid]
             else:
@@ -3142,11 +3217,8 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
         game["wrong_guesses"] += 1
         if game["wrong_guesses"] >= 6:
             word = game["word"]
-            total_reward = calculate_hangman_reward(word)
-            active_player_count = len(game["active_players"])
-            per_player = total_reward // active_player_count
             game["last_move"] = f"{name} guessed `{guess}` — Game over! The word was `{word}`"
-            pot_msg = f"💰 You would've won **{total_reward} 🪙**" if active_player_count == 1 else f"💰 You would've split **{total_reward} 🪙** ({per_player} each)"
+            pot_msg = hangman_pot_msg(word, len(game["active_players"]))
             await _edit_board(channel, game, emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n{pot_msg}\n\n**Last move:** {game['last_move']}", C_RED))
             del active_hangman_games[cid]
         else:
@@ -3200,6 +3272,21 @@ async def cmd_guess(ctx: commands.Context, *, guess: str = None):
     await _process_hangman_guess(ctx.channel, ctx.author.id, cid, guess.lower().strip(), ctx.author.display_name)
 
 
+async def _send_game_board(ctx: commands.Context, game: dict, title: str,
+                           board_text: str, player1_desc: str, player2_desc: str,
+                           controls: str, amount: int) -> None:
+    """Send the initial PVP board message and store its ID in game['board_msg_id']."""
+    wager_info = f"\nWager: {amount} 🪙 each" if amount > 0 else ""
+    desc = (
+        f"{board_text}\n\n"
+        f"{player1_desc} vs {player2_desc}{wager_info}\n"
+        f"{ctx.author.mention}'s turn. {controls}\n\n"
+        f"**Last move:** {game['last_move']}"
+    )
+    msg = await ctx.send(embed=emb(title, desc, C_BLUE))
+    game["board_msg_id"] = msg.id
+
+
 async def _setup_pvp_game(ctx, opponent, amount, invite_title):
     """Validates opponent, deducts wagers, waits for confirmation.
     Returns True if game should proceed; False if an error was already sent."""
@@ -3218,7 +3305,7 @@ async def _setup_pvp_game(ctx, opponent, amount, invite_title):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"You need {amount} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
             return False
         if not deduct_balance(opponent.id, amount):
-            add_balance(uid, amount)
+            add_balance(uid, amount)  # refund challenger
             await ctx.send(embed=emb("💸 Insufficient Funds", f"{opponent.display_name} needs {amount} 🪙. Balance: {get_balance(opponent.id)} 🪙", C_RED))
             return False
     wager_text = f" for {amount} 🪙" if amount > 0 else ""
@@ -3255,10 +3342,10 @@ async def cmd_ttt(ctx: commands.Context, opponent: discord.User = None, amount: 
         "board_msg_id": None,
         "last_move": f"{ctx.author.display_name}'s turn",
     }
-    game = active_ttt_games[cid]
-    wager_info = f"\nWager: {amount} 🪙 each" if amount > 0 else ""
-    board_msg = await ctx.send(embed=emb("🎮 Tic-Tac-Toe", build_ttt_display(game) + f"\n\n{ctx.author.mention} (❌) vs {opponent.mention} (⭕){wager_info}\n{ctx.author.mention}'s turn. Use `!m <1-9>`\n\n**Last move:** {game['last_move']}", C_BLUE))
-    game["board_msg_id"] = board_msg.id
+    await _send_game_board(ctx, active_ttt_games[cid], "🎮 Tic-Tac-Toe",
+                           build_ttt_display(active_ttt_games[cid]),
+                           f"{ctx.author.mention} (❌)", f"{opponent.mention} (⭕)",
+                           "Use `!m <1-9>`", amount)
 
 
 @bot.command(name="c4")
@@ -3281,10 +3368,10 @@ async def cmd_c4(ctx: commands.Context, opponent: discord.User = None, amount: i
         "board_msg_id": None,
         "last_move": f"{ctx.author.display_name}'s turn",
     }
-    game = active_c4_games[cid]
-    wager_info = f"\nWager: {amount} 🪙 each" if amount > 0 else ""
-    board_msg = await ctx.send(embed=emb("🟡 Connect 4", build_c4_display(game) + f"\n\n{ctx.author.mention} (🔴) vs {opponent.mention} (🟡){wager_info}\n{ctx.author.mention}'s turn. Use `!m <1-7>`\n\n**Last move:** {game['last_move']}", C_BLUE))
-    game["board_msg_id"] = board_msg.id
+    await _send_game_board(ctx, active_c4_games[cid], "🟡 Connect 4",
+                           build_c4_display(active_c4_games[cid]),
+                           f"{ctx.author.mention} (🔴)", f"{opponent.mention} (🟡)",
+                           "Use `!m <1-7>`", amount)
 
 
 @bot.command(name="chess")
@@ -3339,10 +3426,10 @@ async def cmd_chess(ctx: commands.Context, *args):
         "board_msg_id": None,
         "last_move": f"{ctx.author.display_name}'s turn (White)",
     }
-    game = active_chess_games[cid]
-    wager_info = f"\nWager: {amount} 🪙 each" if amount > 0 else ""
-    board_msg = await ctx.send(embed=emb("♟️ Chess", build_chess_display(game["board"], is_black_perspective=False) + f"\n\n{ctx.author.mention} (White ♙) vs {opponent.mention} (Black ♟){wager_info}\n{ctx.author.mention}'s turn. Use `!move <e2e4>`\n\n**Last move:** {game['last_move']}", C_BLUE))
-    game["board_msg_id"] = board_msg.id
+    await _send_game_board(ctx, active_chess_games[cid], "♟️ Chess",
+                           build_chess_display(active_chess_games[cid]["board"], is_black_perspective=False),
+                           f"{ctx.author.mention} (White ♙)", f"{opponent.mention} (Black ♟)",
+                           "Use `!move <e2e4>`", amount)
     save_chess_games()
 
 
@@ -3526,10 +3613,7 @@ async def cmd_ask(ctx: commands.Context, *, question: str = None):
         return
 
     # Check cost
-    uid = ctx.author.id
-    cost = 0 if uid in godmode_users else 10
-    if cost > 0 and not deduct_balance(uid, cost):
-        await ctx.send(embed=emb("💸 Insufficient Funds", f"Asking costs **10 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+    if not await enforce_cost(ctx, "ask"):
         return
 
     # Gather last 10 channel messages (excluding the !ask command itself)
@@ -3572,10 +3656,7 @@ async def cmd_fanfic(ctx: commands.Context, *, prompt: str = None):
         await ctx.send("⚠️ Slow down! Please wait a moment before sending another message.")
         return
 
-    uid = ctx.author.id
-    cost = 0 if uid in godmode_users else 20
-    if cost > 0 and not deduct_balance(uid, cost):
-        await ctx.send(embed=emb("💸 Insufficient Funds", f"Fan fiction costs **20 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+    if not await enforce_cost(ctx, "fanfic"):
         return
 
     guild_id = ctx.guild.id if ctx.guild else None
@@ -3606,9 +3687,7 @@ async def cmd_continue(ctx: commands.Context):
         await ctx.send(embed=emb("❌ Nothing to Continue", "No fanfic found in this thread.", C_RED))
         return
 
-    cost = 0 if uid in godmode_users else 10
-    if cost > 0 and not deduct_balance(uid, cost):
-        await ctx.send(embed=emb("💸 Insufficient Funds", f"Continuing costs **10 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+    if not await enforce_cost(ctx, "continue"):
         return
 
     await respond(ctx.channel, uid, "Continue the story.", ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
@@ -3730,9 +3809,7 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
         await ctx.send("Usage: `!roleplay <character prompt> [@user1 @user2 ...]`")
         return
 
-    cost = 0 if uid in godmode_users else 50
-    if cost > 0 and not deduct_balance(uid, cost):
-        await ctx.send(embed=emb("💸 Insufficient Funds", f"Starting a roleplay costs **50 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+    if not await enforce_cost(ctx, "roleplay"):
         return
 
     # Create a thread to contain the roleplay
@@ -3795,9 +3872,7 @@ async def cmd_rpg(ctx: commands.Context):
     # Parse mentions for multiplayer
     invited_users = [m for m in ctx.message.mentions if m.id != uid]
 
-    cost = 0 if uid in godmode_users else 50
-    if cost > 0 and not deduct_balance(uid, cost):
-        await ctx.send(embed=emb("💸 Insufficient Funds", f"Starting an RPG adventure costs **50 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+    if not await enforce_cost(ctx, "rpg"):
         return
 
     # Register host with participants set
@@ -4200,8 +4275,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if is_insured(target.id, "nickname"):
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be renamed.", C_GOLD))
             return
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **{cost_label} 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label=cost_label):
             return
         try:
             await target.edit(nick=new_name)
@@ -4226,8 +4300,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if is_insured(uid, "nickname"):
             await ctx.send(embed=emb("🛡️ Protected", "You have insurance and can't have your nickname changed.", C_GOLD))
             return
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **2,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label="2,000"):
             return
         try:
             await ctx.author.edit(nick=None)
@@ -4286,11 +4359,15 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles.", C_GOLD))
             return
         cost = 0 if uid in godmode_users else 10000
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **10,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label="10,000"):
             return
         try:
             new_role = await ctx.guild.create_role(name=name, color=discord.Color(color_int), hoist=True)
+            # Move the role up so hoisting actually separates members in the sidebar.
+            # Place it just below the bot's highest role (the bot can only manage roles below its own top role).
+            bot_top = ctx.guild.me.top_role.position
+            target_position = max(1, bot_top - 1)
+            await ctx.guild.edit_role_positions({new_role: target_position})
             await target.add_roles(new_role)
             bot_roles.add(new_role.id)
             save_bot_roles()
@@ -4334,8 +4411,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("❌ Not Alone", f"This role has **{member_count}** member(s). You must be the only one with this role to remove it.", C_RED))
             return
         cost = 0 if uid in godmode_users else 2000
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **2,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label="2,000"):
             return
         try:
             await role.delete()
@@ -4371,8 +4447,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("❌ Invalid Name", "Channel name must be at least 2 characters.", C_RED))
             return
         cost = 0 if uid in godmode_users else 20000
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **20,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label="20,000"):
             return
         try:
             # Find or create the "bot-channels" category
@@ -4432,8 +4507,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("❌ Not Found", f"No bot-created channel named **{channel_name}** exists.", C_RED))
             return
         cost = 0 if uid in godmode_users else 20000
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **20,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label="20,000"):
             return
         try:
             channel_name = channel.name
@@ -4466,8 +4540,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             return
         topic = " ".join(a for a in args if not a.startswith("<@"))
         cost = 0 if uid in godmode_users else 2500
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **2,500 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label="2,500"):
             return
         topic_clause = f" The topic should be specifically about: {topic}." if topic else ""
         ragebait_system = (
@@ -4509,8 +4582,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             return
         target = ctx.message.mentions[0]
         cost = 0 if uid in godmode_users else 1500
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **1,500 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label="1,500"):
             return
         active_mocks[target.id] = {"remaining": 5, "started_by": uid}
         save_mock()
@@ -4525,8 +4597,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
     if subcommand == "insurance":
         key = str(uid)
         cost = 0 if uid in godmode_users else 500
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"Insurance costs **500 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label="500"):
             return
         expires_at = int(time.time() + 86400)
         insurance[key] = {
@@ -4567,8 +4638,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             return
 
         cost = 0 if uid in godmode_users else 2000
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **2,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label="2,000"):
             return
 
         try:
@@ -4589,8 +4659,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         target = ctx.message.mentions[0]
 
         cost = 0 if uid in godmode_users else 5000
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **5,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label="5,000"):
             return
 
         if ctx.guild is None:
@@ -4629,8 +4698,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             return
 
         cost = 0 if uid in godmode_users else 1000
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **1,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label="1,000"):
             return
 
         global active_simps
@@ -4662,8 +4730,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             return
 
         cost = 0 if uid in godmode_users else 10000
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **10,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label="10,000"):
             return
 
         global active_curses
@@ -4706,8 +4773,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("❌ Already Lowest", f"**{role.name}** is already the lowest bot-created role.", C_RED))
             return
         cost = 0 if uid in godmode_users else 20000
-        if cost > 0 and not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"This costs **20,000 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        if not await shop_charge(ctx, uid, cost, cost_label="20,000"):
             return
         # Roles are ordered lowest position (bottom) to highest; "up" = higher position value
         new_pos = role.position + (1 if direction == "roleup" else -1)
