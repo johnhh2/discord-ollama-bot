@@ -4119,7 +4119,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if _si.get("removerole", True):
             role_items.append((2000, "`!shop removerole <name>` — Delete a bot-created role — **2,000 🪙**"))
         if _si.get("role", True):
-            role_items.append((10000, "`!shop role <name> <hex>` — Create a custom colored role — **10,000 🪙**"))
+            role_items.append((10000, "`!shop role @user <name> <hex>` — Create a custom colored role for a user — **10,000 🪙**"))
         if _si.get("roleup", True):
             role_items.append((20000, "`!shop roleup <role name>` — Move a bot-created role up one position — **20,000 🪙**"))
         if _si.get("roledown", True):
@@ -4236,11 +4236,31 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if not _shop_cfg.get("role", True):
             await ctx.send(embed=emb("🛒 Disabled", "The role shop item is disabled in this server.", C_GREY))
             return
-        if len(args) < 2:
-            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop role <name> <hex_color>` (e.g. `!shop role CoolGuy ff00aa`)", C_PURPLE))
+        if len(args) < 3:
+            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop role @user <name> <hex_color>` (e.g. `!shop role @CoolGuy MyRole ff00aa`)", C_PURPLE))
+            return
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+            return
+        # Parse target from mention or ID
+        target_arg = args[0]
+        target_id = None
+        if target_arg.startswith("<@") and target_arg.endswith(">"):
+            target_id = int(target_arg.strip("<@!>"))
+        else:
+            try:
+                target_id = int(target_arg)
+            except ValueError:
+                pass
+        if target_id is None:
+            await ctx.send(embed=emb("❌ Invalid User", "First argument must be a @mention or user ID.", C_RED))
+            return
+        target = ctx.guild.get_member(target_id)
+        if target is None:
+            await ctx.send(embed=emb("❌ User Not Found", "That user isn't in this server.", C_RED))
             return
         hex_color = args[-1].lstrip("#")
-        name = " ".join(args[:-1])
+        name = " ".join(args[1:-1])
         if "admin" in name.lower():
             await ctx.send(embed=emb("❌ Invalid Name", "Role names cannot contain \"admin\".", C_RED))
             return
@@ -4251,8 +4271,8 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         except ValueError:
             await ctx.send(embed=emb("❌ Invalid Color", "Example: `ff00aa` or `#ff00aa`", C_RED))
             return
-        if ctx.guild is None:
-            await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+        if is_insured(target.id, "role"):
+            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles.", C_GOLD))
             return
         cost = 0 if uid in godmode_users else 10000
         if cost > 0 and not deduct_balance(uid, cost):
@@ -4260,10 +4280,10 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             return
         try:
             new_role = await ctx.guild.create_role(name=name, color=discord.Color(color_int), hoist=True)
-            await ctx.author.add_roles(new_role)
+            await target.add_roles(new_role)
             bot_roles.add(new_role.id)
             save_bot_roles()
-            await ctx.send(embed=emb("✅ Role Created", f"Role **{name}** created and assigned!", C_GREEN))
+            await ctx.send(embed=emb("✅ Role Created", f"Role **{name}** created and assigned to **{target.display_name}**!", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
                 add_balance(uid, cost)
@@ -4500,7 +4520,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         expires_at = int(time.time() + 86400)
         insurance[key] = {
             "expires_at": expires_at,
-            "protected_from": ["ragebait", "mock", "nickname"],
+            "protected_from": ["ragebait", "mock", "nickname", "role"],
         }
         save_insurance()
         await ctx.send(embed=emb(
