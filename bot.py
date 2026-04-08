@@ -860,9 +860,7 @@ async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | No
     role = discord.utils.get(guild.roles, name="Gamblers")
     if role is None:
         try:
-            role = await guild.create_role(name="Gamblers", hoist=True, reason="Auto-created for gambler role tracking")
-            bot_top = guild.me.top_role.position
-            await guild.edit_role_positions({role: max(1, bot_top - 1)})
+            role = await guild.create_role(name="Gamblers", reason="Auto-created for gambler role tracking")
         except Exception:
             return None
     return role
@@ -4341,8 +4339,14 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             return
         target = ctx.guild.get_member(target_id)
         if target is None:
-            await ctx.send(embed=emb("❌ User Not Found", "That user isn't in this server.", C_RED))
-            return
+            try:
+                target = await ctx.guild.fetch_member(target_id)
+            except discord.NotFound:
+                await ctx.send(embed=emb("❌ User Not Found", "That user isn't in this server.", C_RED))
+                return
+            except discord.HTTPException:
+                await ctx.send(embed=emb("❌ User Not Found", "That user isn't in this server.", C_RED))
+                return
         hex_color = args[-1].lstrip("#")
         name = " ".join(args[1:-1])
         if "admin" in name.lower():
@@ -4363,11 +4367,6 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             return
         try:
             new_role = await ctx.guild.create_role(name=name, color=discord.Color(color_int), hoist=True)
-            # Move the role up so hoisting actually separates members in the sidebar.
-            # Place it just below the bot's highest role (the bot can only manage roles below its own top role).
-            bot_top = ctx.guild.me.top_role.position
-            target_position = max(1, bot_top - 1)
-            await ctx.guild.edit_role_positions({new_role: target_position})
             await target.add_roles(new_role)
             bot_roles.add(new_role.id)
             save_bot_roles()

@@ -739,22 +739,19 @@ class TestJsonIO:
 
 class TestPuzzleRewards:
     def test_easy(self):
-        assert bot.PUZZLE_REWARDS["easy"] == 25
+        assert bot.PUZZLE_REWARDS["easy"] == 10
 
     def test_medium(self):
-        assert bot.PUZZLE_REWARDS["medium"] == 50
+        assert bot.PUZZLE_REWARDS["medium"] == 20
 
     def test_hard(self):
-        assert bot.PUZZLE_REWARDS["hard"] == 100
-
-    def test_expert(self):
-        assert bot.PUZZLE_REWARDS["expert"] == 100
+        assert bot.PUZZLE_REWARDS["hard"] == 35
 
     def test_extreme(self):
-        assert bot.PUZZLE_REWARDS["extreme"] == 100
+        assert bot.PUZZLE_REWARDS["extreme"] == 50
 
     def test_all_difficulties_present(self):
-        assert set(bot.PUZZLE_REWARDS.keys()) == {"easy", "medium", "hard", "expert", "extreme"}
+        assert set(bot.PUZZLE_REWARDS.keys()) == {"easy", "medium", "hard", "extreme"}
 
 
 class TestNormPuzzleAnswer:
