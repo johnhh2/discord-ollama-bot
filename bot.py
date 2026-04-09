@@ -1713,9 +1713,9 @@ async def cmd_gambler_role(ctx: commands.Context, toggle: str = None):
     adding = toggle.lower() == "on"
     already = role in ctx.author.roles
     if adding and already:
-        await ctx.send(embed=emb("🎲 Gambler Role", "You already have the Gamblers role.", C_GREY))
+        await ctx.send(embed=emb("🎲 Gambler Role", f"**{ctx.author.display_name}** already has the Gamblers role.", C_GREY))
     elif not adding and not already:
-        await ctx.send(embed=emb("🎲 Gambler Role", "You don't have the Gamblers role.", C_GREY))
+        await ctx.send(embed=emb("🎲 Gambler Role", f"**{ctx.author.display_name}** doesn't have the Gamblers role.", C_GREY))
     else:
         reason = "User opted in via !gambler-role" if adding else "User opted out via !gambler-role"
         if await toggle_member_role(ctx.author, role, adding, reason=reason):
@@ -2115,7 +2115,7 @@ async def cmd_puzzle(ctx: commands.Context, *args):
 
     uid = ctx.author.id
     if any(p["user_id"] == uid for p in active_puzzles.values()):
-        await ctx.send(embed=emb("⚠️ Puzzle Active", "You already have a puzzle running! Solve it or use `!stop` to cancel.", C_GOLD))
+        await ctx.send(embed=emb("⚠️ Puzzle Active", f"**{ctx.author.display_name}** already has a puzzle running! Solve it or use `!stop` to cancel.", C_GOLD))
         return
 
     cid = ctx.channel.id
@@ -2462,13 +2462,13 @@ async def cmd_daily(ctx: commands.Context):
         remaining = int((next_reset - now_ct).total_seconds())
         hours, rem = divmod(remaining, 3600)
         minutes = rem // 60
-        await ctx.send(embed=emb("⏳ Already Claimed", f"Resets at **5am** — come back in **{hours}h {minutes}m**.", C_GOLD))
+        await ctx.send(embed=emb("⏳ Already Claimed", f"**{ctx.author.display_name}** already claimed today. Resets at **5am** — come back in **{hours}h {minutes}m**.", C_GOLD))
         return
     add_balance(uid, 200)
     user_data["daily_date"] = today
     user_data["last_daily"] = time.time()
     save_economy()
-    await ctx.send(embed=emb("🪙 Daily Reward", f"+200 🪙 claimed! Balance: **{get_balance(uid)} 🪙**", C_GREEN))
+    await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+200 🪙**! Balance: **{get_balance(uid)} 🪙**", C_GREEN))
 
 
 @bot.command(name="balance", aliases=["bal", "b", "!", "$"])
@@ -4597,7 +4597,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             return
         cost = 0 if uid in godmode_users else 2000
         if is_insured(uid, "nickname"):
-            await ctx.send(embed=emb("🛡️ Protected", "You have insurance and can't have your nickname changed.", C_GOLD))
+            await ctx.send(embed=emb("🛡️ Protected", f"**{ctx.author.display_name}** has insurance and can't have their nickname changed.", C_GOLD))
             return
         if not await shop_charge(ctx, uid, cost, cost_label="2,000"):
             return
