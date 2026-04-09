@@ -5779,7 +5779,8 @@ async def cmd_reverse(ctx: commands.Context):
             await user_msg.delete()
         except (discord.NotFound, discord.Forbidden):
             pass
-    await ctx.reply(embed=emb("", "Last AI response removed from history.", C_GREEN))
+    confirm = await ctx.reply(embed=emb("", "Last AI response removed from history.", C_GREEN))
+    asyncio.create_task(_delete_after(confirm, delay=10.0))
 
 
 @bot.command(name="event")
