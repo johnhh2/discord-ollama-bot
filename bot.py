@@ -483,6 +483,18 @@ active_c4_games: dict[int, dict] = {}   # channel_id → {board, players, marks,
 active_race_games: dict[int, dict] = {} # channel_id → {players, names, positions, amount}
 active_chess_games: dict[int, dict] = load_chess_games() # channel_id → {board, players, current, moves, amount}
 active_puzzles: dict[int, dict] = {}  # channel_id → {question, answer, reward, user_id}
+
+def _load_riddles_list() -> list[dict]:
+    import csv as _csv
+    path = os.path.join("data", "riddles_crawsome.csv")
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            return [{"riddle": r["QUESTIONS"].strip(), "answer": r["ANSWERS"].strip().lower()}
+                    for r in _csv.DictReader(f) if r["QUESTIONS"].strip() and r["ANSWERS"].strip()]
+    except Exception:
+        return []
+
+RIDDLES_LIST: list[dict] = _load_riddles_list()
 rigged_slots: set[int] = load_rigged_slots() # user_id → will hit jackpot on next spin
 gambler_streak: dict = load_gambler_streak() # str(user_id) → last date they used all 3 scratchoffs
 quote_log: list[str] = load_quote_log() # last 10 quotes used
@@ -1892,7 +1904,8 @@ async def cmd_ai(ctx: commands.Context, state: str = None):
         value=(
             f"AI-generated puzzles\n"
             f"`!puzzle coding [easy|medium|hard|extreme] [@user …]` — figure out the code output · **10–50 🪙**\n"
-            f"`!puzzle riddle [@user …]` — one-word riddle · **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
+            f"`!puzzle riddle [@user …]` — curated one-word riddle · **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
+            f"`!puzzle riddleai [@user …]` — AI-generated riddle · **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
             f"Model: `{coding_model}`\n"
             f"Only the creator can answer by default; mention users to invite them."
         ),
@@ -1934,7 +1947,8 @@ async def cmd_game(ctx: commands.Context):
         value=(
             "`!puzzle coding [easy|medium|hard|extreme] [@user …]` — AI-generated coding puzzle\n"
             "Reward: **10–50 🪙** depending on difficulty.\n"
-            f"`!puzzle riddle [@user …]` — one-word riddle · Reward: **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
+            f"`!puzzle riddle [@user …]` — curated one-word riddle · Reward: **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
+            f"`!puzzle riddleai [@user …]` — AI-generated riddle · Reward: **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
             "Only the creator can answer by default; mention users to invite them."
         ),
         inline=False
@@ -1958,7 +1972,7 @@ PUZZLE_REWARDS = {
     "extreme": 50,
 }
 
-PUZZLE_RIDDLE_REWARD = 25
+PUZZLE_RIDDLE_REWARD = 20
 
 PUZZLE_RIDDLE_PROMPT = (
     "You are a riddle generator. Your ONLY output must be a single raw JSON object — no markdown, no code fences, no prose before or after.\n"
@@ -2074,18 +2088,28 @@ async def cmd_puzzle(ctx: commands.Context, *args):
         embed.add_field(
             name="!puzzle riddle [@user …]",
             value=(
-                "AI generates a classic riddle — answer in one word!\n"
+                "Classic riddle from our curated list — answer in one word!\n"
                 f"Reward: **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
                 "Only you can answer by default. Mention users to invite them too.\n"
                 "Example: `!puzzle riddle @Alice`"
             ),
             inline=False,
         )
+        embed.add_field(
+            name="!puzzle riddleai [@user …]",
+            value=(
+                "AI-generated riddle — answer in one word!\n"
+                f"Reward: **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
+                "Only you can answer by default. Mention users to invite them too.\n"
+                "Example: `!puzzle riddleai @Alice`"
+            ),
+            inline=False,
+        )
         await ctx.send(embed=embed)
         return
 
-    if subcommand.lower() not in ("coding", "riddle"):
-        await ctx.send(f"Unknown puzzle type `{subcommand}`. Try `!puzzle coding` or `!puzzle riddle`.")
+    if subcommand.lower() not in ("coding", "riddle", "riddleai"):
+        await ctx.send(f"Unknown puzzle type `{subcommand}`. Try `!puzzle coding`, `!puzzle riddle`, or `!puzzle riddleai`.")
         return
 
     uid = ctx.author.id
@@ -2100,8 +2124,37 @@ async def cmd_puzzle(ctx: commands.Context, *args):
 
     import re as _re
 
-    # ── Riddle branch ──────────────────────────────────────────────────────────
+    # ── Riddle branch (static list) ────────────────────────────────────────────
     if subcommand.lower() == "riddle":
+        if not RIDDLES_LIST:
+            await ctx.send(embed=emb("❌ No Riddles", "Riddle list failed to load. Ask an admin to check `data/riddles.json`.", C_RED))
+            return
+
+        reward = PUZZLE_RIDDLE_REWARD
+        entry = random.choice(RIDDLES_LIST)
+        riddle_text = entry["riddle"]
+        answer = entry["answer"]
+
+        active_puzzles[cid] = {"answer": answer, "reward": reward, "user_id": uid, "invited_ids": invited_ids}
+
+        guests = invited_ids - {uid}
+        if guests:
+            invite_line = "\nInvited: " + " ".join(f"<@{i}>" for i in guests)
+            footer = f"Only {ctx.author.display_name} and invited users can answer · Use !stop to cancel"
+        else:
+            invite_line = ""
+            footer = f"Only {ctx.author.display_name} can answer · Use !stop to cancel"
+        embed = discord.Embed(
+            title="🧩 Riddle",
+            description=f"{riddle_text}\n\nType the **one-word answer** to win **{reward} 🪙**!{invite_line}",
+            color=C_GOLD,
+        )
+        embed.set_footer(text=footer)
+        await ctx.send(embed=embed)
+        return
+
+    # ── Riddle AI branch ───────────────────────────────────────────────────────
+    if subcommand.lower() == "riddleai":
         reward = PUZZLE_RIDDLE_REWARD
         messages = [
             {"role": "system", "content": PUZZLE_RIDDLE_PROMPT},
