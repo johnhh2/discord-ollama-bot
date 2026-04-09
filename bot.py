@@ -2396,15 +2396,16 @@ async def cmd_adminhelp(ctx: commands.Context):
 async def cmd_daily(ctx: commands.Context):
     uid = ctx.author.id
     _ensure_user(uid)
-    today = datetime.date.today().isoformat()
+    today = _ct_today()
     user_data = economy["users"][str(uid)]
     if user_data.get("daily_date") == today:
-        now = datetime.datetime.now()
+        now_ct = _ct_now()
         next_reset = datetime.datetime.combine(
-            now.date() if now.hour < 5 else now.date() + datetime.timedelta(days=1),
+            now_ct.date() if now_ct.hour < 5 else now_ct.date() + datetime.timedelta(days=1),
             datetime.time(5, 0),
+            tzinfo=ZoneInfo("America/Chicago"),
         )
-        remaining = int((next_reset - now).total_seconds())
+        remaining = int((next_reset - now_ct).total_seconds())
         hours, rem = divmod(remaining, 3600)
         minutes = rem // 60
         await ctx.send(embed=emb("⏳ Already Claimed", f"Resets at **5am** — come back in **{hours}h {minutes}m**.", C_GOLD))
@@ -2567,9 +2568,23 @@ class MiniCactpotGame:
         total = self.get_line_sum(line_type, line_idx)
         return CACTPOT_PAYOUTS.get(total, 0)
 
+def _ct_now() -> datetime.datetime:
+    """Return the current time in America/Chicago timezone."""
+    return datetime.datetime.now(datetime.timezone.utc).astimezone(ZoneInfo("America/Chicago"))
+
+
+def _ct_today() -> str:
+    """Return the current 'day' in CT, where a new day starts at 5am CT.
+    Before 5am CT, returns yesterday's date (so the reset hasn't happened yet)."""
+    now_ct = _ct_now()
+    if now_ct.hour < 5:
+        return (now_ct.date() - datetime.timedelta(days=1)).isoformat()
+    return now_ct.date().isoformat()
+
+
 def do_daily_reset():
-    """Reset all users' daily reward and scratchoff counts at 5am."""
-    today = datetime.date.today().isoformat()
+    """Reset all users' daily reward and scratchoff counts at 5am CT."""
+    today = _ct_now().date().isoformat()
     for user in economy["users"].values():
         user["daily_date"] = None
         user["scratch_used"] = 0
@@ -2588,7 +2603,7 @@ async def cmd_scratchoff(ctx: commands.Context):
     _ensure_user(uid)
 
     # Check daily limit
-    today = datetime.date.today().isoformat()
+    today = _ct_today()
     user = economy["users"][str(uid)]
     if user.get("scratch_date") != today:
         user["scratch_date"] = today
@@ -6507,11 +6522,11 @@ async def lottery_scheduler():
 
 @tasks.loop(minutes=1)
 async def scratchoff_scheduler():
-    """Reset daily scratchoff counts at 5am every day."""
-    now = datetime.datetime.now()
-    if now.hour != 5 or now.minute != 0:
+    """Reset daily scratchoff counts at 5am CT every day."""
+    now_ct = _ct_now()
+    if now_ct.hour != 5 or now_ct.minute != 0:
         return
-    today = datetime.date.today().isoformat()
+    today = now_ct.date().isoformat()
     if economy.get("last_daily_reset") != today:
         do_daily_reset()
 
@@ -6548,10 +6563,10 @@ async def on_ready():
         except Exception as e:
             logging.warning(f"[RESTART] Failed to edit restart message: {e}")
 
-    # If it's past 5am and the scratchoff reset hasn't happened today, do it now
-    now = datetime.datetime.now()
-    today = datetime.date.today().isoformat()
-    if now.hour >= 5 and economy.get("last_daily_reset") != today:
+    # If it's past 5am CT and the daily reset hasn't happened today, do it now
+    now_ct = _ct_now()
+    today = now_ct.date().isoformat()
+    if now_ct.hour >= 5 and economy.get("last_daily_reset") != today:
         do_daily_reset()
 
     # Check if results need posting or lottery needs resetting
