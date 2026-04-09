@@ -2873,7 +2873,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         ), inline=False)
         embed.add_field(name="Other", value=(
             "❌ **No Match** — 0x (Lose bet)\n\n"
-            f"**Progressive Jackpot:** Grows by 2% of every bet!\n"
+            f"**Progressive Jackpot:** Grows by {SLOT_JACKPOT_CONTRIB:.0%} of every bet!\n"
             f"**Current Jackpot: {slot_jackpot:,} 🪙**"
         ), inline=False)
         await send_ephemeral(ctx, embed=embed)
