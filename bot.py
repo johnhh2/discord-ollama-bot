@@ -5734,6 +5734,18 @@ async def cmd_clearprompt(ctx: commands.Context):
     await ctx.send(embed=emb("⚙️ Prompt Cleared", "Using default system prompt.", C_GREY))
 
 
+@bot.command(name="reverse")
+async def cmd_reverse(ctx: commands.Context):
+    history = channel_histories[ctx.channel.id]
+    if not history or history[-1]["role"] != "assistant":
+        await ctx.reply(embed=emb("", "No AI response to reverse.", C_RED))
+        return
+    history.pop()  # remove assistant message
+    if history and history[-1]["role"] == "user":
+        history.pop()  # remove the paired user message
+    await ctx.reply(embed=emb("", "Last AI response removed from history.", C_GREEN))
+
+
 @bot.command(name="event")
 async def cmd_event(ctx: commands.Context, amount: str = None, duration: str = None):
     if not is_admin(ctx):
