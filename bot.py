@@ -3747,7 +3747,7 @@ async def cmd_fanfic(ctx: commands.Context, *, prompt: str = None):
 
         await respond(thread, uid, clean_prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
         save_fanfic_histories()
-        await thread.send(embed=emb("📖 Continue?", "Use `!continue` for the next chapter · `!tldr` to summarize · `!invite @user` to add a co-author.", C_BLUE))
+        await thread.send(embed=emb("📖 Fanfic Started", "`!continue` — next chapter · `!reverse` — undo last response · `!invite @user` — add a co-author · `!stop` — end the story", C_BLUE))
     else:
         fanfic_owners[ctx.channel.id] = {"owner_id": uid, "invited_ids": {uid}}
         await respond(ctx.channel, uid, clean_prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
@@ -3941,7 +3941,7 @@ async def cmd_roleplay(ctx: commands.Context, *, character_prompt: str = None):
     dest = thread or ctx.channel
     await dest.send(embed=emb(
         "🎭 Roleplay Started",
-        f"Responding as: *{preview}*\nType freely — no @mention needed. Use `!stop` to end.",
+        f"Responding as: *{preview}*\nType freely — no @mention needed.\n`!reverse` — undo last response · `!invite @user` — add a participant · `!stop` — end the roleplay",
         C_BLUE,
     ))
 
@@ -4092,6 +4092,7 @@ async def cmd_rpg(ctx: commands.Context):
         roleplay_histories[uid].append({"role": "assistant", "content": full_response})
         save_roleplay_state()
         await finalize(placeholder, dest, full_response)
+        await dest.send(embed=emb("🗺️ RPG Adventure", "`!reverse` — undo last response · `!invite @user` — add a party member · `!stop` — end the adventure", C_BLUE))
     except aiohttp.ClientError as e:
         _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
         await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
