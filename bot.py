@@ -59,6 +59,7 @@ LOTTERY_FILE = "data/lottery.json"
 GAMBLER_STREAK_FILE = "data/gambler_streak.json"
 RESTART_MSG_FILE = "data/restart_msg.json"
 EPHEMERAL_MSG_FILE = "data/ephemeral_msgs.json"
+RIDDLES_FILE = "data/riddles_crawsome.csv"
 FANFIC_HISTORIES_FILE = "data/fanfic_histories.json"
 FANFIC_OWNERS_FILE = "data/fanfic_owners.json"
 ROLEPLAY_STATE_FILE = "data/roleplay_state.json"
@@ -543,7 +544,7 @@ active_puzzles: dict[int, dict] = {}  # channel_id → {question, answer, reward
 
 def _load_riddles_list() -> list[dict]:
     import csv as _csv
-    path = os.path.join("data", "riddles_crawsome.csv")
+    path = RIDDLES_FILE
     try:
         with open(path, newline="", encoding="utf-8") as f:
             return [{"riddle": r["QUESTIONS"].strip(), "answer": r["ANSWERS"].strip().lower()}
@@ -2185,7 +2186,7 @@ async def cmd_puzzle(ctx: commands.Context, *args):
     # ── Riddle branch (static list) ────────────────────────────────────────────
     if subcommand.lower() == "riddle":
         if not RIDDLES_LIST:
-            await ctx.send(embed=emb("❌ No Riddles", "Riddle list failed to load. Ask an admin to check `data/riddles.json`.", C_RED))
+            await ctx.send(embed=emb("❌ No Riddles", "Riddle list failed to load. Ask an admin to check `data/riddles_crawsome.csv` exists.", C_RED))
             return
 
         reward = PUZZLE_RIDDLE_REWARD
