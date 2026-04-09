@@ -5476,7 +5476,7 @@ async def cmd_clearall(ctx: commands.Context, n: str = None):
 
         await ctx.channel.delete_messages(messages)
         confirm = await ctx.send(embed=emb(
-            "🗑️ Cleared All",
+            "🗑️ Cleared",
             f"Deleted {len(messages)-1} message{'s' if len(messages) != 1 else ''}.",
             C_GREY,
         ))
