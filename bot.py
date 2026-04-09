@@ -1213,18 +1213,19 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
     pval = hand_value(player)
     dval = hand_value(dealer)
     amount = game["amount"]
+    uid_name = message.author.display_name
     del active_blackjack_games[uid]
 
     display = build_blackjack_display(player, dealer, pval, hide_dealer=False, dval=dval)
 
     if dval > 21 or pval > dval:
         add_balance(uid, amount * 2)
-        color, result = C_GREEN, f"✅ You win **{amount} 🪙**! Balance: {get_balance(uid)} 🪙"
+        color, result = C_GREEN, f"✅ **{uid_name}** wins **{amount} 🪙**! Balance: {get_balance(uid)} 🪙"
     elif pval == dval:
         add_balance(uid, amount)
         color, result = C_GOLD, f"🤝 Push! Bet returned. Balance: {get_balance(uid)} 🪙"
     else:
-        color, result = C_RED, f"❌ Dealer wins. You lose **{amount} 🪙**. Balance: {get_balance(uid)} 🪙"
+        color, result = C_RED, f"❌ Dealer wins. **{uid_name}** loses **{amount} 🪙**. Balance: {get_balance(uid)} 🪙"
 
     await message.channel.send(embed=emb("🃏 Blackjack", display + f"\n\n{result}", color))
 
@@ -1513,14 +1514,14 @@ async def on_message(message: discord.Message):
                 simp_tax = 10
                 if deduct_balance(uid, simp_tax):
                     add_balance(simp_master_id, simp_tax)
-                    await message.channel.send(f"You paid a **{simp_tax} 🪙** Concubine tax to <@{simp_master_id}>")
+                    await message.channel.send(f"**{message.author.display_name}** paid a **{simp_tax} 🪙** Concubine tax to <@{simp_master_id}>")
         else:
             # Regular simp (permanent)
             simp_master_id = simp_data["master"]
             simp_tax = 10
             if deduct_balance(uid, simp_tax):
                 add_balance(simp_master_id, simp_tax)
-                await message.channel.send(f"You paid a **{simp_tax} 🪙** Simp tax to <@{simp_master_id}>")
+                await message.channel.send(f"**{message.author.display_name}** paid a **{simp_tax} 🪙** Simp tax to <@{simp_master_id}>")
 
     # Curse: corrupt cursed users' messages
     if uid in active_curses and not message.content.startswith("!"):
@@ -1562,7 +1563,7 @@ async def on_message(message: discord.Message):
                 del active_blackjack_games[uid]
                 await message.channel.send(embed=emb(
                     "💥 Bust!",
-                    display + f"\n\nYou lose **{game['amount']} 🪙**. Balance: {get_balance(uid)} 🪙",
+                    display + f"\n\n**{message.author.display_name}** loses **{game['amount']} 🪙**. Balance: {get_balance(uid)} 🪙",
                     C_RED,
                 ))
             elif pval == 21:
@@ -2522,7 +2523,7 @@ async def cmd_pay(ctx: commands.Context, recipient: discord.Member = None, amoun
         await ctx.send("Usage: `!pay @user <amount>`")
         return
     if recipient.id == ctx.author.id:
-        await ctx.send("You can't pay yourself.")
+        await ctx.send(f"**{ctx.author.display_name}** can't pay themselves.")
         return
     amount = await parse_amount(ctx, amount)
     if amount is None:
@@ -2567,9 +2568,9 @@ async def cmd_flip(ctx: commands.Context, amount: str = None):
     win = random.random() < 0.5
     if win:
         add_balance(uid, amount * 2)
-        await ctx.send(embed=emb("🪙 Heads!", f"You won **{amount} 🪙**! Balance: {get_balance(uid)} 🪙", C_GREEN))
+        await ctx.send(embed=emb("🪙 Heads!", f"**{ctx.author.display_name}** won **{amount} 🪙**! Balance: {get_balance(uid)} 🪙", C_GREEN))
     else:
-        await ctx.send(embed=emb("🪙 Tails!", f"You lost **{amount} 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
+        await ctx.send(embed=emb("🪙 Tails!", f"**{ctx.author.display_name}** lost **{amount} 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
 
 
 # Mini Cactpot payout table
@@ -2664,7 +2665,7 @@ async def cmd_scratchoff(ctx: commands.Context):
 
     if user["scratch_used"] >= 3:
         save_economy()
-        await ctx.send(embed=emb("🎰 Daily Limit", "You've used your **3** daily scratchoffs.\nCome back tomorrow!", C_GOLD))
+        await ctx.send(embed=emb("🎰 Daily Limit", f"**{ctx.author.display_name}** has used all **3** daily scratchoffs.\nCome back tomorrow!", C_GOLD))
         return
 
     user["scratch_used"] += 1
@@ -2695,16 +2696,16 @@ async def cmd_scratchoff(ctx: commands.Context):
         match_text = "❌ No matches."
     elif matches == 1:
         payout = 100
-        match_text = "⭐ 1 Match! You won 100 🪙!"
+        match_text = f"⭐ 1 Match! **{ctx.author.display_name}** won 100 🪙!"
     elif matches == 2:
         payout = 1000
-        match_text = "🎉 2 Matches! You won 1,000 🪙!"
+        match_text = f"🎉 2 Matches! **{ctx.author.display_name}** won 1,000 🪙!"
     elif matches == 3:
         payout = 10000
-        match_text = "🏆 3 Matches! You won 10,000 🪙!"
+        match_text = f"🏆 3 Matches! **{ctx.author.display_name}** won 10,000 🪙!"
     elif matches == 4:
         payout = 100000
-        match_text = "💎 4 Matches! You won 100,000 🪙!"
+        match_text = f"💎 4 Matches! **{ctx.author.display_name}** won 100,000 🪙!"
 
     add_balance(uid, payout)
 
@@ -2859,7 +2860,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         slot_jackpot = SLOT_JACKPOT_SEED
         save_jackpot(slot_jackpot)
         add_balance(uid, prize)
-        desc = (f"{display}\n\n🏆 **You hit the Progressive Jackpot!**\n"
+        desc = (f"{display}\n\n🏆 **{ctx.author.display_name} hit the Progressive Jackpot!**\n"
                 f"**Won: {prize:,} 🪙** (Bet: {amount} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {get_balance(uid):,} 🪙\n"
                 f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*")
         if first_time_slots:
@@ -2882,7 +2883,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
     if label == "1cherry":
         add_balance(uid, amount)
         desc = (f"{display}\n\n🍒 **One Cherry — Money Back!**\n"
-                f"Got **{amount} 🪙** back | Balance: {get_balance(uid):,} 🪙\n"
+                f"**{ctx.author.display_name}** got **{amount} 🪙** back | Balance: {get_balance(uid):,} 🪙\n"
                 f"Progressive Jackpot: **{slot_jackpot:,} 🪙**")
         if first_time_slots:
             desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
@@ -2890,7 +2891,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         return
 
     if mult == 0:
-        desc = (f"{display}\n\nYou lost **{amount} 🪙**. Balance: {get_balance(uid):,} 🪙\n"
+        desc = (f"{display}\n\n**{ctx.author.display_name}** lost **{amount} 🪙**. Balance: {get_balance(uid):,} 🪙\n"
                 f"Progressive Jackpot: **{slot_jackpot:,} 🪙**")
         if first_time_slots:
             desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
@@ -2911,7 +2912,7 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
     desc_line = result_labels.get(label, f"**{mult}x**")
 
     desc = (f"{display}\n\n{desc_line}\n"
-            f"Won **{winnings} 🪙** | Balance: {get_balance(uid):,} 🪙\n"
+            f"**{ctx.author.display_name}** won **{winnings} 🪙** | Balance: {get_balance(uid):,} 🪙\n"
             f"Progressive Jackpot: **{slot_jackpot:,} 🪙**")
     if first_time_slots:
         desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
@@ -3253,7 +3254,7 @@ async def cmd_blackjack(ctx: commands.Context, amount: str = None):
         else:
             winnings = int(amount * 2.5)
             add_balance(uid, winnings)
-            await ctx.send(embed=emb("🃏 Blackjack!", full_display + f"\n\nYou win **{winnings} 🪙**! Balance: {get_balance(uid)} 🪙", C_GREEN))
+            await ctx.send(embed=emb("🃏 Blackjack!", full_display + f"\n\n**{ctx.author.display_name}** wins **{winnings} 🪙**! Balance: {get_balance(uid)} 🪙", C_GREEN))
         return
 
     await ctx.send(embed=emb("🃏 Blackjack", display + "\n\nType `hit` to draw a card or `stand` to hold.", C_BLUE))
@@ -3428,7 +3429,7 @@ async def _setup_pvp_game(ctx, opponent, amount, invite_title):
         return False
     if amount > 0:
         if not deduct_balance(uid, amount):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"You need {amount} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"**{ctx.author.display_name}** needs {amount} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
             return False
         if not deduct_balance(opponent.id, amount):
             add_balance(uid, amount)  # refund challenger
