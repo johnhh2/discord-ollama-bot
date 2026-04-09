@@ -5737,7 +5737,12 @@ async def cmd_clearprompt(ctx: commands.Context):
 
 @bot.command(name="reverse")
 async def cmd_reverse(ctx: commands.Context):
-    history = channel_histories[ctx.channel.id]
+    uid = ctx.author.id
+    if uid in active_roleplays and active_roleplays[uid].get("channel_id") == ctx.channel.id:
+        history_key = active_roleplays[uid].get("history_owner", uid)
+        history = roleplay_histories.get(history_key, [])
+    else:
+        history = channel_histories[ctx.channel.id]
     if not history:
         await ctx.reply(embed=emb("", "No AI response to reverse.", C_RED))
         return
