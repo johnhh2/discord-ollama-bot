@@ -5738,12 +5738,38 @@ async def cmd_clearprompt(ctx: commands.Context):
 @bot.command(name="reverse")
 async def cmd_reverse(ctx: commands.Context):
     history = channel_histories[ctx.channel.id]
-    if not history or history[-1]["role"] != "assistant":
+    if not history:
         await ctx.reply(embed=emb("", "No AI response to reverse.", C_RED))
         return
-    history.pop()  # remove assistant message
+    # Pop assistant message if present
+    if history[-1]["role"] == "assistant":
+        history.pop()
+    # Pop the paired user message
     if history and history[-1]["role"] == "user":
-        history.pop()  # remove the paired user message
+        history.pop()
+    else:
+        await ctx.reply(embed=emb("", "No AI response to reverse.", C_RED))
+        return
+    # Find the bot's last message that is a reply to ctx.author, then delete
+    # both that bot message and the user message it was replying to.
+    async for msg in ctx.channel.history(limit=100):
+        if (
+            msg.author == bot.user
+            and msg.reference
+            and msg.reference.resolved
+            and isinstance(msg.reference.resolved, discord.Message)
+            and msg.reference.resolved.author.id == ctx.author.id
+        ):
+            user_msg = msg.reference.resolved
+            try:
+                await msg.delete()
+            except (discord.NotFound, discord.Forbidden):
+                pass
+            try:
+                await user_msg.delete()
+            except (discord.NotFound, discord.Forbidden):
+                pass
+            break
     await ctx.reply(embed=emb("", "Last AI response removed from history.", C_GREEN))
 
 
