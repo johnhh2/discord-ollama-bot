@@ -2623,9 +2623,8 @@ async def cmd_scratchoff(ctx: commands.Context):
         save_gambler_streak()
         await maybe_assign_gambler_role(ctx.guild, ctx.author, ctx.channel)
 
-    # Generate daily goal seeded by uid + date (consistent if called twice)
-    seed_str = f"{uid}{today}"
-    seed_val = hash(seed_str) % (2**31)
+    # Generate daily goal seeded by date (same for everyone, consistent across attempts)
+    seed_val = hash(today) % (2**31)
     random.seed(seed_val)
     goal = random.choices(SCRATCH_SYMBOLS, k=4)
 
