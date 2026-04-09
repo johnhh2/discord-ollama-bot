@@ -5755,26 +5755,30 @@ async def cmd_reverse(ctx: commands.Context):
     else:
         await ctx.reply(embed=emb("", "No AI response to reverse.", C_RED))
         return
-    # Find the bot's last message that is a reply to ctx.author, then delete
-    # both that bot message and the user message it was replying to.
-    async for msg in ctx.channel.history(limit=100):
-        if (
-            msg.author == bot.user
-            and msg.reference
-            and msg.reference.resolved
-            and isinstance(msg.reference.resolved, discord.Message)
-            and msg.reference.resolved.author.id == ctx.author.id
-        ):
-            user_msg = msg.reference.resolved
-            try:
-                await msg.delete()
-            except (discord.NotFound, discord.Forbidden):
-                pass
-            try:
-                await user_msg.delete()
-            except (discord.NotFound, discord.Forbidden):
-                pass
+    # Scan recent messages to find and delete the last bot response and the
+    # user message that preceded it.
+    recent = [m async for m in ctx.channel.history(limit=100)]
+    bot_msg = None
+    user_msg = None
+    for i, msg in enumerate(recent):
+        if msg.author == bot.user and msg.id != ctx.message.id:
+            bot_msg = msg
+            # Look further back for the invoker's message
+            for msg2 in recent[i + 1:]:
+                if msg2.author.id == ctx.author.id:
+                    user_msg = msg2
+                    break
             break
+    if bot_msg:
+        try:
+            await bot_msg.delete()
+        except (discord.NotFound, discord.Forbidden):
+            pass
+    if user_msg:
+        try:
+            await user_msg.delete()
+        except (discord.NotFound, discord.Forbidden):
+            pass
     await ctx.reply(embed=emb("", "Last AI response removed from history.", C_GREEN))
 
 
