@@ -87,6 +87,63 @@ SCRATCHOFF_PAYOUTS = {1: 100, 2: 1000, 3: 10000, 4: 100000}
 SOUNDBOARD_WINDOW_SECS = 3.0
 SOUNDBOARD_MAX_SOUNDS  = 5
 
+# Economy
+DAILY_REWARD = 200
+DAILY_RESET_HOUR = 5  # 5am CT
+
+# Slots multipliers & limits
+SLOT_MIN_BET = 25
+SLOT_MULT_JACKPOT = 75
+SLOT_MULT_3BAR    = 15
+SLOT_MULT_3BELL   = 7
+SLOT_MULT_3LEMON  = 4
+SLOT_MULT_3CHERRY = 3
+SLOT_MULT_2CHERRY = 2
+SLOT_MULT_1CHERRY = 1
+SLOT_JACKPOT_BONUS_MIN_BET  = 25    # bet at which jackpot bonus = 1x
+SLOT_JACKPOT_BONUS_MAX_BET  = 1000  # bet at which jackpot bonus reaches max
+SLOT_JACKPOT_BONUS_MAX_MULT = 4.0
+
+# Hangman
+HANGMAN_MAX_WRONG       = 6
+HANGMAN_BASE_REWARD     = 10
+HANGMAN_LENGTH_OFFSET   = 3
+HANGMAN_LENGTH_MULT     = 6
+HANGMAN_UNIQUE_MULT     = 3
+HANGMAN_RARE_MULT       = 25
+HANGMAN_ULTRA_RARE_MULT = 50
+
+# Blackjack
+BLACKJACK_NATURAL_MULT = 2.5
+
+# Shop costs
+SHOP_NICKNAME_SELF_COST   = 5_000
+SHOP_NICKNAME_REMOVE_COST = 2_000
+SHOP_NICKNAME_OTHER_COST  = 10_000
+SHOP_ROLE_CREATE_COST     = 10_000
+SHOP_ROLE_REMOVE_COST     = 2_000
+SHOP_ROLE_MOVE_COST       = 20_000
+SHOP_ROLECOLOR_COST       = 2_000
+SHOP_CHANNEL_COST         = 20_000
+SHOP_INSURANCE_COST       = 500
+SHOP_SIMP_COST            = 1_000
+SHOP_MOCK_COST            = 1_500
+SHOP_RAGEBAIT_COST        = 2_500
+SHOP_MUTE_COST            = 5_000
+SHOP_CURSE_COST           = 10_000
+
+# Shop effect parameters
+SHOP_INSURANCE_DURATION_SECS = 86_400  # 24 hours
+SHOP_MOCK_MESSAGES           = 5
+SHOP_RAGEBAIT_MESSAGES       = 4       # remaining after initial AI send
+SHOP_CURSE_MESSAGES          = 5
+SHOP_MUTE_MINUTES            = 5
+SHOP_SIMP_TAX_PER_MESSAGE    = 10
+SHOP_CONCUBINE_DURATION_SECS = 86_400  # 24 hours
+
+# Ephemeral message auto-delete timeout
+EPHEMERAL_DELETE_AFTER = 60
+
 
 def _load_json(filepath, default):
     os.makedirs("data", exist_ok=True)
@@ -106,7 +163,7 @@ def _save_json(filepath, data):
 
 async def send_ephemeral(ctx: commands.Context, *args, **kwargs) -> discord.Message:
     """Send a message with delete_after=60 and register it for cleanup on restart."""
-    kwargs["delete_after"] = 60
+    kwargs["delete_after"] = EPHEMERAL_DELETE_AFTER
     msg = await ctx.send(*args, **kwargs)
     records = _load_json(EPHEMERAL_MSG_FILE, [])
     records.append({"channel_id": msg.channel.id, "message_id": msg.id})
@@ -1419,7 +1476,7 @@ async def _auto_daily(message: discord.Message):
     if user_data.get("daily_date") == today:
         return
     is_new = user_data.get("last_daily", 0.0) == 0.0
-    add_balance(uid, 200)
+    add_balance(uid, DAILY_REWARD)
     user_data["daily_date"] = today
     if is_new:
         user_data["last_daily"] = time.time()  # marks as no longer a new user
@@ -1427,7 +1484,7 @@ async def _auto_daily(message: discord.Message):
     greeting = f"Welcome, **{message.author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
     await message.channel.send(embed=emb(
         "🪙 Daily Reward",
-        f"{greeting} **200 🪙** added. Balance: {get_balance(uid)} 🪙",
+        f"{greeting} **{DAILY_REWARD} 🪙** added. Balance: {get_balance(uid)} 🪙",
         C_GREEN,
     ))
 
@@ -1505,13 +1562,13 @@ async def on_message(message: discord.Message):
         # Check if concubine has expired (24h)
         if tax_type == "concubine" and "activated_at" in simp_data:
             time_elapsed = time.time() - simp_data["activated_at"]
-            if time_elapsed > 86400:  # 24 hours in seconds
+            if time_elapsed > SHOP_CONCUBINE_DURATION_SECS:
                 del active_simps[uid]
                 save_simp(active_simps)
             else:
                 # Apply tax
                 simp_master_id = simp_data["master"]
-                simp_tax = 10
+                simp_tax = SHOP_SIMP_TAX_PER_MESSAGE
                 if deduct_balance(uid, simp_tax):
                     add_balance(simp_master_id, simp_tax)
                     await message.channel.send(f"**{message.author.display_name}** paid a **{simp_tax} 🪙** Concubine tax to <@{simp_master_id}>")
@@ -2455,20 +2512,20 @@ async def cmd_daily(ctx: commands.Context):
     if user_data.get("daily_date") == today:
         now_ct = _ct_now()
         next_reset = datetime.datetime.combine(
-            now_ct.date() if now_ct.hour < 5 else now_ct.date() + datetime.timedelta(days=1),
-            datetime.time(5, 0),
+            now_ct.date() if now_ct.hour < DAILY_RESET_HOUR else now_ct.date() + datetime.timedelta(days=1),
+            datetime.time(DAILY_RESET_HOUR, 0),
             tzinfo=ZoneInfo("America/Chicago"),
         )
         remaining = int((next_reset - now_ct).total_seconds())
         hours, rem = divmod(remaining, 3600)
         minutes = rem // 60
-        await ctx.send(embed=emb("⏳ Already Claimed", f"**{ctx.author.display_name}** already claimed today. Resets at **5am** — come back in **{hours}h {minutes}m**.", C_GOLD))
+        await ctx.send(embed=emb("⏳ Already Claimed", f"**{ctx.author.display_name}** already claimed today. Resets at **{DAILY_RESET_HOUR}am** — come back in **{hours}h {minutes}m**.", C_GOLD))
         return
-    add_balance(uid, 200)
+    add_balance(uid, DAILY_REWARD)
     user_data["daily_date"] = today
     user_data["last_daily"] = time.time()
     save_economy()
-    await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+200 🪙**! Balance: **{get_balance(uid)} 🪙**", C_GREEN))
+    await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD} 🪙**! Balance: **{get_balance(uid)} 🪙**", C_GREEN))
 
 
 @bot.command(name="balance", aliases=["bal", "b", "!", "$"])
@@ -2631,7 +2688,7 @@ def _ct_today() -> str:
     """Return the current 'day' in CT, where a new day starts at 5am CT.
     Before 5am CT, returns yesterday's date (so the reset hasn't happened yet)."""
     now_ct = _ct_now()
-    if now_ct.hour < 5:
+    if now_ct.hour < DAILY_RESET_HOUR:
         return (now_ct.date() - datetime.timedelta(days=1)).isoformat()
     return now_ct.date().isoformat()
 
@@ -2758,25 +2815,25 @@ def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
     if a == b == c:
         sym = a
         if sym == "7️⃣":
-            # Jackpot requires minimum bet of 25
-            if bet < 25:
+            # Jackpot requires minimum bet
+            if bet < SLOT_MIN_BET:
                 return ("nothing", 0)
-            return ("jackpot", 75)
+            return ("jackpot", SLOT_MULT_JACKPOT)
         if sym == "🎰":
-            return ("3bar", 15)
+            return ("3bar", SLOT_MULT_3BAR)
         if sym == "🔔":
-            return ("3bell", 7)
+            return ("3bell", SLOT_MULT_3BELL)
         if sym == "🍋":
-            return ("3lemon", 4)
+            return ("3lemon", SLOT_MULT_3LEMON)
         if sym == cherry:
-            return ("3cherry", 3)
+            return ("3cherry", SLOT_MULT_3CHERRY)
 
     # Cherry retention (only checked when no 3-of-a-kind)
     cherry_count = reels.count(cherry)
     if cherry_count >= 2:
-        return ("2cherry", 2)
+        return ("2cherry", SLOT_MULT_2CHERRY)
     if cherry_count == 1:
-        return ("1cherry", 1)
+        return ("1cherry", SLOT_MULT_1CHERRY)
 
     return ("nothing", 0)
 
@@ -2798,20 +2855,20 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
 
     if amount is None:
         embed = discord.Embed(title="🎰 Slots", color=C_GOLD)
-        embed.description = "**Usage:** `!slots <amount>` — Minimum bet: **25 🪙**"
+        embed.description = f"**Usage:** `!slots <amount>` — Minimum bet: **{SLOT_MIN_BET} 🪙**"
         embed.add_field(name="Jackpot", value=(
-            "**7️⃣7️⃣7️⃣** (Jackpot) — 75x + Progressive Jackpot\n"
-            "The Progressive Jackpot bonus scales to 4x at bet 1000 🪙 or above)*"
+            f"**7️⃣7️⃣7️⃣** (Jackpot) — {SLOT_MULT_JACKPOT}x + Progressive Jackpot\n"
+            f"The Progressive Jackpot bonus scales to {SLOT_JACKPOT_BONUS_MAX_MULT:.0f}x at bet {SLOT_JACKPOT_BONUS_MAX_BET} 🪙 or above)*"
         ), inline=False)
         embed.add_field(name="Three of a Kind", value=(
-            "**🎰🎰🎰** (3 Slots) — 15x\n"
-            "**🔔🔔🔔** (3 Bells) — 7x\n"
-            "**🍋🍋🍋** (3 Lemons) — 4x\n"
-            "**🍒🍒🍒** (3 Cherries) — 3x"
+            f"**🎰🎰🎰** (3 Slots) — {SLOT_MULT_3BAR}x\n"
+            f"**🔔🔔🔔** (3 Bells) — {SLOT_MULT_3BELL}x\n"
+            f"**🍋🍋🍋** (3 Lemons) — {SLOT_MULT_3LEMON}x\n"
+            f"**🍒🍒🍒** (3 Cherries) — {SLOT_MULT_3CHERRY}x"
         ), inline=False)
         embed.add_field(name="Cherry Bonuses", value=(
-            "🍒 **Two Cherries** — 2x\n"
-            "🍒 **One Cherry** — 1x (Money Back)"
+            f"🍒 **Two Cherries** — {SLOT_MULT_2CHERRY}x\n"
+            f"🍒 **One Cherry** — {SLOT_MULT_1CHERRY}x (Money Back)"
         ), inline=False)
         embed.add_field(name="Other", value=(
             "❌ **No Match** — 0x (Lose bet)\n\n"
@@ -2826,8 +2883,8 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
         await ctx.send(embed=emb("❌ Invalid Bet", "Please provide a positive amount.", C_RED))
         return
 
-    if amount < 25:
-        await ctx.send(embed=emb("❌ Minimum Bet", f"Minimum bet is **25 🪙**.", C_RED))
+    if amount < SLOT_MIN_BET:
+        await ctx.send(embed=emb("❌ Minimum Bet", f"Minimum bet is **{SLOT_MIN_BET} 🪙**.", C_RED))
         return
 
     if not await shop_charge(ctx, uid, amount):
@@ -2854,8 +2911,13 @@ async def cmd_slots(ctx: commands.Context, amount: str = None):
 
     # Progressive jackpot: hit 3 sevens
     if label == "jackpot":
-        # Calculate bonus multiplier: 1x at bet 25, scaling to 4x at bet 1000+
-        bet_bonus = min(4.0, 1.0 + max(0, amount - 25) / 975.0 * 3.0)
+        # Calculate bonus multiplier: 1x at SLOT_JACKPOT_BONUS_MIN_BET, scaling to SLOT_JACKPOT_BONUS_MAX_MULT at SLOT_JACKPOT_BONUS_MAX_BET+
+        bet_bonus = min(
+            SLOT_JACKPOT_BONUS_MAX_MULT,
+            1.0 + max(0, amount - SLOT_JACKPOT_BONUS_MIN_BET)
+                 / (SLOT_JACKPOT_BONUS_MAX_BET - SLOT_JACKPOT_BONUS_MIN_BET)
+                 * (SLOT_JACKPOT_BONUS_MAX_MULT - 1.0)
+        )
         prize = int(slot_jackpot * bet_bonus)
         slot_jackpot = SLOT_JACKPOT_SEED
         save_jackpot(slot_jackpot)
@@ -3200,13 +3262,13 @@ def calculate_hangman_reward(word: str) -> int:
     RARE_LETTERS = {'y', 'j', 'k', 'w', 'v'}
 
     word_lower = word.lower()
-    base = 10
-    length_bonus = max(0, (len(word) - 3)) * 6
+    base = HANGMAN_BASE_REWARD
+    length_bonus = max(0, (len(word) - HANGMAN_LENGTH_OFFSET)) * HANGMAN_LENGTH_MULT
     unique_count = len(set(word_lower))
-    unique_bonus = unique_count * 3
+    unique_bonus = unique_count * HANGMAN_UNIQUE_MULT
     rare_count = sum(1 for c in word_lower if c in RARE_LETTERS)
     ultra_rare_count = sum(1 for c in word_lower if c in ULTRA_RARE_LETTERS)
-    rare_bonus = (rare_count * 25) + (ultra_rare_count * 50)
+    rare_bonus = (rare_count * HANGMAN_RARE_MULT) + (ultra_rare_count * HANGMAN_ULTRA_RARE_MULT)
 
     total = base + length_bonus + unique_bonus + rare_bonus
     return total
@@ -3252,7 +3314,7 @@ async def cmd_blackjack(ctx: commands.Context, amount: str = None):
             add_balance(uid, amount)
             await ctx.send(embed=emb("🃏 Blackjack — Push", full_display + "\n\nBoth have Blackjack! Bet returned.", C_GOLD))
         else:
-            winnings = int(amount * 2.5)
+            winnings = int(amount * BLACKJACK_NATURAL_MULT)
             add_balance(uid, winnings)
             await ctx.send(embed=emb("🃏 Blackjack!", full_display + f"\n\n**{ctx.author.display_name}** wins **{winnings} 🪙**! Balance: {get_balance(uid)} 🪙", C_GREEN))
         return
@@ -3315,7 +3377,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
         else:
             game["guessed_words"].add(guess)
             game["wrong_guesses"] += 1
-            if game["wrong_guesses"] >= 6:
+            if game["wrong_guesses"] >= HANGMAN_MAX_WRONG:
                 word = game["word"]
                 game["last_move"] = f"{name} guessed `{guess}` — Game over! The word was `{word}`"
                 pot_msg = hangman_pot_msg(word, len(game["active_players"]))
@@ -3342,7 +3404,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_GREEN))
     else:
         game["wrong_guesses"] += 1
-        if game["wrong_guesses"] >= 6:
+        if game["wrong_guesses"] >= HANGMAN_MAX_WRONG:
             word = game["word"]
             game["last_move"] = f"{name} guessed `{guess}` — Game over! The word was `{word}`"
             pot_msg = hangman_pot_msg(word, len(game["active_players"]))
@@ -4492,9 +4554,9 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         # Nicknames (sorted by cost)
         if _si.get("nickname", True):
             nickname_items = [
-                (5000, "`!shop nickname <new_name>` — Change your own nickname — **5,000 🪙**"),
-                (2000, "`!shop removenickname` — Remove your own nickname — **2,000 🪙**"),
-                (10000, "`!shop nickname @user <new_name>` — Nickname user — **10,000 🪙**"),
+                (SHOP_NICKNAME_SELF_COST,   f"`!shop nickname <new_name>` — Change your own nickname — **{SHOP_NICKNAME_SELF_COST:,} 🪙**"),
+                (SHOP_NICKNAME_REMOVE_COST, f"`!shop removenickname` — Remove your own nickname — **{SHOP_NICKNAME_REMOVE_COST:,} 🪙**"),
+                (SHOP_NICKNAME_OTHER_COST,  f"`!shop nickname @user <new_name>` — Nickname user — **{SHOP_NICKNAME_OTHER_COST:,} 🪙**"),
             ]
             nickname_items.sort(key=lambda x: x[0])
             sections["🎭 Nicknames"] = [item[1] for item in nickname_items]
@@ -4502,13 +4564,13 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         # Roles (sorted by cost)
         role_items = []
         if _si.get("removerole", True):
-            role_items.append((2000, "`!shop removerole <name>` — Delete a bot-created role — **2,000 🪙**"))
+            role_items.append((SHOP_ROLE_REMOVE_COST, f"`!shop removerole <name>` — Delete a bot-created role — **{SHOP_ROLE_REMOVE_COST:,} 🪙**"))
         if _si.get("role", True):
-            role_items.append((10000, "`!shop role @user <name> <hex>` — Create a custom colored role for a user — **10,000 🪙**"))
+            role_items.append((SHOP_ROLE_CREATE_COST, f"`!shop role @user <name> <hex>` — Create a custom colored role for a user — **{SHOP_ROLE_CREATE_COST:,} 🪙**"))
         if _si.get("roleup", True):
-            role_items.append((20000, "`!shop roleup <role name>` — Move a bot-created role up one position — **20,000 🪙**"))
+            role_items.append((SHOP_ROLE_MOVE_COST, f"`!shop roleup <role name>` — Move a bot-created role up one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**"))
         if _si.get("roledown", True):
-            role_items.append((20000, "`!shop roledown <role name>` — Move a bot-created role down one position — **20,000 🪙**"))
+            role_items.append((SHOP_ROLE_MOVE_COST, f"`!shop roledown <role name>` — Move a bot-created role down one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**"))
         if role_items:
             role_items.sort(key=lambda x: x[0])
             sections["👑 Roles"] = [item[1] for item in role_items]
@@ -4516,24 +4578,24 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         # Channels (sorted by cost)
         channel_items = []
         if _si.get("channel", True):
-            channel_items.append((20000, "`!shop channel <name>` — Create a new text channel — **20,000 🪙**"))
+            channel_items.append((SHOP_CHANNEL_COST, f"`!shop channel <name>` — Create a new text channel — **{SHOP_CHANNEL_COST:,} 🪙**"))
         if _si.get("channel", True):
-            channel_items.append((20000, "`!shop removechannel <name>` — Delete a bot-created channel — **20,000 🪙**"))
+            channel_items.append((SHOP_CHANNEL_COST, f"`!shop removechannel <name>` — Delete a bot-created channel — **{SHOP_CHANNEL_COST:,} 🪙**"))
         if channel_items:
             channel_items.sort(key=lambda x: x[0])
             sections["📢 Channels"] = [item[1] for item in channel_items]
 
         # Fun & Social (sorted by cost)
         fun_items = [
-            (500, "`!shop insurance` — Protect yourself for 24 hours — **500 🪙**"),
-            (1000, "`!shop simp @user` — Make a user simp for you — **1,000 🪙**"),
-            (1500, "`!shop mock @user` — Mock someone's next 5 messages — **1,500 🪙**"),
-            (2000, "`!shop rolecolor <role name> <color>` — Change a role's color — **2,000 🪙**"),
+            (SHOP_INSURANCE_COST, f"`!shop insurance` — Protect yourself for 24 hours — **{SHOP_INSURANCE_COST:,} 🪙**"),
+            (SHOP_SIMP_COST,      f"`!shop simp @user` — Make a user simp for you — **{SHOP_SIMP_COST:,} 🪙**"),
+            (SHOP_MOCK_COST,      f"`!shop mock @user` — Mock someone's next {SHOP_MOCK_MESSAGES} messages — **{SHOP_MOCK_COST:,} 🪙**"),
+            (SHOP_ROLECOLOR_COST, f"`!shop rolecolor <role name> <color>` — Change a role's color — **{SHOP_ROLECOLOR_COST:,} 🪙**"),
         ]
         if _si.get("ragebait", True):
-            fun_items.append((2500, "`!shop ragebait @user [topic]` — Ragebait for 5 messages — **2,500 🪙**"))
-        fun_items.append((5000, "`!shop mute @user` — Server mute for 5 minutes — **5,000 🪙**"))
-        fun_items.append((10000, "`!shop curse @user` — Curse someone's messages for 5 messages — **10,000 🪙**"))
+            fun_items.append((SHOP_RAGEBAIT_COST, f"`!shop ragebait @user [topic]` — Ragebait for {SHOP_RAGEBAIT_MESSAGES + 1} messages — **{SHOP_RAGEBAIT_COST:,} 🪙**"))
+        fun_items.append((SHOP_MUTE_COST,  f"`!shop mute @user` — Server mute for {SHOP_MUTE_MINUTES} minutes — **{SHOP_MUTE_COST:,} 🪙**"))
+        fun_items.append((SHOP_CURSE_COST, f"`!shop curse @user` — Curse someone's messages for {SHOP_CURSE_MESSAGES} messages — **{SHOP_CURSE_COST:,} 🪙**"))
         fun_items.sort(key=lambda x: x[0])
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
@@ -4560,13 +4622,13 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if ctx.message.mentions and args[0].startswith("<@"):
             target = ctx.message.mentions[0]
             new_name = " ".join(args[1:])
-            cost = 0 if uid in godmode_users else 10000
-            cost_label = "10,000"
+            cost = 0 if uid in godmode_users else SHOP_NICKNAME_OTHER_COST
+            cost_label = f"{SHOP_NICKNAME_OTHER_COST:,}"
         else:
             target = ctx.author
             new_name = " ".join(args)
-            cost = 0 if uid in godmode_users else 5000
-            cost_label = "5,000"
+            cost = 0 if uid in godmode_users else SHOP_NICKNAME_SELF_COST
+            cost_label = f"{SHOP_NICKNAME_SELF_COST:,}"
 
         if not new_name:
             await ctx.send(embed=emb("🛒 Shop", "Please provide a new nickname.", C_PURPLE))
@@ -4595,11 +4657,11 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if not _shop_cfg.get("nickname", True):
             await ctx.send(embed=emb("🛒 Disabled", "The nickname shop item is disabled in this server.", C_GREY))
             return
-        cost = 0 if uid in godmode_users else 2000
+        cost = 0 if uid in godmode_users else SHOP_NICKNAME_REMOVE_COST
         if is_insured(uid, "nickname"):
             await ctx.send(embed=emb("🛡️ Protected", f"**{ctx.author.display_name}** has insurance and can't have their nickname changed.", C_GOLD))
             return
-        if not await shop_charge(ctx, uid, cost, cost_label="2,000"):
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_NICKNAME_REMOVE_COST:,}"):
             return
         try:
             await ctx.author.edit(nick=None)
@@ -4657,8 +4719,8 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if is_insured(target.id, "role"):
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles.", C_GOLD))
             return
-        cost = 0 if uid in godmode_users else 10000
-        if not await shop_charge(ctx, uid, cost, cost_label="10,000"):
+        cost = 0 if uid in godmode_users else SHOP_ROLE_CREATE_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_CREATE_COST:,}"):
             return
         try:
             new_role = await ctx.guild.create_role(name=name, color=discord.Color(color_int), hoist=True)
@@ -4708,8 +4770,8 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             member_count = len(role.members)
             await ctx.send(embed=emb("❌ Not Alone", f"This role has **{member_count}** member(s). You must be the only one with this role to remove it.", C_RED))
             return
-        cost = 0 if uid in godmode_users else 2000
-        if not await shop_charge(ctx, uid, cost, cost_label="2,000"):
+        cost = 0 if uid in godmode_users else SHOP_ROLE_REMOVE_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_REMOVE_COST:,}"):
             return
         try:
             await role.delete()
@@ -4744,8 +4806,8 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if len(channel_name) < 2:
             await ctx.send(embed=emb("❌ Invalid Name", "Channel name must be at least 2 characters.", C_RED))
             return
-        cost = 0 if uid in godmode_users else 20000
-        if not await shop_charge(ctx, uid, cost, cost_label="20,000"):
+        cost = 0 if uid in godmode_users else SHOP_CHANNEL_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_CHANNEL_COST:,}"):
             return
         try:
             # Find or create the "bot-channels" category
@@ -4804,8 +4866,8 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if channel is None:
             await ctx.send(embed=emb("❌ Not Found", f"No bot-created channel named **{channel_name}** exists.", C_RED))
             return
-        cost = 0 if uid in godmode_users else 20000
-        if not await shop_charge(ctx, uid, cost, cost_label="20,000"):
+        cost = 0 if uid in godmode_users else SHOP_CHANNEL_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_CHANNEL_COST:,}"):
             return
         try:
             channel_name = channel.name
@@ -4837,8 +4899,8 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against ragebait.", C_GOLD))
             return
         topic = " ".join(a for a in args if not a.startswith("<@"))
-        cost = 0 if uid in godmode_users else 2500
-        if not await shop_charge(ctx, uid, cost, cost_label="2,500"):
+        cost = 0 if uid in godmode_users else SHOP_RAGEBAIT_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_RAGEBAIT_COST:,}"):
             return
         topic_clause = f" The topic should be specifically about: {topic}." if topic else ""
         ragebait_system = (
@@ -4863,7 +4925,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
                     {"role": "user", "content": prompt},
                 ], placeholder)
             await finalize(placeholder, ctx.channel, f"{target.mention} {full_response}")
-            active_ragebaits[target.id] = {"remaining": 4, "history": []}
+            active_ragebaits[target.id] = {"remaining": SHOP_RAGEBAIT_MESSAGES, "history": []}
             save_ragebait()
         except Exception as e:
             if cost > 0:
@@ -4879,14 +4941,14 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mock @user`", C_PURPLE))
             return
         target = ctx.message.mentions[0]
-        cost = 0 if uid in godmode_users else 1500
-        if not await shop_charge(ctx, uid, cost, cost_label="1,500"):
+        cost = 0 if uid in godmode_users else SHOP_MOCK_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MOCK_COST:,}"):
             return
-        active_mocks[target.id] = {"remaining": 5, "started_by": uid}
+        active_mocks[target.id] = {"remaining": SHOP_MOCK_MESSAGES, "started_by": uid}
         save_mock()
         await ctx.send(embed=emb(
             "🎭 Mock Activated",
-            f"**{target.display_name}** will have their next 5 messages mocked!",
+            f"**{target.display_name}** will have their next {SHOP_MOCK_MESSAGES} messages mocked!",
             C_PURPLE,
         ))
         return
@@ -4894,10 +4956,10 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
     # ── !shop insurance ───────────────────────────────────────────────────────
     if subcommand == "insurance":
         key = str(uid)
-        cost = 0 if uid in godmode_users else 500
-        if not await shop_charge(ctx, uid, cost, cost_label="500"):
+        cost = 0 if uid in godmode_users else SHOP_INSURANCE_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST:,}"):
             return
-        expires_at = int(time.time() + 86400)
+        expires_at = int(time.time() + SHOP_INSURANCE_DURATION_SECS)
         insurance[key] = {
             "expires_at": expires_at,
             "protected_from": ["ragebait", "mock", "nickname", "role"],
@@ -4936,8 +4998,8 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("❌ Invalid Color", f"Could not parse color: `{color_str}`. Try hex codes like `#FF0000` or color names.", C_RED))
             return
 
-        cost = 0 if uid in godmode_users else 2000
-        if not await shop_charge(ctx, uid, cost, cost_label="2,000"):
+        cost = 0 if uid in godmode_users else SHOP_ROLECOLOR_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLECOLOR_COST:,}"):
             return
 
         try:
@@ -4957,8 +5019,8 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             return
         target = ctx.message.mentions[0]
 
-        cost = 0 if uid in godmode_users else 5000
-        if not await shop_charge(ctx, uid, cost, cost_label="5,000"):
+        cost = 0 if uid in godmode_users else SHOP_MUTE_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MUTE_COST:,}"):
             return
 
         if ctx.guild is None:
@@ -4971,11 +5033,11 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
                 await ctx.send(embed=emb("❌ User Not Found", f"Could not find **{target.display_name}** in this server.", C_RED))
                 return
 
-            # Mute for 5 minutes
-            await member.edit(timed_out_until=discord.utils.utcnow() + datetime.timedelta(minutes=5))
+            # Mute for SHOP_MUTE_MINUTES minutes
+            await member.edit(timed_out_until=discord.utils.utcnow() + datetime.timedelta(minutes=SHOP_MUTE_MINUTES))
             await ctx.send(embed=emb(
                 "🔕 Muted",
-                f"**{target.display_name}** has been muted for 5 minutes!",
+                f"**{target.display_name}** has been muted for {SHOP_MUTE_MINUTES} minutes!",
                 C_PURPLE,
             ))
         except discord.Forbidden:
@@ -4996,8 +5058,8 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("❌ Self Simp", "You can't simp for yourself!", C_RED))
             return
 
-        cost = 0 if uid in godmode_users else 1000
-        if not await shop_charge(ctx, uid, cost, cost_label="1,000"):
+        cost = 0 if uid in godmode_users else SHOP_SIMP_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_SIMP_COST:,}"):
             return
 
         global active_simps
@@ -5012,7 +5074,7 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         title = "🍆 Concubine Tax Activated" if tax_type == "concubine" else "🍆 Simp Tax Activated"
         await ctx.send(embed=emb(
             title,
-            f"**{target.display_name}** now owes **{ctx.author.display_name}** **10 🪙** per message!",
+            f"**{target.display_name}** now owes **{ctx.author.display_name}** **{SHOP_SIMP_TAX_PER_MESSAGE} 🪙** per message!",
             C_PURPLE,
         ))
         return
@@ -5028,17 +5090,17 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
             await ctx.send(embed=emb("❌ Self Curse", "You can't curse yourself!", C_RED))
             return
 
-        cost = 0 if uid in godmode_users else 10000
-        if not await shop_charge(ctx, uid, cost, cost_label="10,000"):
+        cost = 0 if uid in godmode_users else SHOP_CURSE_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_CURSE_COST:,}"):
             return
 
         global active_curses
-        active_curses[target.id] = {"cursed_by": uid, "remaining": 5}
+        active_curses[target.id] = {"cursed_by": uid, "remaining": SHOP_CURSE_MESSAGES}
         save_curse(active_curses)
 
         await ctx.send(embed=emb(
             "🔮 Curse Activated",
-            f"**{target.display_name}** is now cursed for the next **5** messages!",
+            f"**{target.display_name}** is now cursed for the next **{SHOP_CURSE_MESSAGES}** messages!",
             C_PURPLE,
         ))
         return
@@ -5075,8 +5137,8 @@ async def cmd_shop(ctx: commands.Context, subcommand: str = None, *args):
         if direction == "roledown" and role.position == bot_role_positions[0]:
             await ctx.send(embed=emb("❌ Already Lowest", f"**{role.name}** is already the lowest bot-created role.", C_RED))
             return
-        cost = 0 if uid in godmode_users else 20000
-        if not await shop_charge(ctx, uid, cost, cost_label="20,000"):
+        cost = 0 if uid in godmode_users else SHOP_ROLE_MOVE_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_MOVE_COST:,}"):
             return
         # Roles are ordered lowest position (bottom) to highest; "up" = higher position value
         new_pos = role.position + (1 if direction == "roleup" else -1)
@@ -6619,7 +6681,7 @@ async def on_ready():
     # If it's past 5am CT and the daily reset hasn't happened today, do it now
     now_ct = _ct_now()
     today = now_ct.date().isoformat()
-    if now_ct.hour >= 5 and economy.get("last_daily_reset") != today:
+    if now_ct.hour >= DAILY_RESET_HOUR and economy.get("last_daily_reset") != today:
         do_daily_reset()
 
     # Check if results need posting or lottery needs resetting
