@@ -60,6 +60,7 @@ GAMBLER_STREAK_FILE = "data/gambler_streak.json"
 RESTART_MSG_FILE = "data/restart_msg.json"
 EPHEMERAL_MSG_FILE = "data/ephemeral_msgs.json"
 FANFIC_HISTORIES_FILE = "data/fanfic_histories.json"
+FANFIC_OWNERS_FILE = "data/fanfic_owners.json"
 ROLEPLAY_STATE_FILE = "data/roleplay_state.json"
 
 # Slot machine configuration
@@ -150,6 +151,14 @@ def load_fanfic_histories() -> dict[int, list]:
 
 def save_fanfic_histories():
     _save_json(FANFIC_HISTORIES_FILE, {str(k): list(v) for k, v in channel_histories.items() if k in fanfic_thread_ids})
+    _save_json(FANFIC_OWNERS_FILE, {
+        str(k): {"owner_id": v["owner_id"], "invited_ids": list(v["invited_ids"])}
+        for k, v in fanfic_owners.items()
+    })
+
+def load_fanfic_owners() -> dict[int, dict]:
+    raw = _load_json(FANFIC_OWNERS_FILE, {})
+    return {int(k): {"owner_id": v["owner_id"], "invited_ids": set(v["invited_ids"])} for k, v in raw.items()}
 
 
 def load_economy() -> dict:
@@ -481,6 +490,7 @@ quote_log: list[str] = load_quote_log() # last 10 quotes used
 # ── Misc state ────────────────────────────────────────────────────────────────
 channel_histories: dict[int, deque] = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
 fanfic_thread_ids: set[int] = set()
+fanfic_owners: dict[int, dict] = {}  # thread_id → {owner_id, invited_ids: set}
 user_last_request: dict[int, float] = {}
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
@@ -1651,6 +1661,11 @@ async def on_message(message: discord.Message):
     if uid in active_roleplays:
         await respond_roleplay(message.channel, uid, content, message, author_name=message.author.display_name)
     else:
+        # Gate fanfic threads to invited participants only
+        fo = fanfic_owners.get(message.channel.id)
+        if fo and uid not in fo["invited_ids"]:
+            await bot.process_commands(message)
+            return
         guild_id = message.guild.id if message.guild else None
         await respond(message.channel, uid, content, message, guild_id=guild_id, author_name=message.author.display_name)
 
@@ -3694,10 +3709,20 @@ async def cmd_fanfic(ctx: commands.Context, *, prompt: str = None):
     if await check_ai_channel(ctx):
         return
     if prompt is None:
-        await ctx.send("Usage: `!fanfic <prompt>` — e.g. `!fanfic Batman and Superman stuck in an elevator`")
+        await ctx.send("Usage: `!fanfic <prompt> [@user1 @user2 ...]` — e.g. `!fanfic Batman and Superman stuck in an elevator`")
         return
     if check_rate_limit(ctx.author.id):
         await ctx.send("⚠️ Slow down! Please wait a moment before sending another message.")
+        return
+
+    uid = ctx.author.id
+    invited_users = [m for m in ctx.message.mentions if m.id != uid]
+    clean_prompt = prompt
+    for m in ctx.message.mentions:
+        clean_prompt = clean_prompt.replace(f"<@{m.id}>", "").replace(f"<@!{m.id}>", "")
+    clean_prompt = clean_prompt.strip()
+    if not clean_prompt:
+        await ctx.send("Usage: `!fanfic <prompt> [@user1 @user2 ...]` — e.g. `!fanfic Batman and Superman stuck in an elevator`")
         return
 
     if not await enforce_cost(ctx, "fanfic"):
@@ -3705,13 +3730,27 @@ async def cmd_fanfic(ctx: commands.Context, *, prompt: str = None):
 
     guild_id = ctx.guild.id if ctx.guild else None
     if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
-        thread = await ctx.message.create_thread(name=f"Fanfic: {prompt[:75]}")
+        thread = await ctx.message.create_thread(name=f"Fanfic: {clean_prompt[:75]}")
         fanfic_thread_ids.add(thread.id)
-        await respond(thread, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
+
+        confirmed_ids: set[int] = set()
+        if invited_users:
+            confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="📨 Fanfic Invite")
+            for inv_uid in confirmed_ids:
+                member = ctx.guild.get_member(inv_uid)
+                if member:
+                    try:
+                        await thread.add_user(member)
+                    except Exception:
+                        pass
+        fanfic_owners[thread.id] = {"owner_id": uid, "invited_ids": {uid} | confirmed_ids}
+
+        await respond(thread, uid, clean_prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
         save_fanfic_histories()
-        await thread.send(embed=emb("📖 Continue?", "Use `!continue` for the next chapter · `!tldr` to summarize.", C_BLUE))
+        await thread.send(embed=emb("📖 Continue?", "Use `!continue` for the next chapter · `!tldr` to summarize · `!invite @user` to add a co-author.", C_BLUE))
     else:
-        await respond(ctx.channel, ctx.author.id, prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
+        fanfic_owners[ctx.channel.id] = {"owner_id": uid, "invited_ids": {uid}}
+        await respond(ctx.channel, uid, clean_prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
 
 
 @bot.command(name="continue")
@@ -4156,6 +4195,78 @@ async def cmd_race(ctx: commands.Context, *args):
     race_msg = await ctx.send(embed=emb("🏇 Race Starting!", board, C_ORANGE))
 
     asyncio.create_task(_run_race(ctx.channel, cid, race_msg))
+
+
+@bot.command(name="invite")
+async def cmd_invite(ctx: commands.Context):
+    uid = ctx.author.id
+    cid = ctx.channel.id
+
+    invited_users = [m for m in ctx.message.mentions if m.id != uid]
+    if not invited_users:
+        await ctx.send(embed=emb("❌ Usage", "Usage: `!invite @user1 [@user2 ...]`", C_RED))
+        return
+
+    # Determine activity type for this channel
+    is_rp_host = (
+        uid in active_roleplays
+        and "history_owner" not in active_roleplays[uid]
+        and active_roleplays[uid].get("channel_id") == cid
+    )
+    is_fanfic_host = cid in fanfic_thread_ids and fanfic_owners.get(cid, {}).get("owner_id") == uid
+    is_puzzle_host = cid in active_puzzles and active_puzzles[cid].get("user_id") == uid
+
+    if not (is_rp_host or is_fanfic_host or is_puzzle_host):
+        await ctx.send(embed=emb(
+            "❌ No Active Activity",
+            "You must be the host of an active roleplay, RPG, fanfic, or puzzle in this channel to invite others.",
+            C_RED,
+        ))
+        return
+
+    if is_rp_host:
+        activity_label = "RPG" if active_roleplays[uid].get("is_rpg") else "Roleplay"
+    elif is_fanfic_host:
+        activity_label = "Fanfic"
+    else:
+        activity_label = "Puzzle"
+
+    confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title=f"📨 {activity_label} Invite")
+    if not confirmed_ids:
+        await ctx.send(embed=emb("📨 No Response", "No one accepted the invite.", C_BLUE))
+        return
+
+    joined_names = []
+    for inv_uid in confirmed_ids:
+        member = ctx.guild.get_member(inv_uid) if ctx.guild else None
+        if is_rp_host:
+            if inv_uid not in active_roleplays:
+                rp = active_roleplays[uid]
+                active_roleplays[inv_uid] = {
+                    "character_prompt": rp["character_prompt"],
+                    "channel_id": rp["channel_id"],
+                    "guild_id": rp.get("guild_id"),
+                    "history_owner": uid,
+                    **({"is_rpg": True, "system_prompt": rp["system_prompt"]} if rp.get("is_rpg") else {}),
+                }
+            active_roleplays[uid]["participants"].add(inv_uid)
+            save_roleplay_state()
+        elif is_fanfic_host:
+            fanfic_owners[cid]["invited_ids"].add(inv_uid)
+            if member:
+                try:
+                    await ctx.channel.add_user(member)
+                except Exception:
+                    pass
+            save_fanfic_histories()
+        elif is_puzzle_host:
+            active_puzzles[cid].setdefault("invited_ids", set()).add(inv_uid)
+
+        if member:
+            joined_names.append(member.display_name)
+
+    joined_text = ", ".join(joined_names) if joined_names else f"{len(confirmed_ids)} user(s)"
+    await ctx.send(embed=emb("✅ Joined", f"{joined_text} joined the {activity_label.lower()}!", C_GREEN))
 
 
 @bot.command(name="stop", aliases=["quit", "forfeit", "q"])
@@ -6346,6 +6457,7 @@ async def on_ready():
     for thread_id, messages in load_fanfic_histories().items():
         fanfic_thread_ids.add(thread_id)
         channel_histories[thread_id].extend(messages)
+    fanfic_owners.update(load_fanfic_owners())
     saved_roleplays, saved_rp_histories = load_roleplay_state()
     active_roleplays.update(saved_roleplays)
     roleplay_histories.update(saved_rp_histories)
