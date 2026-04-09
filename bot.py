@@ -59,7 +59,7 @@ LOTTERY_FILE = "data/lottery.json"
 GAMBLER_STREAK_FILE = "data/gambler_streak.json"
 RESTART_MSG_FILE = "data/restart_msg.json"
 EPHEMERAL_MSG_FILE = "data/ephemeral_msgs.json"
-RIDDLES_FILE = "data/riddles_crawsome.csv"
+RIDDLES_FILE = "assets/riddles.csv"
 FANFIC_HISTORIES_FILE = "data/fanfic_histories.json"
 FANFIC_OWNERS_FILE = "data/fanfic_owners.json"
 ROLEPLAY_STATE_FILE = "data/roleplay_state.json"
@@ -2186,7 +2186,7 @@ async def cmd_puzzle(ctx: commands.Context, *args):
     # ── Riddle branch (static list) ────────────────────────────────────────────
     if subcommand.lower() == "riddle":
         if not RIDDLES_LIST:
-            await ctx.send(embed=emb("❌ No Riddles", "Riddle list failed to load. Ask an admin to check `data/riddles_crawsome.csv` exists.", C_RED))
+            await ctx.send(embed=emb("❌ No Riddles", "Riddle list failed to load. Ask an admin to check `assets/riddles.csv` exists.", C_RED))
             return
 
         reward = PUZZLE_RIDDLE_REWARD
