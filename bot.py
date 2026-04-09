@@ -4237,18 +4237,26 @@ async def cmd_invite_activity(ctx: commands.Context):
         return
 
     joined_names = []
+    skipped_names = []
     for inv_uid in confirmed_ids:
         member = ctx.guild.get_member(inv_uid) if ctx.guild else None
+        # Check if user is already in an activity in this channel/thread
+        already_in_rp = inv_uid in active_roleplays and active_roleplays[inv_uid].get("channel_id") == cid
+        already_in_fanfic = cid in fanfic_owners and inv_uid in fanfic_owners[cid]["invited_ids"]
+        already_in_puzzle = cid in active_puzzles and inv_uid in active_puzzles[cid].get("invited_ids", set())
+        if already_in_rp or already_in_fanfic or already_in_puzzle:
+            if member:
+                skipped_names.append(member.display_name)
+            continue
         if is_rp_host:
-            if inv_uid not in active_roleplays:
-                rp = active_roleplays[uid]
-                active_roleplays[inv_uid] = {
-                    "character_prompt": rp["character_prompt"],
-                    "channel_id": rp["channel_id"],
-                    "guild_id": rp.get("guild_id"),
-                    "history_owner": uid,
-                    **({"is_rpg": True, "system_prompt": rp["system_prompt"]} if rp.get("is_rpg") else {}),
-                }
+            rp = active_roleplays[uid]
+            active_roleplays[inv_uid] = {
+                "character_prompt": rp["character_prompt"],
+                "channel_id": rp["channel_id"],
+                "guild_id": rp.get("guild_id"),
+                "history_owner": uid,
+                **({"is_rpg": True, "system_prompt": rp["system_prompt"]} if rp.get("is_rpg") else {}),
+            }
             active_roleplays[uid]["participants"].add(inv_uid)
             save_roleplay_state()
             # Add the participant to the thread so they can see and send messages
@@ -4271,8 +4279,16 @@ async def cmd_invite_activity(ctx: commands.Context):
         if member:
             joined_names.append(member.display_name)
 
-    joined_text = ", ".join(joined_names) if joined_names else f"{len(confirmed_ids)} user(s)"
-    await ctx.send(embed=emb("✅ Joined", f"{joined_text} joined the {activity_label.lower()}!", C_GREEN))
+    if skipped_names:
+        await ctx.send(embed=emb(
+            "⚠️ Already Active",
+            f"{', '.join(skipped_names)} already {'has' if len(skipped_names) == 1 else 'have'} an active activity in this channel.",
+            C_GOLD,
+        ))
+    if joined_names:
+        await ctx.send(embed=emb("✅ Joined", f"{', '.join(joined_names)} joined the {activity_label.lower()}!", C_GREEN))
+    elif not skipped_names:
+        await ctx.send(embed=emb("📨 No Response", "No one accepted the invite.", C_BLUE))
 
 
 @bot.command(name="stop", aliases=["quit", "forfeit", "q"])
