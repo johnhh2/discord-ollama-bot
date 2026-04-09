@@ -4198,7 +4198,7 @@ async def cmd_race(ctx: commands.Context, *args):
 
 
 @bot.command(name="invite")
-async def cmd_invite(ctx: commands.Context):
+async def cmd_invite_activity(ctx: commands.Context):
     uid = ctx.author.id
     cid = ctx.channel.id
 
@@ -4251,6 +4251,12 @@ async def cmd_invite(ctx: commands.Context):
                 }
             active_roleplays[uid]["participants"].add(inv_uid)
             save_roleplay_state()
+            # Add the participant to the thread so they can see and send messages
+            if member and isinstance(ctx.channel, discord.Thread):
+                try:
+                    await ctx.channel.add_user(member)
+                except Exception:
+                    pass
         elif is_fanfic_host:
             fanfic_owners[cid]["invited_ids"].add(inv_uid)
             if member:
