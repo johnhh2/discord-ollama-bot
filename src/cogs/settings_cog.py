@@ -138,8 +138,8 @@ class SettingsCog(commands.Cog):
             embed.add_field(name="🎲 Gambler role", value=gambler_role_val, inline=False)
             footer_text = (
                 "Subcommands:\n"
-                "`ai-channels #ch... / clear` • `cmd-whitelist #ch... / clear` • `cmd-blacklist #ch... / clear` • `game-channels #ch... / clear` • `chess-channels #ch... / clear`\n"
-                "`shop <item> on|off` • `rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` • `lottery-channel #channel / clear` • `soundboard-ratelimit add|remove @user|<userid> / list` • `gambler-role on|off`"
+                "ai-channels #ch... / clear  •  cmd-whitelist #ch... / clear  •  cmd-blacklist #ch... / clear  •  game-channels #ch... / clear  •  chess-channels #ch... / clear\n"
+                "shop <item> on|off  •  rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned  •  lottery-channel #channel / clear  •  soundboard-ratelimit add|remove @user|<userid> / list  •  gambler-role on|off"
             )
             embed.set_footer(text=footer_text)
             await send_ephemeral(ctx, embed=embed)
