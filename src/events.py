@@ -371,14 +371,18 @@ class EventsCog(commands.Cog):
                     simp_tax = SHOP_SIMP_TAX_PER_MESSAGE
                     if deduct_balance(uid, simp_tax):
                         add_balance(simp_master_id, simp_tax)
-                        await message.channel.send(f"**{message.author.display_name}** paid a **{simp_tax} 🪙** Concubine tax to <@{simp_master_id}>")
+                        simp_master = await fetch_member(message.guild, simp_master_id)
+                        master_name = simp_master.display_name if simp_master else str(simp_master_id)
+                        await message.channel.send(f"**{message.author.display_name}** paid a **{simp_tax} 🪙** Concubine tax to **{master_name}**")
             else:
                 # Regular simp (permanent)
                 simp_master_id = simp_data["master"]
                 simp_tax = 10
                 if deduct_balance(uid, simp_tax):
                     add_balance(simp_master_id, simp_tax)
-                    await message.channel.send(f"**{message.author.display_name}** paid a **{simp_tax} 🪙** Simp tax to <@{simp_master_id}>")
+                    simp_master = await fetch_member(message.guild, simp_master_id)
+                    master_name = simp_master.display_name if simp_master else str(simp_master_id)
+                    await message.channel.send(f"**{message.author.display_name}** paid a **{simp_tax} 🪙** Simp tax to **{master_name}**")
 
         # Curse: corrupt cursed users' messages
         if uid in state.active_curses and not message.content.startswith("!"):
