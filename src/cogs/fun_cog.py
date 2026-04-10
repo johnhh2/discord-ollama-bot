@@ -98,7 +98,8 @@ async def _r34_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[d
             return []
         if not isinstance(data, list):
             return []
-        return [p for p in data if isinstance(p, dict) and p.get("file_url")]
+        return [p for p in data if isinstance(p, dict) and p.get("file_url")
+                and not p["file_url"].lower().split("?")[0].endswith((".mp4", ".webm"))]
 
     # Try a random page first (pages 0–19 = up to 2000 posts), fall back to page 0
     rand_pid = random.randint(0, 19)
