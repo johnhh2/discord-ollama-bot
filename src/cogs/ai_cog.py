@@ -73,16 +73,17 @@ async def _wait_for_confirmations(
     ctx: commands.Context,
     invited_users: list,
     title: str = "📨 Game Invite",
-    timeout: float = 60.0,
+    dest=None,
 ) -> set:
-    """Wait for invited users to react with ✅ within timeout. Returns set of confirmed user IDs."""
+    """Wait for invited users to react with ✅. Returns set of confirmed user IDs once all have responded."""
     if not invited_users:
         return set()
+    dest = dest or ctx
     invited_ids = {u.id for u in invited_users}
     mentions = " ".join(u.mention for u in invited_users)
-    invite_msg = await ctx.send(embed=emb(
+    invite_msg = await dest.send(embed=emb(
         title,
-        f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ within 60 seconds to join!",
+        f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ to join!",
         C_BLUE,
     ))
     await invite_msg.add_reaction("✅")
@@ -95,17 +96,13 @@ async def _wait_for_confirmations(
         )
 
     confirmed_ids: set = set()
-    deadline = asyncio.get_running_loop().time() + timeout
     while True:
-        remaining = deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
-            break
         try:
-            _, user = await ctx.bot.wait_for("reaction_add", check=check, timeout=remaining)
+            _, user = await ctx.bot.wait_for("reaction_add", check=check)
             confirmed_ids.add(user.id)
             if confirmed_ids == invited_ids:
                 break
-        except asyncio.TimeoutError:
+        except asyncio.CancelledError:
             break
     try:
         await invite_msg.delete()
@@ -193,7 +190,7 @@ class AICog(commands.Cog):
 
             confirmed_ids: set[int] = set()
             if invited_users:
-                confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="📨 Fanfic Invite")
+                confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="📨 Fanfic Invite", dest=thread)
                 for inv_uid in confirmed_ids:
                     member = ctx.guild.get_member(inv_uid)
                     if member:
@@ -329,7 +326,7 @@ class AICog(commands.Cog):
 
         # Invite flow and confirmation
         if invited_users:
-            confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="📨 Roleplay Invite")
+            confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="📨 Roleplay Invite", dest=thread or ctx)
             for inv_uid in confirmed_ids:
                 if inv_uid not in state.active_roleplays:
                     state.active_roleplays[inv_uid] = {
@@ -466,7 +463,7 @@ class AICog(commands.Cog):
 
         # Invite flow and confirmation
         if invited_users:
-            confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="📨 RPG Adventure Invite")
+            confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="📨 RPG Adventure Invite", dest=thread or ctx)
             for inv_uid in confirmed_ids:
                 if inv_uid not in state.active_roleplays:
                     state.active_roleplays[inv_uid] = {
