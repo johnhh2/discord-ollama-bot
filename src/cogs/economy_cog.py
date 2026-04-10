@@ -171,15 +171,13 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb("🦹 Steal", "\n".join(lines), C_GOLD))
             return
 
-        # Parse tier from the rest of the message
+        # Parse tier from the rest of the message, default to 1
         args = ctx.message.content.split()
         tier_str = args[-1] if len(args) >= 3 else None
-        tier_num = None
         if tier_str and tier_str.isdigit() and 1 <= int(tier_str) <= 3:
             tier_num = int(tier_str)
         else:
-            await ctx.send(embed=emb("🦹 Steal", "Please specify a tier: `!steal @user <1|2|3>`", C_GOLD))
-            return
+            tier_num = 1
 
         thief_id = ctx.author.id
         victim_id = target.id
