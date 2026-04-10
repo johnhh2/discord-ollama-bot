@@ -3,7 +3,6 @@ import json
 import os
 import random
 import time
-import datetime
 import logging
 import re
 import subprocess
@@ -163,7 +162,7 @@ async def _auto_daily(message: discord.Message):
     """Award daily coins on first interaction of the day. Sends a short message if awarded."""
     uid = message.author.id
     _ensure_user(uid)
-    today = datetime.date.today().isoformat()
+    today = _ct_today()
     user_data = state.economy["users"][str(uid)]
     if user_data.get("daily_date") == today:
         return

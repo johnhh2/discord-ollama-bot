@@ -39,7 +39,7 @@ from src.persistence import (
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
-    load_lottery, load_saved_quotes, get_guild_cfg,
+    load_lottery, load_saved_quotes, get_guild_cfg, save_jackpot, load_jackpot,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
