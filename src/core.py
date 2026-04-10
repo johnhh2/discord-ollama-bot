@@ -55,4 +55,10 @@ def run():
     async def on_connect():
         await _load_extensions(bot)
 
+    @bot.event
+    async def on_message(message):
+        # Suppress the default on_message so cog listeners don't double-process commands.
+        # EventsCog.on_message handles process_commands itself.
+        pass
+
     bot.run(DISCORD_TOKEN)
