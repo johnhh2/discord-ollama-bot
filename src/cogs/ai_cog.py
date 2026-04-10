@@ -69,6 +69,51 @@ from src.config import (
 from src import state
 
 
+async def _wait_for_confirmations(
+    ctx: commands.Context,
+    invited_users: list,
+    title: str = "📨 Game Invite",
+    timeout: float = 60.0,
+) -> set:
+    """Wait for invited users to react with ✅ within timeout. Returns set of confirmed user IDs."""
+    if not invited_users:
+        return set()
+    invited_ids = {u.id for u in invited_users}
+    mentions = " ".join(u.mention for u in invited_users)
+    invite_msg = await ctx.send(embed=emb(
+        title,
+        f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ within 60 seconds to join!",
+        C_BLUE,
+    ))
+    await invite_msg.add_reaction("✅")
+
+    def check(reaction, user):
+        return (
+            reaction.message.id == invite_msg.id
+            and str(reaction.emoji) == "✅"
+            and user.id in invited_ids
+        )
+
+    confirmed_ids: set = set()
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        try:
+            _, user = await ctx.bot.wait_for("reaction_add", check=check, timeout=remaining)
+            confirmed_ids.add(user.id)
+            if confirmed_ids == invited_ids:
+                break
+        except asyncio.TimeoutError:
+            break
+    try:
+        await invite_msg.delete()
+    except Exception:
+        pass
+    return confirmed_ids
+
+
 async def _send_invite(
     ctx: commands.Context,
     invited_users: list,
