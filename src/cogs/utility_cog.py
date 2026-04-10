@@ -242,12 +242,12 @@ class UtilityCog(commands.Cog):
         ))
         help_embed.add_field(name="🤖 AI", inline=False, value=(
             "`!ai` — View AI connection status and command info\n"
-            "`!ask <question>` — Ask the AI a question\n"
-            "`!fanfic <prompt>` — Generate a steamy fan fiction story (costs 20 🪙)\n"
-            "`!continue` — Generate the next chapter in a fanfic thread (costs 10 🪙)\n"
+            f"`!ask <question>` — Ask the AI a question (costs {FEATURE_COSTS['ask']} 🪙)\n"
+            f"`!fanfic <prompt>` — Generate a steamy fan fiction story (costs {FEATURE_COSTS['fanfic']} 🪙)\n"
+            f"`!continue` — Generate the next chapter in a fanfic thread (costs {FEATURE_COSTS['continue']} 🪙)\n"
             "`!tldr` — Summarize the last AI response in a fanfic or roleplay thread\n"
-            "`!roleplay <character prompt> [@user1 @user2]` — Start a roleplay (costs 50 🪙, invite others with mentions)\n"
-            "`!rpg [@user1 @user2]` — Start an interactive RPG adventure (costs 50 🪙, invite others with mentions)"
+            f"`!roleplay <character prompt> [@user1 @user2]` — Start a roleplay (costs {FEATURE_COSTS['roleplay']} 🪙, invite others with mentions)\n"
+            f"`!rpg [@user1 @user2]` — Start an interactive RPG adventure (costs {FEATURE_COSTS['rpg']} 🪙, invite others with mentions)"
         ))
         help_embed.add_field(name="🛒 Shop", inline=False, value=(
             "`!shop` — Browse items\n"

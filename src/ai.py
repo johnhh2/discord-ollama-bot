@@ -40,11 +40,11 @@ FANFIC_SYSTEM_PROMPT = (
 )
 
 FEATURE_COSTS: dict = {
-    "ask": 10,
-    "fanfic": 20,
+    "ask": 200,
+    "fanfic": 500,
     "continue": 10,
-    "roleplay": 50,
-    "rpg": 50,
+    "roleplay": 500,
+    "rpg": 500,
 }
 
 _FEATURE_LABELS: dict = {
