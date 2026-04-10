@@ -69,15 +69,16 @@ from src.config import (
 from src import state
 
 
-async def _wait_for_confirmations(
+async def _send_invite(
     ctx: commands.Context,
     invited_users: list,
     title: str = "📨 Game Invite",
     dest=None,
-) -> set:
-    """Wait for invited users to react with ✅. Returns set of confirmed user IDs once all have responded."""
+    on_join=None,
+):
+    """Send an invite into dest and start a background task that calls on_join(user) whenever someone reacts ✅."""
     if not invited_users:
-        return set()
+        return
     dest = dest or ctx
     invited_ids = {u.id for u in invited_users}
     mentions = " ".join(u.mention for u in invited_users)
@@ -95,20 +96,19 @@ async def _wait_for_confirmations(
             and user.id in invited_ids
         )
 
-    confirmed_ids: set = set()
-    while True:
-        try:
-            _, user = await ctx.bot.wait_for("reaction_add", check=check)
-            confirmed_ids.add(user.id)
-            if confirmed_ids == invited_ids:
+    async def _listen():
+        reacted: set = set()
+        while reacted != invited_ids:
+            try:
+                _, user = await ctx.bot.wait_for("reaction_add", check=check)
+                if user.id not in reacted:
+                    reacted.add(user.id)
+                    if on_join:
+                        await on_join(user)
+            except asyncio.CancelledError:
                 break
-        except asyncio.CancelledError:
-            break
-    try:
-        await invite_msg.delete()
-    except Exception:
-        pass
-    return confirmed_ids
+
+    asyncio.create_task(_listen())
 
 
 class AICog(commands.Cog):
@@ -188,17 +188,20 @@ class AICog(commands.Cog):
             thread = await ctx.message.create_thread(name=f"Fanfic: {clean_prompt[:75]}")
             state.fanfic_thread_ids.add(thread.id)
 
-            confirmed_ids: set[int] = set()
+            state.fanfic_owners[thread.id] = {"owner_id": uid, "invited_ids": {uid}}
+
+            async def _fanfic_join(user, _thread=thread, _thread_id=thread.id):
+                member = ctx.guild.get_member(user.id) if ctx.guild else None
+                if member:
+                    try:
+                        await _thread.add_user(member)
+                    except Exception:
+                        pass
+                state.fanfic_owners[_thread_id]["invited_ids"].add(user.id)
+                await _thread.send(embed=emb("✅ Joined", f"{user.mention} joined the fanfic!", C_GREEN))
+
             if invited_users:
-                confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="📨 Fanfic Invite", dest=thread)
-                for inv_uid in confirmed_ids:
-                    member = ctx.guild.get_member(inv_uid)
-                    if member:
-                        try:
-                            await thread.add_user(member)
-                        except Exception:
-                            pass
-            state.fanfic_owners[thread.id] = {"owner_id": uid, "invited_ids": {uid} | confirmed_ids}
+                await _send_invite(ctx, invited_users, title="📨 Fanfic Invite", dest=thread, on_join=_fanfic_join)
 
             await respond(thread, uid, clean_prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
             save_fanfic_histories()
@@ -325,27 +328,20 @@ class AICog(commands.Cog):
         save_roleplay_state()
 
         # Invite flow and confirmation
-        if invited_users:
-            confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="📨 Roleplay Invite", dest=thread or ctx)
-            for inv_uid in confirmed_ids:
-                if inv_uid not in state.active_roleplays:
-                    state.active_roleplays[inv_uid] = {
-                        "character_prompt": clean_prompt,
-                        "channel_id": rp_channel_id,
-                        "guild_id": guild_id,
-                        "history_owner": uid,
-                    }
-            state.active_roleplays[uid]["participants"].update(confirmed_ids)
+        async def _rp_join(user, _uid=uid, _clean_prompt=clean_prompt, _rp_channel_id=rp_channel_id, _guild_id=guild_id, _dest=thread or ctx.channel):
+            if user.id not in state.active_roleplays:
+                state.active_roleplays[user.id] = {
+                    "character_prompt": _clean_prompt,
+                    "channel_id": _rp_channel_id,
+                    "guild_id": _guild_id,
+                    "history_owner": _uid,
+                }
+            if _uid in state.active_roleplays and "participants" in state.active_roleplays[_uid]:
+                state.active_roleplays[_uid]["participants"].add(user.id)
+            await _dest.send(embed=emb("✅ Joined", f"{user.mention} joined the roleplay!", C_GREEN))
 
-            # Show confirmation of who joined
-            if confirmed_ids:
-                confirmed_names = []
-                for cid in confirmed_ids:
-                    member = ctx.guild.get_member(cid) if ctx.guild else None
-                    if member:
-                        confirmed_names.append(member.display_name)
-                joined_text = ", ".join(confirmed_names) if confirmed_names else f"{len(confirmed_ids)} user(s)"
-                await ctx.send(embed=emb("✅ Joined", f"{joined_text} joined the roleplay!", C_GREEN))
+        if invited_users:
+            await _send_invite(ctx, invited_users, title="📨 Roleplay Invite", dest=thread or ctx, on_join=_rp_join)
 
         preview = clean_prompt[:100] + ("..." if len(clean_prompt) > 100 else "")
         dest = thread or ctx.channel
@@ -461,30 +457,23 @@ class AICog(commands.Cog):
         state.roleplay_histories[uid] = []
         save_roleplay_state()
 
-        # Invite flow and confirmation
-        if invited_users:
-            confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="📨 RPG Adventure Invite", dest=thread or ctx)
-            for inv_uid in confirmed_ids:
-                if inv_uid not in state.active_roleplays:
-                    state.active_roleplays[inv_uid] = {
-                        "character_prompt": "RPG Adventure",
-                        "channel_id": rpg_channel_id,
-                        "guild_id": guild_id,
-                        "history_owner": uid,
-                        "is_rpg": True,
-                        "system_prompt": rpg_system_prompt,
-                    }
-            state.active_roleplays[uid]["participants"].update(confirmed_ids)
+        # Invite flow — fire and forget, AI starts immediately
+        async def _rpg_join(user, _uid=uid, _rpg_channel_id=rpg_channel_id, _guild_id=guild_id, _rpg_system_prompt=rpg_system_prompt, _dest=thread or ctx.channel):
+            if user.id not in state.active_roleplays:
+                state.active_roleplays[user.id] = {
+                    "character_prompt": "RPG Adventure",
+                    "channel_id": _rpg_channel_id,
+                    "guild_id": _guild_id,
+                    "history_owner": _uid,
+                    "is_rpg": True,
+                    "system_prompt": _rpg_system_prompt,
+                }
+            if _uid in state.active_roleplays and "participants" in state.active_roleplays[_uid]:
+                state.active_roleplays[_uid]["participants"].add(user.id)
+            await _dest.send(embed=emb("✅ Joined", f"{user.mention} joined the adventure!", C_GREEN))
 
-            # Show confirmation of who joined
-            if confirmed_ids:
-                confirmed_names = []
-                for cid in confirmed_ids:
-                    member = ctx.guild.get_member(cid) if ctx.guild else None
-                    if member:
-                        confirmed_names.append(member.display_name)
-                joined_text = ", ".join(confirmed_names) if confirmed_names else f"{len(confirmed_ids)} user(s)"
-                await ctx.send(embed=emb("✅ Joined", f"{joined_text} joined the adventure!", C_GREEN))
+        if invited_users:
+            await _send_invite(ctx, invited_users, title="📨 RPG Adventure Invite", dest=thread or ctx, on_join=_rpg_join)
 
         # Send initial AI message asking for character configuration
         dest = thread or ctx.channel
