@@ -136,10 +136,14 @@ class EconomyCog(commands.Cog):
                 return f"User {uid_str}"
 
         names = await asyncio.gather(*(resolve_name(uid_str) for uid_str, _ in sorted_users))
-        lines = [
-            f"{medals[i] if i < 3 else f'{i + 1}.'} **{name}** — {data['balance']} 🪙"
-            for i, (name, (_, data)) in enumerate(zip(names, sorted_users))
-        ]
+        lottery = load_lottery(ctx.guild.id)
+        lottery_players = lottery.get("players", {})
+        lines = []
+        for i, (name, (uid_str, data)) in enumerate(zip(names, sorted_users)):
+            prefix = medals[i] if i < 3 else f"{i + 1}."
+            tickets = lottery_players.get(uid_str, 0)
+            ticket_str = f" • {tickets} 🎟️" if tickets else ""
+            lines.append(f"{prefix} **{name}** — {data['balance']} 🪙{ticket_str}")
         await ctx.send(embed=emb("🪙 Leaderboard", "\n".join(lines), C_GREEN))
 
 
