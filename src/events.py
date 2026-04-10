@@ -217,6 +217,32 @@ class EventsCog(commands.Cog):
         self.bot = bot
 
     @commands.Cog.listener()
+    async def on_ready(self):
+        logging.info(f"Logged in as {self.bot.user} ({self.bot.user.id})")
+
+        # Edit the restart confirmation message if one was saved
+        restart_data = _load_json(RESTART_MSG_FILE, {})
+        if restart_data:
+            try:
+                channel = await self.bot.fetch_channel(restart_data["channel_id"])
+                msg = await channel.fetch_message(restart_data["message_id"])
+                await msg.edit(content="✅ Bot restarted successfully.")
+            except Exception:
+                pass
+            _save_json(RESTART_MSG_FILE, {})
+
+        # Delete all ephemeral messages that survived the restart
+        records = _load_json(EPHEMERAL_MSG_FILE, [])
+        for record in records:
+            try:
+                channel = await self.bot.fetch_channel(record["channel_id"])
+                msg = await channel.fetch_message(record["message_id"])
+                await msg.delete()
+            except Exception:
+                pass
+        _save_json(EPHEMERAL_MSG_FILE, [])
+
+    @commands.Cog.listener()
     async def global_command_channel_check(self, ctx: commands.Context) -> bool:
         if ctx.guild is None:
             return True
