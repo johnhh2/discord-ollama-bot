@@ -226,7 +226,7 @@ class EventsCog(commands.Cog):
             try:
                 channel = await self.bot.fetch_channel(restart_data["channel_id"])
                 msg = await channel.fetch_message(restart_data["message_id"])
-                await msg.edit(content="✅ Bot restarted successfully.")
+                await msg.edit(embed=emb("✅ Restarted", "Bot has restarted.", C_GREEN))
             except Exception:
                 pass
             _save_json(RESTART_MSG_FILE, {})
