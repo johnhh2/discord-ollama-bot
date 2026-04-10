@@ -10,10 +10,10 @@ from collections import Counter
 
 import pytest
 
-import bot
+import src as bot
 # Keep direct references to I/O functions so they work even when _save_json
 # is stubbed in conftest (the import captures the original function object).
-from bot import _load_json as real_load_json, _save_json as real_save_json
+from src import _load_json as real_load_json, _save_json as real_save_json
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -537,7 +537,7 @@ class TestLotteryWinnerPayout:
             bot.add_balance(int(uid_str), 0)
         pool = 3000
         # Force random.choice to always pick player 8002
-        monkeypatch.setattr("bot.random.choice", lambda seq: "8002")
+        monkeypatch.setattr("src.random.choice", lambda seq: "8002")
         winner_id = int(bot.random.choice(list(players.keys())))
         bot.add_balance(winner_id, pool)
         assert bot.get_balance(8002) == pool
