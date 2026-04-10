@@ -243,6 +243,40 @@ class ScratchoffCog(commands.Cog):
     async def cmd_scratches(self, ctx: commands.Context):
         await ctx.invoke(self.cmd_scratchoff, count=3)
 
+    @commands.command(name="streak")
+    async def cmd_streak(self, ctx: commands.Context):
+        uid = ctx.author.id
+        _ensure_user(uid)
+
+        today_ct = _ct_today()
+        yesterday = (datetime.date.fromisoformat(today_ct) - datetime.timedelta(days=1)).isoformat()
+
+        user = state.economy["users"][str(uid)]
+        scratch_used = user.get("scratch_used", 0) if user.get("scratch_date") == today_ct else 0
+        last_full_day = state.gambler_streak.get(str(uid))
+
+        filled_today = last_full_day == today_ct
+        filled_yesterday = last_full_day == yesterday
+
+        if filled_today:
+            streak_text = "🔥 **2+ days** — you filled today and at least yesterday!"
+            color = C_GREEN
+        elif filled_yesterday:
+            streak_text = f"⏳ **1 day** — you filled yesterday. Use all 3 today to extend your streak! ({scratch_used}/3 used today)"
+            color = C_GOLD
+        elif last_full_day:
+            streak_text = f"❌ **Streak broken** — last full day was `{last_full_day}`. Use all 3 today to start a new streak! ({scratch_used}/3 used today)"
+            color = C_RED
+        else:
+            streak_text = f"❌ **No streak yet** — use all 3 scratchoffs in a day to start one! ({scratch_used}/3 used today)"
+            color = C_GREY
+
+        cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
+        role_enabled = cfg.get("gambler_role_enabled", False)
+        role_line = "\n\nFill all 3 **2 days in a row** to auto-join the **Gamblers** role." if role_enabled else ""
+
+        await ctx.send(embed=emb("🎫 Scratchoff Streak", streak_text + role_line, color))
+
     @commands.command(name="scratchoffrewards", aliases=["scratchrewards", "scratchoffreward", "scratchreward"])
     async def cmd_scratchoff_rewards(self, ctx: commands.Context):
         embed = discord.Embed(title="🎫 Scratchoff Payouts", color=C_PURPLE)
