@@ -115,8 +115,10 @@ class EconomyCog(commands.Cog):
         if ctx.guild is None:
             await ctx.send("Leaderboard is only available in servers.")
             return
+        lottery = load_lottery(ctx.guild.id)
+        lottery_players = lottery.get("players", {})
         sorted_users = sorted(
-            ((k, v) for k, v in state.economy["users"].items() if v["balance"] > 0),
+            ((k, v) for k, v in state.economy["users"].items() if v["balance"] > 0 or k in lottery_players),
             key=lambda x: x[1]["balance"], reverse=True
         )[:10]
         if not sorted_users:
@@ -136,8 +138,6 @@ class EconomyCog(commands.Cog):
                 return f"User {uid_str}"
 
         names = await asyncio.gather(*(resolve_name(uid_str) for uid_str, _ in sorted_users))
-        lottery = load_lottery(ctx.guild.id)
-        lottery_players = lottery.get("players", {})
         lines = []
         for i, (name, (uid_str, data)) in enumerate(zip(names, sorted_users)):
             prefix = medals[i] if i < 3 else f"{i + 1}."
