@@ -237,10 +237,20 @@ class HangmanCog(commands.Cog):
     async def cmd_hangman(self, ctx: commands.Context, *args):
         if await check_game_channel(ctx):
             return
+        uid = ctx.author.id
+        _HANGMAN_COOLDOWN = 6 * 3600
+        now = time.time()
+        last = state.user_last_hangman.get(uid, 0)
+        if now - last < _HANGMAN_COOLDOWN:
+            remaining = int(_HANGMAN_COOLDOWN - (now - last))
+            h, m = divmod(remaining // 60, 60)
+            await ctx.send(embed=emb("🔤 Cooldown", f"You can start another hangman in **{h}h {m}m**.", C_ORANGE))
+            return
         cid = ctx.channel.id
         if cid in state.active_hangman_games:
             await ctx.send(embed=emb("🔤 Already Playing", "Just type your guess directly!", C_ORANGE))
             return
+        state.user_last_hangman[uid] = time.time()
         word = random.choice(HANGMAN_WORDS)
         state.active_hangman_games[cid] = {
             "word": word,

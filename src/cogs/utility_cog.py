@@ -536,6 +536,14 @@ class UtilityCog(commands.Cog):
             return
 
         uid = ctx.author.id
+        _PUZZLE_COOLDOWN = 6 * 3600
+        _now = time.time()
+        _last = state.user_last_puzzle.get(uid, 0)
+        if _now - _last < _PUZZLE_COOLDOWN:
+            _remaining = int(_PUZZLE_COOLDOWN - (_now - _last))
+            _h, _m = divmod(_remaining // 60, 60)
+            await ctx.send(embed=emb("🧩 Cooldown", f"You can start another puzzle in **{_h}h {_m}m**.", C_GOLD))
+            return
         if any(p["user_id"] == uid for p in state.active_puzzles.values()):
             await ctx.send(embed=emb("⚠️ Puzzle Active", f"**{ctx.author.display_name}** already has a puzzle running! Solve it or use `!stop` to cancel.", C_GOLD))
             return
@@ -545,6 +553,7 @@ class UtilityCog(commands.Cog):
             await ctx.send(embed=emb("⚠️ Puzzle Active", "A puzzle is already running in this channel! Solve it first.", C_GOLD))
             return
 
+        state.user_last_puzzle[uid] = time.time()
         import re as _re
 
         # ── Riddle branch (static list) ────────────────────────────────────────────

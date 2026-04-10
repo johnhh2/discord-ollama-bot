@@ -60,6 +60,8 @@ channel_histories: dict = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
 fanfic_thread_ids: set = set()
 fanfic_owners: dict = {}        # thread_id → {owner_id, invited_ids: set}
 user_last_request: dict = {}
+user_last_hangman: dict = {}   # user_id → epoch time of last hangman start
+user_last_puzzle: dict = {}    # user_id → epoch time of last puzzle start
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
