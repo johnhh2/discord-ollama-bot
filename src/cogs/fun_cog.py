@@ -217,7 +217,7 @@ class FunCog(commands.Cog):
                 await ctx.send(embed=emb("❌ Error", "Could not fetch the replied-to message.", C_RED))
                 return
 
-            if replied_msg.author == bot.user:
+            if replied_msg.author == self.bot.user:
                 await ctx.send(embed=emb("📜 Quote", "You can't save the bot's messages as quotes.", C_GREY))
                 return
 
@@ -272,7 +272,7 @@ class FunCog(commands.Cog):
             all_messages = []
             async for msg in target_channel.history():
                 # Filter: no bot messages, no commands, reasonable length, no URLs
-                if msg.author == bot.user or msg.content.startswith("!") or "http" in msg.content.lower():
+                if msg.author == self.bot.user or msg.content.startswith("!") or "http" in msg.content.lower():
                     continue
                 if len(msg.content) < 10 or len(msg.content) > 500:
                     continue

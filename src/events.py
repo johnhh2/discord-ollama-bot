@@ -67,9 +67,11 @@ from src.config import (
     DAILY_REWARD, DAILY_RESET_HOUR, INITIAL_BOT_ADMIN_ID,
 )
 from src import state
+from src.games.blackjack import draw_card, hand_value, build_blackjack_display, _blackjack_stand
+from src.games.hangman import _process_hangman_guess
 
 
-async def _roast_soundboard_spam(guild_id: int, user_id: int):
+async def _roast_soundboard_spam(bot, guild_id: int, user_id: int):
     """Generate a roast for soundboard spam using the ragebait system."""
     guild = bot.get_guild(guild_id)
     if guild is None:
@@ -127,7 +129,7 @@ async def _roast_soundboard_spam(guild_id: int, user_id: int):
         pass
 
 
-async def _handle_soundboard_ratelimit(guild_id: int, user_id: int):
+async def _handle_soundboard_ratelimit(bot, guild_id: int, user_id: int):
     """Check if user exceeded soundboard rate limit; kick if so."""
     now = time.monotonic()
     key = (guild_id, user_id)
@@ -148,7 +150,7 @@ async def _handle_soundboard_ratelimit(guild_id: int, user_id: int):
         return
 
     # Generate roast
-    asyncio.create_task(_roast_soundboard_spam(guild_id, user_id))
+    asyncio.create_task(_roast_soundboard_spam(bot, guild_id, user_id))
 
     # Kick from voice channel
     try:
@@ -292,11 +294,11 @@ class EventsCog(commands.Cog):
         cfg = get_guild_cfg(guild_id)
         if user_id not in cfg.get("soundboard_ratelimit", []):
             return
-        await _handle_soundboard_ratelimit(guild_id, user_id)
+        await _handle_soundboard_ratelimit(self.bot, guild_id, user_id)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.author == bot.user:
+        if message.author == self.bot.user:
             return
 
         uid = message.author.id
@@ -372,7 +374,7 @@ class EventsCog(commands.Cog):
         )
         if not _blacklisted and (
             message.content.startswith("!")
-            or bot.user in message.mentions
+            or self.bot.user in message.mentions
             or _is_dm
             or message.channel.id in state.active_hangman_games
             or uid in state.active_blackjack_games
@@ -437,22 +439,22 @@ class EventsCog(commands.Cog):
 
         # AI enabled guard
         if not state.bot_settings.get("ai_enabled", True):
-            await bot.process_commands(message)
+            await self.bot.process_commands(message)
             return
 
         # Channel guard
         if ACTIVE_CHANNEL_IDS and message.channel.id not in ACTIVE_CHANNEL_IDS:
-            await bot.process_commands(message)
+            await self.bot.process_commands(message)
             return
 
         is_dm = isinstance(message.channel, discord.DMChannel)
         # Only respond to mentions if the message starts with the mention
-        is_mentioned = bot.user in message.mentions and message.content.strip().startswith(f"<@{bot.user.id}>")
+        is_mentioned = self.bot.user in message.mentions and message.content.strip().startswith(f"<@{self.bot.user.id}>")
         in_roleplay = uid in state.active_roleplays and state.active_roleplays[uid].get("channel_id") == message.channel.id
 
         # Ragebait and mock take precedence over normal mentions
         if uid in state.active_ragebaits or uid in state.active_mocks:
-            await bot.process_commands(message)
+            await self.bot.process_commands(message)
             return
 
         # Check channel restrictions for mentions (AI channels and blacklist)
@@ -478,27 +480,27 @@ class EventsCog(commands.Cog):
                     all_channels = [ch.id for ch in message.guild.text_channels if ch.id not in command_blacklist]
                     names = " ".join(f"<#{cid}>" for cid in all_channels) if all_channels else "no channels"
                 await _wrong_channel_reply(message, f"AI commands are only allowed in: {names}")
-                await bot.process_commands(message)
+                await self.bot.process_commands(message)
                 return
 
         if not (is_dm or is_mentioned or in_roleplay):
-            await bot.process_commands(message)
+            await self.bot.process_commands(message)
             return
 
         # Skip bare commands during roleplay (let process_commands handle them)
         if in_roleplay and not is_mentioned and not is_dm and message.content.startswith("!"):
-            await bot.process_commands(message)
+            await self.bot.process_commands(message)
             return
 
-        content = message.content.replace(f"<@{bot.user.id}>", "").strip()
+        content = message.content.replace(f"<@{self.bot.user.id}>", "").strip()
         if not content:
             await message.reply("Yes?")
-            await bot.process_commands(message)
+            await self.bot.process_commands(message)
             return
 
         if check_rate_limit(uid):
             await message.reply("⚠️ Slow down! Please wait a moment before sending another message.")
-            await bot.process_commands(message)
+            await self.bot.process_commands(message)
             return
 
         if uid in state.active_roleplays:
@@ -507,12 +509,12 @@ class EventsCog(commands.Cog):
             # Gate fanfic threads to invited participants only
             fo = state.fanfic_owners.get(message.channel.id)
             if fo and uid not in fo["invited_ids"]:
-                await bot.process_commands(message)
+                await self.bot.process_commands(message)
                 return
             guild_id = message.guild.id if message.guild else None
             await respond(message.channel, uid, content, message, guild_id=guild_id, author_name=message.author.display_name)
 
-        await bot.process_commands(message)
+        await self.bot.process_commands(message)
 
 
 async def setup(bot):

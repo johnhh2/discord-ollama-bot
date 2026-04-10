@@ -102,7 +102,7 @@ class EconomyCog(commands.Cog):
     @commands.command(name="balance", aliases=["bal", "b", "!", "$"])
     async def cmd_balance(self, ctx: commands.Context, target: discord.Member = None):
         target = target or ctx.author
-        if bot.user and target.id == bot.user.id and ctx.guild:
+        if self.bot.user and target.id == self.bot.user.id and ctx.guild:
             bal = get_guild_house_balance(ctx.guild.id)
             await ctx.send(embed=emb("🏦 House Pot", f"**{ctx.guild.name}**: {bal} 🪙", C_GOLD))
         else:
@@ -133,7 +133,7 @@ class EconomyCog(commands.Cog):
             # Try global user lookup
             if name is None:
                 try:
-                    user = await bot.fetch_user(uid_int)
+                    user = await self.bot.fetch_user(uid_int)
                     name = user.display_name
                 except (discord.NotFound, discord.HTTPException):
                     pass
@@ -158,7 +158,7 @@ class EconomyCog(commands.Cog):
             return
         if not await shop_charge(ctx, ctx.author.id, amount):
             return
-        if bot.user and recipient.id == bot.user.id and ctx.guild:
+        if self.bot.user and recipient.id == self.bot.user.id and ctx.guild:
             add_guild_house(ctx.guild.id, amount)
             await ctx.send(embed=emb(
                 "💸 Payment Sent",

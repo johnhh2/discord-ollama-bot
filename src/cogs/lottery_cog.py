@@ -73,6 +73,59 @@ from src import state
 class LotteryCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.lottery_scheduler.start()
+
+    def cog_unload(self):
+        self.lottery_scheduler.cancel()
+
+    @tasks.loop(minutes=1)
+    async def lottery_scheduler(self):
+        """Check every minute if it's Saturday 6pm CST for lottery tasks."""
+        now = datetime.datetime.now()
+        is_saturday = now.weekday() == 5
+
+        if not is_saturday:
+            return
+
+        for guild in self.bot.guilds:
+            cfg = get_guild_cfg(guild.id)
+            lottery_channel_id = cfg.get("lottery_channel")
+            if not lottery_channel_id:
+                continue
+
+            try:
+                channel = await self.bot.fetch_channel(lottery_channel_id)
+            except Exception:
+                continue
+
+            if now.hour == 18 and now.minute == 0:
+                lottery = load_lottery(guild.id)
+                current_week = now.isocalendar()[1]
+                last_posted = lottery.get("last_posted_week", 0)
+
+                if current_week != last_posted:
+                    pool = lottery.get("prize_pool", 0)
+                    players = lottery.get("players", {})
+
+                    if players and pool > 0:
+                        winner_id = random.choice(list(players.keys()))
+                        winner = await self.bot.fetch_user(int(winner_id))
+                        add_balance(int(winner_id), pool)
+
+                        embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
+                        embed.description = (
+                            f"**Winner:** {winner.mention}\n"
+                            f"**Prize:** {pool:,} 🪙\n"
+                            f"**Players:** {len(players)}\n"
+                            f"**Tickets Sold:** {sum(players.values())}"
+                        )
+                        await channel.send(embed=embed)
+
+                    lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
+                    drain_bot_balance_into_lottery(lottery, guild.id)
+                    save_lottery(guild.id, lottery)
+
+                    await announce_new_lottery(channel, lottery["prize_pool"], now)
 
     @commands.command(name="lottery")
     async def cmd_lottery(self, ctx: commands.Context, n: str = None):
@@ -168,59 +221,4 @@ class LotteryCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(LotteryCog(bot))
-
-
-@tasks.loop(minutes=1)
-async def lottery_scheduler():
-    """Check every minute if it's Saturday 6pm CST for lottery tasks."""
-    now = datetime.datetime.now()
-    # Saturday = 5 (Monday = 0)
-    is_saturday = now.weekday() == 5
-
-    if not is_saturday:
-        return
-
-    # Get all guilds with lottery channel configured
-    for guild in bot.guilds:
-        cfg = get_guild_cfg(guild.id)
-        lottery_channel_id = cfg.get("lottery_channel")
-        if not lottery_channel_id:
-            continue
-
-        try:
-            channel = await bot.fetch_channel(lottery_channel_id)
-        except:
-            continue
-
-        # Saturday 6pm CST - post results and start new lottery
-        if now.hour == 18 and now.minute == 0:
-            lottery = load_lottery(guild.id)
-            current_week = now.isocalendar()[1]
-            last_posted = lottery.get("last_posted_week", 0)
-
-            if current_week != last_posted:
-                # Post results
-                pool = lottery.get("prize_pool", 0)
-                players = lottery.get("players", {})
-
-                if players and pool > 0:
-                    winner_id = random.choice(list(players.keys()))
-                    winner = await bot.fetch_user(int(winner_id))
-                    add_balance(int(winner_id), pool)
-
-                    embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
-                    embed.description = (
-                        f"**Winner:** {winner.mention}\n"
-                        f"**Prize:** {pool:,} 🪙\n"
-                        f"**Players:** {len(players)}\n"
-                        f"**Tickets Sold:** {sum(players.values())}"
-                    )
-                    await channel.send(embed=embed)
-
-                # Reset lottery immediately for next week
-                lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
-                drain_bot_balance_into_lottery(lottery, guild.id)
-                save_lottery(guild.id, lottery)
-
-                await announce_new_lottery(channel, lottery["prize_pool"], now)
 

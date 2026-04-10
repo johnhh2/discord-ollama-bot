@@ -208,21 +208,21 @@ class UtilityCog(commands.Cog):
     async def cmd_stats(self, ctx: commands.Context):
         elapsed = time.monotonic() - state.bot_start_time
         msg_rate = state.stats_messages_seen / (elapsed / 60) if elapsed > 0 else 0
-        text_channels = sum(len(g.text_channels) for g in bot.guilds)
-        voice_channels = sum(len(g.voice_channels) for g in bot.guilds)
+        text_channels = sum(len(g.text_channels) for g in self.bot.guilds)
+        voice_channels = sum(len(g.voice_channels) for g in self.bot.guilds)
         ai_connected = await check_ollama_connected()
         vram_text = state.bot_settings.get("vram_text", "16GB")
 
         embed = discord.Embed(title="📊 Bot Stats", color=C_BLUE)
         indent = "⠀ "  # Invisible character + space for indentation that Discord preserves
-        embed.add_field(name="🤖 Bot", value=f"{indent}{bot.user}\n{bot.user.id}", inline=True)
+        embed.add_field(name="🤖 Bot", value=f"{indent}{self.bot.user}\n{self.bot.user.id}", inline=True)
         embed.add_field(name="⚙️ Shard", value=f"{indent}#0 / 1", inline=True)
         embed.add_field(name="💬 Commands Ran", value=f"{indent}{state.stats_commands_ran} Commands", inline=True)
         embed.add_field(name="📨 Messages", value=f"{indent}{state.stats_messages_seen} ({msg_rate:.2f}/min)", inline=True)
         embed.add_field(name="🧠 Memory", value=f"{indent}{get_memory_mb():.2f} MB", inline=True)
         embed.add_field(name="⏱️ Uptime", value=f"{indent}{format_uptime()}", inline=True)
         embed.add_field(name="🌐 Presence", value=(
-            f"{indent}{len(bot.guilds)} Servers\n"
+            f"{indent}{len(self.bot.guilds)} Servers\n"
             f"{indent}{text_channels} Text Channels\n"
             f"{indent}{voice_channels} Voice Channels"
         ), inline=True)

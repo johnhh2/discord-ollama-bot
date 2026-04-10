@@ -99,7 +99,7 @@ class ModerationCog(commands.Cog):
         async for message in ctx.channel.history(limit=500):
             if deleted >= n:
                 break
-            if message.author == bot.user:
+            if message.author == self.bot.user:
                 await message.delete()
                 deleted += 1
         confirm = await ctx.send(embed=emb(

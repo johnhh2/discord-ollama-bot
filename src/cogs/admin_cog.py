@@ -248,7 +248,7 @@ class AdminCog(commands.Cog):
         bot_msg = None
         user_msg = None
         for i, msg in enumerate(recent):
-            if msg.author == bot.user and msg.id != ctx.message.id:
+            if msg.author == self.bot.user and msg.id != ctx.message.id:
                 bot_msg = msg
                 # Look further back for the invoker's message
                 for msg2 in recent[i + 1:]:
@@ -366,14 +366,14 @@ class AdminCog(commands.Cog):
             amount = int(amount)
             assert amount != 0
             if amount < 0:
-                if bot.user and target.id == bot.user.id:
+                if self.bot.user and target.id == self.bot.user.id:
                     amount = max(amount, -1 * get_guild_house_balance(ctx.guild.id if ctx.guild else 0))
                 else:
                     amount = max(amount, -1*get_balance(target.id))
         except (ValueError, AssertionError):
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a non-zero whole number.", C_RED))
             return
-        if bot.user and target.id == bot.user.id and ctx.guild:
+        if self.bot.user and target.id == self.bot.user.id and ctx.guild:
             add_guild_house(ctx.guild.id, amount)
             action = "given to" if amount > 0 else "removed from"
             await ctx.send(embed=emb(
@@ -419,11 +419,12 @@ class AdminCog(commands.Cog):
         invite_url = "https://discord.com/oauth2/authorize?client_id=1489403251303518322&permissions=6192724835560529&integration_type=0&scope=bot"
 
         # Create a view with a button
+        _bot = self.bot
         class InviteView(ui.View):
             @ui.button(label="Get Bot Invitation Link", style=discord.ButtonStyle.primary)
             async def copy_button(self, interaction: discord.Interaction, button: ui.Button):
                 # Verify the user clicking the button is an admin
-                user_ctx = await bot.get_context(interaction.message)
+                user_ctx = await _bot.get_context(interaction.message)
                 user_ctx.author = interaction.user
                 if not is_admin(user_ctx):
                     await interaction.response.send_message("❌ You don't have permission to view this link.", ephemeral=True)
