@@ -41,6 +41,7 @@ from src.persistence import (
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg,
 )
+from src.cogs.ai_cog import _wait_for_confirmations
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
     stream_ollama, finalize, _execute_ollama_stream, respond, respond_roleplay,
