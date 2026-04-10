@@ -20,7 +20,7 @@ from src.helpers import (
     mocking_font, curse_font, parse_amount, send_ephemeral, resolve_role,
     fetch_member, toggle_member_role, shop_charge, _render_race,
     _delete_after, _edit_board, get_memory_mb, format_uptime, get_version,
-    get_system_prompt, _log_audit, log_bot_permission_error,
+    get_system_prompt, _log_audit, log_bot_permission_error, MemberConverter,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
@@ -100,7 +100,7 @@ class EconomyCog(commands.Cog):
 
 
     @commands.command(name="balance", aliases=["bal", "b", "!", "$"])
-    async def cmd_balance(self, ctx: commands.Context, target: discord.Member = None):
+    async def cmd_balance(self, ctx: commands.Context, target: MemberConverter = None):
         target = target or ctx.author
         if self.bot.user and target.id == self.bot.user.id and ctx.guild:
             bal = get_guild_house_balance(ctx.guild.id)
@@ -148,7 +148,7 @@ class EconomyCog(commands.Cog):
 
 
     @commands.command(name="steal")
-    async def cmd_steal(self, ctx: commands.Context, target: discord.Member = None):
+    async def cmd_steal(self, ctx: commands.Context, target: MemberConverter = None):
         TIERS = [
             # (steal_chance, steal_pct, jail_chance, fee, jail_days)
             (0.10, 0.10, 0.25, 1000, 1),
@@ -313,7 +313,7 @@ class EconomyCog(commands.Cog):
 
 
     @commands.command(name="pay", aliases=["give", "gift", "donate"])
-    async def cmd_pay(self, ctx: commands.Context, recipient: discord.Member = None, amount: str = None):
+    async def cmd_pay(self, ctx: commands.Context, recipient: MemberConverter = None, amount: str = None):
         if recipient is None or amount is None:
             await ctx.send("Usage: `!pay @user <amount>`")
             return

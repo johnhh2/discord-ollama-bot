@@ -21,7 +21,7 @@ from src.helpers import (
     mocking_font, curse_font, parse_amount, send_ephemeral, resolve_role,
     fetch_member, toggle_member_role, shop_charge, _render_race,
     _delete_after, _edit_board, get_memory_mb, format_uptime, get_version,
-    get_system_prompt, _log_audit, log_bot_permission_error,
+    get_system_prompt, _log_audit, log_bot_permission_error, MemberConverter,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
@@ -356,7 +356,7 @@ class AdminCog(commands.Cog):
 
 
     @commands.command(name="admingive", aliases=["adminpay"])
-    async def cmd_give(self, ctx: commands.Context, target: discord.Member = None, amount: str = None):
+    async def cmd_give(self, ctx: commands.Context, target: MemberConverter = None, amount: str = None):
         if not is_admin(ctx):
             await ctx.send(embed=emb("❌ No Permission", "", C_RED))
             return

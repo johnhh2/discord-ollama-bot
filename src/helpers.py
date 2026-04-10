@@ -163,6 +163,33 @@ async def fetch_member(guild: discord.Guild, user_id: int) -> "discord.Member | 
     return member
 
 
+class MemberConverter(commands.Converter):
+    """Accepts a mention, user ID, or case-insensitive display name / username substring."""
+
+    async def convert(self, ctx: commands.Context, argument: str) -> discord.Member:
+        # Try built-in converter first (handles mentions and exact IDs)
+        try:
+            return await commands.MemberConverter().convert(ctx, argument)
+        except commands.BadArgument:
+            pass
+
+        if ctx.guild is None:
+            raise commands.BadArgument(f"Member '{argument}' not found.")
+
+        # Case-insensitive substring match against display name and username
+        query = argument.lower()
+        matches = [
+            m for m in ctx.guild.members
+            if query in m.display_name.lower() or query in m.name.lower()
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            names = ", ".join(m.display_name for m in matches[:5])
+            raise commands.BadArgument(f"'{argument}' matched multiple members: {names}")
+        raise commands.BadArgument(f"Member '{argument}' not found.")
+
+
 async def toggle_member_role(
     member: discord.Member, role: discord.Role, add: bool, reason: str = ""
 ) -> bool:
