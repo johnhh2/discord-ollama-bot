@@ -123,25 +123,23 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb("🪙 Leaderboard", "No users yet.", C_GREEN))
             return
         medals = ["🥇", "🥈", "🥉"]
-        lines = []
-        for i, (uid_str, data) in enumerate(sorted_users):
+
+        async def resolve_name(uid_str: str) -> str:
             uid_int = int(uid_str)
-            name = None
             member = await fetch_member(ctx.guild, uid_int)
             if member:
-                name = member.display_name
-            # Try global user lookup
-            if name is None:
-                try:
-                    user = await self.bot.fetch_user(uid_int)
-                    name = user.display_name
-                except (discord.NotFound, discord.HTTPException):
-                    pass
-            # Fallback name
-            if name is None:
-                name = f"User {uid_str}"
-            prefix = medals[i] if i < 3 else f"{i + 1}."
-            lines.append(f"{prefix} **{name}** — {data['balance']} 🪙")
+                return member.display_name
+            try:
+                user = await self.bot.fetch_user(uid_int)
+                return user.display_name
+            except (discord.NotFound, discord.HTTPException):
+                return f"User {uid_str}"
+
+        names = await asyncio.gather(*(resolve_name(uid_str) for uid_str, _ in sorted_users))
+        lines = [
+            f"{medals[i] if i < 3 else f'{i + 1}.'} **{name}** — {data['balance']} 🪙"
+            for i, (name, (_, data)) in enumerate(zip(names, sorted_users))
+        ]
         await ctx.send(embed=emb("🪙 Leaderboard", "\n".join(lines), C_GREEN))
 
 
