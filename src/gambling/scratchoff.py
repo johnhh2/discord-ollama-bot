@@ -160,82 +160,87 @@ class ScratchoffCog(commands.Cog):
         self.bot = bot
 
     @commands.command(name="scratchoff", aliases=["scratch"])
-    async def cmd_scratchoff(self, ctx: commands.Context):
+    async def cmd_scratchoff(self, ctx: commands.Context, count: int = 1):
         if await check_game_channel(ctx, "Gambling"):
             return
+
+        count = max(1, min(3, count))
+
         uid = ctx.author.id
         _ensure_user(uid)
 
-        # Check daily limit
         today = _ct_today()
         user = state.economy["users"][str(uid)]
         if user.get("scratch_date") != today:
             user["scratch_date"] = today
             user["scratch_used"] = 0
 
-        if user["scratch_used"] >= 3:
+        remaining = 3 - user["scratch_used"]
+        if remaining <= 0:
             save_economy()
             await ctx.send(embed=emb("🎰 Daily Limit", f"**{ctx.author.display_name}** has used all **3** daily scratchoffs.\nCome back tomorrow!", C_GOLD))
             return
 
-        user["scratch_used"] += 1
-        save_economy()
+        count = min(count, remaining)
 
-        # Track full-day scratchoff streak for Gamblers role
-        if user["scratch_used"] >= 3 and ctx.guild:
-            state.gambler_streak[str(uid)] = today
-            save_gambler_streak()
-            await maybe_assign_gambler_role(ctx.guild, ctx.author, ctx.channel)
-
-        # Generate daily goal seeded by date (same for everyone, consistent across attempts)
+        # Generate daily goal seeded by date (same for everyone)
         seed_val = hash(today) % (2**31)
         random.seed(seed_val)
         goal = random.choices(SCRATCH_SYMBOLS, k=4)
-
-        # Reset seed and generate player's card
         random.seed()
-        card = random.choices(SCRATCH_SYMBOLS, k=4)
-
-        # Count how many card symbols match the goal at each position
-        matches = sum(c == g for c, g in zip(card, goal))
-
-        # Determine payout
-        payout = 0
-        match_text = ""
-        if matches == 0:
-            match_text = "❌ No matches."
-        elif matches == 1:
-            payout = 100
-            match_text = f"⭐ 1 Match! **{ctx.author.display_name}** won 100 🪙!"
-        elif matches == 2:
-            payout = 1000
-            match_text = f"🎉 2 Matches! **{ctx.author.display_name}** won 1,000 🪙!"
-        elif matches == 3:
-            payout = 10000
-            match_text = f"🏆 3 Matches! **{ctx.author.display_name}** won 10,000 🪙!"
-        elif matches == 4:
-            payout = 100000
-            match_text = f"💎 4 Matches! **{ctx.author.display_name}** won 100,000 🪙!"
-
-        add_balance(uid, payout)
-
-        # First-time message
-        first_time = not user.get("scratchoff_seen_rewards", False)
-        if first_time:
-            user["scratchoff_seen_rewards"] = True
-            save_economy()
 
         goal_str = " ".join(goal)
-        card_str = " ".join(card)
-        attempts_left = 3 - user["scratch_used"]
 
-        embed = discord.Embed(title="🎫 Scratchoff", color=C_GREEN if payout > 0 else C_RED)
-        embed.description = f"Daily Goal: {goal_str}\nYour Card:  {card_str}\n\n{match_text}\n\nAttempts left: {attempts_left}/3"
+        show_hint = not user.get("scratchoff_seen_rewards", False)
+        if show_hint:
+            user["scratchoff_seen_rewards"] = True
 
-        if first_time:
-            embed.add_field(name="📊 Payout Info", value="Use `!scratchoffrewards` to see all payouts!", inline=False)
+        for _ in range(count):
+            card = random.choices(SCRATCH_SYMBOLS, k=4)
+            matches = sum(c == g for c, g in zip(card, goal))
 
-        await ctx.send(embed=embed)
+            payout = 0
+            match_text = ""
+            if matches == 0:
+                match_text = "❌ No matches."
+            elif matches == 1:
+                payout = 100
+                match_text = f"⭐ 1 Match! **{ctx.author.display_name}** won 100 🪙!"
+            elif matches == 2:
+                payout = 1000
+                match_text = f"🎉 2 Matches! **{ctx.author.display_name}** won 1,000 🪙!"
+            elif matches == 3:
+                payout = 10000
+                match_text = f"🏆 3 Matches! **{ctx.author.display_name}** won 10,000 🪙!"
+            elif matches == 4:
+                payout = 100000
+                match_text = f"💎 4 Matches! **{ctx.author.display_name}** won 100,000 🪙!"
+
+            add_balance(uid, payout)
+            user["scratch_used"] += 1
+            save_economy()
+
+            # Track full-day scratchoff streak for Gamblers role
+            if user["scratch_used"] >= 3 and ctx.guild:
+                state.gambler_streak[str(uid)] = today
+                save_gambler_streak()
+                await maybe_assign_gambler_role(ctx.guild, ctx.author, ctx.channel)
+
+            card_str = " ".join(card)
+            attempts_left = 3 - user["scratch_used"]
+
+            embed = discord.Embed(title="🎫 Scratchoff", color=C_GREEN if payout > 0 else C_RED)
+            embed.description = f"Daily Goal: {goal_str}\nYour Card:  {card_str}\n\n{match_text}\n\nAttempts left: {attempts_left}/3"
+
+            if show_hint:
+                embed.add_field(name="📊 Payout Info", value="Use `!scratchoffrewards` to see all payouts!", inline=False)
+                show_hint = False
+
+            await ctx.send(embed=embed)
+
+    @commands.command(name="scratches")
+    async def cmd_scratches(self, ctx: commands.Context):
+        await ctx.invoke(self.cmd_scratchoff, count=3)
 
     @commands.command(name="scratchoffrewards", aliases=["scratchrewards", "scratchoffreward", "scratchreward"])
     async def cmd_scratchoff_rewards(self, ctx: commands.Context):
