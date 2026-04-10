@@ -92,7 +92,8 @@ async def maybe_assign_gambler_role(guild: discord.Guild, member: discord.Member
         return
 
     uid_key = str(member.id)
-    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    today_ct = _ct_today()
+    yesterday = (datetime.date.fromisoformat(today_ct) - datetime.timedelta(days=1)).isoformat()
 
     last_full_day = state.gambler_streak.get(uid_key)
     if last_full_day == yesterday:
