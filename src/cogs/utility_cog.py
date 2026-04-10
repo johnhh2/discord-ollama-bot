@@ -45,6 +45,7 @@ from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
     stream_ollama, finalize, _execute_ollama_stream, respond, respond_roleplay,
     ASK_SYSTEM_PROMPT, FANFIC_SYSTEM_PROMPT, FEATURE_COSTS, _norm_puzzle_answer,
+    ollama_semaphore,
 )
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
