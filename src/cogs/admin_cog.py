@@ -83,13 +83,13 @@ class AdminCog(commands.Cog):
         target_user = user if user else ctx.author
         if target_user.id in state.godmode_users:
             state.godmode_users.remove(target_user.id)
-            state = "disabled"
+            status = "disabled"
         else:
             state.godmode_users.add(target_user.id)
-            state = "enabled"
+            status = "enabled"
 
         save_godmode_users()
-        await ctx.send(embed=emb("👑 Godmode", f"Godmode **{state}** for {target_user.mention}.", C_GOLD))
+        await ctx.send(embed=emb("👑 Godmode", f"Godmode **{status}** for {target_user.mention}.", C_GOLD))
 
 
     @commands.command(name="adminragebait")
