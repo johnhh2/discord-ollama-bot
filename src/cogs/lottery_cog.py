@@ -81,7 +81,8 @@ class LotteryCog(commands.Cog):
     @tasks.loop(minutes=1)
     async def lottery_scheduler(self):
         """Check every minute if it's Saturday 6pm CST for lottery tasks."""
-        now = datetime.datetime.now()
+        ct = ZoneInfo("America/Chicago")
+        now = datetime.datetime.now(datetime.timezone.utc).astimezone(ct)
         is_saturday = now.weekday() == 5
 
         if not is_saturday:
