@@ -99,7 +99,7 @@ class LotteryCog(commands.Cog):
             except Exception:
                 continue
 
-            if now.hour == 19 and now.minute == 0:
+            if now.hour >= 18:
                 lottery = load_lottery(guild.id)
                 current_week = now.isocalendar()[1]
                 last_posted = lottery.get("last_posted_week", 0)
