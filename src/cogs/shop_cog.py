@@ -771,7 +771,10 @@ class ShopCog(commands.Cog):
             try:
                 await role.edit(position=new_pos)
                 label = "up" if direction == "roleup" else "down"
-                await ctx.send(embed=emb("✅ Role Moved", f"Role **{role.name}** moved {label} to position {new_pos}.", C_GREEN))
+                total_bot_roles = len(bot_role_positions)
+                # Rank #1 = highest; recompute after move using new_pos
+                rank = sum(1 for p in bot_role_positions if p >= new_pos)
+                await ctx.send(embed=emb("✅ Role Moved", f"Role **{role.name}** moved {label} — now **#{rank}** of {total_bot_roles}.", C_GREEN))
             except discord.Forbidden:
                 if cost > 0:
                     add_balance(uid, cost)
@@ -785,6 +788,31 @@ class ShopCog(commands.Cog):
 
         await ctx.send(embed=emb("🛒 Unknown Item", "Try `!shop` to see what's available.", C_PURPLE))
 
+    @commands.command(name="roles", aliases=["rolelb", "lbroles", "lbr"])
+    async def cmd_roles(self, ctx: commands.Context):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+            return
+        # Get all bot-created roles present in this guild, sorted highest to lowest
+        bot_roles = sorted(
+            (r for r in ctx.guild.roles if r.id in state.bot_roles),
+            key=lambda r: r.position, reverse=True
+        )
+        if not bot_roles:
+            await ctx.send(embed=emb("👑 Role Leaderboard", "No bot-created roles in this server yet.", C_PURPLE))
+            return
+        lines = []
+        medals = ["🥇", "🥈", "🥉"]
+        for i, role in enumerate(bot_roles):
+            prefix = medals[i] if i < 3 else f"{i + 1}."
+            members = role.members
+            if members:
+                member_str = ", ".join(m.display_name for m in members)
+            else:
+                member_str = "*no members*"
+            color_hex = f"#{role.color.value:06x}" if role.color.value else "default"
+            lines.append(f"{prefix} **{role.name}** ({color_hex}) — {member_str}")
+        await ctx.send(embed=emb("👑 Role Leaderboard", "\n".join(lines), C_PURPLE))
 
 
 async def setup(bot):
