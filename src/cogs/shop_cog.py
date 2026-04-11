@@ -101,7 +101,7 @@ class ShopCog(commands.Cog):
             # Roles (sorted by cost)
             role_items = []
             if _si.get("removerole", True):
-                role_items.append((SHOP_ROLE_REMOVE_COST, f"`!shop removerole <name>` — Remove yourself from a bot-created role — **{SHOP_ROLE_REMOVE_COST:,} 🪙**"))
+                role_items.append((SHOP_ROLE_REMOVE_COST, f"`!shop removerole [@user] <name>` — Remove a bot-created role from yourself or another user — **{SHOP_ROLE_REMOVE_COST:,} 🪙**"))
             if _si.get("deleterole", True):
                 role_items.append((SHOP_ROLE_DELETE_COST, f"`!shop deleterole <name>` — Permanently delete a bot-created role — **{SHOP_ROLE_DELETE_COST:,} 🪙**"))
             if _si.get("role", True):
@@ -286,27 +286,36 @@ class ShopCog(commands.Cog):
             if ctx.guild is None:
                 await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
                 return
-            member = ctx.author
-            if not args:
-                # List bot-created roles the user currently has
+            if ctx.message.mentions and args and args[0].startswith("<@"):
+                member = ctx.message.mentions[0]
+                role_args = args[1:]
+            else:
+                member = ctx.author
+                role_args = args
+            if not role_args:
+                # List bot-created roles the target currently has
                 existing = [r for r in member.roles if r.id in state.bot_roles]
+                who = "They don't" if member != ctx.author else "You don't"
+                whose = f"{member.display_name}'s" if member != ctx.author else "Your"
                 if not existing:
-                    await ctx.send(embed=emb("🛒 Bot Roles", "You don't have any bot-created roles to remove.", C_PURPLE))
+                    await ctx.send(embed=emb("🛒 Bot Roles", f"{who} have any bot-created roles to remove.", C_PURPLE))
                 else:
                     lines = "\n".join(f"• **{r.name}**" for r in existing)
-                    await ctx.send(embed=emb("🛒 Bot Roles", f"Your removable roles:\n{lines}\n\nUse `!shop removerole <name>` to remove one.", C_PURPLE))
+                    await ctx.send(embed=emb("🛒 Bot Roles", f"{whose} removable roles:\n{lines}\n\nUse `!shop removerole [@user] <name>` to remove one.", C_PURPLE))
                 return
-            name = " ".join(args)
+            name = " ".join(role_args)
             role = discord.utils.find(lambda r: r.name.lower() == name.lower() and r.id in state.bot_roles, member.roles)
             if role is None:
-                await ctx.send(embed=emb("❌ Not Found", f"You don't have a bot-created role named **{name}**.", C_RED))
+                who = member.display_name if member != ctx.author else "you"
+                await ctx.send(embed=emb("❌ Not Found", f"**{who}** doesn't have a bot-created role named **{name}**.", C_RED))
                 return
             cost = 0 if uid in state.godmode_users else SHOP_ROLE_REMOVE_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_REMOVE_COST:,}"):
                 return
             try:
                 await member.remove_roles(role)
-                await ctx.send(embed=emb("✅ Role Removed", f"Role **{role.name}** has been removed from you.", C_GREEN))
+                who = member.display_name if member != ctx.author else "you"
+                await ctx.send(embed=emb("✅ Role Removed", f"Role **{role.name}** has been removed from **{who}**.", C_GREEN))
             except discord.Forbidden:
                 if cost > 0:
                     add_balance(uid, cost)
