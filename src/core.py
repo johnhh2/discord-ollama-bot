@@ -25,10 +25,19 @@ EXTENSIONS = [
 ]
 
 
+class Bot(commands.Bot):
+    async def process_commands(self, message: discord.Message) -> None:
+        """Allow other bots to invoke commands (default implementation skips bots)."""
+        if message.author == self.user:
+            return
+        ctx = await self.get_context(message)
+        await self.invoke(ctx)  # type: ignore
+
+
 def create_bot() -> commands.Bot:
     intents = discord.Intents.default()
     intents.message_content = True
-    return commands.Bot(command_prefix="!", intents=intents, help_command=None, case_insensitive=True)
+    return Bot(command_prefix="!", intents=intents, help_command=None, case_insensitive=True)
 
 
 async def _load_extensions(bot: commands.Bot):
