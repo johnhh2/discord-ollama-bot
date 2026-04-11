@@ -192,6 +192,11 @@ class LotteryCog(commands.Cog):
             await ctx.send(embed=emb(f"🎰 Current Lottery • ends <t:{timestamp}:R>", info, C_PURPLE))
             return
 
+        # Block purchases in the 1-hour window before the draw (5-6pm CT Saturday)
+        if now_cst.weekday() == 5 and now_cst.hour == 17:
+            await ctx.send(embed=emb("🔒 Lottery Locked", "Ticket sales are closed for the final hour before the draw. Check back after 6pm CT!", C_RED))
+            return
+
         try:
             tickets = int(n)
             assert tickets > 0
