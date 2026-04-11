@@ -99,7 +99,7 @@ class LotteryCog(commands.Cog):
             except Exception:
                 continue
 
-            if now.hour == 18 and now.minute == 0:
+            if now.hour == 19 and now.minute == 0:
                 lottery = load_lottery(guild.id)
                 current_week = now.isocalendar()[1]
                 last_posted = lottery.get("last_posted_week", 0)
@@ -159,7 +159,7 @@ class LotteryCog(commands.Cog):
             now_cst = datetime.datetime.now(datetime.timezone.utc).astimezone(ct)
             days_until_saturday = (5 - now_cst.weekday()) % 7
             next_saturday = now_cst + datetime.timedelta(days=days_until_saturday)
-            next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
+            next_saturday = next_saturday.replace(hour=19, minute=0, second=0, microsecond=0)
             if next_saturday <= now_cst:
                 next_saturday += datetime.timedelta(weeks=1)
             timestamp = int(next_saturday.timestamp())
@@ -204,7 +204,7 @@ class LotteryCog(commands.Cog):
         now_cst = datetime.datetime.now(datetime.timezone.utc).astimezone(ct)
         days_until_saturday = (5 - now_cst.weekday()) % 7
         next_saturday = now_cst + datetime.timedelta(days=days_until_saturday)
-        next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
+        next_saturday = next_saturday.replace(hour=19, minute=0, second=0, microsecond=0)
         if next_saturday <= now_cst:
             next_saturday += datetime.timedelta(weeks=1)
         timestamp = int(next_saturday.timestamp())
