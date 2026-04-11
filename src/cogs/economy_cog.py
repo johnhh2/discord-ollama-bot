@@ -158,6 +158,15 @@ class EconomyCog(commands.Cog):
         TRACK = 20
 
         if target is None:
+            _ensure_user(ctx.author.id)
+            jail_until = state.economy["users"][str(ctx.author.id)].get("jail_until", 0)
+            if time.time() < jail_until:
+                remaining = int(jail_until - time.time())
+                hours, rem = divmod(remaining, 3600)
+                minutes = rem // 60
+                jail_status = f"🚔 **You are in jail!** Released in **{hours}h {minutes}m**."
+            else:
+                jail_status = "✅ **You are not in jail.**"
             lines = [
                 "**Usage:** `!steal @user <tier>`",
                 "",
@@ -167,6 +176,8 @@ class EconomyCog(commands.Cog):
                 "**3** — 5% steal chance, steal 25%  | Jail chance: 50% | Fee if caught: 1,000 🪙 | Jail: 3 days",
                 "",
                 "If you get caught you might be **jailed** (locked out of !steal) or just fined.",
+                "",
+                jail_status,
             ]
             await ctx.send(embed=emb("🦹 Steal", "\n".join(lines), C_GOLD))
             return
@@ -308,6 +319,28 @@ class EconomyCog(commands.Cog):
                 )
 
         await msg.edit(embed=result_embed)
+
+
+    @commands.command(name="jail")
+    async def cmd_jail(self, ctx: commands.Context, target: MemberConverter = None):
+        member = target or ctx.author
+        _ensure_user(member.id)
+        jail_until = state.economy["users"][str(member.id)].get("jail_until", 0)
+        if time.time() < jail_until:
+            remaining = int(jail_until - time.time())
+            hours, rem = divmod(remaining, 3600)
+            minutes = rem // 60
+            await ctx.send(embed=emb(
+                "🚔 In Jail",
+                f"**{member.display_name}** is locked up! Released in **{hours}h {minutes}m**.",
+                C_RED,
+            ))
+        else:
+            await ctx.send(embed=emb(
+                "✅ Not in Jail",
+                f"**{member.display_name}** is a free citizen.",
+                C_GREEN,
+            ))
 
 
     @commands.command(name="pay", aliases=["give", "gift", "donate"])
