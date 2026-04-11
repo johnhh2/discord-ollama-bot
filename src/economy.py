@@ -84,7 +84,7 @@ async def announce_new_lottery(
     now_cst = now.astimezone(ct)
     days_until_saturday = (5 - now_cst.weekday()) % 7
     next_saturday = now_cst + datetime.timedelta(days=days_until_saturday)
-    next_saturday = next_saturday.replace(hour=19, minute=0, second=0, microsecond=0)
+    next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
     if next_saturday <= now_cst:
         next_saturday += datetime.timedelta(weeks=1)
     timestamp = int(next_saturday.timestamp())
