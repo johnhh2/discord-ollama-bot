@@ -58,7 +58,7 @@ from src.config import (
     HANGMAN_LENGTH_MULT, HANGMAN_UNIQUE_MULT, HANGMAN_RARE_MULT, HANGMAN_ULTRA_RARE_MULT,
     BLACKJACK_NATURAL_MULT, SCRATCH_SYMBOLS, SCRATCHOFF_MAX_DAILY, SCRATCHOFF_PAYOUTS,
     SHOP_NICKNAME_SELF_COST, SHOP_NICKNAME_REMOVE_COST, SHOP_NICKNAME_OTHER_COST,
-    SHOP_ROLE_CREATE_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
+    SHOP_ROLE_CREATE_COST, SHOP_ROLE_ASSIGN_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
     SHOP_ROLECOLOR_COST, SHOP_CHANNEL_COST, SHOP_INSURANCE_COST, SHOP_SIMP_COST,
     SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST,
     SHOP_INSURANCE_DURATION_SECS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
@@ -104,8 +104,10 @@ class ShopCog(commands.Cog):
                 role_items.append((SHOP_ROLE_REMOVE_COST, f"`!shop removerole [@user] <name>` — Remove a bot-created role from yourself or another user — **{SHOP_ROLE_REMOVE_COST:,} 🪙**"))
             if _si.get("deleterole", True):
                 role_items.append((SHOP_ROLE_DELETE_COST, f"`!shop deleterole <name>` — Permanently delete a bot-created role — **{SHOP_ROLE_DELETE_COST:,} 🪙**"))
-            if _si.get("role", True):
-                role_items.append((SHOP_ROLE_CREATE_COST, f"`!shop role @user <name> <hex>` — Create a custom colored role for a user — **{SHOP_ROLE_CREATE_COST:,} 🪙**"))
+            if _si.get("createrole", True):
+                role_items.append((SHOP_ROLE_CREATE_COST, f"`!shop createrole @user <name> <hex>` — Create a custom colored role for a user — **{SHOP_ROLE_CREATE_COST:,} 🪙**"))
+            if _si.get("assignrole", True):
+                role_items.append((SHOP_ROLE_ASSIGN_COST, f"`!shop assignrole @user <name>` — Assign an existing bot-created role to a user — **{SHOP_ROLE_ASSIGN_COST:,} 🪙**"))
             if _si.get("roleup", True):
                 role_items.append((SHOP_ROLE_MOVE_COST, f"`!shop roleup <role name>` — Move a bot-created role up one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**"))
             if _si.get("roledown", True):
@@ -215,13 +217,13 @@ class ShopCog(commands.Cog):
                 await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
             return
 
-        # ── !shop role ────────────────────────────────────────────────────────────
-        if subcommand == "role":
-            if not _shop_cfg.get("role", True):
-                await ctx.send(embed=emb("🛒 Disabled", "The role shop item is disabled in this server.", C_GREY))
+        # ── !shop createrole ──────────────────────────────────────────────────────
+        if subcommand == "createrole":
+            if not _shop_cfg.get("createrole", True):
+                await ctx.send(embed=emb("🛒 Disabled", "The createrole shop item is disabled in this server.", C_GREY))
                 return
             if len(args) < 3:
-                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop role @user <name> <hex_color>` (e.g. `!shop role @CoolGuy MyRole ff00aa`)", C_PURPLE))
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop createrole @user <name> <hex_color>` (e.g. `!shop createrole @CoolGuy MyRole ff00aa`)", C_PURPLE))
                 return
             if ctx.guild is None:
                 await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
@@ -267,6 +269,49 @@ class ShopCog(commands.Cog):
                 state.bot_roles.add(new_role.id)
                 save_bot_roles()
                 await ctx.send(embed=emb("✅ Role Created", f"Role **{name}** created and assigned to **{target.display_name}**!", C_GREEN))
+            except discord.Forbidden:
+                if cost > 0:
+                    add_balance(uid, cost)
+                log_bot_permission_error(ctx, "manage roles")
+                await ctx.send(embed=emb("❌ No Permission", "I don't have permission to manage roles.", C_RED))
+            except Exception as e:
+                if cost > 0:
+                    add_balance(uid, cost)
+                await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
+            return
+
+        # ── !shop assignrole ──────────────────────────────────────────────────────
+        if subcommand == "assignrole":
+            if not _shop_cfg.get("assignrole", True):
+                await ctx.send(embed=emb("🛒 Disabled", "The assignrole shop item is disabled in this server.", C_GREY))
+                return
+            if ctx.guild is None:
+                await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+                return
+            if len(args) < 2 or not args[0].startswith("<@"):
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop assignrole @user <role name>`", C_PURPLE))
+                return
+            target = ctx.message.mentions[0] if ctx.message.mentions else None
+            if target is None:
+                await ctx.send(embed=emb("❌ Invalid User", "First argument must be a @mention.", C_RED))
+                return
+            name = " ".join(args[1:])
+            role = discord.utils.find(lambda r: r.name.lower() == name.lower() and r.id in state.bot_roles, ctx.guild.roles)
+            if role is None:
+                await ctx.send(embed=emb("❌ Not Found", f"No bot-created role named **{name}** exists.", C_RED))
+                return
+            if role in target.roles:
+                await ctx.send(embed=emb("❌ Already Has Role", f"**{target.display_name}** already has the **{role.name}** role.", C_RED))
+                return
+            if is_insured(target.id, "role"):
+                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles.", C_GOLD))
+                return
+            cost = 0 if uid in state.godmode_users else SHOP_ROLE_ASSIGN_COST
+            if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_ASSIGN_COST:,}"):
+                return
+            try:
+                await target.add_roles(role)
+                await ctx.send(embed=emb("✅ Role Assigned", f"Role **{role.name}** assigned to **{target.display_name}**.", C_GREEN))
             except discord.Forbidden:
                 if cost > 0:
                     add_balance(uid, cost)
