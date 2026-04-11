@@ -108,7 +108,9 @@ class LotteryCog(commands.Cog):
                     players = lottery.get("players", {})
 
                     if players and pool > 0:
-                        winner_id = random.choice(list(players.keys()))
+                        player_ids = list(players.keys())
+                        weights = [players[pid] for pid in player_ids]
+                        winner_id = random.choices(player_ids, weights=weights, k=1)[0]
                         winner = await self.bot.fetch_user(int(winner_id))
                         add_balance(int(winner_id), pool)
 
