@@ -85,24 +85,29 @@ class LotteryCog(commands.Cog):
         now = datetime.datetime.now(datetime.timezone.utc).astimezone(ct)
         is_saturday = now.weekday() == 5
 
+        logging.info(f"[lottery] tick: {now}, saturday={is_saturday}, hour={now.hour}")
+
         if not is_saturday:
             return
 
         for guild in self.bot.guilds:
             cfg = get_guild_cfg(guild.id)
             lottery_channel_id = cfg.get("lottery_channel")
+            logging.info(f"[lottery] guild={guild.id}, lottery_channel={lottery_channel_id}")
             if not lottery_channel_id:
                 continue
 
             try:
                 channel = await self.bot.fetch_channel(lottery_channel_id)
-            except Exception:
+            except Exception as e:
+                logging.info(f"[lottery] fetch_channel failed: {e}")
                 continue
 
             if now.hour >= 18:
                 lottery = load_lottery(guild.id)
                 current_week = now.isocalendar()[1]
                 last_posted = lottery.get("last_posted_week", 0)
+                logging.info(f"[lottery] current_week={current_week}, last_posted={last_posted}, pool={lottery.get('prize_pool')}, players={len(lottery.get('players', {}))}")
 
                 if current_week != last_posted:
                     pool = lottery.get("prize_pool", 0)
