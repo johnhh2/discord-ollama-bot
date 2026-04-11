@@ -124,7 +124,7 @@ class ShopCog(commands.Cog):
 
             # Fun & Social (sorted by cost)
             fun_items = [
-                (SHOP_INSURANCE_COST, f"`!shop state.insurance` — Protect yourself for 24 hours — **{SHOP_INSURANCE_COST:,} 🪙**"),
+                (SHOP_INSURANCE_COST, f"`!shop insurance` — Protect yourself for 24 hours — **{SHOP_INSURANCE_COST:,} 🪙**"),
                 (SHOP_SIMP_COST,      f"`!shop simp @user` — Make a user simp for you — **{SHOP_SIMP_COST:,} 🪙**"),
                 (SHOP_MOCK_COST,      f"`!shop mock @user` — Mock someone's next {SHOP_MOCK_MESSAGES} messages — **{SHOP_MOCK_COST:,} 🪙**"),
                 (SHOP_ROLECOLOR_COST, f"`!shop rolecolor <role name> <color>` — Change a role's color — **{SHOP_ROLECOLOR_COST:,} 🪙**"),
@@ -171,7 +171,7 @@ class ShopCog(commands.Cog):
                 await ctx.send(embed=emb("🛒 Shop", "Please provide a new nickname.", C_PURPLE))
                 return
             if is_insured(target.id, "nickname"):
-                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has state.insurance and can't be renamed.", C_GOLD))
+                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be renamed.", C_GOLD))
                 return
             if not await shop_charge(ctx, uid, cost, cost_label=cost_label):
                 return
@@ -196,7 +196,7 @@ class ShopCog(commands.Cog):
                 return
             cost = 0 if uid in state.godmode_users else SHOP_NICKNAME_REMOVE_COST
             if is_insured(uid, "nickname"):
-                await ctx.send(embed=emb("🛡️ Protected", f"**{ctx.author.display_name}** has state.insurance and can't have their nickname changed.", C_GOLD))
+                await ctx.send(embed=emb("🛡️ Protected", f"**{ctx.author.display_name}** has insurance and can't have their nickname changed.", C_GOLD))
                 return
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_NICKNAME_REMOVE_COST:,}"):
                 return
@@ -254,7 +254,7 @@ class ShopCog(commands.Cog):
                 await ctx.send(embed=emb("❌ Invalid Color", "Example: `ff00aa` or `#ff00aa`", C_RED))
                 return
             if is_insured(target.id, "role"):
-                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has state.insurance and can't be given new roles.", C_GOLD))
+                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles.", C_GOLD))
                 return
             cost = 0 if uid in state.godmode_users else SHOP_ROLE_CREATE_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_CREATE_COST:,}"):
@@ -433,7 +433,7 @@ class ShopCog(commands.Cog):
                 return
             target = ctx.message.mentions[0]
             if is_insured(target.id, "ragebait"):
-                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has state.insurance against ragebait.", C_GOLD))
+                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against ragebait.", C_GOLD))
                 return
             topic = " ".join(a for a in args if not a.startswith("<@"))
             cost = 0 if uid in state.godmode_users else SHOP_RAGEBAIT_COST
@@ -490,8 +490,8 @@ class ShopCog(commands.Cog):
             ))
             return
 
-        # ── !shop state.insurance ───────────────────────────────────────────────────────
-        if subcommand == "state.insurance":
+        # ── !shop insurance ─────────────────────────────────────────────────────────────
+        if subcommand == "insurance":
             key = str(uid)
             cost = 0 if uid in state.godmode_users else SHOP_INSURANCE_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST:,}"):
