@@ -103,37 +103,40 @@ class LotteryCog(commands.Cog):
                 logging.info(f"[lottery] fetch_channel failed: {e}")
                 continue
 
-            if now.hour >= 18:
-                lottery = load_lottery(guild.id)
-                current_week = now.isocalendar()[1]
-                last_posted = lottery.get("last_posted_week", 0)
-                logging.info(f"[lottery] current_week={current_week}, last_posted={last_posted}, pool={lottery.get('prize_pool')}, players={len(lottery.get('players', {}))}")
+            lottery = load_lottery(guild.id)
+            current_week = now.isocalendar()[1]
+            logging.info(f"[lottery] current_week={current_week}, last_drawn={lottery.get('last_drawn_week')}, last_posted={lottery.get('last_posted_week')}, pool={lottery.get('prize_pool')}, players={len(lottery.get('players', {}))}")
 
-                if current_week != last_posted:
-                    pool = lottery.get("prize_pool", 0)
-                    players = lottery.get("players", {})
+            # 6pm: draw winner and reset lottery
+            if now.hour >= 18 and lottery.get("last_drawn_week") != current_week:
+                pool = lottery.get("prize_pool", 0)
+                players = lottery.get("players", {})
 
-                    if players and pool > 0:
-                        player_ids = list(players.keys())
-                        weights = [players[pid] for pid in player_ids]
-                        winner_id = random.choices(player_ids, weights=weights, k=1)[0]
-                        winner = await self.bot.fetch_user(int(winner_id))
-                        add_balance(int(winner_id), pool)
+                if players and pool > 0:
+                    player_ids = list(players.keys())
+                    weights = [players[pid] for pid in player_ids]
+                    winner_id = random.choices(player_ids, weights=weights, k=1)[0]
+                    winner = await self.bot.fetch_user(int(winner_id))
+                    add_balance(int(winner_id), pool)
 
-                        embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
-                        embed.description = (
-                            f"**Winner:** {winner.mention}\n"
-                            f"**Prize:** {pool:,} 🪙\n"
-                            f"**Players:** {len(players)}\n"
-                            f"**Tickets Sold:** {sum(players.values())}"
-                        )
-                        await channel.send(embed=embed)
+                    embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
+                    embed.description = (
+                        f"**Winner:** {winner.mention}\n"
+                        f"**Prize:** {pool:,} 🪙\n"
+                        f"**Players:** {len(players)}\n"
+                        f"**Tickets Sold:** {sum(players.values())}"
+                    )
+                    await channel.send(embed=embed)
 
-                    lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
-                    drain_bot_balance_into_lottery(lottery, guild.id)
-                    save_lottery(guild.id, lottery)
+                lottery = {"prize_pool": 2000, "players": {}, "last_drawn_week": current_week, "last_posted_week": 0}
+                drain_bot_balance_into_lottery(lottery, guild.id)
+                save_lottery(guild.id, lottery)
 
-                    await announce_new_lottery(channel, lottery["prize_pool"], now)
+            # 7pm: announce new lottery
+            if now.hour >= 19 and lottery.get("last_posted_week") != current_week:
+                lottery["last_posted_week"] = current_week
+                save_lottery(guild.id, lottery)
+                await announce_new_lottery(channel, lottery["prize_pool"], now)
 
     @commands.command(name="lottery")
     async def cmd_lottery(self, ctx: commands.Context, n: str = None):
@@ -153,6 +156,24 @@ class LotteryCog(commands.Cog):
 
         lottery = load_lottery(ctx.guild.id)
 
+        # Check if we're in the 6-7pm window (draw done, new lottery not yet announced)
+        ct = ZoneInfo("America/Chicago")
+        now_cst = datetime.datetime.now(datetime.timezone.utc).astimezone(ct)
+        current_week = now_cst.isocalendar()[1]
+        in_transition = (
+            now_cst.weekday() == 5
+            and now_cst.hour >= 18
+            and now_cst.hour < 19
+            and lottery.get("last_posted_week") != current_week
+        )
+
+        if in_transition:
+            # Next lottery starts at 7pm today
+            next_lottery_start = now_cst.replace(hour=19, minute=0, second=0, microsecond=0)
+            ts = int(next_lottery_start.timestamp())
+            await ctx.send(embed=emb("🎰 Lottery", f"The next lottery is starting soon!\n\n**Opens:** <t:{ts}:R>", C_GREY))
+            return
+
         if n is None:
             # Show lottery info
             pool = lottery.get("prize_pool", 0)
@@ -160,8 +181,6 @@ class LotteryCog(commands.Cog):
             user_tickets = int(players_dict.get(str(uid), 0))
 
             # Calculate next Saturday 6pm CT (handles CST/CDT automatically)
-            ct = ZoneInfo("America/Chicago")
-            now_cst = datetime.datetime.now(datetime.timezone.utc).astimezone(ct)
             days_until_saturday = (5 - now_cst.weekday()) % 7
             next_saturday = now_cst + datetime.timedelta(days=days_until_saturday)
             next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
@@ -205,8 +224,6 @@ class LotteryCog(commands.Cog):
         bonus_msg = "(+1,000 bonus as new player)" if was_new_player else ""
 
         # Calculate when lottery ends
-        ct = ZoneInfo("America/Chicago")
-        now_cst = datetime.datetime.now(datetime.timezone.utc).astimezone(ct)
         days_until_saturday = (5 - now_cst.weekday()) % 7
         next_saturday = now_cst + datetime.timedelta(days=days_until_saturday)
         next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
