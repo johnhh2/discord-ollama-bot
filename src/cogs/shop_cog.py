@@ -752,21 +752,27 @@ class ShopCog(commands.Cog):
             if role is None:
                 await ctx.send(embed=emb("❌ Not Found", f"No bot-created role named **{name}** exists.", C_RED))
                 return
-            # Check boundary relative to other bot-created roles only
-            bot_role_positions = sorted(
-                r.position for r in ctx.guild.roles if r.id in state.bot_roles
+            # Sorted ascending by position (lowest = index 0)
+            other_bot_roles = sorted(
+                (r for r in ctx.guild.roles if r.id in state.bot_roles and r.id != role.id),
+                key=lambda r: r.position
             )
-            if direction == "roleup" and role.position == bot_role_positions[-1]:
+            if direction == "roleup" and not any(r.position > role.position for r in other_bot_roles):
                 await ctx.send(embed=emb("❌ Already Highest", f"**{role.name}** is already the highest bot-created role.", C_RED))
                 return
-            if direction == "roledown" and role.position == bot_role_positions[0]:
+            if direction == "roledown" and not any(r.position < role.position for r in other_bot_roles):
                 await ctx.send(embed=emb("❌ Already Lowest", f"**{role.name}** is already the lowest bot-created role.", C_RED))
                 return
             cost = 0 if uid in state.godmode_users else SHOP_ROLE_MOVE_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_MOVE_COST:,}"):
                 return
-            # Roles are ordered lowest position (bottom) to highest; "up" = higher position value
-            new_pos = role.position + (1 if direction == "roleup" else -1)
+            # Move to just above the next bot role up, or just below the next bot role down
+            if direction == "roleup":
+                next_role = min((r for r in other_bot_roles if r.position > role.position), key=lambda r: r.position)
+                new_pos = next_role.position + 1
+            else:
+                next_role = max((r for r in other_bot_roles if r.position < role.position), key=lambda r: r.position)
+                new_pos = next_role.position - 1
             new_pos = max(1, min(new_pos, ctx.guild.me.top_role.position - 1))
             try:
                 await role.edit(position=new_pos)
