@@ -332,7 +332,8 @@ class EventsCog(commands.Cog):
         state.stats_messages_seen += 1
 
         # Passive ragebait: track targeted users and fire at 50% chance
-        if uid in state.active_ragebaits and not message.content.startswith("!"):
+        _rage_channel = state.active_ragebaits.get(uid, {}).get("channel_id")
+        if uid in state.active_ragebaits and not message.content.startswith("!") and (_rage_channel is None or message.channel.id == _rage_channel):
             # Only proceed if AI is online
             if await check_ollama_connected():
                 rage = state.active_ragebaits[uid]
@@ -345,7 +346,8 @@ class EventsCog(commands.Cog):
                 asyncio.create_task(_passive_ragebait(message, list(rage["history"])))
 
         # Mock: track mocked users and repeat their messages in mocking font
-        if uid in state.active_mocks and not message.content.startswith("!"):
+        _mock_channel = state.active_mocks.get(uid, {}).get("channel_id")
+        if uid in state.active_mocks and not message.content.startswith("!") and (_mock_channel is None or message.channel.id == _mock_channel):
             mock = state.active_mocks[uid]
             mocked = mocking_font(message.content)
             await message.channel.send(mocked)
@@ -355,7 +357,8 @@ class EventsCog(commands.Cog):
             save_mock()
 
         # Simp/Concubine tax: deduct coins from users who have a tax on them
-        if uid in state.active_simps and not message.content.startswith("!"):
+        _simp_channel = state.active_simps.get(uid, {}).get("channel_id")
+        if uid in state.active_simps and not message.content.startswith("!") and (_simp_channel is None or message.channel.id == _simp_channel):
             simp_data = state.active_simps[uid]
             tax_type = simp_data["type"]
 
@@ -481,8 +484,10 @@ class EventsCog(commands.Cog):
         is_mentioned = self.bot.user in message.mentions and message.content.strip().startswith(f"<@{self.bot.user.id}>")
         in_roleplay = uid in state.active_roleplays and state.active_roleplays[uid].get("channel_id") == message.channel.id
 
-        # Ragebait and mock take precedence over normal mentions
-        if uid in state.active_ragebaits or uid in state.active_mocks:
+        # Ragebait and mock take precedence over normal mentions (only in the purchase channel)
+        _rage_in_channel = uid in state.active_ragebaits and (_rage_channel is None or message.channel.id == _rage_channel)
+        _mock_in_channel = uid in state.active_mocks and (_mock_channel is None or message.channel.id == _mock_channel)
+        if _rage_in_channel or _mock_in_channel:
             await self.bot.process_commands(message)
             return
 

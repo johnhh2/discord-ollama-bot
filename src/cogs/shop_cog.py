@@ -462,7 +462,7 @@ class ShopCog(commands.Cog):
                         {"role": "user", "content": prompt},
                     ], placeholder)
                 await finalize(placeholder, ctx.channel, f"{target.mention} {full_response}")
-                state.active_ragebaits[target.id] = {"remaining": SHOP_RAGEBAIT_MESSAGES, "history": []}
+                state.active_ragebaits[target.id] = {"remaining": SHOP_RAGEBAIT_MESSAGES, "history": [], "channel_id": ctx.channel.id}
                 save_ragebait()
             except Exception as e:
                 if cost > 0:
@@ -481,7 +481,7 @@ class ShopCog(commands.Cog):
             cost = 0 if uid in state.godmode_users else SHOP_MOCK_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MOCK_COST:,}"):
                 return
-            state.active_mocks[target.id] = {"remaining": SHOP_MOCK_MESSAGES, "started_by": uid}
+            state.active_mocks[target.id] = {"remaining": SHOP_MOCK_MESSAGES, "started_by": uid, "channel_id": ctx.channel.id}
             save_mock()
             await ctx.send(embed=emb(
                 "🎭 Mock Activated",
@@ -600,7 +600,7 @@ class ShopCog(commands.Cog):
                 return
 
             tax_type = "concubine" if subcommand == "concubine" else "simp"
-            simp_data = {"master": uid, "type": tax_type}
+            simp_data = {"master": uid, "type": tax_type, "channel_id": ctx.channel.id}
             # Add timestamp for concubine to expire after 24h
             if tax_type == "concubine":
                 simp_data["activated_at"] = time.time()
