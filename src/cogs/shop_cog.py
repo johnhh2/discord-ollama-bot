@@ -101,7 +101,7 @@ class ShopCog(commands.Cog):
             # Roles (sorted by cost)
             role_items = []
             if _si.get("removerole", True):
-                role_items.append((SHOP_ROLE_REMOVE_COST, f"`!shop removerole <name>` — Delete a bot-created role — **{SHOP_ROLE_REMOVE_COST:,} 🪙**"))
+                role_items.append((SHOP_ROLE_REMOVE_COST, f"`!shop removerole <name>` — Remove yourself from a bot-created role — **{SHOP_ROLE_REMOVE_COST:,} 🪙**"))
             if _si.get("role", True):
                 role_items.append((SHOP_ROLE_CREATE_COST, f"`!shop role @user <name> <hex>` — Create a custom colored role for a user — **{SHOP_ROLE_CREATE_COST:,} 🪙**"))
             if _si.get("roleup", True):
@@ -284,42 +284,32 @@ class ShopCog(commands.Cog):
             if ctx.guild is None:
                 await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
                 return
+            member = ctx.author
             if not args:
-                # List bot-created roles still present in the server
-                existing = [r for r in ctx.guild.roles if r.id in state.bot_roles]
+                # List bot-created roles the user currently has
+                existing = [r for r in member.roles if r.id in state.bot_roles]
                 if not existing:
-                    await ctx.send(embed=emb("🛒 Bot Roles", "No bot-created roles found in this server.", C_PURPLE))
+                    await ctx.send(embed=emb("🛒 Bot Roles", "You don't have any bot-created roles to remove.", C_PURPLE))
                 else:
                     lines = "\n".join(f"• **{r.name}**" for r in existing)
-                    await ctx.send(embed=emb("🛒 Bot Roles", f"Removable roles:\n{lines}\n\nUse `!shop removerole <name>` to delete one.", C_PURPLE))
+                    await ctx.send(embed=emb("🛒 Bot Roles", f"Your removable roles:\n{lines}\n\nUse `!shop removerole <name>` to remove one.", C_PURPLE))
                 return
             name = " ".join(args)
-            role = resolve_role(ctx.guild, name) if len(args) == 1 else None
+            role = discord.utils.find(lambda r: r.name.lower() == name.lower() and r.id in state.bot_roles, member.roles)
             if role is None:
-                role = discord.utils.find(lambda r: r.name.lower() == name.lower() and r.id in state.bot_roles, ctx.guild.roles)
-            elif role.id not in state.bot_roles:
-                role = None
-            if role is None:
-                await ctx.send(embed=emb("❌ Not Found", f"No bot-created role named **{name}** exists.", C_RED))
-                return
-            # Check if user is the only one with this role (allow if 0 or 1 member who is user)
-            if len(role.members) > 1 or (len(role.members) == 1 and role.members[0].id != uid):
-                member_count = len(role.members)
-                await ctx.send(embed=emb("❌ Not Alone", f"This role has **{member_count}** member(s). You must be the only one with this role to remove it.", C_RED))
+                await ctx.send(embed=emb("❌ Not Found", f"You don't have a bot-created role named **{name}**.", C_RED))
                 return
             cost = 0 if uid in state.godmode_users else SHOP_ROLE_REMOVE_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_REMOVE_COST:,}"):
                 return
             try:
-                await role.delete()
-                state.bot_roles.discard(role.id)
-                save_bot_roles()
-                await ctx.send(embed=emb("✅ Role Removed", f"Role **{name}** has been deleted.", C_GREEN))
+                await member.remove_roles(role)
+                await ctx.send(embed=emb("✅ Role Removed", f"Role **{role.name}** has been removed from you.", C_GREEN))
             except discord.Forbidden:
                 if cost > 0:
                     add_balance(uid, cost)
-                log_bot_permission_error(ctx, "delete role")
-                await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete that role.", C_RED))
+                log_bot_permission_error(ctx, "remove role")
+                await ctx.send(embed=emb("❌ No Permission", "I don't have permission to remove that role.", C_RED))
             except Exception as e:
                 if cost > 0:
                     add_balance(uid, cost)
