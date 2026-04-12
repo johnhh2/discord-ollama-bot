@@ -189,6 +189,9 @@ class LevelingCog(commands.Cog):
                 for member in vc.members:
                     if member.bot:
                         continue
+                    vs = member.voice
+                    if vs and (vs.self_mute or vs.self_deaf or vs.mute or vs.deaf):
+                        continue
                     xp, leveled_up = grant_xp(member.id, "voice", guild_id=guild.id)
                     if leveled_up and get_guild_cfg(guild.id).get("levelup_channel"):
                         await self._announce_levelup(member, guild.id)
