@@ -217,7 +217,7 @@ class LevelingCog(commands.Cog):
         self._voice_task.cancel()
 
     # ── Voice/stream XP loop: tick every 15 minutes ──────────────────────────
-    @tasks.loop(seconds=MINS30_SECS)
+    @tasks.loop(seconds=300)  # tick every 5 min; rate-limits inside grant_xp control actual XP frequency
     async def _voice_task(self):
         """Award voice XP (every 15 min) and stream XP (hourly, rate-limited in grant_xp)
         to every non-bot member currently active in a voice channel."""
