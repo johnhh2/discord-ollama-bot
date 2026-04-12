@@ -165,9 +165,9 @@ class SlotsCog(commands.Cog):
 
         # Spin (or use rigged result)
         if uid in state.rigged_slots:
-            state.rigged_slots.discard(uid)
+            sym = state.rigged_slots.pop(uid)
             save_rigged_slots()
-            reels = ["7️⃣", "7️⃣", "7️⃣"]
+            reels = [sym, sym, sym]
         else:
             if random.random() < SLOT_HOUSE_CHANCE: # 5% back to house
                 symbol_types = list(dict.fromkeys(SLOT_REEL))  # unique symbols, preserving order
@@ -283,7 +283,7 @@ class SlotsCog(commands.Cog):
     async def cmd_rig(self, ctx: commands.Context):
         """Hidden admin-only command group for rigging games."""
         lines = [
-            "`!rig slots @user` — rig next slots spin to jackpot",
+            "`!rig slots @user [mult]` — rig next slots spin (mult: 75/15/7/4/3, default 75)",
             "`!rig flip @user <n>` — rig next n coin flips to win",
         ]
 
@@ -298,22 +298,32 @@ class SlotsCog(commands.Cog):
             except Exception:
                 return str(uid)
 
-        slots_rigged = list(state.rigged_slots)
+        slots_rigged = dict(state.rigged_slots)
         flips_rigged = dict(state.rigged_flips)
 
         if slots_rigged or flips_rigged:
             lines.append("")
             lines.append("**Active riggings:**")
-            for uid in slots_rigged:
-                lines.append(f"🎰 {await name(uid)} — slots jackpot (1 spin)")
+            for uid, sym in slots_rigged.items():
+                sym_label = next((lbl for s, lbl in self.SLOT_RIG_SYMBOLS.values() if s == sym), f"{sym}{sym}{sym}")
+                lines.append(f"🎰 {await name(uid)} — {sym_label}")
             for uid, n in flips_rigged.items():
                 lines.append(f"🪙 {await name(uid)} — {n} flip {'win' if n == 1 else 'wins'}")
 
         await ctx.send(embed=emb("🎰 Rig", "\n".join(lines), C_GOLD))
 
+    # Maps multiplier number → (symbol, label)
+    SLOT_RIG_SYMBOLS = {
+        75: ("7️⃣", "7️⃣7️⃣7️⃣ jackpot"),
+        15: ("🎰", "🎰🎰🎰 (15x)"),
+        7:  ("🔔", "🔔🔔🔔 (7x)"),
+        4:  ("🍋", "🍋🍋🍋 (4x)"),
+        3:  ("🍒", "🍒🍒🍒 (3x)"),
+    }
+
     @cmd_rig.command(name="slots", hidden=True)
-    async def cmd_rig_slots(self, ctx: commands.Context, target_input: str = None):
-        """Hidden admin-only command: rig the next slots spin to hit 7 7 7."""
+    async def cmd_rig_slots(self, ctx: commands.Context, target_input: str = None, mult: int = 75):
+        """Hidden admin-only command: rig the next slots spin. Optional mult: 75/15/7/4/3."""
         uid = None
         target_name = "you"
 
@@ -321,6 +331,13 @@ class SlotsCog(commands.Cog):
             target = ctx.message.mentions[0]
             uid = target.id
             target_name = target.display_name
+            # mult may follow the mention — re-parse from message
+            args = ctx.message.content.split()
+            mention_indices = [i for i, a in enumerate(args) if a.startswith("<@")]
+            if mention_indices:
+                after = args[mention_indices[-1] + 1:]
+                if after and after[0].isdigit():
+                    mult = int(after[0])
         elif target_input:
             try:
                 uid = int(target_input)
@@ -332,11 +349,17 @@ class SlotsCog(commands.Cog):
             uid = ctx.author.id
             target_name = "you"
 
-        state.rigged_slots.add(uid)
+        if mult not in self.SLOT_RIG_SYMBOLS:
+            valid = ", ".join(str(k) for k in self.SLOT_RIG_SYMBOLS)
+            await ctx.send(embed=emb("❌ Invalid Multiplier", f"Valid multipliers: {valid}", C_RED))
+            return
+
+        symbol, label = self.SLOT_RIG_SYMBOLS[mult]
+        state.rigged_slots[uid] = symbol
         save_rigged_slots()
         await ctx.send(embed=emb(
             "🎰 Slots Rigged",
-            f"{target_name.capitalize()}'s next `!slots` spin will hit the **7️⃣7️⃣7️⃣ jackpot**!",
+            f"{target_name.capitalize()}'s next `!slots` spin will hit **{label}**!",
             C_GOLD,
         ))
 

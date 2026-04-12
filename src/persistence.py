@@ -200,13 +200,17 @@ def save_mock():
     _save_json(MOCK_FILE, state.active_mocks)
 
 
-def load_rigged_slots() -> set:
-    return set(_load_json(RIGGED_SLOTS_FILE, []))
+def load_rigged_slots() -> dict:
+    raw = _load_json(RIGGED_SLOTS_FILE, {})
+    # migrate old format (list of ints) to dict {uid: symbol}
+    if isinstance(raw, list):
+        return {str(uid): "7️⃣" for uid in raw}
+    return {str(k): v for k, v in raw.items()}
 
 
 def save_rigged_slots():
     from src import state
-    _save_json(RIGGED_SLOTS_FILE, list(state.rigged_slots))
+    _save_json(RIGGED_SLOTS_FILE, {str(k): v for k, v in state.rigged_slots.items()})
 
 
 def load_rigged_flips() -> dict:

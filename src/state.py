@@ -50,7 +50,7 @@ def _load_riddles_list() -> list:
 
 
 RIDDLES_LIST: list = _load_riddles_list()
-rigged_slots: set = load_rigged_slots()
+rigged_slots: dict = load_rigged_slots()  # user_id (int) → symbol (str)
 rigged_flips: dict = load_rigged_flips()   # user_id → remaining rigged wins
 gambler_streak: dict = load_gambler_streak()
 quote_log: list = load_quote_log()
