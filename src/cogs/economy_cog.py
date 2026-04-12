@@ -394,29 +394,29 @@ class EconomyCog(commands.Cog):
                     top_name = top_user.display_name
                 except Exception:
                     top_name = top_uid_str
-            highest_bal_str = f"**Highest Balance:** {top_bal:,} 🪙 — **{top_name}**"
+            highest_bal_str = f"**Balance:** {top_bal:,} 🪙 — **{top_name}**"
         else:
-            highest_bal_str = "**Highest Balance:** *none yet*"
+            highest_bal_str = "**Balance:** *none yet*"
 
         # Most hangman wins
         hangman_wins_entries = [(k, v) for k, v in r.items() if k.startswith("hangman_wins_")]
         if hangman_wins_entries:
             _, top_v = max(hangman_wins_entries, key=lambda x: x[1]["value"])
-            hm_wins_str = f"**Most Hangmans Completed:** {top_v['value']} — **{top_v['holder_name']}**"
+            hm_wins_str = f"**Hangmans Completed:** {top_v['value']} — **{top_v['holder_name']}**"
         else:
-            hm_wins_str = "**Most Hangmans Completed:** *none yet*"
+            hm_wins_str = "**Hangmans Completed:** *none yet*"
 
         lines = [
             highest_bal_str,
-            fmt("lottery", "Biggest Lottery Payout"),
-            fmt("slots_jackpot", "Biggest Slots Jackpot",
+            fmt("lottery", "Lottery Payout"),
+            fmt("slots_jackpot", "Slots Jackpot",
                 lambda rec: f"\n  ↳ Symbols: {rec.get('symbols', '?')} • Bet: {rec['bet']:,} 🪙" if rec.get('bet') is not None else ""),
-            fmt("slots_non_jackpot", "Biggest Slots Non-Jackpot",
+            fmt("slots_non_jackpot", "Slots Non-Jackpot",
                 lambda rec: f"\n  ↳ Symbols: {rec.get('symbols', '?')} • Bet: {rec['bet']:,} 🪙" if rec.get('bet') is not None else ""),
-            fmt("blackjack", "Biggest Blackjack Payout",
+            fmt("blackjack", "Blackjack Payout",
                 lambda rec: f"\n  ↳ Hand: {rec.get('player_hand', '?')} ({rec.get('player_score', '?')}) • Dealer: {rec.get('dealer_score', '?')}"),
-            fmt("flip", "Biggest Flip Payout"),
-            fmt("hangman_payout", "Biggest Hangman Payout",
+            fmt("flip", "Flip Payout"),
+            fmt("hangman_payout", "Hangman Payout",
                 lambda rec: f"\n  ↳ Word: `{rec.get('word', '?')}`"),
             hm_wins_str,
         ]
