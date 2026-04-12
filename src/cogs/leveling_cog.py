@@ -43,7 +43,7 @@ DAY_SECS    = 86400
 
 def _xp_cost(n: int) -> int:
     """XP required to advance from level n to level n+1."""
-    return int(50 + n ** 1.9)
+    return int(25 + n ** 1.9 / 2)
 
 
 def xp_for_level(n: int) -> int:
