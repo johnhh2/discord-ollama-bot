@@ -235,19 +235,18 @@ class UtilityCog(commands.Cog):
             "`!daily` — Claim 200 🪙 (24h cooldown)\n"
             "`!balance [@user]` — Check balance\n"
             "`!pay @user <amount>` — Send coins to another user\n"
-            "`!leaderboard` — Top 10 richest users"
+            "`!steal @user` — Attempt to steal coins from another user"
         ))
         help_embed.add_field(name="🎮 Games / Gambling", inline=False, value=(
             "`!games` — View all games and gambling commands"
         ))
+        help_embed.add_field(name="🏆 Leaderboards", inline=False, value=(
+            "`!leaderboard` — Top 10 richest users\n"
+            "`!roles` — View role thresholds and your progress\n"
+            "`!levels` — Top 10 users by XP level"
+        ))
         help_embed.add_field(name="🤖 AI", inline=False, value=(
-            "`!ai` — View AI connection status and command info\n"
-            f"`!ask <question>` — Ask the AI a question (costs {FEATURE_COSTS['ask']} 🪙)\n"
-            f"`!fanfic <prompt>` — Generate a steamy fan fiction story (costs {FEATURE_COSTS['fanfic']} 🪙)\n"
-            f"`!continue` — Generate the next chapter in a fanfic thread (costs {FEATURE_COSTS['continue']} 🪙)\n"
-            "`!tldr` — Summarize the last AI response in a fanfic or roleplay thread\n"
-            f"`!roleplay <character prompt> [@user1 @user2]` — Start a roleplay (costs {FEATURE_COSTS['roleplay']} 🪙, invite others with mentions)\n"
-            f"`!rpg [@user1 @user2]` — Start an interactive RPG adventure (costs {FEATURE_COSTS['rpg']} 🪙, invite others with mentions)"
+            "`!ai` — View AI connection status and command info"
         ))
         help_embed.add_field(name="🛒 Shop", inline=False, value=(
             "`!shop` — Browse items\n"
