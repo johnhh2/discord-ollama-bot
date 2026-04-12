@@ -112,6 +112,8 @@ class ShopCog(commands.Cog):
                 role_items.append((SHOP_ROLE_MOVE_COST, f"`!shop roleup <role name>` — Move a bot-created role up one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**"))
             if _si.get("roledown", True):
                 role_items.append((SHOP_ROLE_MOVE_COST, f"`!shop roledown <role name>` — Move a bot-created role down one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**"))
+            if _si.get("rolecolor", True):
+                role_items.append((SHOP_ROLECOLOR_COST, f"`!shop rolecolor <role name> <color>` — Change a role's color — **{SHOP_ROLECOLOR_COST:,} 🪙**"))
             if role_items:
                 role_items.sort(key=lambda x: x[0])
                 sections["👑 Roles"] = [item[1] for item in role_items]
@@ -131,7 +133,6 @@ class ShopCog(commands.Cog):
                 (SHOP_INSURANCE_COST, f"`!shop insurance` — Protect yourself for 24 hours — **{SHOP_INSURANCE_COST:,} 🪙**"),
                 (SHOP_SIMP_COST,      f"`!shop simp @user` — Make a user simp for you — **{SHOP_SIMP_COST:,} 🪙**"),
                 (SHOP_MOCK_COST,      f"`!shop mock @user` — Mock someone's next {SHOP_MOCK_MESSAGES} messages — **{SHOP_MOCK_COST:,} 🪙**"),
-                (SHOP_ROLECOLOR_COST, f"`!shop rolecolor <role name> <color>` — Change a role's color — **{SHOP_ROLECOLOR_COST:,} 🪙**"),
             ]
             if _si.get("ragebait", True):
                 fun_items.append((SHOP_RAGEBAIT_COST, f"`!shop ragebait @user [topic]` — Ragebait for {SHOP_RAGEBAIT_MESSAGES + 1} messages — **{SHOP_RAGEBAIT_COST:,} 🪙**"))

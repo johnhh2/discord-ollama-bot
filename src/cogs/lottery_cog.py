@@ -233,7 +233,7 @@ class LotteryCog(commands.Cog):
 
         embed_msg = emb(
             "🎰 Tickets Purchased",
-            f"Bought **{tickets}** 🎟️ for **{cost} 🪙**\n\n"
+            f"**{ctx.author.display_name}** bought **{tickets}** 🎟️ for **{cost} 🪙**\n\n"
             f"**Prize Pool:** {lottery['prize_pool']:,} 🪙 {bonus_msg}\n"
             f"**Your Tickets:** {players[str(uid)]}\n"
             f"**Total Players:** {len(players)}\n"
