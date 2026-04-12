@@ -246,6 +246,7 @@ class LevelingCog(commands.Cog):
     @_voice_task.before_loop
     async def _before_voice_task(self):
         await self.bot.wait_until_ready()
+        await self._voice_task()  # fire immediately on startup, don't wait 5 min
 
     # ── Level-up announcement ─────────────────────────────────────────────────
     async def _announce_levelup(self, member: discord.Member, guild_id: int):
