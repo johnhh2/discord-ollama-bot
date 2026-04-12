@@ -16,7 +16,7 @@ import time
 import discord
 from discord.ext import commands, tasks
 
-from src.helpers import emb, C_BLUE, C_GREEN, C_GOLD
+from src.helpers import emb, C_BLUE, C_GREEN, C_GOLD, MemberConverter
 from src.persistence import save_leveling, get_guild_cfg, save_guild_settings
 from src import state
 
@@ -247,7 +247,7 @@ class LevelingCog(commands.Cog):
 
     # ── !level / !xp command ──────────────────────────────────────────────────
     @commands.command(name="lvl", aliases=["level", "xp"])
-    async def cmd_level(self, ctx: commands.Context, member: discord.Member = None):
+    async def cmd_level(self, ctx: commands.Context, member: MemberConverter = None):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Leveling is per-server and not available in DMs.", 0xe74c3c))
             return
