@@ -18,6 +18,7 @@ from discord.ext import commands, tasks
 
 from src.helpers import emb, C_BLUE, C_GREEN, C_GOLD, MemberConverter
 from src.persistence import save_leveling, get_guild_cfg, save_guild_settings
+from src.economy import add_balance
 from src import state
 
 # ── XP constants ──────────────────────────────────────────────────────────────
@@ -77,6 +78,18 @@ def xp_for_next_level(level: int) -> int:
 def display_level(internal_level: int) -> int:
     """Convert 0-based internal level to the 1-based level shown to users."""
     return internal_level + 1
+
+
+def levelup_coin_reward(display_lvl: int) -> int:
+    """Coins awarded on reaching a given display level."""
+    if display_lvl <= 4:   tier = 0
+    elif display_lvl <= 9:  tier = 1
+    elif display_lvl <= 29: tier = 2
+    elif display_lvl <= 59: tier = 3
+    elif display_lvl <= 99: tier = 4
+    elif display_lvl <= 149: tier = 5
+    else:                    tier = 6
+    return 1_000 * (2 ** tier)
 
 
 # ── User record helpers ───────────────────────────────────────────────────────
@@ -237,6 +250,8 @@ class LevelingCog(commands.Cog):
     async def _announce_levelup(self, member: discord.Member, guild_id: int):
         rec = state.leveling.get(str(guild_id), {}).get(str(member.id), {})
         lvl = display_level(rec.get("level", 0))
+        reward = levelup_coin_reward(lvl)
+        add_balance(member.id, reward)
         cfg = get_guild_cfg(guild_id)
         channel_id = cfg.get("levelup_channel")
         if not channel_id:
@@ -246,7 +261,7 @@ class LevelingCog(commands.Cog):
             return
         await channel.send(embed=emb(
             "🎉 Level Up!",
-            f"{member.mention} reached **Level {lvl}**!",
+            f"{member.mention} reached **Level {lvl}**! +**{reward:,} 🪙**",
             C_GOLD,
         ))
 
