@@ -24,13 +24,17 @@ from src import state
 XP_MESSAGE   = 10
 XP_COMMAND   =  5
 XP_VOICE     =  5
+XP_SCRATCH   =  5
+XP_STREAM    = 15
 
-MSG_HOURLY_MAX   = 1
-MSG_DAILY_MAX    = 5
-CMD_HOURLY_MAX   = 1
-CMD_DAILY_MAX    = 5
-VOICE_15MIN_MAX  = 1
-VOICE_DAILY_MAX  = 32
+MSG_HOURLY_MAX    = 1
+MSG_DAILY_MAX     = 5
+CMD_HOURLY_MAX    = 1
+CMD_DAILY_MAX     = 5
+VOICE_15MIN_MAX   = 1
+VOICE_DAILY_MAX   = 32
+STREAM_HOURLY_MAX = 1
+STREAM_DAILY_MAX  = 3
 
 HOUR_SECS   = 3600
 MINS15_SECS =  900
@@ -91,6 +95,9 @@ def _ensure_user(guild_id: int, uid: int) -> dict:
             "voice_last_15": 0.0,   # epoch of last voice XP grant
             "voice_today": 0,
             "voice_day_ts": 0.0,
+            "stream_last_hour": 0.0,
+            "stream_today": 0,
+            "stream_day_ts": 0.0,
         }
     return guild_data[ukey]
 
@@ -148,7 +155,17 @@ def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tuple[int
         xp = XP_VOICE
 
     elif source == "scratch":
-        xp = 10  # flat 10 XP per scratchoff, no extra rate-limit (capped by scratchoff system)
+        xp = XP_SCRATCH  # capped naturally by the scratchoff system (3/day)
+
+    elif source == "stream":
+        _day_reset(rec, "stream_today", "stream_day_ts")
+        if now - rec["stream_last_hour"] < HOUR_SECS:
+            return 0, False
+        if rec["stream_today"] >= STREAM_DAILY_MAX:
+            return 0, False
+        rec["stream_last_hour"] = now
+        rec["stream_today"] += 1
+        xp = XP_STREAM
 
     else:
         return 0, False
@@ -199,6 +216,17 @@ class LevelingCog(commands.Cog):
     @_voice_task.before_loop
     async def _before_voice_task(self):
         await self.bot.wait_until_ready()
+
+    # ── Stream XP: award when a user starts streaming ────────────────────────
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+        if member.bot:
+            return
+        # Trigger on the transition to streaming (wasn't streaming, now is)
+        if not before.self_stream and after.self_stream:
+            _, leveled_up = grant_xp(member.id, "stream", guild_id=member.guild.id)
+            if leveled_up and get_guild_cfg(member.guild.id).get("levelup_channel"):
+                await self._announce_levelup(member, member.guild.id)
 
     # ── Level-up announcement ─────────────────────────────────────────────────
     async def _announce_levelup(self, member: discord.Member, guild_id: int):
@@ -257,21 +285,25 @@ class LevelingCog(commands.Cog):
             m, s = divmod(int(secs_left), 60)
             return f"{m}m {s}s"
 
-        msg_used,   msg_cap   = _day_used("msg_today",   "msg_day_ts",   MSG_DAILY_MAX)
-        cmd_used,   cmd_cap   = _day_used("cmd_today",   "cmd_day_ts",   CMD_DAILY_MAX)
-        voice_used, voice_cap = _day_used("voice_today", "voice_day_ts", VOICE_DAILY_MAX)
+        msg_used,    msg_cap    = _day_used("msg_today",    "msg_day_ts",    MSG_DAILY_MAX)
+        cmd_used,    cmd_cap    = _day_used("cmd_today",    "cmd_day_ts",    CMD_DAILY_MAX)
+        voice_used,  voice_cap  = _day_used("voice_today",  "voice_day_ts",  VOICE_DAILY_MAX)
+        stream_used, stream_cap = _day_used("stream_today", "stream_day_ts", STREAM_DAILY_MAX)
 
-        msg_bar   = _bar(msg_used,   msg_cap,   10)
-        cmd_bar   = _bar(cmd_used,   cmd_cap,   10)
-        voice_bar = _bar(voice_used, voice_cap, 10)
+        msg_bar    = _bar(msg_used,    msg_cap,    10)
+        cmd_bar    = _bar(cmd_used,    cmd_cap,    10)
+        voice_bar  = _bar(voice_used,  voice_cap,  10)
+        stream_bar = _bar(stream_used, stream_cap, 10)
 
         desc = (
             f"**Level {level}** — {xp:,} XP total\n"
             f"`{bar}` {xp_in_level:,} / {xp_needed:,} XP to level {level+1}\n\n"
             f"**Sources** *(daily used / cap)*\n"
-            f"💬 Messages  `{msg_bar}` {msg_used}/{msg_cap}  · next: {_hour_remaining('msg_last_hour')}\n"
-            f"⚡ Commands  `{cmd_bar}` {cmd_used}/{cmd_cap}  · next: {_hour_remaining('cmd_last_hour')}\n"
-            f"🔊 Voice     `{voice_bar}` {voice_used}/{voice_cap}  · next: {_mins15_remaining()}\n"
+            f"💬 Messages  **{XP_MESSAGE} XP**  `{msg_bar}` {msg_used}/{msg_cap}  · next: {_hour_remaining('msg_last_hour')}\n"
+            f"⚡ Commands  **{XP_COMMAND} XP**  `{cmd_bar}` {cmd_used}/{cmd_cap}  · next: {_hour_remaining('cmd_last_hour')}\n"
+            f"🔊 Voice     **{XP_VOICE} XP**  `{voice_bar}` {voice_used}/{voice_cap}  · next: {_mins15_remaining()}\n"
+            f"📺 Stream    **{XP_STREAM} XP**  `{stream_bar}` {stream_used}/{stream_cap}  · next: {_hour_remaining('stream_last_hour')}\n"
+            f"🎫 Scratch   **{XP_SCRATCH} XP**  per scratchoff (3/day)\n"
         )
 
         display = target.display_name
