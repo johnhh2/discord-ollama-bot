@@ -74,6 +74,11 @@ def xp_for_next_level(level: int) -> int:
     return xp_for_level(level + 1)
 
 
+def display_level(internal_level: int) -> int:
+    """Convert 0-based internal level to the 1-based level shown to users."""
+    return internal_level + 1
+
+
 # ── User record helpers ───────────────────────────────────────────────────────
 # Storage layout: state.leveling = {guild_id_str: {uid_str: {...}}}
 
@@ -231,7 +236,7 @@ class LevelingCog(commands.Cog):
     # ── Level-up announcement ─────────────────────────────────────────────────
     async def _announce_levelup(self, member: discord.Member, guild_id: int):
         rec = state.leveling.get(str(guild_id), {}).get(str(member.id), {})
-        lvl = rec.get("level", 0)
+        lvl = display_level(rec.get("level", 0))
         cfg = get_guild_cfg(guild_id)
         channel_id = cfg.get("levelup_channel")
         if not channel_id:
@@ -296,8 +301,8 @@ class LevelingCog(commands.Cog):
         stream_bar = _bar(stream_used, stream_cap, 10)
 
         desc = (
-            f"**Level {level}** — {xp:,} XP total\n"
-            f"`{bar}` {xp_in_level:,} / {xp_needed:,} XP to level {level+1}\n\n"
+            f"**Level {display_level(level)}** — {xp:,} XP total\n"
+            f"`{bar}` {xp_in_level:,} / {xp_needed:,} XP to level {display_level(level + 1)}\n\n"
             f"**Sources** *(daily used / cap)*\n"
             f"💬 Messages  **{XP_MESSAGE} XP**  `{msg_bar}` {msg_used}/{msg_cap}  · next: {_hour_remaining('msg_last_hour')}\n"
             f"⚡ Commands  **{XP_COMMAND} XP**  `{cmd_bar}` {cmd_used}/{cmd_cap}  · next: {_hour_remaining('cmd_last_hour')}\n"
@@ -347,7 +352,7 @@ class LevelingCog(commands.Cog):
         lines = []
         for i, (name, (_, data)) in enumerate(zip(names, sorted_users)):
             prefix = medals[i] if i < 3 else f"{i + 1}."
-            lines.append(f"{prefix} **{name}** — Level {data.get('level', 0)} ({data.get('xp', 0):,} XP)")
+            lines.append(f"{prefix} **{name}** — Level {display_level(data.get('level', 0))} ({data.get('xp', 0):,} XP)")
         lines.append("\n*Also: `!lb` currency · `!lbr` roles*")
         await ctx.send(embed=emb("📊 XP Leaderboard", "\n".join(lines), C_BLUE))
 
