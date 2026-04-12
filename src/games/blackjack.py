@@ -39,7 +39,7 @@ from src.persistence import (
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
-    load_lottery, load_saved_quotes, get_guild_cfg,
+    load_lottery, load_saved_quotes, get_guild_cfg, try_set_record,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
@@ -141,6 +141,9 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
 
     if dval > 21 or pval > dval:
         add_balance(uid, amount * 2)
+        try_set_record("blackjack", amount, uid, uid_name,
+                       player_hand=format_hand(player), player_score=pval,
+                       dealer_score=dval)
         color, result = C_GREEN, f"✅ **{uid_name}** wins **{amount} 🪙**! Balance: {get_balance(uid)} 🪙"
     elif pval == dval:
         add_balance(uid, amount)
@@ -199,6 +202,9 @@ class BlackjackCog(commands.Cog):
             else:
                 winnings = int(amount * BLACKJACK_NATURAL_MULT)
                 add_balance(uid, winnings)
+                try_set_record("blackjack", winnings, uid, username,
+                               player_hand=format_hand(player), player_score=pval,
+                               dealer_score=dval)
                 await ctx.send(embed=emb("🃏 Blackjack!", full_display + f"\n\n**{ctx.author.display_name}** wins **{winnings} 🪙**! Balance: {get_balance(uid)} 🪙", C_GREEN))
             return
 

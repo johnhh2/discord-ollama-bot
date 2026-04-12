@@ -39,7 +39,7 @@ from src.persistence import (
     save_chess_games, save_ragebait, save_mock, save_rigged_slots, save_rigged_flips, save_rigged_scratch,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
-    load_lottery, load_saved_quotes, get_guild_cfg, save_jackpot, load_jackpot,
+    load_lottery, load_saved_quotes, get_guild_cfg, save_jackpot, load_jackpot, try_set_record,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
@@ -190,6 +190,8 @@ class SlotsCog(commands.Cog):
             state.slot_jackpot = SLOT_JACKPOT_SEED
             save_jackpot(state.slot_jackpot)
             add_balance(uid, prize)
+            try_set_record("slots_jackpot", prize, uid, ctx.author.display_name,
+                           bet=amount, symbols=display)
             desc = (f"{display}\n\n🏆 **{ctx.author.display_name} hit the Progressive Jackpot!**\n"
                     f"**Won: {prize:,} 🪙** (Bet: {amount} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {get_balance(uid):,} 🪙\n"
                     f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*")
@@ -230,6 +232,8 @@ class SlotsCog(commands.Cog):
 
         winnings = amount * mult
         add_balance(uid, winnings)
+        try_set_record("slots_non_jackpot", winnings, uid, ctx.author.display_name,
+                       bet=amount, symbols=display, label=label)
 
         result_labels = {
             "jackpot": f"7️⃣7️⃣7️⃣ — **{mult}x** (min bet 25, bonus scales to 4x at bet 1000+)",

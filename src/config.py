@@ -51,6 +51,7 @@ FANFIC_OWNERS_FILE = "data/fanfic_owners.json"
 ROLEPLAY_STATE_FILE = "data/roleplay_state.json"
 SCRATCHOFF_FILE = "data/scratchoff.json"
 LEVELING_FILE = "data/leveling.json"
+RECORDS_FILE = "data/records.json"
 
 # Slot machine configuration
 SLOT_REEL = (

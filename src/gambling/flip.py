@@ -39,7 +39,7 @@ from src.persistence import (
     save_chess_games, save_ragebait, save_mock, save_rigged_slots, save_rigged_flips,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
-    load_lottery, load_saved_quotes, get_guild_cfg,
+    load_lottery, load_saved_quotes, get_guild_cfg, try_set_record,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
@@ -96,7 +96,9 @@ class FlipCog(commands.Cog):
         else:
             win = random.random() < 0.5
         if win:
-            add_balance(uid, amount * 2)
+            winnings = amount * 2
+            add_balance(uid, winnings)
+            try_set_record("flip", amount, uid, ctx.author.display_name)
             await ctx.send(embed=emb("🪙 Heads!", f"**{ctx.author.display_name}** won **{amount} 🪙**! Balance: {get_balance(uid)} 🪙", C_GREEN))
         else:
             await ctx.send(embed=emb("🪙 Tails!", f"**{ctx.author.display_name}** lost **{amount} 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))

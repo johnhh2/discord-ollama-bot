@@ -39,7 +39,7 @@ from src.persistence import (
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
-    load_lottery, load_saved_quotes, get_guild_cfg,
+    load_lottery, load_saved_quotes, get_guild_cfg, try_set_record,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
@@ -113,6 +113,7 @@ class LotteryCog(commands.Cog):
                     winner_id = random.choices(player_ids, weights=weights, k=1)[0]
                     winner = await self.bot.fetch_user(int(winner_id))
                     add_balance(int(winner_id), pool)
+                    try_set_record("lottery", pool, int(winner_id), winner.display_name)
 
                     embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
                     embed.description = (

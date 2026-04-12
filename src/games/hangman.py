@@ -39,7 +39,7 @@ from src.persistence import (
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
-    load_lottery, load_saved_quotes, get_guild_cfg,
+    load_lottery, load_saved_quotes, get_guild_cfg, try_set_record,
 )
 from src.cogs.ai_cog import _wait_for_confirmations
 from src.ai import (
@@ -159,6 +159,15 @@ def _distribute_hangman_rewards(cid: int, game: dict) -> str:
         add_balance(pid, reward)
         name = names.get(pid, f"<@{pid}>")
         msg += f"**{name}**: +{reward} 🪙 | Balance: {get_balance(pid)} 🪙\n"
+        # Track most hangman wins per player
+        wins_key = f"hangman_wins_{pid}"
+        current_wins = state.records.get(wins_key, {}).get("value", 0)
+        try_set_record(wins_key, current_wins + 1, pid, name)
+    # Track biggest hangman payout (use total for multiplayer, per-player for solo)
+    payout_value = total_reward if len(active_players) == 1 else per_player
+    first_pid = active_players[0]
+    first_name = names.get(first_pid, str(first_pid))
+    try_set_record("hangman_payout", payout_value, first_pid, first_name, word=word)
     return msg.strip()
 
 
