@@ -76,7 +76,7 @@ class AdminCog(commands.Cog):
         self.bot = bot
 
     @commands.command(name="godmode")
-    async def cmd_godmode(self, ctx: commands.Context, user: discord.User = None):
+    async def cmd_godmode(self, ctx: commands.Context, user: MemberConverter = None):
         if not is_admin(ctx):
             await ctx.send(embed=emb("❌ No Permission", "", C_RED))
             return
@@ -94,28 +94,14 @@ class AdminCog(commands.Cog):
 
 
     @commands.command(name="adminragebait")
-    async def cmd_adminragebait(self, ctx: commands.Context, user_input: str = None, n: str = None):
+    async def cmd_adminragebait(self, ctx: commands.Context, target: MemberConverter = None, n: str = None):
         if not is_admin(ctx):
             await ctx.send(embed=emb("❌ No Permission", "", C_RED))
             return
 
-        if user_input is None:
+        if target is None:
             await ctx.send(embed=emb("❌ Missing User", "Usage: `!adminragebait @user [n]` or `!adminragebait <userid> [n]`", C_RED))
             return
-
-        # Determine target user ID
-        uid = None
-
-        if ctx.message.mentions:
-            # Priority: use mention if present
-            uid = ctx.message.mentions[0].id
-        else:
-            # Try to parse as user ID
-            try:
-                uid = int(user_input)
-            except ValueError:
-                await ctx.send(embed=emb("❌ Invalid Input", f"Could not parse `{user_input}` as a user ID or mention.", C_RED))
-                return
 
         # Parse optional message count (default 5)
         try:
@@ -127,11 +113,11 @@ class AdminCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Count", f"Could not parse `{n}` as a number.", C_RED))
             return
 
-        state.active_ragebaits[uid] = {"remaining": count, "history": []}
+        state.active_ragebaits[target.id] = {"remaining": count, "history": []}
         save_ragebait()
         await ctx.send(embed=emb(
             "🎭 Ragebait Activated",
-            f"Ragebait enabled for user `{uid}` (next **{count}** message(s))",
+            f"Ragebait enabled for user `{target.id}` (next **{count}** message(s))",
             C_PURPLE,
         ))
 

@@ -20,7 +20,7 @@ from src.helpers import (
     mocking_font, curse_font, parse_amount, send_ephemeral, resolve_role,
     fetch_member, toggle_member_role, shop_charge, _render_race,
     _delete_after, _edit_board, get_memory_mb, format_uptime, get_version,
-    get_system_prompt, _log_audit, log_bot_permission_error,
+    get_system_prompt, _log_audit, log_bot_permission_error, MemberConverter,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
@@ -159,13 +159,14 @@ class ShopCog(commands.Cog):
                 await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop nickname <new_name>` or `!shop nickname @user <new_name>`", C_PURPLE))
                 return
 
-            # Determine target: @mention or self
-            if ctx.message.mentions and args[0].startswith("<@"):
-                target = ctx.message.mentions[0]
+            # Determine target: member arg or self
+            try:
+                maybe_member = await MemberConverter().convert(ctx, args[0])
+                target = maybe_member
                 new_name = " ".join(args[1:])
                 cost = 0 if uid in state.godmode_users else SHOP_NICKNAME_OTHER_COST
                 cost_label = f"{SHOP_NICKNAME_OTHER_COST:,}"
-            else:
+            except commands.BadArgument:
                 target = ctx.author
                 new_name = " ".join(args)
                 cost = 0 if uid in state.godmode_users else SHOP_NICKNAME_SELF_COST
@@ -228,22 +229,11 @@ class ShopCog(commands.Cog):
             if ctx.guild is None:
                 await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
                 return
-            # Parse target from mention or ID
-            target_arg = args[0]
-            target_id = None
-            if target_arg.startswith("<@") and target_arg.endswith(">"):
-                target_id = int(target_arg.strip("<@!>"))
-            else:
-                try:
-                    target_id = int(target_arg)
-                except ValueError:
-                    pass
-            if target_id is None:
-                await ctx.send(embed=emb("❌ Invalid User", "First argument must be a @mention or user ID.", C_RED))
-                return
-            target = await fetch_member(ctx.guild, target_id)
-            if target is None:
-                await ctx.send(embed=emb("❌ User Not Found", "That user isn't in this server.", C_RED))
+            # Parse target from mention, ID, or name
+            try:
+                target = await MemberConverter().convert(ctx, args[0])
+            except commands.BadArgument:
+                await ctx.send(embed=emb("❌ Invalid User", "First argument must be a @mention, user ID, or name.", C_RED))
                 return
             hex_color = args[-1].lstrip("#")
             name = " ".join(args[1:-1])
@@ -288,12 +278,13 @@ class ShopCog(commands.Cog):
             if ctx.guild is None:
                 await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
                 return
-            if len(args) < 2 or not args[0].startswith("<@"):
+            if len(args) < 2:
                 await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop assignrole @user <role name>`", C_PURPLE))
                 return
-            target = ctx.message.mentions[0] if ctx.message.mentions else None
-            if target is None:
-                await ctx.send(embed=emb("❌ Invalid User", "First argument must be a @mention.", C_RED))
+            try:
+                target = await MemberConverter().convert(ctx, args[0])
+            except commands.BadArgument:
+                await ctx.send(embed=emb("❌ Invalid User", "First argument must be a @mention, user ID, or name.", C_RED))
                 return
             name = " ".join(args[1:])
             role = discord.utils.find(lambda r: r.name.lower() == name.lower() and r.id in state.bot_roles, ctx.guild.roles)
@@ -331,9 +322,13 @@ class ShopCog(commands.Cog):
             if ctx.guild is None:
                 await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
                 return
-            if ctx.message.mentions and args and args[0].startswith("<@"):
-                member = ctx.message.mentions[0]
-                role_args = args[1:]
+            if args:
+                try:
+                    member = await MemberConverter().convert(ctx, args[0])
+                    role_args = args[1:]
+                except commands.BadArgument:
+                    member = ctx.author
+                    role_args = args
             else:
                 member = ctx.author
                 role_args = args
@@ -523,14 +518,18 @@ class ShopCog(commands.Cog):
             if not _shop_cfg.get("ragebait", True):
                 await ctx.send(embed=emb("🛒 Disabled", "The ragebait shop item is disabled in this server.", C_GREY))
                 return
-            if not ctx.message.mentions:
+            if not args:
                 await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop ragebait @user [topic]`", C_PURPLE))
                 return
-            target = ctx.message.mentions[0]
+            try:
+                target = await MemberConverter().convert(ctx, args[0])
+            except commands.BadArgument:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop ragebait @user [topic]`", C_PURPLE))
+                return
             if is_insured(target.id, "ragebait"):
                 await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against ragebait.", C_GOLD))
                 return
-            topic = " ".join(a for a in args if not a.startswith("<@"))
+            topic = " ".join(args[1:])
             cost = 0 if uid in state.godmode_users else SHOP_RAGEBAIT_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_RAGEBAIT_COST:,}"):
                 return
@@ -569,10 +568,14 @@ class ShopCog(commands.Cog):
 
         # ── !shop mock ────────────────────────────────────────────────────────────
         if subcommand == "mock":
-            if not ctx.message.mentions:
+            if not args:
                 await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mock @user`", C_PURPLE))
                 return
-            target = ctx.message.mentions[0]
+            try:
+                target = await MemberConverter().convert(ctx, args[0])
+            except commands.BadArgument:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mock @user`", C_PURPLE))
+                return
             cost = 0 if uid in state.godmode_users else SHOP_MOCK_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MOCK_COST:,}"):
                 return
@@ -646,10 +649,14 @@ class ShopCog(commands.Cog):
 
         # ── !shop mute ────────────────────────────────────────────────────────────
         if subcommand == "mute":
-            if not ctx.message.mentions:
+            if not args:
                 await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mute @user`", C_PURPLE))
                 return
-            target = ctx.message.mentions[0]
+            try:
+                target = await MemberConverter().convert(ctx, args[0])
+            except commands.BadArgument:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mute @user`", C_PURPLE))
+                return
 
             cost = 0 if uid in state.godmode_users else SHOP_MUTE_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MUTE_COST:,}"):
@@ -681,10 +688,14 @@ class ShopCog(commands.Cog):
 
         # ── !shop simp / concubine ────────────────────────────────────────────────
         if subcommand in ("simp", "concubine"):
-            if not ctx.message.mentions:
+            if not args:
                 await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop simp @user`", C_PURPLE))
                 return
-            target = ctx.message.mentions[0]
+            try:
+                target = await MemberConverter().convert(ctx, args[0])
+            except commands.BadArgument:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop simp @user`", C_PURPLE))
+                return
 
             if target.id == uid:
                 await ctx.send(embed=emb("❌ Self Simp", "You can't simp for yourself!", C_RED))
@@ -709,10 +720,14 @@ class ShopCog(commands.Cog):
 
         # ── !shop curse ───────────────────────────────────────────────────────────
         if subcommand == "curse":
-            if not ctx.message.mentions:
+            if not args:
                 await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop curse @user`", C_PURPLE))
                 return
-            target = ctx.message.mentions[0]
+            try:
+                target = await MemberConverter().convert(ctx, args[0])
+            except commands.BadArgument:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop curse @user`", C_PURPLE))
+                return
 
             if target.id == uid:
                 await ctx.send(embed=emb("❌ Self Curse", "You can't curse yourself!", C_RED))
