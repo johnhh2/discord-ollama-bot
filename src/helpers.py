@@ -129,15 +129,37 @@ async def parse_amount(
     ctx: commands.Context, value: str, min_val: int = 1,
     error_msg: str = "Please provide a positive whole number amount."
 ) -> "int | None":
-    """Parse a string as a positive integer >= min_val."""
-    try:
-        amount = int(value)
-        assert amount >= min_val
-        return amount
-    except (ValueError, AssertionError):
+    """Parse a string as a positive integer >= min_val.
+
+    Accepts plain integers or percentage strings like '50%', which resolve
+    to that percentage of the caller's current balance.
+    """
+    from src.economy import get_balance
+
+    resolved = value.strip()
+
+    if resolved.endswith("%"):
+        try:
+            pct = float(resolved[:-1])
+            assert 0 < pct <= 100
+            balance = get_balance(ctx.author.id)
+            amount = max(0, int(balance * pct / 100))
+        except (ValueError, AssertionError):
+            await ctx.send("Percentage must be between 1% and 100%.")
+            return None
+    else:
+        try:
+            amount = int(resolved)
+        except ValueError:
+            if error_msg:
+                await ctx.send(error_msg)
+            return None
+
+    if amount < min_val:
         if error_msg:
             await ctx.send(error_msg)
         return None
+    return amount
 
 
 def resolve_role(guild: discord.Guild, token: str) -> "discord.Role | None":
