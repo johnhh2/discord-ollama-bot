@@ -128,7 +128,7 @@ class ShopCog(commands.Cog):
             # Channels (sorted by cost)
             channel_items = []
             if _si.get("channel", True):
-                channel_items.append((SHOP_CHANNEL_COST, f"`!shop channel <name>` — Create a new text channel — **{SHOP_CHANNEL_COST:,} 🪙**"))
+                channel_items.append((SHOP_CHANNEL_COST, f"`!shop createchannel <name>` — Create a new text channel — **{SHOP_CHANNEL_COST:,} 🪙**"))
             if _si.get("channel", True):
                 channel_items.append((SHOP_CHANNEL_DELETE_COST, f"`!shop deletechannel <name>` — Delete a bot-created channel — **{SHOP_CHANNEL_DELETE_COST:,} 🪙**"))
             if _si.get("renamechannel", True):
@@ -444,7 +444,7 @@ class ShopCog(commands.Cog):
             return
 
         # ── !shop channel ─────────────────────────────────────────────────────────
-        if subcommand == "channel":
+        if subcommand == "createchannel":
             if not _shop_cfg.get("channel", True):
                 await ctx.send(embed=emb("🛒 Disabled", "The channel shop item is disabled in this server.", C_GREY))
                 return
@@ -666,9 +666,10 @@ class ShopCog(commands.Cog):
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLECHANNEL_COST:,}"):
                 return
             try:
-                # Deny @everyone, allow the role
-                await target_channel.set_permissions(ctx.guild.default_role, read_messages=False)
+                # Grant bot and role access first, then deny @everyone
+                await target_channel.set_permissions(ctx.guild.me, read_messages=True, send_messages=True)
                 await target_channel.set_permissions(role, read_messages=True)
+                await target_channel.set_permissions(ctx.guild.default_role, read_messages=False)
                 await ctx.send(embed=emb("✅ Channel Restricted", f"{target_channel.mention} is now only visible to **{role.name}**.", C_GREEN))
             except discord.Forbidden:
                 if cost > 0:
