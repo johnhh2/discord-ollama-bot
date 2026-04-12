@@ -426,7 +426,14 @@ class EventsCog(commands.Cog):
                 if deduct_balance(uid, SHOP_SIMP_TAX_PER_MESSAGE):
                     add_balance(simp_master_id, SHOP_SIMP_TAX_PER_MESSAGE)
                     simp_master = await fetch_member(message.guild, simp_master_id)
-                    master_name = simp_master.display_name if simp_master else str(simp_master_id)
+                    if simp_master:
+                        master_name = simp_master.display_name
+                    else:
+                        try:
+                            user = await self.bot.fetch_user(simp_master_id)
+                            master_name = user.display_name
+                        except (discord.NotFound, discord.HTTPException):
+                            master_name = str(simp_master_id)
                     await message.channel.send(f"**{message.author.display_name}** paid a **{SHOP_SIMP_TAX_PER_MESSAGE} 🪙** {tax_label} tax to **{master_name}**")
 
         # Curse: corrupt cursed users' messages
