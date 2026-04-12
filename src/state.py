@@ -22,6 +22,21 @@ bot_settings: dict = load_bot_settings()
 guild_settings: dict = load_guild_settings()
 insurance: dict = load_insurance()
 
+# Populate lock state from guild_settings
+def _load_locks():
+    channels = {}
+    roles = {}
+    for cfg in guild_settings.values():
+        for k, v in cfg.get("locked_channels", {}).items():
+            channels[int(k)] = int(v)
+        for k, v in cfg.get("locked_roles", {}).items():
+            roles[int(k)] = int(v)
+    return channels, roles
+
+locked_channels: dict
+locked_roles: dict
+locked_channels, locked_roles = _load_locks()
+
 # ── In-memory game state ──────────────────────────────────────────────────────
 
 active_blackjack_games: dict = {}

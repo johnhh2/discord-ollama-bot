@@ -59,7 +59,7 @@ from src.config import (
     BLACKJACK_NATURAL_MULT, SCRATCH_SYMBOLS, SCRATCHOFF_MAX_DAILY, SCRATCHOFF_PAYOUTS,
     SHOP_NICKNAME_SELF_COST, SHOP_NICKNAME_REMOVE_COST, SHOP_NICKNAME_OTHER_COST,
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_ASSIGN_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
-    SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_CHANNEL_COST, SHOP_INSURANCE_COST, SHOP_SIMP_COST,
+    SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_LOCK_COST, SHOP_RENAME_COST, SHOP_CHANNEL_COST, SHOP_INSURANCE_COST, SHOP_SIMP_COST,
     SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST,
     SHOP_INSURANCE_DURATION_SECS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
     SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_SIMP_TAX_PER_MESSAGE,
@@ -116,6 +116,11 @@ class ShopCog(commands.Cog):
                 role_items.append((SHOP_ROLECOLOR_COST, f"`!shop rolecolor <role name> <color>` — Change a role's color — **{SHOP_ROLECOLOR_COST:,} 🪙**"))
             if _si.get("rolechannel", True):
                 role_items.append((SHOP_ROLECHANNEL_COST, f"`!shop rolechannel @role #channel` — Restrict a channel to a role — **{SHOP_ROLECHANNEL_COST:,} 🪙**"))
+            if _si.get("renamerole", True):
+                role_items.append((SHOP_RENAME_COST, f"`!shop renamerole <role name> | <new name>` — Rename a bot-created role — **{SHOP_RENAME_COST:,} 🪙**"))
+            if _si.get("lockrole", True):
+                role_items.append((SHOP_LOCK_COST, f"`!shop lockrole <role name>` — Lock a role against changes — **{SHOP_LOCK_COST:,} 🪙**"))
+                role_items.append((0, f"`!shop unlockrole <role name>` — Unlock a role (lock owner only)"))
             if role_items:
                 role_items.sort(key=lambda x: x[0])
                 sections["👑 Roles"] = [item[1] for item in role_items]
@@ -125,7 +130,12 @@ class ShopCog(commands.Cog):
             if _si.get("channel", True):
                 channel_items.append((SHOP_CHANNEL_COST, f"`!shop channel <name>` — Create a new text channel — **{SHOP_CHANNEL_COST:,} 🪙**"))
             if _si.get("channel", True):
-                channel_items.append((SHOP_CHANNEL_COST, f"`!shop removechannel <name>` — Delete a bot-created channel — **{SHOP_CHANNEL_COST:,} 🪙**"))
+                channel_items.append((SHOP_CHANNEL_COST, f"`!shop deletechannel <name>` — Delete a bot-created channel — **{SHOP_CHANNEL_COST:,} 🪙**"))
+            if _si.get("renamechannel", True):
+                channel_items.append((SHOP_RENAME_COST, f"`!shop renamechannel <channel> <new name>` — Rename a bot-created channel — **{SHOP_RENAME_COST:,} 🪙**"))
+            if _si.get("lockchannel", True):
+                channel_items.append((SHOP_LOCK_COST, f"`!shop lockchannel #channel` — Lock a channel against changes — **{SHOP_LOCK_COST:,} 🪙**"))
+                channel_items.append((0, f"`!shop unlockchannel #channel` — Unlock a channel (lock owner only)"))
             if channel_items:
                 channel_items.sort(key=lambda x: x[0])
                 sections["📢 Channels"] = [item[1] for item in channel_items]
@@ -297,6 +307,9 @@ class ShopCog(commands.Cog):
             if role in target.roles:
                 await ctx.send(embed=emb("❌ Already Has Role", f"**{target.display_name}** already has the **{role.name}** role.", C_RED))
                 return
+            if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
+                await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can manage membership.", C_RED))
+                return
             if is_insured(target.id, "role"):
                 await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles.", C_GOLD))
                 return
@@ -352,6 +365,9 @@ class ShopCog(commands.Cog):
                 who = member.display_name if member != ctx.author else "you"
                 await ctx.send(embed=emb("❌ Not Found", f"**{who}** doesn't have a bot-created role named **{name}**.", C_RED))
                 return
+            if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
+                await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can manage membership.", C_RED))
+                return
             cost = 0 if uid in state.godmode_users else SHOP_ROLE_REMOVE_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_REMOVE_COST:,}"):
                 return
@@ -394,6 +410,9 @@ class ShopCog(commands.Cog):
                 role = None
             if role is None:
                 await ctx.send(embed=emb("❌ Not Found", f"No bot-created role named **{name}** exists.", C_RED))
+                return
+            if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
+                await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can delete it.", C_RED))
                 return
             insured_members = [m for m in role.members if is_insured(m.id, "role")]
             if insured_members:
@@ -469,8 +488,8 @@ class ShopCog(commands.Cog):
                 await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
             return
 
-        # ── !shop removechannel ────────────────────────────────────────────────────
-        if subcommand == "removechannel":
+        # ── !shop deletechannel ────────────────────────────────────────────────────
+        if subcommand == "deletechannel":
             if not _shop_cfg.get("channel", True):
                 await ctx.send(embed=emb("🛒 Disabled", "The channel shop item is disabled in this server.", C_GREY))
                 return
@@ -486,7 +505,7 @@ class ShopCog(commands.Cog):
                     await ctx.send(embed=emb("🛒 Bot Channels", "No bot-created channels found in this server.", C_PURPLE))
                 else:
                     lines = "\n".join(f"• {ch.mention}" for ch in existing)
-                    await ctx.send(embed=emb("🛒 Bot Channels", f"Removable channels:\n{lines}\n\nUse `!shop removechannel <name>` to delete one.", C_PURPLE))
+                    await ctx.send(embed=emb("🛒 Bot Channels", f"Removable channels:\n{lines}\n\nUse `!shop deletechannel <name>` to delete one.", C_PURPLE))
                 return
             channel_name = " ".join(args).lower()
             cfg = get_guild_cfg(ctx.guild.id)
@@ -495,6 +514,9 @@ class ShopCog(commands.Cog):
             channel = discord.utils.find(lambda ch: ch.name.lower() == channel_name and ch.id in bot_channel_ids, ctx.guild.channels)
             if channel is None:
                 await ctx.send(embed=emb("❌ Not Found", f"No bot-created channel named **{channel_name}** exists.", C_RED))
+                return
+            if channel.id in state.locked_channels and state.locked_channels[channel.id] != uid and uid not in state.godmode_users:
+                await ctx.send(embed=emb("🔒 Locked", f"**{channel.name}** is locked — only its owner can delete it.", C_RED))
                 return
             cost = 0 if uid in state.godmode_users else SHOP_CHANNEL_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_CHANNEL_COST:,}"):
@@ -510,6 +532,96 @@ class ShopCog(commands.Cog):
                     add_balance(uid, cost)
                 log_bot_permission_error(ctx, "delete channel")
                 await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete that channel.", C_RED))
+            except Exception as e:
+                if cost > 0:
+                    add_balance(uid, cost)
+                await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
+            return
+
+        # ── !shop renamechannel ───────────────────────────────────────────────────
+        if subcommand == "renamechannel":
+            if not _shop_cfg.get("renamechannel", True):
+                await ctx.send(embed=emb("🛒 Disabled", "The renamechannel shop item is disabled in this server.", C_GREY))
+                return
+            if ctx.guild is None:
+                await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+                return
+            if len(args) < 2:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop renamechannel <channel> <new name>`", C_PURPLE))
+                return
+            # First arg is channel (mention or name), rest is new name
+            channel_arg = args[0]
+            new_name = " ".join(args[1:]).lower().replace(" ", "-")[:100]
+            if len(new_name) < 2:
+                await ctx.send(embed=emb("❌ Invalid Name", "Channel name must be at least 2 characters.", C_RED))
+                return
+            channel_id_match = re.match(r"<#(\d+)>", channel_arg)
+            if channel_id_match:
+                target_channel = ctx.guild.get_channel(int(channel_id_match.group(1)))
+            else:
+                cfg = get_guild_cfg(ctx.guild.id)
+                bot_channel_ids = cfg.get("bot_channels", [])
+                target_channel = discord.utils.find(lambda c: c.name.lower() == channel_arg.lstrip("#").lower() and c.id in bot_channel_ids, ctx.guild.channels)
+            if target_channel is None or not isinstance(target_channel, discord.TextChannel):
+                await ctx.send(embed=emb("❌ Not Found", f"Could not find bot-created channel: `{channel_arg}`", C_RED))
+                return
+            if target_channel.id in state.locked_channels and state.locked_channels[target_channel.id] != uid and uid not in state.godmode_users:
+                await ctx.send(embed=emb("🔒 Locked", f"**{target_channel.name}** is locked — only its owner can rename it.", C_RED))
+                return
+            cost = 0 if uid in state.godmode_users else SHOP_RENAME_COST
+            if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_RENAME_COST:,}"):
+                return
+            try:
+                old_name = target_channel.name
+                await target_channel.edit(name=new_name)
+                await ctx.send(embed=emb("✅ Channel Renamed", f"**{old_name}** renamed to **{new_name}**.", C_GREEN))
+            except discord.Forbidden:
+                if cost > 0:
+                    add_balance(uid, cost)
+                log_bot_permission_error(ctx, "edit channel")
+                await ctx.send(embed=emb("❌ No Permission", "I don't have permission to rename that channel.", C_RED))
+            except Exception as e:
+                if cost > 0:
+                    add_balance(uid, cost)
+                await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
+            return
+
+        # ── !shop renamerole ──────────────────────────────────────────────────────
+        if subcommand == "renamerole":
+            if not _shop_cfg.get("renamerole", True):
+                await ctx.send(embed=emb("🛒 Disabled", "The renamerole shop item is disabled in this server.", C_GREY))
+                return
+            if ctx.guild is None:
+                await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+                return
+            # Split on " | " to separate role name from new name
+            full_arg = " ".join(args)
+            if " | " not in full_arg:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop renamerole <role name> | <new name>`", C_PURPLE))
+                return
+            role_name, new_name = [s.strip() for s in full_arg.split(" | ", 1)]
+            if not new_name:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop renamerole <role name> | <new name>`", C_PURPLE))
+                return
+            role = discord.utils.find(lambda r: r.name.lower() == role_name.lower() and r.id in state.bot_roles, ctx.guild.roles)
+            if role is None:
+                await ctx.send(embed=emb("❌ Not Found", f"No bot-created role named **{role_name}** exists.", C_RED))
+                return
+            if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
+                await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can rename it.", C_RED))
+                return
+            cost = 0 if uid in state.godmode_users else SHOP_RENAME_COST
+            if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_RENAME_COST:,}"):
+                return
+            try:
+                old_name = role.name
+                await role.edit(name=new_name)
+                await ctx.send(embed=emb("✅ Role Renamed", f"**{old_name}** renamed to **{new_name}**.", C_GREEN))
+            except discord.Forbidden:
+                if cost > 0:
+                    add_balance(uid, cost)
+                log_bot_permission_error(ctx, "edit role")
+                await ctx.send(embed=emb("❌ No Permission", "I don't have permission to rename that role.", C_RED))
             except Exception as e:
                 if cost > 0:
                     add_balance(uid, cost)
@@ -542,6 +654,9 @@ class ShopCog(commands.Cog):
             if target_channel is None or not isinstance(target_channel, discord.TextChannel):
                 await ctx.send(embed=emb("❌ Not Found", f"Could not find text channel: `{channel_arg}`", C_RED))
                 return
+            if target_channel.id in state.locked_channels and state.locked_channels[target_channel.id] != uid and uid not in state.godmode_users:
+                await ctx.send(embed=emb("🔒 Locked", f"**{target_channel.name}** is locked — only its owner can change its permissions.", C_RED))
+                return
             cost = 0 if uid in state.godmode_users else SHOP_ROLECHANNEL_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLECHANNEL_COST:,}"):
                 return
@@ -559,6 +674,130 @@ class ShopCog(commands.Cog):
                 if cost > 0:
                     add_balance(uid, cost)
                 await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
+            return
+
+        # ── !shop lockchannel ─────────────────────────────────────────────────────
+        if subcommand == "lockchannel":
+            if not _shop_cfg.get("lockchannel", True):
+                await ctx.send(embed=emb("🛒 Disabled", "The lockchannel shop item is disabled in this server.", C_GREY))
+                return
+            if ctx.guild is None:
+                await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+                return
+            if not args:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop lockchannel #channel`", C_PURPLE))
+                return
+            channel_arg = args[0]
+            channel_id_match = re.match(r"<#(\d+)>", channel_arg)
+            if channel_id_match:
+                target_channel = ctx.guild.get_channel(int(channel_id_match.group(1)))
+            else:
+                target_channel = discord.utils.find(lambda c: c.name.lower() == channel_arg.lstrip("#").lower() and isinstance(c, discord.TextChannel), ctx.guild.channels)
+            if target_channel is None or not isinstance(target_channel, discord.TextChannel):
+                await ctx.send(embed=emb("❌ Not Found", f"Could not find text channel: `{channel_arg}`", C_RED))
+                return
+            if target_channel.id in state.locked_channels:
+                await ctx.send(embed=emb("❌ Already Locked", f"{target_channel.mention} is already locked.", C_RED))
+                return
+            cost = 0 if uid in state.godmode_users else SHOP_LOCK_COST
+            if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_LOCK_COST:,}"):
+                return
+            state.locked_channels[target_channel.id] = uid
+            cfg = get_guild_cfg(ctx.guild.id)
+            cfg.setdefault("locked_channels", {})[str(target_channel.id)] = uid
+            save_guild_settings()
+            await ctx.send(embed=emb("🔒 Channel Locked", f"{target_channel.mention} is now locked. Only you can modify or delete it.", C_GREEN))
+            return
+
+        # ── !shop unlockchannel ───────────────────────────────────────────────────
+        if subcommand == "unlockchannel":
+            if ctx.guild is None:
+                await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+                return
+            if not args:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop unlockchannel #channel`", C_PURPLE))
+                return
+            channel_arg = args[0]
+            channel_id_match = re.match(r"<#(\d+)>", channel_arg)
+            if channel_id_match:
+                target_channel = ctx.guild.get_channel(int(channel_id_match.group(1)))
+            else:
+                target_channel = discord.utils.find(lambda c: c.name.lower() == channel_arg.lstrip("#").lower() and isinstance(c, discord.TextChannel), ctx.guild.channels)
+            if target_channel is None or not isinstance(target_channel, discord.TextChannel):
+                await ctx.send(embed=emb("❌ Not Found", f"Could not find text channel: `{channel_arg}`", C_RED))
+                return
+            owner_id = state.locked_channels.get(target_channel.id)
+            if owner_id is None:
+                await ctx.send(embed=emb("❌ Not Locked", f"{target_channel.mention} is not locked.", C_RED))
+                return
+            if uid != owner_id and uid not in state.godmode_users:
+                await ctx.send(embed=emb("🔒 Access Denied", "Only the user who locked this channel can unlock it.", C_RED))
+                return
+            del state.locked_channels[target_channel.id]
+            cfg = get_guild_cfg(ctx.guild.id)
+            cfg.get("locked_channels", {}).pop(str(target_channel.id), None)
+            save_guild_settings()
+            await ctx.send(embed=emb("🔓 Channel Unlocked", f"{target_channel.mention} is now unlocked.", C_GREEN))
+            return
+
+        # ── !shop lockrole ────────────────────────────────────────────────────────
+        if subcommand == "lockrole":
+            if not _shop_cfg.get("lockrole", True):
+                await ctx.send(embed=emb("🛒 Disabled", "The lockrole shop item is disabled in this server.", C_GREY))
+                return
+            if ctx.guild is None:
+                await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+                return
+            if not args:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop lockrole <role name>`", C_PURPLE))
+                return
+            name = " ".join(args)
+            role = resolve_role(ctx.guild, name) if len(args) == 1 else None
+            if role is None:
+                role = discord.utils.find(lambda r: r.name.lower() == name.lower(), ctx.guild.roles)
+            if role is None:
+                await ctx.send(embed=emb("❌ Not Found", f"No role named **{name}** exists.", C_RED))
+                return
+            if role.id in state.locked_roles:
+                await ctx.send(embed=emb("❌ Already Locked", f"**{role.name}** is already locked.", C_RED))
+                return
+            cost = 0 if uid in state.godmode_users else SHOP_LOCK_COST
+            if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_LOCK_COST:,}"):
+                return
+            state.locked_roles[role.id] = uid
+            cfg = get_guild_cfg(ctx.guild.id)
+            cfg.setdefault("locked_roles", {})[str(role.id)] = uid
+            save_guild_settings()
+            await ctx.send(embed=emb("🔒 Role Locked", f"**{role.name}** is now locked. Only you can modify, delete, or manage membership of this role.", C_GREEN))
+            return
+
+        # ── !shop unlockrole ──────────────────────────────────────────────────────
+        if subcommand == "unlockrole":
+            if ctx.guild is None:
+                await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+                return
+            if not args:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop unlockrole <role name>`", C_PURPLE))
+                return
+            name = " ".join(args)
+            role = resolve_role(ctx.guild, name) if len(args) == 1 else None
+            if role is None:
+                role = discord.utils.find(lambda r: r.name.lower() == name.lower(), ctx.guild.roles)
+            if role is None:
+                await ctx.send(embed=emb("❌ Not Found", f"No role named **{name}** exists.", C_RED))
+                return
+            owner_id = state.locked_roles.get(role.id)
+            if owner_id is None:
+                await ctx.send(embed=emb("❌ Not Locked", f"**{role.name}** is not locked.", C_RED))
+                return
+            if uid != owner_id and uid not in state.godmode_users:
+                await ctx.send(embed=emb("🔒 Access Denied", "Only the user who locked this role can unlock it.", C_RED))
+                return
+            del state.locked_roles[role.id]
+            cfg = get_guild_cfg(ctx.guild.id)
+            cfg.get("locked_roles", {}).pop(str(role.id), None)
+            save_guild_settings()
+            await ctx.send(embed=emb("🔓 Role Unlocked", f"**{role.name}** is now unlocked.", C_GREEN))
             return
 
         # ── !shop ragebait ────────────────────────────────────────────────────────
@@ -673,6 +912,9 @@ class ShopCog(commands.Cog):
                 role = discord.utils.find(lambda r: r.name.lower() == role_token.lower(), ctx.guild.roles)
             if role is None:
                 await ctx.send(embed=emb("❌ Not Found", f"No role named **{role_token}** exists.", C_RED))
+                return
+            if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
+                await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can change its color.", C_RED))
                 return
 
             try:
@@ -816,6 +1058,9 @@ class ShopCog(commands.Cog):
                 role = None
             if role is None:
                 await ctx.send(embed=emb("❌ Not Found", f"No bot-created role named **{name}** exists.", C_RED))
+                return
+            if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
+                await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can move it.", C_RED))
                 return
             # Sorted ascending by position (lowest = index 0)
             other_bot_roles = sorted(
