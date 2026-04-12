@@ -188,7 +188,7 @@ class ShopCog(commands.Cog):
             if not new_name:
                 await ctx.send(embed=emb("🛒 Shop", "Please provide a new nickname.", C_PURPLE))
                 return
-            if is_insured(target.id, "nickname"):
+            if target.id != uid and is_insured(target.id, "nickname"):
                 await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be renamed.", C_GOLD))
                 return
             if not await shop_charge(ctx, uid, cost, cost_label=cost_label):
@@ -260,7 +260,7 @@ class ShopCog(commands.Cog):
             except ValueError:
                 await ctx.send(embed=emb("❌ Invalid Color", "Example: `ff00aa` or `#ff00aa`", C_RED))
                 return
-            if is_insured(target.id, "role"):
+            if target.id != uid and is_insured(target.id, "role"):
                 await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles.", C_GOLD))
                 return
             cost = 0 if uid in state.godmode_users else SHOP_ROLE_CREATE_COST
@@ -310,7 +310,7 @@ class ShopCog(commands.Cog):
             if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
                 await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can manage membership.", C_RED))
                 return
-            if is_insured(target.id, "role"):
+            if target.id != uid and is_insured(target.id, "role"):
                 await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles.", C_GOLD))
                 return
             cost = 0 if uid in state.godmode_users else SHOP_ROLE_ASSIGN_COST
@@ -813,7 +813,7 @@ class ShopCog(commands.Cog):
             except commands.BadArgument:
                 await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop ragebait @user [topic]`", C_PURPLE))
                 return
-            if is_insured(target.id, "ragebait"):
+            if target.id != uid and is_insured(target.id, "ragebait"):
                 await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against ragebait.", C_GOLD))
                 return
             topic = " ".join(args[1:])
