@@ -239,7 +239,7 @@ class HangmanCog(commands.Cog):
             return
         uid = ctx.author.id
         _HANGMAN_COOLDOWN = 6 * 3600
-        if not ctx.author.bot:
+        if ctx.author.bot:
             now = time.time()
             last = state.user_last_hangman.get(uid, 0)
             if now - last < _HANGMAN_COOLDOWN:
@@ -251,7 +251,7 @@ class HangmanCog(commands.Cog):
         if cid in state.active_hangman_games:
             await ctx.send(embed=emb("🔤 Already Playing", "Just type your guess directly!", C_ORANGE))
             return
-        if not ctx.author.bot:
+        if ctx.author.bot:
             state.user_last_hangman[uid] = time.time()
         word = random.choice(HANGMAN_WORDS)
         state.active_hangman_games[cid] = {

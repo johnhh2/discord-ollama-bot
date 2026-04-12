@@ -537,7 +537,7 @@ class UtilityCog(commands.Cog):
 
         uid = ctx.author.id
         _PUZZLE_COOLDOWN = 6 * 3600
-        if not ctx.author.bot:
+        if ctx.author.bot:
             _now = time.time()
             _last = state.user_last_puzzle.get(uid, 0)
             if _now - _last < _PUZZLE_COOLDOWN:
@@ -554,7 +554,7 @@ class UtilityCog(commands.Cog):
             await ctx.send(embed=emb("⚠️ Puzzle Active", "A puzzle is already running in this channel! Solve it first.", C_GOLD))
             return
 
-        if not ctx.author.bot:
+        if ctx.author.bot:
             state.user_last_puzzle[uid] = time.time()
         import re as _re
 
