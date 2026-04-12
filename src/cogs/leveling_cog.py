@@ -177,6 +177,9 @@ def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tuple[int
         xp = XP_SCRATCH  # capped naturally by the scratchoff system (3/day)
 
     elif source == "stream":
+        rec.setdefault("stream_last_hour", 0.0)
+        rec.setdefault("stream_today", 0)
+        rec.setdefault("stream_day_ts", 0.0)
         _day_reset(rec, "stream_today", "stream_day_ts")
         if now - rec["stream_last_hour"] < HOUR_SECS:
             return 0, False
