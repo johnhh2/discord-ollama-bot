@@ -296,24 +296,25 @@ class EconomyCog(commands.Cog):
         else:
             # Caught — roll for jail vs fine
             jailed = random.random() < jail_chance
+            actual_fine = min(fee, get_balance(thief_id))
             if jailed:
                 jail_until_ts = time.time() + jail_days * 86400
                 thief_data["jail_until"] = jail_until_ts
                 save_economy()
-                deduct_balance(thief_id, fee)
+                deduct_balance(thief_id, actual_fine)
                 result_embed = emb(
                     "🚔 Caught & Jailed!",
                     f"**{ctx.author.display_name}** was caught stealing from **{target.display_name}**!\n"
-                    f"Fined **{fee} 🪙** and jailed for **{jail_days} day(s)**.\n"
+                    f"Fined **{actual_fine} 🪙** and jailed for **{jail_days} day(s)**.\n"
                     f"Balance: **{get_balance(thief_id)} 🪙**",
                     C_RED,
                 )
             else:
-                deduct_balance(thief_id, fee)
+                deduct_balance(thief_id, actual_fine)
                 result_embed = emb(
                     "🚔 Caught!",
                     f"**{ctx.author.display_name}** was caught stealing from **{target.display_name}**!\n"
-                    f"Fined **{fee} 🪙**. You got lucky — no jail time.\n"
+                    f"Fined **{actual_fine} 🪙**. You got lucky — no jail time.\n"
                     f"Balance: **{get_balance(thief_id)} 🪙**",
                     C_ORANGE,
                 )
