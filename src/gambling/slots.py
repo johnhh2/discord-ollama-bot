@@ -279,18 +279,41 @@ class SlotsCog(commands.Cog):
 
 
     @commands.group(name="rig", hidden=True, invoke_without_command=True)
+    @commands.check(is_admin)
     async def cmd_rig(self, ctx: commands.Context):
         """Hidden admin-only command group for rigging games."""
-        if not is_admin(ctx):
-            return
-        await ctx.send(embed=emb("🎰 Rig", "Usage:\n`!rig slots @user` — rig next slots spin to jackpot\n`!rig flip @user <n>` — rig next n coin flips to win", C_GOLD))
+        lines = [
+            "`!rig slots @user` — rig next slots spin to jackpot",
+            "`!rig flip @user <n>` — rig next n coin flips to win",
+        ]
+
+        async def name(uid: int) -> str:
+            if ctx.guild:
+                m = await fetch_member(ctx.guild, uid)
+                if m:
+                    return m.display_name
+            try:
+                u = await self.bot.fetch_user(uid)
+                return u.display_name
+            except Exception:
+                return str(uid)
+
+        slots_rigged = list(state.rigged_slots)
+        flips_rigged = dict(state.rigged_flips)
+
+        if slots_rigged or flips_rigged:
+            lines.append("")
+            lines.append("**Active riggings:**")
+            for uid in slots_rigged:
+                lines.append(f"🎰 {await name(uid)} — slots jackpot (1 spin)")
+            for uid, n in flips_rigged.items():
+                lines.append(f"🪙 {await name(uid)} — {n} flip {'win' if n == 1 else 'wins'}")
+
+        await ctx.send(embed=emb("🎰 Rig", "\n".join(lines), C_GOLD))
 
     @cmd_rig.command(name="slots", hidden=True)
     async def cmd_rig_slots(self, ctx: commands.Context, target_input: str = None):
         """Hidden admin-only command: rig the next slots spin to hit 7 7 7."""
-        if not is_admin(ctx):
-            return
-
         uid = None
         target_name = "you"
 
@@ -320,9 +343,6 @@ class SlotsCog(commands.Cog):
     @cmd_rig.command(name="flip", hidden=True)
     async def cmd_rig_flip(self, ctx: commands.Context, target_input: str = None, n: int = 1):
         """Hidden admin-only command: rig the next n coin flips to win."""
-        if not is_admin(ctx):
-            return
-
         uid = None
         target_name = "you"
 
