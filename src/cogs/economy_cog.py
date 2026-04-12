@@ -39,7 +39,7 @@ from src.persistence import (
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
-    load_lottery, load_saved_quotes, get_guild_cfg, save_records,
+    load_lottery, load_saved_quotes, get_guild_cfg, load_records,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
@@ -360,21 +360,11 @@ class EconomyCog(commands.Cog):
     @commands.command(name="records", aliases=["record", "rec"])
     async def cmd_records(self, ctx: commands.Context):
         """Display all-time records for economy and games."""
-        r = state.records
+        if ctx.guild is None:
+            await ctx.send(embed=emb("🏆 Records", "Records are only available in servers.", C_RED))
+            return
 
-        async def resolve_name(uid: int, fallback: str) -> str:
-            # Refresh stale uid-as-string holder names from highest_balance
-            if fallback == str(uid):
-                if ctx.guild:
-                    m = await fetch_member(ctx.guild, uid)
-                    if m:
-                        return m.display_name
-                try:
-                    u = await self.bot.fetch_user(uid)
-                    return u.display_name
-                except Exception:
-                    pass
-            return fallback
+        r = load_records(ctx.guild.id)
 
         def fmt(cat: str, label: str, extra_fn=None) -> str:
             rec = r.get(cat)
@@ -387,27 +377,31 @@ class EconomyCog(commands.Cog):
                 base += extra_fn(rec)
             return base
 
-        # Resolve balance holder name (may be stored as uid string)
-        bal_rec = r.get("highest_balance")
-        if bal_rec:
-            uid = bal_rec["holder_id"]
-            resolved = await resolve_name(uid, bal_rec.get("holder_name", str(uid)))
-            if resolved != bal_rec.get("holder_name"):
-                bal_rec["holder_name"] = resolved
-                save_records()
-
-        # Count all hangman wins records and find top completer
-        hangman_wins_entries = [
-            (k, v) for k, v in r.items() if k.startswith("hangman_wins_")
+        # Highest balance: compute live from economy for this server's members
+        guild_member_ids = {str(m.id) for m in ctx.guild.members} if ctx.guild else set()
+        bal_candidates = [
+            (uid_str, data["balance"])
+            for uid_str, data in state.economy["users"].items()
+            if uid_str in guild_member_ids and data["balance"] > 0
         ]
+        if bal_candidates:
+            top_uid_str, top_bal = max(bal_candidates, key=lambda x: x[1])
+            top_member = ctx.guild.get_member(int(top_uid_str))
+            top_name = top_member.display_name if top_member else top_uid_str
+            highest_bal_str = f"**Highest Balance:** {top_bal:,} 🪙 — **{top_name}**"
+        else:
+            highest_bal_str = "**Highest Balance:** *none yet*"
+
+        # Most hangman wins
+        hangman_wins_entries = [(k, v) for k, v in r.items() if k.startswith("hangman_wins_")]
         if hangman_wins_entries:
-            top_k, top_v = max(hangman_wins_entries, key=lambda x: x[1]["value"])
+            _, top_v = max(hangman_wins_entries, key=lambda x: x[1]["value"])
             hm_wins_str = f"**Most Hangmans Completed:** {top_v['value']} — **{top_v['holder_name']}**"
         else:
             hm_wins_str = "**Most Hangmans Completed:** *none yet*"
 
         lines = [
-            fmt("highest_balance", "Highest Balance Ever"),
+            highest_bal_str,
             fmt("lottery", "Biggest Lottery Payout"),
             fmt("slots_jackpot", "Biggest Slots Jackpot",
                 lambda rec: f"\n  ↳ Symbols: {rec.get('symbols', '?')} • Bet: {rec['bet']:,} 🪙" if rec.get('bet') is not None else ""),

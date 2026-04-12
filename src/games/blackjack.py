@@ -141,7 +141,8 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
 
     if dval > 21 or pval > dval:
         add_balance(uid, amount * 2)
-        try_set_record("blackjack", amount, uid, uid_name,
+        gid = message.guild.id if message.guild else None
+        try_set_record(gid, "blackjack", amount * 2, uid, uid_name,
                        player_hand=format_hand(player), player_score=pval,
                        dealer_score=dval)
         color, result = C_GREEN, f"✅ **{uid_name}** wins **{amount} 🪙**! Balance: {get_balance(uid)} 🪙"
@@ -202,7 +203,8 @@ class BlackjackCog(commands.Cog):
             else:
                 winnings = int(amount * BLACKJACK_NATURAL_MULT)
                 add_balance(uid, winnings)
-                try_set_record("blackjack", winnings, uid, username,
+                gid = ctx.guild.id if ctx.guild else None
+                try_set_record(gid, "blackjack", winnings, uid, username,
                                player_hand=format_hand(player), player_score=pval,
                                dealer_score=dval)
                 await ctx.send(embed=emb("🃏 Blackjack!", full_display + f"\n\n**{ctx.author.display_name}** wins **{winnings} 🪙**! Balance: {get_balance(uid)} 🪙", C_GREEN))

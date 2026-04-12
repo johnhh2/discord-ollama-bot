@@ -113,7 +113,7 @@ class LotteryCog(commands.Cog):
                     winner_id = random.choices(player_ids, weights=weights, k=1)[0]
                     winner = await self.bot.fetch_user(int(winner_id))
                     add_balance(int(winner_id), pool)
-                    try_set_record("lottery", pool, int(winner_id), winner.display_name)
+                    try_set_record(guild.id, "lottery", pool, int(winner_id), winner.display_name)
 
                     embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
                     embed.description = (

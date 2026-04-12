@@ -39,7 +39,7 @@ from src.persistence import (
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
-    load_lottery, load_saved_quotes, get_guild_cfg, try_set_record,
+    load_lottery, load_saved_quotes, get_guild_cfg, try_set_record, load_records,
 )
 from src.cogs.ai_cog import _wait_for_confirmations
 from src.ai import (
@@ -143,6 +143,7 @@ def calculate_hangman_reward(word: str) -> int:
 def _distribute_hangman_rewards(cid: int, game: dict) -> str:
     """Distributes win rewards, deletes the game, and returns the reward message."""
     word = game["word"]
+    gid = game.get("guild_id")
     total_reward = calculate_hangman_reward(word)
     active_players = list(game["active_players"])
     per_player = total_reward // len(active_players)
@@ -160,14 +161,16 @@ def _distribute_hangman_rewards(cid: int, game: dict) -> str:
         name = names.get(pid, f"<@{pid}>")
         msg += f"**{name}**: +{reward} 🪙 | Balance: {get_balance(pid)} 🪙\n"
         # Track most hangman wins per player
-        wins_key = f"hangman_wins_{pid}"
-        current_wins = state.records.get(wins_key, {}).get("value", 0)
-        try_set_record(wins_key, current_wins + 1, pid, name)
+        if gid:
+            wins_key = f"hangman_wins_{pid}"
+            records = load_records(gid)
+            current_wins = records.get(wins_key, {}).get("value", 0)
+            try_set_record(gid, wins_key, current_wins + 1, pid, name)
     # Track biggest hangman payout (use total for multiplayer, per-player for solo)
     payout_value = total_reward if len(active_players) == 1 else per_player
     first_pid = active_players[0]
     first_name = names.get(first_pid, str(first_pid))
-    try_set_record("hangman_payout", payout_value, first_pid, first_name, word=word)
+    try_set_record(gid, "hangman_payout", payout_value, first_pid, first_name, word=word)
     return msg.strip()
 
 
@@ -269,6 +272,7 @@ class HangmanCog(commands.Cog):
             "guessed_words": set(),  # Track full word guesses to prevent repeats
             "wrong_guesses": 0,
             "user_id": ctx.author.id,
+            "guild_id": ctx.guild.id if ctx.guild else None,
             "active_players": {ctx.author.id},  # Track who's actively guessing (for rewards)
             "invited_players": {ctx.author.id},  # Only these users may guess
             "player_names": {ctx.author.id: ctx.author.display_name},
