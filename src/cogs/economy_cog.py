@@ -144,6 +144,7 @@ class EconomyCog(commands.Cog):
             tickets = lottery_players.get(uid_str, 0)
             ticket_str = f" • {tickets} 🎟️" if tickets else ""
             lines.append(f"{prefix} **{name}** — {data['balance']} 🪙{ticket_str}")
+        lines.append("\n*Also: `!levels` XP · `!lbr` roles*")
         await ctx.send(embed=emb("🪙 Leaderboard", "\n".join(lines), C_GREEN))
 
 

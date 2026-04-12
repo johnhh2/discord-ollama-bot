@@ -317,5 +317,40 @@ class LevelingCog(commands.Cog):
         await ctx.send(embed=embed)
 
 
+    # ── !levels XP leaderboard ────────────────────────────────────────────────
+    @commands.command(name="levels", aliases=["lbxp", "xplb", "lbx", "xlb", "lblvl", "lblevel"])
+    async def cmd_levels(self, ctx: commands.Context):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Leveling is per-server and not available in DMs.", 0xe74c3c))
+            return
+        guild_data = state.leveling.get(str(ctx.guild.id), {})
+        if not guild_data:
+            await ctx.send(embed=emb("📊 XP Leaderboard", "No XP data yet.", C_BLUE))
+            return
+
+        sorted_users = sorted(guild_data.items(), key=lambda x: x[1].get("xp", 0), reverse=True)[:10]
+
+        async def resolve_name(uid_str: str) -> str:
+            from src.helpers import fetch_member
+            member = await fetch_member(ctx.guild, int(uid_str))
+            if member:
+                return member.display_name
+            try:
+                user = await self.bot.fetch_user(int(uid_str))
+                return user.display_name
+            except Exception:
+                return f"User {uid_str}"
+
+        import asyncio
+        names = await asyncio.gather(*(resolve_name(uid_str) for uid_str, _ in sorted_users))
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for i, (name, (_, data)) in enumerate(zip(names, sorted_users)):
+            prefix = medals[i] if i < 3 else f"{i + 1}."
+            lines.append(f"{prefix} **{name}** — Level {data.get('level', 0)} ({data.get('xp', 0):,} XP)")
+        lines.append("\n*Also: `!lb` currency · `!lbr` roles*")
+        await ctx.send(embed=emb("📊 XP Leaderboard", "\n".join(lines), C_BLUE))
+
+
 async def setup(bot):
     await bot.add_cog(LevelingCog(bot))

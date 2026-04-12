@@ -1109,6 +1109,7 @@ class ShopCog(commands.Cog):
             prefix = medals[i] if i < 3 else f"{i + 1}."
             color_hex = f"#{role.color.value:06x}" if role.color.value else "default"
             lines.append(f"{prefix} **{role.name}** ({color_hex})")
+        lines.append("\n*Also: `!lb` currency · `!levels` XP*")
         await ctx.send(embed=emb("👑 Role Leaderboard", "\n".join(lines), C_PURPLE))
 
 
