@@ -25,7 +25,7 @@ from src.helpers import (
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
     add_guild_house, drain_bot_balance_into_lottery, announce_new_lottery,
-    is_insured, get_guild_ask_model, get_guild_roleplay_model,
+    is_insured, get_insurance_expiry, get_guild_ask_model, get_guild_roleplay_model,
     get_guild_coding_model, _ct_now, _ct_today, do_daily_reset, _ensure_user,
 )
 from src.permissions import (
@@ -281,7 +281,8 @@ class EconomyCog(commands.Cog):
         # Resolve outcome
         if success:
             if is_insured(victim_id, "steal"):
-                result_embed = emb("🛡️ Protected", f"**{target.display_name}** has insurance — your heist failed!", C_GOLD)
+                _exp = get_insurance_expiry(victim_id)
+                result_embed = emb("🛡️ Protected", f"**{target.display_name}** has insurance — your heist failed! (expires <t:{_exp}:R>)", C_GOLD)
             elif victim_bal < steal_amount:
                 steal_amount = victim_bal
                 if steal_amount <= 0:

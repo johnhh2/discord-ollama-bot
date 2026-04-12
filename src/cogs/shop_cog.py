@@ -25,7 +25,7 @@ from src.helpers import (
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
     add_guild_house, drain_bot_balance_into_lottery, announce_new_lottery,
-    is_insured, get_guild_ask_model, get_guild_roleplay_model,
+    is_insured, get_insurance_expiry, get_guild_ask_model, get_guild_roleplay_model,
     get_guild_coding_model, _ct_now, _ct_today, do_daily_reset, _ensure_user,
 )
 from src.permissions import (
@@ -189,7 +189,8 @@ class ShopCog(commands.Cog):
                 await ctx.send(embed=emb("🛒 Shop", "Please provide a new nickname.", C_PURPLE))
                 return
             if target.id != uid and is_insured(target.id, "nickname"):
-                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be renamed.", C_GOLD))
+                _exp = get_insurance_expiry(target.id)
+                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be renamed (expires <t:{_exp}:R>).", C_GOLD))
                 return
             if not await shop_charge(ctx, uid, cost, cost_label=cost_label):
                 return
@@ -214,7 +215,8 @@ class ShopCog(commands.Cog):
                 return
             cost = 0 if uid in state.godmode_users else SHOP_NICKNAME_REMOVE_COST
             if is_insured(uid, "nickname"):
-                await ctx.send(embed=emb("🛡️ Protected", f"**{ctx.author.display_name}** has insurance and can't have their nickname changed.", C_GOLD))
+                _exp = get_insurance_expiry(uid)
+                await ctx.send(embed=emb("🛡️ Protected", f"**{ctx.author.display_name}** has insurance and can't have their nickname changed (expires <t:{_exp}:R>).", C_GOLD))
                 return
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_NICKNAME_REMOVE_COST:,}"):
                 return
@@ -261,7 +263,8 @@ class ShopCog(commands.Cog):
                 await ctx.send(embed=emb("❌ Invalid Color", "Example: `ff00aa` or `#ff00aa`", C_RED))
                 return
             if target.id != uid and is_insured(target.id, "role"):
-                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles.", C_GOLD))
+                _exp = get_insurance_expiry(target.id)
+                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles (expires <t:{_exp}:R>).", C_GOLD))
                 return
             cost = 0 if uid in state.godmode_users else SHOP_ROLE_CREATE_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_CREATE_COST:,}"):
@@ -311,7 +314,8 @@ class ShopCog(commands.Cog):
                 await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can manage membership.", C_RED))
                 return
             if target.id != uid and is_insured(target.id, "role"):
-                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles.", C_GOLD))
+                _exp = get_insurance_expiry(target.id)
+                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles (expires <t:{_exp}:R>).", C_GOLD))
                 return
             cost = 0 if uid in state.godmode_users else SHOP_ROLE_ASSIGN_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_ASSIGN_COST:,}"):
@@ -417,7 +421,8 @@ class ShopCog(commands.Cog):
             insured_members = [m for m in role.members if is_insured(m.id, "role")]
             if insured_members:
                 names = ", ".join(f"**{m.display_name}**" for m in insured_members)
-                await ctx.send(embed=emb("🛡️ Protected", f"{names} {'has' if len(insured_members) == 1 else 'have'} insurance — this role can't be deleted.", C_GOLD))
+                _earliest = min(get_insurance_expiry(m.id) for m in insured_members)
+                await ctx.send(embed=emb("🛡️ Protected", f"{names} {'has' if len(insured_members) == 1 else 'have'} insurance — this role can't be deleted (expires <t:{_earliest}:R>).", C_GOLD))
                 return
             cost = 0 if uid in state.godmode_users else SHOP_ROLE_DELETE_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_DELETE_COST:,}"):
@@ -814,7 +819,8 @@ class ShopCog(commands.Cog):
                 await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop ragebait @user [topic]`", C_PURPLE))
                 return
             if target.id != uid and is_insured(target.id, "ragebait"):
-                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against ragebait.", C_GOLD))
+                _exp = get_insurance_expiry(target.id)
+                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against ragebait (expires <t:{_exp}:R>).", C_GOLD))
                 return
             topic = " ".join(args[1:])
             cost = 0 if uid in state.godmode_users else SHOP_RAGEBAIT_COST
