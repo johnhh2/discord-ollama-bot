@@ -301,7 +301,7 @@ class EventsCog(commands.Cog):
         state.stats_commands_ran += 1
         if ctx.guild and not ctx.author.bot:
             xp, leveled_up = _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
-            if leveled_up:
+            if leveled_up and get_guild_cfg(ctx.guild.id).get("levelup_channel"):
                 from src.cogs.leveling_cog import LevelingCog
                 cog = self.bot.cogs.get("LevelingCog")
                 if cog and isinstance(ctx.author, discord.Member):
@@ -393,7 +393,7 @@ class EventsCog(commands.Cog):
         # Message XP (non-command messages only)
         if message.guild and not message.content.startswith("!"):
             xp, leveled_up = _grant_xp(uid, "msg", guild_id=message.guild.id)
-            if leveled_up and isinstance(message.author, discord.Member):
+            if leveled_up and isinstance(message.author, discord.Member) and get_guild_cfg(message.guild.id).get("levelup_channel"):
                 from src.cogs.leveling_cog import LevelingCog
                 cog = self.bot.cogs.get("LevelingCog")
                 if cog:

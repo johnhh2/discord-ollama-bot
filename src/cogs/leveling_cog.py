@@ -187,7 +187,7 @@ class LevelingCog(commands.Cog):
                     if member.bot:
                         continue
                     xp, leveled_up = grant_xp(member.id, "voice", guild_id=guild.id)
-                    if leveled_up:
+                    if leveled_up and get_guild_cfg(guild.id).get("levelup_channel"):
                         await self._announce_levelup(member, guild.id)
 
     @_voice_task.before_loop
