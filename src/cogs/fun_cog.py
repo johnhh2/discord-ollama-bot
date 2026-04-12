@@ -131,8 +131,7 @@ class FunCog(commands.Cog):
                 await _wrong_channel_reply(ctx, f"rule34 is only allowed in: {names}")
                 return
         await ctx.typing()
-        _STOP = {"and", "or", "with", "the", "a", "an"}
-        tag_parts = [w for w in tags.strip().split() if w.lower() not in _STOP]
+        tag_parts = [w for w in tags.strip().split()]
         banned = [t.lower() for t in cfg.get("rule34_banned_tags", [])]
         tag_parts = [w for w in tag_parts if w.lower() not in banned]
 
@@ -152,16 +151,8 @@ class FunCog(commands.Cog):
 
         try:
             async with aiohttp.ClientSession() as session:
-                # Try all tags combined first, then fall back to each tag alone
                 search_tags = "+".join(tag_parts) if tag_parts else "solo"
                 posts = _filter_banned(await _r34_fetch(session, search_tags + ban_query))
-
-                if not posts and len(tag_parts) > 1:
-                    for part in tag_parts:
-                        posts = _filter_banned(await _r34_fetch(session, part + ban_query))
-                        if posts:
-                            search_tags = part
-                            break
         except Exception as e:
             await ctx.send(embed=emb("❌ rule34", f"Request failed: {e}", C_RED))
             return
