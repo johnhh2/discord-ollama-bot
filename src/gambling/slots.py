@@ -36,7 +36,7 @@ from src.permissions import (
 from src.persistence import (
     _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
     save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
-    save_chess_games, save_ragebait, save_mock, save_rigged_slots, save_rigged_flips,
+    save_chess_games, save_ragebait, save_mock, save_rigged_slots, save_rigged_flips, save_rigged_scratch,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg, save_jackpot, load_jackpot,
@@ -285,6 +285,7 @@ class SlotsCog(commands.Cog):
         lines = [
             "`!rig slots @user [mult]` — rig next slots spin (mult: 75/15/7/4/3, default 75)",
             "`!rig flip @user <n>` — rig next n coin flips to win",
+            "`!rig scratch @user <1-4>` — rig 3rd daily scratchoff to match N symbols",
         ]
 
         async def name(uid: int) -> str:
@@ -300,8 +301,9 @@ class SlotsCog(commands.Cog):
 
         slots_rigged = dict(state.rigged_slots)
         flips_rigged = dict(state.rigged_flips)
+        scratch_rigged = dict(state.rigged_scratch)
 
-        if slots_rigged or flips_rigged:
+        if slots_rigged or flips_rigged or scratch_rigged:
             lines.append("")
             lines.append("**Active riggings:**")
             for uid, sym in slots_rigged.items():
@@ -309,6 +311,8 @@ class SlotsCog(commands.Cog):
                 lines.append(f"🎰 {await name(uid)} — {sym_label}")
             for uid, n in flips_rigged.items():
                 lines.append(f"🪙 {await name(uid)} — {n} flip {'win' if n == 1 else 'wins'}")
+            for uid, n in scratch_rigged.items():
+                lines.append(f"🎫 {await name(uid)} — {n} symbol match on 3rd scratch")
 
         await ctx.send(embed=emb("🎰 Rig", "\n".join(lines), C_GOLD))
 
@@ -391,6 +395,42 @@ class SlotsCog(commands.Cog):
         await ctx.send(embed=emb(
             "🪙 Flip Rigged",
             f"**{target_name}**'s next **{n_int}** `!flip` {'flip' if n_int == 1 else 'flips'} will win!",
+            C_GOLD,
+        ))
+
+    @cmd_rig.command(name="scratch", hidden=True)
+    async def cmd_rig_scratch(self, ctx: commands.Context, target: MemberConverter = None, n: str = "4"):
+        """Hidden admin-only command: rig the 3rd daily scratchoff to match N symbols (1-4)."""
+        if target is None:
+            target = ctx.author
+        uid = target.id
+        target_name = target.display_name
+
+        if n.lower() == "cancel":
+            if uid in state.rigged_scratch:
+                del state.rigged_scratch[uid]
+                save_rigged_scratch()
+                await ctx.send(embed=emb("🎫 Rig Cancelled", f"Cleared scratch rig for **{target_name}**.", C_GOLD))
+            else:
+                await ctx.send(embed=emb("🎫 Not Rigged", f"**{target_name}** has no scratch rig active.", C_RED))
+            return
+
+        try:
+            n_int = int(n)
+        except ValueError:
+            await ctx.send(embed=emb("❌ Invalid", "n must be 1–4 or `cancel`.", C_RED))
+            return
+
+        if not 1 <= n_int <= 4:
+            await ctx.send(embed=emb("❌ Invalid", "n must be between 1 and 4.", C_RED))
+            return
+
+        state.rigged_scratch[uid] = n_int
+        save_rigged_scratch()
+        payout_map = {1: "100 🪙", 2: "1,000 🪙", 3: "10,000 🪙", 4: "100,000 🪙"}
+        await ctx.send(embed=emb(
+            "🎫 Scratch Rigged",
+            f"**{target_name}**'s 3rd daily scratchoff will match **{n_int}** symbol(s) — payout: **{payout_map[n_int]}**!",
             C_GOLD,
         ))
 

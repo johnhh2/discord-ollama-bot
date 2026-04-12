@@ -39,7 +39,7 @@ from src.persistence import (
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
-    load_lottery, load_saved_quotes, get_guild_cfg,
+    load_lottery, load_saved_quotes, get_guild_cfg, save_rigged_scratch,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
@@ -197,7 +197,27 @@ class ScratchoffCog(commands.Cog):
             user["scratchoff_seen_rewards"] = True
 
         for _ in range(count):
-            card = random.choices(SCRATCH_SYMBOLS, k=4)
+            is_third = user["scratch_used"] == 2
+            rig_matches = state.rigged_scratch.get(uid) if is_third else None
+
+            if rig_matches is not None:
+                # Build a card with exactly rig_matches positions matching the goal
+                positions = list(range(4))
+                random.shuffle(positions)
+                match_positions = set(positions[:rig_matches])
+                card = []
+                for i in range(4):
+                    if i in match_positions:
+                        card.append(goal[i])
+                    else:
+                        # Pick a symbol that doesn't match the goal at this position
+                        non_matches = [s for s in SCRATCH_SYMBOLS if s != goal[i]]
+                        card.append(random.choice(non_matches) if non_matches else random.choice(SCRATCH_SYMBOLS))
+                del state.rigged_scratch[uid]
+                save_rigged_scratch()
+            else:
+                card = random.choices(SCRATCH_SYMBOLS, k=4)
+
             matches = sum(c == g for c, g in zip(card, goal))
 
             payout = 0
