@@ -367,6 +367,8 @@ class EventsCog(commands.Cog):
             if "activated_at" in simp_data and time.time() - simp_data["activated_at"] > duration:
                 del state.active_simps[uid]
                 save_simp(state.active_simps)
+            elif is_insured(uid, "simp"):
+                pass
             else:
                 simp_master_id = simp_data["master"]
                 tax_label = "Concubine" if tax_type == "concubine" else "Simp"

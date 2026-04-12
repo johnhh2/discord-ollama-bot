@@ -397,6 +397,11 @@ class ShopCog(commands.Cog):
             if role is None:
                 await ctx.send(embed=emb("❌ Not Found", f"No bot-created role named **{name}** exists.", C_RED))
                 return
+            insured_members = [m for m in role.members if is_insured(m.id, "role")]
+            if insured_members:
+                names = ", ".join(f"**{m.display_name}**" for m in insured_members)
+                await ctx.send(embed=emb("🛡️ Protected", f"{names} {'has' if len(insured_members) == 1 else 'have'} insurance — this role can't be deleted.", C_GOLD))
+                return
             cost = 0 if uid in state.godmode_users else SHOP_ROLE_DELETE_COST
             if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_DELETE_COST:,}"):
                 return
@@ -589,12 +594,12 @@ class ShopCog(commands.Cog):
             expires_at = int(time.time() + SHOP_INSURANCE_DURATION_SECS)
             state.insurance[key] = {
                 "expires_at": expires_at,
-                "protected_from": ["ragebait", "mock", "nickname", "role"],
+                "protected_from": ["ragebait", "mock", "nickname", "role", "steal", "simp"],
             }
             save_insurance()
             await ctx.send(embed=emb(
                 "🛡️ Insurance Purchased",
-                f"Protected against ragebait, mock, nickname, and role changes! (expires <t:{expires_at}:R>)",
+                f"Protected against ragebait, mock, nickname, role changes, steal, and simp tax! (expires <t:{expires_at}:R>)",
                 C_GREEN,
             ))
             return

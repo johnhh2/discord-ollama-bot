@@ -280,10 +280,21 @@ class EconomyCog(commands.Cog):
 
         # Resolve outcome
         if success:
-            if victim_bal < steal_amount:
+            if is_insured(victim_id, "steal"):
+                result_embed = emb("🛡️ Protected", f"**{target.display_name}** has insurance — your heist failed!", C_GOLD)
+            elif victim_bal < steal_amount:
                 steal_amount = victim_bal
-            if steal_amount <= 0:
-                result_embed = emb("🦹 Heist Failed", f"**{target.display_name}** is broke — nothing to steal!", C_RED)
+                if steal_amount <= 0:
+                    result_embed = emb("🦹 Heist Failed", f"**{target.display_name}** is broke — nothing to steal!", C_RED)
+                else:
+                    deduct_balance(victim_id, steal_amount)
+                    add_balance(thief_id, steal_amount)
+                    result_embed = emb(
+                        "🦹 Successful Heist!",
+                        f"**{ctx.author.display_name}** stole **{steal_amount} 🪙** from **{target.display_name}**!\n"
+                        f"Your balance: **{get_balance(thief_id)} 🪙**",
+                        C_GREEN,
+                    )
             else:
                 deduct_balance(victim_id, steal_amount)
                 add_balance(thief_id, steal_amount)
