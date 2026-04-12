@@ -377,17 +377,23 @@ class EconomyCog(commands.Cog):
                 base += extra_fn(rec)
             return base
 
-        # Highest balance: compute live from economy for this server's members
-        guild_member_ids = {str(m.id) for m in ctx.guild.members} if ctx.guild else set()
+        # Highest balance: live max across all economy users
         bal_candidates = [
             (uid_str, data["balance"])
             for uid_str, data in state.economy["users"].items()
-            if uid_str in guild_member_ids and data["balance"] > 0
+            if data["balance"] > 0
         ]
         if bal_candidates:
             top_uid_str, top_bal = max(bal_candidates, key=lambda x: x[1])
             top_member = ctx.guild.get_member(int(top_uid_str))
-            top_name = top_member.display_name if top_member else top_uid_str
+            if top_member:
+                top_name = top_member.display_name
+            else:
+                try:
+                    top_user = await self.bot.fetch_user(int(top_uid_str))
+                    top_name = top_user.display_name
+                except Exception:
+                    top_name = top_uid_str
             highest_bal_str = f"**Highest Balance:** {top_bal:,} 🪙 — **{top_name}**"
         else:
             highest_bal_str = "**Highest Balance:** *none yet*"

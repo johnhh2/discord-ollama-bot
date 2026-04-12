@@ -99,7 +99,7 @@ class FlipCog(commands.Cog):
             winnings = amount * 2
             add_balance(uid, winnings)
             gid = ctx.guild.id if ctx.guild else None
-            try_set_record(gid, "flip", amount, uid, ctx.author.display_name)
+            try_set_record(gid, "flip", winnings, uid, ctx.author.display_name)
             await ctx.send(embed=emb("🪙 Heads!", f"**{ctx.author.display_name}** won **{amount} 🪙**! Balance: {get_balance(uid)} 🪙", C_GREEN))
         else:
             await ctx.send(embed=emb("🪙 Tails!", f"**{ctx.author.display_name}** lost **{amount} 🪙**. Balance: {get_balance(uid)} 🪙", C_RED))
