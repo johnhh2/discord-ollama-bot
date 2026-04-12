@@ -241,6 +241,17 @@ class ScratchoffCog(commands.Cog):
             user["scratch_used"] += 1
             save_economy()
 
+            # Award 10 XP per scratchoff played
+            if ctx.guild:
+                from src.cogs.leveling_cog import grant_xp as _grant_xp_scratch
+                xp_gained, leveled_up = _grant_xp_scratch(uid, "scratch", guild_id=ctx.guild.id)
+                if leveled_up and get_guild_cfg(ctx.guild.id).get("levelup_channel"):
+                    from src.cogs.leveling_cog import LevelingCog
+                    cog = ctx.bot.cogs.get("LevelingCog")
+                    if cog and isinstance(ctx.author, discord.Member):
+                        import asyncio
+                        asyncio.create_task(cog._announce_levelup(ctx.author, ctx.guild.id))
+
             # Track full-day scratchoff streak for Gamblers role
             if user["scratch_used"] >= 3 and ctx.guild:
                 state.gambler_streak[str(uid)] = today

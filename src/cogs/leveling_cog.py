@@ -43,7 +43,7 @@ DAY_SECS    = 86400
 
 def _xp_cost(n: int) -> int:
     """XP required to advance from level n to level n+1."""
-    return int(25 + n ** 1.9 / 2)
+    return int(50 + n ** 1.9)
 
 
 def xp_for_level(n: int) -> int:
@@ -146,6 +146,9 @@ def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tuple[int
         rec["voice_last_15"] = now
         rec["voice_today"] += 1
         xp = XP_VOICE
+
+    elif source == "scratch":
+        xp = 10  # flat 10 XP per scratchoff, no extra rate-limit (capped by scratchoff system)
 
     else:
         return 0, False
