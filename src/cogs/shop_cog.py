@@ -59,7 +59,7 @@ from src.config import (
     BLACKJACK_NATURAL_MULT, SCRATCH_SYMBOLS, SCRATCHOFF_MAX_DAILY, SCRATCHOFF_PAYOUTS,
     SHOP_NICKNAME_SELF_COST, SHOP_NICKNAME_REMOVE_COST, SHOP_NICKNAME_OTHER_COST,
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_ASSIGN_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
-    SHOP_ROLECOLOR_COST, SHOP_CHANNEL_COST, SHOP_INSURANCE_COST, SHOP_SIMP_COST,
+    SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_CHANNEL_COST, SHOP_INSURANCE_COST, SHOP_SIMP_COST,
     SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST,
     SHOP_INSURANCE_DURATION_SECS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
     SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_SIMP_TAX_PER_MESSAGE,
@@ -114,6 +114,8 @@ class ShopCog(commands.Cog):
                 role_items.append((SHOP_ROLE_MOVE_COST, f"`!shop roledown <role name>` — Move a bot-created role down one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**"))
             if _si.get("rolecolor", True):
                 role_items.append((SHOP_ROLECOLOR_COST, f"`!shop rolecolor <role name> <color>` — Change a role's color — **{SHOP_ROLECOLOR_COST:,} 🪙**"))
+            if _si.get("rolechannel", True):
+                role_items.append((SHOP_ROLECHANNEL_COST, f"`!shop rolechannel @role #channel` — Restrict a channel to a role — **{SHOP_ROLECHANNEL_COST:,} 🪙**"))
             if role_items:
                 role_items.sort(key=lambda x: x[0])
                 sections["👑 Roles"] = [item[1] for item in role_items]
@@ -508,6 +510,51 @@ class ShopCog(commands.Cog):
                     add_balance(uid, cost)
                 log_bot_permission_error(ctx, "delete channel")
                 await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete that channel.", C_RED))
+            except Exception as e:
+                if cost > 0:
+                    add_balance(uid, cost)
+                await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
+            return
+
+        # ── !shop rolechannel ─────────────────────────────────────────────────────
+        if subcommand == "rolechannel":
+            if not _shop_cfg.get("rolechannel", True):
+                await ctx.send(embed=emb("🛒 Disabled", "The rolechannel shop item is disabled in this server.", C_GREY))
+                return
+            if ctx.guild is None:
+                await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+                return
+            if len(args) < 2:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop rolechannel @role #channel`", C_PURPLE))
+                return
+            # Resolve role
+            role = resolve_role(ctx.guild, args[0])
+            if role is None:
+                await ctx.send(embed=emb("❌ Not Found", f"Could not find role: `{args[0]}`", C_RED))
+                return
+            # Resolve channel from mention or name
+            channel_arg = args[1]
+            channel_id_match = re.match(r"<#(\d+)>", channel_arg)
+            if channel_id_match:
+                target_channel = ctx.guild.get_channel(int(channel_id_match.group(1)))
+            else:
+                target_channel = discord.utils.find(lambda c: c.name.lower() == channel_arg.lower() and isinstance(c, discord.TextChannel), ctx.guild.channels)
+            if target_channel is None or not isinstance(target_channel, discord.TextChannel):
+                await ctx.send(embed=emb("❌ Not Found", f"Could not find text channel: `{channel_arg}`", C_RED))
+                return
+            cost = 0 if uid in state.godmode_users else SHOP_ROLECHANNEL_COST
+            if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLECHANNEL_COST:,}"):
+                return
+            try:
+                # Deny @everyone, allow the role
+                await target_channel.set_permissions(ctx.guild.default_role, read_messages=False)
+                await target_channel.set_permissions(role, read_messages=True)
+                await ctx.send(embed=emb("✅ Channel Restricted", f"{target_channel.mention} is now only visible to **{role.name}**.", C_GREEN))
+            except discord.Forbidden:
+                if cost > 0:
+                    add_balance(uid, cost)
+                log_bot_permission_error(ctx, "manage channel permissions")
+                await ctx.send(embed=emb("❌ No Permission", "I don't have permission to manage that channel's permissions.", C_RED))
             except Exception as e:
                 if cost > 0:
                     add_balance(uid, cost)
