@@ -348,7 +348,7 @@ class EventsCog(commands.Cog):
             return
 
         async def _move_after_idle():
-            await asyncio.sleep(15 * 60)
+            await asyncio.sleep(20 * 60)
             try:
                 # Re-fetch to confirm they're still in the same channel
                 live_member = member.guild.get_member(user_id)
@@ -359,7 +359,11 @@ class EventsCog(commands.Cog):
                 inactive_vc = member.guild.get_channel(inactive_channel_id)
                 if inactive_vc is None:
                     return
-                await live_member.move_to(inactive_vc, reason="Voice inactivity (15 min)")
+                await live_member.move_to(inactive_vc, reason="Voice inactivity (20 min)")
+                # Increment the per-user inactive count in guild settings
+                counts = cfg.setdefault("inactive_counts", {})
+                counts[str(user_id)] = counts.get(str(user_id), 0) + 1
+                save_guild_settings()
             except (discord.Forbidden, discord.HTTPException):
                 pass
             finally:

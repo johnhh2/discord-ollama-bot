@@ -163,7 +163,8 @@ class SettingsCog(commands.Cog):
                 "soundboard-ratelimit add|remove @user|<userid> / list\n"
                 "gambler-role on|off\n"
                 "inactive-check @user\n"
-                "inactive-channel #channel / <id> / clear"
+                "inactive-channel #channel / <id> / clear\n"
+                "inactive-count @user"
             )
             embed.set_footer(text=footer_text)
             await send_ephemeral(ctx, embed=embed)
@@ -501,7 +502,28 @@ class SettingsCog(commands.Cog):
                 return
             cfg["inactive_channel"] = channel.id
             save_guild_settings()
-            await ctx.send(embed=emb("⚙️ Inactive Channel", f"Inactive users will be moved to {channel.mention} after 15 min of voice idleness.", C_GREEN))
+            await ctx.send(embed=emb("⚙️ Inactive Channel", f"Inactive users will be moved to {channel.mention} after 20 min of voice idleness.", C_GREEN))
+            return
+
+        # ── inactive-count ────────────────────────────────────────────────────────
+        if subcommand == "inactive-count":
+            if not args and not ctx.message.mentions:
+                await ctx.send(embed=emb("⚙️ Inactive Count", "Usage: `!settings inactive-count @user`", C_GREY))
+                return
+            if ctx.message.mentions:
+                target_user = ctx.message.mentions[0]
+                target_id = target_user.id
+            else:
+                try:
+                    target_id = int(args[0])
+                    target_user = ctx.guild.get_member(target_id)
+                except ValueError:
+                    await ctx.send(embed=emb("⚙️ Inactive Count", "Please mention a user or provide their ID.", C_GREY))
+                    return
+            counts = cfg.get("inactive_counts", {})
+            count = counts.get(str(target_id), 0)
+            name = target_user.display_name if target_user else str(target_id)
+            await ctx.send(embed=emb("😴 Inactive Count", f"**{name}** has been moved for inactivity **{count}** time(s).", C_GOLD))
             return
 
         # ── gambler-role ──────────────────────────────────────────────────────────
