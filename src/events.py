@@ -410,7 +410,8 @@ class EventsCog(commands.Cog):
                 game["player_hand"].append(card)
                 pval = hand_value(game["player_hand"])
                 display = build_blackjack_display(
-                    game["player_hand"], game["dealer_hand"], pval, hide_dealer=True
+                    game["player_hand"], game["dealer_hand"], pval, hide_dealer=True,
+                    username=message.author.display_name,
                 )
                 if pval > 21:
                     del state.active_blackjack_games[uid]

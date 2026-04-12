@@ -115,11 +115,12 @@ def build_blackjack_display(
     pval: int,
     hide_dealer: bool = False,
     dval: int = None,
+    username: str = "You",
 ) -> str:
     dealer_str = format_hand(dealer, hide_second=hide_dealer)
     player_str = format_hand(player)
     dealer_label = "Dealer" if hide_dealer or dval is None else f"Dealer ({dval})"
-    return f"**{dealer_label}:** {dealer_str}\n**You ({pval}):** {player_str}"
+    return f"**{dealer_label}:** {dealer_str}\n**{username} ({pval}):** {player_str}"
 
 
 async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
@@ -136,7 +137,7 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
     uid_name = message.author.display_name
     del state.active_blackjack_games[uid]
 
-    display = build_blackjack_display(player, dealer, pval, hide_dealer=False, dval=dval)
+    display = build_blackjack_display(player, dealer, pval, hide_dealer=False, dval=dval, username=uid_name)
 
     if dval > 21 or pval > dval:
         add_balance(uid, amount * 2)
@@ -185,12 +186,13 @@ class BlackjackCog(commands.Cog):
             "channel_id": ctx.channel.id,
         }
 
-        display = build_blackjack_display(player, dealer, pval, hide_dealer=True)
+        username = ctx.author.display_name
+        display = build_blackjack_display(player, dealer, pval, hide_dealer=True, username=username)
 
         # Natural blackjack
         if pval == 21:
             del state.active_blackjack_games[uid]
-            full_display = build_blackjack_display(player, dealer, pval, hide_dealer=False, dval=dval)
+            full_display = build_blackjack_display(player, dealer, pval, hide_dealer=False, dval=dval, username=username)
             if dval == 21:
                 add_balance(uid, amount)
                 await ctx.send(embed=emb("🃏 Blackjack — Push", full_display + "\n\nBoth have Blackjack! Bet returned.", C_GOLD))
