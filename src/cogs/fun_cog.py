@@ -172,7 +172,8 @@ class FunCog(commands.Cog):
 
         embed = discord.Embed(title=f"🔞 rule34: {display}", color=C_PURPLE)
         embed.set_image(url=file_url)
-        embed.set_footer(text=f"Score: {post.get('score', '?')} | Rating: {post.get('rating', '?')}")
+        tags_str = ", ".join(post.get("tags", "").split())
+        embed.set_footer(text=f"Score: {post.get('score', '?')} | Rating: {post.get('rating', '?')} | Tags: {tags_str}")
         msg = await ctx.send(embed=embed)
         _r34_last_msg[(ctx.channel.id, ctx.author.id)] = msg
 
