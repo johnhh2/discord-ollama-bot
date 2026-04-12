@@ -113,6 +113,8 @@ class SettingsCog(commands.Cog):
             if r34_banned:
                 r34_val += f"\nBanned tags: {', '.join(r34_banned)}"
             lottery_val = f"<#{lottery_channel_id}>" if lottery_channel_id else "❌ disabled"
+            levelup_channel_id = cfg.get("levelup_channel")
+            levelup_val = f"<#{levelup_channel_id}>" if levelup_channel_id else "❌ disabled"
             soundboard_rl = cfg.get("soundboard_ratelimit", [])
             if soundboard_rl:
                 rl_names = []
@@ -146,6 +148,7 @@ class SettingsCog(commands.Cog):
             embed.add_field(name="🛒 Shop items", value=shop_val, inline=False)
             embed.add_field(name="🔞 rule34", value=r34_val, inline=False)
             embed.add_field(name="🎰 Lottery channel", value=lottery_val, inline=False)
+            embed.add_field(name="📊 Level-up channel", value=levelup_val, inline=False)
             embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
             embed.add_field(name="🎲 Gambler role", value=gambler_role_val, inline=False)
             embed.add_field(name="😴 Inactive watch list", value=inactive_check_val, inline=False)
@@ -164,7 +167,8 @@ class SettingsCog(commands.Cog):
                 "gambler-role on|off\n"
                 "inactive-check @user\n"
                 "inactive-channel #channel / <id> / clear\n"
-                "inactive-count @user"
+                "inactive-count @user\n"
+                "channel-levelup #channel / clear"
             )
             embed.set_footer(text=footer_text)
             await send_ephemeral(ctx, embed=embed)
@@ -537,6 +541,21 @@ class SettingsCog(commands.Cog):
             status = "✅ enabled" if enabled else "❌ disabled"
             detail = "\nThe **Gamblers** role will be auto-created and assigned to users who use all 3 scratchoffs 2 days in a row. They will be pinged when a progressive jackpot is won." if enabled else ""
             await ctx.send(embed=emb("⚙️ Gambler Role", f"Gambler role tracking is now {status}.{detail}", C_GREEN))
+            return
+
+        # ── channel-levelup ───────────────────────────────────────────────────────
+        if subcommand == "channel-levelup":
+            if args and args[0].lower() == "clear":
+                cfg["levelup_channel"] = None
+                save_guild_settings()
+                await ctx.send(embed=emb("📊 Level-Up Channel", "Level-up announcements disabled.", C_GREEN))
+            elif ctx.message.channel_mentions:
+                channel = ctx.message.channel_mentions[0]
+                cfg["levelup_channel"] = channel.id
+                save_guild_settings()
+                await ctx.send(embed=emb("📊 Level-Up Channel", f"Level-up announcements will be sent to {channel.mention}.", C_GREEN))
+            else:
+                await ctx.send(embed=emb("📊 Level-Up Channel", "Usage: `!settings channel-levelup #channel` or `!settings channel-levelup clear`", C_GREY))
             return
 
         await ctx.send(embed=emb("⚙️ Settings", "Unknown subcommand. Use `!settings` to see options.", C_GREY))

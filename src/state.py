@@ -8,6 +8,7 @@ from src.persistence import (
     load_bot_admins, load_godmode_users, load_bot_settings, load_guild_settings,
     load_insurance, load_ragebait, load_mock, load_rigged_slots, load_rigged_flips,
     load_rigged_scratch, load_gambler_streak, load_quote_log, load_chess_games, load_simp, load_curse,
+    load_leveling,
 )
 
 # ── Persistent state (loaded from disk on startup) ────────────────────────────
@@ -95,6 +96,10 @@ audit_log: deque = deque(maxlen=20)
 active_mocks: dict = load_mock()            # user_id → {remaining: int, started_by: int}
 active_simps: dict = load_simp()            # user_id → simped_by_user_id
 active_curses: dict = load_curse()          # user_id → {cursed_by: int, remaining: int}
+
+# ── Leveling ──────────────────────────────────────────────────────────────────
+# uid_str → {xp, level, msg_last_hour, msg_today, cmd_last_hour, cmd_today, voice_last_15, voice_today}
+leveling: dict = load_leveling()
 
 # ── Soundboard rate-limit tracking ───────────────────────────────────────────
 # (guild_id, user_id) → list of float timestamps (time.monotonic())

@@ -68,6 +68,7 @@ from src.config import (
 from src import state
 from src.games.blackjack import draw_card, hand_value, build_blackjack_display, _blackjack_stand
 from src.games.hangman import _process_hangman_guess
+from src.cogs.leveling_cog import grant_xp as _grant_xp
 
 
 async def _roast_soundboard_spam(bot, guild_id: int, user_id: int):
@@ -298,6 +299,13 @@ class EventsCog(commands.Cog):
     @commands.Cog.listener()
     async def on_command_completion(self, ctx: commands.Context):
         state.stats_commands_ran += 1
+        if ctx.guild and not ctx.author.bot:
+            xp, leveled_up = _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
+            if leveled_up:
+                from src.cogs.leveling_cog import LevelingCog
+                cog = self.bot.cogs.get("LevelingCog")
+                if cog and isinstance(ctx.author, discord.Member):
+                    asyncio.create_task(cog._announce_levelup(ctx.author, ctx.guild.id))
 
     @commands.Cog.listener()
     async def on_socket_raw_receive(self, msg):
@@ -381,6 +389,15 @@ class EventsCog(commands.Cog):
         content_lower = message.content.strip().lower()
 
         state.stats_messages_seen += 1
+
+        # Message XP (non-command messages only)
+        if message.guild and not message.content.startswith("!"):
+            xp, leveled_up = _grant_xp(uid, "msg", guild_id=message.guild.id)
+            if leveled_up and isinstance(message.author, discord.Member):
+                from src.cogs.leveling_cog import LevelingCog
+                cog = self.bot.cogs.get("LevelingCog")
+                if cog:
+                    asyncio.create_task(cog._announce_levelup(message.author, message.guild.id))
 
         # Passive ragebait: track targeted users and fire at 50% chance
         _rage_channel = state.active_ragebaits.get(uid, {}).get("channel_id")

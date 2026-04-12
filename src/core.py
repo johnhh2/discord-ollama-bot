@@ -21,6 +21,7 @@ EXTENSIONS = [
     "src.cogs.utility_cog",
     "src.cogs.fun_cog",
     "src.cogs.lottery_cog",
+    "src.cogs.leveling_cog",
     "src.events",
 ]
 

@@ -8,7 +8,7 @@ from src.config import (
     SLOT_JACKPOT_SEED, GODMODE_USERS_FILE, CHESS_GAMES_FILE, RAGEBAIT_FILE,
     MOCK_FILE, RIGGED_SLOTS_FILE, RIGGED_FLIPS_FILE, RIGGED_SCRATCH_FILE, QUOTE_LOG_FILE, SAVED_QUOTES_FILE, SIMP_FILE,
     CURSE_FILE, GAMBLER_STREAK_FILE, EPHEMERAL_MSG_FILE, FANFIC_HISTORIES_FILE,
-    FANFIC_OWNERS_FILE, ROLEPLAY_STATE_FILE, INITIAL_BOT_ADMIN_ID,
+    FANFIC_OWNERS_FILE, ROLEPLAY_STATE_FILE, INITIAL_BOT_ADMIN_ID, LEVELING_FILE,
 )
 
 
@@ -280,3 +280,13 @@ def load_lottery(guild_id: int) -> dict:
 
 def save_lottery(guild_id: int, lottery_data: dict):
     _save_json(f"data/lottery_{guild_id}.json", lottery_data)
+
+
+def load_leveling() -> dict:
+    """Load leveling data. Structure: {uid_str: {xp, level, msg_last_hour, msg_today, cmd_last_hour, cmd_today, voice_last_15, voice_today}}"""
+    return _load_json(LEVELING_FILE, {})
+
+
+def save_leveling():
+    from src import state
+    _save_json(LEVELING_FILE, state.leveling)
