@@ -20,7 +20,7 @@ from src.helpers import (
     mocking_font, curse_font, parse_amount, send_ephemeral, resolve_role,
     fetch_member, toggle_member_role, shop_charge, _render_race,
     _delete_after, _edit_board, get_memory_mb, format_uptime, get_version,
-    get_system_prompt, _log_audit, log_bot_permission_error,
+    get_system_prompt, _log_audit, log_bot_permission_error, MemberConverter,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
@@ -125,6 +125,18 @@ class SettingsCog(commands.Cog):
 
             gambler_role_val = "✅ enabled" if cfg.get("gambler_role_enabled", False) else "❌ disabled"
 
+            inactive_watch = cfg.get("inactive_check", [])
+            if inactive_watch:
+                inactive_names = []
+                for uid in inactive_watch:
+                    member = ctx.guild.get_member(uid)
+                    inactive_names.append(member.display_name if member else str(uid))
+                inactive_check_val = ", ".join(inactive_names)
+            else:
+                inactive_check_val = "none"
+            inactive_ch_id = cfg.get("inactive_channel")
+            inactive_channel_val = f"<#{inactive_ch_id}>" if inactive_ch_id else "❌ not set"
+
             embed = discord.Embed(title="⚙️ Server Settings", color=C_BLUE)
             embed.add_field(name="🤖 AI channels", value=ai_val, inline=False)
             embed.add_field(name="✅ Channel whitelist", value=whitelist_val, inline=False)
@@ -136,6 +148,8 @@ class SettingsCog(commands.Cog):
             embed.add_field(name="🎰 Lottery channel", value=lottery_val, inline=False)
             embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
             embed.add_field(name="🎲 Gambler role", value=gambler_role_val, inline=False)
+            embed.add_field(name="😴 Inactive watch list", value=inactive_check_val, inline=False)
+            embed.add_field(name="😴 Inactive channel", value=inactive_channel_val, inline=False)
             footer_text = (
                 "Subcommands:\n"
                 "ai-channels #ch... / clear\n"
@@ -147,7 +161,9 @@ class SettingsCog(commands.Cog):
                 "rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned\n"
                 "lottery-channel #channel / clear\n"
                 "soundboard-ratelimit add|remove @user|<userid> / list\n"
-                "gambler-role on|off"
+                "gambler-role on|off\n"
+                "inactive-check @user\n"
+                "inactive-channel #channel / <id> / clear"
             )
             embed.set_footer(text=footer_text)
             await send_ephemeral(ctx, embed=embed)
@@ -432,6 +448,60 @@ class SettingsCog(commands.Cog):
 
             else:
                 await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", "Usage: `!settings soundboard-ratelimit add|remove @user|<userid>` or `list`", C_GREY))
+            return
+
+        # ── inactive-check ────────────────────────────────────────────────────────
+        if subcommand == "inactive-check":
+            if not args and not ctx.message.mentions:
+                await ctx.send(embed=emb("⚙️ Inactive Check", "Usage: `!settings inactive-check @user` — toggles user on/off the inactivity watch list", C_GREY))
+                return
+            # Resolve user: prefer mention, fall back to first arg as ID
+            if ctx.message.mentions:
+                target_user = ctx.message.mentions[0]
+                target_id = target_user.id
+            else:
+                try:
+                    target_id = int(args[0])
+                    target_user = None
+                except ValueError:
+                    await ctx.send(embed=emb("⚙️ Inactive Check", "Please mention a user or provide their ID.", C_GREY))
+                    return
+            watch_list = cfg.setdefault("inactive_check", [])
+            if target_id in watch_list:
+                watch_list.remove(target_id)
+                save_guild_settings()
+                name = target_user.display_name if target_user else str(target_id)
+                await ctx.send(embed=emb("⚙️ Inactive Check", f"**{name}** removed from inactivity watch list.", C_RED))
+            else:
+                watch_list.append(target_id)
+                save_guild_settings()
+                name = target_user.display_name if target_user else str(target_id)
+                await ctx.send(embed=emb("⚙️ Inactive Check", f"**{name}** added to inactivity watch list.", C_GREEN))
+            return
+
+        # ── inactive-channel ──────────────────────────────────────────────────────
+        if subcommand == "inactive-channel":
+            if args and args[0].lower() == "clear":
+                cfg["inactive_channel"] = None
+                save_guild_settings()
+                await ctx.send(embed=emb("⚙️ Inactive Channel", "Inactive channel cleared — inactivity moves disabled.", C_GREEN))
+                return
+            # Accept a raw channel ID or a channel mention
+            channel = None
+            if ctx.message.channel_mentions:
+                channel = ctx.message.channel_mentions[0]
+            elif args:
+                try:
+                    ch_id = int(args[0].strip("<#>"))
+                    channel = ctx.guild.get_channel(ch_id)
+                except (ValueError, AttributeError):
+                    pass
+            if channel is None:
+                await ctx.send(embed=emb("⚙️ Inactive Channel", "Usage: `!settings inactive-channel #channel` or `!settings inactive-channel <channel-id>` or `clear`", C_GREY))
+                return
+            cfg["inactive_channel"] = channel.id
+            save_guild_settings()
+            await ctx.send(embed=emb("⚙️ Inactive Channel", f"Inactive users will be moved to {channel.mention} after 15 min of voice idleness.", C_GREEN))
             return
 
         # ── gambler-role ──────────────────────────────────────────────────────────
