@@ -104,7 +104,3 @@ leveling: dict = load_leveling()
 # ── Soundboard rate-limit tracking ───────────────────────────────────────────
 # (guild_id, user_id) → list of float timestamps (time.monotonic())
 _soundboard_timestamps: dict = {}
-
-# ── Inactivity tracking ───────────────────────────────────────────────────────
-# (guild_id, user_id) → asyncio.Task that moves the user after 15 min of voice idleness
-_inactive_tasks: dict = {}

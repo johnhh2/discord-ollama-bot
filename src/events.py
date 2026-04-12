@@ -330,57 +330,6 @@ class EventsCog(commands.Cog):
         await _handle_soundboard_ratelimit(self.bot, guild_id, user_id)
 
     @commands.Cog.listener()
-    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-        guild_id = member.guild.id
-        user_id = member.id
-        key = (guild_id, user_id)
-
-        cfg = get_guild_cfg(guild_id)
-        watch_list = cfg.get("inactive_check", [])
-        inactive_channel_id = cfg.get("inactive_channel")
-
-        if user_id not in watch_list or not inactive_channel_id:
-            return
-
-        # Cancel any existing inactivity task for this user
-        existing = state._inactive_tasks.pop(key, None)
-        if existing:
-            existing.cancel()
-
-        # User left voice entirely — no task needed
-        if after.channel is None:
-            return
-
-        # User is already in the inactive channel — no task needed
-        if after.channel.id == inactive_channel_id:
-            return
-
-        async def _move_after_idle():
-            await asyncio.sleep(20 * 60)
-            try:
-                # Re-fetch to confirm they're still in the same channel
-                live_member = member.guild.get_member(user_id)
-                if live_member is None or live_member.voice is None:
-                    return
-                if live_member.voice.channel.id == inactive_channel_id:
-                    return
-                inactive_vc = member.guild.get_channel(inactive_channel_id)
-                if inactive_vc is None:
-                    return
-                await live_member.move_to(inactive_vc, reason="Voice inactivity (20 min)")
-                # Increment the per-user inactive count in guild settings
-                counts = cfg.setdefault("inactive_counts", {})
-                counts[str(user_id)] = counts.get(str(user_id), 0) + 1
-                save_guild_settings()
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-            finally:
-                state._inactive_tasks.pop(key, None)
-
-        task = asyncio.create_task(_move_after_idle())
-        state._inactive_tasks[key] = task
-
-    @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author == self.bot.user:
             return
