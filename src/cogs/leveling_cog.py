@@ -373,7 +373,7 @@ class LevelingCog(commands.Cog):
         lines = []
         for i, (name, (_, data)) in enumerate(zip(names, sorted_users)):
             prefix = medals[i] if i < 3 else f"{i + 1}."
-            lines.append(f"{prefix} **{name}** — Level {display_level(data.get('level', 0))} ({data.get('xp', 0):,} XP)")
+            lines.append(f"{prefix} **{name}** — **Level {display_level(data.get('level', 0))}** ({data.get('xp', 0):,} XP)")
         lines.append("\n*Also: `!lb` currency · `!lbr` roles*")
         await ctx.send(embed=emb("📊 XP Leaderboard", "\n".join(lines), C_BLUE))
 
