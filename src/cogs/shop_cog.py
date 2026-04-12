@@ -690,10 +690,7 @@ class ShopCog(commands.Cog):
                 return
 
             tax_type = "concubine" if subcommand == "concubine" else "simp"
-            simp_data = {"master": uid, "type": tax_type, "channel_id": ctx.channel.id}
-            # Add timestamp for concubine to expire after 24h
-            if tax_type == "concubine":
-                simp_data["activated_at"] = time.time()
+            simp_data = {"master": uid, "type": tax_type, "channel_id": ctx.channel.id, "activated_at": time.time()}
             state.active_simps[target.id] = simp_data
             save_simp(state.active_simps)
 

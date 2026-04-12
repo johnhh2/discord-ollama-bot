@@ -126,6 +126,7 @@ SHOP_RAGEBAIT_MESSAGES       = 4       # remaining after initial AI send
 SHOP_CURSE_MESSAGES          = 5
 SHOP_MUTE_MINUTES            = 5
 SHOP_SIMP_TAX_PER_MESSAGE    = 10
+SHOP_SIMP_DURATION_SECS      = 86_400  # 24 hours
 SHOP_CONCUBINE_DURATION_SECS = 86_400  # 24 hours
 
 # Ephemeral message auto-delete timeout

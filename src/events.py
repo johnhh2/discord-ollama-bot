@@ -62,7 +62,7 @@ from src.config import (
     SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST,
     SHOP_INSURANCE_DURATION_SECS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
     SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_SIMP_TAX_PER_MESSAGE,
-    SHOP_CONCUBINE_DURATION_SECS, SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
+    SHOP_SIMP_DURATION_SECS, SHOP_CONCUBINE_DURATION_SECS, SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
     DAILY_REWARD, DAILY_RESET_HOUR, INITIAL_BOT_ADMIN_ID,
 )
 from src import state
@@ -362,30 +362,19 @@ class EventsCog(commands.Cog):
             simp_data = state.active_simps[uid]
             tax_type = simp_data["type"]
 
-            # Check if concubine has expired (24h)
-            if tax_type == "concubine" and "activated_at" in simp_data:
-                time_elapsed = time.time() - simp_data["activated_at"]
-                if time_elapsed > SHOP_CONCUBINE_DURATION_SECS:
-                    del state.active_simps[uid]
-                    save_simp(state.active_simps)
-                else:
-                    # Apply tax
-                    simp_master_id = simp_data["master"]
-                    simp_tax = SHOP_SIMP_TAX_PER_MESSAGE
-                    if deduct_balance(uid, simp_tax):
-                        add_balance(simp_master_id, simp_tax)
-                        simp_master = await fetch_member(message.guild, simp_master_id)
-                        master_name = simp_master.display_name if simp_master else str(simp_master_id)
-                        await message.channel.send(f"**{message.author.display_name}** paid a **{simp_tax} 🪙** Concubine tax to **{master_name}**")
+            # Check if simp/concubine has expired (24h)
+            duration = SHOP_CONCUBINE_DURATION_SECS if tax_type == "concubine" else SHOP_SIMP_DURATION_SECS
+            if "activated_at" in simp_data and time.time() - simp_data["activated_at"] > duration:
+                del state.active_simps[uid]
+                save_simp(state.active_simps)
             else:
-                # Regular simp (permanent)
                 simp_master_id = simp_data["master"]
-                simp_tax = 10
-                if deduct_balance(uid, simp_tax):
-                    add_balance(simp_master_id, simp_tax)
+                tax_label = "Concubine" if tax_type == "concubine" else "Simp"
+                if deduct_balance(uid, SHOP_SIMP_TAX_PER_MESSAGE):
+                    add_balance(simp_master_id, SHOP_SIMP_TAX_PER_MESSAGE)
                     simp_master = await fetch_member(message.guild, simp_master_id)
                     master_name = simp_master.display_name if simp_master else str(simp_master_id)
-                    await message.channel.send(f"**{message.author.display_name}** paid a **{simp_tax} 🪙** Simp tax to **{master_name}**")
+                    await message.channel.send(f"**{message.author.display_name}** paid a **{SHOP_SIMP_TAX_PER_MESSAGE} 🪙** {tax_label} tax to **{master_name}**")
 
         # Curse: corrupt cursed users' messages
         if uid in state.active_curses and not message.content.startswith("!"):
