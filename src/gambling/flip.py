@@ -36,7 +36,7 @@ from src.permissions import (
 from src.persistence import (
     _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
     save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
-    save_chess_games, save_ragebait, save_mock, save_rigged_slots,
+    save_chess_games, save_ragebait, save_mock, save_rigged_slots, save_rigged_flips,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg,
@@ -87,7 +87,14 @@ class FlipCog(commands.Cog):
             return
         if not await shop_charge(ctx, uid, amount):
             return
-        win = random.random() < 0.5
+        if uid in state.rigged_flips:
+            win = True
+            state.rigged_flips[uid] -= 1
+            if state.rigged_flips[uid] <= 0:
+                del state.rigged_flips[uid]
+            save_rigged_flips()
+        else:
+            win = random.random() < 0.5
         if win:
             add_balance(uid, amount * 2)
             await ctx.send(embed=emb("🪙 Heads!", f"**{ctx.author.display_name}** won **{amount} 🪙**! Balance: {get_balance(uid)} 🪙", C_GREEN))

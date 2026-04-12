@@ -199,13 +199,6 @@ class ModerationCog(commands.Cog):
             inline=False
         )
 
-        # Rigged slots
-        embed.add_field(
-            name="🎰 Rigged Slots",
-            value=f"**{len(state.rigged_slots)}** users rigged for jackpot",
-            inline=False
-        )
-
         # Godmode users
         embed.add_field(
             name="👑 Godmode",

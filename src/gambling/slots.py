@@ -36,7 +36,7 @@ from src.permissions import (
 from src.persistence import (
     _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
     save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
-    save_chess_games, save_ragebait, save_mock, save_rigged_slots,
+    save_chess_games, save_ragebait, save_mock, save_rigged_slots, save_rigged_flips,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg, save_jackpot, load_jackpot,
@@ -278,24 +278,27 @@ class SlotsCog(commands.Cog):
         await send_ephemeral(ctx, embed=embed)
 
 
-    @commands.command(name="rig", hidden=True)
-    async def cmd_rig(self, ctx: commands.Context, target_input: str = None):
+    @commands.group(name="rig", hidden=True, invoke_without_command=True)
+    async def cmd_rig(self, ctx: commands.Context):
+        """Hidden admin-only command group for rigging games."""
+        if not is_admin(ctx):
+            return
+        await ctx.send(embed=emb("🎰 Rig", "Usage:\n`!rig slots @user` — rig next slots spin to jackpot\n`!rig flip @user <n>` — rig next n coin flips to win", C_GOLD))
+
+    @cmd_rig.command(name="slots", hidden=True)
+    async def cmd_rig_slots(self, ctx: commands.Context, target_input: str = None):
         """Hidden admin-only command: rig the next slots spin to hit 7 7 7."""
         if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "Only bot admins can use this command.", C_RED))
             return
 
-        # Determine target user
         uid = None
         target_name = "you"
 
         if ctx.message.mentions:
-            # Priority: use mention if present
             target = ctx.message.mentions[0]
             uid = target.id
             target_name = target.display_name
         elif target_input:
-            # Try to parse as user ID
             try:
                 uid = int(target_input)
                 target_name = f"user {uid}"
@@ -303,7 +306,6 @@ class SlotsCog(commands.Cog):
                 await ctx.send(embed=emb("❌ Invalid Input", f"Could not parse `{target_input}` as a user ID.", C_RED))
                 return
         else:
-            # Default to command author
             uid = ctx.author.id
             target_name = "you"
 
@@ -312,6 +314,49 @@ class SlotsCog(commands.Cog):
         await ctx.send(embed=emb(
             "🎰 Slots Rigged",
             f"{target_name.capitalize()}'s next `!slots` spin will hit the **7️⃣7️⃣7️⃣ jackpot**!",
+            C_GOLD,
+        ))
+
+    @cmd_rig.command(name="flip", hidden=True)
+    async def cmd_rig_flip(self, ctx: commands.Context, target_input: str = None, n: int = 1):
+        """Hidden admin-only command: rig the next n coin flips to win."""
+        if not is_admin(ctx):
+            return
+
+        uid = None
+        target_name = "you"
+
+        if ctx.message.mentions:
+            target = ctx.message.mentions[0]
+            uid = target.id
+            target_name = target.display_name
+            # n may be the next positional arg — re-parse from message
+            args = ctx.message.content.split()
+            mention_indices = [i for i, a in enumerate(args) if a.startswith("<@")]
+            if mention_indices:
+                after = args[mention_indices[-1] + 1:]
+                if after and after[0].lstrip("-").isdigit():
+                    n = int(after[0])
+        elif target_input:
+            try:
+                uid = int(target_input)
+                target_name = f"user {uid}"
+            except ValueError:
+                await ctx.send(embed=emb("❌ Invalid Input", f"Could not parse `{target_input}` as a user ID.", C_RED))
+                return
+        else:
+            uid = ctx.author.id
+            target_name = "you"
+
+        if n < 1:
+            await ctx.send(embed=emb("❌ Invalid", "n must be at least 1.", C_RED))
+            return
+
+        state.rigged_flips[uid] = state.rigged_flips.get(uid, 0) + n
+        save_rigged_flips()
+        await ctx.send(embed=emb(
+            "🪙 Flip Rigged",
+            f"{target_name.capitalize()}'s next **{n}** `!flip` {'flip' if n == 1 else 'flips'} will win!",
             C_GOLD,
         ))
 

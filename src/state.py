@@ -6,7 +6,7 @@ from src.config import HISTORY_LIMIT, RIDDLES_FILE
 from src.persistence import (
     load_channel_prompts, load_economy, load_jackpot, load_bot_roles,
     load_bot_admins, load_godmode_users, load_bot_settings, load_guild_settings,
-    load_insurance, load_ragebait, load_mock, load_rigged_slots,
+    load_insurance, load_ragebait, load_mock, load_rigged_slots, load_rigged_flips,
     load_gambler_streak, load_quote_log, load_chess_games, load_simp, load_curse,
 )
 
@@ -51,6 +51,7 @@ def _load_riddles_list() -> list:
 
 RIDDLES_LIST: list = _load_riddles_list()
 rigged_slots: set = load_rigged_slots()
+rigged_flips: dict = load_rigged_flips()   # user_id → remaining rigged wins
 gambler_streak: dict = load_gambler_streak()
 quote_log: list = load_quote_log()
 

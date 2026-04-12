@@ -6,7 +6,7 @@ from src.config import (
     CHANNEL_PROMPTS_FILE, ECONOMY_FILE, BOT_ROLES_FILE, BOT_ADMINS_FILE,
     BOT_SETTINGS_FILE, GUILD_SETTINGS_FILE, INSURANCE_FILE, SLOT_JACKPOT_FILE,
     SLOT_JACKPOT_SEED, GODMODE_USERS_FILE, CHESS_GAMES_FILE, RAGEBAIT_FILE,
-    MOCK_FILE, RIGGED_SLOTS_FILE, QUOTE_LOG_FILE, SAVED_QUOTES_FILE, SIMP_FILE,
+    MOCK_FILE, RIGGED_SLOTS_FILE, RIGGED_FLIPS_FILE, QUOTE_LOG_FILE, SAVED_QUOTES_FILE, SIMP_FILE,
     CURSE_FILE, GAMBLER_STREAK_FILE, EPHEMERAL_MSG_FILE, FANFIC_HISTORIES_FILE,
     FANFIC_OWNERS_FILE, ROLEPLAY_STATE_FILE, INITIAL_BOT_ADMIN_ID,
 )
@@ -207,6 +207,15 @@ def load_rigged_slots() -> set:
 def save_rigged_slots():
     from src import state
     _save_json(RIGGED_SLOTS_FILE, list(state.rigged_slots))
+
+
+def load_rigged_flips() -> dict:
+    return {int(k): v for k, v in _load_json(RIGGED_FLIPS_FILE, {}).items()}
+
+
+def save_rigged_flips():
+    from src import state
+    _save_json(RIGGED_FLIPS_FILE, {str(k): v for k, v in state.rigged_flips.items()})
 
 
 def load_gambler_streak() -> dict:
