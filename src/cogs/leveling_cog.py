@@ -216,11 +216,8 @@ class LevelingCog(commands.Cog):
     def cog_unload(self):
         self._voice_task.cancel()
 
-    # ── Voice/stream XP loop: tick every 15 minutes ──────────────────────────
-    @tasks.loop(seconds=300)  # tick every 5 min; rate-limits inside grant_xp control actual XP frequency
-    async def _voice_task(self):
-        """Award voice XP (every 15 min) and stream XP (hourly, rate-limited in grant_xp)
-        to every non-bot member currently active in a voice channel."""
+    async def _do_voice_tick(self):
+        """Award voice/stream XP to every eligible member currently in a voice channel."""
         for guild in self.bot.guilds:
             cfg_cache = get_guild_cfg(guild.id)
             for vc in guild.voice_channels:
@@ -243,10 +240,14 @@ class LevelingCog(commands.Cog):
                         if leveled_up and cfg_cache.get("levelup_channel"):
                             await self._announce_levelup(member, guild.id)
 
+    @tasks.loop(seconds=300)  # tick every 5 min; rate-limits inside grant_xp control actual XP frequency
+    async def _voice_task(self):
+        await self._do_voice_tick()
+
     @_voice_task.before_loop
     async def _before_voice_task(self):
         await self.bot.wait_until_ready()
-        await self._voice_task()  # fire immediately on startup, don't wait 5 min
+        await self._do_voice_tick()  # fire immediately on startup, don't wait 5 min
 
     # ── Level-up announcement ─────────────────────────────────────────────────
     async def _announce_levelup(self, member: discord.Member, guild_id: int):
