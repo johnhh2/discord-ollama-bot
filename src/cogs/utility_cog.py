@@ -243,7 +243,8 @@ class UtilityCog(commands.Cog):
         help_embed.add_field(name="🏆 Leaderboards", inline=False, value=(
             "`!leaderboard` — Top 10 richest users\n"
             "`!roles` — View role thresholds and your progress\n"
-            "`!levels` — Top 10 users by XP level"
+            "`!levels` — Top 10 users by XP level\n"
+            "`!records` — All-time records for economy and games"
         ))
         help_embed.add_field(name="🤖 AI", inline=False, value=(
             "`!ai` — View AI connection status and command info"
