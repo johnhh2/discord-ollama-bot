@@ -59,7 +59,7 @@ from src.config import (
     BLACKJACK_NATURAL_MULT, SCRATCH_SYMBOLS, SCRATCHOFF_MAX_DAILY, SCRATCHOFF_PAYOUTS,
     SHOP_NICKNAME_SELF_COST, SHOP_NICKNAME_REMOVE_COST, SHOP_NICKNAME_OTHER_COST,
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_ASSIGN_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
-    SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_LOCK_COST, SHOP_RENAME_COST, SHOP_CHANNEL_COST, SHOP_INSURANCE_COST, SHOP_SIMP_COST,
+    SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_LOCK_COST, SHOP_RENAME_COST, SHOP_CHANNEL_COST, SHOP_CHANNEL_DELETE_COST, SHOP_INSURANCE_COST, SHOP_SIMP_COST,
     SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST,
     SHOP_INSURANCE_DURATION_SECS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
     SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_SIMP_TAX_PER_MESSAGE,
@@ -130,7 +130,7 @@ class ShopCog(commands.Cog):
             if _si.get("channel", True):
                 channel_items.append((SHOP_CHANNEL_COST, f"`!shop channel <name>` — Create a new text channel — **{SHOP_CHANNEL_COST:,} 🪙**"))
             if _si.get("channel", True):
-                channel_items.append((SHOP_CHANNEL_COST, f"`!shop deletechannel <name>` — Delete a bot-created channel — **{SHOP_CHANNEL_COST:,} 🪙**"))
+                channel_items.append((SHOP_CHANNEL_DELETE_COST, f"`!shop deletechannel <name>` — Delete a bot-created channel — **{SHOP_CHANNEL_DELETE_COST:,} 🪙**"))
             if _si.get("renamechannel", True):
                 channel_items.append((SHOP_RENAME_COST, f"`!shop renamechannel <channel> <new name>` — Rename a bot-created channel — **{SHOP_RENAME_COST:,} 🪙**"))
             if _si.get("lockchannel", True):
@@ -518,8 +518,8 @@ class ShopCog(commands.Cog):
             if channel.id in state.locked_channels and state.locked_channels[channel.id] != uid and uid not in state.godmode_users:
                 await ctx.send(embed=emb("🔒 Locked", f"**{channel.name}** is locked — only its owner can delete it.", C_RED))
                 return
-            cost = 0 if uid in state.godmode_users else SHOP_CHANNEL_COST
-            if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_CHANNEL_COST:,}"):
+            cost = 0 if uid in state.godmode_users else SHOP_CHANNEL_DELETE_COST
+            if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_CHANNEL_DELETE_COST:,}"):
                 return
             try:
                 channel_name = channel.name
