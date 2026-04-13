@@ -105,10 +105,10 @@ class EconomyCog(commands.Cog):
         target = target or ctx.author
         if self.bot.user and target.id == self.bot.user.id and ctx.guild:
             bal = get_guild_house_balance(ctx.guild.id)
-            await ctx.send(embed=emb("🏦 House Pot", f"**{ctx.guild.name}**: {bal} 🪙", C_GOLD))
+            await ctx.send(embed=emb("🏦 House Pot", f"**{ctx.guild.name}**: {bal:,} 🪙", C_GOLD))
         else:
             bal = get_balance(target.id)
-            await ctx.send(embed=emb("💰 Balance", f"**{target.display_name}**: {bal} 🪙", C_GREEN))
+            await ctx.send(embed=emb("💰 Balance", f"**{target.display_name}**: {bal:,} 🪙", C_GREEN))
 
 
     @commands.command(name="leaderboard", aliases=["leaderboards", "lb"])
@@ -143,8 +143,8 @@ class EconomyCog(commands.Cog):
         for i, (name, (uid_str, data)) in enumerate(zip(names, sorted_users)):
             prefix = medals[i] if i < 3 else f"{i + 1}."
             tickets = lottery_players.get(uid_str, 0)
-            ticket_str = f" • {tickets} 🎟️" if tickets else ""
-            lines.append(f"{prefix} **{name}** — {data['balance']} 🪙{ticket_str}")
+            ticket_str = f" • {tickets:,} 🎟️" if tickets else ""
+            lines.append(f"{prefix} **{name}** — {data['balance']:,} 🪙{ticket_str}")
         lines.append("\n*Also: `!levels` XP · `!lbr` roles*")
         await ctx.send(embed=emb("🪙 Leaderboard", "\n".join(lines), C_GREEN))
 
