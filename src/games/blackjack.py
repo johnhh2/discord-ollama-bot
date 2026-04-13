@@ -140,8 +140,8 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
     display = build_blackjack_display(player, dealer, pval, hide_dealer=False, dval=dval, username=uid_name)
 
     if dval > 21 or pval > dval:
-        add_balance(uid, amount * 2)
         gid = message.guild.id if message.guild else None
+        add_balance(uid, amount * 2, guild_id=gid, holder_name=uid_name)
         try_set_record(gid, "blackjack", amount * 2, uid, uid_name,
                        player_hand=format_hand(player), player_score=pval,
                        dealer_score=dval)
@@ -202,8 +202,8 @@ class BlackjackCog(commands.Cog):
                 await ctx.send(embed=emb("🃏 Blackjack — Push", full_display + "\n\nBoth have Blackjack! Bet returned.", C_GOLD))
             else:
                 winnings = int(amount * BLACKJACK_NATURAL_MULT)
-                add_balance(uid, winnings)
                 gid = ctx.guild.id if ctx.guild else None
+                add_balance(uid, winnings, guild_id=gid, holder_name=username)
                 try_set_record(gid, "blackjack", winnings, uid, username,
                                player_hand=format_hand(player), player_score=pval,
                                dealer_score=dval)

@@ -92,7 +92,8 @@ class EconomyCog(commands.Cog):
             minutes = rem // 60
             await ctx.send(embed=emb("⏳ Already Claimed", f"**{ctx.author.display_name}** already claimed today. Resets at **{DAILY_RESET_HOUR}am** — come back in **{hours}h {minutes}m**.", C_GOLD))
             return
-        add_balance(uid, DAILY_REWARD)
+        gid = ctx.guild.id if ctx.guild else None
+        add_balance(uid, DAILY_REWARD, guild_id=gid, holder_name=ctx.author.display_name)
         user_data["daily_date"] = today
         user_data["last_daily"] = time.time()
         save_economy()
@@ -290,7 +291,7 @@ class EconomyCog(commands.Cog):
                     result_embed = emb("🦹 Heist Failed", f"**{target.display_name}** is broke — nothing to steal!", C_RED)
                 else:
                     deduct_balance(victim_id, steal_amount)
-                    add_balance(thief_id, steal_amount)
+                    add_balance(thief_id, steal_amount, guild_id=ctx.guild.id if ctx.guild else None, holder_name=ctx.author.display_name)
                     result_embed = emb(
                         "🦹 Successful Heist!",
                         f"**{ctx.author.display_name}** stole **{steal_amount} 🪙** from **{target.display_name}**!\n"
@@ -299,7 +300,7 @@ class EconomyCog(commands.Cog):
                     )
             else:
                 deduct_balance(victim_id, steal_amount)
-                add_balance(thief_id, steal_amount)
+                add_balance(thief_id, steal_amount, guild_id=ctx.guild.id if ctx.guild else None, holder_name=ctx.author.display_name)
                 result_embed = emb(
                     "🦹 Successful Heist!",
                     f"**{ctx.author.display_name}** stole **{steal_amount} 🪙** from **{target.display_name}**!\n"
@@ -370,6 +371,9 @@ class EconomyCog(commands.Cog):
             rec = r.get(cat)
             if not rec:
                 return f"**{label}:** *none yet*"
+            holder_id = rec.get("holder_id")
+            if holder_id and not ctx.guild.get_member(int(holder_id)):
+                return f"**{label}:** *none yet*"
             name = rec.get("holder_name", "?")
             val = rec["value"]
             base = f"**{label}:** {val:,} 🪙 — **{name}**"
@@ -377,29 +381,11 @@ class EconomyCog(commands.Cog):
                 base += extra_fn(rec)
             return base
 
-        # Highest balance: live max across all economy users
-        bal_candidates = [
-            (uid_str, data["balance"])
-            for uid_str, data in state.economy["users"].items()
-            if data["balance"] > 0
-        ]
-        if bal_candidates:
-            top_uid_str, top_bal = max(bal_candidates, key=lambda x: x[1])
-            top_member = ctx.guild.get_member(int(top_uid_str))
-            if top_member:
-                top_name = top_member.display_name
-            else:
-                try:
-                    top_user = await self.bot.fetch_user(int(top_uid_str))
-                    top_name = top_user.display_name
-                except Exception:
-                    top_name = top_uid_str
-            highest_bal_str = f"**Balance:** {top_bal:,} 🪙 — **{top_name}**"
-        else:
-            highest_bal_str = "**Balance:** *none yet*"
-
         # Most hangman wins
-        hangman_wins_entries = [(k, v) for k, v in r.items() if k.startswith("hangman_wins_")]
+        hangman_wins_entries = [
+            (k, v) for k, v in r.items()
+            if k.startswith("hangman_wins_") and ctx.guild.get_member(int(v.get("holder_id", 0)))
+        ]
         if hangman_wins_entries:
             _, top_v = max(hangman_wins_entries, key=lambda x: x[1]["value"])
             hm_wins_str = f"**Hangmans Completed:** {top_v['value']} — **{top_v['holder_name']}**"
@@ -407,7 +393,7 @@ class EconomyCog(commands.Cog):
             hm_wins_str = "**Hangmans Completed:** *none yet*"
 
         lines = [
-            highest_bal_str,
+            fmt("highest_balance", "Balance"),
             fmt("lottery", "Lottery Payout"),
             fmt("slots_jackpot", "Slots Jackpot",
                 lambda rec: f"\n  ↳ Symbols: {rec.get('symbols', '?')} • Bet: {rec['bet']:,} 🪙" if rec.get('bet') is not None else ""),

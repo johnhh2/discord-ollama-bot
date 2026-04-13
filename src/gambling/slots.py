@@ -189,8 +189,8 @@ class SlotsCog(commands.Cog):
             prize = int(state.slot_jackpot * bet_bonus)
             state.slot_jackpot = SLOT_JACKPOT_SEED
             save_jackpot(state.slot_jackpot)
-            add_balance(uid, prize)
             gid = ctx.guild.id if ctx.guild else None
+            add_balance(uid, prize, guild_id=gid, holder_name=ctx.author.display_name)
             try_set_record(gid, "slots_jackpot", prize, uid, ctx.author.display_name,
                            bet=amount, symbols=display)
             desc = (f"{display}\n\n🏆 **{ctx.author.display_name} hit the Progressive Jackpot!**\n"
@@ -232,8 +232,8 @@ class SlotsCog(commands.Cog):
             return
 
         winnings = amount * mult
-        add_balance(uid, winnings)
         gid = ctx.guild.id if ctx.guild else None
+        add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name)
         try_set_record(gid, "slots_non_jackpot", winnings, uid, ctx.author.display_name,
                        bet=amount, symbols=display, label=label)
 

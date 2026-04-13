@@ -157,8 +157,8 @@ def _distribute_hangman_rewards(cid: int, game: dict) -> str:
     for i, pid in enumerate(active_players):
         bonus = 1 if i < remainder else 0
         reward = per_player + bonus
-        add_balance(pid, reward)
         name = names.get(pid, f"<@{pid}>")
+        add_balance(pid, reward, guild_id=gid if gid else None, holder_name=name)
         msg += f"**{name}**: +{reward} 🪙 | Balance: {get_balance(pid)} 🪙\n"
         # Track most hangman wins per player
         if gid:

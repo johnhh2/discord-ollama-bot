@@ -7,7 +7,7 @@ import discord
 
 from src.config import OLLAMA_MODEL, DAILY_RESET_HOUR
 from src.persistence import (
-    save_economy, save_insurance, get_guild_cfg,
+    save_economy, save_insurance, get_guild_cfg, try_set_record,
 )
 
 
@@ -25,11 +25,14 @@ def get_balance(uid: int) -> int:
     return state.economy["users"][str(uid)]["balance"]
 
 
-def add_balance(uid: int, n: int):
+def add_balance(uid: int, n: int, guild_id: int = None, holder_name: str = None):
     from src import state
     _ensure_user(uid)
     state.economy["users"][str(uid)]["balance"] += n
     save_economy()
+    if guild_id is not None and holder_name is not None:
+        new_bal = state.economy["users"][str(uid)]["balance"]
+        try_set_record(guild_id, "highest_balance", new_bal, uid, holder_name)
 
 
 def deduct_balance(uid: int, n: int) -> bool:
