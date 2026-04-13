@@ -58,7 +58,8 @@ SLOT_REEL = (
     ["🍋"] * 5 +
     ["🔔"] * 4 +
     ["🎰"] * 3 +
-    ["7️⃣"] * 1
+    ["7️⃣"] * 1 +
+    ["⬛"] * 5
 )
 SLOT_JACKPOT_SEED = 5_000
 SLOT_JACKPOT_CONTRIB = 0.02

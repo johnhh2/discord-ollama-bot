@@ -170,7 +170,7 @@ class SlotsCog(commands.Cog):
             reels = [sym, sym, sym]
         else:
             if random.random() < SLOT_HOUSE_CHANCE: # 5% back to house
-                symbol_types = list(dict.fromkeys(SLOT_REEL))  # unique symbols, preserving order
+                symbol_types = [s for s in dict.fromkeys(SLOT_REEL) if s != "⬛"]  # unique non-blank symbols
                 reels = random.sample(symbol_types, 3)
             else: # normal
                 reels = [random.choice(SLOT_REEL) for _ in range(3)]
