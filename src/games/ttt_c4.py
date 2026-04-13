@@ -141,7 +141,7 @@ async def _send_game_board(ctx: commands.Context, game: dict, title: str,
                            board_text: str, player1_desc: str, player2_desc: str,
                            controls: str, amount: int) -> None:
     """Send the initial PVP board message and store its ID in game['board_msg_id']."""
-    wager_info = f"\nWager: {amount} 🪙 each" if amount > 0 else ""
+    wager_info = f"\nWager: {amount:,} 🪙 each" if amount > 0 else ""
     desc = (
         f"{board_text}\n\n"
         f"{player1_desc} vs {player2_desc}{wager_info}\n"
@@ -167,19 +167,19 @@ async def _setup_pvp_game(ctx, opponent, amount, invite_title):
         return False
     if amount > 0:
         if not deduct_balance(uid, amount):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"**{ctx.author.display_name}** needs {amount} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"**{ctx.author.display_name}** needs {amount:,} 🪙. Balance: {get_balance(uid):,} 🪙", C_RED))
             return False
         if not deduct_balance(opponent.id, amount):
             add_balance(uid, amount)  # refund challenger
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"{opponent.display_name} needs {amount} 🪙. Balance: {get_balance(opponent.id)} 🪙", C_RED))
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"{opponent.display_name} needs {amount:,} 🪙. Balance: {get_balance(opponent.id):,} 🪙", C_RED))
             return False
-    wager_text = f" for {amount} 🪙" if amount > 0 else ""
+    wager_text = f" for {amount:,} 🪙" if amount > 0 else ""
     confirmed = await _wait_for_confirmations(ctx, [opponent], title=f"{invite_title}{wager_text}")
     if not confirmed:
         if amount > 0:
             add_balance(uid, amount)
             add_balance(opponent.id, amount)
-            msg = f"{opponent.display_name} didn't accept. Coins refunded ({amount} 🪙 each)."
+            msg = f"{opponent.display_name} didn't accept. Coins refunded ({amount:,} 🪙 each)."
         else:
             msg = f"{opponent.display_name} didn't accept."
         await ctx.send(embed=emb("❌ Invite Declined", msg, C_RED))
@@ -272,9 +272,9 @@ class TttC4Cog(commands.Cog):
                 if winnings > 0:
                     add_balance(winner_uid, winnings)
                 winner_name = ctx.guild.get_member(winner_uid).display_name if ctx.guild else str(winner_uid)
-                game["last_move"] = f"{name} played position {pos} — {winner_name} wins!" + (f" **+{winnings} 🪙**" if winnings > 0 else "")
+                game["last_move"] = f"{name} played position {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
                 winner_mention = ctx.guild.get_member(winner_uid).mention if ctx.guild else str(winner_uid)
-                await _edit_board(ctx.channel, game, emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
+                await _edit_board(ctx.channel, game, emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
                 del state.active_ttt_games[cid]
             elif all(c is not None for c in game["board"]) or is_ttt_stalemate(game["board"]):
                 amount = game.get("amount", 0)
@@ -282,7 +282,7 @@ class TttC4Cog(commands.Cog):
                     for player_uid in game["players"]:
                         add_balance(player_uid, amount)
                 game["last_move"] = f"{name} played position {pos} — It's a draw!"
-                draw_text = f"\n\nIt's a draw!" + (f" Each player gets {amount} 🪙 back." if amount > 0 else "")
+                draw_text = f"\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
                 await _edit_board(ctx.channel, game, emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
                 del state.active_ttt_games[cid]
             else:
@@ -318,9 +318,9 @@ class TttC4Cog(commands.Cog):
                 if winnings > 0:
                     add_balance(winner_uid, winnings)
                 winner_name = ctx.guild.get_member(winner_uid).display_name if ctx.guild else str(winner_uid)
-                game["last_move"] = f"{name} dropped in column {pos} — {winner_name} wins!" + (f" **+{winnings} 🪙**" if winnings > 0 else "")
+                game["last_move"] = f"{name} dropped in column {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
                 winner_mention = ctx.guild.get_member(winner_uid).mention if ctx.guild else str(winner_uid)
-                await _edit_board(ctx.channel, game, emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
+                await _edit_board(ctx.channel, game, emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
                 del state.active_c4_games[cid]
             elif all(game["board"][r][c] is not None for r in range(6) for c in range(7)):
                 amount = game.get("amount", 0)
@@ -328,7 +328,7 @@ class TttC4Cog(commands.Cog):
                     for player_uid in game["players"]:
                         add_balance(player_uid, amount)
                 game["last_move"] = f"{name} dropped in column {pos} — It's a draw!"
-                draw_text = f"\n\nIt's a draw!" + (f" Each player gets {amount} 🪙 back." if amount > 0 else "")
+                draw_text = f"\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
                 await _edit_board(ctx.channel, game, emb("🤝 Connect 4 Draw", build_c4_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
                 del state.active_c4_games[cid]
             else:

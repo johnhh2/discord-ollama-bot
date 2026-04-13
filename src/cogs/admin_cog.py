@@ -302,7 +302,7 @@ class AdminCog(commands.Cog):
             duration_str = f" (expires <t:{expires_at}:R>)"
         event_msg = await target_channel.send(embed=emb(
             "🎉 Coin Event!",
-            f"React with 🪙 to receive **{amount} 🪙**!{duration_str}",
+            f"React with 🪙 to receive **{amount:,} 🪙**!{duration_str}",
             C_GOLD,
         ))
         await event_msg.add_reaction("🪙")
@@ -318,7 +318,7 @@ class AdminCog(commands.Cog):
                     del state.active_events[event_msg.id]
                     await event_msg.edit(embed=emb(
                         "🎉 Event Ended",
-                        f"This event has ended. **{amount} 🪙** per reaction was given out.",
+                        f"This event has ended. **{amount:,} 🪙** per reaction was given out.",
                         C_GREY,
                     ))
             asyncio.create_task(_close_event())
@@ -365,8 +365,8 @@ class AdminCog(commands.Cog):
             action = "given to" if amount > 0 else "removed from"
             await ctx.send(embed=emb(
                 "💸 Give",
-                f"**{abs(amount)} 🪙** {action} the **house pot** for this server. "
-                f"House pot: {get_guild_house_balance(ctx.guild.id)} 🪙",
+                f"**{abs(amount):,} 🪙** {action} the **house pot** for this server. "
+                f"House pot: {get_guild_house_balance(ctx.guild.id):,} 🪙",
                 C_GOLD,
             ))
         else:
@@ -374,8 +374,8 @@ class AdminCog(commands.Cog):
             action = "given" if amount > 0 else "removed"
             await ctx.send(embed=emb(
                 "💸 Give",
-                f"**{abs(amount)} 🪙** {action} {'to' if amount > 0 else 'from'} **{target.display_name}**. "
-                f"New balance: {get_balance(target.id)} 🪙",
+                f"**{abs(amount):,} 🪙** {action} {'to' if amount > 0 else 'from'} **{target.display_name}**. "
+                f"New balance: {get_balance(target.id):,} 🪙",
                 C_GOLD,
             ))
 

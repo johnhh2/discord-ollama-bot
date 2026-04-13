@@ -408,8 +408,8 @@ class UtilityCog(commands.Cog):
             value=(
                 f"AI-generated puzzles\n"
                 f"`!puzzle coding [easy|medium|hard|extreme] [@user …]` — figure out the code output · **10–50 🪙**\n"
-                f"`!puzzle riddle [@user …]` — curated one-word riddle · **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
-                f"`!puzzle riddleai [@user …]` — AI-generated riddle · **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
+                f"`!puzzle riddle [@user …]` — curated one-word riddle · **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
+                f"`!puzzle riddleai [@user …]` — AI-generated riddle · **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
                 f"Model: `{coding_model}`\n"
                 f"Only the creator can answer by default; mention users to invite them."
             ),
@@ -451,8 +451,8 @@ class UtilityCog(commands.Cog):
             value=(
                 "`!puzzle coding [easy|medium|hard|extreme] [@user …]` — AI-generated coding puzzle\n"
                 "Reward: **10–50 🪙** depending on difficulty.\n"
-                f"`!puzzle riddle [@user …]` — curated one-word riddle · Reward: **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
-                f"`!puzzle riddleai [@user …]` — AI-generated riddle · Reward: **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
+                f"`!puzzle riddle [@user …]` — curated one-word riddle · Reward: **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
+                f"`!puzzle riddleai [@user …]` — AI-generated riddle · Reward: **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
                 "Only the creator can answer by default; mention users to invite them."
             ),
             inline=False
@@ -512,7 +512,7 @@ class UtilityCog(commands.Cog):
                 name="!puzzle riddle [@user …]",
                 value=(
                     "Classic riddle from our curated list — answer in one word!\n"
-                    f"Reward: **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
+                    f"Reward: **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
                     "Only you can answer by default. Mention users to invite them too.\n"
                     "Example: `!puzzle riddle @Alice`"
                 ),
@@ -522,7 +522,7 @@ class UtilityCog(commands.Cog):
                 name="!puzzle riddleai [@user …]",
                 value=(
                     "AI-generated riddle — answer in one word!\n"
-                    f"Reward: **{PUZZLE_RIDDLE_REWARD} 🪙**\n"
+                    f"Reward: **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
                     "Only you can answer by default. Mention users to invite them too.\n"
                     "Example: `!puzzle riddleai @Alice`"
                 ),
@@ -580,7 +580,7 @@ class UtilityCog(commands.Cog):
                 footer = f"Only {ctx.author.display_name} can answer · Use !stop to cancel"
             embed = discord.Embed(
                 title="🧩 Riddle",
-                description=f"{riddle_text}\n\nType the **one-word answer** to win **{reward} 🪙**!{invite_line}",
+                description=f"{riddle_text}\n\nType the **one-word answer** to win **{reward:,} 🪙**!{invite_line}",
                 color=C_GOLD,
             )
             embed.set_footer(text=footer)
@@ -596,7 +596,7 @@ class UtilityCog(commands.Cog):
             ]
             guild_id = ctx.guild.id if ctx.guild else None
             coding_model = get_guild_coding_model(guild_id) if guild_id else OLLAMA_MODEL
-            thinking_msg = await ctx.send(embed=emb("🧩 Generating riddle...", f"Reward: **{reward} 🪙**", C_BLUE))
+            thinking_msg = await ctx.send(embed=emb("🧩 Generating riddle...", f"Reward: **{reward:,} 🪙**", C_BLUE))
 
             if not state.bot_settings.get("ai_enabled", True):
                 await thinking_msg.edit(embed=emb("🤖 AI Offline", "Passive AI responses are currently disabled.", C_RED))
@@ -612,7 +612,7 @@ class UtilityCog(commands.Cog):
                         if cid not in state.active_puzzles:
                             await thinking_msg.edit(embed=emb("🚫 Cancelled", "Puzzle generation was cancelled.", C_RED))
                             return
-                        await thinking_msg.edit(embed=emb("🧩 Generating riddle...", f"Reward: **{reward} 🪙**", C_BLUE))
+                        await thinking_msg.edit(embed=emb("🧩 Generating riddle...", f"Reward: **{reward:,} 🪙**", C_BLUE))
                         typing_task = asyncio.create_task(keep_typing(ctx.channel))
                         try:
                             payload = {"model": coding_model, "messages": messages, "stream": False}
@@ -670,7 +670,7 @@ class UtilityCog(commands.Cog):
                 footer = f"Only {ctx.author.display_name} can answer · Use !stop to cancel"
             embed = discord.Embed(
                 title="🧩 Riddle",
-                description=f"{riddle_text}\n\nType the **one-word answer** to win **{reward} 🪙**!{invite_line}",
+                description=f"{riddle_text}\n\nType the **one-word answer** to win **{reward:,} 🪙**!{invite_line}",
                 color=C_GOLD,
             )
             embed.set_footer(text=footer)
@@ -705,7 +705,7 @@ class UtilityCog(commands.Cog):
 
         guild_id = ctx.guild.id if ctx.guild else None
         coding_model = get_guild_coding_model(guild_id) if guild_id else OLLAMA_MODEL
-        thinking_msg = await ctx.send(embed=emb("🧩 Generating puzzle...", f"Difficulty: **{difficulty}** · Reward: **{reward} 🪙**", C_BLUE))
+        thinking_msg = await ctx.send(embed=emb("🧩 Generating puzzle...", f"Difficulty: **{difficulty}** · Reward: **{reward:,} 🪙**", C_BLUE))
 
         if not state.bot_settings.get("ai_enabled", True):
             await thinking_msg.edit(embed=emb("🤖 AI Offline", "Passive AI responses are currently disabled.", C_RED))
@@ -723,7 +723,7 @@ class UtilityCog(commands.Cog):
                         # Cancelled while waiting in queue
                         await thinking_msg.edit(embed=emb("🚫 Cancelled", "Puzzle generation was cancelled.", C_RED))
                         return
-                    await thinking_msg.edit(embed=emb("🧩 Generating puzzle...", f"Difficulty: **{difficulty}** · Reward: **{reward} 🪙**", C_BLUE))
+                    await thinking_msg.edit(embed=emb("🧩 Generating puzzle...", f"Difficulty: **{difficulty}** · Reward: **{reward:,} 🪙**", C_BLUE))
                     typing_task = asyncio.create_task(keep_typing(ctx.channel))
                     try:
                         payload = {"model": coding_model, "messages": messages, "stream": False}
@@ -813,7 +813,7 @@ class UtilityCog(commands.Cog):
             footer = f"Only {ctx.author.display_name} can answer · Use !stop to cancel"
         embed = discord.Embed(
             title=f"🧩 Coding Puzzle — {difficulty.capitalize()} · {language}",
-            description=f"What will the output of this code be?\n```{language.lower()}\n{code_snippet}\n```\nType the **exact output** to win **{reward} 🪙**!{invite_line}",
+            description=f"What will the output of this code be?\n```{language.lower()}\n{code_snippet}\n```\nType the **exact output** to win **{reward:,} 🪙**!{invite_line}",
             color=C_GOLD,
         )
         embed.set_footer(text=footer)

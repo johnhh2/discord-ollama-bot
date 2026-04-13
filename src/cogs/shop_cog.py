@@ -990,7 +990,7 @@ class ShopCog(commands.Cog):
             title = "🍆 Concubine Tax Activated" if tax_type == "concubine" else "🍆 Simp Tax Activated"
             await ctx.send(embed=emb(
                 title,
-                f"**{target.display_name}** now owes **{ctx.author.display_name}** **{SHOP_SIMP_TAX_PER_MESSAGE} 🪙** per message!",
+                f"**{target.display_name}** now owes **{ctx.author.display_name}** **{SHOP_SIMP_TAX_PER_MESSAGE:,} 🪙** per message!",
                 C_PURPLE,
             ))
             return

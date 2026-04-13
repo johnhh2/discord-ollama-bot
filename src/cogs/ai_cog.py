@@ -674,7 +674,7 @@ class AICog(commands.Cog):
         if uid in state.active_blackjack_games:
             amount = state.active_blackjack_games[uid]["amount"]
             del state.active_blackjack_games[uid]
-            stopped.append(f"🃏 Blackjack (forfeited {amount} 🪙)")
+            stopped.append(f"🃏 Blackjack (forfeited {amount:,} 🪙)")
 
         if cid in state.active_hangman_games and state.active_hangman_games[cid]["user_id"] == uid:
             game = state.active_hangman_games[cid]
@@ -691,8 +691,8 @@ class AICog(commands.Cog):
             if amount > 0:
                 winnings = amount * 2
                 add_balance(opponent_uid, winnings)
-                game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings} 🪙"
-                stopped.append(f"🎮 Tic-Tac-Toe (forfeited, opponent wins {winnings} 🪙)")
+                game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings:,} 🪙"
+                stopped.append(f"🎮 Tic-Tac-Toe (forfeited, opponent wins {winnings:,} 🪙)")
             else:
                 game["last_move"] = f"{ctx.author.display_name} forfeited"
                 stopped.append("🎮 Tic-Tac-Toe (forfeited)")
@@ -706,8 +706,8 @@ class AICog(commands.Cog):
             if amount > 0:
                 winnings = amount * 2
                 add_balance(opponent_uid, winnings)
-                game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings} 🪙"
-                stopped.append(f"🟡 Connect 4 (forfeited, opponent wins {winnings} 🪙)")
+                game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings:,} 🪙"
+                stopped.append(f"🟡 Connect 4 (forfeited, opponent wins {winnings:,} 🪙)")
             else:
                 game["last_move"] = f"{ctx.author.display_name} forfeited"
                 stopped.append("🟡 Connect 4 (forfeited)")
@@ -722,8 +722,8 @@ class AICog(commands.Cog):
             if amount > 0:
                 winnings = amount * 2
                 add_balance(opponent_uid, winnings)
-                game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings} 🪙"
-                stopped.append(f"♟️ Chess (forfeited, opponent wins {winnings} 🪙)")
+                game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings:,} 🪙"
+                stopped.append(f"♟️ Chess (forfeited, opponent wins {winnings:,} 🪙)")
             else:
                 game["last_move"] = f"{ctx.author.display_name} forfeited"
                 stopped.append("♟️ Chess (forfeited)")
@@ -739,7 +739,7 @@ class AICog(commands.Cog):
                 share = amount * len(game["players"]) // len(opponents)
                 for opp in opponents:
                     add_balance(opp, share)
-                stopped.append(f"🏇 Race (forfeited, opponent(s) win {share} 🪙 each)")
+                stopped.append(f"🏇 Race (forfeited, opponent(s) win {share:,} 🪙 each)")
             else:
                 stopped.append("🏇 Race (forfeited)")
 

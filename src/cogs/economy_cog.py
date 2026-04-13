@@ -97,7 +97,7 @@ class EconomyCog(commands.Cog):
         user_data["daily_date"] = today
         user_data["last_daily"] = time.time()
         save_economy()
-        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD} 🪙**! Balance: **{get_balance(uid)} 🪙**", C_GREEN))
+        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**! Balance: **{get_balance(uid):,} 🪙**", C_GREEN))
 
 
     @commands.command(name="balance", aliases=["bal", "b", "!", "$"])
@@ -294,8 +294,8 @@ class EconomyCog(commands.Cog):
                     add_balance(thief_id, steal_amount, guild_id=ctx.guild.id if ctx.guild else None, holder_name=ctx.author.display_name)
                     result_embed = emb(
                         "🦹 Successful Heist!",
-                        f"**{ctx.author.display_name}** stole **{steal_amount} 🪙** from **{target.display_name}**!\n"
-                        f"Your balance: **{get_balance(thief_id)} 🪙**",
+                        f"**{ctx.author.display_name}** stole **{steal_amount:,} 🪙** from **{target.display_name}**!\n"
+                        f"Your balance: **{get_balance(thief_id):,} 🪙**",
                         C_GREEN,
                     )
             else:
@@ -303,8 +303,8 @@ class EconomyCog(commands.Cog):
                 add_balance(thief_id, steal_amount, guild_id=ctx.guild.id if ctx.guild else None, holder_name=ctx.author.display_name)
                 result_embed = emb(
                     "🦹 Successful Heist!",
-                    f"**{ctx.author.display_name}** stole **{steal_amount} 🪙** from **{target.display_name}**!\n"
-                    f"Your balance: **{get_balance(thief_id)} 🪙**",
+                    f"**{ctx.author.display_name}** stole **{steal_amount:,} 🪙** from **{target.display_name}**!\n"
+                    f"Your balance: **{get_balance(thief_id):,} 🪙**",
                     C_GREEN,
                 )
         else:
@@ -319,8 +319,8 @@ class EconomyCog(commands.Cog):
                 result_embed = emb(
                     "🚔 Caught & Jailed!",
                     f"**{ctx.author.display_name}** was caught stealing from **{target.display_name}**!\n"
-                    f"Fined **{actual_fine} 🪙** and jailed for **{jail_days} day(s)**.\n"
-                    f"Balance: **{get_balance(thief_id)} 🪙**",
+                    f"Fined **{actual_fine:,} 🪙** and jailed for **{jail_days} day(s)**.\n"
+                    f"Balance: **{get_balance(thief_id):,} 🪙**",
                     C_RED,
                 )
             else:
@@ -328,8 +328,8 @@ class EconomyCog(commands.Cog):
                 result_embed = emb(
                     "🚔 Caught!",
                     f"**{ctx.author.display_name}** was caught stealing from **{target.display_name}**!\n"
-                    f"Fined **{actual_fine} 🪙**. You got lucky — no jail time.\n"
-                    f"Balance: **{get_balance(thief_id)} 🪙**",
+                    f"Fined **{actual_fine:,} 🪙**. You got lucky — no jail time.\n"
+                    f"Balance: **{get_balance(thief_id):,} 🪙**",
                     C_ORANGE,
                 )
 
@@ -428,16 +428,16 @@ class EconomyCog(commands.Cog):
             add_guild_house(ctx.guild.id, amount)
             await ctx.send(embed=emb(
                 "💸 Payment Sent",
-                f"**{ctx.author.display_name}** paid **{amount} 🪙** to the house pot.\n"
-                f"Your balance: **{get_balance(ctx.author.id)} 🪙**",
+                f"**{ctx.author.display_name}** paid **{amount:,} 🪙** to the house pot.\n"
+                f"Your balance: **{get_balance(ctx.author.id):,} 🪙**",
                 C_GREEN,
             ))
             return
         add_balance(recipient.id, amount)
         await ctx.send(embed=emb(
             "💸 Payment Sent",
-            f"**{ctx.author.display_name}** paid **{recipient.display_name}** {amount} 🪙\n"
-            f"Your balance: **{get_balance(ctx.author.id)} 🪙**",
+            f"**{ctx.author.display_name}** paid **{recipient.display_name}** {amount:,} 🪙\n"
+            f"Your balance: **{get_balance(ctx.author.id):,} 🪙**",
             C_GREEN,
         ))
 

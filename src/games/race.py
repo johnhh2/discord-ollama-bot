@@ -102,13 +102,13 @@ async def _run_race(channel, cid: int, race_msg: discord.Message):
                 winner_name = game["names"][winners[0]]
                 if share > 0:
                     add_balance(winners[0], share)
-                result = f"{board}\n\n🏆 **{winner_name}** wins" + (f" **{share} 🪙**!" if share else "!")
+                result = f"{board}\n\n🏆 **{winner_name}** wins" + (f" **{share:,} 🪙**!" if share else "!")
             else:
                 for w in winners:
                     if share > 0:
                         add_balance(w, share)
                 names = ", ".join(f"**{game['names'][w]}**" for w in winners)
-                result = f"{board}\n\n🤝 Tie! {names} each get **{share} 🪙**"
+                result = f"{board}\n\n🤝 Tie! {names} each get **{share:,} 🪙**"
 
             await race_msg.edit(embed=emb("🏁 Race Finished!", result, C_GREEN))
             return
@@ -161,7 +161,7 @@ class RaceCog(commands.Cog):
                         add_balance(refund_uid, amount)
                     member = ctx.guild.get_member(player_uid) if ctx.guild else None
                     name = member.display_name if member else str(player_uid)
-                    await ctx.send(embed=emb("💸 Insufficient Funds", f"**{name}** can't cover the **{amount} 🪙** bet.", C_RED))
+                    await ctx.send(embed=emb("💸 Insufficient Funds", f"**{name}** can't cover the **{amount:,} 🪙** bet.", C_RED))
                     return
                 paid.append(player_uid)
 
@@ -180,7 +180,7 @@ class RaceCog(commands.Cog):
         if not confirmed_ids:
             if amount > 0:
                 add_balance(uid, amount)
-                msg = f"Race cancelled — no one accepted the invite. Coins refunded ({amount} 🪙)."
+                msg = f"Race cancelled — no one accepted the invite. Coins refunded ({amount:,} 🪙)."
             else:
                 msg = "Race cancelled — no one accepted the invite."
             await ctx.send(embed=emb("❌ No One Joined", msg, C_RED))

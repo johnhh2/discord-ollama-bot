@@ -207,7 +207,7 @@ class LotteryCog(commands.Cog):
 
         cost = tickets * 10
         if not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"Need {cost} 🪙. Balance: {get_balance(uid)} 🪙", C_RED))
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"Need {cost:,} 🪙. Balance: {get_balance(uid):,} 🪙", C_RED))
             return
 
         # Add to lottery
@@ -234,7 +234,7 @@ class LotteryCog(commands.Cog):
 
         embed_msg = emb(
             "🎰 Tickets Purchased",
-            f"**{ctx.author.display_name}** bought **{tickets}** 🎟️ for **{cost} 🪙**\n\n"
+            f"**{ctx.author.display_name}** bought **{tickets:,}** 🎟️ for **{cost:,} 🪙**\n\n"
             f"**Prize Pool:** {lottery['prize_pool']:,} 🪙 {bonus_msg}\n"
             f"**Your Tickets:** {players[str(uid)]}\n"
             f"**Total Players:** {len(players)}\n"

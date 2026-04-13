@@ -176,7 +176,7 @@ async def _auto_daily(message: discord.Message):
     greeting = f"Welcome, **{message.author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
     await message.channel.send(embed=emb(
         "🪙 Daily Reward",
-        f"{greeting} **{DAILY_REWARD} 🪙** added. Balance: {get_balance(uid)} 🪙",
+        f"{greeting} **{DAILY_REWARD:,} 🪙** added. Balance: {get_balance(uid):,} 🪙",
         C_GREEN,
     ))
 
@@ -400,7 +400,7 @@ class EventsCog(commands.Cog):
                             master_name = user.display_name
                         except (discord.NotFound, discord.HTTPException):
                             master_name = str(simp_master_id)
-                    await message.channel.send(f"**{message.author.display_name}** paid a **{SHOP_SIMP_TAX_PER_MESSAGE} 🪙** {tax_label} tax to **{master_name}**")
+                    await message.channel.send(f"**{message.author.display_name}** paid a **{SHOP_SIMP_TAX_PER_MESSAGE:,} 🪙** {tax_label} tax to **{master_name}**")
 
         # Curse: corrupt cursed users' messages
         if uid in state.active_curses and not message.content.startswith("!"):
@@ -443,7 +443,7 @@ class EventsCog(commands.Cog):
                     del state.active_blackjack_games[uid]
                     await message.channel.send(embed=emb(
                         "💥 Bust!",
-                        display + f"\n\n**{message.author.display_name}** loses **{game['amount']} 🪙**. Balance: {get_balance(uid)} 🪙",
+                        display + f"\n\n**{message.author.display_name}** loses **{game['amount']:,} 🪙**. Balance: {get_balance(uid):,} 🪙",
                         C_RED,
                     ))
                 elif pval == 21:
@@ -470,7 +470,7 @@ class EventsCog(commands.Cog):
                     add_balance(uid, reward)
                     await message.channel.send(embed=emb(
                         "✅ Correct!",
-                        f"{message.author.mention} got it!\n**Answer:** `{expected}`\n+**{reward} 🪙** (Balance: {get_balance(uid)} 🪙)",
+                        f"{message.author.mention} got it!\n**Answer:** `{expected}`\n+**{reward:,} 🪙** (Balance: {get_balance(uid):,} 🪙)",
                         C_GREEN,
                     ))
                     return

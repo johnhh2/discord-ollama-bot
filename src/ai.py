@@ -67,7 +67,7 @@ async def enforce_cost(ctx, feature: str) -> bool:
         label = _FEATURE_LABELS.get(feature, feature.title())
         await ctx.send(embed=emb(
             "💸 Insufficient Funds",
-            f"{label} costs **{cost} 🪙**. Balance: {get_balance(uid)} 🪙",
+            f"{label} costs **{cost:,} 🪙**. Balance: {get_balance(uid):,} 🪙",
             C_RED,
         ))
         return False
@@ -77,7 +77,7 @@ async def enforce_cost(ctx, feature: str) -> bool:
 async def insufficient_funds(ctx_or_send, uid: int, *, label: str = "") -> None:
     """Send a standard Insufficient Funds embed."""
     from discord.ext import commands
-    desc = f"{label + ' ' if label else ''}Balance: {get_balance(uid)} 🪙"
+    desc = f"{label + ' ' if label else ''}Balance: {get_balance(uid):,} 🪙"
     e = emb("💸 Insufficient Funds", desc, C_RED)
     if callable(ctx_or_send) and not isinstance(ctx_or_send, commands.Context):
         await ctx_or_send(embed=e)

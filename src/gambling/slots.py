@@ -123,10 +123,10 @@ class SlotsCog(commands.Cog):
 
         if amount is None:
             embed = discord.Embed(title="🎰 Slots", color=C_GOLD)
-            embed.description = f"**Usage:** `!slots <amount>` — Minimum bet: **{SLOT_MIN_BET} 🪙**"
+            embed.description = f"**Usage:** `!slots <amount>` — Minimum bet: **{SLOT_MIN_BET:,} 🪙**"
             embed.add_field(name="Jackpot", value=(
                 f"**7️⃣7️⃣7️⃣** (Jackpot) — {SLOT_MULT_JACKPOT}x + Progressive Jackpot\n"
-                f"The Progressive Jackpot bonus scales to {SLOT_JACKPOT_BONUS_MAX_MULT:.0f}x at bet {SLOT_JACKPOT_BONUS_MAX_BET} 🪙 or above)*"
+                f"The Progressive Jackpot bonus scales to {SLOT_JACKPOT_BONUS_MAX_MULT:.0f}x at bet {SLOT_JACKPOT_BONUS_MAX_BET:,} 🪙 or above)*"
             ), inline=False)
             embed.add_field(name="Three of a Kind", value=(
                 f"**🎰🎰🎰** (3 Slots) — {SLOT_MULT_3BAR}x\n"
@@ -152,7 +152,7 @@ class SlotsCog(commands.Cog):
             return
 
         if amount < SLOT_MIN_BET:
-            await ctx.send(embed=emb("❌ Minimum Bet", f"Minimum bet is **{SLOT_MIN_BET} 🪙**.", C_RED))
+            await ctx.send(embed=emb("❌ Minimum Bet", f"Minimum bet is **{SLOT_MIN_BET:,} 🪙**.", C_RED))
             return
 
         if not await shop_charge(ctx, uid, amount):
@@ -194,7 +194,7 @@ class SlotsCog(commands.Cog):
             try_set_record(gid, "slots_jackpot", prize, uid, ctx.author.display_name,
                            bet=amount, symbols=display)
             desc = (f"{display}\n\n🏆 **{ctx.author.display_name} hit the Progressive Jackpot!**\n"
-                    f"**Won: {prize:,} 🪙** (Bet: {amount} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {get_balance(uid):,} 🪙\n"
+                    f"**Won: {prize:,} 🪙** (Bet: {amount:,} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {get_balance(uid):,} 🪙\n"
                     f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*")
             if first_time_slots:
                 desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
@@ -216,7 +216,7 @@ class SlotsCog(commands.Cog):
         if label == "1cherry":
             add_balance(uid, amount)
             desc = (f"{display}\n\n🍒 **One Cherry — Money Back!**\n"
-                    f"**{ctx.author.display_name}** got **{amount} 🪙** back | Balance: {get_balance(uid):,} 🪙\n"
+                    f"**{ctx.author.display_name}** got **{amount:,} 🪙** back | Balance: {get_balance(uid):,} 🪙\n"
                     f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
             if first_time_slots:
                 desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
@@ -224,7 +224,7 @@ class SlotsCog(commands.Cog):
             return
 
         if mult == 0:
-            desc = (f"{display}\n\n**{ctx.author.display_name}** lost **{amount} 🪙**. Balance: {get_balance(uid):,} 🪙\n"
+            desc = (f"{display}\n\n**{ctx.author.display_name}** lost **{amount:,} 🪙**. Balance: {get_balance(uid):,} 🪙\n"
                     f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
             if first_time_slots:
                 desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
@@ -248,7 +248,7 @@ class SlotsCog(commands.Cog):
         desc_line = result_labels.get(label, f"**{mult}x**")
 
         desc = (f"{display}\n\n{desc_line}\n"
-                f"**{ctx.author.display_name}** won **{winnings} 🪙** | Balance: {get_balance(uid):,} 🪙\n"
+                f"**{ctx.author.display_name}** won **{winnings:,} 🪙** | Balance: {get_balance(uid):,} 🪙\n"
                 f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
         if first_time_slots:
             desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"

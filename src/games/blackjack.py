@@ -145,12 +145,12 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
         try_set_record(gid, "blackjack", amount * 2, uid, uid_name,
                        player_hand=format_hand(player), player_score=pval,
                        dealer_score=dval)
-        color, result = C_GREEN, f"✅ **{uid_name}** wins **{amount} 🪙**! Balance: {get_balance(uid)} 🪙"
+        color, result = C_GREEN, f"✅ **{uid_name}** wins **{amount:,} 🪙**! Balance: {get_balance(uid):,} 🪙"
     elif pval == dval:
         add_balance(uid, amount)
-        color, result = C_GOLD, f"🤝 Push! Bet returned. Balance: {get_balance(uid)} 🪙"
+        color, result = C_GOLD, f"🤝 Push! Bet returned. Balance: {get_balance(uid):,} 🪙"
     else:
-        color, result = C_RED, f"❌ Dealer wins. **{uid_name}** loses **{amount} 🪙**. Balance: {get_balance(uid)} 🪙"
+        color, result = C_RED, f"❌ Dealer wins. **{uid_name}** loses **{amount:,} 🪙**. Balance: {get_balance(uid):,} 🪙"
 
     await message.channel.send(embed=emb("🃏 Blackjack", display + f"\n\n{result}", color))
 
@@ -207,7 +207,7 @@ class BlackjackCog(commands.Cog):
                 try_set_record(gid, "blackjack", winnings, uid, username,
                                player_hand=format_hand(player), player_score=pval,
                                dealer_score=dval)
-                await ctx.send(embed=emb("🃏 Blackjack!", full_display + f"\n\n**{ctx.author.display_name}** wins **{winnings} 🪙**! Balance: {get_balance(uid)} 🪙", C_GREEN))
+                await ctx.send(embed=emb("🃏 Blackjack!", full_display + f"\n\n**{ctx.author.display_name}** wins **{winnings:,} 🪙**! Balance: {get_balance(uid):,} 🪙", C_GREEN))
             return
 
         await ctx.send(embed=emb("🃏 Blackjack", display + "\n\nType `hit` to draw a card or `stand` to hold.", C_BLUE))

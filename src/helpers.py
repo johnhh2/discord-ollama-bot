@@ -240,7 +240,7 @@ async def shop_charge(
         label_str = f"This costs **{cost_label or f'{cost:,}'} 🪙**. "
         await ctx.send(embed=emb(
             "💸 Insufficient Funds",
-            f"{label_str}Balance: {get_balance(uid)} 🪙",
+            f"{label_str}Balance: {get_balance(uid):,} 🪙",
             C_RED,
         ))
         return False

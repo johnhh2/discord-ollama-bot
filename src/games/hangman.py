@@ -107,8 +107,8 @@ def hangman_pot_msg(word: str, player_count: int) -> str:
     total = calculate_hangman_reward(word)
     per = total // player_count
     if player_count == 1:
-        return f"💰 You would've won **{total} 🪙**"
-    return f"💰 You would've split **{total} 🪙** ({per} each)"
+        return f"💰 You would've won **{total:,} 🪙**"
+    return f"💰 You would've split **{total:,} 🪙** ({per:,} each)"
 
 
 def calculate_hangman_reward(word: str) -> int:
@@ -152,14 +152,14 @@ def _distribute_hangman_rewards(cid: int, game: dict) -> str:
     if len(active_players) == 1:
         msg = f"The word was `{word}`!\n\n"
     else:
-        msg = f"The word was `{word}`!\n\n**Total: {total_reward} 🪙** split among {len(active_players)} players\n"
+        msg = f"The word was `{word}`!\n\n**Total: {total_reward:,} 🪙** split among {len(active_players)} players\n"
     names = game.get("player_names", {})
     for i, pid in enumerate(active_players):
         bonus = 1 if i < remainder else 0
         reward = per_player + bonus
         name = names.get(pid, f"<@{pid}>")
         add_balance(pid, reward, guild_id=gid if gid else None, holder_name=name)
-        msg += f"**{name}**: +{reward} 🪙 | Balance: {get_balance(pid)} 🪙\n"
+        msg += f"**{name}**: +{reward:,} 🪙 | Balance: {get_balance(pid):,} 🪙\n"
         # Track most hangman wins per player
         if gid:
             wins_key = f"hangman_wins_{pid}"
