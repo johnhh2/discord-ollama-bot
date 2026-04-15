@@ -371,9 +371,6 @@ class EconomyCog(commands.Cog):
             rec = r.get(cat)
             if not rec:
                 return f"**{label}:** *none yet*"
-            holder_id = rec.get("holder_id")
-            if holder_id and not ctx.guild.get_member(int(holder_id)):
-                return f"**{label}:** *none yet*"
             name = rec.get("holder_name", "?")
             val = rec["value"]
             base = f"**{label}:** {val:,} 🪙 — **{name}**"
@@ -384,7 +381,7 @@ class EconomyCog(commands.Cog):
         # Most hangman wins
         hangman_wins_entries = [
             (k, v) for k, v in r.items()
-            if k.startswith("hangman_wins_") and ctx.guild.get_member(int(v.get("holder_id", 0)))
+            if k.startswith("hangman_wins_")
         ]
         if hangman_wins_entries:
             _, top_v = max(hangman_wins_entries, key=lambda x: x[1]["value"])
