@@ -121,10 +121,12 @@ class ShopCog(commands.Cog):
                 role_items.append((SHOP_RENAME_COST, f"`!shop renamerole @role | <new name>` — Rename a bot-created role — **{SHOP_RENAME_COST:,} 🪙**"))
             if _si.get("lockrole", True):
                 role_items.append((SHOP_LOCK_COST, f"`!shop lockrole <role name>` — Lock a role against changes — **{SHOP_LOCK_COST:,} 🪙**"))
-                role_items.append((0, f"`!shop unlockrole <role name>` — Unlock a role (lock owner only)"))
             if role_items:
                 role_items.sort(key=lambda x: x[0])
-                sections["👑 Roles"] = [item[1] for item in role_items]
+                items_list = [item[1] for item in role_items]
+                if _si.get("lockrole", True):
+                    items_list.append(f"`!shop unlockrole <role name>` — Unlock a role (lock owner only)")
+                sections["👑 Roles"] = items_list
 
             # Channels (sorted by cost)
             channel_items = []
@@ -136,10 +138,12 @@ class ShopCog(commands.Cog):
                 channel_items.append((SHOP_RENAME_COST, f"`!shop renamechannel <channel> <new name>` — Rename a bot-created channel — **{SHOP_RENAME_COST:,} 🪙**"))
             if _si.get("lockchannel", True):
                 channel_items.append((SHOP_LOCK_COST, f"`!shop lockchannel #channel` — Lock a channel against changes — **{SHOP_LOCK_COST:,} 🪙**"))
-                channel_items.append((0, f"`!shop unlockchannel #channel` — Unlock a channel (lock owner only)"))
             if channel_items:
                 channel_items.sort(key=lambda x: x[0])
-                sections["📢 Channels"] = [item[1] for item in channel_items]
+                items_list = [item[1] for item in channel_items]
+                if _si.get("lockchannel", True):
+                    items_list.append(f"`!shop unlockchannel #channel` — Unlock a channel (lock owner only)")
+                sections["📢 Channels"] = items_list
 
             # Fun & Social (sorted by cost)
             fun_items = [
