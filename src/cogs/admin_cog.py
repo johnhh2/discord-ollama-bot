@@ -419,6 +419,8 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="invitelink")
     async def cmd_invite(self, ctx: commands.Context):
+        if not await check_command_permission(ctx):
+            return
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
