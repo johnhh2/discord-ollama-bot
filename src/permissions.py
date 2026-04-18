@@ -77,7 +77,7 @@ def get_command_perm(command_name: str) -> dict:
 
 async def check_command_permission(ctx: commands.Context) -> bool:
     """Return True if the author may run the command; send error / silently ignore and return False if not."""
-    entry = get_command_perm(ctx.command.name)
+    entry = get_command_perm(ctx.command.qualified_name)
     tier = entry.get("tier", "everyone")
     hidden = entry.get("hidden", False)
 

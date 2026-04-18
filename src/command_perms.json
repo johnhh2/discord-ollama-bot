@@ -5,6 +5,8 @@
   "restart":       {"tier": "bot_admin", "hidden": true},
   "setperm":       {"tier": "bot_admin", "hidden": true},
   "rig":           {"tier": "bot_admin", "hidden": true},
+  "ai on":         {"tier": "bot_admin", "hidden": false},
+  "ai off":        {"tier": "bot_admin", "hidden": false},
   "model":         {"tier": "bot_admin", "hidden": false},
   "roleplaymodel": {"tier": "bot_admin", "hidden": false},
   "codingmodel":   {"tier": "bot_admin", "hidden": false},

@@ -320,26 +320,8 @@ class UtilityCog(commands.Cog):
         await send_ephemeral(ctx, embed=embed)
 
 
-    @commands.command(name="ai")
-    async def cmd_ai(self, ctx: commands.Context, toggle: str = None):
-        # Bot-admin subcommands: on/online/off/offline
-        if toggle is not None:
-            if not is_admin(ctx):
-                await ctx.send(embed=emb("❌ No Permission", "Only bot admins can use this command.", C_RED))
-                return
-            normalized = toggle.lower()
-            if normalized in ("on", "online"):
-                state.bot_settings["ai_enabled"] = True
-                save_bot_settings()
-                await ctx.send(embed=emb("🤖 AI Enabled", "Passive AI responses are now **online**.", C_GREEN))
-            elif normalized in ("off", "offline"):
-                state.bot_settings["ai_enabled"] = False
-                save_bot_settings()
-                await ctx.send(embed=emb("🤖 AI Disabled", "Passive AI responses are now **offline**.", C_RED))
-            else:
-                await ctx.send(embed=emb("❌ Invalid Option", "Use `!ai on`, `!ai online`, `!ai off`, or `!ai offline`.", C_RED))
-            return
-
+    @commands.group(name="ai", invoke_without_command=True)
+    async def cmd_ai(self, ctx: commands.Context):
         ai_connected = await check_ollama_connected()
         ask_model = get_guild_ask_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
         roleplay_model = get_guild_roleplay_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
@@ -417,6 +399,22 @@ class UtilityCog(commands.Cog):
         )
 
         await send_ephemeral(ctx, embed=embed)
+
+    @cmd_ai.command(name="on", aliases=["online"])
+    async def ai_on(self, ctx: commands.Context):
+        if not await check_command_permission(ctx):
+            return
+        state.bot_settings["ai_enabled"] = True
+        save_bot_settings()
+        await ctx.send(embed=emb("🤖 AI Enabled", "Passive AI responses are now **online**.", C_GREEN))
+
+    @cmd_ai.command(name="off", aliases=["offline"])
+    async def ai_off(self, ctx: commands.Context):
+        if not await check_command_permission(ctx):
+            return
+        state.bot_settings["ai_enabled"] = False
+        save_bot_settings()
+        await ctx.send(embed=emb("🤖 AI Disabled", "Passive AI responses are now **offline**.", C_RED))
 
 
     @commands.command(name="game", aliases=["games"])
