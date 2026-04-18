@@ -126,6 +126,7 @@ SHOP_MOCK_COST            = 1_500
 SHOP_RAGEBAIT_COST        = 2_500
 SHOP_MUTE_COST            = 5_000
 SHOP_CURSE_COST           = 10_000
+SHOP_UNOREVERSE_COST      = 10_000
 
 # Shop effect parameters
 SHOP_INSURANCE_DURATION_SECS = 86_400  # 24 hours

@@ -61,7 +61,7 @@ from src.config import (
     SHOP_NICKNAME_SELF_COST, SHOP_NICKNAME_REMOVE_COST, SHOP_NICKNAME_OTHER_COST,
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_ASSIGN_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
     SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_LOCK_COST, SHOP_RENAME_COST, SHOP_CHANNEL_COST, SHOP_CHANNEL_DELETE_COST, SHOP_INSURANCE_COST, SHOP_SIMP_COST,
-    SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST,
+    SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST, SHOP_UNOREVERSE_COST,
     SHOP_INSURANCE_DURATION_SECS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
     SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_SIMP_TAX_PER_MESSAGE,
     SHOP_CONCUBINE_DURATION_SECS, SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
@@ -151,6 +151,7 @@ class ShopCog(commands.Cog):
                 fun_items.append((SHOP_RAGEBAIT_COST, f"`!shop ragebait @user [topic]` — Ragebait for {SHOP_RAGEBAIT_MESSAGES + 1} messages — **{SHOP_RAGEBAIT_COST:,} 🪙**"))
             fun_items.append((SHOP_MUTE_COST,  f"`!shop mute @user` — Server mute for {SHOP_MUTE_MINUTES} minutes — **{SHOP_MUTE_COST:,} 🪙**"))
             fun_items.append((SHOP_CURSE_COST, f"`!shop curse @user` — Curse someone's messages for {SHOP_CURSE_MESSAGES} messages — **{SHOP_CURSE_COST:,} 🪙**"))
+            fun_items.append((SHOP_UNOREVERSE_COST, f"`!shop unoreverse @user` — Redirect active mock/ragebait/curse onto someone else — **{SHOP_UNOREVERSE_COST:,} 🪙**"))
             fun_items.sort(key=lambda x: x[0])
             sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
@@ -1020,6 +1021,72 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb(
                 "🔮 Curse Activated",
                 f"**{target.display_name}** is now cursed for the next **{SHOP_CURSE_MESSAGES}** messages!",
+                C_PURPLE,
+            ))
+            return
+
+        # ── !shop unoreverse ──────────────────────────────────────────────────────
+        if subcommand == "unoreverse":
+            if not args:
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop unoreverse @user`", C_PURPLE))
+                return
+            try:
+                target = await MemberConverter().convert(ctx, args[0])
+            except commands.BadArgument:
+                await ctx.send(embed=emb("❌ Invalid User", "Please mention a valid user.", C_RED))
+                return
+
+            if target.id == uid:
+                await ctx.send(embed=emb("❌ Self Reverse", "You can't uno reverse yourself!", C_RED))
+                return
+
+            has_mock     = uid in state.active_mocks
+            has_ragebait = uid in state.active_ragebaits
+            has_curse    = uid in state.active_curses
+
+            if not (has_mock or has_ragebait or has_curse):
+                await ctx.send(embed=emb("🔄 Uno Reverse", "You don't have any active mock, ragebait, or curse on you to reverse!", C_GREY))
+                return
+
+            if is_insured(target.id, "mock"):
+                _exp = get_insurance_expiry(target.id)
+                await ctx.send(embed=emb(
+                    "🛡️ Protected",
+                    f"**{target.display_name}** has insurance and can't be targeted (expires <t:{_exp}:R>).",
+                    C_GOLD,
+                ))
+                return
+
+            cost = 0 if uid in state.godmode_users else SHOP_UNOREVERSE_COST
+            if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_UNOREVERSE_COST:,}"):
+                return
+
+            redirected = []
+
+            if has_mock:
+                mock_data = state.active_mocks.pop(uid)
+                mock_data["started_by"] = uid
+                state.active_mocks[target.id] = mock_data
+                save_mock()
+                redirected.append("mock")
+
+            if has_ragebait:
+                rage_data = state.active_ragebaits.pop(uid)
+                rage_data["history"] = []
+                state.active_ragebaits[target.id] = rage_data
+                save_ragebait()
+                redirected.append("ragebait")
+
+            if has_curse:
+                curse_data = state.active_curses.pop(uid)
+                curse_data["cursed_by"] = uid
+                state.active_curses[target.id] = curse_data
+                save_curse(state.active_curses)
+                redirected.append("curse")
+
+            await ctx.send(embed=emb(
+                "🔄 Uno Reverse!",
+                f"**{ctx.author.display_name}** reversed {', '.join(redirected)} onto **{target.display_name}**!",
                 C_PURPLE,
             ))
             return

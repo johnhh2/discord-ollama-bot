@@ -20,12 +20,12 @@ from src.helpers import (
     mocking_font, curse_font, parse_amount, send_ephemeral, resolve_role,
     fetch_member, toggle_member_role, shop_charge, _render_race,
     _delete_after, _edit_board, get_memory_mb, format_uptime, get_version,
-    get_system_prompt, _log_audit, log_bot_permission_error, MemberConverter,
+    get_system_prompt, _log_audit, log_bot_permission_error,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
     add_guild_house, drain_bot_balance_into_lottery, announce_new_lottery,
-    is_insured, get_insurance_expiry, get_guild_ask_model, get_guild_roleplay_model,
+    is_insured, get_guild_ask_model, get_guild_roleplay_model,
     get_guild_coding_model, _ct_now, _ct_today, do_daily_reset, _ensure_user,
 )
 from src.permissions import (
@@ -412,83 +412,6 @@ class FunCog(commands.Cog):
             await ctx.send(embed=emb("🐱 Cat", f"Failed to fetch: {e}", C_RED))
 
 
-
-    @commands.command(name="unoreverse")
-    async def cmd_unoreverse(self, ctx: commands.Context, *, arg: str = ""):
-        """Redirect any active mock, ragebait, or curse on you to another user. Costs 20,000 🪙.
-
-        Usage: !unoreverse @user
-        """
-        COST = 20_000
-        uid = ctx.author.id
-
-        if not arg:
-            await ctx.send(embed=emb("🔄 Uno Reverse", "Usage: `!unoreverse @user`", C_PURPLE))
-            return
-
-        try:
-            target = await MemberConverter().convert(ctx, arg.split()[0])
-        except commands.BadArgument:
-            await ctx.send(embed=emb("❌ Invalid User", "Please mention a valid user.", C_RED))
-            return
-
-        if target.id == uid:
-            await ctx.send(embed=emb("❌ Self Reverse", "You can't uno reverse yourself!", C_RED))
-            return
-
-        # Check that caller has at least one active effect on them
-        has_mock    = uid in state.active_mocks
-        has_ragebait = uid in state.active_ragebaits
-        has_curse   = uid in state.active_curses
-
-        if not (has_mock or has_ragebait or has_curse):
-            await ctx.send(embed=emb("🔄 Uno Reverse", "You don't have any active mock, ragebait, or curse on you to reverse!", C_GREY))
-            return
-
-        # Check target insurance
-        if is_insured(target.id, "mock"):
-            _exp = get_insurance_expiry(target.id)
-            await ctx.send(embed=emb(
-                "🛡️ Protected",
-                f"**{target.display_name}** has insurance and can't be targeted (expires <t:{_exp}:R>).",
-                C_GOLD,
-            ))
-            return
-
-        # Charge the caller
-        cost = 0 if uid in state.godmode_users else COST
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{COST:,}"):
-            return
-
-        # Transfer effects
-        redirected = []
-
-        if has_mock:
-            mock_data = state.active_mocks.pop(uid)
-            mock_data["started_by"] = uid
-            state.active_mocks[target.id] = mock_data
-            save_mock()
-            redirected.append("mock")
-
-        if has_ragebait:
-            rage_data = state.active_ragebaits.pop(uid)
-            rage_data["history"] = []  # fresh history for the new target
-            state.active_ragebaits[target.id] = rage_data
-            save_ragebait()
-            redirected.append("ragebait")
-
-        if has_curse:
-            curse_data = state.active_curses.pop(uid)
-            curse_data["cursed_by"] = uid
-            state.active_curses[target.id] = curse_data
-            save_curse(state.active_curses)
-            redirected.append("curse")
-
-        await ctx.send(embed=emb(
-            "🔄 Uno Reverse!",
-            f"**{ctx.author.display_name}** reversed {', '.join(redirected)} onto **{target.display_name}**!",
-            C_PURPLE,
-        ))
 
 
 async def setup(bot):
