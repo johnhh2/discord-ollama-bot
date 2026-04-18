@@ -99,7 +99,7 @@ When `hidden: true`, a denied command silently does nothing instead of sending `
 
 1. **New command** — add an entry to `data/command_perms.json`. If you don't add one, it defaults to `everyone`.
 2. **Renamed command** — update the key in the JSON to match the new `name=` in `@commands.command(...)`. Aliases do **not** need their own entries; the check uses `ctx.command.name` (the canonical name).
-3. **Changing a permission** — edit the JSON entry. You can also change it at runtime with `!setperm <command> <tier> [true|false]` (bot-admin only), which writes back to the file automatically.
+3. **Changing a permission** — edit `src/command_perms.json` directly and commit the change. `!setperm` can also update it at runtime, but the file is the source of truth — always commit any permanent changes.
 4. **Each command body** must start with:
    ```python
    if not await check_command_permission(ctx):
@@ -109,7 +109,7 @@ When `hidden: true`, a denied command silently does nothing instead of sending `
 
 ### Relevant files
 
-- `data/command_perms.json` — the permission config (runtime-editable)
+- `src/command_perms.json` — the permission config (committed to the repo, not in `data/`)
 - `src/permissions.py` — `check_command_permission`, `get_command_perm`
 - `src/persistence.py` — `load_command_perms`, `save_command_perms`
 - `src/state.py` — `command_perms` dict (loaded at startup)

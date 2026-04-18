@@ -21,7 +21,7 @@ ACTIVE_CHANNEL_IDS = (
     else set()
 )
 
-COMMAND_PERMS_FILE = "data/command_perms.json"
+COMMAND_PERMS_FILE = "src/command_perms.json"
 CHANNEL_PROMPTS_FILE = "data/channel_prompts.json"
 ECONOMY_FILE = "data/economy.json"
 BOT_ROLES_FILE = "data/bot_roles.json"
