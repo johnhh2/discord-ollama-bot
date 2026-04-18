@@ -73,6 +73,47 @@ Helpers already in `src/economy.py` (import from there, don't reimplement):
 
 Never use `datetime.timezone.utc` with a hardcoded offset for CT — it won't respect DST.
 
+## Command Permission System
+
+Every command's access tier is controlled by `data/command_perms.json`. Commands not listed default to `everyone` (no restriction).
+
+### Tiers
+
+| Tier | Who can run it |
+|------|----------------|
+| `everyone` | All users |
+| `server_admin` | Discord server administrators **or** bot admins |
+| `bot_admin` | Bot admins only (user IDs in `data/bot_admins.json`) |
+
+### `hidden` flag
+
+When `hidden: true`, a denied command silently does nothing instead of sending `❌ No Permission`. Use this for sensitive bot-admin commands that should be invisible to regular users (e.g. `godmode`, `restart`, `admingive`).
+
+### Example entry
+
+```json
+"mycommand": {"tier": "bot_admin", "hidden": false}
+```
+
+### Rules — follow these whenever touching commands
+
+1. **New command** — add an entry to `data/command_perms.json`. If you don't add one, it defaults to `everyone`.
+2. **Renamed command** — update the key in the JSON to match the new `name=` in `@commands.command(...)`. Aliases do **not** need their own entries; the check uses `ctx.command.name` (the canonical name).
+3. **Changing a permission** — edit the JSON entry. You can also change it at runtime with `!setperm <command> <tier> [true|false]` (bot-admin only), which writes back to the file automatically.
+4. **Each command body** must start with:
+   ```python
+   if not await check_command_permission(ctx):
+       return
+   ```
+   Import `check_command_permission` from `src.permissions`. Do **not** use bare `is_admin` / `can_manage_settings` guards for new commands — use the central check so the JSON stays authoritative.
+
+### Relevant files
+
+- `data/command_perms.json` — the permission config (runtime-editable)
+- `src/permissions.py` — `check_command_permission`, `get_command_perm`
+- `src/persistence.py` — `load_command_perms`, `save_command_perms`
+- `src/state.py` — `command_perms` dict (loaded at startup)
+
 ## Docker
 
 ```bash
