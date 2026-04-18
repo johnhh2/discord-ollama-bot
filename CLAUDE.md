@@ -52,6 +52,27 @@ pytest tests/test_bot.py::TestHandValue::test_blackjack
 
 Tests do **not** require a Discord token or Ollama connection. No files are written to `data/` during the test run.
 
+## Timezones
+
+The bot's daily reset is **5am CT** (`DAILY_RESET_HOUR = 5` in `src/config.py`).
+
+Always use `ZoneInfo("America/Chicago")` for CT — it handles CST/CDT automatically:
+
+```python
+from zoneinfo import ZoneInfo
+import datetime
+
+def _ct_now() -> datetime.datetime:
+    return datetime.datetime.now(datetime.timezone.utc).astimezone(ZoneInfo("America/Chicago"))
+```
+
+Helpers already in `src/economy.py` (import from there, don't reimplement):
+- `_ct_now()` — current datetime in CT
+- `_ct_today()` — current "day" string in CT, where the day rolls over at 5am
+- `next_daily_reset_ts()` — Unix timestamp of the next 5am CT reset (use for Discord `<t:...:R>` timestamps)
+
+Never use `datetime.timezone.utc` with a hardcoded offset for CT — it won't respect DST.
+
 ## Docker
 
 ```bash
