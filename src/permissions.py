@@ -70,6 +70,33 @@ def can_manage_settings(ctx: commands.Context) -> bool:
     return is_admin(ctx) or is_server_admin(ctx)
 
 
+def get_command_perm(command_name: str) -> dict:
+    from src import state
+    return state.command_perms.get(command_name, {"tier": "everyone", "hidden": False})
+
+
+async def check_command_permission(ctx: commands.Context) -> bool:
+    """Return True if the author may run the command; send error / silently ignore and return False if not."""
+    entry = get_command_perm(ctx.command.name)
+    tier = entry.get("tier", "everyone")
+    hidden = entry.get("hidden", False)
+
+    if tier == "everyone":
+        allowed = True
+    elif tier == "server_admin":
+        allowed = can_manage_settings(ctx)
+    elif tier == "bot_admin":
+        allowed = is_admin(ctx)
+    else:
+        allowed = True
+
+    if not allowed:
+        if not hidden:
+            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        return False
+    return True
+
+
 def check_rate_limit(user_id: int) -> bool:
     import time
     from src import state

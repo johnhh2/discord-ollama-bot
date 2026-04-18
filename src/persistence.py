@@ -9,6 +9,7 @@ from src.config import (
     MOCK_FILE, RIGGED_SLOTS_FILE, RIGGED_FLIPS_FILE, RIGGED_SCRATCH_FILE, QUOTE_LOG_FILE, SAVED_QUOTES_FILE, SIMP_FILE,
     CURSE_FILE, GAMBLER_STREAK_FILE, EPHEMERAL_MSG_FILE, FANFIC_HISTORIES_FILE,
     FANFIC_OWNERS_FILE, ROLEPLAY_STATE_FILE, INITIAL_BOT_ADMIN_ID, LEVELING_FILE,
+    COMMAND_PERMS_FILE,
 )
 
 
@@ -290,6 +291,15 @@ def load_leveling() -> dict:
 def save_leveling():
     from src import state
     _save_json(LEVELING_FILE, state.leveling)
+
+
+def load_command_perms() -> dict:
+    return _load_json(COMMAND_PERMS_FILE, {})
+
+
+def save_command_perms():
+    from src import state
+    _save_json(COMMAND_PERMS_FILE, state.command_perms)
 
 
 def load_records(guild_id: int) -> dict:

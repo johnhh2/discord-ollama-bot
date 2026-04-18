@@ -31,7 +31,7 @@ from src.economy import (
 from src.permissions import (
     is_admin, is_server_admin, can_manage_settings, check_rate_limit,
     check_channel, check_game_channel, check_ai_channel, check_puzzle_channel,
-    check_chess_channel, _wrong_channel_reply,
+    check_chess_channel, _wrong_channel_reply, check_command_permission,
 )
 from src.persistence import (
     _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
@@ -828,8 +828,7 @@ class UtilityCog(commands.Cog):
 
     @commands.command(name="adminhelp", aliases=["helpadmin"])
     async def cmd_adminhelp(self, ctx: commands.Context):
-        if not can_manage_settings(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
         admin_embed = discord.Embed(title="⚙️ Admin Commands", color=C_GOLD)
         admin_embed.add_field(name="🔧 Server Settings", inline=False, value=(

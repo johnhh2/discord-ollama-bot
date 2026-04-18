@@ -32,7 +32,7 @@ from src.economy import (
 from src.permissions import (
     is_admin, is_server_admin, can_manage_settings, check_rate_limit,
     check_channel, check_game_channel, check_ai_channel, check_puzzle_channel,
-    check_chess_channel, _wrong_channel_reply,
+    check_chess_channel, _wrong_channel_reply, check_command_permission,
 )
 from src.persistence import (
     _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
@@ -40,7 +40,7 @@ from src.persistence import (
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
-    load_lottery, load_saved_quotes, get_guild_cfg,
+    load_lottery, load_saved_quotes, get_guild_cfg, save_command_perms,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
@@ -77,8 +77,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="godmode")
     async def cmd_godmode(self, ctx: commands.Context, user: MemberConverter = None):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
 
         target_user = user if user else ctx.author
@@ -95,8 +94,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="adminragebait")
     async def cmd_adminragebait(self, ctx: commands.Context, target: MemberConverter = None, n: str = None):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
 
         if target is None:
@@ -124,8 +122,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="model")
     async def cmd_model(self, ctx: commands.Context, model_name: str = None):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Error", "This command only works in servers.", C_RED))
@@ -142,8 +139,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="roleplaymodel")
     async def cmd_roleplaymodel(self, ctx: commands.Context, model_name: str = None):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Error", "This command only works in servers.", C_RED))
@@ -160,8 +156,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="codingmodel")
     async def cmd_codingmodel(self, ctx: commands.Context, model_name: str = None):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Error", "This command only works in servers.", C_RED))
@@ -178,8 +173,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="vramtext")
     async def cmd_vramtext(self, ctx: commands.Context, *, text: str = None):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
         if text is None:
             await ctx.send(embed=emb("⚙️ vRAM Text", state.bot_settings.get("vram_text", "16GB"), C_GREY))
@@ -191,8 +185,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="setprompt")
     async def cmd_setprompt(self, ctx: commands.Context, *, prompt: str):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
         channel_prompts[ctx.channel.id] = prompt
         save_channel_prompts(channel_prompts)
@@ -201,8 +194,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="clearprompt")
     async def cmd_clearprompt(self, ctx: commands.Context):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
         channel_prompts.pop(ctx.channel.id, None)
         save_channel_prompts(channel_prompts)
@@ -259,8 +251,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="event")
     async def cmd_event(self, ctx: commands.Context, amount: str = None, duration: str = None):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
         try:
             await ctx.message.delete()
@@ -343,8 +334,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="admingive", aliases=["adminpay"])
     async def cmd_give(self, ctx: commands.Context, target: MemberConverter = None, amount: str = None):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
         if target is None or amount is None:
             await ctx.send(embed=emb("⚙️ Give", "Usage: `!give @user <amount>`", C_GREY))
@@ -382,8 +372,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="say")
     async def cmd_say(self, ctx: commands.Context, *, text: str = None):
-        if not can_manage_settings(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
         if text is None:
             await ctx.send(embed=emb("🔊 Say", "Usage: `!say <text>`", C_GREY))
@@ -399,8 +388,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="botinvitelink", aliases=["botinvite"])
     async def cmd_botinvite(self, ctx: commands.Context):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
 
         invite_url = "https://discord.com/oauth2/authorize?client_id=1489403251303518322&permissions=6192724835560529&integration_type=0&scope=bot"
@@ -468,13 +456,32 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="restart")
     async def cmd_restart(self, ctx: commands.Context):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "Only bot admins can use this command.", C_RED))
+        if not await check_command_permission(ctx):
             return
         msg = await ctx.send(embed=emb("🔄 Restarting", "Bot is restarting...", C_GOLD))
         _save_json(RESTART_MSG_FILE, {"channel_id": msg.channel.id, "message_id": msg.id})
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
+
+    @commands.command(name="setperm")
+    async def cmd_setperm(self, ctx: commands.Context, command_name: str = None, tier: str = None, hidden: str = "false"):
+        if not await check_command_permission(ctx):
+            return
+        valid_tiers = ("everyone", "server_admin", "bot_admin")
+        if command_name is None or tier is None:
+            await ctx.send(embed=emb("⚙️ setperm", "Usage: `!setperm <command> <everyone|server_admin|bot_admin> [true|false]`", C_GOLD))
+            return
+        if tier not in valid_tiers:
+            await ctx.send(embed=emb("❌ Invalid Tier", f"Tier must be one of: {', '.join(valid_tiers)}", C_RED))
+            return
+        hidden_bool = hidden.lower() in ("true", "1", "yes")
+        state.command_perms[command_name] = {"tier": tier, "hidden": hidden_bool}
+        save_command_perms()
+        await ctx.send(embed=emb(
+            "✅ Permission Updated",
+            f"`!{command_name}` → tier: **{tier}**, hidden: **{hidden_bool}**",
+            C_GREEN,
+        ))
 
 
 async def setup(bot):

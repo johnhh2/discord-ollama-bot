@@ -31,7 +31,7 @@ from src.economy import (
 from src.permissions import (
     is_admin, is_server_admin, can_manage_settings, check_rate_limit,
     check_channel, check_game_channel, check_ai_channel, check_puzzle_channel,
-    check_chess_channel, _wrong_channel_reply,
+    check_chess_channel, _wrong_channel_reply, check_command_permission,
 )
 from src.persistence import (
     _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
@@ -76,8 +76,7 @@ class ModerationCog(commands.Cog):
 
     @commands.command(name="audit")
     async def cmd_audit(self, ctx: commands.Context):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
         if not state.audit_log:
             await send_ephemeral(ctx, embed=emb("🔍 Audit Log", "No failed attempts recorded.", C_GREY))
@@ -92,8 +91,7 @@ class ModerationCog(commands.Cog):
 
     @commands.command(name="clearbot")
     async def cmd_clear(self, ctx: commands.Context, n: int = 50):
-        if not can_manage_settings(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
         deleted = 0
         async for message in ctx.channel.history(limit=500):
@@ -113,8 +111,7 @@ class ModerationCog(commands.Cog):
 
     @commands.command(name="clearall")
     async def cmd_clearall(self, ctx: commands.Context, n: str = None):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
 
         if n is None:
@@ -158,8 +155,7 @@ class ModerationCog(commands.Cog):
 
     @commands.command(name="saved", aliases=["persistent", "saves"])
     async def cmd_saved(self, ctx: commands.Context):
-        if not is_admin(ctx):
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        if not await check_command_permission(ctx):
             return
 
         embed = discord.Embed(title="💾 Saved Data", color=C_GOLD)

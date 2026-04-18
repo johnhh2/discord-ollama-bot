@@ -19,6 +19,7 @@ from discord.ext import commands, tasks
 from src.helpers import emb, C_BLUE, C_GREEN, C_GOLD, MemberConverter
 from src.persistence import save_leveling, get_guild_cfg, save_guild_settings
 from src.economy import add_balance, next_daily_reset_ts
+from src.permissions import check_command_permission
 from src import state
 
 # ── XP constants ──────────────────────────────────────────────────────────────
@@ -390,9 +391,9 @@ class LevelingCog(commands.Cog):
 
     # ── !migratelevels ────────────────────────────────────────────────────────
     @commands.command(name="migratelevels")
-    @commands.has_permissions(administrator=True)
     async def cmd_migratelevels(self, ctx: commands.Context):
-        """Recompute every user's stored level from their XP using the current curve."""
+        if not await check_command_permission(ctx):
+            return
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Run this in a server.", 0xe74c3c))
             return

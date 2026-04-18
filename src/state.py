@@ -8,7 +8,7 @@ from src.persistence import (
     load_bot_admins, load_godmode_users, load_bot_settings, load_guild_settings,
     load_insurance, load_ragebait, load_mock, load_rigged_slots, load_rigged_flips,
     load_rigged_scratch, load_gambler_streak, load_quote_log, load_chess_games, load_simp, load_curse,
-    load_leveling,
+    load_leveling, load_command_perms,
 )
 
 # ── Persistent state (loaded from disk on startup) ────────────────────────────
@@ -104,3 +104,7 @@ leveling: dict = load_leveling()
 # ── Soundboard rate-limit tracking ───────────────────────────────────────────
 # (guild_id, user_id) → list of float timestamps (time.monotonic())
 _soundboard_timestamps: dict = {}
+
+# ── Command permission overrides ──────────────────────────────────────────────
+# command_name → {"tier": "everyone"|"server_admin"|"bot_admin", "hidden": bool}
+command_perms: dict = load_command_perms()
