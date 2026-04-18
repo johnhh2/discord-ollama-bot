@@ -72,7 +72,14 @@ def can_manage_settings(ctx: commands.Context) -> bool:
 
 def get_command_perm(command_name: str) -> dict:
     from src import state
-    return state.command_perms.get(command_name, {"tier": "everyone", "hidden": False})
+    perms = state.command_perms
+    # Walk from most-specific to least-specific: "settings ai-channels" → "settings" → default
+    parts = command_name.split(" ")
+    for i in range(len(parts), 0, -1):
+        key = " ".join(parts[:i])
+        if key in perms:
+            return perms[key]
+    return {"tier": "everyone", "hidden": False}
 
 
 async def check_command_permission(ctx: commands.Context) -> bool:
