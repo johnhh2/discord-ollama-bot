@@ -152,6 +152,21 @@ def _ct_today() -> str:
     return now_ct.date().isoformat()
 
 
+def next_daily_reset_ts() -> int:
+    """Unix timestamp of the next 5am CT daily reset."""
+    now_ct = _ct_now()
+    if now_ct.hour < DAILY_RESET_HOUR:
+        reset_date = now_ct.date()
+    else:
+        reset_date = now_ct.date() + datetime.timedelta(days=1)
+    reset_dt = datetime.datetime.combine(
+        reset_date,
+        datetime.time(DAILY_RESET_HOUR, 0),
+        tzinfo=ZoneInfo("America/Chicago"),
+    )
+    return int(reset_dt.timestamp())
+
+
 def do_daily_reset():
     """Reset all users' daily reward and scratchoff counts at 5am CT."""
     from src import state

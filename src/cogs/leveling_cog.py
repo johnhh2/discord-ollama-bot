@@ -18,7 +18,7 @@ from discord.ext import commands, tasks
 
 from src.helpers import emb, C_BLUE, C_GREEN, C_GOLD, MemberConverter
 from src.persistence import save_leveling, get_guild_cfg, save_guild_settings
-from src.economy import add_balance
+from src.economy import add_balance, next_daily_reset_ts
 from src import state
 
 # ── XP constants ──────────────────────────────────────────────────────────────
@@ -305,19 +305,21 @@ class LevelingCog(commands.Cog):
             _day_reset(rec, key_today, key_day_ts)
             return rec.get(key_today, 0), cap
 
-        def _hour_remaining(last_key: str) -> str:
-            secs_left = HOUR_SECS - (now - rec.get(last_key, 0.0))
-            if secs_left <= 0:
+        def _hour_remaining(last_key: str, used: int, cap: int) -> str:
+            if used >= cap:
+                return f"<t:{next_daily_reset_ts()}:R>"
+            ready_at = int(rec.get(last_key, 0.0)) + HOUR_SECS
+            if ready_at <= now:
                 return "ready"
-            m, s = divmod(int(secs_left), 60)
-            return f"{m}m {s}s"
+            return f"<t:{ready_at}:R>"
 
-        def _mins30_remaining() -> str:
-            secs_left = MINS30_SECS - (now - rec.get("voice_last_30", 0.0))
-            if secs_left <= 0:
+        def _mins30_remaining(used: int, cap: int) -> str:
+            if used >= cap:
+                return f"<t:{next_daily_reset_ts()}:R>"
+            ready_at = int(rec.get("voice_last_30", 0.0)) + MINS30_SECS
+            if ready_at <= now:
                 return "ready"
-            m, s = divmod(int(secs_left), 60)
-            return f"{m}m {s}s"
+            return f"<t:{ready_at}:R>"
 
         msg_used,    msg_cap    = _day_used("msg_today",    "msg_day_ts",    MSG_DAILY_MAX)
         cmd_used,    cmd_cap    = _day_used("cmd_today",    "cmd_day_ts",    CMD_DAILY_MAX)
@@ -334,10 +336,10 @@ class LevelingCog(commands.Cog):
             f"`{bar}` {xp_in_level:,} / {xp_needed:,} XP to level {display_level(level + 1)}\n\n"
             f"**Sources** *(daily used / cap)*\n"
             f"🎫 Scratch   **{XP_SCRATCH} XP**  per scratchoff (3/day)\n"
-            f"⚡ Commands  **{XP_COMMAND} XP**  `{cmd_bar}` {cmd_used}/{cmd_cap}  · next: {_hour_remaining('cmd_last_hour')}\n"
-            f"💬 Messages  **{XP_MESSAGE} XP**  `{msg_bar}` {msg_used}/{msg_cap}  · next: {_hour_remaining('msg_last_hour')}\n"
-            f"🔊 Voice     **{XP_VOICE} XP**  `{voice_bar}` {voice_used}/{voice_cap}  · next: {_mins30_remaining()}\n"
-            f"📺 Stream    **{XP_STREAM} XP**  `{stream_bar}` {stream_used}/{stream_cap}  · next: {_hour_remaining('stream_last_hour')}\n"
+            f"⚡ Commands  **{XP_COMMAND} XP**  `{cmd_bar}` {cmd_used}/{cmd_cap}  · next: {_hour_remaining('cmd_last_hour', cmd_used, cmd_cap)}\n"
+            f"💬 Messages  **{XP_MESSAGE} XP**  `{msg_bar}` {msg_used}/{msg_cap}  · next: {_hour_remaining('msg_last_hour', msg_used, msg_cap)}\n"
+            f"🔊 Voice     **{XP_VOICE} XP**  `{voice_bar}` {voice_used}/{voice_cap}  · next: {_mins30_remaining(voice_used, voice_cap)}\n"
+            f"📺 Stream    **{XP_STREAM} XP**  `{stream_bar}` {stream_used}/{stream_cap}  · next: {_hour_remaining('stream_last_hour', stream_used, stream_cap)}\n"
         )
 
         display = target.display_name
