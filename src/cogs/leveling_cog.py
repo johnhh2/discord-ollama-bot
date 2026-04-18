@@ -49,7 +49,7 @@ DAY_SECS    = 86400
 
 def _xp_cost(n: int) -> int:
     """XP required to advance from level n to level n+1."""
-    return int(50 + n ** 1.9)
+    return int(100 + n ** 1.9 * 2)
 
 
 def xp_for_level(n: int) -> int:
@@ -90,7 +90,7 @@ def levelup_coin_reward(display_lvl: int) -> int:
     elif display_lvl <= 99: tier = 4
     elif display_lvl <= 149: tier = 5
     else:                    tier = 6
-    return 1_000 * (2 ** tier)
+    return 500 * (2 ** tier)
 
 
 # ── User record helpers ───────────────────────────────────────────────────────
@@ -224,9 +224,17 @@ class LevelingCog(commands.Cog):
         for guild in self.bot.guilds:
             cfg_cache = get_guild_cfg(guild.id)
             for vc in guild.voice_channels:
-                for member in vc.members:
-                    if member.bot:
-                        continue
+                # Skip private channels (any permission overrides that deny view access to @everyone)
+                everyone = guild.default_role
+                if vc.overwrites_for(everyone).view_channel is False:
+                    continue
+
+                # Skip channels with only 1 non-bot member
+                human_members = [m for m in vc.members if not m.bot]
+                if len(human_members) < 2:
+                    continue
+
+                for member in human_members:
                     vs = member.voice
                     if vs is None:
                         continue
