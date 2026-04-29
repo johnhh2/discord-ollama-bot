@@ -31,7 +31,7 @@ from src.economy import (
 from src.permissions import (
     is_admin, is_server_admin, can_manage_settings, check_rate_limit,
     check_channel, check_game_channel, check_ai_channel, check_puzzle_channel,
-    check_chess_channel, _wrong_channel_reply,
+    check_chess_channel, _wrong_channel_reply, check_command_permission,
 )
 from src.persistence import (
     _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
@@ -364,6 +364,45 @@ class EconomyCog(commands.Cog):
                 C_GREEN,
             ))
 
+
+    @commands.command(name="jailbreak")
+    async def cmd_jailbreak(self, ctx: commands.Context):
+        if not await check_command_permission(ctx):
+            return
+        uid = ctx.author.id
+        _ensure_user(uid)
+        user_data = state.economy["users"][str(uid)]
+
+        jail_until = user_data.get("jail_until", 0)
+        if time.time() >= jail_until:
+            await ctx.send(embed=emb("🔓 Not Jailed", "You're already a free citizen — no need to escape.", C_GOLD))
+            return
+
+        if user_data.get("jailbreak_used", False):
+            await ctx.send(embed=emb("🚔 One Attempt Per Day", "You already tried to break out today. Wait for the daily reset.", C_RED))
+            return
+
+        user_data["jailbreak_used"] = True
+        save_economy()
+
+        if random.random() < 0.20:
+            user_data["jail_until"] = 0
+            save_economy()
+            await ctx.send(embed=emb(
+                "🏃 Escaped!",
+                f"**{ctx.author.display_name}** dug a tunnel under the fence and slipped out! You're free.",
+                C_GREEN,
+            ))
+        else:
+            remaining = int(jail_until - time.time())
+            hours, rem = divmod(remaining, 3600)
+            minutes = rem // 60
+            await ctx.send(embed=emb(
+                "🚨 Failed Escape",
+                f"**{ctx.author.display_name}** was caught by the guards and thrown back in the cell.\n"
+                f"Released in **{hours}h {minutes}m**. No more attempts until tomorrow.",
+                C_RED,
+            ))
 
     @commands.command(name="records", aliases=["record", "rec"])
     async def cmd_records(self, ctx: commands.Context):

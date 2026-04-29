@@ -175,6 +175,7 @@ def do_daily_reset():
         user["daily_date"] = None
         user["scratch_used"] = 0
         user["scratch_date"] = today
+        user["jailbreak_used"] = False
     state.economy["last_daily_reset"] = today
     save_economy()
     logging.info(f"[DAILY] Reset daily reward and scratchoff counts for {today}")

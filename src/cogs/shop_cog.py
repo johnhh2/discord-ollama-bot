@@ -1193,6 +1193,15 @@ class ShopCog(commands.Cog):
                 return
         uid = ctx.author.id
 
+        _ensure_user(uid)
+        jail_until = state.economy["users"][str(uid)].get("jail_until", 0)
+        if time.time() < jail_until:
+            remaining = int(jail_until - time.time())
+            hours, rem = divmod(remaining, 3600)
+            minutes = rem // 60
+            await ctx.send(embed=emb("🚔 In Jail", f"You can't mug anyone from behind bars! Released in **{hours}h {minutes}m**.", C_RED))
+            return
+
         if len(args) < 2:
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mug @user <amount>`\nPay `<amount>` to muggers who steal `<amount>` from the target.", C_PURPLE))
             return
@@ -1236,12 +1245,26 @@ class ShopCog(commands.Cog):
 
         actual_steal = min(amount, target_bal)
         deduct_balance(target.id, actual_steal)
-        await ctx.send(embed=emb(
-            "🔪 Mugged!",
-            f"**{ctx.author.display_name}** paid **{amount:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
-            f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**",
-            C_ORANGE,
-        ))
+
+        jailed = uid not in state.godmode_users and random.random() < 0.5
+        if jailed:
+            jail_until_ts = time.time() + 86400
+            state.economy["users"][str(uid)]["jail_until"] = jail_until_ts
+            save_economy()
+            await ctx.send(embed=emb(
+                "🔪 Mugged — but Caught!",
+                f"**{ctx.author.display_name}** paid **{amount:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
+                f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**\n\n"
+                f"🚔 A witness called the cops — **{ctx.author.display_name}** is jailed for **1 day**!",
+                C_RED,
+            ))
+        else:
+            await ctx.send(embed=emb(
+                "🔪 Mugged!",
+                f"**{ctx.author.display_name}** paid **{amount:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
+                f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**",
+                C_ORANGE,
+            ))
 
     # ── !shop unoreverse ──────────────────────────────────────────────────────
     @cmd_shop.command(name="unoreverse")
