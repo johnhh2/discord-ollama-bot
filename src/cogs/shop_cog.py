@@ -1225,6 +1225,11 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Broke Target", f"**{target.display_name}** has no coins to steal.", C_RED))
             return
 
+        your_bal = get_balance(uid)
+        if target_bal < your_bal * 0.2:
+            await ctx.send(embed=emb("❌ Too Easy", f"**{target.display_name}** has less than 20% of your balance — find someone your own size.", C_RED))
+            return
+
         cost = 0 if uid in state.godmode_users else amount
         if not await shop_charge(ctx, uid, cost, cost_label=f"{amount:,}"):
             return
