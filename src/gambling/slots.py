@@ -36,7 +36,7 @@ from src.permissions import (
 from src.persistence import (
     _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
     save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
-    save_chess_games, save_ragebait, save_mock, save_rigged_slots, save_rigged_flips, save_rigged_scratch,
+    save_chess_games, save_ragebait, save_mock, save_rigged_slots, save_rigged_flips, save_rigged_scratch, save_rigged_steal,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg, save_jackpot, load_jackpot, try_set_record,
@@ -292,6 +292,7 @@ class SlotsCog(commands.Cog):
             "`!rig slots @user [mult]` — rig next slots spin (mult: 75/15/7/4/3, default 75)",
             "`!rig flip @user <n>` — rig next n coin flips to win",
             "`!rig scratch @user <1-4>` — rig 3rd daily scratchoff to match N symbols",
+            "`!rig steal @user [n]` — rig next n steal attempts to succeed (default 1)",
         ]
 
         async def name(uid: int) -> str:
@@ -308,8 +309,9 @@ class SlotsCog(commands.Cog):
         slots_rigged = dict(state.rigged_slots)
         flips_rigged = dict(state.rigged_flips)
         scratch_rigged = dict(state.rigged_scratch)
+        steal_rigged = dict(state.rigged_steal)
 
-        if slots_rigged or flips_rigged or scratch_rigged:
+        if slots_rigged or flips_rigged or scratch_rigged or steal_rigged:
             lines.append("")
             lines.append("**Active riggings:**")
             for uid, sym in slots_rigged.items():
@@ -319,6 +321,8 @@ class SlotsCog(commands.Cog):
                 lines.append(f"🪙 {await name(uid)} — {n} flip {'win' if n == 1 else 'wins'}")
             for uid, n in scratch_rigged.items():
                 lines.append(f"🎫 {await name(uid)} — {n} symbol match on 3rd scratch")
+            for uid, n in steal_rigged.items():
+                lines.append(f"🦹 {await name(uid)} — {n} steal {'success' if n == 1 else 'successes'}")
 
         await ctx.send(embed=emb("🎰 Rig", "\n".join(lines), C_GOLD))
 
@@ -440,6 +444,40 @@ class SlotsCog(commands.Cog):
             C_GOLD,
         ))
 
+    @cmd_rig.command(name="steal", hidden=True)
+    async def cmd_rig_steal(self, ctx: commands.Context, target: MemberConverter = None, n: str = "1"):
+        """Hidden admin-only command: rig the next n steal attempts to succeed. n can be 'cancel'."""
+        if target is None:
+            target = ctx.author
+        uid = target.id
+        target_name = target.display_name
+
+        if n.lower() == "cancel":
+            if uid in state.rigged_steal:
+                del state.rigged_steal[uid]
+                save_rigged_steal()
+                await ctx.send(embed=emb("🦹 Rig Cancelled", f"Cleared steal rig for **{target_name}**.", C_GOLD))
+            else:
+                await ctx.send(embed=emb("🦹 Not Rigged", f"**{target_name}** has no steal rig active.", C_RED))
+            return
+
+        try:
+            n_int = int(n)
+        except ValueError:
+            await ctx.send(embed=emb("❌ Invalid", "n must be a positive number or `cancel`.", C_RED))
+            return
+
+        if n_int < 1:
+            await ctx.send(embed=emb("❌ Invalid", "n must be at least 1.", C_RED))
+            return
+
+        state.rigged_steal[uid] = state.rigged_steal.get(uid, 0) + n_int
+        save_rigged_steal()
+        await ctx.send(embed=emb(
+            "🦹 Steal Rigged",
+            f"**{target_name}**'s next **{n_int}** `!steal` {'attempt' if n_int == 1 else 'attempts'} will succeed!",
+            C_GOLD,
+        ))
 
 
 async def setup(bot):

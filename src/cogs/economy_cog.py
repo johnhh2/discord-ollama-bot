@@ -36,7 +36,7 @@ from src.permissions import (
 from src.persistence import (
     _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
     save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
-    save_chess_games, save_ragebait, save_mock, save_rigged_slots,
+    save_chess_games, save_ragebait, save_mock, save_rigged_slots, save_rigged_steal,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg, load_records,
@@ -224,8 +224,15 @@ class EconomyCog(commands.Cog):
         victim_bal = get_balance(victim_id)
         steal_amount = max(1, int(victim_bal * steal_pct))
 
-        roll = random.random()
-        success = roll < steal_chance
+        if thief_id in state.rigged_steal:
+            state.rigged_steal[thief_id] -= 1
+            if state.rigged_steal[thief_id] <= 0:
+                del state.rigged_steal[thief_id]
+            save_rigged_steal()
+            success = True
+        else:
+            roll = random.random()
+            success = roll < steal_chance
 
         # Animate the chase
         robber_pos = 0

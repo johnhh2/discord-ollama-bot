@@ -7,7 +7,7 @@ from src.persistence import (
     load_channel_prompts, load_economy, load_jackpot, load_bot_roles,
     load_bot_admins, load_godmode_users, load_bot_settings, load_guild_settings,
     load_insurance, load_ragebait, load_mock, load_rigged_slots, load_rigged_flips,
-    load_rigged_scratch, load_gambler_streak, load_quote_log, load_chess_games, load_simp, load_curse,
+    load_rigged_scratch, load_rigged_steal, load_gambler_streak, load_quote_log, load_chess_games, load_simp, load_curse,
     load_leveling, load_command_perms,
 )
 
@@ -69,6 +69,7 @@ RIDDLES_LIST: list = _load_riddles_list()
 rigged_slots: dict = load_rigged_slots()  # user_id (int) → symbol (str)
 rigged_flips: dict = load_rigged_flips()   # user_id → remaining rigged wins
 rigged_scratch: dict = load_rigged_scratch()  # user_id → number of symbols to rig (1-4) on 3rd scratch
+rigged_steal: dict = load_rigged_steal()   # user_id → remaining rigged steal successes
 gambler_streak: dict = load_gambler_streak()
 quote_log: list = load_quote_log()
 
