@@ -172,6 +172,7 @@ class ShopCog(commands.Cog):
         fun_items.append((SHOP_MUTE_COST,  f"`!shop mute @user` — Server mute for {SHOP_MUTE_MINUTES} minutes — **{SHOP_MUTE_COST:,} 🪙**"))
         fun_items.append((SHOP_CURSE_COST, f"`!shop curse @user` — Curse someone's messages for {SHOP_CURSE_MESSAGES} messages — **{SHOP_CURSE_COST:,} 🪙**"))
         fun_items.append((SHOP_UNOREVERSE_COST, f"`!shop unoreverse @user` — Redirect active mock/ragebait/curse onto someone else — **{SHOP_UNOREVERSE_COST:,} 🪙**"))
+        fun_items.append((0, "`!shop mug @user <amount>` — Pay `<amount>` to mug a user for `<amount>`"))
         fun_items.sort(key=lambda x: x[0])
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
@@ -1179,6 +1180,62 @@ class ShopCog(commands.Cog):
             "🔮 Curse Activated",
             f"**{target.display_name}** is now cursed for the next **{SHOP_CURSE_MESSAGES}** messages!",
             C_PURPLE,
+        ))
+
+    # ── !shop mug ─────────────────────────────────────────────────────────────
+    @cmd_shop.command(name="mug")
+    async def shop_mug(self, ctx: commands.Context, *args):
+        if ctx.guild:
+            cfg = get_guild_cfg(ctx.guild.id)
+            lottery_channel_id = cfg.get("lottery_channel")
+            if lottery_channel_id and ctx.channel.id == lottery_channel_id:
+                await _wrong_channel_reply(ctx, "Shop commands are not allowed in the lottery channel.")
+                return
+        uid = ctx.author.id
+
+        if len(args) < 2:
+            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mug @user <amount>`\nPay `<amount>` to muggers who steal `<amount>` from the target.", C_PURPLE))
+            return
+        try:
+            target = await MemberConverter().convert(ctx, args[0])
+        except commands.BadArgument:
+            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mug @user <amount>`", C_PURPLE))
+            return
+        if target.id == uid:
+            await ctx.send(embed=emb("❌ Self Mug", "You can't mug yourself!", C_RED))
+            return
+        if self.bot.user and target.id == self.bot.user.id:
+            await ctx.send(embed=emb("❌ Invalid Target", "You can't mug the house.", C_RED))
+            return
+
+        amount = await parse_amount(ctx, args[1])
+        if amount is None:
+            return
+        if amount <= 0:
+            await ctx.send(embed=emb("❌ Invalid Amount", "Amount must be positive.", C_RED))
+            return
+
+        if is_insured(target.id, "steal"):
+            _exp = get_insurance_expiry(target.id)
+            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be mugged (expires <t:{_exp}:R>).", C_GOLD))
+            return
+
+        target_bal = get_balance(target.id)
+        if target_bal <= 0:
+            await ctx.send(embed=emb("❌ Broke Target", f"**{target.display_name}** has no coins to steal.", C_RED))
+            return
+
+        cost = 0 if uid in state.godmode_users else amount
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{amount:,}"):
+            return
+
+        actual_steal = min(amount, target_bal)
+        deduct_balance(target.id, actual_steal)
+        await ctx.send(embed=emb(
+            "🔪 Mugged!",
+            f"**{ctx.author.display_name}** paid **{amount:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
+            f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**",
+            C_ORANGE,
         ))
 
     # ── !shop unoreverse ──────────────────────────────────────────────────────
