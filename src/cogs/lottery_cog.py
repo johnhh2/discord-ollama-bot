@@ -216,7 +216,7 @@ class LotteryCog(commands.Cog):
 
         players[str(uid)] = players.get(str(uid), 0) + tickets
         lottery.setdefault("prize_pool", 0)
-        lottery["prize_pool"] += cost
+        lottery["prize_pool"] += tickets * 7
         if was_new_player:
             lottery["prize_pool"] += 1000
 
