@@ -64,7 +64,7 @@ from src.config import (
     SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST, SHOP_UNOREVERSE_COST,
     SHOP_INSURANCE_DURATION_SECS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
     SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_SIMP_TAX_PER_MESSAGE,
-    SHOP_CONCUBINE_DURATION_SECS, SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
+    SHOP_SIMP_DURATION_SECS, SHOP_CONCUBINE_DURATION_SECS, SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
     DAILY_REWARD, DAILY_RESET_HOUR, INITIAL_BOT_ADMIN_ID,
 )
 from src import state
@@ -164,7 +164,7 @@ class ShopCog(commands.Cog):
         # Fun & Social (sorted by cost)
         fun_items = [
             (SHOP_INSURANCE_COST, f"`!shop insurance` — Protect yourself for 24 hours — **{SHOP_INSURANCE_COST:,} 🪙**"),
-            (SHOP_SIMP_COST,      f"`!shop simp @user` — Make a user simp for you — **{SHOP_SIMP_COST:,} 🪙**"),
+            (SHOP_SIMP_COST,      f"`!shop simp @user` — Make a user simp for you for 24h — **{SHOP_SIMP_COST:,} 🪙**"),
             (SHOP_MOCK_COST,      f"`!shop mock @user` — Mock someone's next {SHOP_MOCK_MESSAGES} messages — **{SHOP_MOCK_COST:,} 🪙**"),
         ]
         if _si.get("ragebait", True):
@@ -172,7 +172,6 @@ class ShopCog(commands.Cog):
         fun_items.append((SHOP_MUTE_COST,  f"`!shop mute @user` — Server mute for {SHOP_MUTE_MINUTES} minutes — **{SHOP_MUTE_COST:,} 🪙**"))
         fun_items.append((SHOP_CURSE_COST, f"`!shop curse @user` — Curse someone's messages for {SHOP_CURSE_MESSAGES} messages — **{SHOP_CURSE_COST:,} 🪙**"))
         fun_items.append((SHOP_UNOREVERSE_COST, f"`!shop unoreverse @user` — Redirect active mock/ragebait/curse onto someone else — **{SHOP_UNOREVERSE_COST:,} 🪙**"))
-        fun_items.append((0, "`!shop mug @user <amount>` — Pay `<amount>` to mug a user for `<amount>`"))
         fun_items.sort(key=lambda x: x[0])
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
@@ -1139,13 +1138,16 @@ class ShopCog(commands.Cog):
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_SIMP_COST:,}"):
             return
         tax_type = "concubine" if ctx.invoked_with == "concubine" else "simp"
-        simp_data = {"master": uid, "type": tax_type, "channel_id": ctx.channel.id, "activated_at": time.time()}
+        activated_at = time.time()
+        duration = SHOP_CONCUBINE_DURATION_SECS if tax_type == "concubine" else SHOP_SIMP_DURATION_SECS
+        expires_ts = int(activated_at + duration)
+        simp_data = {"master": uid, "type": tax_type, "channel_id": ctx.channel.id, "activated_at": activated_at}
         state.active_simps[target.id] = simp_data
         save_simp(state.active_simps)
         title = "🍆 Concubine Tax Activated" if tax_type == "concubine" else "🍆 Simp Tax Activated"
         await ctx.send(embed=emb(
             title,
-            f"**{target.display_name}** now owes **{ctx.author.display_name}** **{SHOP_SIMP_TAX_PER_MESSAGE:,} 🪙** per message!",
+            f"**{target.display_name}** now owes **{ctx.author.display_name}** **{SHOP_SIMP_TAX_PER_MESSAGE:,} 🪙** per message! Expires <t:{expires_ts}:R>.",
             C_PURPLE,
         ))
 
@@ -1181,90 +1183,6 @@ class ShopCog(commands.Cog):
             f"**{target.display_name}** is now cursed for the next **{SHOP_CURSE_MESSAGES}** messages!",
             C_PURPLE,
         ))
-
-    # ── !shop mug ─────────────────────────────────────────────────────────────
-    @cmd_shop.command(name="mug")
-    async def shop_mug(self, ctx: commands.Context, *args):
-        if ctx.guild:
-            cfg = get_guild_cfg(ctx.guild.id)
-            lottery_channel_id = cfg.get("lottery_channel")
-            if lottery_channel_id and ctx.channel.id == lottery_channel_id:
-                await _wrong_channel_reply(ctx, "Shop commands are not allowed in the lottery channel.")
-                return
-        uid = ctx.author.id
-
-        _ensure_user(uid)
-        jail_until = state.economy["users"][str(uid)].get("jail_until", 0)
-        if time.time() < jail_until:
-            remaining = int(jail_until - time.time())
-            hours, rem = divmod(remaining, 3600)
-            minutes = rem // 60
-            await ctx.send(embed=emb("🚔 In Jail", f"You can't mug anyone from behind bars! Released in **{hours}h {minutes}m**.", C_RED))
-            return
-
-        if len(args) < 2:
-            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mug @user <amount>`\nPay `<amount>` to muggers who steal `<amount>` from the target.", C_PURPLE))
-            return
-        try:
-            target = await MemberConverter().convert(ctx, args[0])
-        except commands.BadArgument:
-            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mug @user <amount>`", C_PURPLE))
-            return
-        if target.id == uid:
-            await ctx.send(embed=emb("❌ Self Mug", "You can't mug yourself!", C_RED))
-            return
-        if self.bot.user and target.id == self.bot.user.id:
-            await ctx.send(embed=emb("❌ Invalid Target", "You can't mug the house.", C_RED))
-            return
-
-        amount = await parse_amount(ctx, args[1])
-        if amount is None:
-            return
-        if amount <= 0:
-            await ctx.send(embed=emb("❌ Invalid Amount", "Amount must be positive.", C_RED))
-            return
-
-        if is_insured(target.id, "steal"):
-            _exp = get_insurance_expiry(target.id)
-            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be mugged (expires <t:{_exp}:R>).", C_GOLD))
-            return
-
-        target_bal = get_balance(target.id)
-        if target_bal <= 0:
-            await ctx.send(embed=emb("❌ Broke Target", f"**{target.display_name}** has no coins to steal.", C_RED))
-            return
-
-        your_bal = get_balance(uid)
-        if target_bal < your_bal * 0.2:
-            await ctx.send(embed=emb("❌ Too Easy", f"**{target.display_name}** has less than 20% of your balance — find someone your own size.", C_RED))
-            return
-
-        cost = 0 if uid in state.godmode_users else amount
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{amount:,}"):
-            return
-
-        actual_steal = min(amount, target_bal)
-        deduct_balance(target.id, actual_steal)
-
-        jailed = uid not in state.godmode_users and random.random() < 0.5
-        if jailed:
-            jail_until_ts = time.time() + 86400
-            state.economy["users"][str(uid)]["jail_until"] = jail_until_ts
-            save_economy()
-            await ctx.send(embed=emb(
-                "🔪 Mugged — but Caught!",
-                f"**{ctx.author.display_name}** paid **{amount:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
-                f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**\n\n"
-                f"🚔 A witness called the cops — **{ctx.author.display_name}** is jailed for **1 day**!",
-                C_RED,
-            ))
-        else:
-            await ctx.send(embed=emb(
-                "🔪 Mugged!",
-                f"**{ctx.author.display_name}** paid **{amount:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
-                f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**",
-                C_ORANGE,
-            ))
 
     # ── !shop unoreverse ──────────────────────────────────────────────────────
     @cmd_shop.command(name="unoreverse")
@@ -1488,10 +1406,6 @@ class ShopCog(commands.Cog):
     @commands.command(name="curse")
     async def cmd_curse(self, ctx: commands.Context, *args):
         await self.shop_curse(ctx, *args)
-
-    @commands.command(name="mug")
-    async def cmd_mug(self, ctx: commands.Context, *args):
-        await self.shop_mug(ctx, *args)
 
     @commands.command(name="unoreverse")
     async def cmd_unoreverse(self, ctx: commands.Context, *args):

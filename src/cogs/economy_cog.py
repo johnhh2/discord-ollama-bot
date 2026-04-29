@@ -149,6 +149,32 @@ class EconomyCog(commands.Cog):
         await ctx.send(embed=emb("🪙 Leaderboard", "\n".join(lines), C_GREEN))
 
 
+    # ── !crime ────────────────────────────────────────────────────────────────
+    @commands.group(name="crime", invoke_without_command=True)
+    async def cmd_crime(self, ctx: commands.Context):
+        if not await check_command_permission(ctx):
+            return
+        uid = ctx.author.id
+        _ensure_user(uid)
+        jail_until = state.economy["users"][str(uid)].get("jail_until", 0)
+        if time.time() < jail_until:
+            jail_status = f"🚔 **You are in jail!** Released <t:{int(jail_until)}:R>."
+        else:
+            jail_status = "✅ **You are not in jail.**"
+        lines = [
+            "**`!steal @user [tier]`** — Pick a pocket. Chance to steal a % of their balance; risk jail if caught.",
+            "  **Tier 1** — 10% steal chance, steal 10% | Jail chance: 25% | Fee: 1,000 🪙 | Jail: 1 day",
+            "  **Tier 2** — 7% steal chance, steal 15%  | Jail chance: 35% | Fee: 1,000 🪙 | Jail: 2 days",
+            "  **Tier 3** — 5% steal chance, steal 25%  | Jail chance: 50% | Fee: 1,000 🪙 | Jail: 3 days",
+            "",
+            "**`!mug @user <amount>`** — Pay `<amount>` 🪙 upfront to steal that amount from a target. 50% chance of getting jailed 1 day.",
+            "",
+            "**`!jailbreak`** — Attempt to escape jail (20% success). One attempt per day.",
+            "",
+            jail_status,
+        ]
+        await ctx.send(embed=emb("🦹 Crime", "\n".join(lines), C_GOLD))
+
     @commands.command(name="steal")
     async def cmd_steal(self, ctx: commands.Context, target: MemberConverter = None):
         TIERS = [
@@ -160,28 +186,7 @@ class EconomyCog(commands.Cog):
         TRACK = 20
 
         if target is None:
-            _ensure_user(ctx.author.id)
-            jail_until = state.economy["users"][str(ctx.author.id)].get("jail_until", 0)
-            if time.time() < jail_until:
-                remaining = int(jail_until - time.time())
-                hours, rem = divmod(remaining, 3600)
-                minutes = rem // 60
-                jail_status = f"🚔 **You are in jail!** Released in **{hours}h {minutes}m**."
-            else:
-                jail_status = "✅ **You are not in jail.**"
-            lines = [
-                "**Usage:** `!steal @user <tier>`",
-                "",
-                "**Tiers:**",
-                "**1** — 10% steal chance, steal 10% | Jail chance: 25% | Fee if caught: 1,000 🪙 | Jail: 1 day",
-                "**2** — 7% steal chance, steal 15%  | Jail chance: 35% | Fee if caught: 1,000 🪙 | Jail: 2 days",
-                "**3** — 5% steal chance, steal 25%  | Jail chance: 50% | Fee if caught: 1,000 🪙 | Jail: 3 days",
-                "",
-                "If you get caught you might be **jailed** (locked out of !steal) or just fined.",
-                "",
-                jail_status,
-            ]
-            await ctx.send(embed=emb("🦹 Steal", "\n".join(lines), C_GOLD))
+            await ctx.invoke(self.cmd_crime)
             return
 
         # Parse tier from the rest of the message, default to 1
@@ -210,12 +215,9 @@ class EconomyCog(commands.Cog):
         # Check jail
         jail_until = thief_data.get("jail_until", 0)
         if time.time() < jail_until:
-            remaining = int(jail_until - time.time())
-            hours, rem = divmod(remaining, 3600)
-            minutes = rem // 60
             await ctx.send(embed=emb(
                 "🚔 You're in Jail",
-                f"**{ctx.author.display_name}** is locked up! Released in **{hours}h {minutes}m**.",
+                f"**{ctx.author.display_name}** is locked up! Released <t:{int(jail_until)}:R>.",
                 C_RED,
             ))
             return
@@ -326,7 +328,7 @@ class EconomyCog(commands.Cog):
                 result_embed = emb(
                     "🚔 Caught & Jailed!",
                     f"**{ctx.author.display_name}** was caught stealing from **{target.display_name}**!\n"
-                    f"Fined **{actual_fine:,} 🪙** and jailed for **{jail_days} day(s)**.\n"
+                    f"Fined **{actual_fine:,} 🪙** and jailed until <t:{int(jail_until_ts)}:F> (<t:{int(jail_until_ts)}:R>).\n"
                     f"Balance: **{get_balance(thief_id):,} 🪙**",
                     C_RED,
                 )
@@ -349,12 +351,9 @@ class EconomyCog(commands.Cog):
         _ensure_user(member.id)
         jail_until = state.economy["users"][str(member.id)].get("jail_until", 0)
         if time.time() < jail_until:
-            remaining = int(jail_until - time.time())
-            hours, rem = divmod(remaining, 3600)
-            minutes = rem // 60
             await ctx.send(embed=emb(
                 "🚔 In Jail",
-                f"**{member.display_name}** is locked up! Released in **{hours}h {minutes}m**.",
+                f"**{member.display_name}** is locked up! Released <t:{int(jail_until)}:R>.",
                 C_RED,
             ))
         else:
@@ -394,14 +393,83 @@ class EconomyCog(commands.Cog):
                 C_GREEN,
             ))
         else:
-            remaining = int(jail_until - time.time())
-            hours, rem = divmod(remaining, 3600)
-            minutes = rem // 60
             await ctx.send(embed=emb(
                 "🚨 Failed Escape",
                 f"**{ctx.author.display_name}** was caught by the guards and thrown back in the cell.\n"
-                f"Released in **{hours}h {minutes}m**. No more attempts until tomorrow.",
+                f"Released <t:{int(jail_until)}:R>. No more attempts until tomorrow.",
                 C_RED,
+            ))
+
+    @commands.command(name="mug")
+    async def cmd_mug(self, ctx: commands.Context, target: MemberConverter = None, amount: str = None):
+        if not await check_command_permission(ctx):
+            return
+        uid = ctx.author.id
+
+        _ensure_user(uid)
+        jail_until = state.economy["users"][str(uid)].get("jail_until", 0)
+        if time.time() < jail_until:
+            await ctx.send(embed=emb("🚔 In Jail", f"You can't mug anyone from behind bars! Released <t:{int(jail_until)}:R>.", C_RED))
+            return
+
+        if target is None or amount is None:
+            await ctx.invoke(self.cmd_crime)
+            return
+
+        if target.id == uid:
+            await ctx.send(embed=emb("❌ Self Mug", "You can't mug yourself!", C_RED))
+            return
+        if self.bot.user and target.id == self.bot.user.id:
+            await ctx.send(embed=emb("❌ Invalid Target", "You can't mug the house.", C_RED))
+            return
+
+        parsed = await parse_amount(ctx, amount)
+        if parsed is None:
+            return
+        if parsed <= 0:
+            await ctx.send(embed=emb("❌ Invalid Amount", "Amount must be positive.", C_RED))
+            return
+
+        if is_insured(target.id, "steal"):
+            _exp = get_insurance_expiry(target.id)
+            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be mugged (expires <t:{_exp}:R>).", C_GOLD))
+            return
+
+        target_bal = get_balance(target.id)
+        if target_bal <= 0:
+            await ctx.send(embed=emb("❌ Broke Target", f"**{target.display_name}** has no coins to steal.", C_RED))
+            return
+
+        your_bal = get_balance(uid)
+        if target_bal < your_bal * 0.2:
+            await ctx.send(embed=emb("❌ Too Easy", f"**{target.display_name}** has less than 20% of your balance — find someone your own size.", C_RED))
+            return
+
+        cost = 0 if uid in state.godmode_users else parsed
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{parsed:,}"):
+            return
+
+        actual_steal = min(parsed, target_bal)
+        deduct_balance(target.id, actual_steal)
+
+        jailed = uid not in state.godmode_users and random.random() < 0.5
+        if jailed:
+            jail_until_ts = time.time() + 86400
+            state.economy["users"][str(uid)]["jail_until"] = jail_until_ts
+            save_economy()
+            await ctx.send(embed=emb(
+                "🔪 Mugged — but Caught!",
+                f"**{ctx.author.display_name}** paid **{parsed:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
+                f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**\n\n"
+                f"🚔 A witness called the cops — **{ctx.author.display_name}** is jailed until <t:{int(jail_until_ts)}:F> (<t:{int(jail_until_ts)}:R>)!",
+                C_RED,
+            ))
+        else:
+            await ctx.send(embed=emb(
+                "🔪 Mugged!",
+                f"**{ctx.author.display_name}** paid **{parsed:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
+                f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**",
+                C_ORANGE,
             ))
 
     @commands.command(name="records", aliases=["record", "rec"])

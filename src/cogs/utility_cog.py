@@ -235,7 +235,7 @@ class UtilityCog(commands.Cog):
             "`!daily` — Claim 200 🪙 (24h cooldown)\n"
             "`!balance [@user]` — Check balance\n"
             "`!pay @user <amount>` — Send coins to another user\n"
-            "`!steal @user` — Attempt to steal coins from another user"
+            "`!crime` — Steal, mug, and jailbreak commands"
         ))
         help_embed.add_field(name="🎮 Games / Gambling", inline=False, value=(
             "`!games` — View all games and gambling commands"
@@ -250,7 +250,7 @@ class UtilityCog(commands.Cog):
             "`!ai` — View AI connection status and command info"
         ))
         help_embed.add_field(name="🛒 Shop", inline=False, value=(
-            "`!shop` — Browse items\n"
+            "`!shop` — Browse items"
         ))
 
         # Only show rule34 if enabled in guild
