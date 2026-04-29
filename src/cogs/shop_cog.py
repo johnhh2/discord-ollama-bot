@@ -1377,6 +1377,111 @@ class ShopCog(commands.Cog):
                 add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
+    # ── Top-level aliases for all shop subcommands ────────────────────────────
+    @commands.command(name="nickname")
+    async def cmd_nickname(self, ctx: commands.Context, *args):
+        await self.shop_nickname(ctx, *args)
+
+    @commands.command(name="removenickname")
+    async def cmd_removenickname(self, ctx: commands.Context):
+        await self.shop_removenickname(ctx)
+
+    @commands.command(name="createrole")
+    async def cmd_createrole(self, ctx: commands.Context, *args):
+        await self.shop_createrole(ctx, *args)
+
+    @commands.command(name="assignrole")
+    async def cmd_assignrole(self, ctx: commands.Context, *args):
+        await self.shop_assignrole(ctx, *args)
+
+    @commands.command(name="removerole")
+    async def cmd_removerole(self, ctx: commands.Context, *args):
+        await self.shop_removerole(ctx, *args)
+
+    @commands.command(name="deleterole")
+    async def cmd_deleterole(self, ctx: commands.Context, *args):
+        await self.shop_deleterole(ctx, *args)
+
+    @commands.command(name="createchannel")
+    async def cmd_createchannel(self, ctx: commands.Context, *args):
+        await self.shop_createchannel(ctx, *args)
+
+    @commands.command(name="deletechannel")
+    async def cmd_deletechannel(self, ctx: commands.Context, *args):
+        await self.shop_deletechannel(ctx, *args)
+
+    @commands.command(name="renamechannel")
+    async def cmd_renamechannel(self, ctx: commands.Context, *args):
+        await self.shop_renamechannel(ctx, *args)
+
+    @commands.command(name="renamerole")
+    async def cmd_renamerole(self, ctx: commands.Context, *args):
+        await self.shop_renamerole(ctx, *args)
+
+    @commands.command(name="rolechannel")
+    async def cmd_rolechannel(self, ctx: commands.Context, *args):
+        await self.shop_rolechannel(ctx, *args)
+
+    @commands.command(name="lockchannel")
+    async def cmd_lockchannel(self, ctx: commands.Context, *args):
+        await self.shop_lockchannel(ctx, *args)
+
+    @commands.command(name="unlockchannel")
+    async def cmd_unlockchannel(self, ctx: commands.Context, *args):
+        await self.shop_unlockchannel(ctx, *args)
+
+    @commands.command(name="lockrole")
+    async def cmd_lockrole(self, ctx: commands.Context, *args):
+        await self.shop_lockrole(ctx, *args)
+
+    @commands.command(name="unlockrole")
+    async def cmd_unlockrole(self, ctx: commands.Context, *args):
+        await self.shop_unlockrole(ctx, *args)
+
+    @commands.command(name="ragebait")
+    async def cmd_ragebait(self, ctx: commands.Context, *args):
+        await self.shop_ragebait(ctx, *args)
+
+    @commands.command(name="mock")
+    async def cmd_mock(self, ctx: commands.Context, *args):
+        await self.shop_mock(ctx, *args)
+
+    @commands.command(name="insurance")
+    async def cmd_insurance(self, ctx: commands.Context):
+        await self.shop_insurance(ctx)
+
+    @commands.command(name="rolecolor")
+    async def cmd_rolecolor(self, ctx: commands.Context, *args):
+        await self.shop_rolecolor(ctx, *args)
+
+    @commands.command(name="mute")
+    async def cmd_mute(self, ctx: commands.Context, *args):
+        await self.shop_mute(ctx, *args)
+
+    @commands.command(name="simp", aliases=["concubine"])
+    async def cmd_simp(self, ctx: commands.Context, *args):
+        await self.shop_simp(ctx, *args)
+
+    @commands.command(name="curse")
+    async def cmd_curse(self, ctx: commands.Context, *args):
+        await self.shop_curse(ctx, *args)
+
+    @commands.command(name="mug")
+    async def cmd_mug(self, ctx: commands.Context, *args):
+        await self.shop_mug(ctx, *args)
+
+    @commands.command(name="unoreverse")
+    async def cmd_unoreverse(self, ctx: commands.Context, *args):
+        await self.shop_unoreverse(ctx, *args)
+
+    @commands.command(name="roleup")
+    async def cmd_roleup(self, ctx: commands.Context, *args):
+        await self.shop_roleup(ctx, *args)
+
+    @commands.command(name="roledown")
+    async def cmd_roledown(self, ctx: commands.Context, *args):
+        await self.shop_roleup(ctx, *args)
+
     @commands.command(name="roles", aliases=["rolelb", "lbroles", "lbr"])
     async def cmd_roles(self, ctx: commands.Context):
         if ctx.guild is None:
