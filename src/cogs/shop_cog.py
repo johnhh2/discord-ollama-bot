@@ -1013,6 +1013,19 @@ class ShopCog(commands.Cog):
         uid = ctx.author.id
 
         key = str(uid)
+        existing = state.insurance.get(key)
+        if existing and uid not in state.godmode_users:
+            remaining = existing.get("expires_at", 0) - time.time()
+            half = SHOP_INSURANCE_DURATION_SECS / 2
+            if remaining > half:
+                earliest_ts = int(existing["expires_at"] - half)
+                await ctx.send(embed=emb(
+                    "🛡️ Insurance Active",
+                    f"You can't renew until your coverage is half expired. Come back <t:{earliest_ts}:R>.",
+                    C_GOLD,
+                ))
+                return
+
         cost = 0 if uid in state.godmode_users else SHOP_INSURANCE_COST
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST:,}"):
             return
