@@ -27,6 +27,7 @@ from src.economy import (
     add_guild_house, drain_bot_balance_into_lottery, announce_new_lottery,
     is_insured, get_insurance_expiry, get_guild_ask_model, get_guild_roleplay_model,
     get_guild_coding_model, _ct_now, _ct_today, do_daily_reset, _ensure_user,
+    next_daily_reset_ts,
 )
 from src.permissions import (
     is_admin, is_server_admin, can_manage_settings, check_rate_limit,
@@ -378,7 +379,8 @@ class EconomyCog(commands.Cog):
             return
 
         if user_data.get("jailbreak_used", False):
-            await ctx.send(embed=emb("🚔 One Attempt Per Day", "You already tried to break out today. Wait for the daily reset.", C_RED))
+            reset_ts = next_daily_reset_ts()
+            await ctx.send(embed=emb("🚔 One Attempt Per Day", f"You already tried to break out today. Next attempt available <t:{reset_ts}:R> (at 5am CT).", C_RED))
             return
 
         user_data["jailbreak_used"] = True
