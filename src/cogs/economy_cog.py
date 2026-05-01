@@ -589,16 +589,28 @@ class EconomyCog(commands.Cog):
                     "*Savings earn **1% compound interest per day**.*"
                 )
             else:
+                now = time.time()
                 principal = sum(e["amount"] for e in deposits)
                 interest = int(value) - principal
+                deposit_lines = []
+                for e in deposits:
+                    days = (now - e["deposited_at"]) / 86400.0
+                    e_val = int(e["amount"] * (1.01 ** days))
+                    e_interest = e_val - e["amount"]
+                    date_str = datetime.datetime.fromtimestamp(e["deposited_at"]).strftime("%Y-%m-%d")
+                    deposit_lines.append(
+                        f"`{date_str}` — {e['amount']:,} 🪙 (+{e_interest:,})"
+                    )
                 desc = (
                     f"**{ctx.author.display_name}**'s piggy bank:\n\n"
                     f"**Current value:** {int(value):,} 🪙\n"
                     f"**Principal:** {principal:,} 🪙\n"
                     f"**Interest earned:** +{interest:,} 🪙\n\n"
+                    "**Deposits:**\n" + "\n".join(deposit_lines) + "\n\n"
                     "**Usage:**\n"
                     "`!savings add <amount>` — deposit coins\n"
-                    "`!savings remove <amount>` — withdraw coins\n\n"
+                    "`!savings remove <amount>` — withdraw coins\n"
+                    "`!savings principals` — show this breakdown\n\n"
                     "*1% compound interest per day, compounded on each deposit separately.*"
                 )
             await ctx.send(embed=emb("🐷 Piggy Bank", desc, C_GREEN))
