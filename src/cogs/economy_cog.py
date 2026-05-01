@@ -223,6 +223,11 @@ class EconomyCog(commands.Cog):
             ))
             return
 
+        if is_insured(victim_id, "steal"):
+            _exp = get_insurance_expiry(victim_id)
+            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance — you can't rob them! (expires <t:{_exp}:R>)", C_GOLD))
+            return
+
         steal_chance, steal_pct, jail_chance, fee, jail_days = TIERS[tier_num - 1]
         victim_bal = get_balance(victim_id)
         steal_amount = max(1, int(victim_bal * steal_pct))
@@ -292,10 +297,7 @@ class EconomyCog(commands.Cog):
 
         # Resolve outcome
         if success:
-            if is_insured(victim_id, "steal"):
-                _exp = get_insurance_expiry(victim_id)
-                result_embed = emb("🛡️ Protected", f"**{target.display_name}** has insurance — your heist failed! (expires <t:{_exp}:R>)", C_GOLD)
-            elif victim_bal < steal_amount:
+            if victim_bal < steal_amount:
                 steal_amount = victim_bal
                 if steal_amount <= 0:
                     result_embed = emb("🦹 Heist Failed", f"**{target.display_name}** is broke — nothing to steal!", C_RED)
