@@ -577,6 +577,8 @@ class EconomyCog(commands.Cog):
         elif action in ("-", "remove", "withdraw"):
             action = "remove"
 
+        show_principals = action in ("principals", "principal")
+
         if action is None or action not in ("add", "remove"):
             value = get_savings_value(uid)
             deposits = state.economy["users"][str(uid)].get("savings", [])
@@ -588,7 +590,7 @@ class EconomyCog(commands.Cog):
                     "`!savings remove <amount>` or `!savings -<amount>` — withdraw coins\n\n"
                     "*Savings earn **1% compound interest per day**.*"
                 )
-            else:
+            elif show_principals:
                 now = time.time()
                 principal = sum(e["amount"] for e in deposits)
                 interest = int(value) - principal
@@ -606,11 +608,20 @@ class EconomyCog(commands.Cog):
                     f"**Current value:** {int(value):,} 🪙\n"
                     f"**Principal:** {principal:,} 🪙\n"
                     f"**Interest earned:** +{interest:,} 🪙\n\n"
-                    "**Deposits:**\n" + "\n".join(deposit_lines) + "\n\n"
+                    "**Deposits:**\n" + "\n".join(deposit_lines)
+                )
+            else:
+                principal = sum(e["amount"] for e in deposits)
+                interest = int(value) - principal
+                desc = (
+                    f"**{ctx.author.display_name}**'s piggy bank:\n\n"
+                    f"**Current value:** {int(value):,} 🪙\n"
+                    f"**Principal:** {principal:,} 🪙\n"
+                    f"**Interest earned:** +{interest:,} 🪙\n\n"
                     "**Usage:**\n"
                     "`!savings add <amount>` — deposit coins\n"
                     "`!savings remove <amount>` — withdraw coins\n"
-                    "`!savings principals` — show this breakdown\n\n"
+                    "`!savings principals` — show deposit breakdown\n\n"
                     "*1% compound interest per day, compounded on each deposit separately.*"
                 )
             await ctx.send(embed=emb("🐷 Piggy Bank", desc, C_GREEN))
