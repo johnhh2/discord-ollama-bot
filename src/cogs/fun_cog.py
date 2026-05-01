@@ -288,13 +288,13 @@ class FunCog(commands.Cog):
                 await ctx.send(embed=emb("📜 Quote", "No messages found to quote.", C_GREY))
                 return
 
-            # Split messages: 100 with "fuck"/"ass"/"bitch"/"gay", 900 random
-            spicy_keywords = {"fuck", "ass", "bitch", "gay"}
+            # Split messages: 100 with high-energy language, 900 random
+            spicy_keywords = {"fuck", "ass", "bitch"}
             spicy_msgs = [m for m in all_messages if any(kw in m["content"].lower() for kw in spicy_keywords)]
             regular_msgs = [m for m in all_messages if m not in spicy_msgs]
 
             # Sample: up to 100 from spicy, up to 900 from regular
-            spicy_sample = spicy_msgs[:100]  # Take up to 100 spicy messages
+            spicy_sample = spicy_msgs[:100]
             regular_sample = random.sample(regular_msgs, min(900, len(regular_msgs))) if regular_msgs else []
             messages = spicy_sample + regular_sample
 
@@ -308,13 +308,12 @@ class FunCog(commands.Cog):
     - Spicy/bold takes that land well (good)
     - Messages that made people laugh or got strong reactions (good)
     - Absurd/funny/goofy statements that would make people laugh (good)
-    - Inflammatory statements with "gay" in them are usually decently funny jokes (good)
     - Random absurd/funny/goofy statements without context (bad if not funny)
     - Generic statements about being angry/sad (bad)
     - Bland or neutral messages (bad)
 
     Example: "I don't even know" = 2/10 (bland)
-    Example: "He said he's gay and he wants you to be his little fuck boy." = 9/10 (bold, emotional, absurd, would get laughs)
+    Example: "I swear on my life if he does that again I'm going to lose my mind" = 8/10 (bold, emotional, relatable)
     Example: "I hate everyone" = 1/10 (just venting, no humor)
 
     From this sample, pick the SINGLE message with the HIGHEST entertainment/humor value:
