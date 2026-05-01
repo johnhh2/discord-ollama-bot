@@ -382,6 +382,19 @@ class EconomyCog(commands.Cog):
                 C_RED,
             ))
 
+    @commands.command(name="adminjailbreak")
+    async def cmd_adminjailbreak(self, ctx: commands.Context, target: MemberConverter = None):
+        if not await check_command_permission(ctx):
+            return
+        if target is None:
+            await ctx.send(embed=emb("❌ Usage", "`!adminjailbreak @user`", C_RED))
+            return
+        _ensure_user(target.id)
+        user_data = state.economy["users"][str(target.id)]
+        user_data["jail_until"] = 0
+        save_economy()
+        await ctx.send(embed=emb("🔓 Released", f"**{target.display_name}** has been freed from jail.", C_GREEN))
+
     @commands.command(name="mug")
     async def cmd_mug(self, ctx: commands.Context, target: MemberConverter = None, amount: str = None):
         if not await check_command_permission(ctx):
