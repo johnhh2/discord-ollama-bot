@@ -580,11 +580,9 @@ class EconomyCog(commands.Cog):
         if action is None or action not in ("add", "remove"):
             value = get_savings_value(uid)
             deposits = state.economy["users"][str(uid)].get("savings", [])
-            bal = get_balance(uid)
             if not deposits:
                 desc = (
                     f"**{ctx.author.display_name}** has no savings yet.\n\n"
-                    f"**Wallet:** {bal:,} 🪙\n\n"
                     "**Usage:**\n"
                     "`!savings add <amount>` or `!savings +<amount>` — deposit coins\n"
                     "`!savings remove <amount>` or `!savings -<amount>` — withdraw coins\n\n"
@@ -592,13 +590,12 @@ class EconomyCog(commands.Cog):
                 )
             else:
                 principal = sum(e["amount"] for e in deposits)
-                interest = value - principal
+                interest = int(value) - principal
                 desc = (
                     f"**{ctx.author.display_name}**'s piggy bank:\n\n"
-                    f"**Current value:** {value:,.2f} 🪙\n"
+                    f"**Current value:** {int(value):,} 🪙\n"
                     f"**Principal:** {principal:,} 🪙\n"
-                    f"**Interest earned:** +{interest:,.2f} 🪙\n"
-                    f"**Wallet:** {bal:,} 🪙\n\n"
+                    f"**Interest earned:** +{interest:,} 🪙\n\n"
                     "**Usage:**\n"
                     "`!savings add <amount>` — deposit coins\n"
                     "`!savings remove <amount>` — withdraw coins\n\n"
@@ -627,7 +624,7 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb(
                 "🐷 Deposited",
                 f"**{ctx.author.display_name}** tucked away **{parsed:,} 🪙** into the piggy bank!\n"
-                f"Savings value: **{value:,.2f} 🪙** | Wallet: **{get_balance(uid):,} 🪙**",
+                f"Savings value: **{int(value):,} 🪙** | Wallet: **{get_balance(uid):,} 🪙**",
                 C_GREEN,
             ))
         else:  # remove
@@ -635,7 +632,7 @@ class EconomyCog(commands.Cog):
                 value = get_savings_value(uid)
                 await ctx.send(embed=emb(
                     "❌ Insufficient Savings",
-                    f"Your savings are only worth **{value:,.2f} 🪙**.",
+                    f"Your savings are only worth **{int(value):,} 🪙**.",
                     C_RED,
                 ))
                 return
@@ -643,7 +640,7 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb(
                 "🐷 Withdrawn",
                 f"**{ctx.author.display_name}** smashed the piggy bank for **{parsed:,} 🪙**!\n"
-                f"Savings remaining: **{value:,.2f} 🪙** | Wallet: **{get_balance(uid):,} 🪙**",
+                f"Savings remaining: **{int(value):,} 🪙** | Wallet: **{get_balance(uid):,} 🪙**",
                 C_GREEN,
             ))
 
