@@ -200,7 +200,7 @@ def remove_savings(uid: int, amount: int) -> bool:
     user = state.economy["users"][str(uid)]
     deposits = user.get("savings", [])
     now = time.time()
-    current_value = sum(e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0)) for e in deposits)
+    current_value = int(sum(e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0)) for e in deposits))
     if current_value < amount:
         return False
     # Drain deposits from oldest first until we've covered the amount
