@@ -235,6 +235,7 @@ class UtilityCog(commands.Cog):
             "`!daily` — Claim 200 🪙 (24h cooldown)\n"
             "`!balance [@user]` — Check balance\n"
             "`!pay @user <amount>` — Send coins to another user\n"
+            "`!savings` — 🐷 Piggy bank with 1% daily interest\n"
             "`!crime` — Steal, mug, and jailbreak commands"
         ))
         help_embed.add_field(name="🎮 Games / Gambling", inline=False, value=(

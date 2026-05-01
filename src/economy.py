@@ -167,6 +167,66 @@ def next_daily_reset_ts() -> int:
     return int(reset_dt.timestamp())
 
 
+def get_savings_value(uid: int) -> float:
+    """Return the current compound value of a user's savings (1% daily interest per deposit)."""
+    from src import state
+    _ensure_user(uid)
+    deposits = state.economy["users"][str(uid)].get("savings", [])
+    now = time.time()
+    total = 0.0
+    for entry in deposits:
+        days = (now - entry["deposited_at"]) / 86400.0
+        total += entry["amount"] * (1.01 ** days)
+    return total
+
+
+def add_savings(uid: int, amount: int) -> bool:
+    """Deduct amount from balance and add a new savings deposit. Returns False if insufficient funds."""
+    from src import state
+    if not deduct_balance(uid, amount):
+        return False
+    _ensure_user(uid)
+    user = state.economy["users"][str(uid)]
+    user.setdefault("savings", [])
+    user["savings"].append({"amount": amount, "deposited_at": time.time()})
+    save_economy()
+    return True
+
+
+def remove_savings(uid: int, amount: int) -> bool:
+    """Withdraw amount from savings back to balance. Returns False if savings value < amount."""
+    from src import state
+    _ensure_user(uid)
+    user = state.economy["users"][str(uid)]
+    deposits = user.get("savings", [])
+    now = time.time()
+    current_value = sum(e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0)) for e in deposits)
+    if current_value < amount:
+        return False
+    # Drain deposits from oldest first until we've covered the amount
+    remaining = float(amount)
+    new_deposits = []
+    for entry in deposits:
+        days = (now - entry["deposited_at"]) / 86400.0
+        val = entry["amount"] * (1.01 ** days)
+        if remaining <= 0:
+            new_deposits.append(entry)
+        elif val <= remaining:
+            remaining -= val
+        else:
+            # Partial: compute what original principal fraction covers `remaining`
+            # remaining = frac * val => frac = remaining / val
+            frac = remaining / val
+            kept_amount = int(entry["amount"] * (1 - frac))
+            if kept_amount > 0:
+                new_deposits.append({"amount": kept_amount, "deposited_at": entry["deposited_at"]})
+            remaining = 0
+    user["savings"] = new_deposits
+    add_balance(uid, amount)
+    save_economy()
+    return True
+
+
 def do_daily_reset():
     """Reset all users' daily reward and scratchoff counts at 5am CT."""
     from src import state

@@ -27,7 +27,7 @@ from src.economy import (
     add_guild_house, drain_bot_balance_into_lottery, announce_new_lottery,
     is_insured, get_insurance_expiry, get_guild_ask_model, get_guild_roleplay_model,
     get_guild_coding_model, _ct_now, _ct_today, do_daily_reset, _ensure_user,
-    next_daily_reset_ts,
+    next_daily_reset_ts, get_savings_value, add_savings, remove_savings,
 )
 from src.permissions import (
     is_admin, is_server_admin, can_manage_settings, check_rate_limit,
@@ -525,6 +525,94 @@ class EconomyCog(commands.Cog):
         embed = discord.Embed(title="🏆 All-Time Records", color=C_GOLD)
         embed.description = "\n".join(lines)
         await ctx.send(embed=embed)
+
+    @commands.command(name="savings", aliases=["piggybank", "save"])
+    async def cmd_savings(self, ctx: commands.Context, action: str = None, amount: str = None):
+        if not await check_command_permission(ctx):
+            return
+        uid = ctx.author.id
+        _ensure_user(uid)
+
+        # Support fused tokens: !savings +1000 or !savings -500
+        if action is not None and action[0] in ("+", "-") and len(action) > 1:
+            amount = action[1:]
+            action = "add" if action[0] == "+" else "remove"
+
+        # Normalize word aliases
+        if action in ("+", "add", "deposit"):
+            action = "add"
+        elif action in ("-", "remove", "withdraw"):
+            action = "remove"
+
+        if action is None or action not in ("add", "remove"):
+            value = get_savings_value(uid)
+            deposits = state.economy["users"][str(uid)].get("savings", [])
+            bal = get_balance(uid)
+            if not deposits:
+                desc = (
+                    f"**{ctx.author.display_name}** has no savings yet.\n\n"
+                    f"**Wallet:** {bal:,} 🪙\n\n"
+                    "**Usage:**\n"
+                    "`!savings add <amount>` or `!savings +<amount>` — deposit coins\n"
+                    "`!savings remove <amount>` or `!savings -<amount>` — withdraw coins\n\n"
+                    "*Savings earn **1% compound interest per day**.*"
+                )
+            else:
+                principal = sum(e["amount"] for e in deposits)
+                interest = value - principal
+                desc = (
+                    f"**{ctx.author.display_name}**'s piggy bank:\n\n"
+                    f"**Current value:** {value:,.2f} 🪙\n"
+                    f"**Principal:** {principal:,} 🪙\n"
+                    f"**Interest earned:** +{interest:,.2f} 🪙\n"
+                    f"**Wallet:** {bal:,} 🪙\n\n"
+                    "**Usage:**\n"
+                    "`!savings add <amount>` — deposit coins\n"
+                    "`!savings remove <amount>` — withdraw coins\n\n"
+                    "*1% compound interest per day, compounded on each deposit separately.*"
+                )
+            await ctx.send(embed=emb("🐷 Piggy Bank", desc, C_GREEN))
+            return
+
+        parsed = await parse_amount(ctx, amount)
+        if parsed is None:
+            return
+        if parsed <= 0:
+            await ctx.send(embed=emb("❌ Invalid Amount", "Amount must be positive.", C_RED))
+            return
+
+        if action == "add":
+            if not add_savings(uid, parsed):
+                bal = get_balance(uid)
+                await ctx.send(embed=emb(
+                    "❌ Insufficient Funds",
+                    f"You only have **{bal:,} 🪙** in your wallet.",
+                    C_RED,
+                ))
+                return
+            value = get_savings_value(uid)
+            await ctx.send(embed=emb(
+                "🐷 Deposited",
+                f"**{ctx.author.display_name}** tucked away **{parsed:,} 🪙** into the piggy bank!\n"
+                f"Savings value: **{value:,.2f} 🪙** | Wallet: **{get_balance(uid):,} 🪙**",
+                C_GREEN,
+            ))
+        else:  # remove
+            if not remove_savings(uid, parsed):
+                value = get_savings_value(uid)
+                await ctx.send(embed=emb(
+                    "❌ Insufficient Savings",
+                    f"Your savings are only worth **{value:,.2f} 🪙**.",
+                    C_RED,
+                ))
+                return
+            value = get_savings_value(uid)
+            await ctx.send(embed=emb(
+                "🐷 Withdrawn",
+                f"**{ctx.author.display_name}** smashed the piggy bank for **{parsed:,} 🪙**!\n"
+                f"Savings remaining: **{value:,.2f} 🪙** | Wallet: **{get_balance(uid):,} 🪙**",
+                C_GREEN,
+            ))
 
     @commands.command(name="pay", aliases=["give", "gift", "donate"])
     async def cmd_pay(self, ctx: commands.Context, recipient: MemberConverter = None, amount: str = None):
