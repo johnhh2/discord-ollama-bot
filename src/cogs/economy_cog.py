@@ -223,6 +223,10 @@ class EconomyCog(commands.Cog):
             ))
             return
 
+        if thief_id in state.crime_active_users:
+            await ctx.send(embed=emb("⏳ Already Running", "You already have a crime in progress — wait for it to finish.", C_RED))
+            return
+
         if is_insured(victim_id, "steal"):
             _exp = get_insurance_expiry(victim_id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance — you can't rob them! (expires <t:{_exp}:R>)", C_GOLD))
@@ -242,63 +246,45 @@ class EconomyCog(commands.Cog):
             roll = random.random()
             success = roll < steal_chance
 
-        # Animate the chase
-        robber_pos = 0
-        cop_pos = 0
-        msg = None
+        state.crime_active_users.add(thief_id)
+        try:
+            # Animate the chase
+            msg = None
 
-        def build_frame(robber_p, cop_p, done=False, caught=False):
-            robber_icon = "🏃" if not caught else "🤜"
-            cop_icon = "👮"
-            track_len = TRACK
+            def build_frame(robber_p, cop_p, done=False, caught=False):
+                robber_icon = "🏃" if not caught else "🤜"
+                r_track = "░" * robber_p + robber_icon + "░" * (TRACK - robber_p)
+                c_track = "░" * cop_p + "👮" + "░" * (TRACK - cop_p)
+                lines = [f"`{r_track}` 🦹", f"`{c_track}` 🚔"]
+                if done:
+                    lines.append("\n**You got caught!** 🚨" if caught else "\n**Escaped!** 💨")
+                return "\n".join(lines)
 
-            # Robber lane
-            r_track = "░" * robber_p + robber_icon + "░" * (track_len - robber_p)
-            # Cop lane (same lane, cop chases)
-            c_track = "░" * cop_p + cop_icon + "░" * (track_len - cop_p)
-
-            lines = [
-                f"`{r_track}` 🦹",
-                f"`{c_track}` 🚔",
-            ]
-            if done:
-                if caught:
-                    lines.append("\n**You got caught!** 🚨")
-                else:
-                    lines.append("\n**Escaped!** 💨")
-            return "\n".join(lines)
-
-        # Number of animation steps
-        steps = 8
-        embed_color = C_ORANGE
-
-        if success:
-            # Robber runs ahead, cop falls behind
-            robber_steps = [int(TRACK * (i + 1) / steps) for i in range(steps)]
-            cop_steps = [max(0, int(TRACK * (i + 1) / steps) - random.randint(3, 6)) for i in range(steps)]
-        else:
-            # Robber gets caught mid-track: robber slows, cop catches up at halfway
-            half = steps // 2
-            robber_steps = [int((TRACK // 2) * (i + 1) / half) if i < half else TRACK // 2 for i in range(steps)]
-            cop_steps = [max(0, int((TRACK // 2) * (i + 1) / half) - random.randint(2, 4)) if i < half
-                         else min(TRACK // 2, int((TRACK // 2) + (TRACK // 2) * (i - half + 1) / (steps - half)))
-                         for i in range(steps)]
-
-        for i in range(steps):
-            caught_now = (not success) and (i == steps - 1)
-            done_now = i == steps - 1
-            frame = build_frame(robber_steps[i], cop_steps[i], done=done_now, caught=caught_now)
-            e = emb("🦹 Heist in Progress...", frame, embed_color)
-            if msg is None:
-                msg = await ctx.send(embed=e)
+            steps = 8
+            if success:
+                robber_steps = [int(TRACK * (i + 1) / steps) for i in range(steps)]
+                cop_steps = [max(0, int(TRACK * (i + 1) / steps) - random.randint(3, 6)) for i in range(steps)]
             else:
-                await msg.edit(embed=e)
-            await asyncio.sleep(0.6)
+                half = steps // 2
+                robber_steps = [int((TRACK // 2) * (i + 1) / half) if i < half else TRACK // 2 for i in range(steps)]
+                cop_steps = [max(0, int((TRACK // 2) * (i + 1) / half) - random.randint(2, 4)) if i < half
+                             else min(TRACK // 2, int((TRACK // 2) + (TRACK // 2) * (i - half + 1) / (steps - half)))
+                             for i in range(steps)]
 
-        # Resolve outcome
-        if success:
-            if victim_bal < steal_amount:
-                steal_amount = victim_bal
+            for i in range(steps):
+                caught_now = (not success) and (i == steps - 1)
+                frame = build_frame(robber_steps[i], cop_steps[i], done=(i == steps - 1), caught=caught_now)
+                e = emb("🦹 Heist in Progress...", frame, C_ORANGE)
+                if msg is None:
+                    msg = await ctx.send(embed=e)
+                else:
+                    await msg.edit(embed=e)
+                await asyncio.sleep(0.6)
+
+            # Resolve outcome
+            if success:
+                if victim_bal < steal_amount:
+                    steal_amount = victim_bal
                 if steal_amount <= 0:
                     result_embed = emb("🦹 Heist Failed", f"**{target.display_name}** is broke — nothing to steal!", C_RED)
                 else:
@@ -311,41 +297,33 @@ class EconomyCog(commands.Cog):
                         C_GREEN,
                     )
             else:
-                deduct_balance(victim_id, steal_amount)
-                add_balance(thief_id, steal_amount, guild_id=ctx.guild.id if ctx.guild else None, holder_name=ctx.author.display_name)
-                result_embed = emb(
-                    "🦹 Successful Heist!",
-                    f"**{ctx.author.display_name}** stole **{steal_amount:,} 🪙** from **{target.display_name}**!\n"
-                    f"Your balance: **{get_balance(thief_id):,} 🪙**",
-                    C_GREEN,
-                )
-        else:
-            # Caught — roll for jail vs fine
-            jailed = random.random() < jail_chance
-            actual_fine = min(fee, get_balance(thief_id))
-            if jailed:
-                jail_until_ts = time.time() + jail_days * 86400
-                thief_data["jail_until"] = jail_until_ts
-                save_economy()
-                deduct_balance(thief_id, actual_fine)
-                result_embed = emb(
-                    "🚔 Caught & Jailed!",
-                    f"**{ctx.author.display_name}** was caught stealing from **{target.display_name}**!\n"
-                    f"Fined **{actual_fine:,} 🪙** and jailed until <t:{int(jail_until_ts)}:F> (<t:{int(jail_until_ts)}:R>).\n"
-                    f"Balance: **{get_balance(thief_id):,} 🪙**",
-                    C_RED,
-                )
-            else:
-                deduct_balance(thief_id, actual_fine)
-                result_embed = emb(
-                    "🚔 Caught!",
-                    f"**{ctx.author.display_name}** was caught stealing from **{target.display_name}**!\n"
-                    f"Fined **{actual_fine:,} 🪙**. You got lucky — no jail time.\n"
-                    f"Balance: **{get_balance(thief_id):,} 🪙**",
-                    C_ORANGE,
-                )
+                jailed = random.random() < jail_chance
+                actual_fine = min(fee, get_balance(thief_id))
+                if jailed:
+                    jail_until_ts = time.time() + jail_days * 86400
+                    thief_data["jail_until"] = jail_until_ts
+                    save_economy()
+                    deduct_balance(thief_id, actual_fine)
+                    result_embed = emb(
+                        "🚔 Caught & Jailed!",
+                        f"**{ctx.author.display_name}** was caught stealing from **{target.display_name}**!\n"
+                        f"Fined **{actual_fine:,} 🪙** and jailed until <t:{int(jail_until_ts)}:F> (<t:{int(jail_until_ts)}:R>).\n"
+                        f"Balance: **{get_balance(thief_id):,} 🪙**",
+                        C_RED,
+                    )
+                else:
+                    deduct_balance(thief_id, actual_fine)
+                    result_embed = emb(
+                        "🚔 Caught!",
+                        f"**{ctx.author.display_name}** was caught stealing from **{target.display_name}**!\n"
+                        f"Fined **{actual_fine:,} 🪙**. You got lucky — no jail time.\n"
+                        f"Balance: **{get_balance(thief_id):,} 🪙**",
+                        C_ORANGE,
+                    )
 
-        await msg.edit(embed=result_embed)
+            await msg.edit(embed=result_embed)
+        finally:
+            state.crime_active_users.discard(thief_id)
 
 
     @commands.command(name="jail")
@@ -420,6 +398,10 @@ class EconomyCog(commands.Cog):
             await ctx.invoke(self.cmd_crime)
             return
 
+        if uid in state.crime_active_users:
+            await ctx.send(embed=emb("⏳ Already Running", "You already have a crime in progress — wait for it to finish.", C_RED))
+            return
+
         if target.id == uid:
             await ctx.send(embed=emb("❌ Self Mug", "You can't mug yourself!", C_RED))
             return
@@ -453,28 +435,66 @@ class EconomyCog(commands.Cog):
         if not await shop_charge(ctx, uid, cost, cost_label=f"{parsed:,}"):
             return
 
-        actual_steal = min(parsed, target_bal)
-        deduct_balance(target.id, actual_steal)
-
         jailed = uid not in state.godmode_users and random.random() < 0.5
-        if jailed:
-            jail_until_ts = time.time() + 86400
-            state.economy["users"][str(uid)]["jail_until"] = jail_until_ts
-            save_economy()
-            await ctx.send(embed=emb(
-                "🔪 Mugged — but Caught!",
-                f"**{ctx.author.display_name}** paid **{parsed:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
-                f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**\n\n"
-                f"🚔 A witness called the cops — **{ctx.author.display_name}** is jailed until <t:{int(jail_until_ts)}:F> (<t:{int(jail_until_ts)}:R>)!",
-                C_RED,
-            ))
-        else:
-            await ctx.send(embed=emb(
-                "🔪 Mugged!",
-                f"**{ctx.author.display_name}** paid **{parsed:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
-                f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**",
-                C_ORANGE,
-            ))
+
+        TRACK = 20
+        steps = 8
+        state.crime_active_users.add(uid)
+        try:
+            def build_mug_frame(robber_p, cop_p, done=False, caught=False):
+                robber_icon = "🏃" if not caught else "🤜"
+                r_track = "░" * robber_p + robber_icon + "░" * (TRACK - robber_p)
+                c_track = "░" * cop_p + "👮" + "░" * (TRACK - cop_p)
+                lines = [f"`{r_track}` 🔪", f"`{c_track}` 🚔"]
+                if done:
+                    lines.append("\n**Witness called the cops!** 🚨" if caught else "\n**Clean getaway!** 💨")
+                return "\n".join(lines)
+
+            if jailed:
+                half = steps // 2
+                robber_steps = [int((TRACK // 2) * (i + 1) / half) if i < half else TRACK // 2 for i in range(steps)]
+                cop_steps = [max(0, int((TRACK // 2) * (i + 1) / half) - random.randint(2, 4)) if i < half
+                             else min(TRACK // 2, int((TRACK // 2) + (TRACK // 2) * (i - half + 1) / (steps - half)))
+                             for i in range(steps)]
+            else:
+                robber_steps = [int(TRACK * (i + 1) / steps) for i in range(steps)]
+                cop_steps = [max(0, int(TRACK * (i + 1) / steps) - random.randint(3, 6)) for i in range(steps)]
+
+            msg = None
+            for i in range(steps):
+                caught_now = jailed and (i == steps - 1)
+                frame = build_mug_frame(robber_steps[i], cop_steps[i], done=(i == steps - 1), caught=caught_now)
+                e = emb("🔪 Mugging in Progress...", frame, C_ORANGE)
+                if msg is None:
+                    msg = await ctx.send(embed=e)
+                else:
+                    await msg.edit(embed=e)
+                await asyncio.sleep(0.6)
+
+            actual_steal = min(parsed, target_bal)
+            deduct_balance(target.id, actual_steal)
+
+            if jailed:
+                jail_until_ts = time.time() + 86400
+                state.economy["users"][str(uid)]["jail_until"] = jail_until_ts
+                save_economy()
+                result_embed = emb(
+                    "🔪 Mugged — but Caught!",
+                    f"**{ctx.author.display_name}** paid **{parsed:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
+                    f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**\n\n"
+                    f"🚔 A witness called the cops — **{ctx.author.display_name}** is jailed until <t:{int(jail_until_ts)}:F> (<t:{int(jail_until_ts)}:R>)!",
+                    C_RED,
+                )
+            else:
+                result_embed = emb(
+                    "🔪 Mugged!",
+                    f"**{ctx.author.display_name}** paid **{parsed:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
+                    f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**",
+                    C_ORANGE,
+                )
+            await msg.edit(embed=result_embed)
+        finally:
+            state.crime_active_users.discard(uid)
 
     @commands.command(name="records", aliases=["record", "rec"])
     async def cmd_records(self, ctx: commands.Context):

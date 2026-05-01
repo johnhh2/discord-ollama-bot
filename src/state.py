@@ -102,6 +102,10 @@ active_curses: dict = load_curse()          # user_id → {cursed_by: int, remai
 # uid_str → {xp, level, msg_last_hour, msg_today, cmd_last_hour, cmd_today, voice_last_15, voice_today}
 leveling: dict = load_leveling()
 
+# ── Crime animation lock ─────────────────────────────────────────────────────
+# user_id → True while a steal or mug animation is in progress
+crime_active_users: set = set()
+
 # ── Soundboard rate-limit tracking ───────────────────────────────────────────
 # (guild_id, user_id) → list of float timestamps (time.monotonic())
 _soundboard_timestamps: dict = {}
