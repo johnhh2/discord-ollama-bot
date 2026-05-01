@@ -6,7 +6,7 @@ from src.config import (
     CHANNEL_PROMPTS_FILE, ECONOMY_FILE, BOT_ROLES_FILE, BOT_ADMINS_FILE,
     BOT_SETTINGS_FILE, GUILD_SETTINGS_FILE, INSURANCE_FILE, SLOT_JACKPOT_FILE,
     SLOT_JACKPOT_SEED, GODMODE_USERS_FILE, CHESS_GAMES_FILE, RAGEBAIT_FILE,
-    MOCK_FILE, RIGGED_SLOTS_FILE, RIGGED_FLIPS_FILE, RIGGED_SCRATCH_FILE, RIGGED_STEAL_FILE, QUOTE_LOG_FILE, SAVED_QUOTES_FILE, SIMP_FILE,
+    MOCK_FILE, RIGGED_SLOTS_FILE, RIGGED_FLIPS_FILE, RIGGED_SCRATCH_FILE, RIGGED_STEAL_FILE, QUOTE_LOG_FILE, SAVED_QUOTES_FILE, TAX_FILE,
     CURSE_FILE, GAMBLER_STREAK_FILE, EPHEMERAL_MSG_FILE, FANFIC_HISTORIES_FILE,
     FANFIC_OWNERS_FILE, ROLEPLAY_STATE_FILE, INITIAL_BOT_ADMIN_ID, LEVELING_FILE,
     COMMAND_PERMS_FILE,
@@ -269,12 +269,12 @@ def save_saved_quotes(quotes: dict):
     _save_json(SAVED_QUOTES_FILE, quotes)
 
 
-def load_simp() -> dict:
-    return {int(k): v for k, v in _load_json(SIMP_FILE, {}).items()}
+def load_tax() -> dict:
+    return {int(k): v for k, v in _load_json(TAX_FILE, {}).items()}
 
 
-def save_simp(simp_data: dict):
-    _save_json(SIMP_FILE, simp_data)
+def save_tax(tax_data: dict):
+    _save_json(TAX_FILE, tax_data)
 
 
 def load_curse() -> dict:

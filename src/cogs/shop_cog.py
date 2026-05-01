@@ -39,7 +39,7 @@ from src.persistence import (
     save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
-    save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
+    save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg,
 )
 from src.ai import (
@@ -60,11 +60,11 @@ from src.config import (
     BLACKJACK_NATURAL_MULT, SCRATCH_SYMBOLS, SCRATCHOFF_MAX_DAILY, SCRATCHOFF_PAYOUTS,
     SHOP_NICKNAME_SELF_COST, SHOP_NICKNAME_REMOVE_COST, SHOP_NICKNAME_OTHER_COST,
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_ASSIGN_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
-    SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_LOCK_COST, SHOP_RENAME_COST, SHOP_CHANNEL_COST, SHOP_CHANNEL_DELETE_COST, SHOP_INSURANCE_COST, SHOP_SIMP_COST,
+    SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_LOCK_COST, SHOP_RENAME_COST, SHOP_CHANNEL_COST, SHOP_CHANNEL_DELETE_COST, SHOP_INSURANCE_COST, SHOP_TAX_COST,
     SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST, SHOP_UNOREVERSE_COST,
     SHOP_INSURANCE_DURATION_SECS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
-    SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_SIMP_TAX_PER_MESSAGE,
-    SHOP_SIMP_DURATION_SECS, SHOP_CONCUBINE_DURATION_SECS, SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
+    SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_TAX_PER_MESSAGE,
+    SHOP_TAX_DURATION_SECS, SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
     DAILY_REWARD, DAILY_RESET_HOUR, INITIAL_BOT_ADMIN_ID,
 )
 from src import state
@@ -93,10 +93,41 @@ class ShopCog(commands.Cog):
             return ch if isinstance(ch, discord.TextChannel) else None
         return None
 
+    @commands.Cog.listener()
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
+        """Route !<alias> @user to shop_tax when the alias is a guild-configured tax alias."""
+        if not isinstance(error, commands.CommandNotFound):
+            return
+        if not ctx.guild:
+            return
+        # Extract the attempted command name from the raw message
+        parts = ctx.message.content.strip().split(None, 1)
+        if not parts:
+            return
+        word = parts[0][1:].lower()  # strip "!"
+        aliases = get_guild_cfg(ctx.guild.id).get("tax_aliases", {})
+        if word not in aliases:
+            return
+        # Patch ctx so shop_tax sees the alias name as invoked_with
+        ctx.invoked_with = word
+        rest_args = tuple(parts[1].split()) if len(parts) > 1 else ()
+        await self.shop_tax(ctx, *rest_args)
+
     @commands.group(name="shop", aliases=["store"], invoke_without_command=True)
     async def cmd_shop(self, ctx: commands.Context):
         if ctx.guild:
             cfg = get_guild_cfg(ctx.guild.id)
+            # Handle !shop <alias> @user for guild-configured tax aliases
+            subcommand = ctx.subcommand_passed
+            if subcommand:
+                aliases = cfg.get("tax_aliases", {})
+                if subcommand.lower() in aliases:
+                    ctx.invoked_with = subcommand.lower()
+                    # Extract @user arg from message: "!shop <alias> <rest>"
+                    raw_parts = ctx.message.content.strip().split(None, 2)
+                    rest_args = tuple(raw_parts[2].split()) if len(raw_parts) > 2 else ()
+                    await self.shop_tax(ctx, *rest_args)
+                    return
             lottery_channel_id = cfg.get("lottery_channel")
             if lottery_channel_id and ctx.channel.id == lottery_channel_id:
                 await _wrong_channel_reply(ctx, "Shop commands are not allowed in the lottery channel.")
@@ -164,7 +195,7 @@ class ShopCog(commands.Cog):
         # Fun & Social (sorted by cost)
         fun_items = [
             (SHOP_INSURANCE_COST, f"`!shop insurance` — Protect yourself for 24 hours — **{SHOP_INSURANCE_COST:,} 🪙**"),
-            (SHOP_SIMP_COST,      f"`!shop simp @user` — Make a user simp for you for 24h — **{SHOP_SIMP_COST:,} 🪙**"),
+            (SHOP_TAX_COST,      f"`!shop tax @user` — Apply a per-message tax to a user for 24h — **{SHOP_TAX_COST:,} 🪙**"),
             (SHOP_MOCK_COST,      f"`!shop mock @user` — Mock someone's next {SHOP_MOCK_MESSAGES} messages — **{SHOP_MOCK_COST:,} 🪙**"),
         ]
         if _si.get("ragebait", True):
@@ -1032,12 +1063,12 @@ class ShopCog(commands.Cog):
         expires_at = int(time.time() + SHOP_INSURANCE_DURATION_SECS)
         state.insurance[key] = {
             "expires_at": expires_at,
-            "protected_from": ["ragebait", "mock", "nickname", "role", "steal", "simp"],
+            "protected_from": ["ragebait", "mock", "nickname", "role", "steal", "tax"],
         }
         save_insurance()
         await ctx.send(embed=emb(
             "🛡️ Insurance Purchased",
-            f"Protected against ragebait, mock, nickname, role changes, steal, and simp tax! (expires <t:{expires_at}:R>)",
+            f"Protected against ragebait, mock, nickname, role changes, steal, and tax! (expires <t:{expires_at}:R>)",
             C_GREEN,
         ))
 
@@ -1125,9 +1156,9 @@ class ShopCog(commands.Cog):
         except Exception as e:
             await ctx.send(embed=emb("❌ Error", f"Failed to mute: {str(e)}", C_RED))
 
-    # ── !shop simp / concubine ────────────────────────────────────────────────
-    @cmd_shop.command(name="simp", aliases=["concubine"])
-    async def shop_simp(self, ctx: commands.Context, *args):
+    # ── !shop tax (+ guild-configured aliases) ───────────────────────────────
+    @cmd_shop.command(name="tax")
+    async def shop_tax(self, ctx: commands.Context, *args):
         if ctx.guild:
             cfg = get_guild_cfg(ctx.guild.id)
             lottery_channel_id = cfg.get("lottery_channel")
@@ -1136,31 +1167,44 @@ class ShopCog(commands.Cog):
                 return
         uid = ctx.author.id
 
+        # Determine the label and emoji: defaults for plain !tax, alias values otherwise
+        invoked = ctx.invoked_with or "tax"
+        guild_aliases = {}
+        if ctx.guild:
+            guild_aliases = get_guild_cfg(ctx.guild.id).get("tax_aliases", {})
+        if invoked in guild_aliases:
+            tax_type = invoked
+            tax_emoji = guild_aliases[invoked]
+        else:
+            tax_type = "tax"
+            tax_emoji = "💰"
+
         if not args:
-            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop simp @user`", C_PURPLE))
+            aliases_line = ""
+            if guild_aliases:
+                aliases_line = "\nAliases: " + ", ".join(f"{e} `!{w}`" for w, e in guild_aliases.items())
+            await ctx.send(embed=emb("🛒 Shop", f"Usage: `!shop tax @user`{aliases_line}", C_PURPLE))
             return
         try:
             target = await MemberConverter().convert(ctx, args[0])
         except commands.BadArgument:
-            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop simp @user`", C_PURPLE))
+            await ctx.send(embed=emb("🛒 Shop", f"Usage: `!shop tax @user`", C_PURPLE))
             return
         if target.id == uid:
-            await ctx.send(embed=emb("❌ Self Simp", "You can't simp for yourself!", C_RED))
+            await ctx.send(embed=emb("❌ Error", "You can't tax yourself!", C_RED))
             return
-        cost = 0 if uid in state.godmode_users else SHOP_SIMP_COST
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_SIMP_COST:,}"):
+        cost = 0 if uid in state.godmode_users else SHOP_TAX_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_TAX_COST:,}"):
             return
-        tax_type = "concubine" if ctx.invoked_with == "concubine" else "simp"
         activated_at = time.time()
-        duration = SHOP_CONCUBINE_DURATION_SECS if tax_type == "concubine" else SHOP_SIMP_DURATION_SECS
-        expires_ts = int(activated_at + duration)
-        simp_data = {"master": uid, "type": tax_type, "channel_id": ctx.channel.id, "activated_at": activated_at}
-        state.active_simps[target.id] = simp_data
-        save_simp(state.active_simps)
-        title = "🍆 Concubine Tax Activated" if tax_type == "concubine" else "🍆 Simp Tax Activated"
+        expires_ts = int(activated_at + SHOP_TAX_DURATION_SECS)
+        tax_data = {"master": uid, "type": tax_type, "emoji": tax_emoji, "channel_id": ctx.channel.id, "activated_at": activated_at}
+        state.active_taxes[target.id] = tax_data
+        save_tax(state.active_taxes)
+        label = tax_type.capitalize()
         await ctx.send(embed=emb(
-            title,
-            f"**{target.display_name}** now owes **{ctx.author.display_name}** **{SHOP_SIMP_TAX_PER_MESSAGE:,} 🪙** per message! Expires <t:{expires_ts}:R>.",
+            f"{tax_emoji} {label} Tax Activated",
+            f"**{target.display_name}** now owes **{ctx.author.display_name}** **{SHOP_TAX_PER_MESSAGE:,} 🪙** per message! Expires <t:{expires_ts}:R>.",
             C_PURPLE,
         ))
 
@@ -1412,9 +1456,9 @@ class ShopCog(commands.Cog):
     async def cmd_mute(self, ctx: commands.Context, *args):
         await self.shop_mute(ctx, *args)
 
-    @commands.command(name="simp", aliases=["concubine"])
-    async def cmd_simp(self, ctx: commands.Context, *args):
-        await self.shop_simp(ctx, *args)
+    @commands.command(name="tax")
+    async def cmd_tax(self, ctx: commands.Context, *args):
+        await self.shop_tax(ctx, *args)
 
     @commands.command(name="curse")
     async def cmd_curse(self, ctx: commands.Context, *args):

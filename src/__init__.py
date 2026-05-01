@@ -17,7 +17,7 @@ from src.state import (
     roleplay_histories, active_race_games, active_chess_games,
     active_puzzles, active_ragebaits, active_ttt_games, active_c4_games,
     rigged_slots, gambler_streak, quote_log, channel_histories,
-    fanfic_thread_ids, fanfic_owners, active_mocks, active_simps,
+    fanfic_thread_ids, fanfic_owners, active_mocks, active_taxes,
     active_curses,
 )
 

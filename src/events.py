@@ -37,7 +37,7 @@ from src.persistence import (
     save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
-    save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
+    save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg,
 )
 from src.ai import (
@@ -58,11 +58,11 @@ from src.config import (
     BLACKJACK_NATURAL_MULT, SCRATCH_SYMBOLS, SCRATCHOFF_MAX_DAILY, SCRATCHOFF_PAYOUTS,
     SHOP_NICKNAME_SELF_COST, SHOP_NICKNAME_REMOVE_COST, SHOP_NICKNAME_OTHER_COST,
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_MOVE_COST,
-    SHOP_ROLECOLOR_COST, SHOP_CHANNEL_COST, SHOP_INSURANCE_COST, SHOP_SIMP_COST,
+    SHOP_ROLECOLOR_COST, SHOP_CHANNEL_COST, SHOP_INSURANCE_COST, SHOP_TAX_COST,
     SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST,
     SHOP_INSURANCE_DURATION_SECS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
-    SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_SIMP_TAX_PER_MESSAGE,
-    SHOP_SIMP_DURATION_SECS, SHOP_CONCUBINE_DURATION_SECS, SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
+    SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_TAX_PER_MESSAGE,
+    SHOP_TAX_DURATION_SECS, SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
     DAILY_REWARD, DAILY_RESET_HOUR, INITIAL_BOT_ADMIN_ID,
 )
 from src import state
@@ -373,34 +373,33 @@ class EventsCog(commands.Cog):
                 del state.active_mocks[uid]
             save_mock()
 
-        # Simp/Concubine tax: deduct coins from users who have a tax on them
-        _simp_channel = state.active_simps.get(uid, {}).get("channel_id")
-        if uid in state.active_simps and not message.content.startswith("!") and (_simp_channel is None or message.channel.id == _simp_channel):
-            simp_data = state.active_simps[uid]
-            tax_type = simp_data["type"]
+        # Tax: deduct coins from users who have an active tax on them
+        _tax_channel = state.active_taxes.get(uid, {}).get("channel_id")
+        if uid in state.active_taxes and not message.content.startswith("!") and (_tax_channel is None or message.channel.id == _tax_channel):
+            tax_data = state.active_taxes[uid]
+            tax_type = tax_data.get("type", "tax")
 
-            # Check if simp/concubine has expired (24h)
-            duration = SHOP_CONCUBINE_DURATION_SECS if tax_type == "concubine" else SHOP_SIMP_DURATION_SECS
-            if "activated_at" in simp_data and time.time() - simp_data["activated_at"] > duration:
-                del state.active_simps[uid]
-                save_simp(state.active_simps)
-            elif is_insured(uid, "simp"):
+            if "activated_at" in tax_data and time.time() - tax_data["activated_at"] > SHOP_TAX_DURATION_SECS:
+                del state.active_taxes[uid]
+                save_tax(state.active_taxes)
+            elif is_insured(uid, "tax"):
                 pass
             else:
-                simp_master_id = simp_data["master"]
-                tax_label = "Concubine" if tax_type == "concubine" else "Simp"
-                if deduct_balance(uid, SHOP_SIMP_TAX_PER_MESSAGE):
-                    add_balance(simp_master_id, SHOP_SIMP_TAX_PER_MESSAGE)
-                    simp_master = await fetch_member(message.guild, simp_master_id)
-                    if simp_master:
-                        master_name = simp_master.display_name
+                tax_master_id = tax_data["master"]
+                tax_label = tax_type.capitalize()
+                tax_emoji = tax_data.get("emoji", "💰")
+                if deduct_balance(uid, SHOP_TAX_PER_MESSAGE):
+                    add_balance(tax_master_id, SHOP_TAX_PER_MESSAGE)
+                    tax_master = await fetch_member(message.guild, tax_master_id)
+                    if tax_master:
+                        master_name = tax_master.display_name
                     else:
                         try:
-                            user = await self.bot.fetch_user(simp_master_id)
+                            user = await self.bot.fetch_user(tax_master_id)
                             master_name = user.display_name
                         except (discord.NotFound, discord.HTTPException):
-                            master_name = str(simp_master_id)
-                    await message.channel.send(f"**{message.author.display_name}** paid a **{SHOP_SIMP_TAX_PER_MESSAGE:,} 🪙** {tax_label} tax to **{master_name}**")
+                            master_name = str(tax_master_id)
+                    await message.channel.send(f"{tax_emoji} **{message.author.display_name}** paid a **{SHOP_TAX_PER_MESSAGE:,} 🪙** {tax_label} tax to **{master_name}**")
 
         # Curse: corrupt cursed users' messages
         if uid in state.active_curses and not message.content.startswith("!"):

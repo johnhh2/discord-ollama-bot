@@ -38,7 +38,7 @@ from src.persistence import (
     save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
-    save_quote_log, save_saved_quotes, save_simp, save_curse, save_lottery,
+    save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg,
 )
 from src.ai import (
@@ -59,11 +59,11 @@ from src.config import (
     BLACKJACK_NATURAL_MULT, SCRATCH_SYMBOLS, SCRATCHOFF_MAX_DAILY, SCRATCHOFF_PAYOUTS,
     SHOP_NICKNAME_SELF_COST, SHOP_NICKNAME_REMOVE_COST, SHOP_NICKNAME_OTHER_COST,
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_MOVE_COST,
-    SHOP_ROLECOLOR_COST, SHOP_CHANNEL_COST, SHOP_INSURANCE_COST, SHOP_SIMP_COST,
+    SHOP_ROLECOLOR_COST, SHOP_CHANNEL_COST, SHOP_INSURANCE_COST, SHOP_TAX_COST,
     SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST,
     SHOP_INSURANCE_DURATION_SECS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
-    SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_SIMP_TAX_PER_MESSAGE,
-    SHOP_CONCUBINE_DURATION_SECS, SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
+    SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_TAX_PER_MESSAGE,
+    SHOP_TAX_DURATION_SECS, SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
     DAILY_REWARD, DAILY_RESET_HOUR, INITIAL_BOT_ADMIN_ID,
 )
 from src import state
@@ -121,6 +121,8 @@ class SettingsCog(commands.Cog):
             rl_val = "none"
 
         gambler_role_val = "✅ enabled" if cfg.get("gambler_role_enabled", False) else "❌ disabled"
+        tax_aliases = cfg.get("tax_aliases", {})
+        tax_aliases_val = ", ".join(f"{v} `!{k}`" for k, v in tax_aliases.items()) if tax_aliases else "none"
 
         embed = discord.Embed(title="⚙️ Server Settings", color=C_BLUE)
         embed.add_field(name="🤖 AI channels", value=ai_val, inline=False)
@@ -134,6 +136,7 @@ class SettingsCog(commands.Cog):
         embed.add_field(name="📊 Level-up channel", value=levelup_val, inline=False)
         embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
         embed.add_field(name="🎲 Gambler role", value=gambler_role_val, inline=False)
+        embed.add_field(name="🏷️ Tax aliases", value=tax_aliases_val, inline=False)
         footer_text = (
             "Subcommands:\n"
             "ai-channels #ch... / clear\n"
@@ -146,7 +149,8 @@ class SettingsCog(commands.Cog):
             "lottery-channel #channel / clear\n"
             "soundboard-ratelimit add|remove @user|<userid> / list\n"
             "gambler-role on|off\n"
-            "channel-levelup #channel / clear"
+            "channel-levelup #channel / clear\n"
+            "tax-aliases add|remove <word> / list / clear"
         )
         embed.set_footer(text=footer_text)
         await send_ephemeral(ctx, embed=embed)
@@ -517,6 +521,70 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("📊 Level-Up Channel", f"Level-up announcements will be sent to {channel.mention}.", C_GREEN))
         else:
             await ctx.send(embed=emb("📊 Level-Up Channel", "Usage: `!settings channel-levelup #channel` or `!settings channel-levelup clear`", C_GREY))
+
+
+    # ── !settings tax-aliases ─────────────────────────────────────────────────
+    @cmd_settings.command(name="tax-aliases")
+    async def settings_tax_aliases(self, ctx: commands.Context, *args):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        if not await check_command_permission(ctx):
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        aliases: dict = cfg.setdefault("tax_aliases", {})
+
+        if not args:
+            await ctx.send(embed=emb(
+                "⚙️ Tax Aliases",
+                "Usage: `!settings tax-aliases add <word> [emoji]` / `remove <word>` / `list` / `clear`\n"
+                "Aliases let users type `!shop <alias> @user` or `!<alias> @user` to apply a tax "
+                "announced as the **<alias> tax**. An optional emoji is shown in the tax message.",
+                C_GREY,
+            ))
+            return
+
+        action = args[0].lower()
+
+        if action == "list":
+            val = "\n".join(f"{v} `!{k}`" for k, v in aliases.items()) if aliases else "none"
+            await ctx.send(embed=emb("🏷️ Tax Aliases", val, C_GOLD))
+
+        elif action == "clear":
+            cfg["tax_aliases"] = {}
+            save_guild_settings()
+            await ctx.send(embed=emb("🏷️ Tax Aliases", "All aliases cleared.", C_GREEN))
+
+        elif action == "add":
+            if len(args) < 2:
+                await ctx.send(embed=emb("⚙️ Tax Aliases", "Usage: `!settings tax-aliases add <word> [emoji]`", C_GREY))
+                return
+            word = args[1].lower()
+            if not word.isalpha():
+                await ctx.send(embed=emb("❌ Invalid Alias", "Alias must be a single word (letters only).", C_RED))
+                return
+            if word in aliases:
+                await ctx.send(embed=emb("🏷️ Tax Aliases", f"`{word}` is already an alias.", C_GREY))
+                return
+            emoji = args[2] if len(args) > 2 else "💰"
+            aliases[word] = emoji
+            save_guild_settings()
+            await ctx.send(embed=emb("🏷️ Tax Aliases", f"Added {emoji} `!{word}`. Users can now use `!shop {word} @user` or `!{word} @user`.", C_GREEN))
+
+        elif action == "remove":
+            if len(args) < 2:
+                await ctx.send(embed=emb("⚙️ Tax Aliases", "Usage: `!settings tax-aliases remove <word>`", C_GREY))
+                return
+            word = args[1].lower()
+            if word not in aliases:
+                await ctx.send(embed=emb("🏷️ Tax Aliases", f"`{word}` is not in the alias list.", C_GREY))
+                return
+            del aliases[word]
+            save_guild_settings()
+            await ctx.send(embed=emb("🏷️ Tax Aliases", f"Removed `{word}`.", C_GREEN))
+
+        else:
+            await ctx.send(embed=emb("⚙️ Tax Aliases", "Usage: `!settings tax-aliases add|remove <word> [emoji]` / `list` / `clear`", C_GREY))
 
 
 async def setup(bot):
