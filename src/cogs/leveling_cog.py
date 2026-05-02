@@ -389,29 +389,5 @@ class LevelingCog(commands.Cog):
         await ctx.send(embed=emb("📊 XP Leaderboard", "\n".join(lines), C_BLUE))
 
 
-    # ── !migratelevels ────────────────────────────────────────────────────────
-    @commands.command(name="migratelevels")
-    async def cmd_migratelevels(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
-        if ctx.guild is None:
-            await ctx.send(embed=emb("❌", "Run this in a server.", 0xe74c3c))
-            return
-        guild_data = state.leveling.get(str(ctx.guild.id), {})
-        updated = 0
-        for rec in guild_data.values():
-            correct = level_from_xp(rec.get("xp", 0))
-            if rec.get("level") != correct:
-                rec["level"] = correct
-                updated += 1
-        if updated:
-            await save_leveling()
-        await ctx.send(embed=emb(
-            "✅ Migration complete",
-            f"Recomputed levels for **{updated}** user(s).",
-            C_GREEN,
-        ))
-
-
 async def setup(bot):
     await bot.add_cog(LevelingCog(bot))

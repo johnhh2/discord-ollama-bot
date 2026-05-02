@@ -24,7 +24,6 @@
   "settings":      {"tier": "server_admin", "hidden": false},
   "clearbot":      {"tier": "server_admin", "hidden": false},
   "say":           {"tier": "server_admin", "hidden": false},
-  "migratelevels": {"tier": "server_admin", "hidden": false},
   "adminhelp":     {"tier": "server_admin", "hidden": false},
   "graph":         {"tier": "everyone",    "hidden": false},
   "economy":       {"tier": "everyone",    "hidden": false},
