@@ -1,6 +1,7 @@
 {
   "godmode":       {"tier": "bot_admin", "hidden": true},
   "adminragebait": {"tier": "bot_admin", "hidden": true},
+  "adminjailbreak": {"tier": "bot_admin",  "hidden": true},
   "admingive":     {"tier": "bot_admin", "hidden": true},
   "restart":       {"tier": "bot_admin", "hidden": true},
   "setperm":       {"tier": "bot_admin", "hidden": true},
@@ -27,6 +28,5 @@
   "tax":           {"tier": "everyone",    "hidden": false},
   "crime":         {"tier": "everyone",    "hidden": false},
   "mug":           {"tier": "everyone",    "hidden": false},
-  "jailbreak":     {"tier": "everyone",    "hidden": false},
-  "adminjailbreak": {"tier": "bot_admin",  "hidden": true}
+  "jailbreak":     {"tier": "everyone",    "hidden": false}
 }
