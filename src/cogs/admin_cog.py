@@ -463,7 +463,8 @@ class AdminCog(commands.Cog):
             return
         msg = await ctx.send(embed=emb("🔄 Restarting", "Bot is restarting...", C_GOLD))
         await save_restart_msg(msg.channel.id, msg.id)
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        await self.bot.close()
+        os._exit(0)
 
 
     @commands.command(name="setperm")
