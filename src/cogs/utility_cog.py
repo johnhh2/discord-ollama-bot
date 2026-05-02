@@ -828,16 +828,7 @@ class UtilityCog(commands.Cog):
             return
         admin_embed = discord.Embed(title="⚙️ Admin Commands", color=C_GOLD)
         admin_embed.add_field(name="🔧 Server Settings", inline=False, value=(
-            "`!settings` — View current server settings\n"
-            "`!settings ai-channels #ch... / clear` — Restrict AI commands to channels\n"
-            "`!settings cmd-whitelist #ch... / clear` — Allow commands only in channels\n"
-            "`!settings cmd-blacklist #ch... / clear` — Disallow commands in channels\n"
-            "`!settings chess-channels #ch... / clear` — Restrict chess to channels\n"
-            "`!settings shop <item> on|off` — Toggle shop items\n"
-            "`!settings quote bypass on|off` — Allow searchquote in any channel (bypass restrictions)\n"
-            "`!settings nsfw on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` — NSFW config\n"
-            "`!settings nsfw-alias add|remove <word> [tags...] / list / clear` — custom NSFW command aliases\n"
-            "`!settings soundboard-ratelimit add|remove @user|<userid> / list` — Soundboard rate-limit list"
+            "`!settings` — View current server settings"
         ))
         admin_embed.add_field(name="🔍 Moderation", inline=False, value=(
             "`!audit` — Last 5 failed command attempts\n"
