@@ -68,7 +68,11 @@ SLOT_JACKPOT_SEED = 5_000
 SLOT_JACKPOT_CONTRIB = 0.02
 SLOT_HOUSE_CHANCE = 0.05
 
-INITIAL_BOT_ADMIN_ID = 139928946044174336
+INITIAL_BOT_ADMIN_IDS = [
+    int(uid.strip())
+    for uid in os.getenv("BOT_ADMIN_IDS", "").split(",")
+    if uid.strip().isdigit()
+]
 
 # Scratchoff lottery configuration
 SCRATCH_SYMBOLS = ["🍒", "🍋", "🍇", "🍊"]
