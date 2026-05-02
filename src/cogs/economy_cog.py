@@ -702,13 +702,10 @@ class EconomyCog(commands.Cog):
             f"**Users with savings:** {users_with_savings:,}\n"
             f"**Users in jail:** {jailed:,}\n\n"
             "**Economy commands:**\n"
-            "`!daily` — Claim daily 🪙\n"
             "`!balance [@user]` — Check wallet\n"
             "`!pay @user <amount>` — Send coins\n"
             "`!savings` — Piggy bank (1% daily interest)\n"
             "`!crime` — Steal, mug, jailbreak\n"
-            "`!leaderboard` — Top 10 richest\n"
-            "`!records` — All-time records\n"
             "`!lottery` — Weekly lottery info\n"
             "`!shop` — Spend coins"
         )
