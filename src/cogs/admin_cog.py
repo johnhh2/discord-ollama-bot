@@ -35,12 +35,13 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply, check_command_permission,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg, save_command_perms,
+    save_restart_msg,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
@@ -50,7 +51,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -88,7 +89,7 @@ class AdminCog(commands.Cog):
             state.godmode_users.add(target_user.id)
             status = "enabled"
 
-        save_godmode_users()
+        await save_godmode_users()
         await ctx.send(embed=emb("👑 Godmode", f"Godmode **{status}** for {target_user.mention}.", C_GOLD))
 
 
@@ -112,7 +113,7 @@ class AdminCog(commands.Cog):
             return
 
         state.active_ragebaits[target.id] = {"remaining": count, "history": []}
-        save_ragebait()
+        await save_ragebait()
         await ctx.send(embed=emb(
             "🎭 Ragebait Activated",
             f"Ragebait enabled for user `{target.id}` (next **{count}** message(s))",
@@ -133,7 +134,7 @@ class AdminCog(commands.Cog):
             await ctx.send(embed=emb("⚙️ Model", f"Current model: `{current}`", C_GREY))
             return
         cfg["ask_model"] = model_name
-        save_guild_settings()
+        await save_guild_settings()
         await ctx.send(embed=emb("⚙️ Model", f"Switched to `{model_name}`", C_GREY))
 
 
@@ -150,7 +151,7 @@ class AdminCog(commands.Cog):
             await ctx.send(embed=emb("⚙️ Roleplay Model", f"Current roleplay model: `{current}`", C_GREY))
             return
         cfg["roleplay_model"] = model_name
-        save_guild_settings()
+        await save_guild_settings()
         await ctx.send(embed=emb("⚙️ Roleplay Model", f"Switched to `{model_name}`", C_GREY))
 
 
@@ -167,7 +168,7 @@ class AdminCog(commands.Cog):
             await ctx.send(embed=emb("⚙️ Coding Model", f"Current coding puzzle model: `{current}`", C_GREY))
             return
         cfg["coding_model"] = model_name
-        save_guild_settings()
+        await save_guild_settings()
         await ctx.send(embed=emb("⚙️ Coding Model", f"Switched to `{model_name}`", C_GREY))
 
 
@@ -179,7 +180,7 @@ class AdminCog(commands.Cog):
             await ctx.send(embed=emb("⚙️ vRAM Text", state.bot_settings.get("vram_text", "16GB"), C_GREY))
             return
         state.bot_settings["vram_text"] = text
-        save_bot_settings()
+        await save_bot_settings()
         await ctx.send(embed=emb("⚙️ vRAM Text", f"Set to: {text}", C_GREY))
 
 
@@ -326,7 +327,7 @@ class AdminCog(commands.Cog):
             return
         try:
             event["rewarded"].add(user.id)
-            add_balance(user.id, event["amount"])
+            await add_balance(user.id, event["amount"])
         except Exception as e:
             logging.error(f"[event] Error rewarding {user.id}: {e}")
             event["rewarded"].discard(user.id)
@@ -346,12 +347,12 @@ class AdminCog(commands.Cog):
                 if self.bot.user and target.id == self.bot.user.id:
                     amount = max(amount, -1 * get_guild_house_balance(ctx.guild.id if ctx.guild else 0))
                 else:
-                    amount = max(amount, -1*get_balance(target.id))
+                    amount = max(amount, -1 * await get_balance(target.id))
         except (ValueError, AssertionError):
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a non-zero whole number.", C_RED))
             return
         if self.bot.user and target.id == self.bot.user.id and ctx.guild:
-            add_guild_house(ctx.guild.id, amount)
+            await add_guild_house(ctx.guild.id, amount)
             action = "given to" if amount > 0 else "removed from"
             await ctx.send(embed=emb(
                 "💸 Give",
@@ -360,12 +361,12 @@ class AdminCog(commands.Cog):
                 C_GOLD,
             ))
         else:
-            add_balance(target.id, amount)
+            await add_balance(target.id, amount)
             action = "given" if amount > 0 else "removed"
             await ctx.send(embed=emb(
                 "💸 Give",
                 f"**{abs(amount):,} 🪙** {action} {'to' if amount > 0 else 'from'} **{target.display_name}**. "
-                f"New balance: {get_balance(target.id):,} 🪙",
+                f"New balance: {await get_balance(target.id):,} 🪙",
                 C_GOLD,
             ))
 
@@ -461,7 +462,7 @@ class AdminCog(commands.Cog):
         if not await check_command_permission(ctx):
             return
         msg = await ctx.send(embed=emb("🔄 Restarting", "Bot is restarting...", C_GOLD))
-        _save_json(RESTART_MSG_FILE, {"channel_id": msg.channel.id, "message_id": msg.id})
+        await save_restart_msg(msg.channel.id, msg.id)
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
@@ -478,7 +479,7 @@ class AdminCog(commands.Cog):
             return
         hidden_bool = hidden.lower() in ("true", "1", "yes")
         state.command_perms[command_name] = {"tier": tier, "hidden": hidden_bool}
-        save_command_perms()
+        await save_command_perms()
         await ctx.send(embed=emb(
             "✅ Permission Updated",
             f"`!{command_name}` → tier: **{tier}**, hidden: **{hidden_bool}**",

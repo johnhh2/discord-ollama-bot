@@ -35,8 +35,8 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply, check_command_permission,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    _load_json, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots, save_rigged_steal,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
@@ -50,7 +50,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -78,7 +78,7 @@ class EconomyCog(commands.Cog):
     @commands.command(name="daily")
     async def cmd_daily(self, ctx: commands.Context):
         uid = ctx.author.id
-        _ensure_user(uid)
+        await _ensure_user(uid)
         today = _ct_today()
         user_data = state.economy["users"][str(uid)]
         if user_data.get("daily_date") == today:
@@ -94,11 +94,11 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb("⏳ Already Claimed", f"**{ctx.author.display_name}** already claimed today. Resets at **{DAILY_RESET_HOUR}am** — come back in **{hours}h {minutes}m**.", C_GOLD))
             return
         gid = ctx.guild.id if ctx.guild else None
-        add_balance(uid, DAILY_REWARD, guild_id=gid, holder_name=ctx.author.display_name)
+        await add_balance(uid, DAILY_REWARD, guild_id=gid, holder_name=ctx.author.display_name)
         user_data["daily_date"] = today
         user_data["last_daily"] = time.time()
-        save_economy()
-        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**! Balance: **{get_balance(uid):,} 🪙**", C_GREEN))
+        await save_economy()
+        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**! Balance: **{await get_balance(uid):,} 🪙**", C_GREEN))
 
 
     @commands.command(name="balance", aliases=["bal", "b", "!", "$"])
@@ -108,7 +108,7 @@ class EconomyCog(commands.Cog):
             bal = get_guild_house_balance(ctx.guild.id)
             await ctx.send(embed=emb("🏦 House Pot", f"**{ctx.guild.name}**: {bal:,} 🪙", C_GOLD))
         else:
-            bal = get_balance(target.id)
+            bal = await get_balance(target.id)
             await ctx.send(embed=emb("💰 Balance", f"**{target.display_name}**: {bal:,} 🪙", C_GREEN))
 
 
@@ -117,7 +117,7 @@ class EconomyCog(commands.Cog):
         if ctx.guild is None:
             await ctx.send("Leaderboard is only available in servers.")
             return
-        lottery = load_lottery(ctx.guild.id)
+        lottery = await load_lottery(ctx.guild.id)
         lottery_players = lottery.get("players", {})
         sorted_users = sorted(
             ((k, v) for k, v in state.economy["users"].items() if v["balance"] > 0 or k in lottery_players),
@@ -156,7 +156,7 @@ class EconomyCog(commands.Cog):
         if not await check_command_permission(ctx):
             return
         uid = ctx.author.id
-        _ensure_user(uid)
+        await _ensure_user(uid)
         jail_until = state.economy["users"][str(uid)].get("jail_until", 0)
         if time.time() < jail_until:
             jail_status = f"🚔 **You are in jail!** Released <t:{int(jail_until)}:R>."
@@ -208,8 +208,8 @@ class EconomyCog(commands.Cog):
             await ctx.send("You can't steal from the house.")
             return
 
-        _ensure_user(thief_id)
-        _ensure_user(victim_id)
+        await _ensure_user(thief_id)
+        await _ensure_user(victim_id)
 
         thief_data = state.economy["users"][str(thief_id)]
 
@@ -227,20 +227,20 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb("⏳ Already Running", "You already have a crime in progress — wait for it to finish.", C_RED))
             return
 
-        if is_insured(victim_id, "steal"):
+        if await is_insured(victim_id, "steal"):
             _exp = get_insurance_expiry(victim_id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance — you can't rob them! (expires <t:{_exp}:R>)", C_GOLD))
             return
 
         steal_chance, steal_pct, jail_chance, fee, jail_days = TIERS[tier_num - 1]
-        victim_bal = get_balance(victim_id)
+        victim_bal = await get_balance(victim_id)
         steal_amount = max(1, int(victim_bal * steal_pct))
 
         if thief_id in state.rigged_steal:
             state.rigged_steal[thief_id] -= 1
             if state.rigged_steal[thief_id] <= 0:
                 del state.rigged_steal[thief_id]
-            save_rigged_steal()
+            await save_rigged_steal()
             success = True
         else:
             roll = random.random()
@@ -288,36 +288,36 @@ class EconomyCog(commands.Cog):
                 if steal_amount <= 0:
                     result_embed = emb("🦹 Heist Failed", f"**{target.display_name}** is broke — nothing to steal!", C_RED)
                 else:
-                    deduct_balance(victim_id, steal_amount)
-                    add_balance(thief_id, steal_amount, guild_id=ctx.guild.id if ctx.guild else None, holder_name=ctx.author.display_name)
+                    await deduct_balance(victim_id, steal_amount)
+                    await add_balance(thief_id, steal_amount, guild_id=ctx.guild.id if ctx.guild else None, holder_name=ctx.author.display_name)
                     result_embed = emb(
                         "🦹 Successful Heist!",
                         f"**{ctx.author.display_name}** stole **{steal_amount:,} 🪙** from **{target.display_name}**!\n"
-                        f"Your balance: **{get_balance(thief_id):,} 🪙**",
+                        f"Your balance: **{await get_balance(thief_id):,} 🪙**",
                         C_GREEN,
                     )
             else:
                 jailed = random.random() < jail_chance
-                actual_fine = min(fee, get_balance(thief_id))
+                actual_fine = min(fee, await get_balance(thief_id))
                 if jailed:
                     jail_until_ts = time.time() + jail_days * 86400
                     thief_data["jail_until"] = jail_until_ts
-                    save_economy()
-                    deduct_balance(thief_id, actual_fine)
+                    await save_economy()
+                    await deduct_balance(thief_id, actual_fine)
                     result_embed = emb(
                         "🚔 Caught & Jailed!",
                         f"**{ctx.author.display_name}** was caught stealing from **{target.display_name}**!\n"
                         f"Fined **{actual_fine:,} 🪙** and jailed until <t:{int(jail_until_ts)}:F> (<t:{int(jail_until_ts)}:R>).\n"
-                        f"Balance: **{get_balance(thief_id):,} 🪙**",
+                        f"Balance: **{await get_balance(thief_id):,} 🪙**",
                         C_RED,
                     )
                 else:
-                    deduct_balance(thief_id, actual_fine)
+                    await deduct_balance(thief_id, actual_fine)
                     result_embed = emb(
                         "🚔 Caught!",
                         f"**{ctx.author.display_name}** was caught stealing from **{target.display_name}**!\n"
                         f"Fined **{actual_fine:,} 🪙**. You got lucky — no jail time.\n"
-                        f"Balance: **{get_balance(thief_id):,} 🪙**",
+                        f"Balance: **{await get_balance(thief_id):,} 🪙**",
                         C_ORANGE,
                     )
 
@@ -329,7 +329,7 @@ class EconomyCog(commands.Cog):
     @commands.command(name="jail")
     async def cmd_jail(self, ctx: commands.Context, target: MemberConverter = None):
         member = target or ctx.author
-        _ensure_user(member.id)
+        await _ensure_user(member.id)
         jail_until = state.economy["users"][str(member.id)].get("jail_until", 0)
         if time.time() < jail_until:
             await ctx.send(embed=emb(
@@ -350,7 +350,7 @@ class EconomyCog(commands.Cog):
         if not await check_command_permission(ctx):
             return
         uid = ctx.author.id
-        _ensure_user(uid)
+        await _ensure_user(uid)
 
         today = _ct_today()
         if state.economy.get("last_daily_reset") != today:
@@ -369,11 +369,11 @@ class EconomyCog(commands.Cog):
             return
 
         user_data["jailbreak_used"] = True
-        save_economy()
+        await save_economy()
 
         if random.random() < 0.20:
             user_data["jail_until"] = 0
-            save_economy()
+            await save_economy()
             await ctx.send(embed=emb(
                 "🏃 Escaped!",
                 f"**{ctx.author.display_name}** dug a tunnel under the fence and slipped out! You're free.",
@@ -394,10 +394,10 @@ class EconomyCog(commands.Cog):
         if target is None:
             await ctx.send(embed=emb("❌ Usage", "`!adminjailbreak @user`", C_RED))
             return
-        _ensure_user(target.id)
+        await _ensure_user(target.id)
         user_data = state.economy["users"][str(target.id)]
         user_data["jail_until"] = 0
-        save_economy()
+        await save_economy()
         await ctx.send(embed=emb("🔓 Released", f"**{target.display_name}** has been freed from jail.", C_GREEN))
 
     @commands.command(name="mug")
@@ -406,7 +406,7 @@ class EconomyCog(commands.Cog):
             return
         uid = ctx.author.id
 
-        _ensure_user(uid)
+        await _ensure_user(uid)
         jail_until = state.economy["users"][str(uid)].get("jail_until", 0)
         if time.time() < jail_until:
             await ctx.send(embed=emb("🚔 In Jail", f"You can't mug anyone from behind bars! Released <t:{int(jail_until)}:R>.", C_RED))
@@ -434,17 +434,17 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Amount", "Amount must be positive.", C_RED))
             return
 
-        if is_insured(target.id, "steal"):
+        if await is_insured(target.id, "steal"):
             _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be mugged (expires <t:{_exp}:R>).", C_GOLD))
             return
 
-        target_bal = get_balance(target.id)
+        target_bal = await get_balance(target.id)
         if target_bal <= 0:
             await ctx.send(embed=emb("❌ Broke Target", f"**{target.display_name}** has no coins to steal.", C_RED))
             return
 
-        your_bal = get_balance(uid)
+        your_bal = await get_balance(uid)
         if target_bal < your_bal * 0.2:
             await ctx.send(embed=emb("❌ Too Easy", f"**{target.display_name}** has less than 20% of your balance — find someone your own size.", C_RED))
             return
@@ -490,16 +490,16 @@ class EconomyCog(commands.Cog):
                 await asyncio.sleep(0.6)
 
             actual_steal = min(parsed, target_bal)
-            deduct_balance(target.id, actual_steal)
+            await deduct_balance(target.id, actual_steal)
 
             if jailed:
                 jail_until_ts = time.time() + 86400
                 state.economy["users"][str(uid)]["jail_until"] = jail_until_ts
-                save_economy()
+                await save_economy()
                 result_embed = emb(
                     "🔪 Mugged — but Caught!",
                     f"**{ctx.author.display_name}** paid **{parsed:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
-                    f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**\n\n"
+                    f"**{target.display_name}**'s balance: **{await get_balance(target.id):,} 🪙**\n\n"
                     f"🚔 A witness called the cops — **{ctx.author.display_name}** is jailed until <t:{int(jail_until_ts)}:F> (<t:{int(jail_until_ts)}:R>)!",
                     C_RED,
                 )
@@ -507,7 +507,7 @@ class EconomyCog(commands.Cog):
                 result_embed = emb(
                     "🔪 Mugged!",
                     f"**{ctx.author.display_name}** paid **{parsed:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
-                    f"**{target.display_name}**'s balance: **{get_balance(target.id):,} 🪙**",
+                    f"**{target.display_name}**'s balance: **{await get_balance(target.id):,} 🪙**",
                     C_ORANGE,
                 )
             await msg.edit(embed=result_embed)
@@ -521,7 +521,7 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb("🏆 Records", "Records are only available in servers.", C_RED))
             return
 
-        r = load_records(ctx.guild.id)
+        r = await load_records(ctx.guild.id)
 
         def fmt(cat: str, label: str, extra_fn=None) -> str:
             rec = r.get(cat)
@@ -569,7 +569,7 @@ class EconomyCog(commands.Cog):
         if not await check_command_permission(ctx):
             return
         uid = ctx.author.id
-        _ensure_user(uid)
+        await _ensure_user(uid)
 
         # Support fused tokens: !savings +1000 or !savings -500
         if action is not None and action[0] in ("+", "-") and len(action) > 1:
@@ -585,7 +585,7 @@ class EconomyCog(commands.Cog):
         show_principals = action in ("principals", "principal")
 
         if action is None or action not in ("add", "remove"):
-            value = get_savings_value(uid)
+            value = await get_savings_value(uid)
             deposits = state.economy["users"][str(uid)].get("savings", [])
             if not deposits:
                 desc = (
@@ -640,35 +640,35 @@ class EconomyCog(commands.Cog):
             return
 
         if action == "add":
-            if not add_savings(uid, parsed):
-                bal = get_balance(uid)
+            if not await add_savings(uid, parsed):
+                bal = await get_balance(uid)
                 await ctx.send(embed=emb(
                     "❌ Insufficient Funds",
                     f"You only have **{bal:,} 🪙** in your wallet.",
                     C_RED,
                 ))
                 return
-            value = get_savings_value(uid)
+            value = await get_savings_value(uid)
             await ctx.send(embed=emb(
                 "🐷 Deposited",
                 f"**{ctx.author.display_name}** tucked away **{parsed:,} 🪙** into the piggy bank!\n"
-                f"Savings value: **{int(value):,} 🪙** | Wallet: **{get_balance(uid):,} 🪙**",
+                f"Savings value: **{int(value):,} 🪙** | Wallet: **{await get_balance(uid):,} 🪙**",
                 C_GREEN,
             ))
         else:  # remove
-            if not remove_savings(uid, parsed):
-                value = get_savings_value(uid)
+            if not await remove_savings(uid, parsed):
+                value = await get_savings_value(uid)
                 await ctx.send(embed=emb(
                     "❌ Insufficient Savings",
                     f"Your savings are only worth **{int(value):,} 🪙**.",
                     C_RED,
                 ))
                 return
-            value = get_savings_value(uid)
+            value = await get_savings_value(uid)
             await ctx.send(embed=emb(
                 "🐷 Withdrawn",
                 f"**{ctx.author.display_name}** smashed the piggy bank for **{parsed:,} 🪙**!\n"
-                f"Savings remaining: **{int(value):,} 🪙** | Wallet: **{get_balance(uid):,} 🪙**",
+                f"Savings remaining: **{int(value):,} 🪙** | Wallet: **{await get_balance(uid):,} 🪙**",
                 C_GREEN,
             ))
 
@@ -693,7 +693,7 @@ class EconomyCog(commands.Cog):
                 jailed += 1
 
         total_circulation = total_wallets + total_savings
-        lottery_pool = load_lottery(ctx.guild.id).get("prize_pool", 0) if ctx.guild else 0
+        lottery_pool = (await load_lottery(ctx.guild.id)).get("prize_pool", 0) if ctx.guild else 0
         house_bal = get_guild_house_balance(ctx.guild.id) if ctx.guild else 0
         total_users = len(users)
 
@@ -730,19 +730,19 @@ class EconomyCog(commands.Cog):
         if not await shop_charge(ctx, ctx.author.id, amount):
             return
         if self.bot.user and recipient.id == self.bot.user.id and ctx.guild:
-            add_guild_house(ctx.guild.id, amount)
+            await add_guild_house(ctx.guild.id, amount)
             await ctx.send(embed=emb(
                 "💸 Payment Sent",
                 f"**{ctx.author.display_name}** paid **{amount:,} 🪙** to the house pot.\n"
-                f"Your balance: **{get_balance(ctx.author.id):,} 🪙**",
+                f"Your balance: **{await get_balance(ctx.author.id):,} 🪙**",
                 C_GREEN,
             ))
             return
-        add_balance(recipient.id, amount)
+        await add_balance(recipient.id, amount)
         await ctx.send(embed=emb(
             "💸 Payment Sent",
             f"**{ctx.author.display_name}** paid **{recipient.display_name}** {amount:,} 🪙\n"
-            f"Your balance: **{get_balance(ctx.author.id):,} 🪙**",
+            f"Your balance: **{await get_balance(ctx.author.id):,} 🪙**",
             C_GREEN,
         ))
 

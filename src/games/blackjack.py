@@ -34,8 +34,8 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    _load_json, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
@@ -49,7 +49,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -141,16 +141,16 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
 
     if dval > 21 or pval > dval:
         gid = message.guild.id if message.guild else None
-        add_balance(uid, amount * 2, guild_id=gid, holder_name=uid_name)
-        try_set_record(gid, "blackjack", amount * 2, uid, uid_name,
+        await add_balance(uid, amount * 2, guild_id=gid, holder_name=uid_name)
+        await try_set_record(gid, "blackjack", amount * 2, uid, uid_name,
                        player_hand=format_hand(player), player_score=pval,
                        dealer_score=dval)
-        color, result = C_GREEN, f"✅ **{uid_name}** wins **{amount:,} 🪙**! Balance: {get_balance(uid):,} 🪙"
+        color, result = C_GREEN, f"✅ **{uid_name}** wins **{amount:,} 🪙**! Balance: {await get_balance(uid):,} 🪙"
     elif pval == dval:
-        add_balance(uid, amount)
-        color, result = C_GOLD, f"🤝 Push! Bet returned. Balance: {get_balance(uid):,} 🪙"
+        await add_balance(uid, amount)
+        color, result = C_GOLD, f"🤝 Push! Bet returned. Balance: {await get_balance(uid):,} 🪙"
     else:
-        color, result = C_RED, f"❌ Dealer wins. **{uid_name}** loses **{amount:,} 🪙**. Balance: {get_balance(uid):,} 🪙"
+        color, result = C_RED, f"❌ Dealer wins. **{uid_name}** loses **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙"
 
     await message.channel.send(embed=emb("🃏 Blackjack", display + f"\n\n{result}", color))
 
@@ -198,16 +198,16 @@ class BlackjackCog(commands.Cog):
             del state.active_blackjack_games[uid]
             full_display = build_blackjack_display(player, dealer, pval, hide_dealer=False, dval=dval, username=username)
             if dval == 21:
-                add_balance(uid, amount)
+                await add_balance(uid, amount)
                 await ctx.send(embed=emb("🃏 Blackjack — Push", full_display + "\n\nBoth have Blackjack! Bet returned.", C_GOLD))
             else:
                 winnings = int(amount * BLACKJACK_NATURAL_MULT)
                 gid = ctx.guild.id if ctx.guild else None
-                add_balance(uid, winnings, guild_id=gid, holder_name=username)
-                try_set_record(gid, "blackjack", winnings, uid, username,
+                await add_balance(uid, winnings, guild_id=gid, holder_name=username)
+                await try_set_record(gid, "blackjack", winnings, uid, username,
                                player_hand=format_hand(player), player_score=pval,
                                dealer_score=dval)
-                await ctx.send(embed=emb("🃏 Blackjack!", full_display + f"\n\n**{ctx.author.display_name}** wins **{winnings:,} 🪙**! Balance: {get_balance(uid):,} 🪙", C_GREEN))
+                await ctx.send(embed=emb("🃏 Blackjack!", full_display + f"\n\n**{ctx.author.display_name}** wins **{winnings:,} 🪙**! Balance: {await get_balance(uid):,} 🪙", C_GREEN))
             return
 
         await ctx.send(embed=emb("🃏 Blackjack", display + "\n\nType `hit` to draw a card or `stand` to hold.", C_BLUE))

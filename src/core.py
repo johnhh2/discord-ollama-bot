@@ -23,6 +23,7 @@ EXTENSIONS = [
     "src.cogs.lottery_cog",
     "src.cogs.leveling_cog",
     "src.cogs.graph_cog",
+    "src.cogs.migrate_cog",
     "src.events",
 ]
 

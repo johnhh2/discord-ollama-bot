@@ -34,8 +34,8 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply, check_command_permission,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    _load_json, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
@@ -49,7 +49,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -170,11 +170,11 @@ class SettingsCog(commands.Cog):
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
             cfg["ai_channels"] = []
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("⚙️ AI Channels", "AI channel restriction removed — all channels allowed.", C_GREEN))
         elif ctx.message.channel_mentions:
             cfg["ai_channels"] = [c.id for c in ctx.message.channel_mentions]
-            save_guild_settings()
+            await save_guild_settings()
             names = " ".join(c.mention for c in ctx.message.channel_mentions)
             await ctx.send(embed=emb("⚙️ AI Channels", f"AI commands restricted to: {names}", C_GREEN))
         else:
@@ -191,11 +191,11 @@ class SettingsCog(commands.Cog):
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
             cfg["command_whitelist"] = []
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("✅ Channel Whitelist", "Whitelist removed — commands allowed in all channels.", C_GREEN))
         elif ctx.message.channel_mentions:
             cfg["command_whitelist"] = [c.id for c in ctx.message.channel_mentions]
-            save_guild_settings()
+            await save_guild_settings()
             names = " ".join(c.mention for c in ctx.message.channel_mentions)
             await ctx.send(embed=emb("✅ Channel Whitelist", f"Commands restricted to: {names}\n(Note: `!settings` always works everywhere)", C_GREEN))
         else:
@@ -212,11 +212,11 @@ class SettingsCog(commands.Cog):
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
             cfg["command_blacklist"] = []
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("❌ Channel Blacklist", "Blacklist cleared — commands allowed in all channels.", C_GREEN))
         elif ctx.message.channel_mentions:
             cfg["command_blacklist"] = [c.id for c in ctx.message.channel_mentions]
-            save_guild_settings()
+            await save_guild_settings()
             names = " ".join(c.mention for c in ctx.message.channel_mentions)
             await ctx.send(embed=emb("❌ Channel Blacklist", f"Commands blocked in: {names}", C_GREEN))
         else:
@@ -233,11 +233,11 @@ class SettingsCog(commands.Cog):
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
             cfg["chess_channels"] = []
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("♟️ Chess Channels", "Chess channel restriction removed — all channels allowed.", C_GREEN))
         elif ctx.message.channel_mentions:
             cfg["chess_channels"] = [c.id for c in ctx.message.channel_mentions]
-            save_guild_settings()
+            await save_guild_settings()
             names = " ".join(c.mention for c in ctx.message.channel_mentions)
             await ctx.send(embed=emb("♟️ Chess Channels", f"Chess restricted to: {names}", C_GREEN))
         else:
@@ -254,11 +254,11 @@ class SettingsCog(commands.Cog):
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
             cfg["game_channels"] = []
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("🎮 Game Channels", "Game channel restriction removed — games and gambling allowed everywhere.", C_GREEN))
         elif ctx.message.channel_mentions:
             cfg["game_channels"] = [c.id for c in ctx.message.channel_mentions]
-            save_guild_settings()
+            await save_guild_settings()
             names = " ".join(c.mention for c in ctx.message.channel_mentions)
             await ctx.send(embed=emb("🎮 Game Channels", f"Games and gambling restricted to: {names}", C_GREEN))
         else:
@@ -282,7 +282,7 @@ class SettingsCog(commands.Cog):
         if "shop_items" not in cfg:
             cfg["shop_items"] = {}
         cfg["shop_items"][item] = enabled
-        save_guild_settings()
+        await save_guild_settings()
         status = "✅ enabled" if enabled else "❌ disabled"
         await ctx.send(embed=emb("⚙️ Shop", f"**{item}** is now {status}.", C_GREEN))
 
@@ -301,7 +301,7 @@ class SettingsCog(commands.Cog):
         action = args[0].lower()
         if action in ("on", "off"):
             cfg["nsfw_enabled"] = (action == "on")
-            save_guild_settings()
+            await save_guild_settings()
             status = "✅ enabled" if action == "on" else "❌ disabled"
             await ctx.send(embed=emb("⚙️ NSFW", f"NSFW commands are now {status}.", C_GREEN))
         elif action == "channels":
@@ -317,7 +317,7 @@ class SettingsCog(commands.Cog):
                 for channel in ctx.message.channel_mentions:
                     if channel.id not in nsfw_channels:
                         nsfw_channels.append(channel.id)
-                save_guild_settings()
+                await save_guild_settings()
                 names = " ".join(f"<#{cid}>" for cid in ctx.message.channel_mentions)
                 await ctx.send(embed=emb("⚙️ NSFW Channels", f"Added {names} to whitelist.", C_GREEN))
             elif channel_action == "remove":
@@ -327,7 +327,7 @@ class SettingsCog(commands.Cog):
                 for channel in ctx.message.channel_mentions:
                     if channel.id in nsfw_channels:
                         nsfw_channels.remove(channel.id)
-                save_guild_settings()
+                await save_guild_settings()
                 names = " ".join(f"<#{cid}>" for cid in ctx.message.channel_mentions)
                 await ctx.send(embed=emb("⚙️ NSFW Channels", f"Removed {names} from whitelist.", C_GREEN))
             elif channel_action == "list":
@@ -340,14 +340,14 @@ class SettingsCog(commands.Cog):
             banned = cfg.setdefault("nsfw_banned_tags", [])
             if tag not in banned:
                 banned.append(tag)
-                save_guild_settings()
+                await save_guild_settings()
             await ctx.send(embed=emb("⚙️ NSFW", f"Tag `{tag}` banned.", C_GREEN))
         elif action == "unban" and len(args) >= 2:
             tag = args[1].lower()
             banned = cfg.get("nsfw_banned_tags", [])
             if tag in banned:
                 banned.remove(tag)
-                save_guild_settings()
+                await save_guild_settings()
                 await ctx.send(embed=emb("⚙️ NSFW", f"Tag `{tag}` unbanned.", C_GREEN))
             else:
                 await ctx.send(embed=emb("⚙️ NSFW", f"Tag `{tag}` was not banned.", C_GREY))
@@ -394,7 +394,7 @@ class SettingsCog(commands.Cog):
 
         elif action == "clear":
             cfg["nsfw_aliases"] = {}
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("🔞 NSFW Aliases", "All aliases cleared.", C_GREEN))
 
         elif action == "add":
@@ -410,7 +410,7 @@ class SettingsCog(commands.Cog):
                 return
             tags = " ".join(args[2:]) if len(args) > 2 else ""
             aliases[word] = {"tags": tags}
-            save_guild_settings()
+            await save_guild_settings()
             tag_info = f" (pre-fills tags: `{tags}`)" if tags else ""
             await ctx.send(embed=emb("🔞 NSFW Aliases", f"Added `!{word}`{tag_info}.", C_GREEN))
 
@@ -423,7 +423,7 @@ class SettingsCog(commands.Cog):
                 await ctx.send(embed=emb("🔞 NSFW Aliases", f"`{word}` is not in the alias list.", C_GREY))
                 return
             del aliases[word]
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("🔞 NSFW Aliases", f"Removed `{word}`.", C_GREEN))
 
         else:
@@ -449,7 +449,7 @@ class SettingsCog(commands.Cog):
             bypass_action = args[1].lower()
             if bypass_action in ("on", "off"):
                 cfg["quote_bypass_restrictions"] = (bypass_action == "on")
-                save_guild_settings()
+                await save_guild_settings()
                 status = "✅ enabled" if bypass_action == "on" else "❌ disabled"
                 await ctx.send(embed=emb("⚙️ quote", f"Quote bypass is now {status} (quote works in any channel).", C_GREEN))
             else:
@@ -468,19 +468,19 @@ class SettingsCog(commands.Cog):
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
             cfg["lottery_channel"] = None
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("🎰 Lottery Channel", "Lottery disabled.", C_GREEN))
         elif ctx.message.channel_mentions:
             channel = ctx.message.channel_mentions[0]
             cfg["lottery_channel"] = channel.id
-            save_guild_settings()
+            await save_guild_settings()
 
             current_week = datetime.datetime.now().isocalendar()[1]
-            lottery = load_lottery(ctx.guild.id)
+            lottery = await load_lottery(ctx.guild.id)
             if lottery.get("last_posted_week", 0) != current_week:
                 lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
-                drain_bot_balance_into_lottery(lottery, ctx.guild.id)
-                save_lottery(ctx.guild.id, lottery)
+                await drain_bot_balance_into_lottery(lottery, ctx.guild.id)
+                await save_lottery(ctx.guild.id, lottery)
                 try:
                     await announce_new_lottery(channel, lottery["prize_pool"])
                 except:
@@ -520,7 +520,7 @@ class SettingsCog(commands.Cog):
                     rl_list.append(uid)
                     added.append(f"`{uid}`")
             if added:
-                save_guild_settings()
+                await save_guild_settings()
                 await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", f"Added: {' '.join(added)}", C_GREEN))
             else:
                 await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", "All users already in the list.", C_GREY))
@@ -543,7 +543,7 @@ class SettingsCog(commands.Cog):
                     rl_list.remove(uid)
                     removed.append(f"`{uid}`")
             if removed:
-                save_guild_settings()
+                await save_guild_settings()
                 await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", f"Removed: {' '.join(removed)}", C_RED))
             else:
                 await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", "None of those users were in the list.", C_GREY))
@@ -571,7 +571,7 @@ class SettingsCog(commands.Cog):
             return
         enabled = args[0].lower() == "on"
         cfg["gambler_role_enabled"] = enabled
-        save_guild_settings()
+        await save_guild_settings()
         status = "✅ enabled" if enabled else "❌ disabled"
         detail = "\nThe **Gamblers** role will be auto-created and assigned to users who use all 3 scratchoffs 2 days in a row. They will be pinged when a progressive jackpot is won." if enabled else ""
         await ctx.send(embed=emb("⚙️ Gambler Role", f"Gambler role tracking is now {status}.{detail}", C_GREEN))
@@ -587,12 +587,12 @@ class SettingsCog(commands.Cog):
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
             cfg["levelup_channel"] = None
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("📊 Level-Up Channel", "Level-up announcements disabled.", C_GREEN))
         elif ctx.message.channel_mentions:
             channel = ctx.message.channel_mentions[0]
             cfg["levelup_channel"] = channel.id
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("📊 Level-Up Channel", f"Level-up announcements will be sent to {channel.mention}.", C_GREEN))
         else:
             await ctx.send(embed=emb("📊 Level-Up Channel", "Usage: `!settings channel-levelup #channel` or `!settings channel-levelup clear`", C_GREY))
@@ -627,7 +627,7 @@ class SettingsCog(commands.Cog):
 
         elif action == "clear":
             cfg["tax_aliases"] = {}
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("🏷️ Tax Aliases", "All aliases cleared.", C_GREEN))
 
         elif action == "add":
@@ -643,7 +643,7 @@ class SettingsCog(commands.Cog):
                 return
             emoji = args[2] if len(args) > 2 else "💰"
             aliases[word] = emoji
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("🏷️ Tax Aliases", f"Added {emoji} `!{word}`. Users can now use `!shop {word} @user` or `!{word} @user`.", C_GREEN))
 
         elif action == "remove":
@@ -655,7 +655,7 @@ class SettingsCog(commands.Cog):
                 await ctx.send(embed=emb("🏷️ Tax Aliases", f"`{word}` is not in the alias list.", C_GREY))
                 return
             del aliases[word]
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("🏷️ Tax Aliases", f"Removed `{word}`.", C_GREEN))
 
         else:

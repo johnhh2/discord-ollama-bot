@@ -34,12 +34,12 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    _load_json, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots, save_rigged_flips, save_rigged_scratch, save_rigged_steal,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
-    load_lottery, load_saved_quotes, get_guild_cfg, save_jackpot, load_jackpot, try_set_record,
+    load_lottery, load_saved_quotes, get_guild_cfg, save_jackpot, try_set_record,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
@@ -49,7 +49,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -112,14 +112,14 @@ class SlotsCog(commands.Cog):
         if await check_game_channel(ctx, "Gambling"):
             return
         uid = ctx.author.id
-        _ensure_user(uid)
+        await _ensure_user(uid)
 
         # Track first-time usage
         user = state.economy["users"][str(uid)]
         first_time_slots = not user.get("slots_seen_rewards", False)
         if first_time_slots:
             user["slots_seen_rewards"] = True
-            save_economy()
+            await save_economy()
 
         if amount is None:
             embed = discord.Embed(title="🎰 Slots", color=C_GOLD)
@@ -161,12 +161,12 @@ class SlotsCog(commands.Cog):
         # Jackpot contribution (2% of every bet, rounded up)
         contrib = max(1, int(amount * SLOT_JACKPOT_CONTRIB))
         state.slot_jackpot += contrib
-        save_jackpot(state.slot_jackpot)
+        await save_jackpot(state.slot_jackpot)
 
         # Spin (or use rigged result)
         if uid in state.rigged_slots:
             sym = state.rigged_slots.pop(uid)
-            save_rigged_slots()
+            await save_rigged_slots()
             reels = [sym, sym, sym]
         else:
             if random.random() < SLOT_HOUSE_CHANCE: # 5% back to house
@@ -188,13 +188,13 @@ class SlotsCog(commands.Cog):
             )
             prize = int(state.slot_jackpot * bet_bonus)
             state.slot_jackpot = SLOT_JACKPOT_SEED
-            save_jackpot(state.slot_jackpot)
+            await save_jackpot(state.slot_jackpot)
             gid = ctx.guild.id if ctx.guild else None
-            add_balance(uid, prize, guild_id=gid, holder_name=ctx.author.display_name)
-            try_set_record(gid, "slots_jackpot", prize, uid, ctx.author.display_name,
+            await add_balance(uid, prize, guild_id=gid, holder_name=ctx.author.display_name)
+            await try_set_record(gid, "slots_jackpot", prize, uid, ctx.author.display_name,
                            bet=amount, symbols=display)
             desc = (f"{display}\n\n🏆 **{ctx.author.display_name} hit the Progressive Jackpot!**\n"
-                    f"**Won: {prize:,} 🪙** (Bet: {amount:,} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {get_balance(uid):,} 🪙\n"
+                    f"**Won: {prize:,} 🪙** (Bet: {amount:,} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {await get_balance(uid):,} 🪙\n"
                     f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*")
             if first_time_slots:
                 desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
@@ -214,9 +214,9 @@ class SlotsCog(commands.Cog):
 
         # Money Back (cherry retention)
         if label == "1cherry":
-            add_balance(uid, amount)
+            await add_balance(uid, amount)
             desc = (f"{display}\n\n🍒 **One Cherry — Money Back!**\n"
-                    f"**{ctx.author.display_name}** got **{amount:,} 🪙** back | Balance: {get_balance(uid):,} 🪙\n"
+                    f"**{ctx.author.display_name}** got **{amount:,} 🪙** back | Balance: {await get_balance(uid):,} 🪙\n"
                     f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
             if first_time_slots:
                 desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
@@ -224,7 +224,7 @@ class SlotsCog(commands.Cog):
             return
 
         if mult == 0:
-            desc = (f"{display}\n\n**{ctx.author.display_name}** lost **{amount:,} 🪙**. Balance: {get_balance(uid):,} 🪙\n"
+            desc = (f"{display}\n\n**{ctx.author.display_name}** lost **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙\n"
                     f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
             if first_time_slots:
                 desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
@@ -233,8 +233,8 @@ class SlotsCog(commands.Cog):
 
         winnings = amount * mult
         gid = ctx.guild.id if ctx.guild else None
-        add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name)
-        try_set_record(gid, "slots_non_jackpot", winnings, uid, ctx.author.display_name,
+        await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name)
+        await try_set_record(gid, "slots_non_jackpot", winnings, uid, ctx.author.display_name,
                        bet=amount, symbols=display, label=label)
 
         result_labels = {
@@ -248,7 +248,7 @@ class SlotsCog(commands.Cog):
         desc_line = result_labels.get(label, f"**{mult}x**")
 
         desc = (f"{display}\n\n{desc_line}\n"
-                f"**{ctx.author.display_name}** won **{winnings:,} 🪙** | Balance: {get_balance(uid):,} 🪙\n"
+                f"**{ctx.author.display_name}** won **{winnings:,} 🪙** | Balance: {await get_balance(uid):,} 🪙\n"
                 f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
         if first_time_slots:
             desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
@@ -274,7 +274,7 @@ class SlotsCog(commands.Cog):
             "🍒 **One Cherry** — 1x (Money Back)",
             inline=False)
 
-        jackpot = load_jackpot()
+        jackpot = state.slot_jackpot
         embed.add_field(name="Other", value=
             "❌ **No Match** — 0x (Lose bet)\n\n"
             f"**Progressive Jackpot:** Grows by 2% of every bet!\n"
@@ -346,7 +346,7 @@ class SlotsCog(commands.Cog):
         if mult.lower() == "cancel":
             if uid in state.rigged_slots:
                 del state.rigged_slots[uid]
-                save_rigged_slots()
+                await save_rigged_slots()
                 await ctx.send(embed=emb("🎰 Rig Cancelled", f"Cleared slots rig for **{target_name}**.", C_GOLD))
             else:
                 await ctx.send(embed=emb("🎰 Not Rigged", f"**{target_name}** has no slots rig active.", C_RED))
@@ -366,7 +366,7 @@ class SlotsCog(commands.Cog):
 
         symbol, label = self.SLOT_RIG_SYMBOLS[mult_int]
         state.rigged_slots[uid] = symbol
-        save_rigged_slots()
+        await save_rigged_slots()
         await ctx.send(embed=emb(
             "🎰 Slots Rigged",
             f"**{target_name}**'s next `!slots` spin will hit **{label}**!",
@@ -384,7 +384,7 @@ class SlotsCog(commands.Cog):
         if n.lower() == "cancel":
             if uid in state.rigged_flips:
                 del state.rigged_flips[uid]
-                save_rigged_flips()
+                await save_rigged_flips()
                 await ctx.send(embed=emb("🪙 Rig Cancelled", f"Cleared flip rig for **{target_name}**.", C_GOLD))
             else:
                 await ctx.send(embed=emb("🪙 Not Rigged", f"**{target_name}** has no flip rig active.", C_RED))
@@ -401,7 +401,7 @@ class SlotsCog(commands.Cog):
             return
 
         state.rigged_flips[uid] = state.rigged_flips.get(uid, 0) + n_int
-        save_rigged_flips()
+        await save_rigged_flips()
         await ctx.send(embed=emb(
             "🪙 Flip Rigged",
             f"**{target_name}**'s next **{n_int}** `!flip` {'flip' if n_int == 1 else 'flips'} will win!",
@@ -419,7 +419,7 @@ class SlotsCog(commands.Cog):
         if n.lower() == "cancel":
             if uid in state.rigged_scratch:
                 del state.rigged_scratch[uid]
-                save_rigged_scratch()
+                await save_rigged_scratch()
                 await ctx.send(embed=emb("🎫 Rig Cancelled", f"Cleared scratch rig for **{target_name}**.", C_GOLD))
             else:
                 await ctx.send(embed=emb("🎫 Not Rigged", f"**{target_name}** has no scratch rig active.", C_RED))
@@ -436,7 +436,7 @@ class SlotsCog(commands.Cog):
             return
 
         state.rigged_scratch[uid] = n_int
-        save_rigged_scratch()
+        await save_rigged_scratch()
         payout_map = {1: "100 🪙", 2: "1,000 🪙", 3: "10,000 🪙", 4: "100,000 🪙"}
         await ctx.send(embed=emb(
             "🎫 Scratch Rigged",
@@ -455,7 +455,7 @@ class SlotsCog(commands.Cog):
         if n.lower() == "cancel":
             if uid in state.rigged_steal:
                 del state.rigged_steal[uid]
-                save_rigged_steal()
+                await save_rigged_steal()
                 await ctx.send(embed=emb("🦹 Rig Cancelled", f"Cleared steal rig for **{target_name}**.", C_GOLD))
             else:
                 await ctx.send(embed=emb("🦹 Not Rigged", f"**{target_name}** has no steal rig active.", C_RED))
@@ -472,7 +472,7 @@ class SlotsCog(commands.Cog):
             return
 
         state.rigged_steal[uid] = state.rigged_steal.get(uid, 0) + n_int
-        save_rigged_steal()
+        await save_rigged_steal()
         await ctx.send(embed=emb(
             "🦹 Steal Rigged",
             f"**{target_name}**'s next **{n_int}** `!steal` {'attempt' if n_int == 1 else 'attempts'} will succeed!",

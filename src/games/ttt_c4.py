@@ -34,8 +34,8 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    _load_json, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
@@ -50,7 +50,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -166,19 +166,19 @@ async def _setup_pvp_game(ctx, opponent, amount, invite_title):
         await ctx.send("Amount must be positive.")
         return False
     if amount > 0:
-        if not deduct_balance(uid, amount):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"**{ctx.author.display_name}** needs {amount:,} 🪙. Balance: {get_balance(uid):,} 🪙", C_RED))
+        if not await deduct_balance(uid, amount):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"**{ctx.author.display_name}** needs {amount:,} 🪙. Balance: {await get_balance(uid):,} 🪙", C_RED))
             return False
-        if not deduct_balance(opponent.id, amount):
-            add_balance(uid, amount)  # refund challenger
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"{opponent.display_name} needs {amount:,} 🪙. Balance: {get_balance(opponent.id):,} 🪙", C_RED))
+        if not await deduct_balance(opponent.id, amount):
+            await add_balance(uid, amount)  # refund challenger
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"{opponent.display_name} needs {amount:,} 🪙. Balance: {await get_balance(opponent.id):,} 🪙", C_RED))
             return False
     wager_text = f" for {amount:,} 🪙" if amount > 0 else ""
     confirmed = await _wait_for_confirmations(ctx, [opponent], title=f"{invite_title}{wager_text}")
     if not confirmed:
         if amount > 0:
-            add_balance(uid, amount)
-            add_balance(opponent.id, amount)
+            await add_balance(uid, amount)
+            await add_balance(opponent.id, amount)
             msg = f"{opponent.display_name} didn't accept. Coins refunded ({amount:,} 🪙 each)."
         else:
             msg = f"{opponent.display_name} didn't accept."
@@ -270,7 +270,7 @@ class TttC4Cog(commands.Cog):
                 amount = game.get("amount", 0)
                 winnings = amount * 2
                 if winnings > 0:
-                    add_balance(winner_uid, winnings)
+                    await add_balance(winner_uid, winnings)
                 winner_name = ctx.guild.get_member(winner_uid).display_name if ctx.guild else str(winner_uid)
                 game["last_move"] = f"{name} played position {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
                 winner_mention = ctx.guild.get_member(winner_uid).mention if ctx.guild else str(winner_uid)
@@ -280,7 +280,7 @@ class TttC4Cog(commands.Cog):
                 amount = game.get("amount", 0)
                 if amount > 0:
                     for player_uid in game["players"]:
-                        add_balance(player_uid, amount)
+                        await add_balance(player_uid, amount)
                 game["last_move"] = f"{name} played position {pos} — It's a draw!"
                 draw_text = f"\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
                 await _edit_board(ctx.channel, game, emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
@@ -316,7 +316,7 @@ class TttC4Cog(commands.Cog):
                 amount = game.get("amount", 0)
                 winnings = amount * 2
                 if winnings > 0:
-                    add_balance(winner_uid, winnings)
+                    await add_balance(winner_uid, winnings)
                 winner_name = ctx.guild.get_member(winner_uid).display_name if ctx.guild else str(winner_uid)
                 game["last_move"] = f"{name} dropped in column {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
                 winner_mention = ctx.guild.get_member(winner_uid).mention if ctx.guild else str(winner_uid)
@@ -326,7 +326,7 @@ class TttC4Cog(commands.Cog):
                 amount = game.get("amount", 0)
                 if amount > 0:
                     for player_uid in game["players"]:
-                        add_balance(player_uid, amount)
+                        await add_balance(player_uid, amount)
                 game["last_move"] = f"{name} dropped in column {pos} — It's a draw!"
                 draw_text = f"\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
                 await _edit_board(ctx.channel, game, emb("🤝 Connect 4 Draw", build_c4_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))

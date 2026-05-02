@@ -34,8 +34,8 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    _load_json, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
@@ -49,7 +49,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -249,7 +249,7 @@ class AICog(commands.Cog):
                 await _send_invite(ctx, invited_users, title="📨 Fanfic Invite", dest=thread, on_join=_fanfic_join)
 
             await respond(thread, uid, clean_prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
-            save_fanfic_histories()
+            await save_fanfic_histories()
             await thread.send(embed=emb("📖 Fanfic Started", "`!continue` — next chapter · `!reverse` — undo last response · `!invite @user` — add a co-author · `!stop` — end the story", C_BLUE))
         else:
             state.fanfic_owners[ctx.channel.id] = {"owner_id": uid, "invited_ids": {uid}}
@@ -277,7 +277,7 @@ class AICog(commands.Cog):
             return
 
         await respond(ctx.channel, uid, "Continue the story.", ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
-        save_fanfic_histories()
+        await save_fanfic_histories()
 
 
     @commands.command(name="tldr")
@@ -370,7 +370,7 @@ class AICog(commands.Cog):
             "participants": {uid},
         }
         state.roleplay_histories[uid] = []
-        save_roleplay_state()
+        await save_roleplay_state()
 
         # Invite flow and confirmation
         async def _rp_join(user, _uid=uid, _clean_prompt=clean_prompt, _rp_channel_id=rp_channel_id, _guild_id=guild_id, _dest=thread or ctx.channel):
@@ -500,7 +500,7 @@ class AICog(commands.Cog):
             "system_prompt": rpg_system_prompt,
         }
         state.roleplay_histories[uid] = []
-        save_roleplay_state()
+        await save_roleplay_state()
 
         # Invite flow — fire and forget, AI starts immediately
         async def _rpg_join(user, _uid=uid, _rpg_channel_id=rpg_channel_id, _guild_id=guild_id, _rpg_system_prompt=rpg_system_prompt, _dest=thread or ctx.channel):
@@ -534,7 +534,7 @@ class AICog(commands.Cog):
             # Add to history with a synthetic user turn so the conversation structure is valid
             state.roleplay_histories[uid].append({"role": "user", "content": "Begin the adventure."})
             state.roleplay_histories[uid].append({"role": "assistant", "content": full_response})
-            save_roleplay_state()
+            await save_roleplay_state()
             await finalize(placeholder, dest, full_response)
             await dest.send(embed=emb("🗺️ RPG Adventure", "`!reverse` — undo last response · `!invite @user` — add a party member · `!stop` — end the adventure", C_BLUE))
         except aiohttp.ClientError as e:
@@ -607,7 +607,7 @@ class AICog(commands.Cog):
                     **({"is_rpg": True, "system_prompt": rp["system_prompt"]} if rp.get("is_rpg") else {}),
                 }
                 state.active_roleplays[uid]["participants"].add(inv_uid)
-                save_roleplay_state()
+                await save_roleplay_state()
                 # Add the participant to the thread so they can see and send messages
                 if member and isinstance(ctx.channel, discord.Thread):
                     try:
@@ -621,7 +621,7 @@ class AICog(commands.Cog):
                         await ctx.channel.add_user(member)
                     except Exception:
                         pass
-                save_fanfic_histories()
+                await save_fanfic_histories()
             elif is_puzzle_host:
                 state.active_puzzles[cid].setdefault("invited_ids", set()).add(inv_uid)
 
@@ -661,14 +661,14 @@ class AICog(commands.Cog):
                 del state.active_roleplays[uid]
                 if history_owner in state.active_roleplays:
                     state.active_roleplays[history_owner]["participants"].discard(uid)
-                save_roleplay_state()
+                await save_roleplay_state()
                 stopped.append("🎭 Roleplay (left group)")
             else:
                 # Host stopping — remove all participants and shared history
                 for pid in list(rp.get("participants", {uid})):
                     state.active_roleplays.pop(pid, None)
                 state.roleplay_histories.pop(uid, None)
-                save_roleplay_state()
+                await save_roleplay_state()
                 stopped.append("🎭 Roleplay")
 
         if uid in state.active_blackjack_games:
@@ -690,7 +690,7 @@ class AICog(commands.Cog):
             opponent_uid = [p for p in game["players"] if p != uid][0]
             if amount > 0:
                 winnings = amount * 2
-                add_balance(opponent_uid, winnings)
+                await add_balance(opponent_uid, winnings)
                 game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings:,} 🪙"
                 stopped.append(f"🎮 Tic-Tac-Toe (forfeited, opponent wins {winnings:,} 🪙)")
             else:
@@ -705,7 +705,7 @@ class AICog(commands.Cog):
             opponent_uid = [p for p in game["players"] if p != uid][0]
             if amount > 0:
                 winnings = amount * 2
-                add_balance(opponent_uid, winnings)
+                await add_balance(opponent_uid, winnings)
                 game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings:,} 🪙"
                 stopped.append(f"🟡 Connect 4 (forfeited, opponent wins {winnings:,} 🪙)")
             else:
@@ -721,7 +721,7 @@ class AICog(commands.Cog):
             is_black = uid == game["players"][1]
             if amount > 0:
                 winnings = amount * 2
-                add_balance(opponent_uid, winnings)
+                await add_balance(opponent_uid, winnings)
                 game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings:,} 🪙"
                 stopped.append(f"♟️ Chess (forfeited, opponent wins {winnings:,} 🪙)")
             else:
@@ -738,7 +738,7 @@ class AICog(commands.Cog):
             if amount > 0 and opponents:
                 share = amount * len(game["players"]) // len(opponents)
                 for opp in opponents:
-                    add_balance(opp, share)
+                    await add_balance(opp, share)
                 stopped.append(f"🏇 Race (forfeited, opponent(s) win {share:,} 🪙 each)")
             else:
                 stopped.append("🏇 Race (forfeited)")
@@ -747,7 +747,7 @@ class AICog(commands.Cog):
             await ctx.send(embed=emb("⏹️ Nothing to Stop", "No active game or roleplay.", C_GREY))
             return
 
-        save_chess_games()
+        await save_chess_games()
         await ctx.send(embed=emb("⏹️ Stopped", "\n".join(stopped), C_GREY))
 
 

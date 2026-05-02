@@ -34,8 +34,8 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply, check_command_permission,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    _load_json, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
@@ -50,7 +50,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -406,7 +406,7 @@ class UtilityCog(commands.Cog):
         if not await check_command_permission(ctx):
             return
         state.bot_settings["ai_enabled"] = True
-        save_bot_settings()
+        await save_bot_settings()
         await ctx.send(embed=emb("🤖 AI Enabled", "Passive AI responses are now **online**.", C_GREEN))
 
     @cmd_ai.command(name="off", aliases=["offline"])
@@ -414,7 +414,7 @@ class UtilityCog(commands.Cog):
         if not await check_command_permission(ctx):
             return
         state.bot_settings["ai_enabled"] = False
-        save_bot_settings()
+        await save_bot_settings()
         await ctx.send(embed=emb("🤖 AI Disabled", "Passive AI responses are now **offline**.", C_RED))
 
 

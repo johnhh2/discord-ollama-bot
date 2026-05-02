@@ -6,8 +6,8 @@ import time
 import discord
 from discord.ext import commands
 
-from src.config import RACE_TRACK_LEN, EPHEMERAL_DELETE_AFTER, EPHEMERAL_MSG_FILE
-from src.persistence import _load_json, _save_json
+from src.config import RACE_TRACK_LEN, EPHEMERAL_DELETE_AFTER
+from src.persistence import add_ephemeral_msg
 
 # ── Embed colors ──────────────────────────────────────────────────────────────
 
@@ -119,9 +119,7 @@ async def send_ephemeral(ctx: commands.Context, *args, **kwargs) -> discord.Mess
     """Send a message with delete_after=60 and register it for cleanup on restart."""
     kwargs["delete_after"] = EPHEMERAL_DELETE_AFTER
     msg = await ctx.send(*args, **kwargs)
-    records = _load_json(EPHEMERAL_MSG_FILE, [])
-    records.append({"channel_id": msg.channel.id, "message_id": msg.id})
-    _save_json(EPHEMERAL_MSG_FILE, records)
+    await add_ephemeral_msg(msg.channel.id, msg.id)
     return msg
 
 

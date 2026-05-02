@@ -4,6 +4,7 @@
   "adminjailbreak": {"tier": "bot_admin",  "hidden": true},
   "admingive":     {"tier": "bot_admin", "hidden": true},
   "restart":       {"tier": "bot_admin", "hidden": true},
+  "migratedata":   {"tier": "bot_admin", "hidden": true},
   "setperm":       {"tier": "bot_admin", "hidden": true},
   "rig":           {"tier": "bot_admin", "hidden": true},
   "ai on":         {"tier": "bot_admin", "hidden": false},

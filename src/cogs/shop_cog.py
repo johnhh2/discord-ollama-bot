@@ -35,8 +35,8 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    _load_json, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
@@ -50,7 +50,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -258,12 +258,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("✅ Nickname Changed", f"**{target.display_name}**'s nickname is now **{new_name}**!", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             log_bot_permission_error(ctx, "change nickname")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to change that nickname.", C_RED))
         except discord.HTTPException as e:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop removenickname ──────────────────────────────────────────────────
@@ -293,11 +293,11 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("✅ Nickname Removed", "Your nickname has been reset to your username.", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to change your nickname.", C_RED))
         except discord.HTTPException as e:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop createrole ──────────────────────────────────────────────────────
@@ -349,16 +349,16 @@ class ShopCog(commands.Cog):
             new_role = await ctx.guild.create_role(name=name, color=discord.Color(color_int), hoist=True)
             await target.add_roles(new_role)
             state.bot_roles.add(new_role.id)
-            save_bot_roles()
+            await save_bot_roles()
             await ctx.send(embed=emb("✅ Role Created", f"Role **{name}** created and assigned to **{target.display_name}**!", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             log_bot_permission_error(ctx, "manage roles")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to manage roles.", C_RED))
         except Exception as e:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop assignrole ──────────────────────────────────────────────────────
@@ -409,12 +409,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("✅ Role Assigned", f"Role **{role.name}** assigned to **{target.display_name}**.", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             log_bot_permission_error(ctx, "manage roles")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to manage roles.", C_RED))
         except Exception as e:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop removerole ──────────────────────────────────────────────────────
@@ -472,12 +472,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("✅ Role Removed", f"Role **{role.name}** has been removed from **{who}**.", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             log_bot_permission_error(ctx, "remove role")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to remove that role.", C_RED))
         except Exception as e:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop deleterole ──────────────────────────────────────────────────────
@@ -526,16 +526,16 @@ class ShopCog(commands.Cog):
             name = role.name
             await role.delete()
             state.bot_roles.discard(role.id)
-            save_bot_roles()
+            await save_bot_roles()
             await ctx.send(embed=emb("✅ Role Deleted", f"Role **{name}** has been permanently deleted.", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             log_bot_permission_error(ctx, "delete role")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete that role.", C_RED))
         except Exception as e:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop createchannel ───────────────────────────────────────────────────
@@ -580,16 +580,16 @@ class ShopCog(commands.Cog):
             if "bot_channels" not in cfg:
                 cfg["bot_channels"] = []
             cfg["bot_channels"].append(new_channel.id)
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("✅ Channel Created", f"Channel {new_channel.mention} created in #bot-channels!", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             log_bot_permission_error(ctx, "create channels")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to create channels.", C_RED))
         except Exception as e:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop deletechannel ───────────────────────────────────────────────────
@@ -636,16 +636,16 @@ class ShopCog(commands.Cog):
             channel_name = channel.name
             await channel.delete()
             cfg["bot_channels"].remove(channel.id)
-            save_guild_settings()
+            await save_guild_settings()
             await ctx.send(embed=emb("✅ Channel Removed", f"Channel **{channel_name}** has been deleted.", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             log_bot_permission_error(ctx, "delete channel")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete that channel.", C_RED))
         except Exception as e:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop renamechannel ───────────────────────────────────────────────────
@@ -689,12 +689,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("✅ Channel Renamed", f"**{old_name}** renamed to **{new_name}**.", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             log_bot_permission_error(ctx, "edit channel")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to rename that channel.", C_RED))
         except Exception as e:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop renamerole ──────────────────────────────────────────────────────
@@ -739,12 +739,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("✅ Role Renamed", f"**{old_name}** renamed to **{new_name}**.", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             log_bot_permission_error(ctx, "edit role")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to rename that role.", C_RED))
         except Exception as e:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop rolechannel ─────────────────────────────────────────────────────
@@ -789,12 +789,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("✅ Channel Restricted", f"{target_channel.mention} is now only visible to **{role.name}**.", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             log_bot_permission_error(ctx, "manage channel permissions")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to manage that channel's permissions.", C_RED))
         except Exception as e:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop lockchannel ─────────────────────────────────────────────────────
@@ -831,7 +831,7 @@ class ShopCog(commands.Cog):
         state.locked_channels[target_channel.id] = uid
         cfg = get_guild_cfg(ctx.guild.id)
         cfg.setdefault("locked_channels", {})[str(target_channel.id)] = uid
-        save_guild_settings()
+        await save_guild_settings()
         await ctx.send(embed=emb("🔒 Channel Locked", f"{target_channel.mention} is now locked. Only you can modify or delete it.", C_GREEN))
 
     # ── !shop unlockchannel ───────────────────────────────────────────────────
@@ -865,7 +865,7 @@ class ShopCog(commands.Cog):
         del state.locked_channels[target_channel.id]
         cfg = get_guild_cfg(ctx.guild.id)
         cfg.get("locked_channels", {}).pop(str(target_channel.id), None)
-        save_guild_settings()
+        await save_guild_settings()
         await ctx.send(embed=emb("🔓 Channel Unlocked", f"{target_channel.mention} is now unlocked.", C_GREEN))
 
     # ── !shop lockrole ────────────────────────────────────────────────────────
@@ -902,7 +902,7 @@ class ShopCog(commands.Cog):
         state.locked_roles[role.id] = uid
         cfg = get_guild_cfg(ctx.guild.id)
         cfg.setdefault("locked_roles", {})[str(role.id)] = uid
-        save_guild_settings()
+        await save_guild_settings()
         await ctx.send(embed=emb("🔒 Role Locked", f"**{role.name}** is now locked. Only you can modify, delete, or manage membership of this role.", C_GREEN))
 
     # ── !shop unlockrole ──────────────────────────────────────────────────────
@@ -936,7 +936,7 @@ class ShopCog(commands.Cog):
         del state.locked_roles[role.id]
         cfg = get_guild_cfg(ctx.guild.id)
         cfg.get("locked_roles", {}).pop(str(role.id), None)
-        save_guild_settings()
+        await save_guild_settings()
         await ctx.send(embed=emb("🔓 Role Unlocked", f"**{role.name}** is now unlocked.", C_GREEN))
 
     # ── !shop ragebait ────────────────────────────────────────────────────────
@@ -994,10 +994,10 @@ class ShopCog(commands.Cog):
                 ], placeholder)
             await finalize(placeholder, ctx.channel, f"{target.mention} {full_response}")
             state.active_ragebaits[target.id] = {"remaining": SHOP_RAGEBAIT_MESSAGES, "history": [], "channel_id": ctx.channel.id}
-            save_ragebait()
+            await save_ragebait()
         except Exception as e:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await placeholder.edit(content=f"⚠️ {e}")
         finally:
             typing_task.cancel()
@@ -1025,7 +1025,7 @@ class ShopCog(commands.Cog):
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MOCK_COST:,}"):
             return
         state.active_mocks[target.id] = {"remaining": SHOP_MOCK_MESSAGES, "started_by": uid, "channel_id": ctx.channel.id}
-        save_mock()
+        await save_mock()
         await ctx.send(embed=emb(
             "🎭 Mock Activated",
             f"**{target.display_name}** will have their next {SHOP_MOCK_MESSAGES} messages mocked!",
@@ -1065,7 +1065,7 @@ class ShopCog(commands.Cog):
             "expires_at": expires_at,
             "protected_from": ["ragebait", "mock", "nickname", "role", "steal", "tax"],
         }
-        save_insurance()
+        await save_insurance()
         await ctx.send(embed=emb(
             "🛡️ Insurance Purchased",
             f"Protected against ragebait, mock, nickname, role changes, steal, and tax! (expires <t:{expires_at}:R>)",
@@ -1200,7 +1200,7 @@ class ShopCog(commands.Cog):
         expires_ts = int(activated_at + SHOP_TAX_DURATION_SECS)
         tax_data = {"master": uid, "type": tax_type, "emoji": tax_emoji, "channel_id": ctx.channel.id, "activated_at": activated_at}
         state.active_taxes[target.id] = tax_data
-        save_tax(state.active_taxes)
+        await save_tax(state.active_taxes)
         label = tax_type.capitalize()
         await ctx.send(embed=emb(
             f"{tax_emoji} {label} Tax Activated",
@@ -1234,7 +1234,7 @@ class ShopCog(commands.Cog):
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_CURSE_COST:,}"):
             return
         state.active_curses[target.id] = {"cursed_by": uid, "remaining": SHOP_CURSE_MESSAGES}
-        save_curse(state.active_curses)
+        await save_curse(state.active_curses)
         await ctx.send(embed=emb(
             "🔮 Curse Activated",
             f"**{target.display_name}** is now cursed for the next **{SHOP_CURSE_MESSAGES}** messages!",
@@ -1285,19 +1285,19 @@ class ShopCog(commands.Cog):
             mock_data = state.active_mocks.pop(uid)
             mock_data["started_by"] = uid
             state.active_mocks[target.id] = mock_data
-            save_mock()
+            await save_mock()
             redirected.append("mock")
         if has_ragebait:
             rage_data = state.active_ragebaits.pop(uid)
             rage_data["history"] = []
             state.active_ragebaits[target.id] = rage_data
-            save_ragebait()
+            await save_ragebait()
             redirected.append("ragebait")
         if has_curse:
             curse_data = state.active_curses.pop(uid)
             curse_data["cursed_by"] = uid
             state.active_curses[target.id] = curse_data
-            save_curse(state.active_curses)
+            await save_curse(state.active_curses)
             redirected.append("curse")
         await ctx.send(embed=emb(
             "🔄 Uno Reverse!",
@@ -1367,12 +1367,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("✅ Role Moved", f"Role **{role.name}** moved {label} — now **#{rank}** of {total_bot_roles}.", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             log_bot_permission_error(ctx, "manage roles")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to manage roles.", C_RED))
         except Exception as e:
             if cost > 0:
-                add_balance(uid, cost)
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── Top-level aliases for all shop subcommands ────────────────────────────

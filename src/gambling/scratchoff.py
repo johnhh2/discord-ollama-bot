@@ -34,8 +34,8 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    _load_json, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
@@ -49,7 +49,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -168,7 +168,7 @@ class ScratchoffCog(commands.Cog):
         count = max(1, min(3, count))
 
         uid = ctx.author.id
-        _ensure_user(uid)
+        await _ensure_user(uid)
 
         today = _ct_today()
         user = state.economy["users"][str(uid)]
@@ -178,7 +178,7 @@ class ScratchoffCog(commands.Cog):
 
         remaining = 3 - user["scratch_used"]
         if remaining <= 0:
-            save_economy()
+            await save_economy()
             await ctx.send(embed=emb("🎰 Daily Limit", f"**{ctx.author.display_name}** has used all **3** daily scratchoffs.\nCome back tomorrow!", C_GOLD))
             return
 
@@ -214,7 +214,7 @@ class ScratchoffCog(commands.Cog):
                         non_matches = [s for s in SCRATCH_SYMBOLS if s != goal[i]]
                         card.append(random.choice(non_matches) if non_matches else random.choice(SCRATCH_SYMBOLS))
                 del state.rigged_scratch[uid]
-                save_rigged_scratch()
+                await save_rigged_scratch()
             else:
                 card = random.choices(SCRATCH_SYMBOLS, k=4)
 
@@ -237,9 +237,9 @@ class ScratchoffCog(commands.Cog):
                 payout = 100000
                 match_text = f"💎 4 Matches! **{ctx.author.display_name}** won 100,000 🪙!"
 
-            add_balance(uid, payout)
+            await add_balance(uid, payout)
             user["scratch_used"] += 1
-            save_economy()
+            await save_economy()
 
             # Award 10 XP per scratchoff played
             if ctx.guild:
@@ -255,7 +255,7 @@ class ScratchoffCog(commands.Cog):
             # Track full-day scratchoff streak for Gamblers role
             if user["scratch_used"] >= 3 and ctx.guild:
                 state.gambler_streak[str(uid)] = today
-                save_gambler_streak()
+                await save_gambler_streak()
                 await maybe_assign_gambler_role(ctx.guild, ctx.author, ctx.channel)
 
             card_str = " ".join(card)
@@ -277,7 +277,7 @@ class ScratchoffCog(commands.Cog):
     @commands.command(name="streak")
     async def cmd_streak(self, ctx: commands.Context):
         uid = ctx.author.id
-        _ensure_user(uid)
+        await _ensure_user(uid)
 
         today_ct = _ct_today()
         yesterday = (datetime.date.fromisoformat(today_ct) - datetime.timedelta(days=1)).isoformat()

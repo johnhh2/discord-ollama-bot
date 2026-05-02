@@ -1,19 +1,16 @@
-import os
 import json
-import time
+import os
 
 from src.config import (
-    CHANNEL_PROMPTS_FILE, ECONOMY_FILE, BOT_ROLES_FILE, BOT_ADMINS_FILE,
-    BOT_SETTINGS_FILE, GUILD_SETTINGS_FILE, INSURANCE_FILE, SLOT_JACKPOT_FILE,
-    SLOT_JACKPOT_SEED, GODMODE_USERS_FILE, CHESS_GAMES_FILE, RAGEBAIT_FILE,
-    MOCK_FILE, RIGGED_SLOTS_FILE, RIGGED_FLIPS_FILE, RIGGED_SCRATCH_FILE, RIGGED_STEAL_FILE, QUOTE_LOG_FILE, SAVED_QUOTES_FILE, TAX_FILE,
-    CURSE_FILE, GAMBLER_STREAK_FILE, EPHEMERAL_MSG_FILE, FANFIC_HISTORIES_FILE,
-    FANFIC_OWNERS_FILE, ROLEPLAY_STATE_FILE, INITIAL_BOT_ADMIN_IDS, LEVELING_FILE,
-    COMMAND_PERMS_FILE, BALANCE_HISTORY_FILE, BOT_STATS_HISTORY_FILE,
+    COMMAND_PERMS_FILE, SLOT_JACKPOT_SEED, INITIAL_BOT_ADMIN_IDS,
 )
+from src.db import get_pool
 
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _load_json(filepath, default):
+    """Read a JSON file; return default on missing/corrupt. Kept for migration use."""
     os.makedirs("data", exist_ok=True)
     try:
         with open(filepath) as f:
@@ -23,147 +20,105 @@ def _load_json(filepath, default):
 
 
 def _save_json(filepath, data):
+    """Write data to a JSON file. Kept for test compatibility."""
     os.makedirs("data", exist_ok=True)
     with open(filepath, "w") as f:
         json.dump(data, f, indent=2)
 
 
-def load_channel_prompts() -> dict:
-    if os.path.exists(CHANNEL_PROMPTS_FILE):
-        with open(CHANNEL_PROMPTS_FILE) as f:
-            return {int(k): v for k, v in json.load(f).items()}
-    return {}
+# ── Economy ───────────────────────────────────────────────────────────────────
 
-
-def save_channel_prompts(prompts: dict):
-    with open(CHANNEL_PROMPTS_FILE, "w") as f:
-        json.dump({str(k): v for k, v in prompts.items()}, f, indent=2)
-
-
-def load_roleplay_state():
-    # Imported here to avoid circular import with state
+async def save_economy():
     from src import state
-    raw = _load_json(ROLEPLAY_STATE_FILE, {"roleplays": {}, "histories": {}})
-    roleplays = {}
-    for k, v in raw.get("roleplays", {}).items():
-        v["participants"] = set(v.get("participants", []))
-        roleplays[int(k)] = v
-    histories = {int(k): v for k, v in raw.get("histories", {}).items()}
-    return roleplays, histories
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            for uid_str, u in state.economy["users"].items():
+                uid = int(uid_str)
+                savings = json.dumps(u.get("savings", []))
+                await cur.execute(
+                    """INSERT INTO economy_users
+                        (user_id, balance, last_daily, daily_date, scratch_used,
+                         scratch_date, jailbreak_used, jail_until, savings)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       ON DUPLICATE KEY UPDATE
+                         balance=VALUES(balance),
+                         last_daily=VALUES(last_daily),
+                         daily_date=VALUES(daily_date),
+                         scratch_used=VALUES(scratch_used),
+                         scratch_date=VALUES(scratch_date),
+                         jailbreak_used=VALUES(jailbreak_used),
+                         jail_until=VALUES(jail_until),
+                         savings=VALUES(savings)""",
+                    (
+                        uid,
+                        u.get("balance", 0),
+                        u.get("last_daily", 0.0),
+                        u.get("daily_date"),
+                        u.get("scratch_used", 0),
+                        u.get("scratch_date"),
+                        bool(u.get("jailbreak_used", False)),
+                        u.get("jail_until", 0.0),
+                        savings,
+                    ),
+                )
+            # last_daily_reset
+            await cur.execute(
+                "INSERT INTO economy_meta (key_name, value_text) VALUES ('last_daily_reset', %s)"
+                " ON DUPLICATE KEY UPDATE value_text=VALUES(value_text)",
+                (state.economy.get("last_daily_reset"),),
+            )
+            # guild house balances
+            for gid_str, bal in state.economy.get("guild_house", {}).items():
+                await cur.execute(
+                    "INSERT INTO guild_house_balance (guild_id, balance) VALUES (%s,%s)"
+                    " ON DUPLICATE KEY UPDATE balance=VALUES(balance)",
+                    (int(gid_str), bal),
+                )
 
 
-def save_roleplay_state():
+async def save_insurance():
     from src import state
-    _save_json(ROLEPLAY_STATE_FILE, {
-        "roleplays": {
-            str(k): {**v, "participants": list(v.get("participants", set()))}
-            for k, v in state.active_roleplays.items()
-        },
-        "histories": {str(k): v for k, v in state.roleplay_histories.items()},
-    })
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM shop_insurance")
+            for uid_str, entry in state.insurance.items():
+                await cur.execute(
+                    "INSERT INTO shop_insurance (user_id, expires_at, protected_from) VALUES (%s,%s,%s)",
+                    (int(uid_str), entry["expires_at"], json.dumps(entry.get("protected_from", []))),
+                )
 
 
-def load_fanfic_histories() -> dict:
-    raw = _load_json(FANFIC_HISTORIES_FILE, {})
-    return {int(k): v for k, v in raw.items()}
-
-
-def save_fanfic_histories():
+async def save_jackpot(value: int):
     from src import state
-    _save_json(FANFIC_HISTORIES_FILE, {
-        str(k): list(v) for k, v in state.channel_histories.items()
-        if k in state.fanfic_thread_ids
-    })
-    _save_json(FANFIC_OWNERS_FILE, {
-        str(k): {"owner_id": v["owner_id"], "invited_ids": list(v["invited_ids"])}
-        for k, v in state.fanfic_owners.items()
-    })
+    state.slot_jackpot = value
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO slots_jackpot (id, jackpot) VALUES (1,%s)"
+                " ON DUPLICATE KEY UPDATE jackpot=VALUES(jackpot)",
+                (value,),
+            )
 
 
-def load_fanfic_owners() -> dict:
-    raw = _load_json(FANFIC_OWNERS_FILE, {})
-    return {
-        int(k): {"owner_id": v["owner_id"], "invited_ids": set(v["invited_ids"])}
-        for k, v in raw.items()
-    }
+# ── Guild settings ────────────────────────────────────────────────────────────
 
-
-def load_economy() -> dict:
-    data = _load_json(ECONOMY_FILE, {"users": {}, "last_daily_reset": None})
-    data.setdefault("last_daily_reset", None)
-    data.setdefault("guild_house", {})
-    return data
-
-
-def save_economy():
+async def save_guild_settings():
     from src import state
-    _save_json(ECONOMY_FILE, state.economy)
-
-
-def load_jackpot() -> int:
-    return max(SLOT_JACKPOT_SEED, _load_json(SLOT_JACKPOT_FILE, {}).get("jackpot", SLOT_JACKPOT_SEED))
-
-
-def save_jackpot(value: int):
-    _save_json(SLOT_JACKPOT_FILE, {"jackpot": value})
-
-
-def load_bot_roles() -> set:
-    return set(_load_json(BOT_ROLES_FILE, []))
-
-
-def save_bot_roles():
-    from src import state
-    _save_json(BOT_ROLES_FILE, list(state.bot_roles))
-
-
-def load_bot_admins() -> set:
-    return set(_load_json(BOT_ADMINS_FILE, INITIAL_BOT_ADMIN_IDS))
-
-
-def save_bot_admins():
-    from src import state
-    _save_json(BOT_ADMINS_FILE, list(state.bot_admins))
-
-
-def load_bot_settings() -> dict:
-    return _load_json(BOT_SETTINGS_FILE, {"vram_text": "16GB"})
-
-
-def save_bot_settings():
-    from src import state
-    _save_json(BOT_SETTINGS_FILE, state.bot_settings)
-
-
-def load_godmode_users() -> set:
-    return set(_load_json(GODMODE_USERS_FILE, []))
-
-
-def save_godmode_users():
-    from src import state
-    _save_json(GODMODE_USERS_FILE, list(state.godmode_users))
-
-
-def load_chess_games() -> dict:
-    return {int(k): v for k, v in _load_json(CHESS_GAMES_FILE, {}).items()}
-
-
-def save_chess_games():
-    from src import state
-    _save_json(CHESS_GAMES_FILE, state.active_chess_games)
-
-
-def load_guild_settings() -> dict:
-    return _load_json(GUILD_SETTINGS_FILE, {})
-
-
-def save_guild_settings():
-    from src import state
-    _save_json(GUILD_SETTINGS_FILE, state.guild_settings)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            for gid_str, settings in state.guild_settings.items():
+                await cur.execute(
+                    "INSERT INTO guild_settings (guild_id, settings_json) VALUES (%s,%s)"
+                    " ON DUPLICATE KEY UPDATE settings_json=VALUES(settings_json)",
+                    (int(gid_str), json.dumps(settings)),
+                )
 
 
 def get_guild_cfg(guild_id: int) -> dict:
-    # Access through src module so monkeypatching src.guild_settings in tests works.
     import src as _src
     gs = _src.guild_settings
     key = str(guild_id)
@@ -172,180 +127,737 @@ def get_guild_cfg(guild_id: int) -> dict:
     return gs[key]
 
 
-def load_insurance() -> dict:
-    data = _load_json(INSURANCE_FILE, {})
-    now = time.time()
-    return {k: v for k, v in data.items() if v.get("expires_at", 0) > now}
+# ── Bot roles / godmode / settings ────────────────────────────────────────────
 
-
-def save_insurance():
+async def save_bot_roles():
     from src import state
-    _save_json(INSURANCE_FILE, state.insurance)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM bot_roles")
+            for role_id in state.bot_roles:
+                await cur.execute("INSERT IGNORE INTO bot_roles (role_id) VALUES (%s)", (role_id,))
 
 
-def load_ragebait() -> dict:
-    return _load_json(RAGEBAIT_FILE, {})
-
-
-def save_ragebait():
+async def save_godmode_users():
     from src import state
-    _save_json(RAGEBAIT_FILE, state.active_ragebaits)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM godmode_users")
+            for uid in state.godmode_users:
+                await cur.execute("INSERT IGNORE INTO godmode_users (user_id) VALUES (%s)", (uid,))
 
 
-def load_mock() -> dict:
-    return _load_json(MOCK_FILE, {})
-
-
-def save_mock():
+async def save_bot_settings():
     from src import state
-    _save_json(MOCK_FILE, state.active_mocks)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            for k, v in state.bot_settings.items():
+                await cur.execute(
+                    "INSERT INTO bot_settings (key_name, value_text) VALUES (%s,%s)"
+                    " ON DUPLICATE KEY UPDATE value_text=VALUES(value_text)",
+                    (k, str(v)),
+                )
 
 
-def load_rigged_slots() -> dict:
-    raw = _load_json(RIGGED_SLOTS_FILE, {})
-    # migrate old format (list of ints) to dict {uid: symbol}
-    if isinstance(raw, list):
-        return {str(uid): "7️⃣" for uid in raw}
-    return {str(k): v for k, v in raw.items()}
+# ── Shop effects ──────────────────────────────────────────────────────────────
 
-
-def save_rigged_slots():
+async def save_ragebait():
     from src import state
-    _save_json(RIGGED_SLOTS_FILE, {str(k): v for k, v in state.rigged_slots.items()})
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM shop_effects WHERE effect_type='ragebait'")
+            for uid, data in state.active_ragebaits.items():
+                await cur.execute(
+                    "INSERT INTO shop_effects (user_id, effect_type, remaining, started_by, history_json, channel_id)"
+                    " VALUES (%s,'ragebait',%s,%s,%s,%s)",
+                    (int(uid), data.get("remaining"), data.get("started_by"),
+                     json.dumps(data.get("history", [])), data.get("channel_id")),
+                )
 
 
-def load_rigged_flips() -> dict:
-    return {int(k): v for k, v in _load_json(RIGGED_FLIPS_FILE, {}).items()}
-
-
-def save_rigged_flips():
+async def save_mock():
     from src import state
-    _save_json(RIGGED_FLIPS_FILE, {str(k): v for k, v in state.rigged_flips.items()})
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM shop_effects WHERE effect_type='mock'")
+            for uid, data in state.active_mocks.items():
+                await cur.execute(
+                    "INSERT INTO shop_effects (user_id, effect_type, remaining, started_by, channel_id)"
+                    " VALUES (%s,'mock',%s,%s,%s)",
+                    (int(uid), data.get("remaining"), data.get("started_by"), data.get("channel_id")),
+                )
 
 
-def load_rigged_scratch() -> dict:
-    # uid (int) → number of symbols to match (1-4)
-    return {int(k): v for k, v in _load_json(RIGGED_SCRATCH_FILE, {}).items()}
-
-
-def save_rigged_scratch():
+async def save_curse(curse_data: dict):
     from src import state
-    _save_json(RIGGED_SCRATCH_FILE, {str(k): v for k, v in state.rigged_scratch.items()})
+    state.active_curses = curse_data
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM shop_effects WHERE effect_type='curse'")
+            for uid, data in curse_data.items():
+                await cur.execute(
+                    "INSERT INTO shop_effects (user_id, effect_type, remaining, cursed_by, channel_id)"
+                    " VALUES (%s,'curse',%s,%s,%s)",
+                    (int(uid), data.get("remaining"), data.get("cursed_by"), data.get("channel_id")),
+                )
 
 
-def load_rigged_steal() -> dict:
-    # uid (int) → remaining rigged successes
-    return {int(k): v for k, v in _load_json(RIGGED_STEAL_FILE, {}).items()}
-
-
-def save_rigged_steal():
+async def save_tax(tax_data: dict):
     from src import state
-    _save_json(RIGGED_STEAL_FILE, {str(k): v for k, v in state.rigged_steal.items()})
+    state.active_taxes = tax_data
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM shop_effects WHERE effect_type='tax'")
+            for uid, data in tax_data.items():
+                await cur.execute(
+                    "INSERT INTO shop_effects (user_id, effect_type, master_id, tax_type, tax_emoji, channel_id, activated_at)"
+                    " VALUES (%s,'tax',%s,%s,%s,%s,%s)",
+                    (int(uid), data.get("master"), data.get("type", "tax"),
+                     data.get("emoji", "💰"), data.get("channel_id"), data.get("activated_at")),
+                )
 
 
-def load_gambler_streak() -> dict:
-    return _load_json(GAMBLER_STREAK_FILE, {})
+# ── Rigged ────────────────────────────────────────────────────────────────────
 
-
-def save_gambler_streak():
+async def save_rigged_slots():
     from src import state
-    _save_json(GAMBLER_STREAK_FILE, state.gambler_streak)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM rigged_slots")
+            for uid, symbol in state.rigged_slots.items():
+                await cur.execute(
+                    "INSERT INTO rigged_slots (user_id, symbol) VALUES (%s,%s)",
+                    (int(uid), symbol),
+                )
 
 
-def load_quote_log() -> list:
-    return _load_json(QUOTE_LOG_FILE, [])
-
-
-def save_quote_log(log: list):
-    import src as _src
-    _src._save_json(_src.QUOTE_LOG_FILE, log[-10:])
-
-
-def load_saved_quotes() -> dict:
-    return _load_json(SAVED_QUOTES_FILE, {})
-
-
-def save_saved_quotes(quotes: dict):
-    _save_json(SAVED_QUOTES_FILE, quotes)
-
-
-def load_tax() -> dict:
-    return {int(k): v for k, v in _load_json(TAX_FILE, {}).items()}
-
-
-def save_tax(tax_data: dict):
-    _save_json(TAX_FILE, tax_data)
-
-
-def load_curse() -> dict:
-    return {int(k): v for k, v in _load_json(CURSE_FILE, {}).items()}
-
-
-def save_curse(curse_data: dict):
-    _save_json(CURSE_FILE, curse_data)
-
-
-def load_lottery(guild_id: int) -> dict:
-    return _load_json(f"data/lottery_{guild_id}.json", {"prize_pool": 0, "players": {}, "last_posted_week": 0})
-
-
-def save_lottery(guild_id: int, lottery_data: dict):
-    _save_json(f"data/lottery_{guild_id}.json", lottery_data)
-
-
-def load_leveling() -> dict:
-    """Load leveling data. Structure: {uid_str: {xp, level, msg_last_hour, msg_today, cmd_last_hour, cmd_today, voice_last_15, voice_today}}"""
-    return _load_json(LEVELING_FILE, {})
-
-
-def save_leveling():
+async def save_rigged_flips():
     from src import state
-    _save_json(LEVELING_FILE, state.leveling)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM rigged_flips")
+            for uid, wins in state.rigged_flips.items():
+                await cur.execute(
+                    "INSERT INTO rigged_flips (user_id, remaining_wins) VALUES (%s,%s)",
+                    (int(uid), wins),
+                )
 
 
-def load_command_perms() -> dict:
-    return _load_json(COMMAND_PERMS_FILE, {})
-
-
-def save_command_perms():
+async def save_rigged_scratch():
     from src import state
-    _save_json(COMMAND_PERMS_FILE, state.command_perms)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM rigged_scratch")
+            for uid, count in state.rigged_scratch.items():
+                await cur.execute(
+                    "INSERT INTO rigged_scratch (user_id, symbols_count) VALUES (%s,%s)",
+                    (int(uid), count),
+                )
 
 
-def load_records(guild_id: int) -> dict:
-    return _load_json(f"data/records_{guild_id}.json", {})
+async def save_rigged_steal():
+    from src import state
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM rigged_steal")
+            for uid, remaining in state.rigged_steal.items():
+                await cur.execute(
+                    "INSERT INTO rigged_steal (user_id, remaining_successes) VALUES (%s,%s)",
+                    (int(uid), remaining),
+                )
 
 
-def save_records(guild_id: int, records: dict):
-    _save_json(f"data/records_{guild_id}.json", records)
+# ── Gambler streak ────────────────────────────────────────────────────────────
+
+async def save_gambler_streak():
+    from src import state
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM gambler_streak")
+            for uid_str, date_str in state.gambler_streak.items():
+                await cur.execute(
+                    "INSERT INTO gambler_streak (user_id, last_full_date) VALUES (%s,%s)",
+                    (int(uid_str), date_str),
+                )
 
 
-def load_balance_history() -> dict:
-    """Load balance history. Structure: {date_str: {uid_str: {"wallet": int, "savings": int}}}"""
-    return _load_json(BALANCE_HISTORY_FILE, {})
+# ── Chess ─────────────────────────────────────────────────────────────────────
+
+async def save_chess_games():
+    from src import state
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM chess_games")
+            for ch_id, game in state.active_chess_games.items():
+                await cur.execute(
+                    "INSERT INTO chess_games (channel_id, game_json) VALUES (%s,%s)",
+                    (int(ch_id), json.dumps(game)),
+                )
 
 
-def save_balance_history(history: dict):
-    _save_json(BALANCE_HISTORY_FILE, history)
+# ── Roleplay / fanfic ─────────────────────────────────────────────────────────
+
+async def save_roleplay_state():
+    from src import state
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM roleplay_state")
+            for uid, rp in state.active_roleplays.items():
+                ch_id = rp.get("channel_id", uid)
+                rp_serializable = {**rp, "participants": list(rp.get("participants", set()))}
+                history = state.roleplay_histories.get(uid, [])
+                await cur.execute(
+                    "INSERT INTO roleplay_state (channel_id, state_json, history_json) VALUES (%s,%s,%s)"
+                    " ON DUPLICATE KEY UPDATE state_json=VALUES(state_json), history_json=VALUES(history_json)",
+                    (int(ch_id), json.dumps(rp_serializable), json.dumps(history)),
+                )
 
 
-def load_bot_stats_history() -> dict:
-    """Load bot stats history. Structure: {date_str: {messages, commands, ai_responses, ai_up, memory_mb}}"""
-    return _load_json(BOT_STATS_HISTORY_FILE, {})
+async def save_fanfic_histories():
+    from src import state
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            # owners
+            await cur.execute("DELETE FROM fanfic_owners")
+            for tid, data in state.fanfic_owners.items():
+                await cur.execute(
+                    "INSERT INTO fanfic_owners (thread_id, owner_id, invited_ids_json) VALUES (%s,%s,%s)",
+                    (int(tid), data["owner_id"], json.dumps(list(data["invited_ids"]))),
+                )
+            # histories (only fanfic threads)
+            await cur.execute("DELETE FROM fanfic_histories")
+            for ch_id, history in state.channel_histories.items():
+                if ch_id in state.fanfic_thread_ids:
+                    await cur.execute(
+                        "INSERT INTO fanfic_histories (channel_id, history_json) VALUES (%s,%s)",
+                        (int(ch_id), json.dumps(list(history))),
+                    )
 
 
-def save_bot_stats_history(history: dict):
-    _save_json(BOT_STATS_HISTORY_FILE, history)
+# ── Quotes ────────────────────────────────────────────────────────────────────
+
+async def save_quote_log(log: list):
+    from src import state
+    trimmed = log[-10:]
+    state.quote_log = trimmed
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM quote_log")
+            for entry in trimmed:
+                await cur.execute(
+                    "INSERT INTO quote_log (content) VALUES (%s)", (entry,)
+                )
 
 
-def try_set_record(guild_id: int, category: str, value: int, holder_id: int, holder_name: str, **meta) -> bool:
-    """Update a record if value exceeds the current record. Returns True if a new record was set."""
+async def save_saved_quotes(quotes: dict):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM saved_quotes")
+            for guild_id_str, guild_quotes in quotes.items():
+                for q in guild_quotes:
+                    await cur.execute(
+                        "INSERT INTO saved_quotes (guild_id, quote_json) VALUES (%s,%s)",
+                        (str(guild_id_str), json.dumps(q)),
+                    )
+
+
+async def load_saved_quotes() -> dict:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT guild_id, quote_json FROM saved_quotes")
+            rows = await cur.fetchall()
+    result = {}
+    for guild_id_str, quote_json in rows:
+        q = json.loads(quote_json)
+        result.setdefault(guild_id_str, []).append(q)
+    return result
+
+
+# ── Leveling ──────────────────────────────────────────────────────────────────
+
+async def save_leveling():
+    from src import state
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            for uid_str, u in state.leveling.items():
+                await cur.execute(
+                    """INSERT INTO leveling
+                        (user_id, xp, level, msg_last_hour, msg_today,
+                         cmd_last_hour, cmd_today, voice_last_15, voice_today)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       ON DUPLICATE KEY UPDATE
+                         xp=VALUES(xp), level=VALUES(level),
+                         msg_last_hour=VALUES(msg_last_hour), msg_today=VALUES(msg_today),
+                         cmd_last_hour=VALUES(cmd_last_hour), cmd_today=VALUES(cmd_today),
+                         voice_last_15=VALUES(voice_last_15), voice_today=VALUES(voice_today)""",
+                    (
+                        int(uid_str),
+                        u.get("xp", 0), u.get("level", 0),
+                        u.get("msg_last_hour", 0), u.get("msg_today", 0),
+                        u.get("cmd_last_hour", 0), u.get("cmd_today", 0),
+                        u.get("voice_last_15", 0), u.get("voice_today", 0),
+                    ),
+                )
+
+
+# ── Lottery ───────────────────────────────────────────────────────────────────
+
+async def load_lottery(guild_id: int) -> dict:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT prize_pool, last_posted_week FROM lottery WHERE guild_id=%s", (guild_id,)
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return {"prize_pool": 0, "players": {}, "last_posted_week": 0}
+            prize_pool, last_posted_week = row
+            await cur.execute(
+                "SELECT user_id, tickets FROM lottery_players WHERE guild_id=%s", (guild_id,)
+            )
+            players = {str(r[0]): r[1] for r in await cur.fetchall()}
+    return {"prize_pool": prize_pool, "players": players, "last_posted_week": last_posted_week}
+
+
+async def save_lottery(guild_id: int, lottery_data: dict):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO lottery (guild_id, prize_pool, last_posted_week) VALUES (%s,%s,%s)"
+                " ON DUPLICATE KEY UPDATE prize_pool=VALUES(prize_pool), last_posted_week=VALUES(last_posted_week)",
+                (guild_id, lottery_data.get("prize_pool", 0), lottery_data.get("last_posted_week", 0)),
+            )
+            await cur.execute("DELETE FROM lottery_players WHERE guild_id=%s", (guild_id,))
+            for uid_str, tickets in lottery_data.get("players", {}).items():
+                await cur.execute(
+                    "INSERT INTO lottery_players (guild_id, user_id, tickets) VALUES (%s,%s,%s)",
+                    (guild_id, int(uid_str), tickets),
+                )
+
+
+# ── Records ───────────────────────────────────────────────────────────────────
+
+async def load_records(guild_id: int) -> dict:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT category, value, holder_id, holder_name, extra_json FROM records WHERE guild_id=%s",
+                (guild_id,),
+            )
+            rows = await cur.fetchall()
+    result = {}
+    for cat, val, holder_id, holder_name, extra_json in rows:
+        entry = {"value": val, "holder_id": holder_id, "holder_name": holder_name}
+        if extra_json:
+            entry.update(json.loads(extra_json))
+        result[cat] = entry
+    return result
+
+
+async def save_records(guild_id: int, records: dict):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            for cat, data in records.items():
+                known_keys = {"value", "holder_id", "holder_name"}
+                extra = {k: v for k, v in data.items() if k not in known_keys}
+                await cur.execute(
+                    "INSERT INTO records (guild_id, category, value, holder_id, holder_name, extra_json)"
+                    " VALUES (%s,%s,%s,%s,%s,%s)"
+                    " ON DUPLICATE KEY UPDATE value=VALUES(value), holder_id=VALUES(holder_id),"
+                    " holder_name=VALUES(holder_name), extra_json=VALUES(extra_json)",
+                    (guild_id, cat, data["value"], data["holder_id"], data["holder_name"],
+                     json.dumps(extra) if extra else None),
+                )
+
+
+async def try_set_record(guild_id: int, category: str, value: int, holder_id: int, holder_name: str, **meta) -> bool:
     if guild_id is None:
         return False
-    records = load_records(guild_id)
+    records = await load_records(guild_id)
     current = records.get(category, {})
     if value > current.get("value", -1):
         records[category] = {"value": value, "holder_id": holder_id, "holder_name": holder_name, **meta}
-        save_records(guild_id, records)
+        await save_records(guild_id, records)
         return True
     return False
+
+
+# ── Balance / bot stats history ───────────────────────────────────────────────
+
+async def load_balance_history() -> dict:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT snapshot_date, user_id, wallet, savings FROM balance_history")
+            rows = await cur.fetchall()
+    result = {}
+    for date_str, uid, wallet, savings in rows:
+        result.setdefault(date_str, {})[str(uid)] = {"wallet": wallet, "savings": savings}
+    return result
+
+
+async def save_balance_history(history: dict):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            for date_str, users in history.items():
+                for uid_str, vals in users.items():
+                    await cur.execute(
+                        "INSERT INTO balance_history (snapshot_date, user_id, wallet, savings)"
+                        " VALUES (%s,%s,%s,%s)"
+                        " ON DUPLICATE KEY UPDATE wallet=VALUES(wallet), savings=VALUES(savings)",
+                        (date_str, int(uid_str), vals.get("wallet", 0), vals.get("savings", 0)),
+                    )
+
+
+async def load_bot_stats_history() -> dict:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT snapshot_date, messages, commands, ai_responses, ai_up, memory_mb FROM bot_stats_history"
+            )
+            rows = await cur.fetchall()
+    return {
+        r[0]: {"messages": r[1], "commands": r[2], "ai_responses": r[3], "ai_up": bool(r[4]), "memory_mb": r[5]}
+        for r in rows
+    }
+
+
+async def save_bot_stats_history(history: dict):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            for date_str, vals in history.items():
+                await cur.execute(
+                    "INSERT INTO bot_stats_history"
+                    " (snapshot_date, messages, commands, ai_responses, ai_up, memory_mb)"
+                    " VALUES (%s,%s,%s,%s,%s,%s)"
+                    " ON DUPLICATE KEY UPDATE messages=VALUES(messages), commands=VALUES(commands),"
+                    " ai_responses=VALUES(ai_responses), ai_up=VALUES(ai_up), memory_mb=VALUES(memory_mb)",
+                    (date_str, vals.get("messages", 0), vals.get("commands", 0),
+                     vals.get("ai_responses", 0), vals.get("ai_up", False), vals.get("memory_mb", 0.0)),
+                )
+
+
+# ── Channel prompts ───────────────────────────────────────────────────────────
+
+async def save_channel_prompts(prompts: dict):
+    from src import state
+    state.channel_prompts = prompts
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM channel_prompts")
+            for ch_id, prompt in prompts.items():
+                await cur.execute(
+                    "INSERT INTO channel_prompts (channel_id, prompt_text) VALUES (%s,%s)",
+                    (int(ch_id), prompt),
+                )
+
+
+# ── Command perms ─────────────────────────────────────────────────────────────
+
+async def save_command_perms():
+    from src import state
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            for cmd, data in state.command_perms.items():
+                await cur.execute(
+                    "INSERT INTO command_perms (command_name, tier, hidden) VALUES (%s,%s,%s)"
+                    " ON DUPLICATE KEY UPDATE tier=VALUES(tier), hidden=VALUES(hidden)",
+                    (cmd, data["tier"], bool(data.get("hidden", False))),
+                )
+
+
+# ── Restart msg / ephemeral msgs ──────────────────────────────────────────────
+
+async def save_restart_msg(channel_id: int, message_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO restart_msg (id, channel_id, message_id) VALUES (1,%s,%s)"
+                " ON DUPLICATE KEY UPDATE channel_id=VALUES(channel_id), message_id=VALUES(message_id)",
+                (channel_id, message_id),
+            )
+
+
+async def load_restart_msg() -> dict:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT channel_id, message_id FROM restart_msg WHERE id=1")
+            row = await cur.fetchone()
+    if row:
+        return {"channel_id": row[0], "message_id": row[1]}
+    return {}
+
+
+async def clear_restart_msg():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("DELETE FROM restart_msg WHERE id=1")
+
+
+async def add_ephemeral_msg(channel_id: int, message_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "INSERT INTO ephemeral_msgs (channel_id, message_id) VALUES (%s,%s)",
+                (channel_id, message_id),
+            )
+
+
+async def load_and_clear_ephemeral_msgs() -> list:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT channel_id, message_id FROM ephemeral_msgs")
+            rows = await cur.fetchall()
+            await cur.execute("DELETE FROM ephemeral_msgs")
+    return [{"channel_id": r[0], "message_id": r[1]} for r in rows]
+
+
+# ── init_db_state ─────────────────────────────────────────────────────────────
+
+async def init_db_state():
+    """Load all persistent state from DB into src.state. Called once from on_ready."""
+    import src.state as state
+    from src.config import SLOT_JACKPOT_SEED, INITIAL_BOT_ADMIN_IDS
+    from collections import deque
+    from src.config import HISTORY_LIMIT
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+
+            # economy_users
+            await cur.execute(
+                "SELECT user_id, balance, last_daily, daily_date, scratch_used,"
+                " scratch_date, jailbreak_used, jail_until, savings FROM economy_users"
+            )
+            for row in await cur.fetchall():
+                uid, bal, last_daily, daily_date, scratch_used, scratch_date, jb_used, jail_until, savings_json = row
+                state.economy["users"][str(uid)] = {
+                    "balance": bal,
+                    "last_daily": last_daily,
+                    "daily_date": daily_date,
+                    "scratch_used": scratch_used,
+                    "scratch_date": scratch_date,
+                    "jailbreak_used": bool(jb_used),
+                    "jail_until": jail_until,
+                    "savings": json.loads(savings_json) if savings_json else [],
+                }
+
+            # economy_meta (last_daily_reset)
+            await cur.execute("SELECT value_text FROM economy_meta WHERE key_name='last_daily_reset'")
+            row = await cur.fetchone()
+            state.economy["last_daily_reset"] = row[0] if row and row[0] is not None else None
+
+            # guild_house_balance
+            await cur.execute("SELECT guild_id, balance FROM guild_house_balance")
+            for guild_id, bal in await cur.fetchall():
+                state.economy["guild_house"][str(guild_id)] = bal
+
+            # guild_settings
+            await cur.execute("SELECT guild_id, settings_json FROM guild_settings")
+            for guild_id, settings_json in await cur.fetchall():
+                settings = json.loads(settings_json)
+                state.guild_settings[str(guild_id)] = settings
+                for k, v in settings.get("locked_channels", {}).items():
+                    state.locked_channels[int(k)] = int(v)
+                for k, v in settings.get("locked_roles", {}).items():
+                    state.locked_roles[int(k)] = int(v)
+
+            # slots_jackpot
+            await cur.execute("SELECT jackpot FROM slots_jackpot WHERE id=1")
+            row = await cur.fetchone()
+            state.slot_jackpot = max(SLOT_JACKPOT_SEED, row[0] if row else SLOT_JACKPOT_SEED)
+
+            # bot_roles
+            await cur.execute("SELECT role_id FROM bot_roles")
+            state.bot_roles = {r[0] for r in await cur.fetchall()}
+
+            # godmode_users
+            await cur.execute("SELECT user_id FROM godmode_users")
+            state.godmode_users = {r[0] for r in await cur.fetchall()}
+
+            # bot_settings
+            await cur.execute("SELECT key_name, value_text FROM bot_settings")
+            for k, v in await cur.fetchall():
+                state.bot_settings[k] = v
+
+            # shop_insurance
+            await cur.execute("SELECT user_id, expires_at, protected_from FROM shop_insurance")
+            import time as _time
+            now = _time.time()
+            for uid, expires_at, protected_json in await cur.fetchall():
+                if expires_at > now:
+                    state.insurance[str(uid)] = {
+                        "expires_at": expires_at,
+                        "protected_from": json.loads(protected_json) if protected_json else [],
+                    }
+
+            # shop_effects — ragebait
+            await cur.execute(
+                "SELECT user_id, remaining, started_by, history_json, channel_id"
+                " FROM shop_effects WHERE effect_type='ragebait'"
+            )
+            for uid, remaining, started_by, history_json, channel_id in await cur.fetchall():
+                state.active_ragebaits[uid] = {
+                    "remaining": remaining,
+                    "started_by": started_by,
+                    "history": json.loads(history_json) if history_json else [],
+                    "channel_id": channel_id,
+                }
+
+            # shop_effects — mock
+            await cur.execute(
+                "SELECT user_id, remaining, started_by, channel_id"
+                " FROM shop_effects WHERE effect_type='mock'"
+            )
+            for uid, remaining, started_by, channel_id in await cur.fetchall():
+                state.active_mocks[uid] = {
+                    "remaining": remaining,
+                    "started_by": started_by,
+                    "channel_id": channel_id,
+                }
+
+            # shop_effects — curse
+            await cur.execute(
+                "SELECT user_id, remaining, cursed_by, channel_id"
+                " FROM shop_effects WHERE effect_type='curse'"
+            )
+            for uid, remaining, cursed_by, channel_id in await cur.fetchall():
+                state.active_curses[uid] = {
+                    "remaining": remaining,
+                    "cursed_by": cursed_by,
+                    "channel_id": channel_id,
+                }
+
+            # shop_effects — tax
+            await cur.execute(
+                "SELECT user_id, master_id, tax_type, tax_emoji, channel_id, activated_at"
+                " FROM shop_effects WHERE effect_type='tax'"
+            )
+            for uid, master_id, tax_type, tax_emoji, channel_id, activated_at in await cur.fetchall():
+                state.active_taxes[uid] = {
+                    "master": master_id,
+                    "type": tax_type,
+                    "emoji": tax_emoji,
+                    "channel_id": channel_id,
+                    "activated_at": activated_at,
+                }
+
+            # rigged_slots
+            await cur.execute("SELECT user_id, symbol FROM rigged_slots")
+            state.rigged_slots = {str(r[0]): r[1] for r in await cur.fetchall()}
+
+            # rigged_flips
+            await cur.execute("SELECT user_id, remaining_wins FROM rigged_flips")
+            state.rigged_flips = {r[0]: r[1] for r in await cur.fetchall()}
+
+            # rigged_scratch
+            await cur.execute("SELECT user_id, symbols_count FROM rigged_scratch")
+            state.rigged_scratch = {r[0]: r[1] for r in await cur.fetchall()}
+
+            # rigged_steal
+            await cur.execute("SELECT user_id, remaining_successes FROM rigged_steal")
+            state.rigged_steal = {r[0]: r[1] for r in await cur.fetchall()}
+
+            # gambler_streak
+            await cur.execute("SELECT user_id, last_full_date FROM gambler_streak")
+            state.gambler_streak = {str(r[0]): r[1] for r in await cur.fetchall()}
+
+            # chess_games
+            await cur.execute("SELECT channel_id, game_json FROM chess_games")
+            state.active_chess_games = {r[0]: json.loads(r[1]) for r in await cur.fetchall()}
+
+            # roleplay_state
+            await cur.execute("SELECT channel_id, state_json, history_json FROM roleplay_state")
+            for ch_id, state_json, history_json in await cur.fetchall():
+                rp = json.loads(state_json)
+                rp["participants"] = set(rp.get("participants", []))
+                uid = rp.get("user_id", ch_id)
+                state.active_roleplays[uid] = rp
+                state.roleplay_histories[uid] = json.loads(history_json) if history_json else []
+
+            # fanfic_owners
+            await cur.execute("SELECT thread_id, owner_id, invited_ids_json FROM fanfic_owners")
+            for tid, owner_id, invited_json in await cur.fetchall():
+                state.fanfic_owners[tid] = {
+                    "owner_id": owner_id,
+                    "invited_ids": set(json.loads(invited_json) if invited_json else []),
+                }
+                state.fanfic_thread_ids.add(tid)
+
+            # fanfic_histories
+            await cur.execute("SELECT channel_id, history_json FROM fanfic_histories")
+            for ch_id, history_json in await cur.fetchall():
+                history = json.loads(history_json) if history_json else []
+                state.channel_histories[ch_id] = deque(history, maxlen=HISTORY_LIMIT)
+
+            # quote_log
+            await cur.execute("SELECT content FROM quote_log ORDER BY id")
+            state.quote_log = [r[0] for r in await cur.fetchall()]
+
+            # leveling
+            await cur.execute(
+                "SELECT user_id, xp, level, msg_last_hour, msg_today,"
+                " cmd_last_hour, cmd_today, voice_last_15, voice_today FROM leveling"
+            )
+            for row in await cur.fetchall():
+                uid, xp, level, mlh, mt, clh, ct, vl15, vt = row
+                state.leveling[str(uid)] = {
+                    "xp": xp, "level": level,
+                    "msg_last_hour": mlh, "msg_today": mt,
+                    "cmd_last_hour": clh, "cmd_today": ct,
+                    "voice_last_15": vl15, "voice_today": vt,
+                }
+
+            # channel_prompts
+            await cur.execute("SELECT channel_id, prompt_text FROM channel_prompts")
+            state.channel_prompts = {r[0]: r[1] for r in await cur.fetchall()}
+
+            # command_perms — load from DB, then seed missing entries from JSON via INSERT IGNORE
+            json_perms = _load_json(COMMAND_PERMS_FILE, {})
+            for cmd, data in json_perms.items():
+                await cur.execute(
+                    "INSERT IGNORE INTO command_perms (command_name, tier, hidden) VALUES (%s,%s,%s)",
+                    (cmd, data.get("tier", "everyone"), bool(data.get("hidden", False))),
+                )
+            await cur.execute("SELECT command_name, tier, hidden FROM command_perms")
+            state.command_perms = {
+                r[0]: {"tier": r[1], "hidden": bool(r[2])}
+                for r in await cur.fetchall()
+            }
+
+    # bot_admins: always from env, never DB
+    state.bot_admins = set(INITIAL_BOT_ADMIN_IDS)

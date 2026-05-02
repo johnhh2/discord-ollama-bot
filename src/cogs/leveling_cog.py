@@ -132,7 +132,7 @@ def _day_reset(rec: dict, key_today: str, key_day_ts: str):
         rec[key_day_ts] = now
 
 
-def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tuple[int, bool]:
+async def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tuple[int, bool]:
     """
     Attempt to grant XP for *source* ('msg', 'cmd', 'voice').
 
@@ -198,7 +198,7 @@ def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tuple[int
     new_level = level_from_xp(rec["xp"])
     rec["level"] = new_level
     leveled_up = new_level > old_level
-    save_leveling()
+    await save_leveling()
     return xp, leveled_up
 
 
@@ -242,13 +242,13 @@ class LevelingCog(commands.Cog):
 
                     # Voice XP: must not be muted/deafened
                     if not (vs.self_mute or vs.self_deaf or vs.mute or vs.deaf):
-                        _, leveled_up = grant_xp(member.id, "voice", guild_id=guild.id)
+                        _, leveled_up = await grant_xp(member.id, "voice", guild_id=guild.id)
                         if leveled_up and cfg_cache.get("levelup_channel"):
                             await self._announce_levelup(member, guild.id)
 
                     # Stream XP: must currently be streaming; hourly rate-limit handled inside grant_xp
                     if vs.self_stream:
-                        _, leveled_up = grant_xp(member.id, "stream", guild_id=guild.id)
+                        _, leveled_up = await grant_xp(member.id, "stream", guild_id=guild.id)
                         if leveled_up and cfg_cache.get("levelup_channel"):
                             await self._announce_levelup(member, guild.id)
 
@@ -266,7 +266,7 @@ class LevelingCog(commands.Cog):
         rec = state.leveling.get(str(guild_id), {}).get(str(member.id), {})
         lvl = display_level(rec.get("level", 0))
         reward = levelup_coin_reward(lvl)
-        add_balance(member.id, reward)
+        await add_balance(member.id, reward)
         cfg = get_guild_cfg(guild_id)
         channel_id = cfg.get("levelup_channel")
         if not channel_id:
@@ -405,7 +405,7 @@ class LevelingCog(commands.Cog):
                 rec["level"] = correct
                 updated += 1
         if updated:
-            save_leveling()
+            await save_leveling()
         await ctx.send(embed=emb(
             "✅ Migration complete",
             f"Recomputed levels for **{updated}** user(s).",

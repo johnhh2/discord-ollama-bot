@@ -33,12 +33,13 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    init_db_state, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg,
+    load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
@@ -48,7 +49,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -162,21 +163,21 @@ async def _handle_soundboard_ratelimit(bot, guild_id: int, user_id: int):
 async def _auto_daily(message: discord.Message):
     """Award daily coins on first interaction of the day. Sends a short message if awarded."""
     uid = message.author.id
-    _ensure_user(uid)
+    await _ensure_user(uid)
     today = _ct_today()
     user_data = state.economy["users"][str(uid)]
     if user_data.get("daily_date") == today:
         return
     is_new = user_data.get("last_daily", 0.0) == 0.0
-    add_balance(uid, DAILY_REWARD)
+    await add_balance(uid, DAILY_REWARD)
     user_data["daily_date"] = today
     if is_new:
-        user_data["last_daily"] = time.time()  # marks as no longer a new user
-    save_economy()
+        user_data["last_daily"] = time.time()
+    await save_economy()
     greeting = f"Welcome, **{message.author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
     await message.channel.send(embed=emb(
         "🪙 Daily Reward",
-        f"{greeting} **{DAILY_REWARD:,} 🪙** added. Balance: {get_balance(uid):,} 🪙",
+        f"{greeting} **{DAILY_REWARD:,} 🪙** added. Balance: {await get_balance(uid):,} 🪙",
         C_GREEN,
     ))
 
@@ -221,8 +222,10 @@ class EventsCog(commands.Cog):
     async def on_ready(self):
         logging.info(f"Logged in as {self.bot.user} ({self.bot.user.id})")
 
+        await init_db_state()
+
         # Edit the restart confirmation message if one was saved
-        restart_data = _load_json(RESTART_MSG_FILE, {})
+        restart_data = await load_restart_msg()
         if restart_data:
             try:
                 channel = await self.bot.fetch_channel(restart_data["channel_id"])
@@ -230,10 +233,10 @@ class EventsCog(commands.Cog):
                 await msg.edit(embed=emb("✅ Restarted", "Bot has restarted.", C_GREEN))
             except Exception:
                 pass
-            _save_json(RESTART_MSG_FILE, {})
+            await clear_restart_msg()
 
         # Delete all ephemeral messages that survived the restart
-        records = _load_json(EPHEMERAL_MSG_FILE, [])
+        records = await load_and_clear_ephemeral_msgs()
         for record in records:
             try:
                 channel = await self.bot.fetch_channel(record["channel_id"])
@@ -241,7 +244,6 @@ class EventsCog(commands.Cog):
                 await msg.delete()
             except Exception:
                 pass
-        _save_json(EPHEMERAL_MSG_FILE, [])
 
     @commands.Cog.listener()
     async def global_command_channel_check(self, ctx: commands.Context) -> bool:
@@ -301,7 +303,7 @@ class EventsCog(commands.Cog):
         state.stats_commands_ran += 1
         state.stats_commands_today += 1
         if ctx.guild and not ctx.author.bot:
-            xp, leveled_up = _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
+            xp, leveled_up = await _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
             if leveled_up and get_guild_cfg(ctx.guild.id).get("levelup_channel"):
                 from src.cogs.leveling_cog import LevelingCog
                 cog = self.bot.cogs.get("LevelingCog")
@@ -343,7 +345,7 @@ class EventsCog(commands.Cog):
 
         # Message XP (non-command messages only)
         if message.guild and not message.content.startswith("!"):
-            xp, leveled_up = _grant_xp(uid, "msg", guild_id=message.guild.id)
+            xp, leveled_up = await _grant_xp(uid, "msg", guild_id=message.guild.id)
             if leveled_up and isinstance(message.author, discord.Member) and get_guild_cfg(message.guild.id).get("levelup_channel"):
                 from src.cogs.leveling_cog import LevelingCog
                 cog = self.bot.cogs.get("LevelingCog")
@@ -360,7 +362,7 @@ class EventsCog(commands.Cog):
                 rage["remaining"] -= 1
                 if rage["remaining"] <= 0:
                     del state.active_ragebaits[uid]
-                save_ragebait()
+                await save_ragebait()
 
                 asyncio.create_task(_passive_ragebait(message, list(rage["history"])))
 
@@ -373,7 +375,7 @@ class EventsCog(commands.Cog):
             mock["remaining"] -= 1
             if mock["remaining"] <= 0:
                 del state.active_mocks[uid]
-            save_mock()
+            await save_mock()
 
         # Tax: deduct coins from users who have an active tax on them
         _tax_channel = state.active_taxes.get(uid, {}).get("channel_id")
@@ -383,15 +385,15 @@ class EventsCog(commands.Cog):
 
             if "activated_at" in tax_data and time.time() - tax_data["activated_at"] > SHOP_TAX_DURATION_SECS:
                 del state.active_taxes[uid]
-                save_tax(state.active_taxes)
-            elif is_insured(uid, "tax"):
+                await save_tax(state.active_taxes)
+            elif await is_insured(uid, "tax"):
                 pass
             else:
                 tax_master_id = tax_data["master"]
                 tax_label = tax_type.capitalize()
                 tax_emoji = tax_data.get("emoji", "💰")
-                if deduct_balance(uid, SHOP_TAX_PER_MESSAGE):
-                    add_balance(tax_master_id, SHOP_TAX_PER_MESSAGE)
+                if await deduct_balance(uid, SHOP_TAX_PER_MESSAGE):
+                    await add_balance(tax_master_id, SHOP_TAX_PER_MESSAGE)
                     tax_master = await fetch_member(message.guild, tax_master_id)
                     if tax_master:
                         master_name = tax_master.display_name
@@ -411,7 +413,7 @@ class EventsCog(commands.Cog):
             curse["remaining"] -= 1
             if curse["remaining"] <= 0:
                 del state.active_curses[uid]
-            save_curse(state.active_curses)
+            await save_curse(state.active_curses)
 
         # Auto-award daily on any bot interaction (skip blacklisted channels)
         _is_dm = isinstance(message.channel, discord.DMChannel)
@@ -444,7 +446,7 @@ class EventsCog(commands.Cog):
                     del state.active_blackjack_games[uid]
                     await message.channel.send(embed=emb(
                         "💥 Bust!",
-                        display + f"\n\n**{message.author.display_name}** loses **{game['amount']:,} 🪙**. Balance: {get_balance(uid):,} 🪙",
+                        display + f"\n\n**{message.author.display_name}** loses **{game['amount']:,} 🪙**. Balance: {await get_balance(uid):,} 🪙",
                         C_RED,
                     ))
                 elif pval == 21:
@@ -468,10 +470,10 @@ class EventsCog(commands.Cog):
                 if _norm_puzzle_answer(guess) == _norm_puzzle_answer(expected):
                     reward = puzzle["reward"]
                     del state.active_puzzles[cid]
-                    add_balance(uid, reward)
+                    await add_balance(uid, reward)
                     await message.channel.send(embed=emb(
                         "✅ Correct!",
-                        f"{message.author.mention} got it!\n**Answer:** `{expected}`\n+**{reward:,} 🪙** (Balance: {get_balance(uid):,} 🪙)",
+                        f"{message.author.mention} got it!\n**Answer:** `{expected}`\n+**{reward:,} 🪙** (Balance: {await get_balance(uid):,} 🪙)",
                         C_GREEN,
                     ))
                     return

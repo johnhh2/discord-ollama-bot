@@ -34,8 +34,8 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    _load_json, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
@@ -49,7 +49,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -99,7 +99,7 @@ class LotteryCog(commands.Cog):
             except Exception:
                 continue
 
-            lottery = load_lottery(guild.id)
+            lottery = await load_lottery(guild.id)
             current_week = now.isocalendar()[1]
 
             # 6pm: draw winner and reset lottery
@@ -112,8 +112,8 @@ class LotteryCog(commands.Cog):
                     weights = [players[pid] for pid in player_ids]
                     winner_id = random.choices(player_ids, weights=weights, k=1)[0]
                     winner = await self.bot.fetch_user(int(winner_id))
-                    add_balance(int(winner_id), pool, guild_id=guild.id, holder_name=winner.display_name)
-                    try_set_record(guild.id, "lottery", pool, int(winner_id), winner.display_name)
+                    await add_balance(int(winner_id), pool, guild_id=guild.id, holder_name=winner.display_name)
+                    await try_set_record(guild.id, "lottery", pool, int(winner_id), winner.display_name)
 
                     embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
                     embed.description = (
@@ -125,19 +125,19 @@ class LotteryCog(commands.Cog):
                     await channel.send(embed=embed)
 
                 lottery = {"prize_pool": 2000, "players": {}, "last_drawn_week": current_week, "last_posted_week": 0}
-                drain_bot_balance_into_lottery(lottery, guild.id)
-                save_lottery(guild.id, lottery)
+                await drain_bot_balance_into_lottery(lottery, guild.id)
+                await save_lottery(guild.id, lottery)
 
             # 7pm: announce new lottery
             if now.hour >= 19 and lottery.get("last_posted_week") != current_week:
                 lottery["last_posted_week"] = current_week
-                save_lottery(guild.id, lottery)
+                await save_lottery(guild.id, lottery)
                 await announce_new_lottery(channel, lottery["prize_pool"], now)
 
     @commands.command(name="lottery")
     async def cmd_lottery(self, ctx: commands.Context, n: str = None):
         uid = ctx.author.id
-        _ensure_user(uid)
+        await _ensure_user(uid)
 
         # Check if lottery channel is configured
         if ctx.guild is None:
@@ -150,7 +150,7 @@ class LotteryCog(commands.Cog):
             await ctx.send(embed=emb("🎰 Lottery Disabled", "Lottery channel not configured.", C_GREY))
             return
 
-        lottery = load_lottery(ctx.guild.id)
+        lottery = await load_lottery(ctx.guild.id)
 
         # Check if we're in the 6-7pm window (draw done, new lottery not yet announced)
         ct = ZoneInfo("America/Chicago")
@@ -207,8 +207,8 @@ class LotteryCog(commands.Cog):
             return
 
         cost = tickets * 10
-        if not deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"Need {cost:,} 🪙. Balance: {get_balance(uid):,} 🪙", C_RED))
+        if not await deduct_balance(uid, cost):
+            await ctx.send(embed=emb("💸 Insufficient Funds", f"Need {cost:,} 🪙. Balance: {await get_balance(uid):,} 🪙", C_RED))
             return
 
         # Add to lottery
@@ -221,7 +221,7 @@ class LotteryCog(commands.Cog):
         if was_new_player:
             lottery["prize_pool"] += 1000
 
-        save_lottery(ctx.guild.id, lottery)
+        await save_lottery(ctx.guild.id, lottery)
 
         bonus_msg = "(+1,000 bonus as new player)" if was_new_player else ""
 

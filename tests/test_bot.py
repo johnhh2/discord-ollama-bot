@@ -378,42 +378,46 @@ GUILD_ID = 111222333
 
 
 class TestDrainBotBalanceIntoLottery:
-    def test_transfers_house_balance_to_pool(self):
+    @pytest.mark.asyncio
+    async def test_transfers_house_balance_to_pool(self):
         bot.economy["guild_house"] = {str(GUILD_ID): 500}
         lottery = {"prize_pool": 100, "players": {}}
-        transferred = bot.drain_bot_balance_into_lottery(lottery, GUILD_ID)
+        transferred = await bot.drain_bot_balance_into_lottery(lottery, GUILD_ID)
         assert transferred == 500
         assert lottery["prize_pool"] == 600
         assert bot.economy["guild_house"][str(GUILD_ID)] == 0
 
-    def test_noop_when_house_balance_zero(self):
+    @pytest.mark.asyncio
+    async def test_noop_when_house_balance_zero(self):
         bot.economy["guild_house"] = {str(GUILD_ID): 0}
         lottery = {"prize_pool": 200, "players": {}}
-        transferred = bot.drain_bot_balance_into_lottery(lottery, GUILD_ID)
+        transferred = await bot.drain_bot_balance_into_lottery(lottery, GUILD_ID)
         assert transferred == 0
         assert lottery["prize_pool"] == 200
 
-    def test_noop_when_no_guild_entry(self):
+    @pytest.mark.asyncio
+    async def test_noop_when_no_guild_entry(self):
         bot.economy["guild_house"] = {}
         lottery = {"prize_pool": 50, "players": {}}
-        transferred = bot.drain_bot_balance_into_lottery(lottery, GUILD_ID)
+        transferred = await bot.drain_bot_balance_into_lottery(lottery, GUILD_ID)
         assert transferred == 0
         assert lottery["prize_pool"] == 50
 
-    def test_large_house_balance(self):
+    @pytest.mark.asyncio
+    async def test_large_house_balance(self):
         bot.economy["guild_house"] = {str(GUILD_ID): 99999}
         lottery = {"prize_pool": 2000, "players": {}}
-        bot.drain_bot_balance_into_lottery(lottery, GUILD_ID)
+        await bot.drain_bot_balance_into_lottery(lottery, GUILD_ID)
         assert lottery["prize_pool"] == 101999
 
 
 class TestLotteryTicketPurchase:
     """Test the dict-mutation logic that cmd_lottery performs (no Discord needed)."""
 
-    def _buy(self, lottery: dict, uid: int, tickets: int):
+    async def _buy(self, lottery: dict, uid: int, tickets: int):
         """Replicate the purchase logic from cmd_lottery lines 6184-6197."""
         cost = tickets * 10
-        bot.deduct_balance(uid, cost)
+        await bot.deduct_balance(uid, cost)
         players = lottery.setdefault("players", {})
         was_new = str(uid) not in players
         players[str(uid)] = players.get(str(uid), 0) + tickets
@@ -423,52 +427,58 @@ class TestLotteryTicketPurchase:
             lottery["prize_pool"] += 1000
         return was_new
 
-    def test_first_buyer_gets_bonus(self):
+    @pytest.mark.asyncio
+    async def test_first_buyer_gets_bonus(self):
         uid = 1001
-        bot.add_balance(uid, 500)
+        await bot.add_balance(uid, 500)
         lottery = {"prize_pool": 2000, "players": {}}
-        was_new = self._buy(lottery, uid, 5)
+        was_new = await self._buy(lottery, uid, 5)
         assert was_new is True
         assert lottery["prize_pool"] == 2000 + 50 + 1000
         assert lottery["players"][str(uid)] == 5
 
-    def test_returning_buyer_no_bonus(self):
+    @pytest.mark.asyncio
+    async def test_returning_buyer_no_bonus(self):
         uid = 1002
-        bot.add_balance(uid, 500)
+        await bot.add_balance(uid, 500)
         lottery = {"prize_pool": 2000, "players": {str(uid): 3}}
-        was_new = self._buy(lottery, uid, 2)
+        was_new = await self._buy(lottery, uid, 2)
         assert was_new is False
         assert lottery["prize_pool"] == 2000 + 20  # no bonus
         assert lottery["players"][str(uid)] == 5
 
-    def test_each_new_player_adds_bonus(self):
+    @pytest.mark.asyncio
+    async def test_each_new_player_adds_bonus(self):
         lottery = {"prize_pool": 2000, "players": {}}
         for uid in [2001, 2002, 2003]:
-            bot.add_balance(uid, 200)
-            self._buy(lottery, uid, 1)
+            await bot.add_balance(uid, 200)
+            await self._buy(lottery, uid, 1)
         # 3 new players × (10 ticket cost + 1000 bonus) = 3030 added
         assert lottery["prize_pool"] == 2000 + 3 * 10 + 3 * 1000
 
-    def test_ticket_count_accumulates(self):
+    @pytest.mark.asyncio
+    async def test_ticket_count_accumulates(self):
         uid = 3001
-        bot.add_balance(uid, 1000)
+        await bot.add_balance(uid, 1000)
         lottery = {"prize_pool": 0, "players": {}}
-        self._buy(lottery, uid, 4)
-        self._buy(lottery, uid, 6)
+        await self._buy(lottery, uid, 4)
+        await self._buy(lottery, uid, 6)
         assert lottery["players"][str(uid)] == 10
 
-    def test_balance_deducted(self):
+    @pytest.mark.asyncio
+    async def test_balance_deducted(self):
         uid = 4001
-        bot.add_balance(uid, 300)
+        await bot.add_balance(uid, 300)
         lottery = {"prize_pool": 0, "players": {}}
-        self._buy(lottery, uid, 10)  # costs 100
-        assert bot.get_balance(uid) == 200
+        await self._buy(lottery, uid, 10)  # costs 100
+        assert await bot.get_balance(uid) == 200
 
-    def test_ticket_cost_is_ten_per_ticket(self):
+    @pytest.mark.asyncio
+    async def test_ticket_cost_is_ten_per_ticket(self):
         uid = 5001
-        bot.add_balance(uid, 1000)
+        await bot.add_balance(uid, 1000)
         lottery = {"prize_pool": 0, "players": {}}
-        self._buy(lottery, uid, 7)
+        await self._buy(lottery, uid, 7)
         # pool gets 70 (cost) + 1000 (new player bonus)
         assert lottery["prize_pool"] == 1070
 
@@ -514,35 +524,38 @@ class TestLotteryWeekTiming:
 
 
 class TestLotteryWinnerPayout:
-    def test_sole_player_always_wins(self):
+    @pytest.mark.asyncio
+    async def test_sole_player_always_wins(self):
         uid = 7001
-        bot.add_balance(uid, 0)
+        await bot.add_balance(uid, 0)
         pool = 5000
         players = {str(uid): 10}
         # Replicate scheduler payout: pick winner, add_balance
         winner_id = int(list(players.keys())[0])
-        bot.add_balance(winner_id, pool)
-        assert bot.get_balance(uid) == pool
+        await bot.add_balance(winner_id, pool)
+        assert await bot.get_balance(uid) == pool
 
-    def test_winner_receives_full_pool(self):
+    @pytest.mark.asyncio
+    async def test_winner_receives_full_pool(self):
         uid = 7002
-        bot.add_balance(uid, 100)
+        await bot.add_balance(uid, 100)
         pool = 8000
-        bot.add_balance(uid, pool)
-        assert bot.get_balance(uid) == 8100
+        await bot.add_balance(uid, pool)
+        assert await bot.get_balance(uid) == 8100
 
-    def test_random_choice_winner(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_random_choice_winner(self, monkeypatch):
         players = {"8001": 5, "8002": 3, "8003": 1}
         for uid_str in players:
-            bot.add_balance(int(uid_str), 0)
+            await bot.add_balance(int(uid_str), 0)
         pool = 3000
         # Force random.choice to always pick player 8002
         monkeypatch.setattr("src.random.choice", lambda seq: "8002")
         winner_id = int(bot.random.choice(list(players.keys())))
-        bot.add_balance(winner_id, pool)
-        assert bot.get_balance(8002) == pool
-        assert bot.get_balance(8001) == 0
-        assert bot.get_balance(8003) == 0
+        await bot.add_balance(winner_id, pool)
+        assert await bot.get_balance(8002) == pool
+        assert await bot.get_balance(8001) == 0
+        assert await bot.get_balance(8003) == 0
 
 
 @pytest.mark.asyncio
@@ -847,45 +860,53 @@ class TestMiniCactpot:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestEconomy:
-    def test_ensure_user_creates_entry(self):
-        bot._ensure_user(1)
+    @pytest.mark.asyncio
+    async def test_ensure_user_creates_entry(self):
+        await bot._ensure_user(1)
         assert "1" in bot.economy["users"]
         assert bot.economy["users"]["1"]["balance"] == 0
 
-    def test_ensure_user_idempotent(self):
-        bot._ensure_user(1)
-        bot._ensure_user(1)
+    @pytest.mark.asyncio
+    async def test_ensure_user_idempotent(self):
+        await bot._ensure_user(1)
+        await bot._ensure_user(1)
         assert bot.economy["users"]["1"]["balance"] == 0
 
-    def test_get_balance_new_user(self):
-        assert bot.get_balance(1) == 0
+    @pytest.mark.asyncio
+    async def test_get_balance_new_user(self):
+        assert await bot.get_balance(1) == 0
 
-    def test_add_balance(self):
-        bot.add_balance(1, 100)
-        assert bot.get_balance(1) == 100
+    @pytest.mark.asyncio
+    async def test_add_balance(self):
+        await bot.add_balance(1, 100)
+        assert await bot.get_balance(1) == 100
 
-    def test_add_balance_accumulates(self):
-        bot.add_balance(1, 50)
-        bot.add_balance(1, 75)
-        assert bot.get_balance(1) == 125
+    @pytest.mark.asyncio
+    async def test_add_balance_accumulates(self):
+        await bot.add_balance(1, 50)
+        await bot.add_balance(1, 75)
+        assert await bot.get_balance(1) == 125
 
-    def test_deduct_balance_sufficient_funds(self):
-        bot.add_balance(1, 100)
-        result = bot.deduct_balance(1, 60)
+    @pytest.mark.asyncio
+    async def test_deduct_balance_sufficient_funds(self):
+        await bot.add_balance(1, 100)
+        result = await bot.deduct_balance(1, 60)
         assert result is True
-        assert bot.get_balance(1) == 40
+        assert await bot.get_balance(1) == 40
 
-    def test_deduct_balance_insufficient_funds(self):
-        bot.add_balance(1, 10)
-        result = bot.deduct_balance(1, 50)
+    @pytest.mark.asyncio
+    async def test_deduct_balance_insufficient_funds(self):
+        await bot.add_balance(1, 10)
+        result = await bot.deduct_balance(1, 50)
         assert result is False
-        assert bot.get_balance(1) == 10  # unchanged
+        assert await bot.get_balance(1) == 10  # unchanged
 
-    def test_deduct_exact_balance(self):
-        bot.add_balance(1, 50)
-        result = bot.deduct_balance(1, 50)
+    @pytest.mark.asyncio
+    async def test_deduct_exact_balance(self):
+        await bot.add_balance(1, 50)
+        result = await bot.deduct_balance(1, 50)
         assert result is True
-        assert bot.get_balance(1) == 0
+        assert await bot.get_balance(1) == 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -924,26 +945,30 @@ class TestGuildSettings:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestInsurance:
-    def test_not_insured_missing_user(self):
-        assert bot.is_insured(1, "rob") is False
+    @pytest.mark.asyncio
+    async def test_not_insured_missing_user(self):
+        assert await bot.is_insured(1, "rob") is False
 
-    def test_not_insured_expired(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_not_insured_expired(self, monkeypatch):
         monkeypatch.setattr(bot, "insurance", {
             "1": {"expires_at": time.time() - 10, "protected_from": ["rob"]}
         })
-        assert bot.is_insured(1, "rob") is False
+        assert await bot.is_insured(1, "rob") is False
 
-    def test_insured_valid(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_insured_valid(self, monkeypatch):
         monkeypatch.setattr(bot, "insurance", {
             "1": {"expires_at": time.time() + 3600, "protected_from": ["rob"]}
         })
-        assert bot.is_insured(1, "rob") is True
+        assert await bot.is_insured(1, "rob") is True
 
-    def test_insured_wrong_protection_type(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_insured_wrong_protection_type(self, monkeypatch):
         monkeypatch.setattr(bot, "insurance", {
             "1": {"expires_at": time.time() + 3600, "protected_from": ["mug"]}
         })
-        assert bot.is_insured(1, "rob") is False
+        assert await bot.is_insured(1, "rob") is False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1068,19 +1093,16 @@ class TestGetGuildCodingModel:
 
 
 class TestSaveQuoteLog:
-    def test_trims_to_last_10(self, tmp_path, monkeypatch):
-        # Point QUOTE_LOG_FILE at a temp path and use real _save_json
-        monkeypatch.setattr(bot, "QUOTE_LOG_FILE", str(tmp_path / "quotes.json"))
-        monkeypatch.setattr(bot, "_save_json", real_save_json)
+    @pytest.mark.asyncio
+    async def test_trims_to_last_10(self, monkeypatch):
+        import src.state as _state
         log = [str(i) for i in range(15)]
-        bot.save_quote_log(log)
-        saved = real_load_json(str(tmp_path / "quotes.json"), [])
-        assert saved == [str(i) for i in range(5, 15)]
+        await bot.save_quote_log(log)
+        assert _state.quote_log == [str(i) for i in range(5, 15)]
 
-    def test_short_log_unchanged(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(bot, "QUOTE_LOG_FILE", str(tmp_path / "quotes.json"))
-        monkeypatch.setattr(bot, "_save_json", real_save_json)
+    @pytest.mark.asyncio
+    async def test_short_log_unchanged(self, monkeypatch):
+        import src.state as _state
         log = ["a", "b", "c"]
-        bot.save_quote_log(log)
-        saved = real_load_json(str(tmp_path / "quotes.json"), [])
-        assert saved == ["a", "b", "c"]
+        await bot.save_quote_log(log)
+        assert _state.quote_log == ["a", "b", "c"]

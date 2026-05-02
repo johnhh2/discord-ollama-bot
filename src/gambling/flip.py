@@ -34,8 +34,8 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    _load_json, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots, save_rigged_flips,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
@@ -49,7 +49,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -92,17 +92,17 @@ class FlipCog(commands.Cog):
             state.rigged_flips[uid] -= 1
             if state.rigged_flips[uid] <= 0:
                 del state.rigged_flips[uid]
-            save_rigged_flips()
+            await save_rigged_flips()
         else:
             win = random.random() < 0.5
         if win:
             winnings = amount * 2
             gid = ctx.guild.id if ctx.guild else None
-            add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name)
-            try_set_record(gid, "flip", winnings, uid, ctx.author.display_name)
-            await ctx.send(embed=emb("🪙 Heads!", f"**{ctx.author.display_name}** won **{amount:,} 🪙**! Balance: {get_balance(uid):,} 🪙", C_GREEN))
+            await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name)
+            await try_set_record(gid, "flip", winnings, uid, ctx.author.display_name)
+            await ctx.send(embed=emb("🪙 Heads!", f"**{ctx.author.display_name}** won **{amount:,} 🪙**! Balance: {await get_balance(uid):,} 🪙", C_GREEN))
         else:
-            await ctx.send(embed=emb("🪙 Tails!", f"**{ctx.author.display_name}** lost **{amount:,} 🪙**. Balance: {get_balance(uid):,} 🪙", C_RED))
+            await ctx.send(embed=emb("🪙 Tails!", f"**{ctx.author.display_name}** lost **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙", C_RED))
 
 
     # Mini Cactpot payout table

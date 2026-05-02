@@ -63,11 +63,11 @@ async def enforce_cost(ctx, feature: str) -> bool:
     cost = 0 if uid in state.godmode_users else FEATURE_COSTS.get(feature, 0)
     if cost == 0:
         return True
-    if not deduct_balance(uid, cost):
+    if not await deduct_balance(uid, cost):
         label = _FEATURE_LABELS.get(feature, feature.title())
         await ctx.send(embed=emb(
             "💸 Insufficient Funds",
-            f"{label} costs **{cost:,} 🪙**. Balance: {get_balance(uid):,} 🪙",
+            f"{label} costs **{cost:,} 🪙**. Balance: {await get_balance(uid):,} 🪙",
             C_RED,
         ))
         return False
@@ -77,7 +77,7 @@ async def enforce_cost(ctx, feature: str) -> bool:
 async def insufficient_funds(ctx_or_send, uid: int, *, label: str = "") -> None:
     """Send a standard Insufficient Funds embed."""
     from discord.ext import commands
-    desc = f"{label + ' ' if label else ''}Balance: {get_balance(uid):,} 🪙"
+    desc = f"{label + ' ' if label else ''}Balance: {await get_balance(uid):,} 🪙"
     e = emb("💸 Insufficient Funds", desc, C_RED)
     if callable(ctx_or_send) and not isinstance(ctx_or_send, commands.Context):
         await ctx_or_send(embed=e)
@@ -258,7 +258,7 @@ async def respond_roleplay(
     await _execute_ollama_stream(
         channel, reply_to, messages, history, model=model, placeholder=placeholder
     )
-    save_roleplay_state()
+    await save_roleplay_state()
 
 
 def _norm_puzzle_answer(s: str) -> str:

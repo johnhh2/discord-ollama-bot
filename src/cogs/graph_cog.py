@@ -59,9 +59,9 @@ class GraphCog(commands.Cog):
 
         member = target or ctx.author
         uid_str = str(member.id)
-        _ensure_user(member.id)
+        await _ensure_user(member.id)
 
-        history = load_balance_history()
+        history = await load_balance_history()
         dates = _sorted_dates(history)
 
         if not dates:
@@ -79,7 +79,7 @@ class GraphCog(commands.Cog):
 
         # Append today's live balance
         today = _ct_now().date()
-        live_wallet = get_balance(member.id)
+        live_wallet = await get_balance(member.id)
         if not x_dates or x_dates[-1] != today:
             x_dates.append(today)
             y_wallet.append(live_wallet)
@@ -124,7 +124,7 @@ class GraphCog(commands.Cog):
         import matplotlib.dates as mdates
         import time as _time
 
-        history = load_balance_history()
+        history = await load_balance_history()
         dates = _sorted_dates(history)
 
         if not dates:
@@ -202,7 +202,7 @@ class GraphCog(commands.Cog):
         import matplotlib.pyplot as plt
         import matplotlib.dates as mdates
 
-        history = load_bot_stats_history()
+        history = await load_bot_stats_history()
         dates = _sorted_dates(history)
 
         if not dates:
@@ -266,7 +266,7 @@ class GraphCog(commands.Cog):
         import matplotlib.pyplot as plt
         import matplotlib.dates as mdates
 
-        history = load_bot_stats_history()
+        history = await load_bot_stats_history()
         dates = _sorted_dates(history)
 
         if not dates:
@@ -328,7 +328,7 @@ class GraphCog(commands.Cog):
         import matplotlib.pyplot as plt
         import matplotlib.dates as mdates
 
-        history = load_bot_stats_history()
+        history = await load_bot_stats_history()
         dates = _sorted_dates(history)
 
         if not dates:

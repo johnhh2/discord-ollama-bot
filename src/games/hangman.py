@@ -34,8 +34,8 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    _load_json, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
@@ -50,7 +50,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -140,7 +140,7 @@ def calculate_hangman_reward(word: str) -> int:
     return total
 
 
-def _distribute_hangman_rewards(cid: int, game: dict) -> str:
+async def _distribute_hangman_rewards(cid: int, game: dict) -> str:
     """Distributes win rewards, deletes the game, and returns the reward message."""
     word = game["word"]
     gid = game.get("guild_id")
@@ -158,19 +158,19 @@ def _distribute_hangman_rewards(cid: int, game: dict) -> str:
         bonus = 1 if i < remainder else 0
         reward = per_player + bonus
         name = names.get(pid, f"<@{pid}>")
-        add_balance(pid, reward, guild_id=gid if gid else None, holder_name=name)
-        msg += f"**{name}**: +{reward:,} 🪙 | Balance: {get_balance(pid):,} 🪙\n"
+        await add_balance(pid, reward, guild_id=gid if gid else None, holder_name=name)
+        msg += f"**{name}**: +{reward:,} 🪙 | Balance: {await get_balance(pid):,} 🪙\n"
         # Track most hangman wins per player
         if gid:
             wins_key = f"hangman_wins_{pid}"
-            records = load_records(gid)
+            records = await load_records(gid)
             current_wins = records.get(wins_key, {}).get("value", 0)
-            try_set_record(gid, wins_key, current_wins + 1, pid, name)
+            await try_set_record(gid, wins_key, current_wins + 1, pid, name)
     # Track biggest hangman payout (use total for multiplayer, per-player for solo)
     payout_value = total_reward if len(active_players) == 1 else per_player
     first_pid = active_players[0]
     first_name = names.get(first_pid, str(first_pid))
-    try_set_record(gid, "hangman_payout", payout_value, first_pid, first_name, word=word)
+    await try_set_record(gid, "hangman_payout", payout_value, first_pid, first_name, word=word)
     return msg.strip()
 
 
@@ -195,7 +195,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
         if guess == game["word"]:
             game["last_move"] = f"{name} guessed the word! 🎉"
             game["guessed_letters"].update(game["word"])  # reveal full word for display
-            reward_msg = _distribute_hangman_rewards(cid, game)
+            reward_msg = await _distribute_hangman_rewards(cid, game)
             await _edit_board(channel, game, emb("🎉 Correct!", build_hangman_display(game) + "\n\n" + reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         elif guess in game["guessed_words"]:
             game["last_move"] = f"{name} guessed `{guess}` ❌ (already tried)"
@@ -223,7 +223,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
     if guess in game["word"]:
         if all(c in game["guessed_letters"] for c in game["word"]):
             game["last_move"] = f"{name} guessed `{guess}` ✅ — word complete! 🎉"
-            reward_msg = _distribute_hangman_rewards(cid, game)
+            reward_msg = await _distribute_hangman_rewards(cid, game)
             await _edit_board(channel, game, emb("🎉 You Got It!", build_hangman_display(game) + "\n\n" + reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         else:
             game["last_move"] = f"{name} guessed `{guess}` ✅"

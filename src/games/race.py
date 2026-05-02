@@ -34,8 +34,8 @@ from src.permissions import (
     check_chess_channel, _wrong_channel_reply,
 )
 from src.persistence import (
-    _load_json, _save_json, save_economy, save_insurance, save_guild_settings,
-    save_bot_settings, save_bot_admins, save_godmode_users, save_bot_roles,
+    _load_json, save_economy, save_insurance, save_guild_settings,
+    save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
     save_gambler_streak, save_roleplay_state, save_fanfic_histories,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
@@ -50,7 +50,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -101,12 +101,12 @@ async def _run_race(channel, cid: int, race_msg: discord.Message):
             if len(winners) == 1:
                 winner_name = game["names"][winners[0]]
                 if share > 0:
-                    add_balance(winners[0], share)
+                    await add_balance(winners[0], share)
                 result = f"{board}\n\n🏆 **{winner_name}** wins" + (f" **{share:,} 🪙**!" if share else "!")
             else:
                 for w in winners:
                     if share > 0:
-                        add_balance(w, share)
+                        await add_balance(w, share)
                 names = ", ".join(f"**{game['names'][w]}**" for w in winners)
                 result = f"{board}\n\n🤝 Tie! {names} each get **{share:,} 🪙**"
 
@@ -156,9 +156,9 @@ class RaceCog(commands.Cog):
         paid = []
         if amount > 0:
             for player_uid in all_players:
-                if not deduct_balance(player_uid, amount):
+                if not await deduct_balance(player_uid, amount):
                     for refund_uid in paid:
-                        add_balance(refund_uid, amount)
+                        await add_balance(refund_uid, amount)
                     member = ctx.guild.get_member(player_uid) if ctx.guild else None
                     name = member.display_name if member else str(player_uid)
                     await ctx.send(embed=emb("💸 Insufficient Funds", f"**{name}** can't cover the **{amount:,} 🪙** bet.", C_RED))
@@ -175,11 +175,11 @@ class RaceCog(commands.Cog):
         declined = set(u.id for u in invited_users) - confirmed_ids
         if amount > 0:
             for d_uid in declined:
-                add_balance(d_uid, amount)
+                await add_balance(d_uid, amount)
 
         if not confirmed_ids:
             if amount > 0:
-                add_balance(uid, amount)
+                await add_balance(uid, amount)
                 msg = f"Race cancelled — no one accepted the invite. Coins refunded ({amount:,} 🪙)."
             else:
                 msg = "Race cancelled — no one accepted the invite."
