@@ -232,6 +232,7 @@ class UtilityCog(commands.Cog):
     async def cmd_help(self, ctx: commands.Context):
         help_embed = discord.Embed(title="📖 Commands", color=0x3498db)
         help_embed.add_field(name="💰 Economy", inline=False, value=(
+            "`!economy` — Economy overview and command list\n"
             "`!daily` — Claim 200 🪙 (24h cooldown)\n"
             "`!balance [@user]` — Check balance\n"
             "`!pay @user <amount>` — Send coins to another user\n"

@@ -667,6 +667,53 @@ class EconomyCog(commands.Cog):
                 C_GREEN,
             ))
 
+    @commands.command(name="economy", aliases=["eco"])
+    async def cmd_economy(self, ctx: commands.Context):
+        if not await check_command_permission(ctx):
+            return
+
+        users = state.economy["users"]
+        now = time.time()
+
+        total_wallets = sum(u.get("balance", 0) for u in users.values())
+        total_savings = 0
+        users_with_savings = 0
+        jailed = 0
+        for u in users.values():
+            deps = u.get("savings", [])
+            if deps:
+                users_with_savings += 1
+                total_savings += int(sum(e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0)) for e in deps))
+            if u.get("jail_until", 0) > now:
+                jailed += 1
+
+        total_circulation = total_wallets + total_savings
+        lottery_pool = load_lottery(ctx.guild.id).get("prize_pool", 0) if ctx.guild else 0
+        house_bal = get_guild_house_balance(ctx.guild.id) if ctx.guild else 0
+        total_users = len(users)
+
+        stats = (
+            f"**Total in wallets:** {total_wallets:,} 🪙\n"
+            f"**Total in savings:** {total_savings:,} 🪙\n"
+            f"**Total in circulation:** {total_circulation:,} 🪙\n"
+            f"**Lottery pool:** {lottery_pool:,} 🪙\n"
+            f"**House pot:** {house_bal:,} 🪙\n\n"
+            f"**Users tracked:** {total_users:,}\n"
+            f"**Users with savings:** {users_with_savings:,}\n"
+            f"**Users in jail:** {jailed:,}\n\n"
+            "**Economy commands:**\n"
+            "`!daily` — Claim daily 🪙\n"
+            "`!balance [@user]` — Check wallet\n"
+            "`!pay @user <amount>` — Send coins\n"
+            "`!savings` — Piggy bank (1% daily interest)\n"
+            "`!crime` — Steal, mug, jailbreak\n"
+            "`!leaderboard` — Top 10 richest\n"
+            "`!records` — All-time records\n"
+            "`!lottery` — Weekly lottery info\n"
+            "`!shop` — Spend coins"
+        )
+        await send_ephemeral(ctx, embed=emb("📊 Economy", stats, C_GOLD))
+
     @commands.command(name="pay", aliases=["give", "gift", "donate"])
     async def cmd_pay(self, ctx: commands.Context, recipient: MemberConverter = None, amount: str = None):
         if recipient is None or amount is None:
