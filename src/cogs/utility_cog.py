@@ -233,8 +233,6 @@ class UtilityCog(commands.Cog):
         help_embed = discord.Embed(title="📖 Commands", color=0x3498db)
         help_embed.add_field(name="💰 Economy", inline=False, value=(
             "`!economy` — Economy overview and command list\n"
-            "`!balance [@user]` — Check balance\n"
-            "`!pay @user <amount>` — Send coins to another user\n"
             "`!savings` — 🐷 Piggy bank with 1% daily interest\n"
             "`!crime` — Steal, mug, and jailbreak commands"
         ))
@@ -276,8 +274,6 @@ class UtilityCog(commands.Cog):
             "`!stats` — Show bot statistics\n"
             "`!stop` — Stop roleplay / forfeit active game"
         )
-        if ctx.guild and get_guild_cfg(ctx.guild.id).get("gambler_role_enabled", False):
-            utility_val += "\n`!gambler-role on|off` — Opt in/out of the Gamblers role"
         help_embed.add_field(name="🔧 Utility", inline=False, value=utility_val)
         await send_ephemeral(ctx, embed=help_embed)
 
@@ -457,11 +453,12 @@ class UtilityCog(commands.Cog):
             inline=False
         )
 
+        utility_val = "`!stop` — Forfeit/stop active game"
+        if ctx.guild and get_guild_cfg(ctx.guild.id).get("gambler_role_enabled", False):
+            utility_val += "\n`!gambler-role on|off` — Opt in/out of the Gamblers role"
         embed.add_field(
             name="🏁 Utility",
-            value=(
-                "`!stop` — Forfeit/stop active game"
-            ),
+            value=utility_val,
             inline=False
         )
 
