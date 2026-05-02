@@ -85,28 +85,6 @@ async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | No
     return role
 
 
-async def maybe_assign_gambler_role(guild: discord.Guild, member: discord.Member, channel: discord.abc.Messageable):
-    """Assign the Gamblers role if the user used all 3 scratchoffs 2 days in a row."""
-    cfg = get_guild_cfg(guild.id)
-    if not cfg.get("gambler_role_enabled", False):
-        return
-
-    uid_key = str(member.id)
-    today_ct = _ct_today()
-    yesterday = (datetime.date.fromisoformat(today_ct) - datetime.timedelta(days=1)).isoformat()
-
-    last_full_day = state.gambler_streak.get(uid_key)
-    if last_full_day == yesterday:
-        role = await get_or_create_gamblers_role(guild)
-        if role and role not in member.roles:
-            if await toggle_member_role(member, role, True, reason="Used all 3 scratchoffs 2 days in a row"):
-                await channel.send(
-                    f"🎲 {member.mention} You've been automatically added to the **Gamblers** role for using all 3 scratchoffs 2 days in a row! "
-                    f"You'll be pinged whenever a progressive jackpot is won. "
-                    f"Use `!gambler-role off` to opt out."
-                )
-
-
 PUZZLE_REWARDS = {
     "easy":   10,
     "medium": 20,

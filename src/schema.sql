@@ -147,7 +147,8 @@ CREATE TABLE IF NOT EXISTS leveling (
 
 CREATE TABLE IF NOT EXISTS gambler_streak (
     user_id        BIGINT UNSIGNED NOT NULL PRIMARY KEY,
-    last_full_date VARCHAR(10)     NOT NULL
+    last_full_date VARCHAR(10)     NOT NULL,
+    streak_count   INT             NOT NULL DEFAULT 1
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS quote_log (

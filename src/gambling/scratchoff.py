@@ -84,26 +84,53 @@ async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | No
     return role
 
 
-async def maybe_assign_gambler_role(guild: discord.Guild, member: discord.Member, channel: discord.abc.Messageable):
-    """Assign the Gamblers role if the user used all 3 scratchoffs 2 days in a row."""
+GAMBLER_ROLE_STREAK_REQUIRED = 3
+
+
+def _get_streak_entry(uid_key: str) -> dict:
+    """Return the streak entry as a dict {date, count}, normalizing legacy str entries."""
+    entry = state.gambler_streak.get(uid_key)
+    if entry is None:
+        return {"date": None, "count": 0}
+    if isinstance(entry, dict):
+        return {"date": entry.get("date"), "count": int(entry.get("count", 1))}
+    return {"date": entry, "count": 1}
+
+
+async def update_gambler_streak(uid: int, today_ct: str) -> int:
+    """Bump the user's full-day scratchoff streak. Returns the new streak count."""
+    uid_key = str(uid)
+    yesterday = (datetime.date.fromisoformat(today_ct) - datetime.timedelta(days=1)).isoformat()
+    entry = _get_streak_entry(uid_key)
+
+    if entry["date"] == today_ct:
+        return entry["count"]
+    if entry["date"] == yesterday:
+        new_count = entry["count"] + 1
+    else:
+        new_count = 1
+
+    state.gambler_streak[uid_key] = {"date": today_ct, "count": new_count}
+    await save_gambler_streak()
+    return new_count
+
+
+async def maybe_assign_gambler_role(guild: discord.Guild, member: discord.Member, channel: discord.abc.Messageable, streak_count: int):
+    """Assign the Gamblers role if the user has hit the required streak. Does not remove on loss."""
     cfg = get_guild_cfg(guild.id)
     if not cfg.get("gambler_role_enabled", False):
         return
+    if streak_count < GAMBLER_ROLE_STREAK_REQUIRED:
+        return
 
-    uid_key = str(member.id)
-    today_ct = _ct_today()
-    yesterday = (datetime.date.fromisoformat(today_ct) - datetime.timedelta(days=1)).isoformat()
-
-    last_full_day = state.gambler_streak.get(uid_key)
-    if last_full_day == yesterday:
-        role = await get_or_create_gamblers_role(guild)
-        if role and role not in member.roles:
-            if await toggle_member_role(member, role, True, reason="Used all 3 scratchoffs 2 days in a row"):
-                await channel.send(
-                    f"🎲 {member.mention} You've been automatically added to the **Gamblers** role for using all 3 scratchoffs 2 days in a row! "
-                    f"You'll be pinged whenever a progressive jackpot is won. "
-                    f"Use `!gambler-role off` to opt out."
-                )
+    role = await get_or_create_gamblers_role(guild)
+    if role and role not in member.roles:
+        if await toggle_member_role(member, role, True, reason=f"Used all 3 scratchoffs {GAMBLER_ROLE_STREAK_REQUIRED} days in a row"):
+            await channel.send(
+                f"🎲 {member.mention} You've been automatically added to the **Gamblers** role for using all 3 scratchoffs **{GAMBLER_ROLE_STREAK_REQUIRED} days in a row**! "
+                f"You'll be pinged whenever a slots jackpot or lottery is won. "
+                f"Use `!gambler-role off` to opt out."
+            )
 
 
 CACTPOT_PAYOUTS = {
@@ -254,9 +281,8 @@ class ScratchoffCog(commands.Cog):
 
             # Track full-day scratchoff streak for Gamblers role
             if user["scratch_used"] >= 3 and ctx.guild:
-                state.gambler_streak[str(uid)] = today
-                await save_gambler_streak()
-                await maybe_assign_gambler_role(ctx.guild, ctx.author, ctx.channel)
+                new_streak = await update_gambler_streak(uid, today)
+                await maybe_assign_gambler_role(ctx.guild, ctx.author, ctx.channel, new_streak)
 
             card_str = " ".join(card)
             attempts_left = 3 - user["scratch_used"]
@@ -284,27 +310,36 @@ class ScratchoffCog(commands.Cog):
 
         user = state.economy["users"][str(uid)]
         scratch_used = user.get("scratch_used", 0) if user.get("scratch_date") == today_ct else 0
-        last_full_day = state.gambler_streak.get(str(uid))
+        entry = _get_streak_entry(str(uid))
+        last_full_day = entry["date"]
+        count = entry["count"]
 
-        filled_today = last_full_day == today_ct
-        filled_yesterday = last_full_day == yesterday
-
-        if filled_today:
-            streak_text = "🔥 **2+ days** — you filled today and at least yesterday!"
+        # Effective current streak: today/yesterday keep it alive; otherwise it's broken
+        if last_full_day == today_ct:
+            effective = count
+            streak_text = f"🔥 **{effective}-day streak** — you filled all 3 today!"
             color = C_GREEN
-        elif filled_yesterday:
-            streak_text = f"⏳ **1 day** — you filled yesterday. Use all 3 today to extend your streak! ({scratch_used}/3 used today)"
+        elif last_full_day == yesterday:
+            effective = count
+            streak_text = f"⏳ **{effective}-day streak** — fill all 3 today to extend it! ({scratch_used}/3 used today)"
             color = C_GOLD
         elif last_full_day:
-            streak_text = f"❌ **Streak broken** — last full day was `{last_full_day}`. Use all 3 today to start a new streak! ({scratch_used}/3 used today)"
+            effective = 0
+            streak_text = f"❌ **Streak broken** — last full day was `{last_full_day}` ({count}-day streak). Use all 3 today to start a new streak! ({scratch_used}/3 used today)"
             color = C_RED
         else:
+            effective = 0
             streak_text = f"❌ **No streak yet** — use all 3 scratchoffs in a day to start one! ({scratch_used}/3 used today)"
             color = C_GREY
 
         cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
         role_enabled = cfg.get("gambler_role_enabled", False)
-        role_line = "\n\nFill all 3 **2 days in a row** to auto-join the **Gamblers** role." if role_enabled else ""
+        role_line = ""
+        if role_enabled:
+            if effective >= GAMBLER_ROLE_STREAK_REQUIRED:
+                role_line = f"\n\n🎲 You've earned the **Gamblers** role!"
+            else:
+                role_line = f"\n\nFill all 3 **{GAMBLER_ROLE_STREAK_REQUIRED} days in a row** to auto-join the **Gamblers** role."
 
         await ctx.send(embed=emb("🎫 Scratchoff Streak", streak_text + role_line, color))
 

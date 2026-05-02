@@ -573,7 +573,14 @@ class SettingsCog(commands.Cog):
         cfg["gambler_role_enabled"] = enabled
         await save_guild_settings()
         status = "✅ enabled" if enabled else "❌ disabled"
-        detail = "\nThe **Gamblers** role will be auto-created and assigned to users who use all 3 scratchoffs 2 days in a row. They will be pinged when a progressive jackpot is won." if enabled else ""
+        detail = ""
+        if enabled:
+            from src.gambling.scratchoff import get_or_create_gamblers_role, GAMBLER_ROLE_STREAK_REQUIRED
+            role = await get_or_create_gamblers_role(ctx.guild)
+            if role:
+                detail = f"\nThe **Gamblers** role is ready. Users who use all 3 scratchoffs **{GAMBLER_ROLE_STREAK_REQUIRED} days in a row** will be auto-assigned. They'll be pinged when a slots jackpot or lottery is won."
+            else:
+                detail = "\n⚠️ Could not create the **Gamblers** role — check the bot's `Manage Roles` permission."
         await ctx.send(embed=emb("⚙️ Gambler Role", f"Gambler role tracking is now {status}.{detail}", C_GREEN))
 
     # ── !settings channel-levelup ─────────────────────────────────────────────

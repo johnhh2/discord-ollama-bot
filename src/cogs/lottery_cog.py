@@ -124,6 +124,12 @@ class LotteryCog(commands.Cog):
                     )
                     await channel.send(embed=embed)
 
+                    # Ping Gamblers role if enabled
+                    if cfg.get("gambler_role_enabled", False):
+                        gamblers_role = discord.utils.get(guild.roles, name="Gamblers")
+                        if gamblers_role:
+                            await channel.send(f"{gamblers_role.mention} 🎰 The lottery was just won!")
+
                 lottery = {"prize_pool": 2000, "players": {}, "last_drawn_week": current_week, "last_posted_week": 0}
                 await drain_bot_balance_into_lottery(lottery, guild.id)
                 await save_lottery(guild.id, lottery)
