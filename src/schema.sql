@@ -139,15 +139,10 @@ CREATE TABLE IF NOT EXISTS fanfic_histories (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS leveling (
-    user_id       BIGINT UNSIGNED NOT NULL PRIMARY KEY,
-    xp            INT             NOT NULL DEFAULT 0,
-    level         INT             NOT NULL DEFAULT 0,
-    msg_last_hour INT             NOT NULL DEFAULT 0,
-    msg_today     INT             NOT NULL DEFAULT 0,
-    cmd_last_hour INT             NOT NULL DEFAULT 0,
-    cmd_today     INT             NOT NULL DEFAULT 0,
-    voice_last_15 INT             NOT NULL DEFAULT 0,
-    voice_today   INT             NOT NULL DEFAULT 0
+    guild_id BIGINT UNSIGNED NOT NULL,
+    user_id  BIGINT UNSIGNED NOT NULL,
+    data     JSON            NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS gambler_streak (

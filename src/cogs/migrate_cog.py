@@ -89,29 +89,19 @@ class MigrateCog(commands.Cog):
                     n += 1
                 counts["guild_settings"] = n
 
-                # leveling
+                # leveling — JSON shape: {guild_id_str: {uid_str: {...}}}
                 leveling = _load_json("data/leveling.json", {})
                 n = 0
-                for uid_str, u in leveling.items():
-                    await cur.execute(
-                        """INSERT INTO leveling
-                            (user_id, xp, level, msg_last_hour, msg_today,
-                             cmd_last_hour, cmd_today, voice_last_15, voice_today)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                           ON DUPLICATE KEY UPDATE
-                             xp=VALUES(xp), level=VALUES(level),
-                             msg_last_hour=VALUES(msg_last_hour), msg_today=VALUES(msg_today),
-                             cmd_last_hour=VALUES(cmd_last_hour), cmd_today=VALUES(cmd_today),
-                             voice_last_15=VALUES(voice_last_15), voice_today=VALUES(voice_today)""",
-                        (
-                            int(uid_str),
-                            u.get("xp", 0), u.get("level", 0),
-                            u.get("msg_last_hour", 0), u.get("msg_today", 0),
-                            u.get("cmd_last_hour", 0), u.get("cmd_today", 0),
-                            u.get("voice_last_15", 0), u.get("voice_today", 0),
-                        ),
-                    )
-                    n += 1
+                for gid_str, users in leveling.items():
+                    if not isinstance(users, dict):
+                        continue
+                    for uid_str, rec in users.items():
+                        await cur.execute(
+                            "INSERT INTO leveling (guild_id, user_id, data) VALUES (%s,%s,%s)"
+                            " ON DUPLICATE KEY UPDATE data=VALUES(data)",
+                            (int(gid_str), int(uid_str), json.dumps(rec)),
+                        )
+                        n += 1
                 counts["leveling"] = n
 
                 # records (per-guild files)

@@ -394,29 +394,18 @@ async def load_saved_quotes() -> dict:
 # ── Leveling ──────────────────────────────────────────────────────────────────
 
 async def save_leveling():
+    """state.leveling = {guild_id_str: {uid_str: {...record...}}}"""
     from src import state
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            for uid_str, u in state.leveling.items():
-                await cur.execute(
-                    """INSERT INTO leveling
-                        (user_id, xp, level, msg_last_hour, msg_today,
-                         cmd_last_hour, cmd_today, voice_last_15, voice_today)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                       ON DUPLICATE KEY UPDATE
-                         xp=VALUES(xp), level=VALUES(level),
-                         msg_last_hour=VALUES(msg_last_hour), msg_today=VALUES(msg_today),
-                         cmd_last_hour=VALUES(cmd_last_hour), cmd_today=VALUES(cmd_today),
-                         voice_last_15=VALUES(voice_last_15), voice_today=VALUES(voice_today)""",
-                    (
-                        int(uid_str),
-                        u.get("xp", 0), u.get("level", 0),
-                        u.get("msg_last_hour", 0), u.get("msg_today", 0),
-                        u.get("cmd_last_hour", 0), u.get("cmd_today", 0),
-                        u.get("voice_last_15", 0), u.get("voice_today", 0),
-                    ),
-                )
+            for gid_str, users in state.leveling.items():
+                for uid_str, rec in users.items():
+                    await cur.execute(
+                        "INSERT INTO leveling (guild_id, user_id, data) VALUES (%s,%s,%s)"
+                        " ON DUPLICATE KEY UPDATE data=VALUES(data)",
+                        (int(gid_str), int(uid_str), json.dumps(rec)),
+                    )
 
 
 # ── Lottery ───────────────────────────────────────────────────────────────────
@@ -828,19 +817,11 @@ async def init_db_state():
             await cur.execute("SELECT content FROM quote_log ORDER BY id")
             state.quote_log = [r[0] for r in await cur.fetchall()]
 
-            # leveling
-            await cur.execute(
-                "SELECT user_id, xp, level, msg_last_hour, msg_today,"
-                " cmd_last_hour, cmd_today, voice_last_15, voice_today FROM leveling"
-            )
-            for row in await cur.fetchall():
-                uid, xp, level, mlh, mt, clh, ct, vl15, vt = row
-                state.leveling[str(uid)] = {
-                    "xp": xp, "level": level,
-                    "msg_last_hour": mlh, "msg_today": mt,
-                    "cmd_last_hour": clh, "cmd_today": ct,
-                    "voice_last_15": vl15, "voice_today": vt,
-                }
+            # leveling — nested by guild_id
+            await cur.execute("SELECT guild_id, user_id, data FROM leveling")
+            for guild_id, uid, data_json in await cur.fetchall():
+                rec = json.loads(data_json) if data_json else {}
+                state.leveling.setdefault(str(guild_id), {})[str(uid)] = rec
 
             # channel_prompts
             await cur.execute("SELECT channel_id, prompt_text FROM channel_prompts")
