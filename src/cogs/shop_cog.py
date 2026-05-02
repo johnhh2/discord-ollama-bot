@@ -252,7 +252,7 @@ class ShopCog(commands.Cog):
         if not new_name:
             await ctx.send(embed=emb("🛒 Shop", "Please provide a new nickname.", C_PURPLE))
             return
-        if target.id != uid and is_insured(target.id, "nickname"):
+        if target.id != uid and await is_insured(target.id, "nickname"):
             _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be renamed (expires <t:{_exp}:R>).", C_GOLD))
             return
@@ -287,7 +287,7 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🛒 Disabled", "The nickname shop item is disabled in this server.", C_GREY))
             return
         cost = 0 if uid in state.godmode_users else SHOP_NICKNAME_REMOVE_COST
-        if is_insured(uid, "nickname"):
+        if await is_insured(uid, "nickname"):
             _exp = get_insurance_expiry(uid)
             await ctx.send(embed=emb("🛡️ Protected", f"**{ctx.author.display_name}** has insurance and can't have their nickname changed (expires <t:{_exp}:R>).", C_GOLD))
             return
@@ -343,7 +343,7 @@ class ShopCog(commands.Cog):
         except ValueError:
             await ctx.send(embed=emb("❌ Invalid Color", "Example: `ff00aa` or `#ff00aa`", C_RED))
             return
-        if target.id != uid and is_insured(target.id, "role"):
+        if target.id != uid and await is_insured(target.id, "role"):
             _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles (expires <t:{_exp}:R>).", C_GOLD))
             return
@@ -402,7 +402,7 @@ class ShopCog(commands.Cog):
         if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
             await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can manage membership.", C_RED))
             return
-        if target.id != uid and is_insured(target.id, "role"):
+        if target.id != uid and await is_insured(target.id, "role"):
             _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles (expires <t:{_exp}:R>).", C_GOLD))
             return
@@ -518,7 +518,10 @@ class ShopCog(commands.Cog):
         if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
             await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can delete it.", C_RED))
             return
-        insured_members = [m for m in role.members if is_insured(m.id, "role")]
+        insured_members = []
+        for m in role.members:
+            if await is_insured(m.id, "role"):
+                insured_members.append(m)
         if insured_members:
             names = ", ".join(f"**{m.display_name}**" for m in insured_members)
             _earliest = min(get_insurance_expiry(m.id) for m in insured_members)
@@ -967,7 +970,7 @@ class ShopCog(commands.Cog):
         except commands.BadArgument:
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop ragebait @user [topic]`", C_PURPLE))
             return
-        if target.id != uid and is_insured(target.id, "ragebait"):
+        if target.id != uid and await is_insured(target.id, "ragebait"):
             _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against ragebait (expires <t:{_exp}:R>).", C_GOLD))
             return
@@ -1274,7 +1277,7 @@ class ShopCog(commands.Cog):
         if not (has_mock or has_ragebait or has_curse):
             await ctx.send(embed=emb("🔄 Uno Reverse", "You don't have any active mock, ragebait, or curse on you to reverse!", C_GREY))
             return
-        if is_insured(target.id, "mock"):
+        if await is_insured(target.id, "mock"):
             _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb(
                 "🛡️ Protected",

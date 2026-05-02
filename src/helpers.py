@@ -140,7 +140,7 @@ async def parse_amount(
         try:
             pct = float(resolved[:-1])
             assert 0 < pct <= 100
-            balance = get_balance(ctx.author.id)
+            balance = await get_balance(ctx.author.id)
             amount = max(0, int(balance * pct / 100))
         except (ValueError, AssertionError):
             await ctx.send("Percentage must be between 1% and 100%.")
@@ -234,11 +234,11 @@ async def shop_charge(
     from src.economy import deduct_balance, get_balance
     if uid in state.godmode_users or cost == 0:
         return True
-    if not deduct_balance(uid, cost):
+    if not await deduct_balance(uid, cost):
         label_str = f"This costs **{cost_label or f'{cost:,}'} 🪙**. "
         await ctx.send(embed=emb(
             "💸 Insufficient Funds",
-            f"{label_str}Balance: {get_balance(uid):,} 🪙",
+            f"{label_str}Balance: {await get_balance(uid):,} 🪙",
             C_RED,
         ))
         return False
