@@ -351,6 +351,11 @@ class EconomyCog(commands.Cog):
             return
         uid = ctx.author.id
         _ensure_user(uid)
+
+        today = _ct_today()
+        if state.economy.get("last_daily_reset") != today:
+            await do_daily_reset()
+
         user_data = state.economy["users"][str(uid)]
 
         jail_until = user_data.get("jail_until", 0)
