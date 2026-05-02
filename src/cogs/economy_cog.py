@@ -174,7 +174,7 @@ class EconomyCog(commands.Cog):
             "",
             jail_status,
         ]
-        await ctx.send(embed=emb("🦹 Crime", "\n".join(lines), C_GOLD))
+        await send_ephemeral(ctx, embed=emb("🦹 Crime", "\n".join(lines), C_GOLD))
 
     @commands.command(name="steal")
     async def cmd_steal(self, ctx: commands.Context, target: MemberConverter = None):
@@ -624,7 +624,7 @@ class EconomyCog(commands.Cog):
                     "`!savings principals` — show deposit breakdown\n\n"
                     "*1% compound interest per day, compounded on each deposit separately.*"
                 )
-            await ctx.send(embed=emb("🐷 Piggy Bank", desc, C_GREEN))
+            await send_ephemeral(ctx, embed=emb("🐷 Piggy Bank", desc, C_GREEN))
             return
 
         parsed = await parse_amount(ctx, amount)
