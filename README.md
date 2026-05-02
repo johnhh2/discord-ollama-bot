@@ -89,7 +89,6 @@ OLLAMA_BASE_URL=http://host.docker.internal:11434
 Open Docker Desktop, then run:
 
 ```powershell
-cd C:\Users\John-Hugh\discord-ollama-bot
 docker compose up -d
 ```
 
