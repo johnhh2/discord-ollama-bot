@@ -372,9 +372,9 @@ class SettingsCog(commands.Cog):
         if not args:
             await ctx.send(embed=emb(
                 "⚙️ NSFW Aliases",
-                "Usage: `!settings nsfw-alias add <word> [tags...]` / `remove <word>` / `list` / `clear`\n"
-                "Aliases let users type `!<alias>` as a shortcut for `!nsfw [tags]`. "
-                "The alias name becomes a custom command that pre-fills the given tags.",
+                "Usage: `!settings nsfw-alias add|remove <word>` / `list` / `clear`\n"
+                "Aliases let users type `!<alias>` as a shortcut for `!nsfw`. "
+                "The alias name becomes a custom command.",
                 C_GREY,
             ))
             return
@@ -399,11 +399,11 @@ class SettingsCog(commands.Cog):
 
         elif action == "add":
             if len(args) < 2:
-                await ctx.send(embed=emb("⚙️ NSFW Aliases", "Usage: `!settings nsfw-alias add <word> [tags...]`", C_GREY))
+                await ctx.send(embed=emb("⚙️ NSFW Aliases", "Usage: `!settings nsfw-alias add <word>`", C_GREY))
                 return
             word = args[1].lower()
-            if not word.isalpha():
-                await ctx.send(embed=emb("❌ Invalid Alias", "Alias must be a single word (letters only).", C_RED))
+            if not word.isalnum():
+                await ctx.send(embed=emb("❌ Invalid Alias", "Alias must be a single word (letters and numbers only).", C_RED))
                 return
             if word in aliases:
                 await ctx.send(embed=emb("🔞 NSFW Aliases", f"`{word}` is already an alias.", C_GREY))
@@ -427,7 +427,7 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("🔞 NSFW Aliases", f"Removed `{word}`.", C_GREEN))
 
         else:
-            await ctx.send(embed=emb("⚙️ NSFW Aliases", "Usage: `!settings nsfw-alias add|remove <word> [tags...]` / `list` / `clear`", C_GREY))
+            await ctx.send(embed=emb("⚙️ NSFW Aliases", "Usage: `!settings nsfw-alias add|remove <word>` / `list` / `clear`", C_GREY))
 
     # ── !settings quote ───────────────────────────────────────────────────────
     @cmd_settings.command(name="quote")
