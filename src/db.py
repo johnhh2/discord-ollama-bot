@@ -17,6 +17,7 @@ async def get_pool() -> aiomysql.Pool:
             charset="utf8mb4",
             minsize=2,
             maxsize=10,
+            init_command="SET sql_notes=0",
         )
     return _pool
 
