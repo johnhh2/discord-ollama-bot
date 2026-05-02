@@ -175,7 +175,7 @@ class MigrateCog(commands.Cog):
                         " ON DUPLICATE KEY UPDATE jackpot=VALUES(jackpot)",
                         (jp["jackpot"],),
                     )
-                    counts["slots_jackpot"] = jp["jackpot"]
+                    counts["slots_jackpot"] = 1
 
                 # bot_roles
                 bot_roles = _load_json("data/bot_roles.json", [])
