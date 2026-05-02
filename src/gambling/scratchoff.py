@@ -375,6 +375,6 @@ async def scratchoff_scheduler():
         return
     today = now_ct.date().isoformat()
     if state.economy.get("last_daily_reset") != today:
-        do_daily_reset()
+        await do_daily_reset()
 
 

@@ -187,6 +187,8 @@ async def _execute_ollama_stream(
                 session, messages, placeholder, guild_id=guild_id, model=model
             )
         history.append({"role": "assistant", "content": full_response})
+        from src import state as _state
+        _state.stats_ai_responses_today += 1
         await finalize(placeholder, channel, full_response)
     except aiohttp.ClientError as e:
         history.pop()

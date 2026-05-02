@@ -9,7 +9,7 @@ from src.config import (
     MOCK_FILE, RIGGED_SLOTS_FILE, RIGGED_FLIPS_FILE, RIGGED_SCRATCH_FILE, RIGGED_STEAL_FILE, QUOTE_LOG_FILE, SAVED_QUOTES_FILE, TAX_FILE,
     CURSE_FILE, GAMBLER_STREAK_FILE, EPHEMERAL_MSG_FILE, FANFIC_HISTORIES_FILE,
     FANFIC_OWNERS_FILE, ROLEPLAY_STATE_FILE, INITIAL_BOT_ADMIN_IDS, LEVELING_FILE,
-    COMMAND_PERMS_FILE,
+    COMMAND_PERMS_FILE, BALANCE_HISTORY_FILE, BOT_STATS_HISTORY_FILE,
 )
 
 
@@ -318,6 +318,24 @@ def load_records(guild_id: int) -> dict:
 
 def save_records(guild_id: int, records: dict):
     _save_json(f"data/records_{guild_id}.json", records)
+
+
+def load_balance_history() -> dict:
+    """Load balance history. Structure: {date_str: {uid_str: {"wallet": int, "savings": int}}}"""
+    return _load_json(BALANCE_HISTORY_FILE, {})
+
+
+def save_balance_history(history: dict):
+    _save_json(BALANCE_HISTORY_FILE, history)
+
+
+def load_bot_stats_history() -> dict:
+    """Load bot stats history. Structure: {date_str: {messages, commands, ai_responses, ai_up, memory_mb}}"""
+    return _load_json(BOT_STATS_HISTORY_FILE, {})
+
+
+def save_bot_stats_history(history: dict):
+    _save_json(BOT_STATS_HISTORY_FILE, history)
 
 
 def try_set_record(guild_id: int, category: str, value: int, holder_id: int, holder_name: str, **meta) -> bool:

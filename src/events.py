@@ -299,6 +299,7 @@ class EventsCog(commands.Cog):
     @commands.Cog.listener()
     async def on_command_completion(self, ctx: commands.Context):
         state.stats_commands_ran += 1
+        state.stats_commands_today += 1
         if ctx.guild and not ctx.author.bot:
             xp, leveled_up = _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
             if leveled_up and get_guild_cfg(ctx.guild.id).get("levelup_channel"):
@@ -338,6 +339,7 @@ class EventsCog(commands.Cog):
         content_lower = message.content.strip().lower()
 
         state.stats_messages_seen += 1
+        state.stats_messages_today += 1
 
         # Message XP (non-command messages only)
         if message.guild and not message.content.startswith("!"):

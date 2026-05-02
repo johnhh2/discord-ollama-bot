@@ -88,6 +88,11 @@ bot_start_time = time.monotonic()
 stats_commands_ran: int = 0
 stats_messages_seen: int = 0
 
+# Per-day counters (reset to 0 each time do_daily_reset fires)
+stats_messages_today: int = 0
+stats_commands_today: int = 0
+stats_ai_responses_today: int = 0
+
 # ── Audit log ─────────────────────────────────────────────────────────────────
 
 audit_log: deque = deque(maxlen=20)

@@ -8,6 +8,8 @@ import discord
 from src.config import OLLAMA_MODEL, DAILY_RESET_HOUR
 from src.persistence import (
     save_economy, save_insurance, get_guild_cfg, try_set_record,
+    load_balance_history, save_balance_history,
+    load_bot_stats_history, save_bot_stats_history,
 )
 
 
@@ -227,10 +229,58 @@ def remove_savings(uid: int, amount: int) -> bool:
     return True
 
 
-def do_daily_reset():
+def snapshot_balances():
+    """Record each user's wallet and savings value keyed by today's date; prune entries older than 14 days."""
+    from src import state
+    import time as _time
+    today = _ct_now().date().isoformat()
+    history = load_balance_history()
+    snapshot = {}
+    now = _time.time()
+    for uid_str, user in state.economy["users"].items():
+        wallet = user.get("balance", 0)
+        deps = user.get("savings", [])
+        savings = int(sum(e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0)) for e in deps))
+        snapshot[uid_str] = {"wallet": wallet, "savings": savings}
+    history[today] = snapshot
+    # Prune entries older than 14 days
+    cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
+    history = {d: v for d, v in history.items() if d >= cutoff}
+    save_balance_history(history)
+    logging.info(f"[DAILY] Snapshotted {len(snapshot)} user balances for {today}")
+
+
+async def snapshot_bot_stats(ai_up: bool):
+    """Record today's message/command/AI counts and memory; prune entries older than 14 days."""
+    from src import state
+    from src.helpers import get_memory_mb
+    today = _ct_now().date().isoformat()
+    history = load_bot_stats_history()
+    history[today] = {
+        "messages": state.stats_messages_today,
+        "commands": state.stats_commands_today,
+        "ai_responses": state.stats_ai_responses_today,
+        "ai_up": ai_up,
+        "memory_mb": get_memory_mb(),
+    }
+    cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
+    history = {d: v for d, v in history.items() if d >= cutoff}
+    save_bot_stats_history(history)
+    logging.info(f"[DAILY] Snapshotted bot stats for {today}: {history[today]}")
+
+
+async def do_daily_reset():
     """Reset all users' daily reward and scratchoff counts at 5am CT."""
     from src import state
+    from src.ai import check_ollama_connected
     today = _ct_now().date().isoformat()
+    snapshot_balances()
+    ai_up = await check_ollama_connected()
+    await snapshot_bot_stats(ai_up)
+    # Reset today counters
+    state.stats_messages_today = 0
+    state.stats_commands_today = 0
+    state.stats_ai_responses_today = 0
     for user in state.economy["users"].values():
         user["daily_date"] = None
         user["scratch_used"] = 0
