@@ -8,6 +8,12 @@ services:
       NSFW_API_KEY: ${NSFW_API_KEY}
       NSFW_API_USER_ID: ${NSFW_API_USER_ID}
       OLLAMA_BASE_URL: http://ollama:11434
+      BOT_ADMIN_IDS: ${BOT_ADMIN_IDS}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
     # Allows the bot container to reach Ollama and other services
     extra_hosts:
       - "host.docker.internal:host-gateway"
