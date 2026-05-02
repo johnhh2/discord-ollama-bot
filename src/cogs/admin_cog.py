@@ -488,5 +488,77 @@ class AdminCog(commands.Cog):
         ))
 
 
+    @commands.command(name="adminunlock")
+    async def cmd_adminunlock(self, ctx: commands.Context, target: str = None):
+        if not await check_command_permission(ctx):
+            return
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+            return
+        if not target:
+            await ctx.send(embed=emb("⚙️ adminunlock", "Usage: `!adminunlock <#channel|@role|id>`", C_GOLD))
+            return
+
+        ch_match = re.match(r"<#(\d+)>", target)
+        role_match = re.match(r"<@&(\d+)>", target)
+
+        if ch_match:
+            channel_id = int(ch_match.group(1))
+            ch = ctx.guild.get_channel(channel_id)
+            if ch is None:
+                await ctx.send(embed=emb("❌ Not Found", "Could not find that channel.", C_RED))
+                return
+            if channel_id not in state.locked_channels:
+                await ctx.send(embed=emb("❌ Not Locked", f"{ch.mention} is not locked.", C_RED))
+                return
+            del state.locked_channels[channel_id]
+            cfg = get_guild_cfg(ctx.guild.id)
+            cfg.get("locked_channels", {}).pop(str(channel_id), None)
+            await save_guild_settings()
+            await ctx.send(embed=emb("🔓 Channel Unlocked", f"{ch.mention} has been force-unlocked by an admin.", C_GREEN))
+            return
+
+        if role_match:
+            role_id = int(role_match.group(1))
+            r = ctx.guild.get_role(role_id)
+            if r is None:
+                await ctx.send(embed=emb("❌ Not Found", "Could not find that role.", C_RED))
+                return
+            if role_id not in state.locked_roles:
+                await ctx.send(embed=emb("❌ Not Locked", f"**{r.name}** is not locked.", C_RED))
+                return
+            del state.locked_roles[role_id]
+            cfg = get_guild_cfg(ctx.guild.id)
+            cfg.get("locked_roles", {}).pop(str(role_id), None)
+            await save_guild_settings()
+            await ctx.send(embed=emb("🔓 Role Unlocked", f"**{r.name}** has been force-unlocked by an admin.", C_GREEN))
+            return
+
+        if target.isdigit():
+            obj_id = int(target)
+            if obj_id in state.locked_channels:
+                ch = ctx.guild.get_channel(obj_id)
+                del state.locked_channels[obj_id]
+                cfg = get_guild_cfg(ctx.guild.id)
+                cfg.get("locked_channels", {}).pop(str(obj_id), None)
+                await save_guild_settings()
+                label = ch.mention if ch else f"channel `{obj_id}`"
+                await ctx.send(embed=emb("🔓 Channel Unlocked", f"{label} has been force-unlocked by an admin.", C_GREEN))
+                return
+            if obj_id in state.locked_roles:
+                r = ctx.guild.get_role(obj_id)
+                del state.locked_roles[obj_id]
+                cfg = get_guild_cfg(ctx.guild.id)
+                cfg.get("locked_roles", {}).pop(str(obj_id), None)
+                await save_guild_settings()
+                label = f"**{r.name}**" if r else f"role `{obj_id}`"
+                await ctx.send(embed=emb("🔓 Role Unlocked", f"{label} has been force-unlocked by an admin.", C_GREEN))
+                return
+            await ctx.send(embed=emb("❌ Not Locked", f"No locked channel or role with ID `{obj_id}`.", C_RED))
+            return
+
+        await ctx.send(embed=emb("❌ Invalid Target", "Please supply a `#channel` mention, `@role` mention, or a numeric ID.", C_RED))
+
+
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))
