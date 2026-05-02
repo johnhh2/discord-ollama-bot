@@ -232,12 +232,12 @@ class LotteryCog(commands.Cog):
             next_saturday += datetime.timedelta(weeks=1)
         timestamp = int(next_saturday.timestamp())
 
+        total_tickets = sum(players.values())
         embed_msg = emb(
             "🎰 Tickets Purchased",
             f"**{ctx.author.display_name}** bought **{tickets:,}** 🎟️ for **{cost:,} 🪙**\n\n"
             f"**Prize Pool:** {lottery['prize_pool']:,} 🪙 {bonus_msg}\n"
-            f"**Your Tickets:** {players[str(uid)]}\n"
-            f"**Total Players:** {len(players)}\n"
+            f"**Your Tickets:** {players[str(uid)]:,} / {total_tickets:,} total\n"
             f"**Ends:** <t:{timestamp}:R>",
             C_GREEN
         )
