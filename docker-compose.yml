@@ -4,8 +4,9 @@ services:
     restart: unless-stopped
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
-      RULE34_API_KEY: ${RULE34_API_KEY}
-      RULE34_USER_ID: ${RULE34_USER_ID}
+      NSFW_API_URL: ${NSFW_API_URL}
+      NSFW_API_KEY: ${NSFW_API_KEY}
+      NSFW_API_USER_ID: ${NSFW_API_USER_ID}
       OLLAMA_BASE_URL: http://ollama:11434
     # Allows the bot container to reach Ollama and other services
     extra_hosts:

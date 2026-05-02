@@ -21,7 +21,8 @@ Key environment variables (all optional except `DISCORD_TOKEN`):
 | `HISTORY_LIMIT` | `20` | Per-channel message history depth |
 | `RATE_LIMIT_SECONDS` | `5.0` | Per-user AI cooldown |
 | `ACTIVE_CHANNEL_IDS` | _(all channels)_ | Comma-separated channel IDs for passive AI responses |
-| `RULE34_API_KEY` / `RULE34_USER_ID` | — | Optional; enables `!rule34` command |
+| `NSFW_API_URL` | — | Optional; base URL for the NSFW image API (enables `!nsfw`) |
+| `NSFW_API_KEY` / `NSFW_API_USER_ID` | — | Optional; API credentials for the NSFW image endpoint |
 
 ## Running Tests
 

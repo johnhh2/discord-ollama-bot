@@ -49,7 +49,7 @@ from src.ai import (
 )
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
-    RATE_LIMIT_SECONDS, RULE34_API_KEY, RULE34_USER_ID, RACE_TRACK_LEN,
+    RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
     ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
@@ -254,16 +254,16 @@ class UtilityCog(commands.Cog):
             "`!shop` — Browse items"
         ))
 
-        # Only show rule34 if enabled in guild
+        # Only show NSFW if enabled in guild
         if ctx.guild:
             cfg = get_guild_cfg(ctx.guild.id)
-            r34_enabled = cfg.get("rule34_enabled", True)
+            nsfw_enabled = cfg.get("nsfw_enabled", False)
         else:
-            r34_enabled = True
+            nsfw_enabled = False
 
-        if r34_enabled:
+        if nsfw_enabled:
             help_embed.add_field(name="🔞 NSFW", inline=False, value=(
-                "`!rule34 [tags]` — Random image from rule34 (alias: `!r34`)"
+                "`!nsfw [tags]` — Random NSFW image"
             ))
 
         help_embed.add_field(name="🎉 Fun", inline=False, value=(
@@ -838,7 +838,8 @@ class UtilityCog(commands.Cog):
             "`!settings chess-channels #ch... / clear` — Restrict chess to channels\n"
             "`!settings shop <item> on|off` — Toggle shop items\n"
             "`!settings quote bypass on|off` — Allow searchquote in any channel (bypass restrictions)\n"
-            "`!settings rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` — rule34 config\n"
+            "`!settings nsfw on|off / channels add|remove|list / ban <tag> / unban <tag> / banned` — NSFW config\n"
+            "`!settings nsfw-alias add|remove <word> [tags...] / list / clear` — custom NSFW command aliases\n"
             "`!settings soundboard-ratelimit add|remove @user|<userid> / list` — Soundboard rate-limit list"
         ))
         admin_embed.add_field(name="🔍 Moderation", inline=False, value=(

@@ -48,7 +48,7 @@ from src.ai import (
 )
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
-    RATE_LIMIT_SECONDS, RULE34_API_KEY, RULE34_USER_ID, RACE_TRACK_LEN,
+    RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
     ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
@@ -88,9 +88,9 @@ class SettingsCog(commands.Cog):
         game_channels = cfg.get("game_channels", [])
         chess_channels = cfg.get("chess_channels", [])
         shop_items = cfg.get("shop_items", {})
-        r34_enabled = cfg.get("rule34_enabled", True)
-        r34_channels = cfg.get("rule34_channels", [])
-        r34_banned = cfg.get("rule34_banned_tags", [])
+        nsfw_enabled = cfg.get("nsfw_enabled", False)
+        nsfw_channels = cfg.get("nsfw_channels", [])
+        nsfw_banned = cfg.get("nsfw_banned_tags", [])
         lottery_channel_id = cfg.get("lottery_channel")
 
         ai_val = " ".join(f"<#{c}>" for c in ai_channels) if ai_channels else "all channels"
@@ -102,11 +102,14 @@ class SettingsCog(commands.Cog):
         shop_val = "  ".join(
             f"{n} {'✅' if shop_items.get(n, True) else '❌'}" for n in item_names
         )
-        r34_val = ("✅ enabled" if r34_enabled else "❌ disabled")
-        r34_ch_val = " ".join(f"<#{c}>" for c in r34_channels) if r34_channels else "all channels"
-        r34_val += f"\nChannels: {r34_ch_val}"
-        if r34_banned:
-            r34_val += f"\nBanned tags: {', '.join(r34_banned)}"
+        nsfw_val = ("✅ enabled" if nsfw_enabled else "❌ disabled")
+        nsfw_ch_val = " ".join(f"<#{c}>" for c in nsfw_channels) if nsfw_channels else "all channels"
+        nsfw_val += f"\nChannels: {nsfw_ch_val}"
+        if nsfw_banned:
+            nsfw_val += f"\nBanned tags: {', '.join(nsfw_banned)}"
+        nsfw_aliases = cfg.get("nsfw_aliases", {})
+        if nsfw_aliases:
+            nsfw_val += "\nAliases: " + ", ".join(f"`!{k}`" for k in nsfw_aliases)
         lottery_val = f"<#{lottery_channel_id}>" if lottery_channel_id else "❌ disabled"
         levelup_channel_id = cfg.get("levelup_channel")
         levelup_val = f"<#{levelup_channel_id}>" if levelup_channel_id else "❌ disabled"
@@ -131,7 +134,7 @@ class SettingsCog(commands.Cog):
         embed.add_field(name="🎮 Game channels", value=game_val, inline=False)
         embed.add_field(name="♟️ Chess channels", value=chess_val, inline=False)
         embed.add_field(name="🛒 Shop items", value=shop_val, inline=False)
-        embed.add_field(name="🔞 rule34", value=r34_val, inline=False)
+        embed.add_field(name="🔞 NSFW", value=nsfw_val, inline=False)
         embed.add_field(name="🎰 Lottery channel", value=lottery_val, inline=False)
         embed.add_field(name="📊 Level-up channel", value=levelup_val, inline=False)
         embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
@@ -145,7 +148,8 @@ class SettingsCog(commands.Cog):
             "game-channels #ch... / clear\n"
             "chess-channels #ch... / clear\n"
             "shop <item> on|off\n"
-            "rule34 on|off / channels add|remove|list / ban <tag> / unban <tag> / banned\n"
+            "nsfw on|off / channels add|remove|list / ban <tag> / unban <tag> / banned\n"
+            "nsfw-alias add|remove <word> [tags...] / list / clear\n"
             "lottery-channel #channel / clear\n"
             "soundboard-ratelimit add|remove @user|<userid> / list\n"
             "gambler-role on|off\n"
@@ -282,9 +286,9 @@ class SettingsCog(commands.Cog):
         status = "✅ enabled" if enabled else "❌ disabled"
         await ctx.send(embed=emb("⚙️ Shop", f"**{item}** is now {status}.", C_GREEN))
 
-    # ── !settings rule34 ──────────────────────────────────────────────────────
-    @cmd_settings.command(name="rule34")
-    async def settings_rule34(self, ctx: commands.Context, *args):
+    # ── !settings nsfw ────────────────────────────────────────────────────────
+    @cmd_settings.command(name="nsfw")
+    async def settings_nsfw(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
             return
@@ -292,67 +296,138 @@ class SettingsCog(commands.Cog):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         if not args:
-            await ctx.send(embed=emb("⚙️ rule34", "Usage: `!settings rule34 on|off` / `channels <add|remove|list> [#channel]` / `ban <tag>` / `unban <tag>` / `banned`", C_GREY))
+            await ctx.send(embed=emb("⚙️ NSFW", "Usage: `!settings nsfw on|off` / `channels <add|remove|list> [#channel]` / `ban <tag>` / `unban <tag>` / `banned`", C_GREY))
             return
         action = args[0].lower()
         if action in ("on", "off"):
-            cfg["rule34_enabled"] = (action == "on")
+            cfg["nsfw_enabled"] = (action == "on")
             save_guild_settings()
             status = "✅ enabled" if action == "on" else "❌ disabled"
-            await ctx.send(embed=emb("⚙️ rule34", f"rule34 is now {status}.", C_GREEN))
+            await ctx.send(embed=emb("⚙️ NSFW", f"NSFW commands are now {status}.", C_GREEN))
         elif action == "channels":
             if len(args) < 2:
-                await ctx.send(embed=emb("⚙️ rule34", "Usage: `!settings rule34 channels <add|remove|list> [#channel]`", C_GREY))
+                await ctx.send(embed=emb("⚙️ NSFW", "Usage: `!settings nsfw channels <add|remove|list> [#channel]`", C_GREY))
                 return
             channel_action = args[1].lower()
-            r34_channels = cfg.setdefault("rule34_channels", [])
+            nsfw_channels = cfg.setdefault("nsfw_channels", [])
             if channel_action == "add":
                 if not ctx.message.channel_mentions:
-                    await ctx.send(embed=emb("⚙️ rule34", "Please mention a channel to add.", C_GREY))
+                    await ctx.send(embed=emb("⚙️ NSFW", "Please mention a channel to add.", C_GREY))
                     return
                 for channel in ctx.message.channel_mentions:
-                    if channel.id not in r34_channels:
-                        r34_channels.append(channel.id)
+                    if channel.id not in nsfw_channels:
+                        nsfw_channels.append(channel.id)
                 save_guild_settings()
                 names = " ".join(f"<#{cid}>" for cid in ctx.message.channel_mentions)
-                await ctx.send(embed=emb("⚙️ rule34 Channels", f"Added {names} to whitelist.", C_GREEN))
+                await ctx.send(embed=emb("⚙️ NSFW Channels", f"Added {names} to whitelist.", C_GREEN))
             elif channel_action == "remove":
                 if not ctx.message.channel_mentions:
-                    await ctx.send(embed=emb("⚙️ rule34", "Please mention a channel to remove.", C_GREY))
+                    await ctx.send(embed=emb("⚙️ NSFW", "Please mention a channel to remove.", C_GREY))
                     return
                 for channel in ctx.message.channel_mentions:
-                    if channel.id in r34_channels:
-                        r34_channels.remove(channel.id)
+                    if channel.id in nsfw_channels:
+                        nsfw_channels.remove(channel.id)
                 save_guild_settings()
                 names = " ".join(f"<#{cid}>" for cid in ctx.message.channel_mentions)
-                await ctx.send(embed=emb("⚙️ rule34 Channels", f"Removed {names} from whitelist.", C_GREEN))
+                await ctx.send(embed=emb("⚙️ NSFW Channels", f"Removed {names} from whitelist.", C_GREEN))
             elif channel_action == "list":
-                val = " ".join(f"<#{cid}>" for cid in r34_channels) if r34_channels else "none"
-                await ctx.send(embed=emb("⚙️ rule34 Channels", val, C_GREY))
+                val = " ".join(f"<#{cid}>" for cid in nsfw_channels) if nsfw_channels else "none"
+                await ctx.send(embed=emb("⚙️ NSFW Channels", val, C_GREY))
             else:
-                await ctx.send(embed=emb("⚙️ rule34", "Usage: `!settings rule34 channels <add|remove|list> [#channel]`", C_GREY))
+                await ctx.send(embed=emb("⚙️ NSFW", "Usage: `!settings nsfw channels <add|remove|list> [#channel]`", C_GREY))
         elif action == "ban" and len(args) >= 2:
             tag = args[1].lower()
-            banned = cfg.setdefault("rule34_banned_tags", [])
+            banned = cfg.setdefault("nsfw_banned_tags", [])
             if tag not in banned:
                 banned.append(tag)
                 save_guild_settings()
-            await ctx.send(embed=emb("⚙️ rule34", f"Tag `{tag}` banned.", C_GREEN))
+            await ctx.send(embed=emb("⚙️ NSFW", f"Tag `{tag}` banned.", C_GREEN))
         elif action == "unban" and len(args) >= 2:
             tag = args[1].lower()
-            banned = cfg.get("rule34_banned_tags", [])
+            banned = cfg.get("nsfw_banned_tags", [])
             if tag in banned:
                 banned.remove(tag)
                 save_guild_settings()
-                await ctx.send(embed=emb("⚙️ rule34", f"Tag `{tag}` unbanned.", C_GREEN))
+                await ctx.send(embed=emb("⚙️ NSFW", f"Tag `{tag}` unbanned.", C_GREEN))
             else:
-                await ctx.send(embed=emb("⚙️ rule34", f"Tag `{tag}` was not banned.", C_GREY))
+                await ctx.send(embed=emb("⚙️ NSFW", f"Tag `{tag}` was not banned.", C_GREY))
         elif action == "banned":
-            banned = cfg.get("rule34_banned_tags", [])
+            banned = cfg.get("nsfw_banned_tags", [])
             val = ", ".join(f"`{t}`" for t in banned) if banned else "none"
-            await ctx.send(embed=emb("⚙️ rule34 Banned Tags", val, C_GREY))
+            await ctx.send(embed=emb("⚙️ NSFW Banned Tags", val, C_GREY))
         else:
-            await ctx.send(embed=emb("⚙️ rule34", "Usage: `!settings rule34 on|off` / `channels <add|remove|list> [#channel]` / `ban <tag>` / `unban <tag>` / `banned`", C_GREY))
+            await ctx.send(embed=emb("⚙️ NSFW", "Usage: `!settings nsfw on|off` / `channels <add|remove|list> [#channel]` / `ban <tag>` / `unban <tag>` / `banned`", C_GREY))
+
+    # ── !settings nsfw-alias ──────────────────────────────────────────────────
+    @cmd_settings.command(name="nsfw-alias")
+    async def settings_nsfw_alias(self, ctx: commands.Context, *args):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        if not await check_command_permission(ctx):
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        aliases: dict = cfg.setdefault("nsfw_aliases", {})
+
+        if not args:
+            await ctx.send(embed=emb(
+                "⚙️ NSFW Aliases",
+                "Usage: `!settings nsfw-alias add <word> [tags...]` / `remove <word>` / `list` / `clear`\n"
+                "Aliases let users type `!<alias>` as a shortcut for `!nsfw [tags]`. "
+                "The alias name becomes a custom command that pre-fills the given tags.",
+                C_GREY,
+            ))
+            return
+
+        action = args[0].lower()
+
+        if action == "list":
+            if aliases:
+                lines = []
+                for k, v in aliases.items():
+                    t = v.get("tags", "") if isinstance(v, dict) else ""
+                    lines.append(f"`!{k}`" + (f" — tags: `{t}`" if t else ""))
+                val = "\n".join(lines)
+            else:
+                val = "none"
+            await ctx.send(embed=emb("🔞 NSFW Aliases", val, C_GOLD))
+
+        elif action == "clear":
+            cfg["nsfw_aliases"] = {}
+            save_guild_settings()
+            await ctx.send(embed=emb("🔞 NSFW Aliases", "All aliases cleared.", C_GREEN))
+
+        elif action == "add":
+            if len(args) < 2:
+                await ctx.send(embed=emb("⚙️ NSFW Aliases", "Usage: `!settings nsfw-alias add <word> [tags...]`", C_GREY))
+                return
+            word = args[1].lower()
+            if not word.isalpha():
+                await ctx.send(embed=emb("❌ Invalid Alias", "Alias must be a single word (letters only).", C_RED))
+                return
+            if word in aliases:
+                await ctx.send(embed=emb("🔞 NSFW Aliases", f"`{word}` is already an alias.", C_GREY))
+                return
+            tags = " ".join(args[2:]) if len(args) > 2 else ""
+            aliases[word] = {"tags": tags}
+            save_guild_settings()
+            tag_info = f" (pre-fills tags: `{tags}`)" if tags else ""
+            await ctx.send(embed=emb("🔞 NSFW Aliases", f"Added `!{word}`{tag_info}.", C_GREEN))
+
+        elif action == "remove":
+            if len(args) < 2:
+                await ctx.send(embed=emb("⚙️ NSFW Aliases", "Usage: `!settings nsfw-alias remove <word>`", C_GREY))
+                return
+            word = args[1].lower()
+            if word not in aliases:
+                await ctx.send(embed=emb("🔞 NSFW Aliases", f"`{word}` is not in the alias list.", C_GREY))
+                return
+            del aliases[word]
+            save_guild_settings()
+            await ctx.send(embed=emb("🔞 NSFW Aliases", f"Removed `{word}`.", C_GREEN))
+
+        else:
+            await ctx.send(embed=emb("⚙️ NSFW Aliases", "Usage: `!settings nsfw-alias add|remove <word> [tags...]` / `list` / `clear`", C_GREY))
 
     # ── !settings quote ───────────────────────────────────────────────────────
     @cmd_settings.command(name="quote")

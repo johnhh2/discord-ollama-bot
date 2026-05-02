@@ -48,7 +48,7 @@ from src.ai import (
 )
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
-    RATE_LIMIT_SECONDS, RULE34_API_KEY, RULE34_USER_ID, RACE_TRACK_LEN,
+    RATE_LIMIT_SECONDS, NSFW_API_URL, NSFW_API_KEY, NSFW_API_USER_ID, RACE_TRACK_LEN,
     ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, RESTART_MSG_FILE, EPHEMERAL_MSG_FILE,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
@@ -70,20 +70,23 @@ from src import state
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Commands — Rule34
+# Commands — NSFW image
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Tracks the last rule34 bot message per (channel_id, user_id)
-_r34_last_msg: dict[tuple[int, int], discord.Message] = {}
+# Tracks the last nsfw bot message per (channel_id, user_id)
+_nsfw_last_msg: dict[tuple[int, int], discord.Message] = {}
 
-async def _r34_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[dict]:
+async def _nsfw_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[dict]:
+    if not NSFW_API_URL:
+        return []
+
     async def _fetch_pid(pid: int) -> list[dict]:
         url = (
-            f"https://api.rule34.xxx/index.php"
+            f"{NSFW_API_URL}"
             f"?page=dapi&s=post&q=index&json=1&limit=100&pid={pid}&tags={search_tags}"
         )
-        if RULE34_API_KEY and RULE34_USER_ID:
-            url += f"&api_key={RULE34_API_KEY}&user_id={RULE34_USER_ID}"
+        if NSFW_API_KEY and NSFW_API_USER_ID:
+            url += f"&api_key={NSFW_API_KEY}&user_id={NSFW_API_USER_ID}"
         headers = {"User-Agent": "Mozilla/5.0"}
         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status != 200:
@@ -116,23 +119,23 @@ class FunCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="rule34", aliases=["r34"])
-    async def cmd_rule34(self, ctx: commands.Context, *, tags: str = ""):
+    @commands.command(name="nsfw")
+    async def cmd_nsfw(self, ctx: commands.Context, *, tags: str = ""):
         cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
-        if not cfg.get("rule34_enabled", False):
-            await ctx.send(embed=emb("🔞 Disabled", "rule34 is disabled in this server.", C_GREY))
+        if not cfg.get("nsfw_enabled", False):
+            await ctx.send(embed=emb("🔞 Disabled", "NSFW commands are disabled in this server.", C_GREY))
             return
 
         # Check channel whitelist
         if ctx.guild:
-            r34_channels = cfg.get("rule34_channels", [])
-            if r34_channels and ctx.channel.id not in r34_channels:
-                names = " ".join(f"<#{cid}>" for cid in r34_channels)
-                await _wrong_channel_reply(ctx, f"rule34 is only allowed in: {names}")
+            nsfw_channels = cfg.get("nsfw_channels", [])
+            if nsfw_channels and ctx.channel.id not in nsfw_channels:
+                names = " ".join(f"<#{cid}>" for cid in nsfw_channels)
+                await _wrong_channel_reply(ctx, f"NSFW commands are only allowed in: {names}")
                 return
         await ctx.typing()
         tag_parts = [w for w in tags.strip().split()]
-        banned = [t.lower() for t in cfg.get("rule34_banned_tags", [])]
+        banned = [t.lower() for t in cfg.get("nsfw_banned_tags", [])]
         tag_parts = [w for w in tag_parts if w.lower() not in banned]
 
         def _filter_banned(posts: list[dict]) -> list[dict]:
@@ -149,39 +152,68 @@ class FunCog(commands.Cog):
         # Append server-side exclusions so the API pre-filters results
         ban_query = "".join(f"+-{bt}" for bt in banned)
 
+        # Check for server-configured alias so we can auto-apply tags
+        nsfw_aliases = cfg.get("nsfw_aliases", {})
+        invoked = ctx.invoked_with or "nsfw"
+        alias_tags = nsfw_aliases.get(invoked, {}).get("tags", "") if invoked in nsfw_aliases else ""
+        if alias_tags and not tag_parts:
+            tag_parts = alias_tags.split()
+
+        if not NSFW_API_URL:
+            await ctx.send(embed=emb("❌ NSFW", "No image API configured.", C_RED))
+            return
+
         try:
             async with aiohttp.ClientSession() as session:
                 search_tags = "+".join(tag_parts) if tag_parts else "solo"
-                posts = _filter_banned(await _r34_fetch(session, search_tags + ban_query))
+                posts = _filter_banned(await _nsfw_fetch(session, search_tags + ban_query))
         except Exception as e:
-            await ctx.send(embed=emb("❌ rule34", f"Request failed: {e}", C_RED))
+            await ctx.send(embed=emb("❌ NSFW", f"Request failed: {e}", C_RED))
             return
 
         if not posts:
             label = " ".join(tag_parts) if tag_parts else "solo"
-            await ctx.send(embed=emb("🔞 rule34", f"No results for `{label}`.", C_GREY))
+            await ctx.send(embed=emb("🔞 NSFW", f"No results for `{label}`.", C_GREY))
             return
 
-        logging.info(f"[rule34] {len(posts)} posts after filtering")
+        logging.info(f"[nsfw] {len(posts)} posts after filtering")
         post = random.choice(posts)
         file_url = post["file_url"]
-        logging.info(f"[rule34] picked id={post.get('id')} url={file_url}")
+        logging.info(f"[nsfw] picked id={post.get('id')} url={file_url}")
         # Bust Discord's embed image cache
         file_url = f"{file_url}?v={post.get('id', random.randint(0, 999999))}"
         display = search_tags.replace("+", " ") if tag_parts else "random"
 
-        embed = discord.Embed(title=f"🔞 rule34: {display}", color=C_PURPLE)
+        embed = discord.Embed(title=f"🔞 {display}", color=C_PURPLE)
         embed.set_image(url=file_url)
         tags_str = ", ".join(post.get("tags", "").split())
         embed.set_footer(text=f"Score: {post.get('score', '?')} | Rating: {post.get('rating', '?')} | Tags: {tags_str}")
         msg = await ctx.send(embed=embed)
-        _r34_last_msg[(ctx.channel.id, ctx.author.id)] = msg
+        _nsfw_last_msg[(ctx.channel.id, ctx.author.id)] = msg
 
+
+    @commands.Cog.listener()
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
+        """Route !<alias> to cmd_nsfw when the alias is a guild-configured nsfw alias."""
+        if not isinstance(error, commands.CommandNotFound):
+            return
+        if not ctx.guild:
+            return
+        parts = ctx.message.content.strip().split(None, 1)
+        if not parts:
+            return
+        word = parts[0][1:].lower()
+        nsfw_aliases = get_guild_cfg(ctx.guild.id).get("nsfw_aliases", {})
+        if word not in nsfw_aliases:
+            return
+        ctx.invoked_with = word
+        rest = parts[1] if len(parts) > 1 else ""
+        await self.cmd_nsfw(ctx, tags=rest)
 
     @commands.command(name="ew")
     async def cmd_ew(self, ctx: commands.Context):
         key = (ctx.channel.id, ctx.author.id)
-        msg = _r34_last_msg.pop(key, None)
+        msg = _nsfw_last_msg.pop(key, None)
         if msg is None:
             return
         try:
