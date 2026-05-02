@@ -167,8 +167,6 @@ class ShopCog(commands.Cog):
             role_items.append((SHOP_ROLE_MOVE_COST, L("roledown", f"`!shop roledown <role name>` — Move a bot-created role down one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**")))
         if _si.get("rolecolor", True):
             role_items.append((SHOP_ROLECOLOR_COST, L("rolecolor", f"`!shop rolecolor @role <color>` — Change a role's color — **{SHOP_ROLECOLOR_COST:,} 🪙**")))
-        if _si.get("rolechannel", True):
-            role_items.append((SHOP_ROLECHANNEL_COST, L("rolechannel", f"`!shop rolechannel @role #channel` — Restrict a channel to a role — **{SHOP_ROLECHANNEL_COST:,} 🪙**")))
         if _si.get("renamerole", True):
             role_items.append((SHOP_RENAME_COST, L("renamerole", f"`!shop renamerole @role | <new name>` — Rename a bot-created role — **{SHOP_RENAME_COST:,} 🪙**")))
         if _si.get("lockrole", True):
@@ -190,6 +188,8 @@ class ShopCog(commands.Cog):
             channel_items.append((SHOP_RENAME_COST, L("renamechannel", f"`!shop renamechannel <channel> <new name>` — Rename a bot-created channel — **{SHOP_RENAME_COST:,} 🪙**")))
         if _si.get("lockchannel", True):
             channel_items.append((SHOP_LOCK_COST, L("lockchannel", f"`!shop lockchannel #channel` — Lock a channel against changes — **{SHOP_LOCK_COST:,} 🪙**")))
+        if _si.get("rolechannel", True):
+            channel_items.append((SHOP_ROLECHANNEL_COST, L("rolechannel", f"`!shop rolechannel @role #channel` — Restrict a channel to a role — **{SHOP_ROLECHANNEL_COST:,} 🪙**")))
         if channel_items:
             channel_items.sort(key=lambda x: x[0])
             items_list = [item[1] for item in channel_items]
