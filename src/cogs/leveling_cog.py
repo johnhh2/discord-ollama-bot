@@ -274,11 +274,15 @@ class LevelingCog(commands.Cog):
         channel = self.bot.get_channel(channel_id)
         if channel is None:
             return
-        await channel.send(embed=emb(
-            "🎉 Level Up!",
-            f"{member.mention} reached **Level {lvl}**! +**{reward:,} 🪙**",
-            C_GOLD,
-        ))
+        desc = f"{member.mention} reached **Level {lvl}**! +**{reward:,} 🪙**"
+
+        # List any commands unlocked at this exact level (server-enabled only)
+        from src.level_unlocks import unlocks_at_level
+        unlocked = unlocks_at_level(lvl, guild_id)
+        if unlocked:
+            desc += "\n\n**🔓 Unlocked**\n" + "\n".join(info["usage"] for _cmd, info in unlocked)
+
+        await channel.send(embed=emb("🎉 Level Up!", desc, C_GOLD))
 
     # ── !level / !xp command ──────────────────────────────────────────────────
     @commands.command(name="lvl", aliases=["level", "xp"])
@@ -342,6 +346,14 @@ class LevelingCog(commands.Cog):
             f"🔊 Voice     **{XP_VOICE} XP**  `{voice_bar}` {voice_used}/{voice_cap}  · next: {_mins30_remaining(voice_used, voice_cap)}\n"
             f"📺 Stream    **{XP_STREAM} XP**  `{stream_bar}` {stream_used}/{stream_cap}  · next: {_hour_remaining('stream_last_hour', stream_used, stream_cap)}\n"
         )
+
+        # Next unlocks (only show ones enabled on this server)
+        from src.level_unlocks import next_unlocks
+        upcoming = next_unlocks(target.id, ctx.guild.id, count=3)
+        if upcoming:
+            desc += "\n**🎁 Next Unlocks**\n"
+            for lvl_req, _cmd, info in upcoming:
+                desc += f"`Lvl {lvl_req}` — {info['usage']}\n"
 
         display = target.display_name
         embed = discord.Embed(

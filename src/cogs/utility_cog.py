@@ -208,21 +208,27 @@ class UtilityCog(commands.Cog):
 
     @commands.command(name="help", aliases=["h"])
     async def cmd_help(self, ctx: commands.Context):
+        from src.level_unlocks import fmt_line
+        gid = ctx.guild.id if ctx.guild else 0
+        uid = ctx.author.id
+
         help_embed = discord.Embed(title="📖 Commands", color=0x3498db)
-        help_embed.add_field(name="💰 Economy", inline=False, value=(
-            "`!economy` — Economy overview and command list\n"
-            "`!savings` — 🐷 Piggy bank with 1% daily interest\n"
-            "`!crime` — Steal, mug, and jailbreak commands"
-        ))
+        eco_lines = [
+            "`!economy` — Economy overview and command list",
+            fmt_line("savings", "`!savings` — 🐷 Piggy bank with 1% daily interest", uid, gid),
+            "`!crime` — Steal, mug, and jailbreak commands",
+        ]
+        help_embed.add_field(name="💰 Economy", inline=False, value="\n".join(eco_lines))
         help_embed.add_field(name="🎮 Games / Gambling", inline=False, value=(
             "`!games` — View all games and gambling commands"
         ))
-        help_embed.add_field(name="🏆 Leaderboards", inline=False, value=(
-            "`!leaderboard` — Top 10 richest users\n"
-            "`!roles` — View role thresholds and your progress\n"
-            "`!levels` — Top 10 users by XP level\n"
-            "`!records` — All-time records for economy and games"
-        ))
+        lb_lines = [
+            "`!leaderboard` — Top 10 richest users",
+            fmt_line("roles", "`!roles` — View role thresholds and your progress", uid, gid),
+            "`!levels` — Top 10 users by XP level",
+            "`!records` — All-time records for economy and games",
+        ]
+        help_embed.add_field(name="🏆 Leaderboards", inline=False, value="\n".join(lb_lines))
         help_embed.add_field(name="🤖 AI", inline=False, value=(
             "`!ai` — View AI connection status and command info"
         ))
@@ -239,7 +245,7 @@ class UtilityCog(commands.Cog):
 
         if nsfw_enabled:
             help_embed.add_field(name="🔞 NSFW", inline=False, value=(
-                "`!nsfw [tags]` — Random NSFW image"
+                fmt_line("nsfw", "`!nsfw [tags]` — Random NSFW image", uid, gid)
             ))
 
         help_embed.add_field(name="🎉 Fun", inline=False, value=(

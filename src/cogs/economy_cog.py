@@ -162,13 +162,17 @@ class EconomyCog(commands.Cog):
             jail_status = f"🚔 **You are in jail!** Released <t:{int(jail_until)}:R>."
         else:
             jail_status = "✅ **You are not in jail.**"
+        from src.level_unlocks import fmt_line, lock_marker
+        gid = ctx.guild.id if ctx.guild else 0
+        steal_lock = lock_marker("steal", uid, gid)
+        mug_lock   = lock_marker("mug",   uid, gid)
         lines = [
-            "**`!steal @user [tier]`** — Pick a pocket. Chance to steal a % of their balance; risk jail if caught.",
+            f"**`!steal @user [tier]`**{steal_lock} — Pick a pocket. Chance to steal a % of their balance; risk jail if caught.",
             "  **Tier 1** — 10% steal chance, steal 10% | Jail chance: 25% | Fee: 1,000 🪙 | Jail: 1 day",
             "  **Tier 2** — 7% steal chance, steal 15%  | Jail chance: 35% | Fee: 1,000 🪙 | Jail: 2 days",
             "  **Tier 3** — 5% steal chance, steal 25%  | Jail chance: 50% | Fee: 1,000 🪙 | Jail: 3 days",
             "",
-            "**`!mug @user <amount>`** — Pay `<amount>` 🪙 upfront to steal that amount from a target. 50% chance of getting jailed 1 day.",
+            f"**`!mug @user <amount>`**{mug_lock} — Pay `<amount>` 🪙 upfront to steal that amount from a target. 50% chance of getting jailed 1 day.",
             "",
             "**`!jailbreak`** — Attempt to escape jail (20% success). One attempt per day.",
             "",
@@ -677,6 +681,10 @@ class EconomyCog(commands.Cog):
         if not await check_command_permission(ctx):
             return
 
+        from src.level_unlocks import fmt_line
+        uid_help = ctx.author.id
+        gid_help = ctx.guild.id if ctx.guild else 0
+
         users = state.economy["users"]
         now = time.time()
 
@@ -709,7 +717,7 @@ class EconomyCog(commands.Cog):
             "**Economy commands:**\n"
             "`!balance [@user]` — Check wallet\n"
             "`!pay @user <amount>` — Send coins\n"
-            "`!savings` — Piggy bank (1% daily interest)\n"
+            f"{fmt_line('savings', '`!savings` — Piggy bank (1% daily interest)', uid_help, gid_help)}\n"
             "`!crime` — Steal, mug, jailbreak\n"
             "`!lottery` — Weekly lottery info\n"
             "`!shop` — Spend coins"

@@ -280,6 +280,9 @@ class EventsCog(commands.Cog):
         if isinstance(error, commands.CommandNotFound):
             logging.debug(f"[debug] {error}")
             return
+        from src.level_unlocks import LevelLocked
+        if isinstance(error, LevelLocked):
+            return  # gate already sent its own message
         if isinstance(error, commands.CheckFailure):
             cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
             command_whitelist = cfg.get("command_whitelist", [])

@@ -39,7 +39,26 @@ class Bot(commands.Bot):
 def create_bot() -> commands.Bot:
     intents = discord.Intents.default()
     intents.message_content = True
-    return Bot(command_prefix="!", intents=intents, help_command=None, case_insensitive=True)
+    bot = Bot(command_prefix="!", intents=intents, help_command=None, case_insensitive=True)
+
+    @bot.check
+    async def _level_gate(ctx: commands.Context) -> bool:
+        """Block commands the author hasn't unlocked yet."""
+        if ctx.guild is None or ctx.command is None:
+            return True
+        from src.level_unlocks import is_locked_for, LevelLocked
+        from src.helpers import emb, C_GREY
+        required = is_locked_for(ctx.command.qualified_name, ctx.author.id, ctx.guild.id)
+        if required is None:
+            return True
+        await ctx.send(embed=emb(
+            "🔒 Locked",
+            f"`!{ctx.command.qualified_name}` unlocks at **Level {required}**. Check `!level` for next unlocks.",
+            C_GREY,
+        ))
+        raise LevelLocked()
+
+    return bot
 
 
 async def _load_extensions(bot: commands.Bot):

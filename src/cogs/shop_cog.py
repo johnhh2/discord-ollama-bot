@@ -134,14 +134,19 @@ class ShopCog(commands.Cog):
                 return
 
         _si = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
+        from src.level_unlocks import fmt_line
+        _gid = ctx.guild.id if ctx.guild else 0
+        _uid = ctx.author.id
+        def L(cmd, text):  # shorthand for level-aware line
+            return fmt_line(cmd, text, _uid, _gid)
         sections = {}
 
         # Nicknames (sorted by cost)
         if _si.get("nickname", True):
             nickname_items = [
-                (SHOP_NICKNAME_SELF_COST,   f"`!shop nickname <new_name>` — Change your own nickname — **{SHOP_NICKNAME_SELF_COST:,} 🪙**"),
-                (SHOP_NICKNAME_REMOVE_COST, f"`!shop removenickname` — Remove your own nickname — **{SHOP_NICKNAME_REMOVE_COST:,} 🪙**"),
-                (SHOP_NICKNAME_OTHER_COST,  f"`!shop nickname @user <new_name>` — Nickname user — **{SHOP_NICKNAME_OTHER_COST:,} 🪙**"),
+                (SHOP_NICKNAME_SELF_COST,   L("nickname", f"`!shop nickname <new_name>` — Change your own nickname — **{SHOP_NICKNAME_SELF_COST:,} 🪙**")),
+                (SHOP_NICKNAME_REMOVE_COST, L("removenickname", f"`!shop removenickname` — Remove your own nickname — **{SHOP_NICKNAME_REMOVE_COST:,} 🪙**")),
+                (SHOP_NICKNAME_OTHER_COST,  L("nickname", f"`!shop nickname @user <new_name>` — Nickname user — **{SHOP_NICKNAME_OTHER_COST:,} 🪙**")),
             ]
             nickname_items.sort(key=lambda x: x[0])
             sections["🎭 Nicknames"] = [item[1] for item in nickname_items]
@@ -149,47 +154,47 @@ class ShopCog(commands.Cog):
         # Roles (sorted by cost)
         role_items = []
         if _si.get("removerole", True):
-            role_items.append((SHOP_ROLE_REMOVE_COST, f"`!shop removerole [@user] <name>` — Remove a bot-created role from yourself or another user — **{SHOP_ROLE_REMOVE_COST:,} 🪙**"))
+            role_items.append((SHOP_ROLE_REMOVE_COST, L("removerole", f"`!shop removerole [@user] <name>` — Remove a bot-created role from yourself or another user — **{SHOP_ROLE_REMOVE_COST:,} 🪙**")))
         if _si.get("deleterole", True):
-            role_items.append((SHOP_ROLE_DELETE_COST, f"`!shop deleterole <name>` — Permanently delete a bot-created role — **{SHOP_ROLE_DELETE_COST:,} 🪙**"))
+            role_items.append((SHOP_ROLE_DELETE_COST, L("deleterole", f"`!shop deleterole <name>` — Permanently delete a bot-created role — **{SHOP_ROLE_DELETE_COST:,} 🪙**")))
         if _si.get("createrole", True):
-            role_items.append((SHOP_ROLE_CREATE_COST, f"`!shop createrole @user <name> <hex>` — Create a custom colored role for a user — **{SHOP_ROLE_CREATE_COST:,} 🪙**"))
+            role_items.append((SHOP_ROLE_CREATE_COST, L("createrole", f"`!shop createrole @user <name> <hex>` — Create a custom colored role for a user — **{SHOP_ROLE_CREATE_COST:,} 🪙**")))
         if _si.get("assignrole", True):
-            role_items.append((SHOP_ROLE_ASSIGN_COST, f"`!shop assignrole @user <name>` — Assign an existing bot-created role to a user — **{SHOP_ROLE_ASSIGN_COST:,} 🪙**"))
+            role_items.append((SHOP_ROLE_ASSIGN_COST, L("assignrole", f"`!shop assignrole @user <name>` — Assign an existing bot-created role to a user — **{SHOP_ROLE_ASSIGN_COST:,} 🪙**")))
         if _si.get("roleup", True):
-            role_items.append((SHOP_ROLE_MOVE_COST, f"`!shop roleup <role name>` — Move a bot-created role up one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**"))
+            role_items.append((SHOP_ROLE_MOVE_COST, L("roleup", f"`!shop roleup <role name>` — Move a bot-created role up one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**")))
         if _si.get("roledown", True):
-            role_items.append((SHOP_ROLE_MOVE_COST, f"`!shop roledown <role name>` — Move a bot-created role down one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**"))
+            role_items.append((SHOP_ROLE_MOVE_COST, L("roledown", f"`!shop roledown <role name>` — Move a bot-created role down one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**")))
         if _si.get("rolecolor", True):
-            role_items.append((SHOP_ROLECOLOR_COST, f"`!shop rolecolor @role <color>` — Change a role's color — **{SHOP_ROLECOLOR_COST:,} 🪙**"))
+            role_items.append((SHOP_ROLECOLOR_COST, L("rolecolor", f"`!shop rolecolor @role <color>` — Change a role's color — **{SHOP_ROLECOLOR_COST:,} 🪙**")))
         if _si.get("rolechannel", True):
-            role_items.append((SHOP_ROLECHANNEL_COST, f"`!shop rolechannel @role #channel` — Restrict a channel to a role — **{SHOP_ROLECHANNEL_COST:,} 🪙**"))
+            role_items.append((SHOP_ROLECHANNEL_COST, L("rolechannel", f"`!shop rolechannel @role #channel` — Restrict a channel to a role — **{SHOP_ROLECHANNEL_COST:,} 🪙**")))
         if _si.get("renamerole", True):
-            role_items.append((SHOP_RENAME_COST, f"`!shop renamerole @role | <new name>` — Rename a bot-created role — **{SHOP_RENAME_COST:,} 🪙**"))
+            role_items.append((SHOP_RENAME_COST, L("renamerole", f"`!shop renamerole @role | <new name>` — Rename a bot-created role — **{SHOP_RENAME_COST:,} 🪙**")))
         if _si.get("lockrole", True):
-            role_items.append((SHOP_LOCK_COST, f"`!shop lockrole <role name>` — Lock a role against changes — **{SHOP_LOCK_COST:,} 🪙**"))
+            role_items.append((SHOP_LOCK_COST, L("lockrole", f"`!shop lockrole <role name>` — Lock a role against changes — **{SHOP_LOCK_COST:,} 🪙**")))
         if role_items:
             role_items.sort(key=lambda x: x[0])
             items_list = [item[1] for item in role_items]
             if _si.get("lockrole", True):
-                items_list.append(f"`!shop unlockrole <role name>` — Unlock a role (lock owner only)")
+                items_list.append(L("unlockrole", f"`!shop unlockrole <role name>` — Unlock a role (lock owner only)"))
             sections["👑 Roles"] = items_list
 
         # Channels (sorted by cost)
         channel_items = []
         if _si.get("channel", True):
-            channel_items.append((SHOP_CHANNEL_COST, f"`!shop createchannel <name>` — Create a new text channel — **{SHOP_CHANNEL_COST:,} 🪙**"))
+            channel_items.append((SHOP_CHANNEL_COST, L("createchannel", f"`!shop createchannel <name>` — Create a new text channel — **{SHOP_CHANNEL_COST:,} 🪙**")))
         if _si.get("channel", True):
-            channel_items.append((SHOP_CHANNEL_DELETE_COST, f"`!shop deletechannel <name>` — Delete a bot-created channel — **{SHOP_CHANNEL_DELETE_COST:,} 🪙**"))
+            channel_items.append((SHOP_CHANNEL_DELETE_COST, L("deletechannel", f"`!shop deletechannel <name>` — Delete a bot-created channel — **{SHOP_CHANNEL_DELETE_COST:,} 🪙**")))
         if _si.get("renamechannel", True):
-            channel_items.append((SHOP_RENAME_COST, f"`!shop renamechannel <channel> <new name>` — Rename a bot-created channel — **{SHOP_RENAME_COST:,} 🪙**"))
+            channel_items.append((SHOP_RENAME_COST, L("renamechannel", f"`!shop renamechannel <channel> <new name>` — Rename a bot-created channel — **{SHOP_RENAME_COST:,} 🪙**")))
         if _si.get("lockchannel", True):
-            channel_items.append((SHOP_LOCK_COST, f"`!shop lockchannel #channel` — Lock a channel against changes — **{SHOP_LOCK_COST:,} 🪙**"))
+            channel_items.append((SHOP_LOCK_COST, L("lockchannel", f"`!shop lockchannel #channel` — Lock a channel against changes — **{SHOP_LOCK_COST:,} 🪙**")))
         if channel_items:
             channel_items.sort(key=lambda x: x[0])
             items_list = [item[1] for item in channel_items]
             if _si.get("lockchannel", True):
-                items_list.append(f"`!shop unlockchannel #channel` — Unlock a channel (lock owner only)")
+                items_list.append(L("unlockchannel", f"`!shop unlockchannel #channel` — Unlock a channel (lock owner only)"))
             sections["📢 Channels"] = items_list
 
         # Fun & Social (sorted by cost)
@@ -202,7 +207,7 @@ class ShopCog(commands.Cog):
             fun_items.append((SHOP_RAGEBAIT_COST, f"`!shop ragebait @user [topic]` — Ragebait for {SHOP_RAGEBAIT_MESSAGES + 1} messages — **{SHOP_RAGEBAIT_COST:,} 🪙**"))
         fun_items.append((SHOP_MUTE_COST,  f"`!shop mute @user` — Server mute for {SHOP_MUTE_MINUTES} minutes — **{SHOP_MUTE_COST:,} 🪙**"))
         fun_items.append((SHOP_CURSE_COST, f"`!shop curse @user` — Curse someone's messages for {SHOP_CURSE_MESSAGES} messages — **{SHOP_CURSE_COST:,} 🪙**"))
-        fun_items.append((SHOP_UNOREVERSE_COST, f"`!shop unoreverse @user` — Redirect active mock/ragebait/curse onto someone else — **{SHOP_UNOREVERSE_COST:,} 🪙**"))
+        fun_items.append((SHOP_UNOREVERSE_COST, L("unoreverse", f"`!shop unoreverse @user` — Redirect active mock/ragebait/curse onto someone else — **{SHOP_UNOREVERSE_COST:,} 🪙**")))
         fun_items.sort(key=lambda x: x[0])
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
