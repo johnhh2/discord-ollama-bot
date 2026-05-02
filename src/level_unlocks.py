@@ -60,7 +60,7 @@ UNLOCKS: dict[str, dict] = {
     "steal":       {"level": 5, "enabled": _always,                       "usage": "`!steal @user [tier]` — pick a pocket", "reward": True},
 
     # Level 7 — role family (advertised: createrole). lockrole/unlockrole gated separately at 12.
-    "roles":       {"level": 7, "enabled": _always,                       "usage": "`!roles` — list bot-created roles"},
+    # !roles is the role leaderboard — never gated.
     "createrole":  {"level": 7, "enabled": _shop_item_enabled("createrole"), "usage": "`!createrole @user <name> <hex>` — create a custom role", "reward": True},
     "assignrole":  {"level": 7, "enabled": _shop_item_enabled("assignrole"), "usage": "`!assignrole @user <name>` — assign an existing role"},
     "removerole":  {"level": 7, "enabled": _shop_item_enabled("removerole"), "usage": "`!removerole [@user] <name>` — remove a role"},

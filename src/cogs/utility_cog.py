@@ -224,7 +224,7 @@ class UtilityCog(commands.Cog):
         ))
         lb_lines = [
             "`!leaderboard` — Top 10 richest users",
-            fmt_line("roles", "`!roles` — View role thresholds and your progress", uid, gid),
+            "`!roles` — View role thresholds and your progress",
             "`!levels` — Top 10 users by XP level",
             "`!records` — All-time records for economy and games",
         ]
