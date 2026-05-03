@@ -7,10 +7,16 @@ Importing src as bot is safe because:
 - commands.Bot(...) creates an object with no network calls
 """
 import pytest
+import pytest_asyncio
 import src as bot
 import src.state as _state
 import src.persistence as _persistence
 import src.economy as _economy
+import src.db as _db
+
+# Import this BEFORE the autouse fixture below runs — it snapshots the real
+# save_*/load_* function refs so the opt-in `db` fixture can restore them.
+from tests.fakes import originals as _originals  # noqa: E402,F401
 
 
 async def _noop(*args, **kwargs):
@@ -39,6 +45,12 @@ def reset_bot_state(monkeypatch):
     fresh_user_last_request = {}
     monkeypatch.setattr(bot, "user_last_request", fresh_user_last_request)
     monkeypatch.setattr(_state, "user_last_request", fresh_user_last_request)
+
+    # Reset per-test state that newer tests mutate. Existing tests don't touch
+    # these (or set them to fresh values themselves), so this is additive-safe.
+    monkeypatch.setattr(_state, "bot_admins", set())
+    monkeypatch.setattr(_state, "godmode_users", set())
+    monkeypatch.setattr(_state, "command_perms", {})
 
     # Stub all async DB save functions in persistence so tests don't need a real DB
     save_fn_names = [
@@ -69,3 +81,32 @@ def reset_bot_state(monkeypatch):
         import src.state as _s
         _s.quote_log = log[-10:]
     monkeypatch.setattr(bot, "save_quote_log", _stub_save_quote_log)
+
+
+@pytest_asyncio.fixture
+async def db(monkeypatch):
+    """Opt-in: real save/load paths against an in-memory SQLite that mimics MariaDB.
+
+    Tests that take this fixture exercise the actual SQL in src/persistence.py
+    instead of the no-op stubs installed by `reset_bot_state`. Use this for
+    persistence round-trips, shop money flow, and anything where "did it
+    actually persist?" matters.
+    """
+    from tests.fakes.db import make_fake_pool
+    pool = await make_fake_pool()
+
+    async def _get_pool():
+        return pool
+
+    # Replace the pool factory wherever it's referenced.
+    monkeypatch.setattr(_db, "get_pool", _get_pool)
+    monkeypatch.setattr(_persistence, "get_pool", _get_pool)
+
+    # Restore real save_*/load_* refs that `reset_bot_state` stubbed.
+    for target_module, attr_name, real_fn in _originals.ALL:
+        monkeypatch.setattr(target_module, attr_name, real_fn)
+
+    try:
+        yield pool
+    finally:
+        await pool.close()
