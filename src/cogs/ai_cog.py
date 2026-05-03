@@ -29,6 +29,14 @@ from src.config import (
 )
 from src import state
 from src.invites import _wait_for_confirmations, _send_invite
+# Forfeit-board renderers used in cmd_stop. NOTE: these were referenced
+# inline since the original bot.py split but never actually imported —
+# !stop in a ttt/c4/chess/hangman game would NameError. Tests in
+# test_cmd_stop.py now cover this. Don't drop these without adjusting
+# the cmd_stop coverage.
+from src.games.ttt_c4 import build_ttt_display, build_c4_display
+from src.games.chess import build_chess_display
+from src.games.hangman import build_hangman_display
 
 
 class AICog(commands.Cog):
