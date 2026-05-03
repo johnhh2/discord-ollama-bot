@@ -67,7 +67,7 @@ src/
 └── gambling/          # Slots, flip, scratchoff
 ```
 
-Roughly **12.4k lines of source** and **2.3k lines of tests**.
+Roughly **12.4k lines of source** and **3.9k lines of tests**.
 
 The persistence layer was [migrated from JSON files to MariaDB](src/persistence.py) mid-project — the schema lives in [src/schema.sql](src/schema.sql) and a SQLite-flavored version lives in [tests/fakes/schema_sqlite.sql](tests/fakes/schema_sqlite.sql) so the test suite can run against an in-memory DB with no external dependencies.
 
@@ -105,6 +105,7 @@ All configuration is via environment variables. See [.env.example](.env.example)
 |---|---|---|
 | `DISCORD_TOKEN` | — | **Required.** Bot token from the Discord Developer Portal |
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | — | **Required.** MariaDB connection |
+| `DISCORD_CLIENT_ID` | — | Application client ID; required only for `!botinvitelink` |
 | `BOT_ADMIN_IDS` | — | Comma-separated Discord user IDs who get bot-admin tier |
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama API endpoint |
 | `OLLAMA_MODEL` | `dolphin3:8b` | Default model for `!ask` |

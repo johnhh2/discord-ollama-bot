@@ -4,6 +4,7 @@ services:
     restart: unless-stopped
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       NSFW_API_URL: ${NSFW_API_URL}
       NSFW_API_KEY: ${NSFW_API_KEY}
       NSFW_API_USER_ID: ${NSFW_API_USER_ID}

@@ -51,7 +51,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
     RATE_LIMIT_SECONDS, RACE_TRACK_LEN,
-    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN,
+    ACTIVE_CHANNEL_IDS, DISCORD_TOKEN, DISCORD_CLIENT_ID,
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
@@ -394,7 +394,12 @@ class AdminCog(commands.Cog):
         if not await check_command_permission(ctx):
             return
 
-        invite_url = "https://discord.com/oauth2/authorize?client_id=1489403251303518322&permissions=6192724835560529&integration_type=0&scope=bot"
+        if not DISCORD_CLIENT_ID:
+            await ctx.send("❌ `DISCORD_CLIENT_ID` is not set. Add it to your `.env` to enable this command.")
+            return
+
+        permissions = "6192724835560529"
+        invite_url = f"https://discord.com/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&permissions={permissions}&integration_type=0&scope=bot"
 
         # Create a view with a button
         _bot = self.bot
@@ -414,8 +419,8 @@ class AdminCog(commands.Cog):
             description="Click the button below to get a copy of the bot invite URL",
             color=discord.Color(0x9932CC)
         )
-        embed.add_field(name="Client ID", value="1489403251303518322", inline=False)
-        embed.add_field(name="Permissions", value="6192724835560529", inline=False)
+        embed.add_field(name="Client ID", value=DISCORD_CLIENT_ID, inline=False)
+        embed.add_field(name="Permissions", value=permissions, inline=False)
 
         await ctx.send(embed=embed, view=InviteView())
 

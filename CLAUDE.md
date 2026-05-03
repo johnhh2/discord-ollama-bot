@@ -24,6 +24,17 @@ Key environment variables (all optional except `DISCORD_TOKEN`):
 | `NSFW_API_URL` | — | Optional; base URL for the NSFW image API (enables `!nsfw`) |
 | `NSFW_API_KEY` / `NSFW_API_USER_ID` | — | Optional; API credentials for the NSFW image endpoint |
 
+### Adding a new env var
+
+When adding a new env var that the bot reads from `os.getenv(...)`, you must update **all** of the following or it won't reach the deployed container:
+
+1. `src/config.py` — the `os.getenv(...)` call
+2. `.env.example` — placeholder + one-line comment
+3. `docker-compose.yml` — add it to the `environment:` block as `MY_VAR: ${MY_VAR:-}` (the `:-` empty default avoids "variable not set" warnings in Portainer)
+4. This `CLAUDE.md` env-var table (and the README's table if user-facing)
+
+The production deploy reads env vars from the Portainer stack UI, which exports them to the shell that runs `docker compose up`. Vars listed only in `.env` will work locally but will be silently missing in production.
+
 ## Running Tests
 
 Install dev dependencies (not in `requirements.txt`):
