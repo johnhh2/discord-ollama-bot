@@ -69,7 +69,7 @@ from src.config import (
 from src import state
 from src.games.blackjack import draw_card, hand_value, build_blackjack_display, _blackjack_stand
 from src.games.hangman import _process_hangman_guess
-from src.cogs.leveling_cog import grant_xp as _grant_xp
+from src.leveling import grant_xp as _grant_xp
 
 
 async def _roast_soundboard_spam(bot, guild_id: int, user_id: int):
@@ -308,7 +308,6 @@ class EventsCog(commands.Cog):
         if ctx.guild and not ctx.author.bot:
             xp, leveled_up = await _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
             if leveled_up and get_guild_cfg(ctx.guild.id).get("levelup_channel"):
-                from src.cogs.leveling_cog import LevelingCog
                 cog = self.bot.cogs.get("LevelingCog")
                 if cog and isinstance(ctx.author, discord.Member):
                     asyncio.create_task(cog._announce_levelup(ctx.author, ctx.guild.id))
@@ -350,7 +349,6 @@ class EventsCog(commands.Cog):
         if message.guild and not message.content.startswith("!"):
             xp, leveled_up = await _grant_xp(uid, "msg", guild_id=message.guild.id)
             if leveled_up and isinstance(message.author, discord.Member) and get_guild_cfg(message.guild.id).get("levelup_channel"):
-                from src.cogs.leveling_cog import LevelingCog
                 cog = self.bot.cogs.get("LevelingCog")
                 if cog:
                     asyncio.create_task(cog._announce_levelup(message.author, message.guild.id))

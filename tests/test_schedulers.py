@@ -18,7 +18,7 @@ import pytest
 
 import src.state as _state
 import src.persistence as _persistence
-from src.cogs.leveling_cog import (
+from src.leveling import (
     grant_xp, _ensure_user as _ensure_lvl_user,
     HOUR_SECS, MINS30_SECS, MSG_DAILY_MAX, CMD_DAILY_MAX,
     VOICE_DAILY_MAX, STREAM_DAILY_MAX,
@@ -169,7 +169,7 @@ async def test_grant_xp_unknown_source_returns_zero(db, monkeypatch):
 @pytest.mark.asyncio
 async def test_grant_xp_levels_up_when_threshold_crossed(db, monkeypatch):
     """Pre-load XP just below level-1 threshold; one msg grant pushes over."""
-    from src.cogs.leveling_cog import xp_for_level
+    from src.leveling import xp_for_level
     monkeypatch.setattr("src.cogs.leveling_cog.time.time", lambda: 1_000_000.0)
 
     # Seed user with xp = level-1 threshold - 1, level=0

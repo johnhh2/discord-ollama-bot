@@ -17,10 +17,11 @@ from unittest.mock import AsyncMock
 import src.state as _state
 import src.persistence as _persistence
 import src.economy as _economy
-from src.cogs.leveling_cog import (
-    LevelingCog, grant_xp, _ensure_user as _ensure_lvl_user,
+from src.leveling import (
+    grant_xp, _ensure_user as _ensure_lvl_user,
     levelup_coin_reward, display_level, XP_SCRATCH,
 )
+from src.cogs.leveling_cog import LevelingCog
 
 from tests.fakes.discord import FakeMember, FakeGuild
 
@@ -198,7 +199,7 @@ async def test_voice_tick_grants_stream_xp_when_streaming(db, monkeypatch):
     assert rec["voice_today"] == 1
     assert rec["stream_today"] == 1
     # XP is the sum of XP_VOICE + XP_STREAM (currently 10 + 15 = 25).
-    from src.cogs.leveling_cog import XP_VOICE, XP_STREAM
+    from src.leveling import XP_VOICE, XP_STREAM
     assert rec["xp"] == XP_VOICE + XP_STREAM
 
 

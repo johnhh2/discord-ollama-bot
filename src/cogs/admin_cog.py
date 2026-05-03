@@ -390,7 +390,7 @@ class AdminCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a non-zero whole number.", C_RED))
             return
 
-        from src.cogs.leveling_cog import _ensure_user, level_from_xp, display_level
+        from src.leveling import _ensure_user, level_from_xp, display_level
         from src.persistence import save_leveling
 
         rec = _ensure_user(ctx.guild.id, target.id)

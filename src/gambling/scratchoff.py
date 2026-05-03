@@ -33,6 +33,7 @@ from src.permissions import (
     check_channel, check_game_channel, check_ai_channel, check_puzzle_channel,
     check_chess_channel, _wrong_channel_reply,
 )
+from src.leveling import grant_xp
 from src.persistence import (
     save_economy, save_insurance, save_guild_settings,
     save_bot_settings, save_godmode_users, save_bot_roles,
@@ -283,13 +284,10 @@ class ScratchoffCog(commands.Cog):
 
             # Award 10 XP per scratchoff played
             if ctx.guild:
-                from src.cogs.leveling_cog import grant_xp as _grant_xp_scratch
-                _, leveled_up = await _grant_xp_scratch(uid, "scratch", guild_id=ctx.guild.id)
+                _, leveled_up = await grant_xp(uid, "scratch", guild_id=ctx.guild.id)
                 if leveled_up and get_guild_cfg(ctx.guild.id).get("levelup_channel"):
-                    from src.cogs.leveling_cog import LevelingCog
                     cog = ctx.bot.cogs.get("LevelingCog")
                     if cog and isinstance(ctx.author, discord.Member):
-                        import asyncio
                         asyncio.create_task(cog._announce_levelup(ctx.author, ctx.guild.id))
 
             # Track full-day scratchoff streak for Gamblers role

@@ -13,7 +13,7 @@ import pytest
 from unittest.mock import AsyncMock
 
 import src.state as _state
-from src.cogs.leveling_cog import (
+from src.leveling import (
     _xp_cost, xp_for_level, level_from_xp, xp_for_next_level, levelup_coin_reward,
     _bar,
 )
