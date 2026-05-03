@@ -285,3 +285,174 @@ async def test_jackpot_roundtrip(db):
     _state.slot_jackpot = 0
     await _persistence.init_db_state()
     assert _state.slot_jackpot == 42424
+
+
+# ── chess_games ───────────────────────────────────────────────────────────────
+
+async def test_chess_games_roundtrip(db):
+    """save_chess_games does DELETE + INSERT; verify nested dict round-trips
+    cleanly through json column."""
+    _state.active_chess_games.clear()
+    _state.active_chess_games[12345] = {
+        "white": 100,
+        "black": 200,
+        "turn": "white",
+        "board": [["r", "n", "b"], ["p", "p", "p"]],
+        "moves": ["e2e4", "e7e5"],
+    }
+    _state.active_chess_games[67890] = {
+        "white": 300,
+        "black": 400,
+        "turn": "black",
+        "board": [],
+        "moves": [],
+    }
+    await _persistence.save_chess_games()
+
+    _state.active_chess_games.clear()
+    await _persistence.init_db_state()
+
+    assert 12345 in _state.active_chess_games
+    g = _state.active_chess_games[12345]
+    assert g["white"] == 100 and g["black"] == 200
+    assert g["turn"] == "white"
+    assert g["moves"] == ["e2e4", "e7e5"]
+    assert g["board"] == [["r", "n", "b"], ["p", "p", "p"]]
+    assert _state.active_chess_games[67890]["turn"] == "black"
+
+
+async def test_chess_games_save_replaces_full_table(db):
+    """save_chess_games does DELETE FROM chess_games before inserting — confirm
+    that removing a game from in-memory state and re-saving drops its DB row."""
+    _state.active_chess_games.clear()
+    _state.active_chess_games[1] = {"x": 1}
+    _state.active_chess_games[2] = {"x": 2}
+    await _persistence.save_chess_games()
+
+    del _state.active_chess_games[2]
+    await _persistence.save_chess_games()
+
+    _state.active_chess_games.clear()
+    await _persistence.init_db_state()
+    assert 1 in _state.active_chess_games
+    assert 2 not in _state.active_chess_games
+
+
+# ── ai_threads (ask, fanfic, roleplay, rpg) ───────────────────────────────────
+
+async def test_ai_threads_roundtrip_preserves_set_invited_ids(db):
+    """ai_threads.invited_ids is a set in memory but a JSON list on disk —
+    pin the round-trip so the set→list→set conversion stays correct."""
+    _state.ai_threads.clear()
+    _state.ai_threads[111] = {
+        "kind": "ask",
+        "owner_id": 7,
+        "guild_id": 99,
+        "invited_ids": {201, 202, 203},
+        "system_prompt": "be brief",
+        "character_prompt": None,
+        "history": [{"role": "user", "content": "hi"}],
+    }
+    await _persistence.save_ai_threads()
+
+    _state.ai_threads.clear()
+    await _persistence.init_db_state()
+
+    t = _state.ai_threads[111]
+    assert t["kind"] == "ask"
+    assert t["owner_id"] == 7
+    assert t["guild_id"] == 99
+    # Set on the way out, set on the way in.
+    assert isinstance(t["invited_ids"], set)
+    assert t["invited_ids"] == {201, 202, 203}
+    assert t["system_prompt"] == "be brief"
+    assert t["character_prompt"] is None
+    assert t["history"] == [{"role": "user", "content": "hi"}]
+
+
+async def test_ai_threads_roundtrip_handles_null_guild_id(db):
+    """guild_id can be None for DMs — must round-trip through INT NULL column."""
+    _state.ai_threads.clear()
+    _state.ai_threads[222] = {
+        "kind": "roleplay",
+        "owner_id": 8,
+        "guild_id": None,
+        "invited_ids": set(),
+        "system_prompt": None,
+        "character_prompt": "wizard",
+        "history": [],
+    }
+    await _persistence.save_ai_threads()
+
+    _state.ai_threads.clear()
+    await _persistence.init_db_state()
+
+    t = _state.ai_threads[222]
+    assert t["guild_id"] is None
+    assert t["character_prompt"] == "wizard"
+    assert t["invited_ids"] == set()
+
+
+async def test_ai_threads_save_replaces_full_table(db):
+    """save_ai_threads is DELETE-then-INSERT semantics; removed threads vanish."""
+    _state.ai_threads.clear()
+    _state.ai_threads[1] = {
+        "kind": "fanfic", "owner_id": 1, "guild_id": 1,
+        "invited_ids": set(), "system_prompt": None,
+        "character_prompt": None, "history": [],
+    }
+    _state.ai_threads[2] = {
+        "kind": "fanfic", "owner_id": 2, "guild_id": 1,
+        "invited_ids": set(), "system_prompt": None,
+        "character_prompt": None, "history": [],
+    }
+    await _persistence.save_ai_threads()
+
+    del _state.ai_threads[2]
+    await _persistence.save_ai_threads()
+
+    _state.ai_threads.clear()
+    await _persistence.init_db_state()
+    assert 1 in _state.ai_threads
+    assert 2 not in _state.ai_threads
+
+
+# ── channel_prompts ───────────────────────────────────────────────────────────
+
+async def test_channel_prompts_roundtrip(db):
+    """save_channel_prompts(prompts: dict) DELETEs then INSERTs.
+    Verify the int channel_id key + text round-trip cleanly."""
+    _state.channel_prompts.clear()
+    prompts = {
+        555_001: "Be a pirate.",
+        555_002: "Speak only in haiku.",
+    }
+    await _persistence.save_channel_prompts(prompts)
+
+    _state.channel_prompts.clear()
+    await _persistence.init_db_state()
+
+    assert _state.channel_prompts[555_001] == "Be a pirate."
+    assert _state.channel_prompts[555_002] == "Speak only in haiku."
+
+
+async def test_channel_prompts_save_replaces_full_table(db):
+    """Pass a dict missing previously-saved channels and verify they're gone."""
+    _state.channel_prompts.clear()
+    await _persistence.save_channel_prompts({1: "first", 2: "second"})
+    await _persistence.save_channel_prompts({1: "first-only"})
+
+    _state.channel_prompts.clear()
+    await _persistence.init_db_state()
+    assert _state.channel_prompts == {1: "first-only"}
+
+
+async def test_channel_prompts_empty_dict_clears_table(db):
+    """Saving an empty dict should leave the table empty."""
+    _state.channel_prompts.clear()
+    await _persistence.save_channel_prompts({1: "before"})
+    await _persistence.save_channel_prompts({})
+
+    _state.channel_prompts.clear()
+    await _persistence.init_db_state()
+    assert _state.channel_prompts == {}
