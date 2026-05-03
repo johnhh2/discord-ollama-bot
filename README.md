@@ -1,145 +1,143 @@
 # discord-ollama-bot
 
-A Discord bot that uses a locally hosted [Ollama](https://ollama.com) server to respond to messages as a configurable character or persona.
+A feature-rich Discord bot that runs against a self-hosted [Ollama](https://ollama.com) LLM. Beyond chat, it ships with a full economy, gambling games, role/channel shop, lottery, level system, and a permission framework — all backed by MariaDB.
 
-## Requirements
+Built as a long-running personal project to explore Discord's API, async Python, LLM streaming, and small-scale game-economy design.
 
-- Python 3.10+
-- [Ollama](https://ollama.com) installed and running locally
-- A Discord bot token
+## Features
 
-## Setup
+**LLM-backed chat**
+- `!ask` — conversational Q&A, threaded so each conversation has its own context
+- `!continue` — extend the previous response
+- Per-guild model selection (separate models for different command modes)
+- Channel-scoped passive responses, configurable history depth, per-user rate limiting
+- Streaming output with a global semaphore so a single GPU isn't overloaded
 
-### 1. Clone the repo
+**Economy & gambling**
+- Daily rewards (resets at 5am CT, DST-aware)
+- `!slots` with progressive jackpot, `!flip`, `!blackjack`, `!scratch` (scratchoffs)
+- Weekly `!lottery` with per-ticket purchases and a scheduled draw
+- `!savings` with compounding principal/interest tracking
+- `!steal` / `!mug` / `!jail` / `!jailbreak` PvP economy actions with insurance you can buy in the shop
+- `!leaderboard`, `!records`, `!economy` overview, `!graph` for visualizing balance history
 
-```powershell
+**Games**
+- `!hangman` (with a 60k-word list and rarity-weighted payouts)
+- `!ttt` (tic-tac-toe), `!c4` (connect 4), `!chess` (persistent games), `!race`
+- Multi-player support with channel-scoped sessions
+
+**Shop**
+- Spend currency on real Discord effects: nicknames, role create/assign/color/move, channel create/rename/lock, mute, mock/curse/ragebait text effects, tax-other-user, insurance, UNO-reverse cards
+- All costs configured centrally in [src/config.py](src/config.py)
+
+**Levels & unlocks**
+- Per-guild XP from messages
+- Commands gated behind level thresholds — see [src/level_unlocks.py](src/level_unlocks.py)
+- `!lvl`, `!levels` leaderboard
+
+**Moderation & admin**
+- Three-tier permission system (`everyone`, `server_admin`, `bot_admin`) with optional `hidden` flag for stealth admin commands
+- All command perms in a single JSON file ([src/command_perms.json](src/command_perms.json)) — runtime-editable via `!setperm`
+- Bot-admin commands: `!restart` (Docker-aware), `!godmode`, `!audit`, `!clearbot`, `!admingive`, `!adminunlock`
+- Full audit log of admin actions
+
+**Other**
+- Riddles, quotes, dog/cat image commands
+- Ephemeral message auto-deletion
+- VRAM/uptime/memory `!stats`
+
+## Architecture
+
+```
+src/
+├── core.py            # Bot factory, extension loading, level-gate check
+├── config.py          # All env vars and tunable constants
+├── persistence.py     # MariaDB-backed save/load layer (~970 lines)
+├── db.py              # aiomysql connection pool
+├── schema.sql         # MariaDB schema
+├── economy.py         # Balance, daily reset, savings, jail logic
+├── ai.py              # Ollama streaming, cost enforcement, system prompts
+├── permissions.py     # check_command_permission, tier resolution
+├── level_unlocks.py   # Per-command level requirements
+├── helpers.py         # Embed builders, font transforms, shared utilities
+├── events.py          # Message dispatch, XP, ragebait/mock/curse handlers
+├── state.py           # In-memory caches loaded at startup
+├── cogs/              # Command groups (admin, ai, economy, shop, …)
+├── games/             # Blackjack, hangman, chess, ttt/c4, race
+└── gambling/          # Slots, flip, scratchoff
+```
+
+Roughly **12.4k lines of source** and **2.3k lines of tests**.
+
+The persistence layer was [migrated from JSON files to MariaDB](src/persistence.py) mid-project — the schema lives in [src/schema.sql](src/schema.sql) and a SQLite-flavored version lives in [tests/fakes/schema_sqlite.sql](tests/fakes/schema_sqlite.sql) so the test suite can run against an in-memory DB with no external dependencies.
+
+## Quick start (Docker)
+
+The bot is designed to run in Docker against an Ollama instance running on the host (or another machine on the LAN).
+
+```bash
 git clone https://github.com/johnhh2/discord-ollama-bot.git
 cd discord-ollama-bot
-```
-
-### 2. Install dependencies
-
-```powershell
-pip install -r requirements.txt
-```
-
-### 3. Create a Discord bot
-
-1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
-2. Click **New Application**, give it a name
-3. Go to **Bot** in the left sidebar
-4. Click **Reset Token** and copy the token
-5. Under **Privileged Gateway Intents**, enable **Message Content Intent**
-
-### 4. Invite the bot to your server
-
-1. Go to **OAuth2 → URL Generator**
-2. Select scope: `bot`
-3. Select permissions: `Read Messages/View Channels`, `Send Messages`, `Read Message History`
-4. Open the generated URL and invite the bot to your server
-
-### 5. Configure the bot
-
-Copy `.env.example` to `.env` and fill in your values:
-
-```powershell
-cp .env.example .env
-```
-
-```env
-DISCORD_TOKEN=your_discord_bot_token_here
-
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.2
-
-# Optional: comma-separated channel IDs to restrict the bot to specific channels
-# Leave empty to allow responses everywhere
-ACTIVE_CHANNEL_IDS=
-
-# Define your bot's character or goal here
-SYSTEM_PROMPT=You are a helpful assistant.
-```
-
-Run `ollama list` to see which models you have available.
-
-### 6. Run the bot
-
-```powershell
-python bot.py
-```
-
----
-
-## Docker setup (Docker Desktop)
-
-This is the recommended way to run the bot persistently without keeping a terminal open.
-
-### 1. Make sure your `.env` is configured
-
-Same as above. One important difference — since the bot runs inside a container, it can't reach `localhost` on your machine directly. Change `OLLAMA_BASE_URL` in your `.env` to:
-
-```env
-OLLAMA_BASE_URL=http://host.docker.internal:11434
-```
-
-`host.docker.internal` is a special hostname Docker Desktop provides on Windows to reach the host machine.
-
-### 2. Build and start the container
-
-Open Docker Desktop, then run:
-
-```powershell
+cp .env.example .env       # fill in DISCORD_TOKEN, DB_*, etc.
 docker compose up -d
-```
-
-- `-d` runs it in the background (detached)
-- Docker Desktop will show the container under the **Containers** tab
-
-### 3. View logs
-
-```powershell
 docker compose logs -f
 ```
 
-Or click the container in Docker Desktop and open the **Logs** tab.
+You'll need a MariaDB instance reachable from the container. Initialize it once with:
 
-### 4. Stop the bot
-
-```powershell
-docker compose down
+```bash
+mysql -h $DB_HOST -u $DB_USER -p $DB_NAME < src/schema.sql
 ```
 
-### 5. Rebuild after code changes
+## Running locally (without Docker)
 
-```powershell
-docker compose up -d --build
+```bash
+pip install -r requirements.txt
+cp .env.example .env       # fill in values
+python main.py
 ```
 
----
+## Configuration
 
-## Usage
-
-- **Mention the bot** in any channel it can see: `@BotName hello!`
-- **DM the bot** directly — no mention needed
-
-The bot will query your local Ollama server and reply in the same channel.
-
-## Configuration reference
+All configuration is via environment variables. See [.env.example](.env.example) for the full list. Highlights:
 
 | Variable | Default | Description |
 |---|---|---|
-| `DISCORD_TOKEN` | *(required)* | Your Discord bot token |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | URL of your Ollama server |
-| `OLLAMA_MODEL` | `llama3.2` | Model to use (must be pulled in Ollama) |
-| `ACTIVE_CHANNEL_IDS` | *(empty)* | Comma-separated channel IDs to restrict responses; empty = everywhere |
-| `SYSTEM_PROMPT` | `You are a helpful assistant.` | Character definition or goal for the bot |
+| `DISCORD_TOKEN` | — | **Required.** Bot token from the Discord Developer Portal |
+| `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | — | **Required.** MariaDB connection |
+| `BOT_ADMIN_IDS` | — | Comma-separated Discord user IDs who get bot-admin tier |
+| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama API endpoint |
+| `OLLAMA_MODEL` | `dolphin3:8b` | Default model for `!ask` |
+| `SYSTEM_PROMPT` | `You are a helpful assistant.` | Default character prompt |
+| `HISTORY_LIMIT` | `20` | Per-channel history depth fed to the model |
+| `RATE_LIMIT_SECONDS` | `5.0` | Per-user AI cooldown |
+| `ACTIVE_CHANNEL_IDS` | _(all)_ | Comma-separated channel IDs where the bot responds passively |
 
-## Example characters
+## Tests
 
-```env
-SYSTEM_PROMPT=You are a grumpy pirate named Barnacle Pete. You speak in pirate slang and are easily annoyed.
+The test suite uses an in-memory SQLite database and a fake `discord` module — no Discord token, Ollama instance, or MariaDB needed.
+
+```bash
+pip install pytest pytest-asyncio
+pytest
 ```
 
-```env
-SYSTEM_PROMPT=You are a helpful server moderator. Keep responses concise and friendly.
-```
+Test layout:
+- [tests/test_bot.py](tests/test_bot.py) — game logic, hand evaluation, lottery math
+- [tests/test_economy_flows.py](tests/test_economy_flows.py) — daily reset, savings, transfers
+- [tests/test_persistence.py](tests/test_persistence.py) — DB round-trips
+- [tests/test_shop.py](tests/test_shop.py) — shop charge/refund flows
+- [tests/test_permissions.py](tests/test_permissions.py) — tier resolution and `hidden` flag
+- [tests/test_downtime.py](tests/test_downtime.py) — recovery from missed scheduled events
+
+## Deployment
+
+The bot runs in production on a Synology NAS, deployed via:
+1. GitHub Actions builds and pushes the Docker image to GHCR ([.github/workflows/docker.yml](.github/workflows/docker.yml))
+2. A Portainer webhook on the NAS pulls the new image and restarts the stack
+
+`docker-compose.yml` is configured for this setup (named volume at `/volume1/docker/ollama_discord_bot`, memory cap, log rotation).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

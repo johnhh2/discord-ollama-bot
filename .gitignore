@@ -208,6 +208,7 @@ __marimo__/
 
 # Custom
 TODO.txt
+.config
 docker-compose.override.yml
 
 # Claude Code local configuration
