@@ -14,8 +14,9 @@ from src.permissions import (
 )
 from src.persistence import (
     save_economy, save_rigged_slots, save_rigged_flips, save_rigged_scratch, save_rigged_steal,
-    get_guild_cfg, save_jackpot, try_set_record,
+    save_jackpot, try_set_record
 )
+from src.guild_config import get_guild_cfg
 from src.config import (
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,

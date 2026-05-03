@@ -16,9 +16,9 @@ from src.permissions import (
     check_ai_channel,
 )
 from src.persistence import (
-    save_chess_games, save_ai_threads,
-    get_guild_cfg,
+    save_chess_games, save_ai_threads
 )
+from src.guild_config import get_guild_cfg
 from src.ai import (
     enforce_cost, keep_typing,
     stream_ollama, finalize, respond,

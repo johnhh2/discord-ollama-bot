@@ -18,8 +18,9 @@ from src.permissions import (
 from src.leveling import grant_xp
 from src.persistence import (
     save_economy, save_gambler_streak,
-    get_guild_cfg, save_rigged_scratch,
+    save_rigged_scratch
 )
+from src.guild_config import get_guild_cfg
 from src.config import (
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,

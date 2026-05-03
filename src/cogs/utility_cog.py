@@ -20,8 +20,9 @@ from src.permissions import (
     requires_perm,
 )
 from src.persistence import (
-    save_bot_settings, get_guild_cfg, load_saved_quotes,
+    save_bot_settings, load_saved_quotes
 )
+from src.guild_config import get_guild_cfg
 from src.ai import (
     check_ollama_connected, keep_typing,
     ollama_semaphore,

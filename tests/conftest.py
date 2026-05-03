@@ -110,7 +110,11 @@ async def db(monkeypatch):
     async def _get_pool():
         return pool
 
-    # Replace the pool factory wherever it's referenced.
+    # Replace the pool factory at the source. with_cursor() in src/db.py
+    # calls get_pool() through its module scope, so patching _db.get_pool
+    # cascades wherever with_cursor is used. Tests that reach into
+    # _persistence.get_pool directly (e.g. test_slots_flow.py:_read_jackpot)
+    # need the second patch.
     monkeypatch.setattr(_db, "get_pool", _get_pool)
     monkeypatch.setattr(_persistence, "get_pool", _get_pool)
 

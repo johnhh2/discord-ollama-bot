@@ -17,7 +17,7 @@ from typing import Callable, Optional
 
 from discord.ext import commands
 
-from src.persistence import get_guild_cfg
+from src.guild_config import get_guild_cfg
 from src import state
 
 

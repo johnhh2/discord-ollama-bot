@@ -22,8 +22,9 @@ from src.permissions import (
 from src.persistence import (
     save_insurance, save_guild_settings,
     save_bot_roles,
-    save_ragebait, save_mock, save_tax, save_curse, get_guild_cfg,
+    save_ragebait, save_mock, save_tax, save_curse
 )
+from src.guild_config import get_guild_cfg
 from src.ai import (
     keep_typing,
     stream_ollama, finalize,

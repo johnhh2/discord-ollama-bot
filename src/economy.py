@@ -7,10 +7,11 @@ import discord
 
 from src.config import OLLAMA_MODEL, DAILY_RESET_HOUR
 from src.persistence import (
-    save_economy, save_insurance, get_guild_cfg, try_set_record,
+    save_economy, save_insurance, try_set_record,
     load_balance_history, save_balance_history,
-    load_bot_stats_history, save_bot_stats_history,
+    load_bot_stats_history, save_bot_stats_history
 )
+from src.guild_config import get_guild_cfg
 
 
 async def _ensure_user(uid: int):

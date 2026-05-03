@@ -18,8 +18,9 @@ from src.permissions import (
     _wrong_channel_reply,
 )
 from src.persistence import (
-    save_quote_log, save_saved_quotes, load_saved_quotes, get_guild_cfg,
+    save_quote_log, save_saved_quotes, load_saved_quotes
 )
+from src.guild_config import get_guild_cfg
 from src.ai import (
     keep_typing,
     stream_ollama,

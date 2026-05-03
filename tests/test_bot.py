@@ -21,7 +21,7 @@ from src.games.hangman import HANGMAN_ART, build_hangman_display, calculate_hang
 from src.games.ttt_c4 import build_c4_display, build_ttt_display, check_c4_winner, check_ttt_winner, is_ttt_stalemate
 from src.helpers import _render_race, curse_font, mocking_font
 from src.permissions import check_rate_limit
-from src.persistence import get_guild_cfg
+from src.guild_config import get_guild_cfg
 from src.state import economy, guild_settings
 
 

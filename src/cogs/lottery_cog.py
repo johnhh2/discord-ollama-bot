@@ -14,8 +14,9 @@ from src.economy import (
 )
 from src.persistence import (
     save_lottery,
-    load_lottery, get_guild_cfg, try_set_record,
+    load_lottery, try_set_record
 )
+from src.guild_config import get_guild_cfg
 from src.economy import lottery_week_key
 
 

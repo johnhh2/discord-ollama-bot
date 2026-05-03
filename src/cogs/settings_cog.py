@@ -16,8 +16,9 @@ from src.permissions import (
 from src.persistence import (
     save_guild_settings, save_bot_settings, save_channel_prompts,
     save_lottery,
-    load_lottery, get_guild_cfg,
+    load_lottery
 )
+from src.guild_config import get_guild_cfg
 from src.config import OLLAMA_MODEL
 from src import state
 

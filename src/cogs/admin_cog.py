@@ -14,9 +14,10 @@ from src.permissions import (
 )
 from src.persistence import (
     save_guild_settings,
-    save_godmode_users, save_ragebait, get_guild_cfg, save_command_perms,
-    save_restart_msg,
+    save_godmode_users, save_ragebait, save_command_perms,
+    save_restart_msg
 )
+from src.guild_config import get_guild_cfg
 from src.config import (
     DISCORD_CLIENT_ID,
 )

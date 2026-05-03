@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src.helpers import emb, C_BLUE, C_GOLD, MemberConverter, fetch_member
-from src.persistence import get_guild_cfg
+from src.guild_config import get_guild_cfg
 from src.economy import add_balance, next_daily_reset_ts
 from src import state
 from src.leveling import (

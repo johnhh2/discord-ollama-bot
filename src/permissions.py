@@ -4,9 +4,7 @@ import functools
 from discord.ext import commands
 
 from src.helpers import emb, C_RED, _delete_after
-from src.persistence import get_guild_cfg
-
-
+from src.guild_config import get_guild_cfg
 def requires_perm(func):
     """Wrap a cog command so it short-circuits with a No Permission embed
     (or silently, if the command_perms entry has hidden=true) when the author

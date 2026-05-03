@@ -18,9 +18,9 @@ from src.permissions import (
     _wrong_channel_reply,
 )
 from src.persistence import (
-    init_db_state, save_economy, save_ragebait, save_mock, save_tax, save_curse, get_guild_cfg,
-    load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs,
+    init_db_state, save_economy, save_ragebait, save_mock, save_tax, save_curse, load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs
 )
+from src.guild_config import get_guild_cfg
 from src.ai import (
     check_ollama_connected, keep_typing,
     stream_ollama, finalize, respond,
