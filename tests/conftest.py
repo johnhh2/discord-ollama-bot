@@ -51,6 +51,20 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "bot_admins", set())
     monkeypatch.setattr(_state, "godmode_users", set())
     monkeypatch.setattr(_state, "command_perms", {})
+    monkeypatch.setattr(_state, "leveling", {})
+    monkeypatch.setattr(_state, "active_taxes", {})
+    monkeypatch.setattr(_state, "active_curses", {})
+    monkeypatch.setattr(_state, "active_mocks", {})
+    monkeypatch.setattr(_state, "active_ragebaits", {})
+    monkeypatch.setattr(_state, "active_events", {})
+    monkeypatch.setattr(_state, "rigged_slots", {})
+    monkeypatch.setattr(_state, "rigged_steal", {})
+    monkeypatch.setattr(_state, "active_chess_games", {})
+    monkeypatch.setattr(_state, "ai_threads", {})
+    monkeypatch.setattr(_state, "channel_prompts", {})
+    monkeypatch.setattr(_state, "locked_channels", {})
+    monkeypatch.setattr(_state, "locked_roles", {})
+    monkeypatch.setattr(_state, "crime_active_users", set())
 
     # Stub all async DB save functions in persistence so tests don't need a real DB
     save_fn_names = [

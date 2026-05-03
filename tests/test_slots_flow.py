@@ -160,6 +160,71 @@ async def test_slots_rigged_forces_three_of_a_kind_and_decrements(db, monkeypatc
     assert 3 not in _state.rigged_slots
 
 
+def test_slots_house_edge_is_positive_at_10k_bet():
+    """Simulate many slot spins at a 10k bet; verify expected gross return
+    is below the bet (house edge > 0). Uses a fixed seed so the result
+    is reproducible.
+
+    Models the production reel logic from cmd_slots:
+    - 5% chance of a forced loss (random.sample of distinct non-blank
+      symbols, guaranteed no match)
+    - 95% chance of three independent random.choice(SLOT_REEL) draws
+
+    Excludes the progressive jackpot from the EV calculation: in the
+    long-run steady state, the progressive pot is funded by all spins
+    (2% contribution) and paid back to players when the jackpot hits,
+    so it nets out near zero. We check the underlying eval_slots-driven
+    EV, which is the actual house edge.
+    """
+    import random as _random
+    from src.gambling.slots import eval_slots
+    from src.config import (
+        SLOT_REEL, SLOT_HOUSE_CHANCE, SLOT_MIN_BET, SLOT_MULT_JACKPOT,
+    )
+
+    rng = _random.Random(12345)
+    bet = 10_000
+    spins = 200_000
+    distinct_non_blank = [s for s in dict.fromkeys(SLOT_REEL) if s != "⬛"]
+
+    total_gross = 0
+    for _ in range(spins):
+        if rng.random() < SLOT_HOUSE_CHANCE:
+            reels = rng.sample(distinct_non_blank, 3)
+        else:
+            reels = [rng.choice(SLOT_REEL) for _ in range(3)]
+        label, mult = eval_slots(reels, bet)
+
+        if label == "jackpot":
+            # Production pays progressive pot here; for a steady-state EV
+            # estimate we treat the jackpot as paying SLOT_MULT_JACKPOT × bet
+            # (the table multiplier). The progressive pot is funded by
+            # spin contributions and is approximately EV-neutral.
+            total_gross += bet * SLOT_MULT_JACKPOT
+        elif label == "1cherry":
+            total_gross += bet  # money back
+        else:
+            total_gross += bet * mult
+
+    avg_return = total_gross / spins
+    house_edge = 1.0 - avg_return / bet
+
+    # Sanity: house must keep some edge.
+    assert avg_return < bet, (
+        f"Slots EV at {bet:,} bet is {avg_return:,.2f} (house edge "
+        f"{house_edge:+.4%}); expected < bet."
+    )
+    # Loose upper-bound sanity to catch wildly off configurations.
+    assert house_edge < 0.50, (
+        f"House edge {house_edge:.4%} is implausibly high — payout table "
+        f"may have regressed."
+    )
+
+    # Surface the value so it shows up in test output if --tb=short or -v.
+    print(f"\n[slots EV] bet={bet:,} spins={spins:,} "
+          f"avg_gross={avg_return:,.2f} house_edge={house_edge:+.4%}")
+
+
 @pytest.mark.asyncio
 async def test_slots_rigged_jackpot_pays_progressive_pot_and_resets(db, monkeypatch):
     """Rigging with the jackpot symbol triggers the progressive-jackpot
