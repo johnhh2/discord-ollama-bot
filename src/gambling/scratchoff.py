@@ -271,7 +271,7 @@ class ScratchoffCog(commands.Cog):
             # Award 10 XP per scratchoff played
             if ctx.guild:
                 from src.cogs.leveling_cog import grant_xp as _grant_xp_scratch
-                _, leveled_up = _grant_xp_scratch(uid, "scratch", guild_id=ctx.guild.id)
+                _, leveled_up = await _grant_xp_scratch(uid, "scratch", guild_id=ctx.guild.id)
                 if leveled_up and get_guild_cfg(ctx.guild.id).get("levelup_channel"):
                     from src.cogs.leveling_cog import LevelingCog
                     cog = ctx.bot.cogs.get("LevelingCog")
