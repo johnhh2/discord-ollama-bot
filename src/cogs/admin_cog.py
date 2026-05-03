@@ -189,7 +189,7 @@ class AdminCog(commands.Cog):
         if not await check_command_permission(ctx):
             return
         channel_prompts[ctx.channel.id] = prompt
-        save_channel_prompts(channel_prompts)
+        await save_channel_prompts(channel_prompts)
         await ctx.send(embed=emb("⚙️ Prompt Updated", "System prompt updated for this channel.", C_GREY))
 
 
@@ -198,7 +198,7 @@ class AdminCog(commands.Cog):
         if not await check_command_permission(ctx):
             return
         channel_prompts.pop(ctx.channel.id, None)
-        save_channel_prompts(channel_prompts)
+        await save_channel_prompts(channel_prompts)
         await ctx.send(embed=emb("⚙️ Prompt Cleared", "Using default system prompt.", C_GREY))
 
 
