@@ -548,13 +548,54 @@ class AICog(commands.Cog):
             await ctx.send(embed=emb("📨 No Response", "No one accepted the invite.", C_BLUE))
 
 
+    async def _stop_pvp_game(
+        self,
+        ctx: commands.Context,
+        registry: dict,
+        emoji_label: str,
+        build_display,
+        display_kwargs_for=lambda game, uid: {},
+    ) -> str | None:
+        """Forfeit a 2-player PvP game (ttt/c4/chess) in this channel.
+
+        Returns the human-readable line to append to the !stop summary, or
+        None if there's no matching game / the user isn't in it. Pays out
+        the wager pot to the opponent, tags game["last_move"], edits the
+        board to a 🏳️ embed asynchronously, and removes the game.
+        """
+        cid = ctx.channel.id
+        uid = ctx.author.id
+        if cid not in registry or uid not in registry[cid]["players"]:
+            return None
+        game = registry[cid]
+        amount = game.get("amount", 0)
+        opponent_uid = [p for p in game["players"] if p != uid][0]
+        if amount > 0:
+            winnings = amount * 2
+            await add_balance(opponent_uid, winnings)
+            game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings:,} 🪙"
+            line = f"{emoji_label} (forfeited, opponent wins {winnings:,} 🪙)"
+        else:
+            game["last_move"] = f"{ctx.author.display_name} forfeited"
+            line = f"{emoji_label} (forfeited)"
+        display = build_display(game, **display_kwargs_for(game, uid))
+        title = f"🏳️ {emoji_label.split(' ', 1)[1]} Forfeited"
+        asyncio.create_task(_edit_board(
+            ctx.channel, game,
+            emb(title, display + f"\n\n**Last move:** {game['last_move']}", C_RED),
+        ))
+        del registry[cid]
+        return line
+
     @commands.command(name="stop", aliases=["quit", "forfeit", "q"])
     async def cmd_stop(self, ctx: commands.Context):
         uid = ctx.author.id
         cid = ctx.channel.id
-        stopped = []
+        stopped: list[str] = []
         close_thread = False
 
+        # AI thread (ask/story/roleplay/rpg) — owner closes the thread; an
+        # invited user just leaves the group.
         ai_thread = state.ai_threads.get(cid)
         if ai_thread is not None:
             label = {
@@ -571,6 +612,7 @@ class AICog(commands.Cog):
                 await save_ai_threads()
                 stopped.append(f"{label} (left group)")
 
+        # Puzzle: only the host (or an admin) can cancel.
         if cid in state.active_puzzles and (state.active_puzzles[cid]["user_id"] == uid or is_admin(ctx)):
             puzzle = state.active_puzzles.pop(cid)
             if puzzle.get("generating"):
@@ -578,65 +620,42 @@ class AICog(commands.Cog):
             else:
                 stopped.append(f"🧩 Puzzle (answer was `{puzzle['answer']}`)")
 
+        # Blackjack: forfeit drops the wager.
         if uid in state.active_blackjack_games:
             amount = state.active_blackjack_games[uid]["amount"]
             del state.active_blackjack_games[uid]
             stopped.append(f"🃏 Blackjack (forfeited {amount:,} 🪙)")
 
+        # Hangman: only the host stops it; reveal the word.
         if cid in state.active_hangman_games and state.active_hangman_games[cid]["user_id"] == uid:
             game = state.active_hangman_games[cid]
             word = game["word"]
             game["last_move"] = f"{ctx.author.display_name} forfeited. The word was `{word}`"
-            asyncio.create_task(_edit_board(ctx.channel, game, emb("🏳️ Hangman Forfeited", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n**Last move:** {game['last_move']}", C_RED)))
+            asyncio.create_task(_edit_board(
+                ctx.channel, game,
+                emb(
+                    "🏳️ Hangman Forfeited",
+                    build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n**Last move:** {game['last_move']}",
+                    C_RED,
+                ),
+            ))
             del state.active_hangman_games[cid]
             stopped.append(f"🔤 Hangman (the word was `{word}`)")
 
-        if cid in state.active_ttt_games and uid in state.active_ttt_games[cid]["players"]:
-            game = state.active_ttt_games[cid]
-            amount = game.get("amount", 0)
-            opponent_uid = [p for p in game["players"] if p != uid][0]
-            if amount > 0:
-                winnings = amount * 2
-                await add_balance(opponent_uid, winnings)
-                game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings:,} 🪙"
-                stopped.append(f"🎮 Tic-Tac-Toe (forfeited, opponent wins {winnings:,} 🪙)")
-            else:
-                game["last_move"] = f"{ctx.author.display_name} forfeited"
-                stopped.append("🎮 Tic-Tac-Toe (forfeited)")
-            asyncio.create_task(_edit_board(ctx.channel, game, emb("🏳️ Tic-Tac-Toe Forfeited", build_ttt_display(game) + f"\n\n**Last move:** {game['last_move']}", C_RED)))
-            del state.active_ttt_games[cid]
+        # 2-player PvP games — same shape, factored into _stop_pvp_game.
+        for line in (
+            await self._stop_pvp_game(ctx, state.active_ttt_games, "🎮 Tic-Tac-Toe", build_ttt_display),
+            await self._stop_pvp_game(ctx, state.active_c4_games,  "🟡 Connect 4",   build_c4_display),
+            await self._stop_pvp_game(
+                ctx, state.active_chess_games, "♟️ Chess",
+                lambda game, **k: build_chess_display(game["board"], **k),
+                display_kwargs_for=lambda game, uid: {"is_black_perspective": uid == game["players"][1]},
+            ),
+        ):
+            if line:
+                stopped.append(line)
 
-        if cid in state.active_c4_games and uid in state.active_c4_games[cid]["players"]:
-            game = state.active_c4_games[cid]
-            amount = game.get("amount", 0)
-            opponent_uid = [p for p in game["players"] if p != uid][0]
-            if amount > 0:
-                winnings = amount * 2
-                await add_balance(opponent_uid, winnings)
-                game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings:,} 🪙"
-                stopped.append(f"🟡 Connect 4 (forfeited, opponent wins {winnings:,} 🪙)")
-            else:
-                game["last_move"] = f"{ctx.author.display_name} forfeited"
-                stopped.append("🟡 Connect 4 (forfeited)")
-            asyncio.create_task(_edit_board(ctx.channel, game, emb("🏳️ Connect 4 Forfeited", build_c4_display(game) + f"\n\n**Last move:** {game['last_move']}", C_RED)))
-            del state.active_c4_games[cid]
-
-        if cid in state.active_chess_games and uid in state.active_chess_games[cid]["players"]:
-            game = state.active_chess_games[cid]
-            amount = game.get("amount", 0)
-            opponent_uid = [p for p in game["players"] if p != uid][0]
-            is_black = uid == game["players"][1]
-            if amount > 0:
-                winnings = amount * 2
-                await add_balance(opponent_uid, winnings)
-                game["last_move"] = f"{ctx.author.display_name} forfeited — opponent wins {winnings:,} 🪙"
-                stopped.append(f"♟️ Chess (forfeited, opponent wins {winnings:,} 🪙)")
-            else:
-                game["last_move"] = f"{ctx.author.display_name} forfeited"
-                stopped.append("♟️ Chess (forfeited)")
-            asyncio.create_task(_edit_board(ctx.channel, game, emb("🏳️ Chess Forfeited", build_chess_display(game["board"], is_black_perspective=is_black) + f"\n\n**Last move:** {game['last_move']}", C_RED)))
-            del state.active_chess_games[cid]
-
+        # Race: multi-player; pot splits across opponents instead of paying one.
         if cid in state.active_race_games and uid in state.active_race_games[cid]["players"]:
             game = state.active_race_games[cid]
             amount = game.get("amount", 0)
