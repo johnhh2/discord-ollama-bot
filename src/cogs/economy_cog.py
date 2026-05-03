@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import random
 import time
 import datetime
@@ -8,7 +9,7 @@ import discord
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_GOLD, C_ORANGE, parse_amount, send_ephemeral, fetch_member, shop_charge, MemberConverter,
+    emb, C_GREEN, C_RED, C_GOLD, C_ORANGE, C_GREY, parse_amount, send_ephemeral, fetch_member, shop_charge, MemberConverter,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
@@ -17,7 +18,7 @@ from src.economy import (
     seize_from_savings,
 )
 from src.permissions import (
-    check_command_permission,
+    requires_perm,
 )
 from src.persistence import (
     save_economy, save_rigged_steal,
@@ -111,9 +112,8 @@ class EconomyCog(commands.Cog):
 
     # ── !crime ────────────────────────────────────────────────────────────────
     @commands.group(name="crime", invoke_without_command=True)
+    @requires_perm
     async def cmd_crime(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
         uid = ctx.author.id
         await _ensure_user(uid)
         jail_until = state.economy["users"][str(uid)].get("jail_until", 0)
@@ -313,9 +313,8 @@ class EconomyCog(commands.Cog):
 
 
     @commands.command(name="jailbreak")
+    @requires_perm
     async def cmd_jailbreak(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
         uid = ctx.author.id
         await _ensure_user(uid)
 
@@ -355,9 +354,8 @@ class EconomyCog(commands.Cog):
             ))
 
     @commands.command(name="adminjailbreak")
+    @requires_perm
     async def cmd_adminjailbreak(self, ctx: commands.Context, target: MemberConverter = None):
-        if not await check_command_permission(ctx):
-            return
         if target is None:
             await ctx.send(embed=emb("❌ Usage", "`!adminjailbreak @user`", C_RED))
             return
@@ -368,9 +366,8 @@ class EconomyCog(commands.Cog):
         await ctx.send(embed=emb("🔓 Released", f"**{target.display_name}** has been freed from jail.", C_GREEN))
 
     @commands.command(name="mug")
+    @requires_perm
     async def cmd_mug(self, ctx: commands.Context, target: MemberConverter = None, amount: str = None):
-        if not await check_command_permission(ctx):
-            return
         uid = ctx.author.id
 
         await _ensure_user(uid)
@@ -534,9 +531,8 @@ class EconomyCog(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name="savings", aliases=["piggybank"])
+    @requires_perm
     async def cmd_savings(self, ctx: commands.Context, action: str = None, amount: str = None):
-        if not await check_command_permission(ctx):
-            return
         uid = ctx.author.id
         await _ensure_user(uid)
 
@@ -647,9 +643,8 @@ class EconomyCog(commands.Cog):
         await self.cmd_savings(ctx, "add", amount)
 
     @commands.command(name="economy", aliases=["eco"])
+    @requires_perm
     async def cmd_economy(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
 
         from src.level_unlocks import fmt_line
         uid_help = ctx.author.id
@@ -724,6 +719,170 @@ class EconomyCog(commands.Cog):
             C_GREEN,
         ))
 
+
+    # ── Bot-admin economy mutators ────────────────────────────────────────────
+
+    @commands.command(name="event")
+    @requires_perm
+    async def cmd_event(self, ctx: commands.Context, amount: str = None, duration: str = None):
+        try:
+            await ctx.message.delete()
+        except discord.Forbidden:
+            logging.warning(f"[event] No permission to delete command message in {ctx.channel}")
+        except Exception as e:
+            logging.warning(f"[event] Failed to delete command message: {e}")
+        if amount is None:
+            await ctx.send(embed=emb("⚙️ Event", "Usage: `!event <amount> [duration_hours] [#channel]`", C_GREY))
+            return
+        try:
+            amount = int(amount)
+            assert amount > 0
+        except (ValueError, AssertionError):
+            await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a positive whole number.", C_RED))
+            return
+
+        duration_hours = None
+        if duration is not None:
+            if duration.startswith("<#"):
+                duration = None
+            else:
+                try:
+                    duration_hours = float(duration)
+                    assert duration_hours > 0
+                except (ValueError, AssertionError):
+                    await ctx.send(embed=emb("❌ Invalid Duration", "Duration must be a positive number of hours.", C_RED))
+                    return
+
+        target_channel = ctx.channel
+        if ctx.message.channel_mentions:
+            target_channel = ctx.message.channel_mentions[-1]
+
+        duration_str = ""
+        if duration_hours:
+            expires_at = int(time.time() + duration_hours * 3600)
+            duration_str = f" (expires <t:{expires_at}:R>)"
+        event_msg = await target_channel.send(embed=emb(
+            "🎉 Coin Event!",
+            f"React with 🪙 to receive **{amount:,} 🪙**!{duration_str}",
+            C_GOLD,
+        ))
+        await event_msg.add_reaction("🪙")
+        state.active_events[event_msg.id] = {"amount": amount, "rewarded": set()}
+
+        if target_channel != ctx.channel:
+            await ctx.send(embed=emb("✅ Event Started", f"Event posted in {target_channel.mention}.", C_GREEN))
+
+        if duration_hours:
+            async def _close_event():
+                await asyncio.sleep(duration_hours * 3600)
+                if event_msg.id in state.active_events:
+                    del state.active_events[event_msg.id]
+                    await event_msg.edit(embed=emb(
+                        "🎉 Event Ended",
+                        f"This event has ended. **{amount:,} 🪙** per reaction was given out.",
+                        C_GREY,
+                    ))
+            asyncio.create_task(_close_event())
+
+
+    @commands.Cog.listener()
+    async def on_reaction_add(self, reaction: discord.Reaction, user: discord.User):
+        """Award the configured event amount to each unique user reacting 🪙
+        on a !event message. Idempotent — same user reacting twice grants once."""
+        if reaction.message.id not in state.active_events:
+            return
+        if str(reaction.emoji) != "🪙":
+            return
+        event = state.active_events[reaction.message.id]
+        if user.id in event["rewarded"]:
+            return
+        try:
+            event["rewarded"].add(user.id)
+            await add_balance(user.id, event["amount"])
+        except Exception as e:
+            logging.error(f"[event] Error rewarding {user.id}: {e}")
+            event["rewarded"].discard(user.id)
+
+
+    @commands.command(name="admingive", aliases=["adminpay"])
+    @requires_perm
+    async def cmd_give(self, ctx: commands.Context, target: MemberConverter = None, amount: str = None):
+        if target is None or amount is None:
+            await ctx.send(embed=emb("⚙️ Give", "Usage: `!give @user <amount>`", C_GREY))
+            return
+        try:
+            amount = int(amount)
+            assert amount != 0
+            if amount < 0:
+                if self.bot.user and target.id == self.bot.user.id:
+                    amount = max(amount, -1 * get_guild_house_balance(ctx.guild.id if ctx.guild else 0))
+                else:
+                    amount = max(amount, -1 * await get_balance(target.id))
+        except (ValueError, AssertionError):
+            await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a non-zero whole number.", C_RED))
+            return
+        if self.bot.user and target.id == self.bot.user.id and ctx.guild:
+            await add_guild_house(ctx.guild.id, amount)
+            action = "given to" if amount > 0 else "removed from"
+            await ctx.send(embed=emb(
+                "💸 Give",
+                f"**{abs(amount):,} 🪙** {action} the **house pot** for this server. "
+                f"House pot: {get_guild_house_balance(ctx.guild.id):,} 🪙",
+                C_GOLD,
+            ))
+        else:
+            await add_balance(target.id, amount)
+            action = "given" if amount > 0 else "removed"
+            await ctx.send(embed=emb(
+                "💸 Give",
+                f"**{abs(amount):,} 🪙** {action} {'to' if amount > 0 else 'from'} **{target.display_name}**. "
+                f"New balance: {await get_balance(target.id):,} 🪙",
+                C_GOLD,
+            ))
+
+
+    @commands.command(name="admingivexp", aliases=["adminxp", "adminpayxp"])
+    @requires_perm
+    async def cmd_givexp(self, ctx: commands.Context, target: MemberConverter = None, amount: str = None):
+        if target is None or amount is None:
+            await ctx.send(embed=emb("⚙️ Give XP", "Usage: `!admingivexp @user <amount>`", C_GREY))
+            return
+        if not ctx.guild:
+            await ctx.send(embed=emb("❌ Guild Only", "This command can only be used in a server.", C_RED))
+            return
+        try:
+            amount = int(amount)
+            assert amount != 0
+        except (ValueError, AssertionError):
+            await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a non-zero whole number.", C_RED))
+            return
+
+        # Function-local imports because src.economy._ensure_user shadows
+        # src.leveling._ensure_user at module scope.
+        from src.leveling import _ensure_user as _ensure_lvl_user, level_from_xp, display_level
+        from src.persistence import save_leveling
+
+        rec = _ensure_lvl_user(ctx.guild.id, target.id)
+        if amount < 0:
+            amount = max(amount, -rec["xp"])
+            if amount == 0:
+                await ctx.send(embed=emb(
+                    "⚙️ Give XP",
+                    f"**{target.display_name}** has 0 XP — nothing to remove.",
+                    C_GREY,
+                ))
+                return
+        rec["xp"] += amount
+        rec["level"] = level_from_xp(rec["xp"])
+        await save_leveling(guild_id=ctx.guild.id, uid=target.id)
+
+        action = "given" if amount > 0 else "removed"
+        await ctx.send(embed=emb(
+            "✨ Give XP",
+            f"**{abs(amount):,} XP** {action} {'to' if amount > 0 else 'from'} **{target.display_name}**. "
+            f"New total: {rec['xp']:,} XP (Level {display_level(rec['level'])})",
+            C_GOLD,
+        ))
 
 
 async def setup(bot):

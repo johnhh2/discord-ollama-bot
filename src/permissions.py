@@ -1,9 +1,24 @@
 import asyncio
+import functools
 
 from discord.ext import commands
 
 from src.helpers import emb, C_RED, _delete_after
 from src.persistence import get_guild_cfg
+
+
+def requires_perm(func):
+    """Wrap a cog command so it short-circuits with a No Permission embed
+    (or silently, if the command_perms entry has hidden=true) when the author
+    lacks the configured tier. Equivalent to opening the body with
+    `if not await check_command_permission(ctx): return`.
+    """
+    @functools.wraps(func)
+    async def wrapper(self, ctx, *args, **kwargs):
+        if not await check_command_permission(ctx):
+            return
+        return await func(self, ctx, *args, **kwargs)
+    return wrapper
 
 
 async def _wrong_channel_reply(ctx_or_msg, text: str) -> None:

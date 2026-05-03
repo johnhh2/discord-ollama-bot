@@ -6,7 +6,7 @@ from discord.ext import commands
 
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_BLUE, C_GREY,
-    _edit_board, _log_audit, log_bot_permission_error,
+    _edit_board, _delete_after, _log_audit, log_bot_permission_error,
 )
 from src.economy import (
     add_balance, get_guild_ask_model, get_guild_roleplay_model,
@@ -665,6 +665,54 @@ class AICog(commands.Cog):
             except Exception:
                 pass
 
+
+    @commands.command(name="reverse")
+    async def cmd_reverse(self, ctx: commands.Context):
+        """Pop the last assistant + user message pair from the AI thread's
+        history and delete them from the channel. Available to anyone in
+        the thread (no @requires_perm gate by design)."""
+        t = state.ai_threads.get(ctx.channel.id)
+        if t is not None:
+            history = t["history"]
+        else:
+            history = state.channel_histories[ctx.channel.id]
+        if not history:
+            await ctx.reply(embed=emb("", "No AI response to reverse.", C_RED))
+            return
+        if history[-1]["role"] == "assistant":
+            history.pop()
+        if history and history[-1]["role"] == "user":
+            history.pop()
+        else:
+            await ctx.reply(embed=emb("", "No AI response to reverse.", C_RED))
+            return
+        if t is not None:
+            await save_ai_threads()
+        # Scan recent messages and delete the bot's last response and the
+        # user message that preceded it.
+        recent = [m async for m in ctx.channel.history(limit=100)]
+        bot_msg = None
+        user_msg = None
+        for i, msg in enumerate(recent):
+            if msg.author == self.bot.user and msg.id != ctx.message.id:
+                bot_msg = msg
+                for msg2 in recent[i + 1:]:
+                    if msg2.author.id == ctx.author.id:
+                        user_msg = msg2
+                        break
+                break
+        if bot_msg:
+            try:
+                await bot_msg.delete()
+            except (discord.NotFound, discord.Forbidden):
+                pass
+        if user_msg:
+            try:
+                await user_msg.delete()
+            except (discord.NotFound, discord.Forbidden):
+                pass
+        confirm = await ctx.reply(embed=emb("", "Last AI response removed from history.", C_GREEN))
+        asyncio.create_task(_delete_after(confirm, delay=10.0))
 
 
 async def setup(bot):

@@ -9,10 +9,7 @@ from src.helpers import (
     send_ephemeral,
 )
 from src.permissions import (
-    check_command_permission,
-)
-from src.persistence import (
-    load_saved_quotes,
+    requires_perm,
 )
 from src import state
 
@@ -23,9 +20,8 @@ class ModerationCog(commands.Cog):
         self.bot = bot
 
     @commands.command(name="audit")
+    @requires_perm
     async def cmd_audit(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
         if not state.audit_log:
             await send_ephemeral(ctx, embed=emb("🔍 Audit Log", "No failed attempts recorded.", C_GREY))
             return
@@ -38,9 +34,8 @@ class ModerationCog(commands.Cog):
 
 
     @commands.command(name="clearbot")
+    @requires_perm
     async def cmd_clear(self, ctx: commands.Context, n: int = 50):
-        if not await check_command_permission(ctx):
-            return
         deleted = 0
         async for message in ctx.channel.history(limit=500):
             if deleted >= n:
@@ -58,9 +53,8 @@ class ModerationCog(commands.Cog):
 
 
     @commands.command(name="clearall", aliases=["clerall"])
+    @requires_perm
     async def cmd_clearall(self, ctx: commands.Context, n: str = None):
-        if not await check_command_permission(ctx):
-            return
 
         if n is None:
             await ctx.send(embed=emb("❌ Missing Argument", "Usage: `!clearall <n>` — Delete last n messages", C_RED))
@@ -99,92 +93,6 @@ class ModerationCog(commands.Cog):
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete messages.", C_RED))
         except Exception as e:
             await ctx.send(embed=emb("❌ Error", f"Failed to delete messages: {str(e)}", C_RED))
-
-
-    @commands.command(name="saved", aliases=["persistent", "saves"])
-    async def cmd_saved(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
-
-        embed = discord.Embed(title="💾 Saved Data", color=C_GOLD)
-
-        # Insurance data
-        embed.add_field(
-            name="🛡️ Insurance",
-            value=f"**{len(state.insurance)}** users with active state.insurance",
-            inline=False
-        )
-
-        # Mock data
-        embed.add_field(
-            name="🎭 Mock",
-            value=f"**{len(state.active_mocks)}** users being mocked",
-            inline=False
-        )
-
-        # Ragebait data
-        embed.add_field(
-            name="🎯 Ragebait",
-            value=f"**{len(state.active_ragebaits)}** users with ragebait active",
-            inline=False
-        )
-
-        # Tax data
-        embed.add_field(
-            name="🍆 Tax",
-            value=f"**{len(state.active_taxes)}** users with active tax",
-            inline=False
-        )
-
-        # Curse data
-        embed.add_field(
-            name="🔮 Curse",
-            value=f"**{len(state.active_curses)}** users with curse active",
-            inline=False
-        )
-
-        # Godmode users
-        embed.add_field(
-            name="👑 Godmode",
-            value=f"**{len(state.godmode_users)}** users with godmode",
-            inline=False
-        )
-
-        # Slot jackpot
-        embed.add_field(
-            name="💰 Slot Jackpot",
-            value=f"**{state.slot_jackpot:,} 🪙** in jackpot",
-            inline=False
-        )
-
-        # Chess games
-        embed.add_field(
-            name="♟️ Chess Games",
-            value=f"**{len(state.active_chess_games)}** active correspondence chess games",
-            inline=False
-        )
-
-        # Quote log
-        _all_saved = await load_saved_quotes()
-        _guild_id = str(ctx.guild.id) if ctx.guild else "dm"
-        saved_quotes_count = len(_all_saved.get(_guild_id, []))
-        embed.add_field(
-            name="📜 Quotes",
-            value=f"**{saved_quotes_count}** saved quotes (this server) | **{len(state.quote_log)}** in searchquote log (max 10)",
-            inline=False
-        )
-
-        # Economy stats
-        total_users = len(state.economy.get("users", {}))
-        total_balance = sum(u.get("balance", 0) for u in state.economy.get("users", {}).values())
-        embed.add_field(
-            name="🪙 Economy",
-            value=f"**{total_users}** users with **{total_balance:,} 🪙** total balance",
-            inline=False
-        )
-
-        await send_ephemeral(ctx, embed=embed)
-
 
 
 async def setup(bot):

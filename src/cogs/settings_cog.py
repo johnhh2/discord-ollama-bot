@@ -11,13 +11,15 @@ from src.economy import (
     _ct_now, lottery_week_key,
 )
 from src.permissions import (
-    check_command_permission,
+    requires_perm,
 )
 from src.persistence import (
-    save_guild_settings,
+    save_guild_settings, save_bot_settings, save_channel_prompts,
     save_lottery,
     load_lottery, get_guild_cfg,
 )
+from src.config import OLLAMA_MODEL
+from src import state
 
 
 class SettingsCog(commands.Cog):
@@ -25,11 +27,10 @@ class SettingsCog(commands.Cog):
         self.bot = bot
 
     @commands.group(name="settings", aliases=["setting"], invoke_without_command=True)
+    @requires_perm
     async def cmd_settings(self, ctx: commands.Context):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
 
         cfg = get_guild_cfg(ctx.guild.id)
@@ -115,11 +116,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings ai-channels ─────────────────────────────────────────────────
     @cmd_settings.command(name="ai-channels")
+    @requires_perm
     async def settings_ai_channels(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
@@ -136,11 +136,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings cmd-whitelist ───────────────────────────────────────────────
     @cmd_settings.command(name="cmd-whitelist")
+    @requires_perm
     async def settings_cmd_whitelist(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
@@ -157,11 +156,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings cmd-blacklist ───────────────────────────────────────────────
     @cmd_settings.command(name="cmd-blacklist")
+    @requires_perm
     async def settings_cmd_blacklist(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
@@ -178,11 +176,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings chess-channels ──────────────────────────────────────────────
     @cmd_settings.command(name="chess-channels")
+    @requires_perm
     async def settings_chess_channels(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
@@ -199,11 +196,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings game-channels ───────────────────────────────────────────────
     @cmd_settings.command(name="game-channels")
+    @requires_perm
     async def settings_game_channels(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
@@ -220,11 +216,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings shop ────────────────────────────────────────────────────────
     @cmd_settings.command(name="shop")
+    @requires_perm
     async def settings_shop(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         valid_items = {"nickname", "role", "removerole", "roleup", "roledown", "ragebait"}
@@ -242,11 +237,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings nsfw ────────────────────────────────────────────────────────
     @cmd_settings.command(name="nsfw")
+    @requires_perm
     async def settings_nsfw(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         if not args:
@@ -314,11 +308,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings nsfw-alias ──────────────────────────────────────────────────
     @cmd_settings.command(name="nsfw-alias")
+    @requires_perm
     async def settings_nsfw_alias(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         aliases: dict = cfg.setdefault("nsfw_aliases", {})
@@ -385,11 +378,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings story-alias ─────────────────────────────────────────────────
     @cmd_settings.command(name="story-alias")
+    @requires_perm
     async def settings_story_alias(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         aliases: dict = cfg.setdefault("story_aliases", {})
@@ -462,11 +454,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings quote ───────────────────────────────────────────────────────
     @cmd_settings.command(name="quote")
+    @requires_perm
     async def settings_quote(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         if not args:
@@ -490,11 +481,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings lottery-channel ─────────────────────────────────────────────
     @cmd_settings.command(name="lottery-channel")
+    @requires_perm
     async def settings_lottery_channel(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
@@ -523,11 +513,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings soundboard-ratelimit ────────────────────────────────────────
     @cmd_settings.command(name="soundboard-ratelimit")
+    @requires_perm
     async def settings_soundboard_ratelimit(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         action = args[0].lower() if args else ""
@@ -590,11 +579,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings gambler-role ────────────────────────────────────────────────
     @cmd_settings.command(name="gambler-role")
+    @requires_perm
     async def settings_gambler_role(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         if not args or args[0].lower() not in ("on", "off"):
@@ -616,11 +604,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings channel-levelup ─────────────────────────────────────────────
     @cmd_settings.command(name="channel-levelup")
+    @requires_perm
     async def settings_channel_levelup(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         if args and args[0].lower() == "clear":
@@ -638,11 +625,10 @@ class SettingsCog(commands.Cog):
 
     # ── !settings tax-aliases ─────────────────────────────────────────────────
     @cmd_settings.command(name="tax-aliases")
+    @requires_perm
     async def settings_tax_aliases(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        if not await check_command_permission(ctx):
             return
         cfg = get_guild_cfg(ctx.guild.id)
         aliases: dict = cfg.setdefault("tax_aliases", {})
@@ -698,6 +684,85 @@ class SettingsCog(commands.Cog):
 
         else:
             await ctx.send(embed=emb("⚙️ Tax Aliases", "Usage: `!settings tax-aliases add|remove <word> [emoji]` / `list` / `clear`", C_GREY))
+
+
+    # ── Per-guild AI model selectors ──────────────────────────────────────────
+
+    @commands.command(name="model")
+    @requires_perm
+    async def cmd_model(self, ctx: commands.Context, model_name: str = None):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Error", "This command only works in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        if model_name is None:
+            current = cfg.get("ask_model", OLLAMA_MODEL)
+            await ctx.send(embed=emb("⚙️ Model", f"Current model: `{current}`", C_GREY))
+            return
+        cfg["ask_model"] = model_name
+        await save_guild_settings()
+        await ctx.send(embed=emb("⚙️ Model", f"Switched to `{model_name}`", C_GREY))
+
+
+    @commands.command(name="roleplaymodel")
+    @requires_perm
+    async def cmd_roleplaymodel(self, ctx: commands.Context, model_name: str = None):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Error", "This command only works in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        if model_name is None:
+            current = cfg.get("roleplay_model", OLLAMA_MODEL)
+            await ctx.send(embed=emb("⚙️ Roleplay Model", f"Current roleplay model: `{current}`", C_GREY))
+            return
+        cfg["roleplay_model"] = model_name
+        await save_guild_settings()
+        await ctx.send(embed=emb("⚙️ Roleplay Model", f"Switched to `{model_name}`", C_GREY))
+
+
+    @commands.command(name="codingmodel")
+    @requires_perm
+    async def cmd_codingmodel(self, ctx: commands.Context, model_name: str = None):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Error", "This command only works in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        if model_name is None:
+            current = cfg.get("coding_model", OLLAMA_MODEL)
+            await ctx.send(embed=emb("⚙️ Coding Model", f"Current coding puzzle model: `{current}`", C_GREY))
+            return
+        cfg["coding_model"] = model_name
+        await save_guild_settings()
+        await ctx.send(embed=emb("⚙️ Coding Model", f"Switched to `{model_name}`", C_GREY))
+
+
+    @commands.command(name="vramtext")
+    @requires_perm
+    async def cmd_vramtext(self, ctx: commands.Context, *, text: str = None):
+        if text is None:
+            await ctx.send(embed=emb("⚙️ vRAM Text", state.bot_settings.get("vram_text", "16GB"), C_GREY))
+            return
+        state.bot_settings["vram_text"] = text
+        await save_bot_settings()
+        await ctx.send(embed=emb("⚙️ vRAM Text", f"Set to: {text}", C_GREY))
+
+
+    # ── Per-channel system prompt overrides ───────────────────────────────────
+
+    @commands.command(name="setprompt")
+    @requires_perm
+    async def cmd_setprompt(self, ctx: commands.Context, *, prompt: str):
+        state.channel_prompts[ctx.channel.id] = prompt
+        await save_channel_prompts(state.channel_prompts)
+        await ctx.send(embed=emb("⚙️ Prompt Updated", "System prompt updated for this channel.", C_GREY))
+
+
+    @commands.command(name="clearprompt")
+    @requires_perm
+    async def cmd_clearprompt(self, ctx: commands.Context):
+        state.channel_prompts.pop(ctx.channel.id, None)
+        await save_channel_prompts(state.channel_prompts)
+        await ctx.send(embed=emb("⚙️ Prompt Cleared", "Using default system prompt.", C_GREY))
 
 
 async def setup(bot):

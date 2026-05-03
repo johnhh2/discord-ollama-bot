@@ -20,7 +20,7 @@ from src.leveling import (
     grant_xp, _ensure_user as _ensure_lvl_user,
     HOUR_SECS, MINS30_SECS, MSG_DAILY_MAX, XP_MESSAGE, XP_VOICE, XP_STREAM,
 )
-from src.cogs.admin_cog import AdminCog
+from src.cogs.economy_cog import EconomyCog
 from src.config import SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS, SHOP_TAX_DURATION_SECS
 from src.economy import get_balance
 
@@ -281,7 +281,7 @@ class _StubReaction:
 
 @pytest.mark.asyncio
 async def test_event_reaction_first_time_awards_coins(db):
-    cog = AdminCog(bot=None)
+    cog = EconomyCog(bot=None)
     user = FakeMember(uid=2001)
     msg_id = 555_000
     _state.active_events[msg_id] = {"amount": 100, "rewarded": set()}
@@ -294,7 +294,7 @@ async def test_event_reaction_first_time_awards_coins(db):
 
 @pytest.mark.asyncio
 async def test_event_reaction_double_react_only_pays_once(db):
-    cog = AdminCog(bot=None)
+    cog = EconomyCog(bot=None)
     user = FakeMember(uid=2002)
     msg_id = 555_001
     _state.active_events[msg_id] = {"amount": 100, "rewarded": set()}
@@ -309,7 +309,7 @@ async def test_event_reaction_double_react_only_pays_once(db):
 async def test_event_reaction_after_expiry_silently_skipped(db):
     """Once _close_event has removed the message_id from active_events, any
     later reaction is a no-op (not in dict → first guard returns)."""
-    cog = AdminCog(bot=None)
+    cog = EconomyCog(bot=None)
     user = FakeMember(uid=2003)
     # active_events does NOT contain msg_id (post-expiry)
     msg_id = 555_002
@@ -322,7 +322,7 @@ async def test_event_reaction_after_expiry_silently_skipped(db):
 
 @pytest.mark.asyncio
 async def test_event_reaction_wrong_emoji_ignored(db):
-    cog = AdminCog(bot=None)
+    cog = EconomyCog(bot=None)
     user = FakeMember(uid=2004)
     msg_id = 555_003
     _state.active_events[msg_id] = {"amount": 100, "rewarded": set()}

@@ -18,6 +18,7 @@ import src.state as _state
 import src.persistence as _persistence
 import src.economy as _economy
 from src.cogs.admin_cog import AdminCog
+from src.cogs.economy_cog import EconomyCog
 
 from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild
 
@@ -135,7 +136,7 @@ async def test_setperm_blocked_when_caller_is_not_bot_admin(db):
 # ── !admingive ────────────────────────────────────────────────────────────────
 
 async def test_admingive_positive_credits_target(db):
-    cog = AdminCog(bot=_StubBot())
+    cog = EconomyCog(bot=_StubBot())
     ctx = _admin_ctx()
     ctx.command.qualified_name = "admingive"
     target = FakeMember(uid=500, display_name="recipient")
@@ -147,7 +148,7 @@ async def test_admingive_positive_credits_target(db):
 
 
 async def test_admingive_negative_debits_target(db):
-    cog = AdminCog(bot=_StubBot())
+    cog = EconomyCog(bot=_StubBot())
     ctx = _admin_ctx()
     ctx.command.qualified_name = "admingive"
     target = FakeMember(uid=501, display_name="victim")
@@ -161,7 +162,7 @@ async def test_admingive_negative_debits_target(db):
 
 async def test_admingive_negative_clamps_at_zero(db):
     """A negative amount larger than balance is clamped so the user doesn't go negative."""
-    cog = AdminCog(bot=_StubBot())
+    cog = EconomyCog(bot=_StubBot())
     ctx = _admin_ctx()
     ctx.command.qualified_name = "admingive"
     target = FakeMember(uid=502)
@@ -173,7 +174,7 @@ async def test_admingive_negative_clamps_at_zero(db):
 
 
 async def test_admingive_zero_amount_rejected(db):
-    cog = AdminCog(bot=_StubBot())
+    cog = EconomyCog(bot=_StubBot())
     ctx = _admin_ctx()
     ctx.command.qualified_name = "admingive"
     target = FakeMember(uid=503)
@@ -187,7 +188,7 @@ async def test_admingive_zero_amount_rejected(db):
 
 
 async def test_admingive_to_bot_user_routes_to_guild_house(db):
-    cog = AdminCog(bot=_StubBot())
+    cog = EconomyCog(bot=_StubBot())
     ctx = _admin_ctx(guild_id=77)
     ctx.command.qualified_name = "admingive"
     bot_target = FakeMember(uid=999_999_999)  # matches _StubBotUser.id
@@ -200,7 +201,7 @@ async def test_admingive_to_bot_user_routes_to_guild_house(db):
 
 
 async def test_admingive_negative_to_bot_user_drains_guild_house(db):
-    cog = AdminCog(bot=_StubBot())
+    cog = EconomyCog(bot=_StubBot())
     ctx = _admin_ctx(guild_id=78)
     ctx.command.qualified_name = "admingive"
     await _economy.add_guild_house(78, 1000)

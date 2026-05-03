@@ -5,7 +5,7 @@ import discord
 from discord.ext import commands
 
 from src.helpers import emb, C_GOLD, get_memory_mb
-from src.permissions import check_command_permission
+from src.permissions import requires_perm
 from src.persistence import load_balance_history, load_bot_stats_history
 from src.economy import _ensure_user, get_balance, _ct_now
 from src import state
@@ -33,9 +33,8 @@ class GraphCog(commands.Cog):
         self.bot = bot
 
     @commands.group(name="graph", invoke_without_command=True)
+    @requires_perm
     async def cmd_graph(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
         await ctx.send(embed=emb(
             "📊 Graph",
             "**Subcommands:**\n"
@@ -48,9 +47,8 @@ class GraphCog(commands.Cog):
         ))
 
     @cmd_graph.command(name="balance", aliases=["bal"])
+    @requires_perm
     async def cmd_graph_balance(self, ctx: commands.Context, target: discord.Member = None):
-        if not await check_command_permission(ctx):
-            return
 
         import matplotlib
         matplotlib.use("Agg")
@@ -114,9 +112,8 @@ class GraphCog(commands.Cog):
         await ctx.send(file=discord.File(buf, filename="balance.png"))
 
     @cmd_graph.command(name="totalbalance", aliases=["total", "eco"])
+    @requires_perm
     async def cmd_graph_totalbalance(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
 
         import matplotlib
         matplotlib.use("Agg")
@@ -193,9 +190,8 @@ class GraphCog(commands.Cog):
 
 
     @cmd_graph.command(name="server", aliases=["srv"])
+    @requires_perm
     async def cmd_graph_server(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
 
         import matplotlib
         matplotlib.use("Agg")
@@ -257,9 +253,8 @@ class GraphCog(commands.Cog):
         await ctx.send(file=discord.File(buf, filename="server_activity.png"))
 
     @cmd_graph.command(name="memory", aliases=["mem", "ram"])
+    @requires_perm
     async def cmd_graph_memory(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
 
         import matplotlib
         matplotlib.use("Agg")
@@ -319,9 +314,8 @@ class GraphCog(commands.Cog):
         await ctx.send(file=discord.File(buf, filename="memory.png"))
 
     @cmd_graph.command(name="ai")
+    @requires_perm
     async def cmd_graph_ai(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
 
         import matplotlib
         matplotlib.use("Agg")

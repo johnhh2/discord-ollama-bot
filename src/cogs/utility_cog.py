@@ -17,10 +17,10 @@ from src.economy import (
 )
 from src.permissions import (
     is_admin, check_puzzle_channel,
-    check_command_permission,
+    requires_perm,
 )
 from src.persistence import (
-    save_bot_settings, get_guild_cfg,
+    save_bot_settings, get_guild_cfg, load_saved_quotes,
 )
 from src.ai import (
     check_ollama_connected, keep_typing,
@@ -344,17 +344,15 @@ class UtilityCog(commands.Cog):
         await send_ephemeral(ctx, embed=embed)
 
     @cmd_ai.command(name="on", aliases=["online"])
+    @requires_perm
     async def ai_on(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
         state.bot_settings["ai_enabled"] = True
         await save_bot_settings()
         await ctx.send(embed=emb("🤖 AI Enabled", "Passive AI responses are now **online**.", C_GREEN))
 
     @cmd_ai.command(name="off", aliases=["offline"])
+    @requires_perm
     async def ai_off(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
         state.bot_settings["ai_enabled"] = False
         await save_bot_settings()
         await ctx.send(embed=emb("🤖 AI Disabled", "Passive AI responses are now **offline**.", C_RED))
@@ -769,9 +767,8 @@ class UtilityCog(commands.Cog):
 
 
     @commands.command(name="adminhelp", aliases=["helpadmin"])
+    @requires_perm
     async def cmd_adminhelp(self, ctx: commands.Context):
-        if not await check_command_permission(ctx):
-            return
         admin_embed = discord.Embed(title="⚙️ Admin Commands", color=C_GOLD)
         admin_embed.add_field(name="🔧 Server Settings", inline=False, value=(
             "`!settings` — View current server settings"
@@ -807,6 +804,72 @@ class UtilityCog(commands.Cog):
             ))
         await send_ephemeral(ctx, embed=admin_embed)
 
+
+    @commands.command(name="saved", aliases=["persistent", "saves"])
+    @requires_perm
+    async def cmd_saved(self, ctx: commands.Context):
+        """Show a snapshot of the bot's persisted in-memory state."""
+        embed = discord.Embed(title="💾 Saved Data", color=C_GOLD)
+
+        embed.add_field(
+            name="🛡️ Insurance",
+            value=f"**{len(state.insurance)}** users with active state.insurance",
+            inline=False,
+        )
+        embed.add_field(
+            name="🎭 Mock",
+            value=f"**{len(state.active_mocks)}** users being mocked",
+            inline=False,
+        )
+        embed.add_field(
+            name="🎯 Ragebait",
+            value=f"**{len(state.active_ragebaits)}** users with ragebait active",
+            inline=False,
+        )
+        embed.add_field(
+            name="🍆 Tax",
+            value=f"**{len(state.active_taxes)}** users with active tax",
+            inline=False,
+        )
+        embed.add_field(
+            name="🔮 Curse",
+            value=f"**{len(state.active_curses)}** users with curse active",
+            inline=False,
+        )
+        embed.add_field(
+            name="👑 Godmode",
+            value=f"**{len(state.godmode_users)}** users with godmode",
+            inline=False,
+        )
+        embed.add_field(
+            name="💰 Slot Jackpot",
+            value=f"**{state.slot_jackpot:,} 🪙** in jackpot",
+            inline=False,
+        )
+        embed.add_field(
+            name="♟️ Chess Games",
+            value=f"**{len(state.active_chess_games)}** active correspondence chess games",
+            inline=False,
+        )
+
+        _all_saved = await load_saved_quotes()
+        _guild_id = str(ctx.guild.id) if ctx.guild else "dm"
+        saved_quotes_count = len(_all_saved.get(_guild_id, []))
+        embed.add_field(
+            name="📜 Quotes",
+            value=f"**{saved_quotes_count}** saved quotes (this server) | **{len(state.quote_log)}** in searchquote log (max 10)",
+            inline=False,
+        )
+
+        total_users = len(state.economy.get("users", {}))
+        total_balance = sum(u.get("balance", 0) for u in state.economy.get("users", {}).values())
+        embed.add_field(
+            name="🪙 Economy",
+            value=f"**{total_users}** users with **{total_balance:,} 🪙** total balance",
+            inline=False,
+        )
+
+        await send_ephemeral(ctx, embed=embed)
 
 
 async def setup(bot):
