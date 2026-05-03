@@ -95,7 +95,7 @@ async def test_steal_success_transfers_coins_and_persists(db, monkeypatch):
     assert await _economy.get_balance(victim.id) == 10_000 - expected_steal
     assert await _read_db_balance(thief.id) == 5000 + expected_steal
     assert await _read_db_balance(victim.id) == 10_000 - expected_steal
-    assert thief.id not in _state.crime_active_users  # lock released
+    assert thief.id not in cog._crime_active  # lock released
 
 
 async def test_steal_caught_and_jailed_deducts_fee_and_sets_jail(db, monkeypatch):
@@ -222,7 +222,7 @@ async def test_steal_concurrent_lock_blocks_second_attempt(db):
     victim = FakeMember(uid=207)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _state.crime_active_users.add(thief.id)  # simulate one already running
+    cog._crime_active.add(thief.id)  # simulate one already running
 
     ctx = _make_ctx(thief, victim)
     await cog.cmd_steal.callback(cog, ctx, target=victim)

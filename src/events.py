@@ -95,19 +95,24 @@ async def _roast_soundboard_spam(bot, guild_id: int, user_id: int):
         pass
 
 
+# {(guild_id, user_id): [monotonic timestamps]} — only consumed by
+# _handle_soundboard_ratelimit; in-memory only, never persisted.
+_SOUNDBOARD_TIMESTAMPS: dict[tuple[int, int], list[float]] = {}
+
+
 async def _handle_soundboard_ratelimit(bot, guild_id: int, user_id: int):
     """Check if user exceeded soundboard rate limit; kick if so."""
     now = time.monotonic()
     key = (guild_id, user_id)
-    timestamps = state._soundboard_timestamps.setdefault(key, [])
+    timestamps = _SOUNDBOARD_TIMESTAMPS.setdefault(key, [])
     cutoff = now - SOUNDBOARD_WINDOW_SECS
-    state._soundboard_timestamps[key] = [t for t in timestamps if t >= cutoff]
-    timestamps = state._soundboard_timestamps[key]
+    _SOUNDBOARD_TIMESTAMPS[key] = [t for t in timestamps if t >= cutoff]
+    timestamps = _SOUNDBOARD_TIMESTAMPS[key]
     timestamps.append(now)
     if len(timestamps) <= SOUNDBOARD_MAX_SOUNDS:
         return
     # Threshold exceeded — clear so the same burst doesn't re-trigger
-    state._soundboard_timestamps[key] = []
+    _SOUNDBOARD_TIMESTAMPS[key] = []
     guild = bot.get_guild(guild_id)
     if guild is None:
         return

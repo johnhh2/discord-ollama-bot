@@ -200,6 +200,8 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
 class HangmanCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # epoch of last bot-initiated hangman per uid, for the 6h cooldown.
+        self._last_hangman_by_uid: dict[int, float] = {}
 
     @commands.command(name="hangman", aliases=["hang", "hm"])
     async def cmd_hangman(self, ctx: commands.Context, *args):
@@ -209,7 +211,7 @@ class HangmanCog(commands.Cog):
         _HANGMAN_COOLDOWN = 6 * 3600
         if ctx.author.bot:
             now = time.time()
-            last = state.user_last_hangman.get(uid, 0)
+            last = self._last_hangman_by_uid.get(uid, 0)
             if now - last < _HANGMAN_COOLDOWN:
                 remaining = int(_HANGMAN_COOLDOWN - (now - last))
                 h, m = divmod(remaining // 60, 60)
@@ -220,7 +222,7 @@ class HangmanCog(commands.Cog):
             await ctx.send(embed=emb("🔤 Already Playing", "Just type your guess directly!", C_ORANGE))
             return
         if ctx.author.bot:
-            state.user_last_hangman[uid] = time.time()
+            self._last_hangman_by_uid[uid] = time.time()
         word = random.choice(HANGMAN_WORDS)
         state.active_hangman_games[cid] = {
             "word": word,

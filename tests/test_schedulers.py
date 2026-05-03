@@ -16,6 +16,7 @@ window in real time would slow the suite for no benefit.
 import pytest
 
 import src.state as _state
+import src.events as _events
 from src.leveling import (
     grant_xp, _ensure_user as _ensure_lvl_user,
     HOUR_SECS, MINS30_SECS, MSG_DAILY_MAX, XP_MESSAGE, XP_VOICE, XP_STREAM,
@@ -198,8 +199,8 @@ async def test_soundboard_under_threshold_no_kick(db, monkeypatch):
         times[0] += 0.1
 
     # state still tracks the timestamps; no kick was attempted.
-    assert (1, 100) in _state._soundboard_timestamps
-    assert len(_state._soundboard_timestamps[(1, 100)]) == SOUNDBOARD_MAX_SOUNDS
+    assert (1, 100) in _events._SOUNDBOARD_TIMESTAMPS
+    assert len(_events._SOUNDBOARD_TIMESTAMPS[(1, 100)]) == SOUNDBOARD_MAX_SOUNDS
 
 
 @pytest.mark.asyncio
@@ -226,7 +227,7 @@ async def test_soundboard_over_threshold_clears_and_attempts_kick(db, monkeypatc
         times[0] += 0.1
 
     # On exceeding, the deque is cleared so the same burst doesn't re-fire.
-    assert _state._soundboard_timestamps.get((1, 200)) == []
+    assert _events._SOUNDBOARD_TIMESTAMPS.get((1, 200)) == []
 
 
 @pytest.mark.asyncio
@@ -244,13 +245,13 @@ async def test_soundboard_old_timestamps_evicted_outside_window(db, monkeypatch)
     for _ in range(SOUNDBOARD_MAX_SOUNDS):
         await _handle_soundboard_ratelimit(_Bot(), guild_id=1, user_id=300)
         times[0] += 0.1
-    assert len(_state._soundboard_timestamps[(1, 300)]) == SOUNDBOARD_MAX_SOUNDS
+    assert len(_events._SOUNDBOARD_TIMESTAMPS[(1, 300)]) == SOUNDBOARD_MAX_SOUNDS
 
     # Skip past the window; the next call should evict everything older.
     times[0] += SOUNDBOARD_WINDOW_SECS + 1
     await _handle_soundboard_ratelimit(_Bot(), guild_id=1, user_id=300)
     # Only the just-added timestamp remains.
-    assert len(_state._soundboard_timestamps[(1, 300)]) == 1
+    assert len(_events._SOUNDBOARD_TIMESTAMPS[(1, 300)]) == 1
 
 
 @pytest.mark.asyncio
@@ -266,8 +267,8 @@ async def test_soundboard_isolated_per_user(db, monkeypatch):
     await _handle_soundboard_ratelimit(_Bot(), guild_id=1, user_id=400)
     await _handle_soundboard_ratelimit(_Bot(), guild_id=1, user_id=401)
 
-    assert len(_state._soundboard_timestamps[(1, 400)]) == 1
-    assert len(_state._soundboard_timestamps[(1, 401)]) == 1
+    assert len(_events._SOUNDBOARD_TIMESTAMPS[(1, 400)]) == 1
+    assert len(_events._SOUNDBOARD_TIMESTAMPS[(1, 401)]) == 1
 
 
 # ── !event on_reaction_add ────────────────────────────────────────────────────

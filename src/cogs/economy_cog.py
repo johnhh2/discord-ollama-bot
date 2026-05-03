@@ -34,6 +34,8 @@ from src import state
 class EconomyCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # uids currently mid-crime (steal/mug). In-flight per-cog state, never persisted.
+        self._crime_active: set[int] = set()
 
     @commands.command(name="daily")
     async def cmd_daily(self, ctx: commands.Context):
@@ -186,7 +188,7 @@ class EconomyCog(commands.Cog):
             ))
             return
 
-        if thief_id in state.crime_active_users:
+        if thief_id in self._crime_active:
             await ctx.send(embed=emb("⏳ Already Running", "You already have a crime in progress — wait for it to finish.", C_RED))
             return
 
@@ -209,7 +211,7 @@ class EconomyCog(commands.Cog):
             roll = random.random()
             success = roll < steal_chance
 
-        state.crime_active_users.add(thief_id)
+        self._crime_active.add(thief_id)
         try:
             # Animate the chase
             msg = None
@@ -290,7 +292,7 @@ class EconomyCog(commands.Cog):
 
             await msg.edit(embed=result_embed)
         finally:
-            state.crime_active_users.discard(thief_id)
+            self._crime_active.discard(thief_id)
 
 
     @commands.command(name="jail")
@@ -380,7 +382,7 @@ class EconomyCog(commands.Cog):
             await ctx.invoke(self.cmd_crime)
             return
 
-        if uid in state.crime_active_users:
+        if uid in self._crime_active:
             await ctx.send(embed=emb("⏳ Already Running", "You already have a crime in progress — wait for it to finish.", C_RED))
             return
 
@@ -421,7 +423,7 @@ class EconomyCog(commands.Cog):
 
         TRACK = 20
         steps = 8
-        state.crime_active_users.add(uid)
+        self._crime_active.add(uid)
         try:
             def build_mug_frame(robber_p, cop_p, done=False, caught=False):
                 robber_icon = "🏃" if not caught else "🤜"
@@ -478,7 +480,7 @@ class EconomyCog(commands.Cog):
                 )
             await msg.edit(embed=result_embed)
         finally:
-            state.crime_active_users.discard(uid)
+            self._crime_active.discard(uid)
 
     @commands.command(name="records", aliases=["record", "rec"])
     async def cmd_records(self, ctx: commands.Context):

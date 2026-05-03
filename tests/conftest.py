@@ -68,7 +68,6 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "channel_prompts", {})
     monkeypatch.setattr(_state, "locked_channels", {})
     monkeypatch.setattr(_state, "locked_roles", {})
-    monkeypatch.setattr(_state, "crime_active_users", set())
 
     # Stub all async DB save functions in persistence so tests don't need a real DB
     save_fn_names = [

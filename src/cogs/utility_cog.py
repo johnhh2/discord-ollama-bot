@@ -127,6 +127,8 @@ PUZZLE_DIFFICULTY_GUIDANCE = {
 class UtilityCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # epoch of last !puzzle generation per uid, for the per-user cooldown.
+        self._last_puzzle_by_uid: dict[int, float] = {}
 
     @commands.command(name="gambler-role", aliases=["gamblerole", "gamblers"])
     async def cmd_gambler_role(self, ctx: commands.Context, toggle: str = None):
@@ -480,7 +482,7 @@ class UtilityCog(commands.Cog):
         _PUZZLE_COOLDOWN = 6 * 3600
         if ctx.author.bot:
             _now = time.time()
-            _last = state.user_last_puzzle.get(uid, 0)
+            _last = self._last_puzzle_by_uid.get(uid, 0)
             if _now - _last < _PUZZLE_COOLDOWN:
                 _remaining = int(_PUZZLE_COOLDOWN - (_now - _last))
                 _h, _m = divmod(_remaining // 60, 60)
@@ -496,7 +498,7 @@ class UtilityCog(commands.Cog):
             return
 
         if ctx.author.bot:
-            state.user_last_puzzle[uid] = time.time()
+            self._last_puzzle_by_uid[uid] = time.time()
         import re as _re
 
         # ── Riddle branch (static list) ────────────────────────────────────────────

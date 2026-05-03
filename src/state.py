@@ -63,9 +63,13 @@ channel_histories: dict = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
 # Value: {kind, owner_id, invited_ids: set, system_prompt: str|None,
 #         character_prompt: str|None, history: list, guild_id: int|None}
 ai_threads: dict = {}
+# Cross-cog rate-limit tracking. user_last_hangman / user_last_puzzle /
+# crime_active_users / _soundboard_timestamps used to live here too;
+# they were each touched by exactly one cog or module and have been
+# moved to that owner (HangmanCog._last_hangman_by_uid,
+# UtilityCog._last_puzzle_by_uid, EconomyCog._crime_active,
+# events._SOUNDBOARD_TIMESTAMPS).
 user_last_request: dict = {}
-user_last_hangman: dict = {}
-user_last_puzzle: dict = {}
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
@@ -80,11 +84,3 @@ stats_ai_responses_today: int = 0
 # ── Audit log ─────────────────────────────────────────────────────────────────
 
 audit_log: deque = deque(maxlen=20)
-
-# ── Crime animation lock ──────────────────────────────────────────────────────
-
-crime_active_users: set = set()
-
-# ── Soundboard rate-limit tracking ───────────────────────────────────────────
-
-_soundboard_timestamps: dict = {}
