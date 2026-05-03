@@ -16,7 +16,6 @@ mini-cactpot reveal mechanics aren't tested here — those features either
 aren't implemented or live in interactive command flows that require a
 real Discord gateway.
 """
-import pytest
 
 from src.games.ttt_c4 import drop_in_column, check_c4_winner
 from src.games.race import advance_player

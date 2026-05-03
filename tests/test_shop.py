@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 
-import src as bot
 import src.state as _state
 import src.persistence as _persistence
 from src.economy import add_balance, get_balance

@@ -684,9 +684,6 @@ async def init_db_state():
     """Load all persistent state from DB into src.state. Called once from on_ready."""
     import logging
     import src.state as state
-    from src.config import SLOT_JACKPOT_SEED, INITIAL_BOT_ADMIN_IDS
-    from collections import deque
-    from src.config import HISTORY_LIMIT
 
     pool = await get_pool()
     async with pool.acquire() as conn:

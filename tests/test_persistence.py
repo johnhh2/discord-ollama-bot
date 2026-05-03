@@ -5,12 +5,9 @@ in an in-memory SQLite for `src.db.get_pool` and restores the real save_*/
 load_* functions. They exercise the actual SQL strings in src/persistence.py;
 a typo in a column name will fail a test here.
 """
-import json
 
 import pytest
-import pytest_asyncio
 
-import src as bot
 import src.state as _state
 import src.persistence as _persistence
 

@@ -14,11 +14,9 @@ The on_message handler is invoked directly on a stub EventsCog. We stub
 check_ollama_connected and _passive_ragebait so the ragebait branch
 runs without Ollama or background tasks.
 """
-import asyncio
 import time
 from unittest.mock import AsyncMock
 
-import discord
 import pytest
 
 import src.state as _state

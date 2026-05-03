@@ -12,10 +12,8 @@
   posts to levelup_channel only when configured.
 """
 import pytest
-from unittest.mock import AsyncMock
 
 import src.state as _state
-import src.persistence as _persistence
 import src.economy as _economy
 from src.leveling import (
     grant_xp, _ensure_user as _ensure_lvl_user,

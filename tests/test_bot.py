@@ -4,7 +4,6 @@ Tests for bot.py helper functions.
 Run: pytest -v
 Dev deps: pip install pytest pytest-asyncio
 """
-import json
 import time
 from collections import Counter
 

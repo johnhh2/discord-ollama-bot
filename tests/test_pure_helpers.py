@@ -10,7 +10,6 @@ Covered here:
 - src/permissions.py    — get_command_perm hierarchical fallback
 """
 import pytest
-from unittest.mock import AsyncMock
 
 import src.state as _state
 from src.leveling import (
@@ -21,7 +20,7 @@ from src.helpers import parse_amount, MemberConverter
 from src.permissions import get_command_perm
 from src.economy import add_balance
 
-from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild
+from tests.fakes.discord import FakeCtx, FakeMember
 
 # Note: no module-level pytestmark — only async tests get pytest.mark.asyncio,
 # applied at the class or function level below.

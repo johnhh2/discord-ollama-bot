@@ -10,7 +10,6 @@ parts NOT covered there:
   decrements (single-use per entry).
 - Jackpot win resets state.slot_jackpot to SLOT_JACKPOT_SEED.
 """
-import math
 import random
 
 import pytest
@@ -179,7 +178,7 @@ def test_slots_house_edge_is_positive_at_10k_bet():
     import random as _random
     from src.gambling.slots import eval_slots
     from src.config import (
-        SLOT_REEL, SLOT_HOUSE_CHANCE, SLOT_MIN_BET, SLOT_MULT_JACKPOT,
+        SLOT_REEL, SLOT_HOUSE_CHANCE, SLOT_MULT_JACKPOT,
     )
 
     rng = _random.Random(12345)

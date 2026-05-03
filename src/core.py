@@ -67,7 +67,6 @@ async def _load_extensions(bot: commands.Bot):
 
 
 def run():
-    import asyncio
     import logging
 
     if not DISCORD_TOKEN:

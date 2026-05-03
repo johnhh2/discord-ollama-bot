@@ -10,8 +10,7 @@ from src.persistence import get_guild_cfg
 from src.economy import add_balance, next_daily_reset_ts
 from src import state
 from src.leveling import (
-    grant_xp, _ensure_user, _day_reset, level_from_xp,
-    xp_for_level, xp_for_next_level, display_level, levelup_coin_reward, _bar,
+    grant_xp, _ensure_user, _day_reset, xp_for_level, xp_for_next_level, display_level, levelup_coin_reward, _bar,
     XP_MESSAGE, XP_COMMAND, XP_VOICE, XP_SCRATCH, XP_STREAM,
     MSG_DAILY_MAX, CMD_DAILY_MAX, VOICE_DAILY_MAX, STREAM_DAILY_MAX,
     HOUR_SECS, MINS30_SECS,

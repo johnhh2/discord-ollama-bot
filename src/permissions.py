@@ -1,6 +1,5 @@
 import asyncio
 
-import discord
 from discord.ext import commands
 
 from src.helpers import emb, C_RED, _delete_after

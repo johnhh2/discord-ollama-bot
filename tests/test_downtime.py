@@ -197,7 +197,6 @@ async def test_lottery_year_boundary_no_longer_silently_skips(db):
     with the next year's week 1.
     """
     from src.economy import lottery_week_key
-    import datetime
     from zoneinfo import ZoneInfo
     ct = ZoneInfo("America/Chicago")
 
@@ -222,7 +221,6 @@ async def test_lottery_iso_week_dec_to_jan_still_draws(db):
     """Dec week 52 → Jan week 1 (or week 53 → 1) must still trigger a draw.
     Both bare-int and YYYYWW handle this; pin it as a regression guard."""
     from src.economy import lottery_week_key
-    import datetime
     from zoneinfo import ZoneInfo
     ct = ZoneInfo("America/Chicago")
 

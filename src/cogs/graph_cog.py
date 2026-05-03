@@ -326,7 +326,6 @@ class GraphCog(commands.Cog):
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        import matplotlib.dates as mdates
 
         history = await load_bot_stats_history()
         dates = _sorted_dates(history)

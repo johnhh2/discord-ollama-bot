@@ -6,7 +6,6 @@ tested in isolation. The full command (RNG card draw, payout tiers,
 streak/role logic) is integration territory; the daily-limit invariant
 is what matters here.
 """
-import pytest
 
 from src.gambling.scratchoff import scratchoff_attempts_remaining
 

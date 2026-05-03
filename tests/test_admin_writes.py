@@ -13,7 +13,6 @@ state mutation in it; !adminunlock follows the !shop unlock patterns
 already covered.
 """
 import pytest
-from unittest.mock import AsyncMock
 
 import src.state as _state
 import src.persistence as _persistence

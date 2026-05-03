@@ -12,23 +12,19 @@ For grant_xp / soundboard, time.time() and time.monotonic() are
 monkeypatched to advance under our control — running the actual rolling
 window in real time would slow the suite for no benefit.
 """
-import time
 
 import pytest
 
 import src.state as _state
-import src.persistence as _persistence
 from src.leveling import (
     grant_xp, _ensure_user as _ensure_lvl_user,
-    HOUR_SECS, MINS30_SECS, MSG_DAILY_MAX, CMD_DAILY_MAX,
-    VOICE_DAILY_MAX, STREAM_DAILY_MAX,
-    XP_MESSAGE, XP_COMMAND, XP_VOICE, XP_STREAM,
+    HOUR_SECS, MINS30_SECS, MSG_DAILY_MAX, XP_MESSAGE, XP_VOICE, XP_STREAM,
 )
 from src.cogs.admin_cog import AdminCog
 from src.config import SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS, SHOP_TAX_DURATION_SECS
-from src.economy import add_balance, get_balance
+from src.economy import get_balance
 
-from tests.fakes.discord import FakeMember, FakeGuild
+from tests.fakes.discord import FakeMember
 
 # Note: no module-level pytestmark — most tests are async, but the tax-expiry
 # arithmetic test is sync. Async tests get @pytest.mark.asyncio per-function

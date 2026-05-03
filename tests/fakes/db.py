@@ -8,7 +8,6 @@ actually uses (`%s` placeholders, `INSERT IGNORE`, and
 If a query string here ever fails to translate, prefer extending the translator
 over rewriting production SQL — production has to keep speaking MariaDB.
 """
-import os
 import re
 import sqlite3
 from pathlib import Path
