@@ -109,7 +109,7 @@ class ModerationCog(commands.Cog):
         await confirm.delete()
 
 
-    @commands.command(name="clearall")
+    @commands.command(name="clearall", aliases=["clerall"])
     async def cmd_clearall(self, ctx: commands.Context, n: str = None):
         if not await check_command_permission(ctx):
             return
