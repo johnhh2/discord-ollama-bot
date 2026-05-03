@@ -247,6 +247,39 @@ async def remove_savings(uid: int, amount: int) -> bool:
     return True
 
 
+async def seize_from_savings(uid: int, max_amount: int) -> int:
+    """Drain up to max_amount from savings without crediting the wallet.
+    Returns the actual amount seized (0 if savings empty or max_amount <= 0)."""
+    from src import state
+    if max_amount <= 0:
+        return 0
+    await _ensure_user(uid)
+    user = state.economy["users"][str(uid)]
+    deposits = user.get("savings", [])
+    now = time.time()
+    current_value = int(sum(e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0)) for e in deposits))
+    if current_value <= 0:
+        return 0
+    seized = min(max_amount, current_value)
+    remaining = float(seized)
+    new_deposits = []
+    for entry in deposits:
+        days = (now - entry["deposited_at"]) / 86400.0
+        val = entry["amount"] * (1.01 ** days)
+        if remaining <= 0:
+            new_deposits.append(entry)
+        elif val <= remaining:
+            remaining -= val
+        else:
+            kept_amount = entry["amount"] - remaining / (1.01 ** days)
+            if kept_amount > 0:
+                new_deposits.append({"amount": kept_amount, "deposited_at": entry["deposited_at"]})
+            remaining = 0
+    user["savings"] = new_deposits
+    await save_economy(uid=uid)
+    return seized
+
+
 async def snapshot_balances():
     """Record each user's wallet and savings value keyed by today's date; prune entries older than 14 days."""
     from src import state

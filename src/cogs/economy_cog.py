@@ -28,6 +28,7 @@ from src.economy import (
     is_insured, get_insurance_expiry, get_guild_ask_model, get_guild_roleplay_model,
     get_guild_coding_model, _ct_now, _ct_today, do_daily_reset, _ensure_user,
     next_daily_reset_ts, get_savings_value, add_savings, remove_savings,
+    seize_from_savings,
 )
 from src.permissions import (
     is_admin, is_server_admin, can_manage_settings, check_rate_limit,
@@ -302,25 +303,29 @@ class EconomyCog(commands.Cog):
                     )
             else:
                 jailed = random.random() < jail_chance
-                actual_fine = min(fee, await get_balance(thief_id))
+                from_wallet = min(fee, await get_balance(thief_id))
+                await deduct_balance(thief_id, from_wallet)
+                from_savings = await seize_from_savings(thief_id, fee - from_wallet)
+                actual_fine = from_wallet + from_savings
+                fine_line = f"Fined **{actual_fine:,} 🪙**"
+                if from_savings > 0:
+                    fine_line += f" (**{from_savings:,}** taken from savings)"
                 if jailed:
                     jail_until_ts = time.time() + jail_days * 86400
                     thief_data["jail_until"] = jail_until_ts
                     await save_economy(uid=thief_id)
-                    await deduct_balance(thief_id, actual_fine)
                     result_embed = emb(
                         "🚔 Caught & Jailed!",
                         f"**{ctx.author.display_name}** was caught stealing from **{target.display_name}**!\n"
-                        f"Fined **{actual_fine:,} 🪙** and jailed until <t:{int(jail_until_ts)}:F> (<t:{int(jail_until_ts)}:R>).\n"
+                        f"{fine_line} and jailed until <t:{int(jail_until_ts)}:F> (<t:{int(jail_until_ts)}:R>).\n"
                         f"Balance: **{await get_balance(thief_id):,} 🪙**",
                         C_RED,
                     )
                 else:
-                    await deduct_balance(thief_id, actual_fine)
                     result_embed = emb(
                         "🚔 Caught!",
                         f"**{ctx.author.display_name}** was caught stealing from **{target.display_name}**!\n"
-                        f"Fined **{actual_fine:,} 🪙**. You got lucky — no jail time.\n"
+                        f"{fine_line}. You got lucky — no jail time.\n"
                         f"Balance: **{await get_balance(thief_id):,} 🪙**",
                         C_ORANGE,
                     )
