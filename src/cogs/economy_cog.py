@@ -570,7 +570,7 @@ class EconomyCog(commands.Cog):
         embed.description = "\n".join(lines)
         await ctx.send(embed=embed)
 
-    @commands.command(name="savings", aliases=["piggybank", "save"])
+    @commands.command(name="savings", aliases=["piggybank"])
     async def cmd_savings(self, ctx: commands.Context, action: str = None, amount: str = None):
         if not await check_command_permission(ctx):
             return
@@ -677,6 +677,10 @@ class EconomyCog(commands.Cog):
                 f"Savings remaining: **{int(value):,} 🪙** | Wallet: **{await get_balance(uid):,} 🪙**",
                 C_GREEN,
             ))
+
+    @commands.command(name="save")
+    async def cmd_save(self, ctx: commands.Context, amount: str = None):
+        await self.cmd_savings(ctx, "add", amount)
 
     @commands.command(name="economy", aliases=["eco"])
     async def cmd_economy(self, ctx: commands.Context):
