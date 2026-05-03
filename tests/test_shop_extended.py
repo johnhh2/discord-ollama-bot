@@ -1,0 +1,363 @@
+"""Tier 2: shop subcommands beyond nickname/insurance.
+
+Pattern is the same for every paid !shop subcommand:
+1. Charge via shop_charge (covered exhaustively in test_shop.py).
+2. Perform a Discord-API or state-mutation action.
+3. Persist via save_*.
+4. On Discord-API failure, refund the cost.
+
+Rather than testing 25 near-duplicates, this picks one representative for
+each shape: a role op (createrole), a channel op (lockchannel/unlockchannel),
+and the three timed effects (mock, curse, tax) that persist to shop_effects.
+"""
+import pytest
+from unittest.mock import AsyncMock
+
+import discord
+from discord.ext import commands as dpy_commands
+
+import src.state as _state
+import src.persistence as _persistence
+from src.cogs.shop_cog import ShopCog
+from src.economy import add_balance, get_balance
+from src.config import (
+    SHOP_ROLE_CREATE_COST, SHOP_LOCK_COST, SHOP_MOCK_COST,
+    SHOP_MOCK_MESSAGES, SHOP_CURSE_COST, SHOP_CURSE_MESSAGES,
+    SHOP_TAX_COST,
+)
+
+from tests.fakes.discord import (
+    FakeCtx, FakeMember, FakeGuild, FakeRole, FakeTextChannel,
+)
+
+
+pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture
+def force_member_converter_fallback(monkeypatch):
+    """Make discord.py's built-in MemberConverter raise BadArgument so the
+    project's substring-fallback path runs. Required to drive any shop
+    subcommand that uses MemberConverter without a real Discord cache.
+    """
+    async def _bad(self, ctx, argument):
+        raise dpy_commands.BadArgument(f"forced fallback for {argument!r}")
+    monkeypatch.setattr(dpy_commands.MemberConverter, "convert", _bad)
+
+
+async def _read_db_balance(uid: int) -> int | None:
+    pool = await _persistence.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT balance FROM economy_users WHERE user_id=?", (uid,))
+            row = await cur.fetchone()
+    return row[0] if row else None
+
+
+async def _read_shop_effect(uid: int, effect_type: str) -> tuple | None:
+    """Return the (user_id, effect_type, remaining, started_by, cursed_by,
+    master_id, tax_type, tax_emoji, channel_id) row for a given effect, or None."""
+    pool = await _persistence.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT user_id, effect_type, remaining, started_by, cursed_by,"
+                " master_id, tax_type, tax_emoji, channel_id"
+                " FROM shop_effects WHERE user_id=? AND effect_type=?",
+                (uid, effect_type),
+            )
+            return await cur.fetchone()
+
+
+# ── Roles: shop_createrole ────────────────────────────────────────────────────
+
+async def test_shop_createrole_creates_role_and_persists(db, force_member_converter_fallback):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=1001, display_name="buyer")
+    target = FakeMember(uid=1002, display_name="target")
+    await add_balance(buyer.id, SHOP_ROLE_CREATE_COST + 1000)
+
+    guild = FakeGuild(gid=42)
+    guild.members = [buyer, target]
+    new_role = FakeRole(role_id=900, name="MyRole")
+    guild.create_role = AsyncMock(return_value=new_role)
+    target.add_roles = AsyncMock()
+
+    ctx = FakeCtx(author=buyer, guild=guild)
+
+    await cog.shop_createrole.callback(cog, ctx, "target", "MyRole", "ff00aa")
+
+    assert await get_balance(buyer.id) == 1000
+    assert await _read_db_balance(buyer.id) == 1000
+    guild.create_role.assert_awaited_once()
+    target.add_roles.assert_awaited_once_with(new_role)
+    assert new_role.id in _state.bot_roles
+
+
+async def test_shop_createrole_rejects_admin_in_name(db, force_member_converter_fallback):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=1003)
+    target = FakeMember(uid=1004, display_name="target")
+    await add_balance(buyer.id, SHOP_ROLE_CREATE_COST + 1000)
+
+    guild = FakeGuild(gid=42)
+    guild.members = [buyer, target]
+    guild.create_role = AsyncMock()
+    ctx = FakeCtx(author=buyer, guild=guild)
+
+    await cog.shop_createrole.callback(cog, ctx, "target", "ADMIN of stuff", "ff00aa")
+
+    # Rejected before charging.
+    assert await get_balance(buyer.id) == SHOP_ROLE_CREATE_COST + 1000
+    guild.create_role.assert_not_called()
+
+
+async def test_shop_createrole_invalid_color_no_charge(db, force_member_converter_fallback):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=1005)
+    target = FakeMember(uid=1006, display_name="target")
+    await add_balance(buyer.id, SHOP_ROLE_CREATE_COST + 1000)
+
+    guild = FakeGuild(gid=42)
+    guild.members = [buyer, target]
+    guild.create_role = AsyncMock()
+    ctx = FakeCtx(author=buyer, guild=guild)
+
+    await cog.shop_createrole.callback(cog, ctx, "target", "Cool", "notacolor")
+
+    assert await get_balance(buyer.id) == SHOP_ROLE_CREATE_COST + 1000
+    guild.create_role.assert_not_called()
+
+
+async def test_shop_createrole_refunds_on_forbidden(db, force_member_converter_fallback):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=1007)
+    target = FakeMember(uid=1008, display_name="target")
+    starting = SHOP_ROLE_CREATE_COST + 500
+    await add_balance(buyer.id, starting)
+
+    guild = FakeGuild(gid=42)
+    guild.members = [buyer, target]
+    guild.create_role = AsyncMock(side_effect=discord.Forbidden(
+        response=type("R", (), {"status": 403, "reason": "no"})(),
+        message="forbidden",
+    ))
+    ctx = FakeCtx(author=buyer, guild=guild)
+
+    await cog.shop_createrole.callback(cog, ctx, "target", "Cool", "ff00aa")
+
+    # Refunded back to starting balance.
+    assert await get_balance(buyer.id) == starting
+    assert await _read_db_balance(buyer.id) == starting
+
+
+# ── Channels: shop_lockchannel + shop_unlockchannel ───────────────────────────
+
+async def test_shop_lockchannel_charges_and_records_owner(db):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=2001)
+    await add_balance(buyer.id, SHOP_LOCK_COST + 5000)
+
+    guild = FakeGuild(gid=77)
+    chan = FakeTextChannel(ch_id=8888, name="general")
+    guild.channels = [chan]
+    ctx = FakeCtx(author=buyer, guild=guild)
+
+    await cog.shop_lockchannel.callback(cog, ctx, str(chan.id))
+
+    assert await get_balance(buyer.id) == 5000
+    assert _state.locked_channels.get(chan.id) == buyer.id
+    cfg = _state.guild_settings[str(guild.id)]
+    assert cfg["locked_channels"][str(chan.id)] == buyer.id
+
+
+async def test_shop_lockchannel_rejects_already_locked(db):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=2002)
+    await add_balance(buyer.id, SHOP_LOCK_COST + 5000)
+
+    guild = FakeGuild(gid=78)
+    chan = FakeTextChannel(ch_id=8889)
+    guild.channels = [chan]
+    _state.locked_channels[chan.id] = 9999  # someone else owns it
+
+    ctx = FakeCtx(author=buyer, guild=guild)
+    await cog.shop_lockchannel.callback(cog, ctx, str(chan.id))
+
+    # Not charged.
+    assert await get_balance(buyer.id) == SHOP_LOCK_COST + 5000
+    # Owner unchanged.
+    assert _state.locked_channels[chan.id] == 9999
+
+
+async def test_shop_unlockchannel_owner_can_unlock(db):
+    cog = ShopCog(bot=None)
+    owner = FakeMember(uid=2003)
+    guild = FakeGuild(gid=79)
+    chan = FakeTextChannel(ch_id=8890)
+    guild.channels = [chan]
+    _state.locked_channels[chan.id] = owner.id
+
+    ctx = FakeCtx(author=owner, guild=guild)
+    await cog.shop_unlockchannel.callback(cog, ctx, str(chan.id))
+
+    assert chan.id not in _state.locked_channels
+
+
+async def test_shop_unlockchannel_non_owner_rejected(db):
+    cog = ShopCog(bot=None)
+    owner = FakeMember(uid=2004)
+    other = FakeMember(uid=2005)
+    guild = FakeGuild(gid=80)
+    chan = FakeTextChannel(ch_id=8891)
+    guild.channels = [chan]
+    _state.locked_channels[chan.id] = owner.id
+
+    ctx = FakeCtx(author=other, guild=guild)
+    await cog.shop_unlockchannel.callback(cog, ctx, str(chan.id))
+
+    # Still locked, still owned by `owner`.
+    assert _state.locked_channels[chan.id] == owner.id
+
+
+# ── Timed effects: shop_mock ──────────────────────────────────────────────────
+
+async def test_shop_mock_charges_and_writes_state_and_db(db, force_member_converter_fallback):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=3001, display_name="buyer")
+    target = FakeMember(uid=3002, display_name="target")
+    await add_balance(buyer.id, SHOP_MOCK_COST + 1000)
+
+    guild = FakeGuild(gid=42)
+    guild.members = [buyer, target]
+    ctx = FakeCtx(author=buyer, guild=guild)
+
+    await cog.shop_mock.callback(cog, ctx, "target")
+
+    assert await get_balance(buyer.id) == 1000
+    assert target.id in _state.active_mocks
+    entry = _state.active_mocks[target.id]
+    assert entry["remaining"] == SHOP_MOCK_MESSAGES
+    assert entry["started_by"] == buyer.id
+
+    # Persisted to shop_effects.
+    row = await _read_shop_effect(target.id, "mock")
+    assert row is not None
+    assert row[0] == target.id and row[1] == "mock"
+    assert row[2] == SHOP_MOCK_MESSAGES        # remaining
+    assert row[3] == buyer.id                  # started_by
+
+
+# ── Timed effects: shop_curse ─────────────────────────────────────────────────
+
+async def test_shop_curse_charges_and_persists(db, force_member_converter_fallback):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=3003)
+    target = FakeMember(uid=3004, display_name="target")
+    await add_balance(buyer.id, SHOP_CURSE_COST + 1000)
+
+    guild = FakeGuild(gid=42)
+    guild.members = [buyer, target]
+    ctx = FakeCtx(author=buyer, guild=guild)
+
+    await cog.shop_curse.callback(cog, ctx, "target")
+
+    assert await get_balance(buyer.id) == 1000
+    assert target.id in _state.active_curses
+    assert _state.active_curses[target.id]["remaining"] == SHOP_CURSE_MESSAGES
+    assert _state.active_curses[target.id]["cursed_by"] == buyer.id
+
+    row = await _read_shop_effect(target.id, "curse")
+    assert row is not None
+    assert row[2] == SHOP_CURSE_MESSAGES        # remaining
+    assert row[4] == buyer.id                   # cursed_by
+
+
+async def test_shop_curse_self_target_rejected(db, force_member_converter_fallback):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=3005, display_name="buyer")
+    await add_balance(buyer.id, SHOP_CURSE_COST + 1000)
+
+    guild = FakeGuild(gid=42)
+    guild.members = [buyer]
+    ctx = FakeCtx(author=buyer, guild=guild)
+
+    # Substring "buyer" matches buyer (the only member) — that's the self-target.
+    await cog.shop_curse.callback(cog, ctx, "buyer")
+
+    # Not charged.
+    assert await get_balance(buyer.id) == SHOP_CURSE_COST + 1000
+    assert buyer.id not in _state.active_curses
+
+
+# ── Timed effects: shop_tax ───────────────────────────────────────────────────
+
+async def test_shop_tax_default_writes_state_with_tax_type_and_emoji(
+    db, force_member_converter_fallback
+):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=4001, display_name="buyer")
+    target = FakeMember(uid=4002, display_name="target")
+    await add_balance(buyer.id, SHOP_TAX_COST + 1000)
+
+    guild = FakeGuild(gid=42)
+    guild.members = [buyer, target]
+    ctx = FakeCtx(author=buyer, guild=guild)
+    # invoked_with isn't an alias → defaults to ("tax", "💰")
+    ctx.invoked_with = "tax"
+
+    await cog.shop_tax.callback(cog, ctx, "target")
+
+    assert await get_balance(buyer.id) == 1000
+    assert target.id in _state.active_taxes
+    entry = _state.active_taxes[target.id]
+    assert entry["master"] == buyer.id
+    assert entry["type"] == "tax"
+    assert entry["emoji"] == "💰"
+
+    row = await _read_shop_effect(target.id, "tax")
+    assert row is not None
+    assert row[5] == buyer.id     # master_id
+    assert row[6] == "tax"        # tax_type
+    assert row[7] == "💰"          # tax_emoji
+
+
+async def test_shop_tax_alias_uses_guild_emoji(db, force_member_converter_fallback):
+    """When invoked_with matches a guild-configured tax_alias, store that
+    type and emoji instead of the defaults."""
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=4003)
+    target = FakeMember(uid=4004, display_name="target")
+    await add_balance(buyer.id, SHOP_TAX_COST + 1000)
+
+    guild = FakeGuild(gid=42)
+    guild.members = [buyer, target]
+    # Configure an alias.
+    _state.guild_settings[str(guild.id)] = {
+        "tax_aliases": {"toll": "🛣️"},
+    }
+
+    ctx = FakeCtx(author=buyer, guild=guild)
+    ctx.invoked_with = "toll"
+
+    await cog.shop_tax.callback(cog, ctx, "target")
+
+    entry = _state.active_taxes[target.id]
+    assert entry["type"] == "toll"
+    assert entry["emoji"] == "🛣️"
+
+
+async def test_shop_tax_self_rejected(db, force_member_converter_fallback):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=4005, display_name="onlyme")
+    await add_balance(buyer.id, SHOP_TAX_COST + 1000)
+
+    guild = FakeGuild(gid=42)
+    guild.members = [buyer]
+    ctx = FakeCtx(author=buyer, guild=guild)
+    ctx.invoked_with = "tax"
+
+    await cog.shop_tax.callback(cog, ctx, "onlyme")
+
+    assert await get_balance(buyer.id) == SHOP_TAX_COST + 1000
+    assert buyer.id not in _state.active_taxes

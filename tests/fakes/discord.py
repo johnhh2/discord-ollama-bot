@@ -41,11 +41,25 @@ class FakeMember:
         return f"FakeMember(id={self.id}, display_name={self.display_name!r})"
 
 
+class FakeRole:
+    def __init__(self, role_id: int, name: str = "test-role"):
+        self.id = role_id
+        self.name = name
+        self.mention = f"<@&{role_id}>"
+        self.edit = AsyncMock()
+        self.delete = AsyncMock()
+
+
 class FakeGuild:
     def __init__(self, gid: int = 1, name: str = "test-guild"):
         self.id = gid
         self.name = name
         self.members = []
+        self.roles = []
+        self.channels = []
+        # Tests that drive role/channel creation can set side_effects on these.
+        self.create_role = AsyncMock()
+        self.create_text_channel = AsyncMock()
 
     def get_member(self, uid: int):
         for m in self.members:
@@ -53,11 +67,44 @@ class FakeGuild:
                 return m
         return None
 
+    def get_role(self, role_id: int):
+        for r in self.roles:
+            if r.id == role_id:
+                return r
+        return None
+
+    def get_channel(self, ch_id: int):
+        for c in self.channels:
+            if c.id == ch_id:
+                return c
+        return None
+
 
 class FakeChannel:
+    """Generic non-text channel stand-in (won't satisfy isinstance discord.TextChannel)."""
     def __init__(self, ch_id: int = 100):
         self.id = ch_id
         self.send = AsyncMock()
+
+
+# Subclass discord.TextChannel so isinstance() checks pass without pulling in
+# the full discord.py state machinery. We bypass __init__ and set just the
+# attributes our code touches.
+import discord as _discord  # noqa: E402
+
+
+class FakeTextChannel(_discord.TextChannel):
+    """Subclasses discord.TextChannel so isinstance() checks pass without
+    pulling in the full discord.py state machinery. We bypass __init__ and
+    set just the attributes our code touches; `mention` is a read-only
+    property on the base class that derives from `id`.
+    """
+    def __init__(self, ch_id: int = 100, name: str = "test-channel"):
+        self.id = ch_id
+        self.name = name
+        self.send = AsyncMock()
+        self.delete = AsyncMock()
+        self.edit = AsyncMock()
 
 
 class FakeMessage:
