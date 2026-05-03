@@ -130,21 +130,15 @@ CREATE TABLE IF NOT EXISTS chess_games (
     game_json  TEXT    NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS roleplay_state (
-    channel_id   INTEGER NOT NULL PRIMARY KEY,
-    state_json   TEXT    NOT NULL,
-    history_json TEXT    NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS fanfic_owners (
+CREATE TABLE IF NOT EXISTS ai_threads (
     thread_id        INTEGER NOT NULL PRIMARY KEY,
+    kind             TEXT    NOT NULL,
     owner_id         INTEGER NOT NULL,
-    invited_ids_json TEXT    NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS fanfic_histories (
-    channel_id   INTEGER NOT NULL PRIMARY KEY,
-    history_json TEXT    NOT NULL
+    guild_id         INTEGER,
+    invited_ids_json TEXT    NOT NULL,
+    system_prompt    TEXT,
+    character_prompt TEXT,
+    history_json     TEXT    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS leveling (

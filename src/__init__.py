@@ -13,11 +13,11 @@ from src.persistence import (
 from src.state import (
     economy, guild_settings, insurance, user_last_request,
     slot_jackpot, bot_roles, bot_admins, godmode_users, bot_settings,
-    active_blackjack_games, active_hangman_games, active_roleplays,
-    roleplay_histories, active_race_games, active_chess_games,
+    active_blackjack_games, active_hangman_games,
+    active_race_games, active_chess_games,
     active_puzzles, active_ragebaits, active_ttt_games, active_c4_games,
     rigged_slots, gambler_streak, quote_log, channel_histories,
-    fanfic_thread_ids, fanfic_owners, active_mocks, active_taxes,
+    ai_threads, active_mocks, active_taxes,
     active_curses,
 )
 

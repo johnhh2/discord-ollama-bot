@@ -11,7 +11,7 @@ from src.economy import (
     deduct_balance, get_balance,
     get_guild_ask_model, get_guild_roleplay_model,
 )
-from src.persistence import save_roleplay_state
+from src.persistence import save_ai_threads
 
 
 # Global semaphore — only one Ollama request runs at a time to avoid GPU overload.
@@ -214,51 +214,32 @@ async def respond(
     from src import state
     from src.helpers import get_system_prompt
     channel_id = channel.id
-    history = state.channel_histories[channel_id]
-    system_prompt = system_prompt or get_system_prompt(channel_id)
 
-    formatted_content = f"{author_name}: {content}" if author_name else content
-    history.append({"role": "user", "content": formatted_content})
-    messages = [{"role": "system", "content": system_prompt}] + list(history)
-
-    placeholder = await channel.send("...") if isinstance(channel, discord.Thread) else None
-    await _execute_ollama_stream(
-        channel, reply_to, messages, history, guild_id=guild_id, placeholder=placeholder
-    )
-
-
-async def respond_roleplay(
-    channel: discord.abc.Messageable,
-    user_id: int,
-    content: str,
-    reply_to: discord.Message,
-    author_name: str = None,
-):
-    from src import state
-    rp = state.active_roleplays[user_id]
-    history_key = rp.get("history_owner", user_id)
-    history = state.roleplay_histories.setdefault(history_key, [])
-
-    if rp.get("is_rpg"):
-        system_prompt = rp.get("system_prompt")
-    else:
-        system_prompt = (
-            f"You are roleplaying as the following character and must stay in character "
-            f"for every response, no matter what: {rp['character_prompt']}. "
-            f"Never break character or acknowledge that you are an AI."
+    # AI thread session (ask, fanfic, roleplay, rpg) — shared per-thread history
+    ai_thread = state.ai_threads.get(channel_id)
+    if ai_thread is not None:
+        history = ai_thread["history"]
+        sp = system_prompt or ai_thread.get("system_prompt") or get_system_prompt(channel_id)
+        kind = ai_thread["kind"]
+        model = (
+            get_guild_roleplay_model(guild_id) if guild_id and kind in ("roleplay", "rpg") else None
         )
+    else:
+        history = state.channel_histories[channel_id]
+        sp = system_prompt or get_system_prompt(channel_id)
+        model = None
 
     formatted_content = f"{author_name}: {content}" if author_name else content
     history.append({"role": "user", "content": formatted_content})
-    messages = [{"role": "system", "content": system_prompt}] + history
+    messages = [{"role": "system", "content": sp}] + list(history)
 
-    guild_id = rp.get("guild_id")
-    model = get_guild_roleplay_model(guild_id) if guild_id else OLLAMA_MODEL
     placeholder = await channel.send("...") if isinstance(channel, discord.Thread) else None
     await _execute_ollama_stream(
-        channel, reply_to, messages, history, model=model, placeholder=placeholder
+        channel, reply_to, messages, history,
+        model=model, guild_id=guild_id, placeholder=placeholder,
     )
-    await save_roleplay_state()
+    if ai_thread is not None:
+        await save_ai_threads()
 
 
 def _norm_puzzle_answer(s: str) -> str:

@@ -36,14 +36,14 @@ from src.persistence import (
     init_db_state, save_economy, save_insurance, save_guild_settings,
     save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
-    save_gambler_streak, save_roleplay_state, save_fanfic_histories,
+    save_gambler_streak,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg,
     load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
-    stream_ollama, finalize, _execute_ollama_stream, respond, respond_roleplay,
+    stream_ollama, finalize, _execute_ollama_stream, respond,
     ASK_SYSTEM_PROMPT, FANFIC_SYSTEM_PROMPT, FEATURE_COSTS, _norm_puzzle_answer,
 )
 from src.config import (
@@ -504,8 +504,8 @@ class EventsCog(commands.Cog):
         is_dm = isinstance(message.channel, discord.DMChannel)
         # Only respond to mentions if the message starts with the mention
         is_mentioned = self.bot.user in message.mentions and message.content.strip().startswith(f"<@{self.bot.user.id}>")
-        in_roleplay = uid in state.active_roleplays and state.active_roleplays[uid].get("channel_id") == message.channel.id
-        in_ask_thread = message.channel.id in state.ask_thread_ids
+        ai_thread = state.ai_threads.get(message.channel.id)
+        in_ai_thread = ai_thread is not None
 
         # Ragebait and mock take precedence over normal mentions (only in the purchase channel)
         _rage_in_channel = uid in state.active_ragebaits and (_rage_channel is None or message.channel.id == _rage_channel)
@@ -540,12 +540,12 @@ class EventsCog(commands.Cog):
                 await self.bot.process_commands(message)
                 return
 
-        if not (is_dm or is_mentioned or in_roleplay or in_ask_thread):
+        if not (is_dm or is_mentioned or in_ai_thread):
             await self.bot.process_commands(message)
             return
 
-        # Skip bare commands during roleplay or ask threads (let process_commands handle them)
-        if (in_roleplay or in_ask_thread) and not is_mentioned and not is_dm and message.content.startswith("!"):
+        # Skip bare commands inside AI threads (let process_commands handle them)
+        if in_ai_thread and not is_mentioned and not is_dm and message.content.startswith("!"):
             await self.bot.process_commands(message)
             return
 
@@ -560,22 +560,16 @@ class EventsCog(commands.Cog):
             await self.bot.process_commands(message)
             return
 
-        if uid in state.active_roleplays:
-            await respond_roleplay(message.channel, uid, content, message, author_name=message.author.display_name)
-        else:
-            # Gate fanfic threads to invited participants only
-            fo = state.fanfic_owners.get(message.channel.id)
-            if fo and uid not in fo["invited_ids"]:
-                await self.bot.process_commands(message)
-                return
-            # Gate ask threads to invited participants only
-            ao = state.ask_owners.get(message.channel.id)
-            if ao and uid not in ao["invited_ids"]:
+        if ai_thread is not None:
+            # Gate AI thread to invited participants only
+            if uid not in ai_thread["invited_ids"]:
                 await self.bot.process_commands(message)
                 return
             guild_id = message.guild.id if message.guild else None
-            ask_system_prompt = ao["system_prompt"] if ao else None
-            await respond(message.channel, uid, content, message, system_prompt=ask_system_prompt, guild_id=guild_id, author_name=message.author.display_name)
+            await respond(message.channel, uid, content, message, guild_id=guild_id, author_name=message.author.display_name)
+        else:
+            guild_id = message.guild.id if message.guild else None
+            await respond(message.channel, uid, content, message, guild_id=guild_id, author_name=message.author.display_name)
 
         await self.bot.process_commands(message)
 

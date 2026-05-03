@@ -38,14 +38,14 @@ from src.persistence import (
     save_economy, save_insurance, save_guild_settings,
     save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
-    save_gambler_streak, save_roleplay_state, save_fanfic_histories,
+    save_gambler_streak, save_ai_threads,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg, save_command_perms,
     save_restart_msg,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
-    stream_ollama, finalize, _execute_ollama_stream, respond, respond_roleplay,
+    stream_ollama, finalize, _execute_ollama_stream, respond,
     ASK_SYSTEM_PROMPT, FANFIC_SYSTEM_PROMPT, FEATURE_COSTS, _norm_puzzle_answer,
 )
 from src.config import (
@@ -205,9 +205,9 @@ class AdminCog(commands.Cog):
     @commands.command(name="reverse")
     async def cmd_reverse(self, ctx: commands.Context):
         uid = ctx.author.id
-        if uid in state.active_roleplays and state.active_roleplays[uid].get("channel_id") == ctx.channel.id:
-            history_key = state.active_roleplays[uid].get("history_owner", uid)
-            history = state.roleplay_histories.get(history_key, [])
+        t = state.ai_threads.get(ctx.channel.id)
+        if t is not None:
+            history = t["history"]
         else:
             history = state.channel_histories[ctx.channel.id]
         if not history:
@@ -222,6 +222,8 @@ class AdminCog(commands.Cog):
         else:
             await ctx.reply(embed=emb("", "No AI response to reverse.", C_RED))
             return
+        if t is not None:
+            await save_ai_threads()
         # Scan recent messages to find and delete the last bot response and the
         # user message that preceded it.
         recent = [m async for m in ctx.channel.history(limit=100)]

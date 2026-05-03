@@ -23,7 +23,7 @@ _PERSISTENCE_SAVE_NAMES = [
     "save_guild_settings", "save_bot_roles", "save_bot_settings", "save_godmode_users",
     "save_chess_games", "save_ragebait", "save_mock", "save_curse", "save_tax",
     "save_rigged_slots", "save_rigged_flips", "save_rigged_scratch", "save_rigged_steal",
-    "save_gambler_streak", "save_roleplay_state", "save_fanfic_histories",
+    "save_gambler_streak", "save_ai_threads",
     "save_quote_log", "save_saved_quotes", "save_lottery", "save_records",
     "save_leveling", "save_command_perms", "save_channel_prompts",
     "save_balance_history", "save_bot_stats_history", "add_ephemeral_msg",

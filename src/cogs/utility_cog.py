@@ -37,13 +37,13 @@ from src.persistence import (
     _load_json, save_economy, save_insurance, save_guild_settings,
     save_bot_settings, save_godmode_users, save_bot_roles,
     save_chess_games, save_ragebait, save_mock, save_rigged_slots,
-    save_gambler_streak, save_roleplay_state, save_fanfic_histories,
+    save_gambler_streak,
     save_quote_log, save_saved_quotes, save_tax, save_curse, save_lottery,
     load_lottery, load_saved_quotes, get_guild_cfg,
 )
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
-    stream_ollama, finalize, _execute_ollama_stream, respond, respond_roleplay,
+    stream_ollama, finalize, _execute_ollama_stream, respond,
     ASK_SYSTEM_PROMPT, FANFIC_SYSTEM_PROMPT, FEATURE_COSTS, _norm_puzzle_answer,
     ollama_semaphore,
 )

@@ -35,8 +35,6 @@ command_perms: dict = {}
 
 active_blackjack_games: dict = {}
 active_hangman_games: dict = {}
-active_roleplays: dict = {}
-roleplay_histories: dict = {}
 active_events: dict = {}        # message_id → {amount, rewarded: set}
 active_ttt_games: dict = {}
 active_c4_games: dict = {}
@@ -61,10 +59,10 @@ RIDDLES_LIST: list = _load_riddles_list()
 # ── Misc state ────────────────────────────────────────────────────────────────
 
 channel_histories: dict = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
-fanfic_thread_ids: set = set()
-fanfic_owners: dict = {}        # thread_id → {owner_id, invited_ids: set}
-ask_thread_ids: set = set()
-ask_owners: dict = {}           # thread_id → {owner_id, invited_ids: set, system_prompt: str}
+# AI thread sessions (ask, fanfic, roleplay, rpg) — keyed by thread_id.
+# Value: {kind, owner_id, invited_ids: set, system_prompt: str|None,
+#         character_prompt: str|None, history: list, guild_id: int|None}
+ai_threads: dict = {}
 user_last_request: dict = {}
 user_last_hangman: dict = {}
 user_last_puzzle: dict = {}

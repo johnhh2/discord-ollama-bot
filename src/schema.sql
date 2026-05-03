@@ -122,21 +122,15 @@ CREATE TABLE IF NOT EXISTS chess_games (
     game_json  JSON            NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS roleplay_state (
-    channel_id   BIGINT UNSIGNED NOT NULL PRIMARY KEY,
-    state_json   JSON            NOT NULL,
-    history_json JSON            NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS fanfic_owners (
-    thread_id        BIGINT UNSIGNED NOT NULL PRIMARY KEY,
-    owner_id         BIGINT UNSIGNED NOT NULL,
-    invited_ids_json JSON            NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS fanfic_histories (
-    channel_id   BIGINT UNSIGNED NOT NULL PRIMARY KEY,
-    history_json JSON            NOT NULL
+CREATE TABLE IF NOT EXISTS ai_threads (
+    thread_id         BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+    kind              ENUM('ask','fanfic','roleplay','rpg') NOT NULL,
+    owner_id          BIGINT UNSIGNED NOT NULL,
+    guild_id          BIGINT UNSIGNED NULL,
+    invited_ids_json  JSON            NOT NULL,
+    system_prompt     TEXT            NULL,
+    character_prompt  TEXT            NULL,
+    history_json      JSON            NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS leveling (

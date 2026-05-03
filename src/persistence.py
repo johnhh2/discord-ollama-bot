@@ -346,45 +346,30 @@ async def save_chess_games():
                 )
 
 
-# ── Roleplay / fanfic ─────────────────────────────────────────────────────────
+# ── AI threads (ask, fanfic, roleplay, rpg) ───────────────────────────────────
 
-async def save_roleplay_state():
+async def save_ai_threads():
     from src import state
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
-            await cur.execute("DELETE FROM roleplay_state")
-            for uid, rp in state.active_roleplays.items():
-                ch_id = rp.get("channel_id", uid)
-                rp_serializable = {**rp, "participants": list(rp.get("participants", set()))}
-                history = state.roleplay_histories.get(uid, [])
+            await cur.execute("DELETE FROM ai_threads")
+            for tid, t in state.ai_threads.items():
                 await cur.execute(
-                    "INSERT INTO roleplay_state (channel_id, state_json, history_json) VALUES (%s,%s,%s)"
-                    " ON DUPLICATE KEY UPDATE state_json=VALUES(state_json), history_json=VALUES(history_json)",
-                    (int(ch_id), json.dumps(rp_serializable), json.dumps(history)),
+                    "INSERT INTO ai_threads "
+                    "(thread_id, kind, owner_id, guild_id, invited_ids_json, system_prompt, character_prompt, history_json) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (
+                        int(tid),
+                        t["kind"],
+                        int(t["owner_id"]),
+                        int(t["guild_id"]) if t.get("guild_id") is not None else None,
+                        json.dumps(list(t.get("invited_ids", set()))),
+                        t.get("system_prompt"),
+                        t.get("character_prompt"),
+                        json.dumps(list(t.get("history", []))),
+                    ),
                 )
-
-
-async def save_fanfic_histories():
-    from src import state
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            # owners
-            await cur.execute("DELETE FROM fanfic_owners")
-            for tid, data in state.fanfic_owners.items():
-                await cur.execute(
-                    "INSERT INTO fanfic_owners (thread_id, owner_id, invited_ids_json) VALUES (%s,%s,%s)",
-                    (int(tid), data["owner_id"], json.dumps(list(data["invited_ids"]))),
-                )
-            # histories (only fanfic threads)
-            await cur.execute("DELETE FROM fanfic_histories")
-            for ch_id, history in state.channel_histories.items():
-                if ch_id in state.fanfic_thread_ids:
-                    await cur.execute(
-                        "INSERT INTO fanfic_histories (channel_id, history_json) VALUES (%s,%s)",
-                        (int(ch_id), json.dumps(list(history))),
-                    )
 
 
 # ── Quotes ────────────────────────────────────────────────────────────────────
@@ -922,38 +907,27 @@ async def init_db_state():
             except Exception as e:
                 logging.error(f"[init_db_state] chess_games failed: {e}", exc_info=True)
 
-            # ── roleplay_state ────────────────────────────────────────────────
+            # ── ai_threads (ask, fanfic, roleplay, rpg) ───────────────────────
             try:
-                await cur.execute("SELECT channel_id, state_json, history_json FROM roleplay_state")
-                for ch_id, state_json, history_json in await cur.fetchall():
-                    rp = json.loads(state_json)
-                    rp["participants"] = set(rp.get("participants", []))
-                    uid = rp.get("user_id", ch_id)
-                    state.active_roleplays[uid] = rp
-                    state.roleplay_histories[uid] = json.loads(history_json) if history_json else []
-            except Exception as e:
-                logging.error(f"[init_db_state] roleplay_state failed: {e}", exc_info=True)
-
-            # ── fanfic_owners ─────────────────────────────────────────────────
-            try:
-                await cur.execute("SELECT thread_id, owner_id, invited_ids_json FROM fanfic_owners")
-                for tid, owner_id, invited_json in await cur.fetchall():
-                    state.fanfic_owners[tid] = {
+                await cur.execute(
+                    "SELECT thread_id, kind, owner_id, guild_id, invited_ids_json, "
+                    "system_prompt, character_prompt, history_json FROM ai_threads"
+                )
+                for (
+                    tid, kind, owner_id, guild_id,
+                    invited_json, system_prompt, character_prompt, history_json,
+                ) in await cur.fetchall():
+                    state.ai_threads[tid] = {
+                        "kind": kind,
                         "owner_id": owner_id,
+                        "guild_id": guild_id,
                         "invited_ids": set(json.loads(invited_json) if invited_json else []),
+                        "system_prompt": system_prompt,
+                        "character_prompt": character_prompt,
+                        "history": json.loads(history_json) if history_json else [],
                     }
-                    state.fanfic_thread_ids.add(tid)
             except Exception as e:
-                logging.error(f"[init_db_state] fanfic_owners failed: {e}", exc_info=True)
-
-            # ── fanfic_histories ──────────────────────────────────────────────
-            try:
-                await cur.execute("SELECT channel_id, history_json FROM fanfic_histories")
-                for ch_id, history_json in await cur.fetchall():
-                    history = json.loads(history_json) if history_json else []
-                    state.channel_histories[ch_id] = deque(history, maxlen=HISTORY_LIMIT)
-            except Exception as e:
-                logging.error(f"[init_db_state] fanfic_histories failed: {e}", exc_info=True)
+                logging.error(f"[init_db_state] ai_threads failed: {e}", exc_info=True)
 
             # ── quote_log ─────────────────────────────────────────────────────
             try:
