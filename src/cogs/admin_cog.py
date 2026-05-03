@@ -373,6 +373,49 @@ class AdminCog(commands.Cog):
             ))
 
 
+    @commands.command(name="admingivexp", aliases=["adminxp", "adminpayxp"])
+    async def cmd_givexp(self, ctx: commands.Context, target: MemberConverter = None, amount: str = None):
+        if not await check_command_permission(ctx):
+            return
+        if target is None or amount is None:
+            await ctx.send(embed=emb("⚙️ Give XP", "Usage: `!admingivexp @user <amount>`", C_GREY))
+            return
+        if not ctx.guild:
+            await ctx.send(embed=emb("❌ Guild Only", "This command can only be used in a server.", C_RED))
+            return
+        try:
+            amount = int(amount)
+            assert amount != 0
+        except (ValueError, AssertionError):
+            await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a non-zero whole number.", C_RED))
+            return
+
+        from src.cogs.leveling_cog import _ensure_user, level_from_xp, display_level
+        from src.persistence import save_leveling
+
+        rec = _ensure_user(ctx.guild.id, target.id)
+        if amount < 0:
+            amount = max(amount, -rec["xp"])
+            if amount == 0:
+                await ctx.send(embed=emb(
+                    "⚙️ Give XP",
+                    f"**{target.display_name}** has 0 XP — nothing to remove.",
+                    C_GREY,
+                ))
+                return
+        rec["xp"] += amount
+        rec["level"] = level_from_xp(rec["xp"])
+        await save_leveling(guild_id=ctx.guild.id, uid=target.id)
+
+        action = "given" if amount > 0 else "removed"
+        await ctx.send(embed=emb(
+            "✨ Give XP",
+            f"**{abs(amount):,} XP** {action} {'to' if amount > 0 else 'from'} **{target.display_name}**. "
+            f"New total: {rec['xp']:,} XP (Level {display_level(rec['level'])})",
+            C_GOLD,
+        ))
+
+
     @commands.command(name="say")
     async def cmd_say(self, ctx: commands.Context, *, text: str = None):
         if not await check_command_permission(ctx):
