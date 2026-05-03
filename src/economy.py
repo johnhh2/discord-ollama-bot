@@ -156,6 +156,22 @@ def _ct_today() -> str:
     return now_ct.date().isoformat()
 
 
+def lottery_week_key(now_ct: datetime.datetime) -> int:
+    """Year-qualified ISO week key: iso_year * 100 + iso_week.
+
+    Bare ISO week numbers wrap 1..52 every year, so a year-old
+    last_drawn_week=1 would collide with next year's week 1 and silently
+    suppress the draw. Encoding as YYYYWW (e.g. 202601 for 2026 week 1)
+    avoids the collision while staying an INT.
+
+    Pre-fix saved values (bare week 0..53) can't collide with new values
+    (>= 100000), so the first post-deploy Saturday draw triggers a
+    natural migration via the normal save path.
+    """
+    iso_year, iso_week, _ = now_ct.isocalendar()
+    return iso_year * 100 + iso_week
+
+
 def next_daily_reset_ts() -> int:
     """Unix timestamp of the next 5am CT daily reset."""
     now_ct = _ct_now()

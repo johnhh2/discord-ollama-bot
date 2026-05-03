@@ -66,8 +66,8 @@ from src.config import (
     SHOP_TAX_DURATION_SECS, SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
     DAILY_REWARD, DAILY_RESET_HOUR, INITIAL_BOT_ADMIN_IDS,
 )
+from src.economy import lottery_week_key
 from src import state
-
 
 
 class LotteryCog(commands.Cog):
@@ -100,7 +100,7 @@ class LotteryCog(commands.Cog):
                 continue
 
             lottery = await load_lottery(guild.id)
-            current_week = now.isocalendar()[1]
+            current_week = lottery_week_key(now)
 
             # 6pm: draw winner and reset lottery
             if now.hour >= 18 and lottery.get("last_drawn_week") != current_week:
@@ -161,7 +161,7 @@ class LotteryCog(commands.Cog):
         # Check if we're in the 6-7pm window (draw done, new lottery not yet announced)
         ct = ZoneInfo("America/Chicago")
         now_cst = datetime.datetime.now(datetime.timezone.utc).astimezone(ct)
-        current_week = now_cst.isocalendar()[1]
+        current_week = lottery_week_key(now_cst)
         in_transition = (
             now_cst.weekday() == 5
             and now_cst.hour >= 18

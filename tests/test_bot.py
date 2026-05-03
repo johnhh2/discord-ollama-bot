@@ -368,9 +368,10 @@ def _ct(year, month, day, hour, minute=0):
 
 def _should_draw(lottery: dict, now_ct: datetime.datetime) -> bool:
     """Mirror the gate logic in lottery_scheduler / on_ready."""
+    from src.economy import lottery_week_key
     is_saturday = now_ct.weekday() == 5
     is_6pm = now_ct.hour == 18 and now_ct.minute == 0
-    current_week = now_ct.isocalendar()[1]
+    current_week = lottery_week_key(now_ct)
     return is_saturday and is_6pm and current_week != lottery.get("last_posted_week", 0)
 
 
@@ -513,14 +514,28 @@ class TestLotteryWeekTiming:
         assert _should_draw(self._lottery(), now) is False
 
     def test_already_posted_this_week_does_not_retrigger(self):
+        from src.economy import lottery_week_key
         now = _ct(2025, 6, 7, 18, 0)
-        week = now.isocalendar()[1]
+        week = lottery_week_key(now)
         assert _should_draw(self._lottery(last_posted_week=week), now) is False
 
     def test_different_week_triggers_again(self):
-        # week 23 is different from last_posted_week=22 → should draw
-        now = _ct(2025, 6, 7, 18, 0)   # ISO week 23
-        assert _should_draw(self._lottery(last_posted_week=22), now) is True
+        # Last week's encoded key differs from this week's → should draw
+        from src.economy import lottery_week_key
+        now = _ct(2025, 6, 7, 18, 0)               # ISO week 23 of 2025
+        last_week_key = lottery_week_key(_ct(2025, 5, 31, 18, 0))  # week 22
+        assert _should_draw(self._lottery(last_posted_week=last_week_key), now) is True
+
+    def test_year_boundary_does_not_silently_skip(self):
+        """A year-old week 1 must not collide with the new year's week 1.
+        Previously last_drawn_week was a bare int 1..52 with no year, so a
+        year of uptime could suppress the draw. Encoding as YYYYWW fixes it.
+        """
+        from src.economy import lottery_week_key
+        # Saturday in ISO week 1 of 2027 is Jan 9 (Jan 2 is week 53 of 2026).
+        now = _ct(2027, 1, 9, 18, 0)
+        last_year_key = lottery_week_key(_ct(2026, 1, 3, 18, 0))  # week 1 of 2026
+        assert _should_draw(self._lottery(last_posted_week=last_year_key), now) is True
 
 
 class TestLotteryWinnerPayout:

@@ -27,6 +27,7 @@ from src.economy import (
     add_guild_house, drain_bot_balance_into_lottery, announce_new_lottery,
     is_insured, get_guild_ask_model, get_guild_roleplay_model,
     get_guild_coding_model, _ct_now, _ct_today, do_daily_reset, _ensure_user,
+    lottery_week_key,
 )
 from src.permissions import (
     is_admin, is_server_admin, can_manage_settings, check_rate_limit,
@@ -475,7 +476,7 @@ class SettingsCog(commands.Cog):
             cfg["lottery_channel"] = channel.id
             await save_guild_settings()
 
-            current_week = datetime.datetime.now().isocalendar()[1]
+            current_week = lottery_week_key(_ct_now())
             lottery = await load_lottery(ctx.guild.id)
             if lottery.get("last_posted_week", 0) != current_week:
                 lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
