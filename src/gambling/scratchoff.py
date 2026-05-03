@@ -87,6 +87,23 @@ async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | No
 GAMBLER_ROLE_STREAK_REQUIRED = 3
 
 
+def scratchoff_attempts_remaining(user: dict, today: str) -> int:
+    """Return how many scratchoff attempts the user has left today.
+
+    Mutates `user` to roll the daily counter to `today` if the stored
+    `scratch_date` is stale (or missing), and normalizes `scratch_used`
+    to an int so the caller can safely do `user["scratch_used"] += 1`.
+    Mirrors the pre-condition logic at the top of cmd_scratchoff so the
+    rollover + cap behavior can be tested in isolation.
+    """
+    if user.get("scratch_date") != today:
+        user["scratch_date"] = today
+        user["scratch_used"] = 0
+    elif "scratch_used" not in user:
+        user["scratch_used"] = 0
+    return max(0, 3 - user["scratch_used"])
+
+
 def _get_streak_entry(uid_key: str) -> dict:
     """Return the streak entry as a dict {date, count}, normalizing legacy str entries."""
     entry = state.gambler_streak.get(uid_key)
@@ -199,11 +216,7 @@ class ScratchoffCog(commands.Cog):
 
         today = _ct_today()
         user = state.economy["users"][str(uid)]
-        if user.get("scratch_date") != today:
-            user["scratch_date"] = today
-            user["scratch_used"] = 0
-
-        remaining = 3 - user["scratch_used"]
+        remaining = scratchoff_attempts_remaining(user, today)
         if remaining <= 0:
             await save_economy(uid=uid)
             await ctx.send(embed=emb("🎰 Daily Limit", f"**{ctx.author.display_name}** has used all **3** daily scratchoffs.\nCome back tomorrow!", C_GOLD))
