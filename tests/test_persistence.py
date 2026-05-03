@@ -456,3 +456,180 @@ async def test_channel_prompts_empty_dict_clears_table(db):
     _state.channel_prompts.clear()
     await _persistence.init_db_state()
     assert _state.channel_prompts == {}
+
+
+# ── bot_roles / godmode_users ─────────────────────────────────────────────────
+
+async def test_bot_roles_roundtrip(db):
+    _state.bot_roles.clear()
+    _state.bot_roles.update({101, 202, 303})
+    await _persistence.save_bot_roles()
+
+    _state.bot_roles.clear()
+    await _persistence.init_db_state()
+    assert _state.bot_roles == {101, 202, 303}
+
+
+async def test_bot_roles_save_replaces_full_table(db):
+    """save_bot_roles is DELETE-then-INSERT: removed roles vanish on next save."""
+    _state.bot_roles.clear()
+    _state.bot_roles.update({1, 2, 3})
+    await _persistence.save_bot_roles()
+
+    _state.bot_roles.discard(2)
+    await _persistence.save_bot_roles()
+
+    _state.bot_roles.clear()
+    await _persistence.init_db_state()
+    assert _state.bot_roles == {1, 3}
+
+
+async def test_godmode_users_roundtrip(db):
+    _state.godmode_users.clear()
+    _state.godmode_users.update({4001, 4002})
+    await _persistence.save_godmode_users()
+
+    _state.godmode_users.clear()
+    await _persistence.init_db_state()
+    assert _state.godmode_users == {4001, 4002}
+
+
+# ── rigged_slots / flips / scratch / steal ────────────────────────────────────
+
+async def test_rigged_slots_roundtrip(db):
+    _state.rigged_slots.clear()
+    _state.rigged_slots["100"] = "🍒"
+    _state.rigged_slots["200"] = "7️⃣"
+    await _persistence.save_rigged_slots()
+
+    _state.rigged_slots.clear()
+    await _persistence.init_db_state()
+    # init_db_state keys rigged_slots by str(uid).
+    assert _state.rigged_slots == {"100": "🍒", "200": "7️⃣"}
+
+
+async def test_rigged_slots_save_replaces_full_table(db):
+    _state.rigged_slots.clear()
+    _state.rigged_slots["1"] = "🍒"
+    _state.rigged_slots["2"] = "🍋"
+    await _persistence.save_rigged_slots()
+
+    del _state.rigged_slots["2"]
+    await _persistence.save_rigged_slots()
+
+    _state.rigged_slots.clear()
+    await _persistence.init_db_state()
+    assert "1" in _state.rigged_slots
+    assert "2" not in _state.rigged_slots
+
+
+async def test_rigged_flips_roundtrip(db):
+    _state.rigged_flips.clear()
+    _state.rigged_flips[5001] = 3   # 3 guaranteed wins remaining
+    _state.rigged_flips[5002] = 1
+    await _persistence.save_rigged_flips()
+
+    _state.rigged_flips.clear()
+    await _persistence.init_db_state()
+    # init_db_state keys rigged_flips by int(uid).
+    assert _state.rigged_flips == {5001: 3, 5002: 1}
+
+
+async def test_rigged_scratch_roundtrip(db):
+    _state.rigged_scratch.clear()
+    _state.rigged_scratch[6001] = 4   # forced 4-symbol match next scratch
+    await _persistence.save_rigged_scratch()
+
+    _state.rigged_scratch.clear()
+    await _persistence.init_db_state()
+    assert _state.rigged_scratch == {6001: 4}
+
+
+async def test_rigged_steal_roundtrip(db):
+    _state.rigged_steal.clear()
+    _state.rigged_steal[7001] = 2   # 2 guaranteed steal successes remaining
+    await _persistence.save_rigged_steal()
+
+    _state.rigged_steal.clear()
+    await _persistence.init_db_state()
+    assert _state.rigged_steal == {7001: 2}
+
+
+# ── leveling ──────────────────────────────────────────────────────────────────
+
+async def test_leveling_targeted_save_writes_one_user(db):
+    """save_leveling(guild_id, uid) writes exactly that user's row."""
+    _state.leveling.clear()
+    _state.leveling["42"] = {
+        "100": {"xp": 500, "level": 3, "msg_today": 2},
+        "200": {"xp": 1500, "level": 5, "msg_today": 0},
+    }
+    await _persistence.save_leveling(guild_id=42, uid=100)
+
+    # Read uid=100 back via init_db_state
+    _state.leveling.clear()
+    await _persistence.init_db_state()
+    assert _state.leveling["42"]["100"]["xp"] == 500
+    assert _state.leveling["42"]["100"]["level"] == 3
+    # uid=200 was NOT saved (targeted write).
+    assert "200" not in _state.leveling.get("42", {})
+
+
+async def test_leveling_bulk_save_writes_all(db):
+    """save_leveling() with no args writes every row in state.leveling."""
+    _state.leveling.clear()
+    _state.leveling["42"] = {
+        "100": {"xp": 100, "level": 1},
+        "200": {"xp": 200, "level": 2},
+    }
+    _state.leveling["99"] = {
+        "300": {"xp": 999, "level": 9},
+    }
+    await _persistence.save_leveling()
+
+    _state.leveling.clear()
+    await _persistence.init_db_state()
+    assert _state.leveling["42"]["100"]["xp"] == 100
+    assert _state.leveling["42"]["200"]["xp"] == 200
+    assert _state.leveling["99"]["300"]["xp"] == 999
+
+
+async def test_leveling_targeted_save_overwrites_existing_row(db):
+    """ON DUPLICATE KEY UPDATE: re-saving the same (guild, uid) overwrites."""
+    _state.leveling.clear()
+    _state.leveling["42"] = {"100": {"xp": 100, "level": 1}}
+    await _persistence.save_leveling(guild_id=42, uid=100)
+
+    _state.leveling["42"]["100"]["xp"] = 999
+    await _persistence.save_leveling(guild_id=42, uid=100)
+
+    _state.leveling.clear()
+    await _persistence.init_db_state()
+    assert _state.leveling["42"]["100"]["xp"] == 999
+
+
+# ── restart_msg ───────────────────────────────────────────────────────────────
+
+async def test_restart_msg_save_load_clear_cycle(db):
+    """save → load → clear → load returns empty."""
+    await _persistence.save_restart_msg(channel_id=8888, message_id=99999)
+
+    loaded = await _persistence.load_restart_msg()
+    assert loaded == {"channel_id": 8888, "message_id": 99999}
+
+    await _persistence.clear_restart_msg()
+    assert await _persistence.load_restart_msg() == {}
+
+
+async def test_restart_msg_load_when_empty_returns_empty_dict(db):
+    """No saved message → load returns {} (not None)."""
+    assert await _persistence.load_restart_msg() == {}
+
+
+async def test_restart_msg_save_overwrites_existing(db):
+    """Only one restart_msg row exists at a time (id=1 PK)."""
+    await _persistence.save_restart_msg(channel_id=1, message_id=2)
+    await _persistence.save_restart_msg(channel_id=3, message_id=4)
+
+    loaded = await _persistence.load_restart_msg()
+    assert loaded == {"channel_id": 3, "message_id": 4}
