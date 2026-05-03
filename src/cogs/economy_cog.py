@@ -859,12 +859,9 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a non-zero whole number.", C_RED))
             return
 
-        # Function-local imports because src.economy._ensure_user shadows
-        # src.leveling._ensure_user at module scope.
-        from src.leveling import _ensure_user as _ensure_lvl_user, level_from_xp, display_level
         from src.persistence import save_leveling
 
-        rec = _ensure_lvl_user(ctx.guild.id, target.id)
+        rec = _ensure_lvl_record(ctx.guild.id, target.id)
         if amount < 0:
             amount = max(amount, -rec["xp"])
             if amount == 0:

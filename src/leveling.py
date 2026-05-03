@@ -94,7 +94,7 @@ def levelup_coin_reward(display_lvl: int) -> int:
 # ── User record helpers ───────────────────────────────────────────────────────
 # Storage layout: state.leveling = {guild_id_str: {uid_str: {...}}}
 
-def _ensure_user(guild_id: int, uid: int) -> dict:
+def _ensure_lvl_record(guild_id: int, uid: int) -> dict:
     gkey = str(guild_id)
     ukey = str(uid)
     guild_data = state.leveling.setdefault(gkey, {})
@@ -138,7 +138,7 @@ async def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tup
     """
     if not guild_id:
         return 0, False
-    rec = _ensure_user(guild_id, uid)
+    rec = _ensure_lvl_record(guild_id, uid)
     now = time.time()
 
     if source == "msg":

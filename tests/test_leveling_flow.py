@@ -16,7 +16,7 @@ import pytest
 import src.state as _state
 import src.economy as _economy
 from src.leveling import (
-    grant_xp, _ensure_user as _ensure_lvl_user,
+    grant_xp, _ensure_lvl_record as _ensure_lvl_user,
     levelup_coin_reward, display_level, XP_SCRATCH,
 )
 from src.cogs.leveling_cog import LevelingCog

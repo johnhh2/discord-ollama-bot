@@ -18,7 +18,7 @@ import pytest
 import src.state as _state
 import src.events as _events
 from src.leveling import (
-    grant_xp, _ensure_user as _ensure_lvl_user,
+    grant_xp, _ensure_lvl_record as _ensure_lvl_user,
     HOUR_SECS, MINS30_SECS, MSG_DAILY_MAX, XP_MESSAGE, XP_VOICE, XP_STREAM,
 )
 from src.cogs.economy_cog import EconomyCog
