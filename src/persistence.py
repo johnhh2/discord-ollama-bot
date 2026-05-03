@@ -346,7 +346,7 @@ async def save_chess_games():
                 )
 
 
-# ── AI threads (ask, fanfic, roleplay, rpg) ───────────────────────────────────
+# ── AI threads (ask, story, roleplay, rpg) ───────────────────────────────────
 
 async def save_ai_threads():
     from src import state
@@ -907,7 +907,7 @@ async def init_db_state():
             except Exception as e:
                 logging.error(f"[init_db_state] chess_games failed: {e}", exc_info=True)
 
-            # ── ai_threads (ask, fanfic, roleplay, rpg) ───────────────────────
+            # ── ai_threads (ask, story, roleplay, rpg) ───────────────────────
             try:
                 await cur.execute(
                     "SELECT thread_id, kind, owner_id, guild_id, invited_ids_json, "

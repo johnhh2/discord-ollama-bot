@@ -45,7 +45,7 @@ from src.persistence import (
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
     stream_ollama, finalize, _execute_ollama_stream, respond,
-    ASK_SYSTEM_PROMPT, FANFIC_SYSTEM_PROMPT, FEATURE_COSTS, _norm_puzzle_answer,
+    ASK_SYSTEM_PROMPT, STORY_SYSTEM_PROMPT, FEATURE_COSTS, _norm_puzzle_answer,
 )
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
@@ -127,6 +127,8 @@ class SettingsCog(commands.Cog):
         gambler_role_val = "✅ enabled" if cfg.get("gambler_role_enabled", False) else "❌ disabled"
         tax_aliases = cfg.get("tax_aliases", {})
         tax_aliases_val = ", ".join(f"{v} `!{k}`" for k, v in tax_aliases.items()) if tax_aliases else "none"
+        story_aliases = cfg.get("story_aliases", {})
+        story_aliases_val = ", ".join(f"`!{k}`" for k in story_aliases) if story_aliases else "none"
 
         embed = discord.Embed(title="⚙️ Server Settings", color=C_BLUE)
         embed.add_field(name="🤖 AI channels", value=ai_val, inline=False)
@@ -141,6 +143,7 @@ class SettingsCog(commands.Cog):
         embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
         embed.add_field(name="🎲 Gambler role", value=gambler_role_val, inline=False)
         embed.add_field(name="🏷️ Tax aliases", value=tax_aliases_val, inline=False)
+        embed.add_field(name="📖 Story aliases", value=story_aliases_val, inline=False)
         footer_text = (
             "Subcommands:\n"
             "ai-channels #ch... / clear\n"
@@ -429,6 +432,83 @@ class SettingsCog(commands.Cog):
 
         else:
             await ctx.send(embed=emb("⚙️ NSFW Aliases", "Usage: `!settings nsfw-alias add|remove <word>` / `list` / `clear`", C_GREY))
+
+    # ── !settings story-alias ─────────────────────────────────────────────────
+    @cmd_settings.command(name="story-alias")
+    async def settings_story_alias(self, ctx: commands.Context, *args):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        if not await check_command_permission(ctx):
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        aliases: dict = cfg.setdefault("story_aliases", {})
+
+        usage_short = (
+            "Usage: `!settings story-alias add <word> <system prompt>` / `remove <word>` / `list` / `clear`"
+        )
+
+        if not args:
+            await ctx.send(embed=emb(
+                "⚙️ Story Aliases",
+                f"{usage_short}\n"
+                "Aliases let users type `!<word>` as a shortcut for `!story` with a custom "
+                "system prompt — e.g. `!settings story-alias add scifi You write hard science fiction…`",
+                C_GREY,
+            ))
+            return
+
+        action = args[0].lower()
+
+        if action == "list":
+            if aliases:
+                lines = []
+                for k, v in aliases.items():
+                    preview = (v[:80] + "…") if isinstance(v, str) and len(v) > 80 else v
+                    lines.append(f"`!{k}` — {preview}")
+                val = "\n".join(lines)
+            else:
+                val = "none"
+            await ctx.send(embed=emb("📖 Story Aliases", val, C_GOLD))
+
+        elif action == "clear":
+            cfg["story_aliases"] = {}
+            await save_guild_settings()
+            await ctx.send(embed=emb("📖 Story Aliases", "All aliases cleared.", C_GREEN))
+
+        elif action == "add":
+            if len(args) < 3:
+                await ctx.send(embed=emb("⚙️ Story Aliases", "Usage: `!settings story-alias add <word> <system prompt>`", C_GREY))
+                return
+            word = args[1].lower()
+            if not word.isalnum():
+                await ctx.send(embed=emb("❌ Invalid Alias", "Alias must be a single word (letters and numbers only).", C_RED))
+                return
+            prompt = " ".join(args[2:]).strip()
+            if not prompt:
+                await ctx.send(embed=emb("❌ Empty Prompt", "Provide a non-empty system prompt.", C_RED))
+                return
+            if len(prompt) > 2000:
+                await ctx.send(embed=emb("❌ Prompt Too Long", "System prompt must be ≤ 2000 characters.", C_RED))
+                return
+            aliases[word] = prompt
+            await save_guild_settings()
+            await ctx.send(embed=emb("📖 Story Aliases", f"Added `!{word}`.", C_GREEN))
+
+        elif action == "remove":
+            if len(args) < 2:
+                await ctx.send(embed=emb("⚙️ Story Aliases", "Usage: `!settings story-alias remove <word>`", C_GREY))
+                return
+            word = args[1].lower()
+            if word not in aliases:
+                await ctx.send(embed=emb("📖 Story Aliases", f"`{word}` is not in the alias list.", C_GREY))
+                return
+            del aliases[word]
+            await save_guild_settings()
+            await ctx.send(embed=emb("📖 Story Aliases", f"Removed `{word}`.", C_GREEN))
+
+        else:
+            await ctx.send(embed=emb("⚙️ Story Aliases", usage_short, C_GREY))
 
     # ── !settings quote ───────────────────────────────────────────────────────
     @cmd_settings.command(name="quote")

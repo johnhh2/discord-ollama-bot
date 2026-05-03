@@ -44,7 +44,7 @@ from src.persistence import (
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
     stream_ollama, finalize, _execute_ollama_stream, respond,
-    ASK_SYSTEM_PROMPT, FANFIC_SYSTEM_PROMPT, FEATURE_COSTS, _norm_puzzle_answer,
+    ASK_SYSTEM_PROMPT, STORY_SYSTEM_PROMPT, FEATURE_COSTS, _norm_puzzle_answer,
     ollama_semaphore,
 )
 from src.config import (
@@ -334,12 +334,13 @@ class UtilityCog(commands.Cog):
         )
 
         embed.add_field(
-            name="📖 !fanfic",
+            name="📖 !story",
             value=(
-                f"Generate a steamy fan fiction story on any topic\n"
-                f"Cost: **20 🪙** · `!continue` for next chapter (10 🪙) · `!tldr` to summarize\n"
+                f"Generate an original short story on any topic\n"
+                f"Cost: **500 🪙** · `!continue` for next chapter (10 🪙) · `!tldr` to summarize\n"
                 f"Model: `{ask_model}`\n"
-                f"Usage: `!fanfic <prompt>`"
+                f"Usage: `!story <prompt>`\n"
+                f"Server admins can register custom-prompt aliases via `!settings story-alias`"
             ),
             inline=False
         )

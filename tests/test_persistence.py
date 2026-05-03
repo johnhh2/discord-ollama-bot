@@ -338,7 +338,7 @@ async def test_chess_games_save_replaces_full_table(db):
     assert 2 not in _state.active_chess_games
 
 
-# ── ai_threads (ask, fanfic, roleplay, rpg) ───────────────────────────────────
+# ── ai_threads (ask, story, roleplay, rpg) ───────────────────────────────────
 
 async def test_ai_threads_roundtrip_preserves_set_invited_ids(db):
     """ai_threads.invited_ids is a set in memory but a JSON list on disk —
@@ -397,12 +397,12 @@ async def test_ai_threads_save_replaces_full_table(db):
     """save_ai_threads is DELETE-then-INSERT semantics; removed threads vanish."""
     _state.ai_threads.clear()
     _state.ai_threads[1] = {
-        "kind": "fanfic", "owner_id": 1, "guild_id": 1,
+        "kind": "story", "owner_id": 1, "guild_id": 1,
         "invited_ids": set(), "system_prompt": None,
         "character_prompt": None, "history": [],
     }
     _state.ai_threads[2] = {
-        "kind": "fanfic", "owner_id": 2, "guild_id": 1,
+        "kind": "story", "owner_id": 2, "guild_id": 1,
         "invited_ids": set(), "system_prompt": None,
         "character_prompt": None, "history": [],
     }

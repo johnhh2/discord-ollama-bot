@@ -59,7 +59,7 @@ RIDDLES_LIST: list = _load_riddles_list()
 # ── Misc state ────────────────────────────────────────────────────────────────
 
 channel_histories: dict = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
-# AI thread sessions (ask, fanfic, roleplay, rpg) — keyed by thread_id.
+# AI thread sessions (ask, story, roleplay, rpg) — keyed by thread_id.
 # Value: {kind, owner_id, invited_ids: set, system_prompt: str|None,
 #         character_prompt: str|None, history: list, guild_id: int|None}
 ai_threads: dict = {}

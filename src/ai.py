@@ -26,22 +26,19 @@ ASK_SYSTEM_PROMPT = (
     "Do not make up information."
 )
 
-FANFIC_SYSTEM_PROMPT = (
-    "You are a bold, creative fiction writer specializing in steamy, adult romantic fan fiction. "
-    "Your stories are imaginative, dramatic, and elaborately detailed — never timid or vague. "
-    "When given a topic, subject, characters, or scenario, write an original, self-contained short story "
-    "(roughly 400–700 words) that is sensual, emotionally charged, and engaging from start to finish. "
-    "Use vivid descriptive language, charged dialogue, and strong narrative momentum. "
-    "Build tension before the payoff. Give characters distinct voices and desires. "
-    "The story should feel complete — with a beginning that hooks the reader, a middle that escalates, "
-    "and a satisfying, steamy conclusion. "
-    "Do not summarize or describe what you are about to write — just write the story directly. "
-    "Do not add disclaimers, caveats, or author's notes."
+STORY_SYSTEM_PROMPT = (
+    "You are a creative fiction writer. "
+    "When given a topic, characters, or scenario, write an original, self-contained short story "
+    "(roughly 400-700 words) with vivid descriptive language, distinct character voices, "
+    "and strong narrative momentum. "
+    "The story should feel complete — a beginning that hooks the reader, a middle that escalates, "
+    "and a satisfying conclusion. "
+    "Do not summarize what you are about to write — just write the story."
 )
 
 FEATURE_COSTS: dict = {
     "ask": 200,
-    "fanfic": 500,
+    "story": 500,
     "continue": 10,
     "roleplay": 500,
     "rpg": 500,
@@ -49,7 +46,7 @@ FEATURE_COSTS: dict = {
 
 _FEATURE_LABELS: dict = {
     "ask": "Asking",
-    "fanfic": "Fan fiction",
+    "story": "Writing a story",
     "continue": "Continuing",
     "roleplay": "Starting a roleplay",
     "rpg": "Starting an RPG adventure",
@@ -215,7 +212,7 @@ async def respond(
     from src.helpers import get_system_prompt
     channel_id = channel.id
 
-    # AI thread session (ask, fanfic, roleplay, rpg) — shared per-thread history
+    # AI thread session (ask, story, roleplay, rpg) — shared per-thread history
     ai_thread = state.ai_threads.get(channel_id)
     if ai_thread is not None:
         history = ai_thread["history"]

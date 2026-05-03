@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS chess_games (
 
 CREATE TABLE IF NOT EXISTS ai_threads (
     thread_id         BIGINT UNSIGNED NOT NULL PRIMARY KEY,
-    kind              ENUM('ask','fanfic','roleplay','rpg') NOT NULL,
+    kind              ENUM('ask','story','roleplay','rpg') NOT NULL,
     owner_id          BIGINT UNSIGNED NOT NULL,
     guild_id          BIGINT UNSIGNED NULL,
     invited_ids_json  JSON            NOT NULL,

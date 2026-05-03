@@ -45,7 +45,7 @@ from src.persistence import (
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
     stream_ollama, finalize, _execute_ollama_stream, respond,
-    ASK_SYSTEM_PROMPT, FANFIC_SYSTEM_PROMPT, FEATURE_COSTS, _norm_puzzle_answer,
+    ASK_SYSTEM_PROMPT, STORY_SYSTEM_PROMPT, FEATURE_COSTS, _norm_puzzle_answer,
 )
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,

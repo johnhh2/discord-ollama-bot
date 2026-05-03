@@ -44,7 +44,7 @@ from src.persistence import (
 from src.ai import (
     enforce_cost, insufficient_funds, check_ollama_connected, keep_typing,
     stream_ollama, finalize, _execute_ollama_stream, respond,
-    ASK_SYSTEM_PROMPT, FANFIC_SYSTEM_PROMPT, FEATURE_COSTS, _norm_puzzle_answer,
+    ASK_SYSTEM_PROMPT, STORY_SYSTEM_PROMPT, FEATURE_COSTS, _norm_puzzle_answer,
 )
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, SYSTEM_PROMPT, HISTORY_LIMIT,
@@ -214,12 +214,31 @@ class AICog(commands.Cog):
             await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
 
 
-    @commands.command(name="fanfic")
-    async def cmd_fanfic(self, ctx: commands.Context, *, prompt: str = None):
+    @commands.command(name="story")
+    async def cmd_story(self, ctx: commands.Context, *, prompt: str = None):
+        await self._story_with_prompt(ctx, prompt=prompt, system_prompt=STORY_SYSTEM_PROMPT, alias_name=None)
+
+    async def _story_with_prompt(
+        self,
+        ctx: commands.Context,
+        *,
+        prompt: str,
+        system_prompt: str,
+        alias_name: str | None,
+    ):
+        """Shared body for !story and any guild-defined story aliases.
+
+        When invoked via an alias listener, alias_name is the alias word
+        (used in usage hints and thread titles) and system_prompt is the
+        custom prompt registered for that alias.
+        """
+        cmd_label = alias_name or "story"
+        usage = f"Usage: `!{cmd_label} <prompt> [@user1 @user2 ...]` — e.g. `!{cmd_label} Batman and Superman stuck in an elevator`"
+
         if await check_ai_channel(ctx):
             return
         if prompt is None:
-            await ctx.send("Usage: `!fanfic <prompt> [@user1 @user2 ...]` — e.g. `!fanfic Batman and Superman stuck in an elevator`")
+            await ctx.send(usage)
             return
         if check_rate_limit(ctx.author.id):
             await ctx.send("⚠️ Slow down! Please wait a moment before sending another message.")
@@ -232,26 +251,27 @@ class AICog(commands.Cog):
             clean_prompt = clean_prompt.replace(f"<@{m.id}>", "").replace(f"<@!{m.id}>", "")
         clean_prompt = clean_prompt.strip()
         if not clean_prompt:
-            await ctx.send("Usage: `!fanfic <prompt> [@user1 @user2 ...]` — e.g. `!fanfic Batman and Superman stuck in an elevator`")
+            await ctx.send(usage)
             return
 
-        if not await enforce_cost(ctx, "fanfic"):
+        if not await enforce_cost(ctx, "story"):
             return
 
+        thread_label = alias_name.capitalize() if alias_name else "Story"
         guild_id = ctx.guild.id if ctx.guild else None
         if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
-            thread = await ctx.message.create_thread(name=f"Fanfic: {clean_prompt[:75]}")
+            thread = await ctx.message.create_thread(name=f"{thread_label}: {clean_prompt[:75]}")
             state.ai_threads[thread.id] = {
-                "kind": "fanfic",
+                "kind": "story",
                 "owner_id": uid,
                 "guild_id": guild_id,
                 "invited_ids": {uid},
-                "system_prompt": FANFIC_SYSTEM_PROMPT,
+                "system_prompt": system_prompt,
                 "character_prompt": None,
                 "history": [],
             }
 
-            async def _fanfic_join(user, _thread=thread, _thread_id=thread.id):
+            async def _story_join(user, _thread=thread, _thread_id=thread.id):
                 member = ctx.guild.get_member(user.id) if ctx.guild else None
                 if member:
                     try:
@@ -262,21 +282,44 @@ class AICog(commands.Cog):
                 if t is not None:
                     t["invited_ids"].add(user.id)
                     await save_ai_threads()
-                await _thread.send(embed=emb("✅ Joined", f"{user.mention} joined the fanfic!", C_GREEN))
+                await _thread.send(embed=emb("✅ Joined", f"{user.mention} joined the {thread_label.lower()}!", C_GREEN))
 
             if invited_users:
-                await _send_invite(ctx, invited_users, title="📨 Fanfic Invite", dest=thread, on_join=_fanfic_join)
+                await _send_invite(ctx, invited_users, title=f"📨 {thread_label} Invite", dest=thread, on_join=_story_join)
 
-            await respond(thread, uid, clean_prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
-            await thread.send(embed=emb("📖 Fanfic Started", "`!continue` — next chapter · `!reverse` — undo last response · `!invite @user` — add a co-author · `!stop` — end the story", C_BLUE))
+            await respond(thread, uid, clean_prompt, ctx.message, system_prompt=system_prompt, guild_id=guild_id)
+            await thread.send(embed=emb(f"📖 {thread_label} Started", "`!continue` — next chapter · `!reverse` — undo last response · `!invite @user` — add a co-author · `!stop` — end the story", C_BLUE))
         else:
-            await respond(ctx.channel, uid, clean_prompt, ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
+            await respond(ctx.channel, uid, clean_prompt, ctx.message, system_prompt=system_prompt, guild_id=guild_id)
+
+
+    @commands.Cog.listener()
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
+        """Route !<alias> to cmd_story when the alias is a guild-configured story alias."""
+        if not isinstance(error, commands.CommandNotFound):
+            return
+        if not ctx.guild:
+            return
+        parts = ctx.message.content.strip().split(None, 1)
+        if not parts:
+            return
+        word = parts[0][1:].lower()
+        story_aliases = get_guild_cfg(ctx.guild.id).get("story_aliases", {})
+        if word not in story_aliases:
+            return
+        custom_prompt = story_aliases[word]
+        rest = parts[1] if len(parts) > 1 else None
+        ctx.invoked_with = word
+        # Set ctx.command so check_command_permission and rate-limit logic
+        # behave as if !story were invoked.
+        ctx.command = self.cmd_story
+        await self._story_with_prompt(ctx, prompt=rest, system_prompt=custom_prompt, alias_name=word)
 
 
     @commands.command(name="continue")
     async def cmd_continue(self, ctx: commands.Context):
         if not isinstance(ctx.channel, discord.Thread):
-            await ctx.send(embed=emb("❌ Threads Only", "`!continue` only works inside a fanfic thread.", C_RED))
+            await ctx.send(embed=emb("❌ Threads Only", "`!continue` only works inside an AI thread.", C_RED))
             return
         if check_rate_limit(ctx.author.id):
             await ctx.send("⚠️ Slow down! Please wait a moment before sending another message.")
@@ -288,19 +331,20 @@ class AICog(commands.Cog):
         history = t["history"] if t else state.channel_histories[ctx.channel.id]
 
         if not history:
-            await ctx.send(embed=emb("❌ Nothing to Continue", "No fanfic found in this thread.", C_RED))
+            await ctx.send(embed=emb("❌ Nothing to Continue", "No story to continue in this thread.", C_RED))
             return
 
         if not await enforce_cost(ctx, "continue"):
             return
 
-        await respond(ctx.channel, uid, "Continue the story.", ctx.message, system_prompt=FANFIC_SYSTEM_PROMPT, guild_id=guild_id)
+        sp = t.get("system_prompt") if t else STORY_SYSTEM_PROMPT
+        await respond(ctx.channel, uid, "Continue the story.", ctx.message, system_prompt=sp, guild_id=guild_id)
 
 
     @commands.command(name="tldr")
     async def cmd_tldr(self, ctx: commands.Context):
         if not isinstance(ctx.channel, discord.Thread):
-            await ctx.send(embed=emb("❌ Threads Only", "`!tldr` only works inside a fanfic or roleplay thread.", C_RED))
+            await ctx.send(embed=emb("❌ Threads Only", "`!tldr` only works inside an AI thread.", C_RED))
             return
 
         uid = ctx.author.id
@@ -565,14 +609,14 @@ class AICog(commands.Cog):
         if not (is_ai_host or is_puzzle_host):
             await ctx.send(embed=emb(
                 "❌ No Active Activity",
-                "You must be the host of an active roleplay, RPG, fanfic, ask thread, or puzzle in this channel to invite others.",
+                "You must be the host of an active roleplay, RPG, story, ask thread, or puzzle in this channel to invite others.",
                 C_RED,
             ))
             return
 
         if is_ai_host:
             activity_label = {
-                "ask": "Ask", "fanfic": "Fanfic",
+                "ask": "Ask", "story": "Story",
                 "roleplay": "Roleplay", "rpg": "RPG",
             }.get(ai_thread["kind"], ai_thread["kind"].title())
         else:
@@ -630,7 +674,7 @@ class AICog(commands.Cog):
         ai_thread = state.ai_threads.get(cid)
         if ai_thread is not None:
             label = {
-                "ask": "💬 Ask thread", "fanfic": "📖 Fanfic",
+                "ask": "💬 Ask thread", "story": "📖 Story",
                 "roleplay": "🎭 Roleplay", "rpg": "🗺️ RPG",
             }.get(ai_thread["kind"], ai_thread["kind"].title())
             if ai_thread["owner_id"] == uid or is_admin(ctx):
