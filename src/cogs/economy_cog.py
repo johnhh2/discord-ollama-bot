@@ -97,7 +97,7 @@ class EconomyCog(commands.Cog):
         await add_balance(uid, DAILY_REWARD, guild_id=gid, holder_name=ctx.author.display_name)
         user_data["daily_date"] = today
         user_data["last_daily"] = time.time()
-        await save_economy()
+        await save_economy(uid=uid)
         await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**! Balance: **{await get_balance(uid):,} 🪙**", C_GREEN))
 
 
@@ -306,7 +306,7 @@ class EconomyCog(commands.Cog):
                 if jailed:
                     jail_until_ts = time.time() + jail_days * 86400
                     thief_data["jail_until"] = jail_until_ts
-                    await save_economy()
+                    await save_economy(uid=thief_id)
                     await deduct_balance(thief_id, actual_fine)
                     result_embed = emb(
                         "🚔 Caught & Jailed!",
@@ -373,11 +373,11 @@ class EconomyCog(commands.Cog):
             return
 
         user_data["jailbreak_used"] = True
-        await save_economy()
+        await save_economy(uid=uid)
 
         if random.random() < 0.20:
             user_data["jail_until"] = 0
-            await save_economy()
+            await save_economy(uid=uid)
             await ctx.send(embed=emb(
                 "🏃 Escaped!",
                 f"**{ctx.author.display_name}** dug a tunnel under the fence and slipped out! You're free.",
@@ -401,7 +401,7 @@ class EconomyCog(commands.Cog):
         await _ensure_user(target.id)
         user_data = state.economy["users"][str(target.id)]
         user_data["jail_until"] = 0
-        await save_economy()
+        await save_economy(uid=target.id)
         await ctx.send(embed=emb("🔓 Released", f"**{target.display_name}** has been freed from jail.", C_GREEN))
 
     @commands.command(name="mug")
@@ -499,7 +499,7 @@ class EconomyCog(commands.Cog):
             if jailed:
                 jail_until_ts = time.time() + 86400
                 state.economy["users"][str(uid)]["jail_until"] = jail_until_ts
-                await save_economy()
+                await save_economy(uid=uid)
                 result_embed = emb(
                     "🔪 Mugged — but Caught!",
                     f"**{ctx.author.display_name}** paid **{parsed:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"

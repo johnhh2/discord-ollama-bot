@@ -18,7 +18,7 @@ async def _ensure_user(uid: int):
     key = str(uid)
     if key not in state.economy["users"]:
         state.economy["users"][key] = {"balance": 0, "last_daily": 0.0}
-        await save_economy()
+        await save_economy(uid=uid)
 
 
 async def get_balance(uid: int) -> int:
@@ -31,7 +31,7 @@ async def add_balance(uid: int, n: int, guild_id: int = None, holder_name: str =
     from src import state
     await _ensure_user(uid)
     state.economy["users"][str(uid)]["balance"] += n
-    await save_economy()
+    await save_economy(uid=uid)
     if guild_id is not None and holder_name is not None:
         new_bal = state.economy["users"][str(uid)]["balance"]
         await try_set_record(guild_id, "highest_balance", new_bal, uid, holder_name)
@@ -44,7 +44,7 @@ async def deduct_balance(uid: int, n: int) -> bool:
     if state.economy["users"][key]["balance"] < n:
         return False
     state.economy["users"][key]["balance"] -= n
-    await save_economy()
+    await save_economy(uid=uid)
     return True
 
 
@@ -55,21 +55,23 @@ def get_guild_house_balance(guild_id: int) -> int:
 
 async def add_guild_house(guild_id: int, amount: int):
     from src import state
+    from src.persistence import save_guild_house
     state.economy.setdefault("guild_house", {})
     key = str(guild_id)
     state.economy["guild_house"][key] = state.economy["guild_house"].get(key, 0) + amount
-    await save_economy()
+    await save_guild_house(guild_id)
 
 
 async def drain_bot_balance_into_lottery(lottery: dict, guild_id: int) -> int:
     """Transfer this guild's house balance into the lottery prize pool. Returns the amount transferred."""
     from src import state
+    from src.persistence import save_guild_house
     state.economy.setdefault("guild_house", {})
     key = str(guild_id)
     house_balance = state.economy["guild_house"].get(key, 0)
     if house_balance > 0:
         state.economy["guild_house"][key] = 0
-        await save_economy()
+        await save_guild_house(guild_id)
         lottery["prize_pool"] = lottery.get("prize_pool", 0) + house_balance
     return house_balance
 
@@ -191,7 +193,7 @@ async def add_savings(uid: int, amount: int) -> bool:
     user = state.economy["users"][str(uid)]
     user.setdefault("savings", [])
     user["savings"].append({"amount": amount, "deposited_at": time.time()})
-    await save_economy()
+    await save_economy(uid=uid)
     return True
 
 
@@ -222,7 +224,7 @@ async def remove_savings(uid: int, amount: int) -> bool:
             remaining = 0
     user["savings"] = new_deposits
     await add_balance(uid, amount)
-    await save_economy()
+    await save_economy(uid=uid)
     return True
 
 
@@ -269,7 +271,7 @@ async def do_daily_reset():
     """Reset all users' daily reward and scratchoff counts at 5am CT."""
     from src import state
     from src.ai import check_ollama_connected
-    today = _ct_now().date().isoformat()
+    today = _ct_today()
     await snapshot_balances()
     ai_up = await check_ollama_connected()
     await snapshot_bot_stats(ai_up)

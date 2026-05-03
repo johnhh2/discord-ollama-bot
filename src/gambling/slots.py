@@ -119,7 +119,7 @@ class SlotsCog(commands.Cog):
         first_time_slots = not user.get("slots_seen_rewards", False)
         if first_time_slots:
             user["slots_seen_rewards"] = True
-            await save_economy()
+            await save_economy(uid=uid)
 
         if amount is None:
             embed = discord.Embed(title="🎰 Slots", color=C_GOLD)

@@ -205,7 +205,7 @@ class ScratchoffCog(commands.Cog):
 
         remaining = 3 - user["scratch_used"]
         if remaining <= 0:
-            await save_economy()
+            await save_economy(uid=uid)
             await ctx.send(embed=emb("🎰 Daily Limit", f"**{ctx.author.display_name}** has used all **3** daily scratchoffs.\nCome back tomorrow!", C_GOLD))
             return
 
@@ -266,7 +266,7 @@ class ScratchoffCog(commands.Cog):
 
             await add_balance(uid, payout)
             user["scratch_used"] += 1
-            await save_economy()
+            await save_economy(uid=uid)
 
             # Award 10 XP per scratchoff played
             if ctx.guild:

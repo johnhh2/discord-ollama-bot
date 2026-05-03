@@ -198,7 +198,7 @@ async def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tup
     new_level = level_from_xp(rec["xp"])
     rec["level"] = new_level
     leveled_up = new_level > old_level
-    await save_leveling()
+    await save_leveling(guild_id=guild_id, uid=uid)
     return xp, leveled_up
 
 

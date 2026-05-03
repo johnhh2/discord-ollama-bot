@@ -42,14 +42,14 @@ def reset_bot_state(monkeypatch):
 
     # Stub all async DB save functions in persistence so tests don't need a real DB
     save_fn_names = [
-        "save_economy", "save_insurance", "save_jackpot", "save_guild_settings",
-        "save_bot_roles", "save_bot_settings", "save_godmode_users", "save_chess_games",
-        "save_ragebait", "save_mock", "save_curse", "save_tax", "save_rigged_slots",
-        "save_rigged_flips", "save_rigged_scratch", "save_rigged_steal", "save_gambler_streak",
-        "save_roleplay_state", "save_fanfic_histories", "save_quote_log", "save_saved_quotes",
-        "save_lottery", "save_records", "save_leveling", "save_command_perms",
-        "save_channel_prompts", "save_balance_history", "save_bot_stats_history",
-        "add_ephemeral_msg",
+        "save_economy", "save_guild_house", "save_insurance", "save_jackpot",
+        "save_guild_settings", "save_bot_roles", "save_bot_settings", "save_godmode_users",
+        "save_chess_games", "save_ragebait", "save_mock", "save_curse", "save_tax",
+        "save_rigged_slots", "save_rigged_flips", "save_rigged_scratch", "save_rigged_steal",
+        "save_gambler_streak", "save_roleplay_state", "save_fanfic_histories",
+        "save_quote_log", "save_saved_quotes", "save_lottery", "save_records",
+        "save_leveling", "save_command_perms", "save_channel_prompts",
+        "save_balance_history", "save_bot_stats_history", "add_ephemeral_msg",
     ]
     for fn_name in save_fn_names:
         if hasattr(_persistence, fn_name):

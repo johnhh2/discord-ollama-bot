@@ -173,7 +173,7 @@ async def _auto_daily(message: discord.Message):
     user_data["daily_date"] = today
     if is_new:
         user_data["last_daily"] = time.time()
-    await save_economy()
+    await save_economy(uid=uid)
     greeting = f"Welcome, **{message.author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
     await message.channel.send(embed=emb(
         "🪙 Daily Reward",
