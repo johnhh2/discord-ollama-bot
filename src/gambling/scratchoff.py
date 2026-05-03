@@ -296,7 +296,7 @@ class ScratchoffCog(commands.Cog):
 
             await ctx.send(embed=embed)
 
-    @commands.command(name="scratches")
+    @commands.command(name="scratches", aliases=["scratchoffs"])
     async def cmd_scratches(self, ctx: commands.Context):
         await ctx.invoke(self.cmd_scratchoff, count=3)
 
