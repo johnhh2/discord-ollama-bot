@@ -41,9 +41,56 @@ from src import state
 
 
 
+# Top-level command names that should map to a !shop subcommand of the same
+# shape (same args, same body). Keeps a !shop subcommand and a !alias top-level
+# command in lockstep without 30 hand-written wrappers.
+_SHOP_TOP_ALIASES: list[tuple[str, str]] = [
+    ("nickname",       "shop_nickname"),
+    ("removenickname", "shop_removenickname"),
+    ("createrole",     "shop_createrole"),
+    ("assignrole",     "shop_assignrole"),
+    ("removerole",     "shop_removerole"),
+    ("deleterole",     "shop_deleterole"),
+    ("createchannel",  "shop_createchannel"),
+    ("deletechannel",  "shop_deletechannel"),
+    ("renamechannel",  "shop_renamechannel"),
+    ("renamerole",     "shop_renamerole"),
+    ("rolechannel",    "shop_rolechannel"),
+    ("lockchannel",    "shop_lockchannel"),
+    ("unlockchannel",  "shop_unlockchannel"),
+    ("lockrole",       "shop_lockrole"),
+    ("unlockrole",     "shop_unlockrole"),
+    ("ragebait",       "shop_ragebait"),
+    ("mock",           "shop_mock"),
+    ("insurance",      "shop_insurance"),
+    ("rolecolor",      "shop_rolecolor"),
+    ("mute",           "shop_mute"),
+    ("tax",            "shop_tax"),
+    ("curse",          "shop_curse"),
+    ("unoreverse",     "shop_unoreverse"),
+    # roleup and roledown both dispatch via shop_roleup (it reads
+    # ctx.invoked_with to pick direction).
+    ("roleup",         "shop_roleup"),
+    ("roledown",       "shop_roleup"),
+]
+
+
 class ShopCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # Register declarative top-level aliases for shop subcommands. Tests
+        # instantiate ShopCog(bot=None) to exercise subcommand handlers
+        # directly, so skip registration when there's no bot to attach to.
+        if bot is not None:
+            for top_name, sub_attr in _SHOP_TOP_ALIASES:
+                sub_cmd = getattr(self, sub_attr)
+                bot.add_command(commands.Command(sub_cmd.callback, name=top_name))
+
+    def cog_unload(self):
+        if self.bot is None:
+            return
+        for top_name, _ in _SHOP_TOP_ALIASES:
+            self.bot.remove_command(top_name)
 
     def _resolve_role_strict(self, guild: discord.Guild, arg: str) -> "discord.Role | None":
         m = re.match(r"<@&(\d+)>", arg)
@@ -1363,107 +1410,6 @@ class ShopCog(commands.Cog):
             if cost > 0:
                 await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
-
-    # ── Top-level aliases for all shop subcommands ────────────────────────────
-    @commands.command(name="nickname")
-    async def cmd_nickname(self, ctx: commands.Context, *args):
-        await self.shop_nickname(ctx, *args)
-
-    @commands.command(name="removenickname")
-    async def cmd_removenickname(self, ctx: commands.Context):
-        await self.shop_removenickname(ctx)
-
-    @commands.command(name="createrole")
-    async def cmd_createrole(self, ctx: commands.Context, *args):
-        await self.shop_createrole(ctx, *args)
-
-    @commands.command(name="assignrole")
-    async def cmd_assignrole(self, ctx: commands.Context, *args):
-        await self.shop_assignrole(ctx, *args)
-
-    @commands.command(name="removerole")
-    async def cmd_removerole(self, ctx: commands.Context, *args):
-        await self.shop_removerole(ctx, *args)
-
-    @commands.command(name="deleterole")
-    async def cmd_deleterole(self, ctx: commands.Context, *args):
-        await self.shop_deleterole(ctx, *args)
-
-    @commands.command(name="createchannel")
-    async def cmd_createchannel(self, ctx: commands.Context, *args):
-        await self.shop_createchannel(ctx, *args)
-
-    @commands.command(name="deletechannel")
-    async def cmd_deletechannel(self, ctx: commands.Context, *args):
-        await self.shop_deletechannel(ctx, *args)
-
-    @commands.command(name="renamechannel")
-    async def cmd_renamechannel(self, ctx: commands.Context, *args):
-        await self.shop_renamechannel(ctx, *args)
-
-    @commands.command(name="renamerole")
-    async def cmd_renamerole(self, ctx: commands.Context, *args):
-        await self.shop_renamerole(ctx, *args)
-
-    @commands.command(name="rolechannel")
-    async def cmd_rolechannel(self, ctx: commands.Context, *args):
-        await self.shop_rolechannel(ctx, *args)
-
-    @commands.command(name="lockchannel")
-    async def cmd_lockchannel(self, ctx: commands.Context, *args):
-        await self.shop_lockchannel(ctx, *args)
-
-    @commands.command(name="unlockchannel")
-    async def cmd_unlockchannel(self, ctx: commands.Context, *args):
-        await self.shop_unlockchannel(ctx, *args)
-
-    @commands.command(name="lockrole")
-    async def cmd_lockrole(self, ctx: commands.Context, *args):
-        await self.shop_lockrole(ctx, *args)
-
-    @commands.command(name="unlockrole")
-    async def cmd_unlockrole(self, ctx: commands.Context, *args):
-        await self.shop_unlockrole(ctx, *args)
-
-    @commands.command(name="ragebait")
-    async def cmd_ragebait(self, ctx: commands.Context, *args):
-        await self.shop_ragebait(ctx, *args)
-
-    @commands.command(name="mock")
-    async def cmd_mock(self, ctx: commands.Context, *args):
-        await self.shop_mock(ctx, *args)
-
-    @commands.command(name="insurance")
-    async def cmd_insurance(self, ctx: commands.Context):
-        await self.shop_insurance(ctx)
-
-    @commands.command(name="rolecolor")
-    async def cmd_rolecolor(self, ctx: commands.Context, *args):
-        await self.shop_rolecolor(ctx, *args)
-
-    @commands.command(name="mute")
-    async def cmd_mute(self, ctx: commands.Context, *args):
-        await self.shop_mute(ctx, *args)
-
-    @commands.command(name="tax")
-    async def cmd_tax(self, ctx: commands.Context, *args):
-        await self.shop_tax(ctx, *args)
-
-    @commands.command(name="curse")
-    async def cmd_curse(self, ctx: commands.Context, *args):
-        await self.shop_curse(ctx, *args)
-
-    @commands.command(name="unoreverse")
-    async def cmd_unoreverse(self, ctx: commands.Context, *args):
-        await self.shop_unoreverse(ctx, *args)
-
-    @commands.command(name="roleup")
-    async def cmd_roleup(self, ctx: commands.Context, *args):
-        await self.shop_roleup(ctx, *args)
-
-    @commands.command(name="roledown")
-    async def cmd_roledown(self, ctx: commands.Context, *args):
-        await self.shop_roleup(ctx, *args)
 
     @commands.command(name="roles", aliases=["rolelb", "lbroles", "lbr"])
     async def cmd_roles(self, ctx: commands.Context):

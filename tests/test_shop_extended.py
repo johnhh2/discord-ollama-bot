@@ -361,3 +361,33 @@ async def test_shop_tax_self_rejected(db, force_member_converter_fallback):
 
     assert await get_balance(buyer.id) == SHOP_TAX_COST + 1000
     assert buyer.id not in _state.active_taxes
+
+
+# ── Top-level alias table sanity ──────────────────────────────────────────────
+# These guard against the original wrapper-typo class of bug (e.g. cmd_roledown
+# silently routing to shop_roleup with no direction adjustment) by verifying the
+# declarative alias table is internally consistent.
+
+async def test_shop_top_aliases_resolve_to_real_methods():
+    """Every (top_name, sub_attr) entry must point at a method that exists on
+    ShopCog. A typo in sub_attr would have crashed at cog load time, but the
+    test makes the guarantee explicit so refactors get a clear failure."""
+    from src.cogs.shop_cog import _SHOP_TOP_ALIASES, ShopCog
+    cog = ShopCog(bot=None)
+    for top_name, sub_attr in _SHOP_TOP_ALIASES:
+        assert hasattr(cog, sub_attr), (
+            f"!{top_name} alias points at ShopCog.{sub_attr} which does not exist"
+        )
+
+
+async def test_shop_roleup_and_roledown_share_handler_with_directional_dispatch():
+    """!roleup and !roledown must both dispatch to shop_roleup, which uses
+    ctx.invoked_with to pick direction. If a future edit splits them onto
+    different handlers, the dispatch contract has to change too."""
+    from src.cogs.shop_cog import _SHOP_TOP_ALIASES
+    table = dict(_SHOP_TOP_ALIASES)
+    assert table["roleup"] == "shop_roleup"
+    assert table["roledown"] == "shop_roleup", (
+        "Both top-level aliases must route to shop_roleup so its "
+        "ctx.invoked_with branch picks the right direction."
+    )
