@@ -91,7 +91,8 @@ INSERT IGNORE INTO slots_jackpot (id, jackpot) VALUES (1, 5000);
 CREATE TABLE IF NOT EXISTS lottery (
     guild_id         BIGINT UNSIGNED NOT NULL PRIMARY KEY,
     prize_pool       BIGINT          NOT NULL DEFAULT 0,
-    last_posted_week INT             NOT NULL DEFAULT 0
+    last_posted_week INT             NOT NULL DEFAULT 0,
+    last_drawn_week  INT             NOT NULL DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS lottery_players (
