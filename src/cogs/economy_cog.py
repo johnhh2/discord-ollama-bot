@@ -172,7 +172,7 @@ class EconomyCog(commands.Cog):
             "  **Tier 2** — 7% steal chance, steal 15%  | Jail chance: 35% | Fee: 1,000 🪙 | Jail: 2 days",
             "  **Tier 3** — 5% steal chance, steal 25%  | Jail chance: 50% | Fee: 1,000 🪙 | Jail: 3 days",
             "",
-            f"**`!mug @user <amount>`**{mug_lock} — Pay `<amount>` 🪙 upfront to steal that amount from a target. 50% chance of getting jailed 1 day.",
+            f"**`!mug @user <amount>`**{mug_lock} — Pay muggers `<amount>` 🪙 to take that amount from a target. The muggers keep it. 50% chance you get jailed 1 day.",
             "",
             "**`!jailbreak`** — Attempt to escape jail (20% success). One attempt per day.",
             "",
@@ -445,7 +445,7 @@ class EconomyCog(commands.Cog):
 
         target_bal = await get_balance(target.id)
         if target_bal <= 0:
-            await ctx.send(embed=emb("❌ Broke Target", f"**{target.display_name}** has no coins to steal.", C_RED))
+            await ctx.send(embed=emb("❌ Broke Target", f"**{target.display_name}** has no coins for the muggers to take.", C_RED))
             return
 
         your_bal = await get_balance(uid)
@@ -502,7 +502,8 @@ class EconomyCog(commands.Cog):
                 await save_economy(uid=uid)
                 result_embed = emb(
                     "🔪 Mugged — but Caught!",
-                    f"**{ctx.author.display_name}** paid **{parsed:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
+                    f"**{ctx.author.display_name}** paid muggers **{parsed:,} 🪙** to take **{actual_steal:,} 🪙** from **{target.display_name}**!\n"
+                    f"The muggers kept it all.\n"
                     f"**{target.display_name}**'s balance: **{await get_balance(target.id):,} 🪙**\n\n"
                     f"🚔 A witness called the cops — **{ctx.author.display_name}** is jailed until <t:{int(jail_until_ts)}:F> (<t:{int(jail_until_ts)}:R>)!",
                     C_RED,
@@ -510,7 +511,8 @@ class EconomyCog(commands.Cog):
             else:
                 result_embed = emb(
                     "🔪 Mugged!",
-                    f"**{ctx.author.display_name}** paid **{parsed:,} 🪙** to mug **{target.display_name}** for **{actual_steal:,} 🪙**!\n"
+                    f"**{ctx.author.display_name}** paid muggers **{parsed:,} 🪙** to take **{actual_steal:,} 🪙** from **{target.display_name}**!\n"
+                    f"The muggers kept it all.\n"
                     f"**{target.display_name}**'s balance: **{await get_balance(target.id):,} 🪙**",
                     C_ORANGE,
                 )

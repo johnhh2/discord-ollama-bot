@@ -71,7 +71,7 @@ UNLOCKS: dict[str, dict] = {
     "roledown":    {"level": 7, "enabled": _shop_item_enabled("roledown"),   "usage": "`!roledown <name>` — move role down one position"},
 
     # Level 10 — mug (advertised: mug)
-    "mug":         {"level": 10, "enabled": _always,                      "usage": "`!mug @user <amount>` — pay upfront to steal an exact amount", "reward": True},
+    "mug":         {"level": 10, "enabled": _always,                      "usage": "`!mug @user <amount>` — pay muggers to take an exact amount from a target (muggers keep it)", "reward": True},
 
     # Level 12 — role locking
     "lockrole":    {"level": 12, "enabled": _always,                      "usage": "`!lockrole <name>` — lock a role against changes", "reward": True},
