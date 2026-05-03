@@ -505,6 +505,7 @@ class EventsCog(commands.Cog):
         # Only respond to mentions if the message starts with the mention
         is_mentioned = self.bot.user in message.mentions and message.content.strip().startswith(f"<@{self.bot.user.id}>")
         in_roleplay = uid in state.active_roleplays and state.active_roleplays[uid].get("channel_id") == message.channel.id
+        in_ask_thread = message.channel.id in state.ask_thread_ids
 
         # Ragebait and mock take precedence over normal mentions (only in the purchase channel)
         _rage_in_channel = uid in state.active_ragebaits and (_rage_channel is None or message.channel.id == _rage_channel)
@@ -539,12 +540,12 @@ class EventsCog(commands.Cog):
                 await self.bot.process_commands(message)
                 return
 
-        if not (is_dm or is_mentioned or in_roleplay):
+        if not (is_dm or is_mentioned or in_roleplay or in_ask_thread):
             await self.bot.process_commands(message)
             return
 
-        # Skip bare commands during roleplay (let process_commands handle them)
-        if in_roleplay and not is_mentioned and not is_dm and message.content.startswith("!"):
+        # Skip bare commands during roleplay or ask threads (let process_commands handle them)
+        if (in_roleplay or in_ask_thread) and not is_mentioned and not is_dm and message.content.startswith("!"):
             await self.bot.process_commands(message)
             return
 
@@ -567,8 +568,14 @@ class EventsCog(commands.Cog):
             if fo and uid not in fo["invited_ids"]:
                 await self.bot.process_commands(message)
                 return
+            # Gate ask threads to invited participants only
+            ao = state.ask_owners.get(message.channel.id)
+            if ao and uid not in ao["invited_ids"]:
+                await self.bot.process_commands(message)
+                return
             guild_id = message.guild.id if message.guild else None
-            await respond(message.channel, uid, content, message, guild_id=guild_id, author_name=message.author.display_name)
+            ask_system_prompt = ao["system_prompt"] if ao else None
+            await respond(message.channel, uid, content, message, system_prompt=ask_system_prompt, guild_id=guild_id, author_name=message.author.display_name)
 
         await self.bot.process_commands(message)
 

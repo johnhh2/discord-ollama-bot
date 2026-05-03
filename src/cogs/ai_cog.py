@@ -199,7 +199,14 @@ class AICog(commands.Cog):
         guild_id = ctx.guild.id if ctx.guild else None
         if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
             thread = await ctx.message.create_thread(name=f"ask: {question[:80]}")
+            state.ask_thread_ids.add(thread.id)
+            state.ask_owners[thread.id] = {
+                "owner_id": ctx.author.id,
+                "invited_ids": {ctx.author.id},
+                "system_prompt": ASK_SYSTEM_PROMPT,
+            }
             await respond(thread, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
+            await thread.send(embed=emb("💬 Ask Thread", "Keep talking — I'll remember the conversation.\n`!invite @user` — let someone else join · `!stop` — end the thread", C_BLUE))
         else:
             await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
 
@@ -563,12 +570,13 @@ class AICog(commands.Cog):
             and state.active_roleplays[uid].get("channel_id") == cid
         )
         is_fanfic_host = cid in state.fanfic_thread_ids and state.fanfic_owners.get(cid, {}).get("owner_id") == uid
+        is_ask_host = cid in state.ask_thread_ids and state.ask_owners.get(cid, {}).get("owner_id") == uid
         is_puzzle_host = cid in state.active_puzzles and state.active_puzzles[cid].get("user_id") == uid
 
-        if not (is_rp_host or is_fanfic_host or is_puzzle_host):
+        if not (is_rp_host or is_fanfic_host or is_ask_host or is_puzzle_host):
             await ctx.send(embed=emb(
                 "❌ No Active Activity",
-                "You must be the host of an active roleplay, RPG, fanfic, or puzzle in this channel to invite others.",
+                "You must be the host of an active roleplay, RPG, fanfic, ask thread, or puzzle in this channel to invite others.",
                 C_RED,
             ))
             return
@@ -577,6 +585,8 @@ class AICog(commands.Cog):
             activity_label = "RPG" if state.active_roleplays[uid].get("is_rpg") else "Roleplay"
         elif is_fanfic_host:
             activity_label = "Fanfic"
+        elif is_ask_host:
+            activity_label = "Ask"
         else:
             activity_label = "Puzzle"
 
@@ -592,8 +602,9 @@ class AICog(commands.Cog):
             # Check if user is already in an activity in this channel/thread
             already_in_rp = inv_uid in state.active_roleplays and state.active_roleplays[inv_uid].get("channel_id") == cid
             already_in_fanfic = cid in state.fanfic_owners and inv_uid in state.fanfic_owners[cid]["invited_ids"]
+            already_in_ask = cid in state.ask_owners and inv_uid in state.ask_owners[cid]["invited_ids"]
             already_in_puzzle = cid in state.active_puzzles and inv_uid in state.active_puzzles[cid].get("invited_ids", set())
-            if already_in_rp or already_in_fanfic or already_in_puzzle:
+            if already_in_rp or already_in_fanfic or already_in_ask or already_in_puzzle:
                 if member:
                     skipped_names.append(member.display_name)
                 continue
@@ -622,6 +633,13 @@ class AICog(commands.Cog):
                     except Exception:
                         pass
                 await save_fanfic_histories()
+            elif is_ask_host:
+                state.ask_owners[cid]["invited_ids"].add(inv_uid)
+                if member and isinstance(ctx.channel, discord.Thread):
+                    try:
+                        await ctx.channel.add_user(member)
+                    except Exception:
+                        pass
             elif is_puzzle_host:
                 state.active_puzzles[cid].setdefault("invited_ids", set()).add(inv_uid)
 
@@ -645,6 +663,22 @@ class AICog(commands.Cog):
         uid = ctx.author.id
         cid = ctx.channel.id
         stopped = []
+        close_thread = False
+
+        if cid in state.ask_thread_ids and (state.ask_owners.get(cid, {}).get("owner_id") == uid or is_admin(ctx)):
+            state.ask_thread_ids.discard(cid)
+            state.ask_owners.pop(cid, None)
+            state.channel_histories.pop(cid, None)
+            stopped.append("💬 Ask thread")
+            close_thread = True
+
+        if cid in state.fanfic_thread_ids and (state.fanfic_owners.get(cid, {}).get("owner_id") == uid or is_admin(ctx)):
+            state.fanfic_thread_ids.discard(cid)
+            state.fanfic_owners.pop(cid, None)
+            state.channel_histories.pop(cid, None)
+            await save_fanfic_histories()
+            stopped.append("📖 Fanfic")
+            close_thread = True
 
         if cid in state.active_puzzles and (state.active_puzzles[cid]["user_id"] == uid or is_admin(ctx)):
             puzzle = state.active_puzzles.pop(cid)
@@ -656,20 +690,23 @@ class AICog(commands.Cog):
         if uid in state.active_roleplays:
             rp = state.active_roleplays[uid]
             history_owner = rp.get("history_owner", uid)
+            is_rpg = rp.get("is_rpg")
             if "history_owner" in rp:
                 # Participant leaving the group
                 del state.active_roleplays[uid]
                 if history_owner in state.active_roleplays:
                     state.active_roleplays[history_owner]["participants"].discard(uid)
                 await save_roleplay_state()
-                stopped.append("🎭 Roleplay (left group)")
+                stopped.append(("🗺️ RPG" if is_rpg else "🎭 Roleplay") + " (left group)")
             else:
                 # Host stopping — remove all participants and shared history
                 for pid in list(rp.get("participants", {uid})):
                     state.active_roleplays.pop(pid, None)
                 state.roleplay_histories.pop(uid, None)
                 await save_roleplay_state()
-                stopped.append("🎭 Roleplay")
+                stopped.append("🗺️ RPG" if is_rpg else "🎭 Roleplay")
+                if isinstance(ctx.channel, discord.Thread) and rp.get("channel_id") == cid:
+                    close_thread = True
 
         if uid in state.active_blackjack_games:
             amount = state.active_blackjack_games[uid]["amount"]
@@ -749,6 +786,14 @@ class AICog(commands.Cog):
 
         await save_chess_games()
         await ctx.send(embed=emb("⏹️ Stopped", "\n".join(stopped), C_GREY))
+
+        if close_thread and isinstance(ctx.channel, discord.Thread):
+            try:
+                await ctx.channel.edit(archived=True, locked=True)
+            except discord.Forbidden:
+                log_bot_permission_error(ctx.guild, "Manage Threads")
+            except Exception:
+                pass
 
 
 

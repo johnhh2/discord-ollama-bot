@@ -63,6 +63,8 @@ RIDDLES_LIST: list = _load_riddles_list()
 channel_histories: dict = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
 fanfic_thread_ids: set = set()
 fanfic_owners: dict = {}        # thread_id → {owner_id, invited_ids: set}
+ask_thread_ids: set = set()
+ask_owners: dict = {}           # thread_id → {owner_id, invited_ids: set, system_prompt: str}
 user_last_request: dict = {}
 user_last_hangman: dict = {}
 user_last_puzzle: dict = {}
