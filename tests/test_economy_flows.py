@@ -83,6 +83,85 @@ async def test_remove_savings_more_than_available_returns_false(db, monkeypatch)
     assert len(_state.economy["users"][str(uid)]["savings"]) == 1
 
 
+async def test_partial_withdraw_then_redeposit_does_not_lose_value(db, monkeypatch):
+    """Regression: with the old `int()` truncation in remove_savings, a 1000-coin
+    deposit aged 1 day (val=1010.0, displayed 1010) followed by withdraw 500 +
+    redeposit 500 dropped displayed savings from 1010 → 1009.
+
+    With the float-remainder fix, displayed savings must never decrease across
+    a withdraw-X / redeposit-X round trip."""
+    uid = 8005
+    await _economy.add_balance(uid, 5000)
+
+    times = [0.0]
+    monkeypatch.setattr(_economy.time, "time", lambda: times[0])
+
+    # Deposit 1000, advance 1 day → val=1010.0, displayed 1010.
+    await _economy.add_savings(uid, 1000)
+    times[0] = 86400.0
+    before = int(await _economy.get_savings_value(uid))
+    assert before == 1010
+
+    # Withdraw 500 → keeps a partial principal in the deposit.
+    ok = await _economy.remove_savings(uid, 500)
+    assert ok is True
+
+    # Redeposit 500 at the same instant.
+    ok = await _economy.add_savings(uid, 500)
+    assert ok is True
+
+    after = int(await _economy.get_savings_value(uid))
+    assert after >= before, f"savings dropped {before} -> {after} after withdraw+redeposit of 500"
+
+
+async def test_repeated_withdraw_redeposit_does_not_drain_savings(db, monkeypatch):
+    """A user repeating withdraw-X / redeposit-X should not be able to bleed
+    coins out of savings via cumulative rounding loss."""
+    uid = 8006
+    await _economy.add_balance(uid, 100000)
+
+    times = [0.0]
+    monkeypatch.setattr(_economy.time, "time", lambda: times[0])
+
+    await _economy.add_savings(uid, 10000)
+    # Age the deposit through several differently-rounded factors.
+    for day in (1, 3, 7, 13, 29):
+        times[0] = day * 86400.0
+        before = int(await _economy.get_savings_value(uid))
+        # Pick a partial amount that forces the partial-cut branch.
+        partial = before // 3
+        ok = await _economy.remove_savings(uid, partial)
+        assert ok is True
+        ok = await _economy.add_savings(uid, partial)
+        assert ok is True
+        after = int(await _economy.get_savings_value(uid))
+        assert after >= before, (
+            f"day {day}: withdraw+redeposit of {partial} dropped {before} -> {after}"
+        )
+
+
+async def test_full_withdraw_then_redeposit_preserves_value(db, monkeypatch):
+    """Withdrawing the entire displayed savings and redepositing must not lose
+    coins either (this path always worked, but lock it in)."""
+    uid = 8007
+    await _economy.add_balance(uid, 5000)
+
+    times = [0.0]
+    monkeypatch.setattr(_economy.time, "time", lambda: times[0])
+
+    await _economy.add_savings(uid, 1000)
+    times[0] = 5 * 86400.0
+    before = int(await _economy.get_savings_value(uid))
+
+    ok = await _economy.remove_savings(uid, before)
+    assert ok is True
+    ok = await _economy.add_savings(uid, before)
+    assert ok is True
+
+    after = int(await _economy.get_savings_value(uid))
+    assert after == before
+
+
 # ── daily reset ───────────────────────────────────────────────────────────────
 
 async def test_do_daily_reset_resets_user_fields_and_persists(db, monkeypatch):

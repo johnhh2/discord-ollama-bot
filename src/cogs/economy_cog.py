@@ -603,16 +603,17 @@ class EconomyCog(commands.Cog):
                 )
             elif show_principals:
                 now = time.time()
-                principal = sum(e["amount"] for e in deposits)
+                principal = int(sum(e["amount"] for e in deposits))
                 interest = int(value) - principal
                 deposit_lines = []
                 for e in deposits:
                     days = (now - e["deposited_at"]) / 86400.0
                     e_val = int(e["amount"] * (1.01 ** days))
-                    e_interest = e_val - e["amount"]
+                    e_principal = int(e["amount"])
+                    e_interest = e_val - e_principal
                     date_str = datetime.datetime.fromtimestamp(e["deposited_at"]).strftime("%Y-%m-%d")
                     deposit_lines.append(
-                        f"`{date_str}` — {e['amount']:,} 🪙 (+{e_interest:,})"
+                        f"`{date_str}` — {e_principal:,} 🪙 (+{e_interest:,})"
                     )
                 desc = (
                     f"**{ctx.author.display_name}**'s piggy bank:\n\n"
@@ -622,7 +623,7 @@ class EconomyCog(commands.Cog):
                     "**Deposits:**\n" + "\n".join(deposit_lines)
                 )
             else:
-                principal = sum(e["amount"] for e in deposits)
+                principal = int(sum(e["amount"] for e in deposits))
                 interest = int(value) - principal
                 desc = (
                     f"**{ctx.author.display_name}**'s piggy bank:\n\n"

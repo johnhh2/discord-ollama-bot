@@ -233,8 +233,11 @@ async def remove_savings(uid: int, amount: int) -> bool:
         elif val <= remaining:
             remaining -= val
         else:
-            frac = remaining / val
-            kept_amount = int(entry["amount"] * (1 - frac))
+            # Store the leftover principal as a float so the kept value
+            # (kept_amount * factor) exactly equals (val - remaining). Truncating
+            # to int here used to lose up to ~factor coins, letting a withdraw +
+            # redeposit of the same amount drop displayed savings by 1.
+            kept_amount = entry["amount"] - remaining / (1.01 ** days)
             if kept_amount > 0:
                 new_deposits.append({"amount": kept_amount, "deposited_at": entry["deposited_at"]})
             remaining = 0
