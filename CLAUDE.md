@@ -89,7 +89,7 @@ Never use `datetime.timezone.utc` with a hardcoded offset for CT — it won't re
 
 ## Command Permission System
 
-Every command's access tier is controlled by `data/command_perms.json`. Commands not listed default to `everyone` (no restriction).
+Every command's access tier is controlled by `src/command_perms.json` (committed to the repo, not under `data/`). Commands not listed default to `everyone` (no restriction). The JSON seeds the `command_perms` table on every boot via `INSERT IGNORE` (see `init_db_state` in `src/persistence.py`); `!setperm` mutates the DB at runtime but the JSON is the source of truth — always commit permanent changes there.
 
 ### Tiers
 
@@ -97,7 +97,7 @@ Every command's access tier is controlled by `data/command_perms.json`. Commands
 |------|----------------|
 | `everyone` | All users |
 | `server_admin` | Discord server administrators **or** bot admins |
-| `bot_admin` | Bot admins only (user IDs in `data/bot_admins.json`) |
+| `bot_admin` | Bot admins only — user IDs come from the `BOT_ADMIN_IDS` env var (comma-separated), seeded into `state.bot_admins` at startup |
 
 ### `hidden` flag
 
@@ -111,15 +111,19 @@ When `hidden: true`, a denied command silently does nothing instead of sending `
 
 ### Rules — follow these whenever touching commands
 
-1. **New command** — add an entry to `data/command_perms.json`. If you don't add one, it defaults to `everyone`.
-2. **Renamed command** — update the key in the JSON to match the new `name=` in `@commands.command(...)`. Aliases do **not** need their own entries; the check uses `ctx.command.name` (the canonical name).
+1. **New command** — add an entry to `src/command_perms.json`. If you don't add one, it defaults to `everyone`.
+2. **Renamed command** — update the key in the JSON to match the new `name=` in `@commands.command(...)`. Aliases do **not** need their own entries; the check uses `ctx.command.qualified_name` (the canonical name, with subgroup space-prefixed for `!settings X`-style subcommands).
 3. **Changing a permission** — edit `src/command_perms.json` directly and commit the change. `!setperm` can also update it at runtime, but the file is the source of truth — always commit any permanent changes.
-4. **Each command body** must start with:
+4. **Each command body** must use the `@requires_perm` decorator (from `src.permissions`):
    ```python
-   if not await check_command_permission(ctx):
-       return
+   from src.permissions import requires_perm
+
+   @commands.command(name="mycommand")
+   @requires_perm
+   async def cmd_mycommand(self, ctx):
+       ...
    ```
-   Import `check_command_permission` from `src.permissions`. Do **not** use bare `is_admin` / `can_manage_settings` guards for new commands — use the central check so the JSON stays authoritative.
+   Decorator order matters: `@commands.command` outermost, `@requires_perm` directly above the def. Do **not** use bare `is_admin` / `can_manage_settings` guards for new commands.
 
 ### Relevant files
 
