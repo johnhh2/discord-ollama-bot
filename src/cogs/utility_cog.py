@@ -85,14 +85,7 @@ async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | No
     return role
 
 
-PUZZLE_REWARDS = {
-    "easy":   10,
-    "medium": 20,
-    "hard":   35,
-    "extreme": 50,
-}
-
-
+from src.config import PUZZLE_REWARDS
 
 PUZZLE_RIDDLE_REWARD = 20
 

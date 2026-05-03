@@ -65,4 +65,4 @@ from src.gambling.slots import eval_slots
 
 from src.gambling.scratchoff import MiniCactpotGame
 
-from src.cogs.utility_cog import PUZZLE_REWARDS
+from src.config import PUZZLE_REWARDS

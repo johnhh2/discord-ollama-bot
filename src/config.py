@@ -26,6 +26,13 @@ ACTIVE_CHANNEL_IDS = (
 COMMAND_PERMS_FILE = "src/command_perms.json"
 RIDDLES_FILE = "assets/riddles.csv"
 
+PUZZLE_REWARDS = {
+    "easy":   10,
+    "medium": 20,
+    "hard":   35,
+    "extreme": 50,
+}
+
 # Slot machine configuration
 SLOT_REEL = (
     ["🍒"] * 7 +
