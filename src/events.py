@@ -304,199 +304,262 @@ class EventsCog(commands.Cog):
         if message.author == self.bot.user:
             return
 
-        uid = message.author.id
-        content_lower = message.content.strip().lower()
-
         state.stats_messages_seen += 1
         state.stats_messages_today += 1
 
-        # Message XP (non-command messages only)
-        if message.guild and not message.content.startswith("!"):
-            xp, leveled_up = await _grant_xp(uid, "msg", guild_id=message.guild.id)
-            if leveled_up and isinstance(message.author, discord.Member) and get_guild_cfg(message.guild.id).get("levelup_channel"):
-                cog = self.bot.cogs.get("LevelingCog")
-                if cog:
-                    asyncio.create_task(cog._announce_levelup(message.author, message.guild.id))
+        # Side-effect handlers — each runs unconditionally on every non-command
+        # message, mutating its own state slice. Order matters for things like
+        # the tax/curse/mock/ragebait quartet: they're independent but run in
+        # the canonical order to keep ordering stable.
+        await self._handle_msg_xp(message)
+        await self._handle_ragebait(message)
+        await self._handle_mock(message)
+        await self._handle_tax(message)
+        await self._handle_curse(message)
+        await self._handle_auto_daily(message)
 
-        # Passive ragebait: track targeted users and fire at 50% chance
-        _rage_channel = state.active_ragebaits.get(uid, {}).get("channel_id")
-        if uid in state.active_ragebaits and not message.content.startswith("!") and (_rage_channel is None or message.channel.id == _rage_channel):
-            # Only proceed if AI is online
-            if await check_ollama_connected():
-                rage = state.active_ragebaits[uid]
-                rage["history"].append(f"[{message.author.display_name}]: {message.content[:200]}")
-                rage["remaining"] -= 1
-                if rage["remaining"] <= 0:
-                    del state.active_ragebaits[uid]
-                await save_ragebait()
-
-                asyncio.create_task(_passive_ragebait(message, list(rage["history"])))
-
-        # Mock: track mocked users and repeat their messages in mocking font
-        _mock_channel = state.active_mocks.get(uid, {}).get("channel_id")
-        if uid in state.active_mocks and not message.content.startswith("!") and (_mock_channel is None or message.channel.id == _mock_channel):
-            mock = state.active_mocks[uid]
-            mocked = mocking_font(message.content)
-            await message.channel.send(mocked)
-            mock["remaining"] -= 1
-            if mock["remaining"] <= 0:
-                del state.active_mocks[uid]
-            await save_mock()
-
-        # Tax: deduct coins from users who have an active tax on them
-        _tax_channel = state.active_taxes.get(uid, {}).get("channel_id")
-        if uid in state.active_taxes and not message.content.startswith("!") and (_tax_channel is None or message.channel.id == _tax_channel):
-            tax_data = state.active_taxes[uid]
-            tax_type = tax_data.get("type", "tax")
-
-            if "activated_at" in tax_data and time.time() - tax_data["activated_at"] > SHOP_TAX_DURATION_SECS:
-                del state.active_taxes[uid]
-                await save_tax(state.active_taxes)
-            elif await is_insured(uid, "tax"):
-                pass
-            else:
-                tax_master_id = tax_data["master"]
-                tax_label = tax_type.capitalize()
-                tax_emoji = tax_data.get("emoji", "💰")
-                if await deduct_balance(uid, SHOP_TAX_PER_MESSAGE):
-                    await add_balance(tax_master_id, SHOP_TAX_PER_MESSAGE)
-                    tax_master = await fetch_member(message.guild, tax_master_id)
-                    if tax_master:
-                        master_name = tax_master.display_name
-                    else:
-                        try:
-                            user = await self.bot.fetch_user(tax_master_id)
-                            master_name = user.display_name
-                        except (discord.NotFound, discord.HTTPException):
-                            master_name = str(tax_master_id)
-                    await message.channel.send(f"{tax_emoji} **{message.author.display_name}** paid a **{SHOP_TAX_PER_MESSAGE:,} 🪙** {tax_label} tax to **{master_name}**")
-
-        # Curse: corrupt cursed users' messages
-        if uid in state.active_curses and not message.content.startswith("!"):
-            curse = state.active_curses[uid]
-            cursed = curse_font(message.content)
-            await message.channel.send(cursed)
-            curse["remaining"] -= 1
-            if curse["remaining"] <= 0:
-                del state.active_curses[uid]
-            await save_curse(state.active_curses)
-
-        # Auto-award daily on any bot interaction (skip blacklisted channels)
-        _is_dm = isinstance(message.channel, discord.DMChannel)
-        _blacklisted = (
-            not _is_dm
-            and message.guild
-            and message.channel.id in get_guild_cfg(message.guild.id).get("command_blacklist", [])
-        )
-        if not _blacklisted and (
-            message.content.startswith("!")
-            or self.bot.user in message.mentions
-            or _is_dm
-            or message.channel.id in state.active_hangman_games
-            or uid in state.active_blackjack_games
-        ):
-            await _auto_daily(message)
-
-        # Intercept hit / stand for active blackjack (with or without ! prefix)
-        if content_lower in ("!hit", "!stand", "hit", "stand") and uid in state.active_blackjack_games and state.active_blackjack_games[uid].get("channel_id") == message.channel.id:
-            game = state.active_blackjack_games[uid]
-            if content_lower in ("!hit", "hit"):
-                card = draw_card(game["deck"])
-                game["player_hand"].append(card)
-                pval = hand_value(game["player_hand"])
-                display = build_blackjack_display(
-                    game["player_hand"], game["dealer_hand"], pval, hide_dealer=True,
-                    username=message.author.display_name,
-                )
-                if pval > 21:
-                    del state.active_blackjack_games[uid]
-                    await message.channel.send(embed=emb(
-                        "💥 Bust!",
-                        display + f"\n\n**{message.author.display_name}** loses **{game['amount']:,} 🪙**. Balance: {await get_balance(uid):,} 🪙",
-                        C_RED,
-                    ))
-                elif pval == 21:
-                    await _blackjack_stand(message, uid, game)
-                else:
-                    await message.channel.send(embed=emb(
-                        "🃏 Blackjack", display + "\n\n`!hit` to draw or `!stand` to hold.", C_BLUE
-                    ))
-            else:
-                await _blackjack_stand(message, uid, game)
+        # Interceptors — return True if they consumed the message and the rest
+        # of the chain (including AI routing) should be skipped.
+        if await self._handle_blackjack_input(message):
+            return
+        if await self._handle_puzzle_answer(message):
+            return
+        if await self._handle_hangman_guess(message):
             return
 
-        # Intercept puzzle answers (must run before channel/AI guards)
-        cid = message.channel.id
-        if cid in state.active_puzzles and not message.content.startswith("!"):
-            puzzle = state.active_puzzles[cid]
-            invited = puzzle.get("invited_ids")
-            if not invited or uid in invited:
-                guess = message.content.strip()
-                expected = puzzle["answer"]
-                if _norm_puzzle_answer(guess) == _norm_puzzle_answer(expected):
-                    reward = puzzle["reward"]
-                    del state.active_puzzles[cid]
-                    await add_balance(uid, reward)
-                    await message.channel.send(embed=emb(
-                        "✅ Correct!",
-                        f"{message.author.mention} got it!\n**Answer:** `{expected}`\n+**{reward:,} 🪙** (Balance: {await get_balance(uid):,} 🪙)",
-                        C_GREEN,
-                    ))
-                    return
+        # Final stage: AI routing. Always ends with self.bot.process_commands.
+        await self._handle_ai_routing(message)
 
-        # Intercept free-text hangman guesses (no prefix needed when game is active)
-        # Only single-letter guesses via free-text; full words require !guess command
-        cid = message.channel.id
-        if cid in state.active_hangman_games and not message.content.startswith("!"):
-            guess = message.content.lower().strip()
-            if guess and guess.isalpha() and len(guess) == 1:
-                asyncio.create_task(_delete_after(message))
-                await _process_hangman_guess(message.channel, uid, cid, guess, message.author.display_name)
-                return
+    # ── Side-effect handlers ──────────────────────────────────────────────────
 
-        # AI enabled guard
+    async def _handle_msg_xp(self, message: discord.Message):
+        """Award XP for non-command messages; announce level-ups."""
+        if not (message.guild and not message.content.startswith("!")):
+            return
+        uid = message.author.id
+        _, leveled_up = await _grant_xp(uid, "msg", guild_id=message.guild.id)
+        if leveled_up and isinstance(message.author, discord.Member) and get_guild_cfg(message.guild.id).get("levelup_channel"):
+            cog = self.bot.cogs.get("LevelingCog")
+            if cog:
+                asyncio.create_task(cog._announce_levelup(message.author, message.guild.id))
+
+    async def _handle_ragebait(self, message: discord.Message):
+        """Fire passive AI ragebait if the author is targeted in this channel."""
+        uid = message.author.id
+        rage_channel = state.active_ragebaits.get(uid, {}).get("channel_id")
+        if not (uid in state.active_ragebaits
+                and not message.content.startswith("!")
+                and (rage_channel is None or message.channel.id == rage_channel)):
+            return
+        if not await check_ollama_connected():
+            return
+        rage = state.active_ragebaits[uid]
+        rage["history"].append(f"[{message.author.display_name}]: {message.content[:200]}")
+        rage["remaining"] -= 1
+        if rage["remaining"] <= 0:
+            del state.active_ragebaits[uid]
+        await save_ragebait()
+        asyncio.create_task(_passive_ragebait(message, list(rage["history"])))
+
+    async def _handle_mock(self, message: discord.Message):
+        """Repeat the message in mocking font if the author is being mocked."""
+        uid = message.author.id
+        mock_channel = state.active_mocks.get(uid, {}).get("channel_id")
+        if not (uid in state.active_mocks
+                and not message.content.startswith("!")
+                and (mock_channel is None or message.channel.id == mock_channel)):
+            return
+        mock = state.active_mocks[uid]
+        await message.channel.send(mocking_font(message.content))
+        mock["remaining"] -= 1
+        if mock["remaining"] <= 0:
+            del state.active_mocks[uid]
+        await save_mock()
+
+    async def _handle_tax(self, message: discord.Message):
+        """Deduct per-message tax from users with an active tax on them."""
+        uid = message.author.id
+        tax_channel = state.active_taxes.get(uid, {}).get("channel_id")
+        if not (uid in state.active_taxes
+                and not message.content.startswith("!")
+                and (tax_channel is None or message.channel.id == tax_channel)):
+            return
+        tax_data = state.active_taxes[uid]
+        if "activated_at" in tax_data and time.time() - tax_data["activated_at"] > SHOP_TAX_DURATION_SECS:
+            del state.active_taxes[uid]
+            await save_tax(state.active_taxes)
+            return
+        if await is_insured(uid, "tax"):
+            return
+        tax_master_id = tax_data["master"]
+        tax_label = tax_data.get("type", "tax").capitalize()
+        tax_emoji = tax_data.get("emoji", "💰")
+        if not await deduct_balance(uid, SHOP_TAX_PER_MESSAGE):
+            return
+        await add_balance(tax_master_id, SHOP_TAX_PER_MESSAGE)
+        tax_master = await fetch_member(message.guild, tax_master_id)
+        if tax_master:
+            master_name = tax_master.display_name
+        else:
+            try:
+                user = await self.bot.fetch_user(tax_master_id)
+                master_name = user.display_name
+            except (discord.NotFound, discord.HTTPException):
+                master_name = str(tax_master_id)
+        await message.channel.send(
+            f"{tax_emoji} **{message.author.display_name}** paid a "
+            f"**{SHOP_TAX_PER_MESSAGE:,} 🪙** {tax_label} tax to **{master_name}**"
+        )
+
+    async def _handle_curse(self, message: discord.Message):
+        """Replay cursed users' messages in curse font."""
+        uid = message.author.id
+        if not (uid in state.active_curses and not message.content.startswith("!")):
+            return
+        curse = state.active_curses[uid]
+        await message.channel.send(curse_font(message.content))
+        curse["remaining"] -= 1
+        if curse["remaining"] <= 0:
+            del state.active_curses[uid]
+        await save_curse(state.active_curses)
+
+    async def _handle_auto_daily(self, message: discord.Message):
+        """Auto-claim daily reward on the first qualifying interaction each day."""
+        uid = message.author.id
+        is_dm = isinstance(message.channel, discord.DMChannel)
+        if (not is_dm
+                and message.guild
+                and message.channel.id in get_guild_cfg(message.guild.id).get("command_blacklist", [])):
+            return
+        triggers = (
+            message.content.startswith("!")
+            or self.bot.user in message.mentions
+            or is_dm
+            or message.channel.id in state.active_hangman_games
+            or uid in state.active_blackjack_games
+        )
+        if triggers:
+            await _auto_daily(message)
+
+    # ── Interceptors (return True if message consumed) ────────────────────────
+
+    async def _handle_blackjack_input(self, message: discord.Message) -> bool:
+        """Intercept hit/stand from a player with an active blackjack game."""
+        uid = message.author.id
+        content_lower = message.content.strip().lower()
+        if content_lower not in ("!hit", "!stand", "hit", "stand"):
+            return False
+        if uid not in state.active_blackjack_games:
+            return False
+        game = state.active_blackjack_games[uid]
+        if game.get("channel_id") != message.channel.id:
+            return False
+        if content_lower in ("!hit", "hit"):
+            card = draw_card(game["deck"])
+            game["player_hand"].append(card)
+            pval = hand_value(game["player_hand"])
+            display = build_blackjack_display(
+                game["player_hand"], game["dealer_hand"], pval, hide_dealer=True,
+                username=message.author.display_name,
+            )
+            if pval > 21:
+                del state.active_blackjack_games[uid]
+                await message.channel.send(embed=emb(
+                    "💥 Bust!",
+                    display + f"\n\n**{message.author.display_name}** loses **{game['amount']:,} 🪙**. Balance: {await get_balance(uid):,} 🪙",
+                    C_RED,
+                ))
+            elif pval == 21:
+                await _blackjack_stand(message, uid, game)
+            else:
+                await message.channel.send(embed=emb(
+                    "🃏 Blackjack", display + "\n\n`!hit` to draw or `!stand` to hold.", C_BLUE,
+                ))
+        else:
+            await _blackjack_stand(message, uid, game)
+        return True
+
+    async def _handle_puzzle_answer(self, message: discord.Message) -> bool:
+        """Intercept correct puzzle answers in a channel with an active puzzle."""
+        uid = message.author.id
+        cid = message.channel.id
+        if cid not in state.active_puzzles or message.content.startswith("!"):
+            return False
+        puzzle = state.active_puzzles[cid]
+        invited = puzzle.get("invited_ids")
+        if invited and uid not in invited:
+            return False
+        if _norm_puzzle_answer(message.content.strip()) != _norm_puzzle_answer(puzzle["answer"]):
+            return False
+        reward = puzzle["reward"]
+        expected = puzzle["answer"]
+        del state.active_puzzles[cid]
+        await add_balance(uid, reward)
+        await message.channel.send(embed=emb(
+            "✅ Correct!",
+            f"{message.author.mention} got it!\n**Answer:** `{expected}`\n+**{reward:,} 🪙** (Balance: {await get_balance(uid):,} 🪙)",
+            C_GREEN,
+        ))
+        return True
+
+    async def _handle_hangman_guess(self, message: discord.Message) -> bool:
+        """Intercept single-letter free-text hangman guesses."""
+        uid = message.author.id
+        cid = message.channel.id
+        if cid not in state.active_hangman_games or message.content.startswith("!"):
+            return False
+        guess = message.content.lower().strip()
+        if not (guess and guess.isalpha() and len(guess) == 1):
+            return False
+        asyncio.create_task(_delete_after(message))
+        await _process_hangman_guess(message.channel, uid, cid, guess, message.author.display_name)
+        return True
+
+    # ── AI routing (final stage) ──────────────────────────────────────────────
+
+    async def _handle_ai_routing(self, message: discord.Message):
+        """Route mentions / DMs / AI-thread messages to the LLM, otherwise
+        delegate to process_commands. Always ends with process_commands."""
+        uid = message.author.id
+
+        # Bot-wide AI off switch
         if not state.bot_settings.get("ai_enabled", True):
             await self.bot.process_commands(message)
             return
 
-        # Channel guard
+        # Channel allow-list (env-configured)
         if ACTIVE_CHANNEL_IDS and message.channel.id not in ACTIVE_CHANNEL_IDS:
             await self.bot.process_commands(message)
             return
 
         is_dm = isinstance(message.channel, discord.DMChannel)
-        # Only respond to mentions if the message starts with the mention
         is_mentioned = self.bot.user in message.mentions and message.content.strip().startswith(f"<@{self.bot.user.id}>")
         ai_thread = state.ai_threads.get(message.channel.id)
         in_ai_thread = ai_thread is not None
 
-        # Ragebait and mock take precedence over normal mentions (only in the purchase channel)
-        _rage_in_channel = uid in state.active_ragebaits and (_rage_channel is None or message.channel.id == _rage_channel)
-        _mock_in_channel = uid in state.active_mocks and (_mock_channel is None or message.channel.id == _mock_channel)
-        if _rage_in_channel or _mock_in_channel:
+        # Ragebait/mock take precedence over normal mentions (in their channel)
+        rage_channel = state.active_ragebaits.get(uid, {}).get("channel_id")
+        mock_channel = state.active_mocks.get(uid, {}).get("channel_id")
+        rage_in_channel = uid in state.active_ragebaits and (rage_channel is None or message.channel.id == rage_channel)
+        mock_in_channel = uid in state.active_mocks and (mock_channel is None or message.channel.id == mock_channel)
+        if rage_in_channel or mock_in_channel:
             await self.bot.process_commands(message)
             return
 
-        # Check channel restrictions for mentions (AI channels and blacklist)
+        # Per-guild AI channel restrictions for @mention
         if is_mentioned and not is_dm and message.guild:
             cfg = get_guild_cfg(message.guild.id)
             ai_channels = cfg.get("ai_channels", [])
             command_blacklist = cfg.get("command_blacklist", [])
-
-            # Determine if channel is allowed for AI
             channel_allowed = True
             if ai_channels:
-                # If AI channels configured, must be in one of them
                 channel_allowed = message.channel.id in ai_channels
             elif message.channel.id in command_blacklist:
-                # If no AI channels but channel is blacklisted, not allowed
                 channel_allowed = False
-
             if not channel_allowed:
                 if ai_channels:
                     names = " ".join(f"<#{cid}>" for cid in ai_channels)
                 else:
-                    # Show where AI IS allowed (inverse of blacklist)
                     all_channels = [ch.id for ch in message.guild.text_channels if ch.id not in command_blacklist]
                     names = " ".join(f"<#{cid}>" for cid in all_channels) if all_channels else "no channels"
                 await _wrong_channel_reply(message, f"AI commands are only allowed in: {names}")
@@ -523,17 +586,13 @@ class EventsCog(commands.Cog):
             await self.bot.process_commands(message)
             return
 
-        if ai_thread is not None:
-            # Gate AI thread to invited participants only
-            if uid not in ai_thread["invited_ids"]:
-                await self.bot.process_commands(message)
-                return
-            guild_id = message.guild.id if message.guild else None
-            await respond(message.channel, uid, content, message, guild_id=guild_id, author_name=message.author.display_name)
-        else:
-            guild_id = message.guild.id if message.guild else None
-            await respond(message.channel, uid, content, message, guild_id=guild_id, author_name=message.author.display_name)
+        # AI thread: only invited participants get a response
+        if ai_thread is not None and uid not in ai_thread["invited_ids"]:
+            await self.bot.process_commands(message)
+            return
 
+        guild_id = message.guild.id if message.guild else None
+        await respond(message.channel, uid, content, message, guild_id=guild_id, author_name=message.author.display_name)
         await self.bot.process_commands(message)
 
 
