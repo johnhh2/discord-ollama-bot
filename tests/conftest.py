@@ -1,14 +1,12 @@
 """
 Shared fixtures for src/ package tests.
 
-Importing src as bot is safe because:
-- All load_*() functions return defaults on FileNotFoundError
-- bot.run() is only called from main.py / __main__
-- commands.Bot(...) creates an object with no network calls
+Tests import directly from src.<module> (state/persistence/economy/etc.).
+There is no longer a `src` re-export wall — patching `state.X` is the only
+source of truth.
 """
 import pytest
 import pytest_asyncio
-import src as bot
 import src.state as _state
 import src.persistence as _persistence
 import src.economy as _economy
@@ -27,24 +25,30 @@ async def _noop_bool(*args, **kwargs):
     return False
 
 
+def _reset_dict(d, fresh: dict):
+    """Mutate dict d in-place so existing references (e.g. `from src.state
+    import economy`) stay valid across the reset."""
+    d.clear()
+    d.update(fresh)
+
+
+def _reset_set(s, fresh: set):
+    s.clear()
+    s.update(fresh)
+
+
 @pytest.fixture(autouse=True)
 def reset_bot_state(monkeypatch):
-    """Reset all mutable bot globals before each test and stub DB I/O."""
-    fresh_economy = {"users": {}, "last_daily_reset": None, "guild_house": {}}
-    monkeypatch.setattr(bot, "economy", fresh_economy)
-    monkeypatch.setattr(_state, "economy", fresh_economy)
+    """Reset all mutable bot globals before each test and stub DB I/O.
 
-    fresh_guild_settings = {}
-    monkeypatch.setattr(bot, "guild_settings", fresh_guild_settings)
-    monkeypatch.setattr(_state, "guild_settings", fresh_guild_settings)
-
-    fresh_insurance = {}
-    monkeypatch.setattr(bot, "insurance", fresh_insurance)
-    monkeypatch.setattr(_state, "insurance", fresh_insurance)
-
-    fresh_user_last_request = {}
-    monkeypatch.setattr(bot, "user_last_request", fresh_user_last_request)
-    monkeypatch.setattr(_state, "user_last_request", fresh_user_last_request)
+    Uses in-place mutation rather than rebinding so test files that did
+    `from src.state import economy` keep their reference live.
+    """
+    _reset_dict(_state.economy, {"users": {}, "last_daily_reset": None, "guild_house": {}})
+    _reset_dict(_state.guild_settings, {})
+    _reset_dict(_state.insurance, {})
+    _reset_dict(_state.user_last_request, {})
+    _state.quote_log[:] = []
 
     # Reset per-test state that newer tests mutate. Existing tests don't touch
     # these (or set them to fresh values themselves), so this is additive-safe.
@@ -89,12 +93,6 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_economy, "try_set_record", _noop_bool)
     monkeypatch.setattr(_economy, "save_balance_history", _noop)
     monkeypatch.setattr(_economy, "save_bot_stats_history", _noop)
-
-    # Stub save_quote_log at the src (bot) module level since it's re-exported there
-    async def _stub_save_quote_log(log: list):
-        import src.state as _s
-        _s.quote_log = log[-10:]
-    monkeypatch.setattr(bot, "save_quote_log", _stub_save_quote_log)
 
 
 @pytest_asyncio.fixture

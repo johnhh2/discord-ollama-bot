@@ -1,9 +1,9 @@
 """Snapshot the real save_*/load_* refs at import time.
 
 The autouse `reset_bot_state` fixture in tests/conftest.py replaces every
-`save_*` function on `src.persistence` (and a few mirrors on `src.economy` and
-`src`) with no-op stubs, because most existing tests don't want to touch the
-DB. The opt-in `db` fixture wants to put them back.
+`save_*` function on `src.persistence` (and a few mirrors on `src.economy`)
+with no-op stubs, because most existing tests don't want to touch the DB.
+The opt-in `db` fixture wants to put them back.
 
 We capture the originals here, at module import time, before any test runs.
 Importing this module is what actually performs the snapshot — keep it cheap
@@ -11,7 +11,6 @@ Importing this module is what actually performs the snapshot — keep it cheap
 
 Each entry is `(target_module, attr_name, real_callable)`.
 """
-import src as _bot
 import src.economy as _economy
 import src.persistence as _persistence
 
@@ -44,7 +43,3 @@ for _name in ("save_economy", "save_insurance", "try_set_record",
               "save_balance_history", "save_bot_stats_history"):
     if hasattr(_economy, _name):
         ALL.append((_economy, _name, getattr(_economy, _name)))
-
-# save_quote_log is also re-exported on the top-level `src` package.
-if hasattr(_bot, "save_quote_log"):
-    ALL.append((_bot, "save_quote_log", _persistence.save_quote_log))

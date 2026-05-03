@@ -107,13 +107,12 @@ async def announce_new_lottery(
 
 
 async def is_insured(uid: int, against: str) -> bool:
-    import src as _src
-    insurance = _src.insurance
-    if str(uid) not in insurance:
+    from src import state
+    if str(uid) not in state.insurance:
         return False
-    entry = insurance[str(uid)]
+    entry = state.insurance[str(uid)]
     if entry.get("expires_at", 0) <= time.time():
-        del insurance[str(uid)]
+        del state.insurance[str(uid)]
         await save_insurance()
         return False
     return against in entry.get("protected_from", [])
@@ -121,8 +120,8 @@ async def is_insured(uid: int, against: str) -> bool:
 
 def get_insurance_expiry(uid: int) -> int | None:
     """Return the insurance expiry timestamp for uid, or None if not insured."""
-    import src as _src
-    entry = _src.insurance.get(str(uid))
+    from src import state
+    entry = state.insurance.get(str(uid))
     if entry and entry.get("expires_at", 0) > time.time():
         return int(entry["expires_at"])
     return None

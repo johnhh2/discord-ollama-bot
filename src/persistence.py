@@ -142,12 +142,11 @@ async def save_guild_settings():
 
 
 def get_guild_cfg(guild_id: int) -> dict:
-    import src as _src
-    gs = _src.guild_settings
+    from src import state
     key = str(guild_id)
-    if key not in gs:
-        gs[key] = {}
-    return gs[key]
+    if key not in state.guild_settings:
+        state.guild_settings[key] = {}
+    return state.guild_settings[key]
 
 
 # ── Bot roles / godmode / settings ────────────────────────────────────────────
