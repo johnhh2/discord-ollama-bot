@@ -123,13 +123,22 @@ def build_blackjack_display(
     return f"**{dealer_label}:** {dealer_str}\n**{username} ({pval}):** {player_str}"
 
 
+def dealer_play(deck: list, dealer: list) -> None:
+    """Mutate `dealer` by drawing until its hand value is 17 or higher.
+
+    Hits on soft/hard 16, stands on 17+. Used by `_blackjack_stand`; broken
+    out so the dealer rule can be tested in isolation.
+    """
+    while hand_value(dealer) <= 16:
+        dealer.append(draw_card(deck))
+
+
 async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
     dealer = game["dealer_hand"]
     player = game["player_hand"]
     deck = game["deck"]
 
-    while hand_value(dealer) <= 16:
-        dealer.append(draw_card(deck))
+    dealer_play(deck, dealer)
 
     pval = hand_value(player)
     dval = hand_value(dealer)

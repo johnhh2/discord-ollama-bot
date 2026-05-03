@@ -113,6 +113,15 @@ def is_ttt_stalemate(board: list) -> bool:
     return True
 
 
+def drop_in_column(board: list, col: int) -> "int | None":
+    """Return the row a piece would land in for `col` (gravity), or None if full.
+
+    Connect 4 boards are 6 rows × 7 cols, indexed top-down (row 0 is the top).
+    Pieces fall to the lowest empty row.
+    """
+    return next((r for r in range(5, -1, -1) if board[r][col] is None), None)
+
+
 def check_c4_winner(board: list) -> str | None:
     """Check if there's a winner in connect 4. Return winning mark or None."""
     # Check horizontal
@@ -304,7 +313,7 @@ class TttC4Cog(commands.Cog):
                 asyncio.create_task(_delete_after(err))
                 return
             col = pos - 1
-            row = next((r for r in range(5, -1, -1) if game["board"][r][col] is None), None)
+            row = drop_in_column(game["board"], col)
             if row is None:
                 err = await ctx.send(embed=emb("❌ Column Full", "That column is full.", C_RED))
                 asyncio.create_task(_delete_after(err))

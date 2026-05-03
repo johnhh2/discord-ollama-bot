@@ -70,6 +70,11 @@ from src.config import (
 from src import state
 
 
+def advance_player(pos: int, delta: int, finish: int = RACE_TRACK_LEN) -> int:
+    """Move a racer forward by `delta`, clamping to the finish line."""
+    return min(pos + delta, finish)
+
+
 async def _run_race(channel, cid: int, race_msg: discord.Message):
     """Animate and run a race until there's a winner."""
     import random
@@ -83,9 +88,8 @@ async def _run_race(channel, cid: int, race_msg: discord.Message):
 
         # Advance each player
         for uid in game["players"]:
-            game["positions"][uid] = min(
-                game["positions"][uid] + random.randint(1, 3),
-                RACE_TRACK_LEN,
+            game["positions"][uid] = advance_player(
+                game["positions"][uid], random.randint(1, 3),
             )
 
         # Check for winners
