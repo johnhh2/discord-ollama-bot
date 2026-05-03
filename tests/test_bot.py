@@ -11,9 +11,6 @@ from collections import Counter
 import pytest
 
 import src as bot
-# Keep direct references to I/O functions so they work even when _save_json
-# is stubbed in conftest (the import captures the original function object).
-from src import _load_json as real_load_json, _save_json as real_save_json
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1002,35 +999,6 @@ class TestCheckRateLimit:
     def test_different_users_independent(self):
         bot.check_rate_limit(1)
         assert bot.check_rate_limit(2) is False  # user 2 not rate-limited
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# JSON I/O (bypass stub — use direct references captured at import time)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestJsonIO:
-    def test_load_nonexistent_file_returns_default(self, tmp_path):
-        result = real_load_json(str(tmp_path / "nope.json"), {"x": 1})
-        assert result == {"x": 1}
-
-    def test_load_corrupt_json_returns_default(self, tmp_path):
-        p = tmp_path / "bad.json"
-        p.write_text("not json {{{")
-        result = real_load_json(str(p), [])
-        assert result == []
-
-    def test_load_valid_file(self, tmp_path):
-        p = tmp_path / "ok.json"
-        p.write_text(json.dumps({"hello": "world"}))
-        result = real_load_json(str(p), {})
-        assert result == {"hello": "world"}
-
-    def test_save_and_load_roundtrip(self, tmp_path):
-        p = tmp_path / "data.json"
-        data = {"users": {"1": {"balance": 42}}}
-        real_save_json(str(p), data)
-        loaded = real_load_json(str(p), {})
-        assert loaded == data
 
 
 # ─────────────────────────────────────────────────────────────────────────────

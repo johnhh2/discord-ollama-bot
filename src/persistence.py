@@ -19,13 +19,6 @@ def _load_json(filepath, default):
         return default
 
 
-def _save_json(filepath, data):
-    """Write data to a JSON file. Kept for test compatibility."""
-    os.makedirs("data", exist_ok=True)
-    with open(filepath, "w") as f:
-        json.dump(data, f, indent=2)
-
-
 # ── Economy ───────────────────────────────────────────────────────────────────
 
 def _economy_user_row(uid_str: str, u: dict) -> tuple:

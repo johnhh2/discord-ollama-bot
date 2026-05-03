@@ -3,10 +3,10 @@
 # and access attributes like bot.hand_value, bot.economy, etc.
 import random  # re-exported for monkeypatching in tests
 
-from src.config import OLLAMA_MODEL, RACE_TRACK_LEN, QUOTE_LOG_FILE
+from src.config import OLLAMA_MODEL, RACE_TRACK_LEN
 
 from src.persistence import (
-    _load_json, _save_json, get_guild_cfg,
+    get_guild_cfg,
     save_quote_log,
 )
 
