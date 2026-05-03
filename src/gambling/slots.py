@@ -69,6 +69,22 @@ from src.config import (
 from src import state
 
 
+def apply_jackpot_bonus(jackpot: int, bet: int) -> int:
+    """Compute the progressive-jackpot prize for a winning spin.
+
+    The bonus multiplier scales linearly from 1× at SLOT_JACKPOT_BONUS_MIN_BET
+    up to SLOT_JACKPOT_BONUS_MAX_MULT at (and beyond) SLOT_JACKPOT_BONUS_MAX_BET.
+    Bets below the min still get 1×.
+    """
+    bet_bonus = min(
+        SLOT_JACKPOT_BONUS_MAX_MULT,
+        1.0 + max(0, bet - SLOT_JACKPOT_BONUS_MIN_BET)
+             / (SLOT_JACKPOT_BONUS_MAX_BET - SLOT_JACKPOT_BONUS_MIN_BET)
+             * (SLOT_JACKPOT_BONUS_MAX_MULT - 1.0)
+    )
+    return int(jackpot * bet_bonus)
+
+
 def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
     """Returns (result_label, multiplier). Caller applies multiplier to bet."""
     a, b, c = reels
@@ -179,14 +195,8 @@ class SlotsCog(commands.Cog):
 
         # Progressive jackpot: hit 3 sevens
         if label == "jackpot":
-            # Calculate bonus multiplier: 1x at SLOT_JACKPOT_BONUS_MIN_BET, scaling to SLOT_JACKPOT_BONUS_MAX_MULT at SLOT_JACKPOT_BONUS_MAX_BET+
-            bet_bonus = min(
-                SLOT_JACKPOT_BONUS_MAX_MULT,
-                1.0 + max(0, amount - SLOT_JACKPOT_BONUS_MIN_BET)
-                     / (SLOT_JACKPOT_BONUS_MAX_BET - SLOT_JACKPOT_BONUS_MIN_BET)
-                     * (SLOT_JACKPOT_BONUS_MAX_MULT - 1.0)
-            )
-            prize = int(state.slot_jackpot * bet_bonus)
+            prize = apply_jackpot_bonus(state.slot_jackpot, amount)
+            bet_bonus = prize / state.slot_jackpot if state.slot_jackpot else 1.0
             state.slot_jackpot = SLOT_JACKPOT_SEED
             await save_jackpot(state.slot_jackpot)
             gid = ctx.guild.id if ctx.guild else None

@@ -1,0 +1,190 @@
+"""Tier D: !slots integration flow.
+
+eval_slots is well covered by the original suite. This file pins the
+parts NOT covered there:
+
+- apply_jackpot_bonus: scaling math (extracted helper, pure function).
+- Jackpot accumulation: every spin adds SLOT_JACKPOT_CONTRIB × bet
+  to state.slot_jackpot and persists.
+- Rigging: state.rigged_slots forces a guaranteed three-of-a-kind and
+  decrements (single-use per entry).
+- Jackpot win resets state.slot_jackpot to SLOT_JACKPOT_SEED.
+"""
+import math
+import random
+
+import pytest
+
+import src.state as _state
+import src.persistence as _persistence
+import src.economy as _economy
+from src.gambling.slots import SlotsCog, apply_jackpot_bonus
+from src.config import (
+    SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_JACKPOT_BONUS_MIN_BET,
+    SLOT_JACKPOT_BONUS_MAX_BET, SLOT_JACKPOT_BONUS_MAX_MULT, SLOT_MIN_BET,
+    SLOT_MULT_3CHERRY,
+)
+
+from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild
+
+# No module-level pytestmark — TestApplyJackpotBonus is sync, the rest are
+# async. Async tests get @pytest.mark.asyncio per-function below.
+
+
+class _StubBot:
+    def __init__(self):
+        self.user = type("U", (), {"id": 999_999_999})()
+
+
+# ── apply_jackpot_bonus (pure helper) ─────────────────────────────────────────
+
+class TestApplyJackpotBonus:
+    def test_min_bet_returns_unscaled_jackpot(self):
+        # At the min bet, multiplier is exactly 1× (modulo float→int floor).
+        assert apply_jackpot_bonus(10_000, SLOT_JACKPOT_BONUS_MIN_BET) == 10_000
+
+    def test_max_bet_returns_max_multiplier(self):
+        assert apply_jackpot_bonus(10_000, SLOT_JACKPOT_BONUS_MAX_BET) == int(
+            10_000 * SLOT_JACKPOT_BONUS_MAX_MULT
+        )
+
+    def test_above_max_bet_clamps_at_max_multiplier(self):
+        # Bets above the max-bet cap don't keep scaling.
+        big = apply_jackpot_bonus(10_000, SLOT_JACKPOT_BONUS_MAX_BET * 100)
+        assert big == int(10_000 * SLOT_JACKPOT_BONUS_MAX_MULT)
+
+    def test_below_min_bet_returns_unscaled(self):
+        # Bets below SLOT_JACKPOT_BONUS_MIN_BET still get exactly 1× (no negative scaling).
+        if SLOT_JACKPOT_BONUS_MIN_BET > 0:
+            assert apply_jackpot_bonus(10_000, 0) == 10_000
+
+    def test_midpoint_bet_scales_proportionally(self):
+        """At a bet halfway between min and max (by bet value), the multiplier
+        should be halfway between 1× and max."""
+        bet = (SLOT_JACKPOT_BONUS_MIN_BET + SLOT_JACKPOT_BONUS_MAX_BET) // 2
+        ratio = (bet - SLOT_JACKPOT_BONUS_MIN_BET) / (
+            SLOT_JACKPOT_BONUS_MAX_BET - SLOT_JACKPOT_BONUS_MIN_BET
+        )
+        expected_mult = 1.0 + ratio * (SLOT_JACKPOT_BONUS_MAX_MULT - 1.0)
+        assert apply_jackpot_bonus(10_000, bet) == int(10_000 * expected_mult)
+
+    def test_jackpot_zero_returns_zero(self):
+        assert apply_jackpot_bonus(0, 100) == 0
+
+    def test_monotonic_in_bet(self):
+        """Higher bets within the scaling range produce higher prizes."""
+        prev = apply_jackpot_bonus(10_000, SLOT_JACKPOT_BONUS_MIN_BET)
+        step = max(1, (SLOT_JACKPOT_BONUS_MAX_BET - SLOT_JACKPOT_BONUS_MIN_BET) // 10)
+        for bet in range(SLOT_JACKPOT_BONUS_MIN_BET + step, SLOT_JACKPOT_BONUS_MAX_BET + 1, step):
+            curr = apply_jackpot_bonus(10_000, bet)
+            assert curr >= prev
+            prev = curr
+
+
+# ── Jackpot accumulation ──────────────────────────────────────────────────────
+
+async def _read_jackpot() -> int:
+    pool = await _persistence.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT jackpot FROM slots_jackpot WHERE id=1")
+            row = await cur.fetchone()
+    return row[0] if row else 0
+
+
+def _ctx(uid: int = 1, balance: int = 100_000):
+    """Build a slots-friendly FakeCtx and pre-fund the user."""
+    author = FakeMember(uid=uid, display_name="player")
+    ctx = FakeCtx(author=author, guild=FakeGuild(gid=42))
+    ctx.bot = _StubBot()
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_slots_spin_adds_to_jackpot_and_persists(db, monkeypatch):
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=1)
+    await _economy.add_balance(1, 100_000)
+
+    starting_jackpot = SLOT_JACKPOT_SEED
+    _state.slot_jackpot = starting_jackpot
+
+    # Force a non-rigged, non-house spin that produces no win for clarity.
+    monkeypatch.setattr(random, "random", lambda: 0.99)         # skip house
+    monkeypatch.setattr(random, "choice", lambda seq: "⬛")      # blank reels → no win
+    monkeypatch.setattr(random, "sample", lambda seq, k: ["⬛", "⬛", "⬛"])
+
+    bet = 1000
+    await cog.cmd_slots.callback(cog, ctx, amount=str(bet))
+
+    expected_contrib = max(1, int(bet * SLOT_JACKPOT_CONTRIB))
+    assert _state.slot_jackpot == starting_jackpot + expected_contrib
+    assert await _read_jackpot() == starting_jackpot + expected_contrib
+
+
+@pytest.mark.asyncio
+async def test_slots_min_bet_below_threshold_rejected(db):
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=2)
+    await _economy.add_balance(2, 100_000)
+
+    starting_jackpot = _state.slot_jackpot
+
+    await cog.cmd_slots.callback(cog, ctx, amount=str(SLOT_MIN_BET - 1))
+
+    # Balance untouched, jackpot untouched.
+    assert await _economy.get_balance(2) == 100_000
+    assert _state.slot_jackpot == starting_jackpot
+
+
+# ── Rigging ───────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_slots_rigged_forces_three_of_a_kind_and_decrements(db, monkeypatch):
+    """state.rigged_slots[uid] = symbol forces reels = [sym, sym, sym] and
+    pops the entry so it's single-use."""
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=3)
+    await _economy.add_balance(3, 100_000)
+    _state.rigged_slots[3] = "🍒"   # forces three cherries
+
+    bet = 100
+    bal_before = await _economy.get_balance(3)
+    await cog.cmd_slots.callback(cog, ctx, amount=str(bet))
+
+    # Three cherries pays 3CHERRY multiplier.
+    expected_winnings = bet * SLOT_MULT_3CHERRY
+    # Balance: -bet (charged via shop_charge) + winnings.
+    assert await _economy.get_balance(3) == bal_before - bet + expected_winnings
+    # Rigging entry consumed.
+    assert 3 not in _state.rigged_slots
+
+
+@pytest.mark.asyncio
+async def test_slots_rigged_jackpot_pays_progressive_pot_and_resets(db, monkeypatch):
+    """Rigging with the jackpot symbol triggers the progressive-jackpot
+    branch, paying state.slot_jackpot × bonus and resetting to seed."""
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=4)
+    await _economy.add_balance(4, 100_000)
+
+    # Pre-load the progressive jackpot above the seed.
+    _state.slot_jackpot = 50_000
+    await _persistence.save_jackpot(50_000)
+    _state.rigged_slots[4] = "7️⃣"   # forces 3-sevens jackpot
+
+    bet = SLOT_JACKPOT_BONUS_MAX_BET   # max bonus multiplier
+    bal_before = await _economy.get_balance(4)
+    await cog.cmd_slots.callback(cog, ctx, amount=str(bet))
+
+    # Jackpot accumulates the 2% contribution BEFORE the jackpot check fires
+    # (line ordering in cmd_slots), so the pre-bonus pot is 50_000 + contrib.
+    expected_pot = 50_000 + max(1, int(bet * SLOT_JACKPOT_CONTRIB))
+    expected_prize = int(expected_pot * SLOT_JACKPOT_BONUS_MAX_MULT)
+
+    assert await _economy.get_balance(4) == bal_before - bet + expected_prize
+    # Pot reset to seed.
+    assert _state.slot_jackpot == SLOT_JACKPOT_SEED
+    assert await _read_jackpot() == SLOT_JACKPOT_SEED
+    # Rigging entry consumed.
+    assert 4 not in _state.rigged_slots
