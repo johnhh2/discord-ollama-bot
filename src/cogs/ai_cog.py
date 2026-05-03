@@ -218,6 +218,15 @@ class AICog(commands.Cog):
     async def cmd_story(self, ctx: commands.Context, *, prompt: str = None):
         await self._story_with_prompt(ctx, prompt=prompt, system_prompt=STORY_SYSTEM_PROMPT, alias_name=None)
 
+    def _story_alias_hint(self, ctx: commands.Context, alias_name: str | None) -> str:
+        """Suffix listing this guild's story aliases, shown on canonical !story usage only."""
+        if alias_name is not None or not ctx.guild:
+            return ""
+        aliases = get_guild_cfg(ctx.guild.id).get("story_aliases", {})
+        if not aliases:
+            return ""
+        return "\nAliases: " + ", ".join(f"`!{k}`" for k in aliases)
+
     async def _story_with_prompt(
         self,
         ctx: commands.Context,
@@ -238,7 +247,7 @@ class AICog(commands.Cog):
         if await check_ai_channel(ctx):
             return
         if prompt is None:
-            await ctx.send(usage)
+            await ctx.send(usage + self._story_alias_hint(ctx, alias_name))
             return
         if check_rate_limit(ctx.author.id):
             await ctx.send("⚠️ Slow down! Please wait a moment before sending another message.")
@@ -251,7 +260,7 @@ class AICog(commands.Cog):
             clean_prompt = clean_prompt.replace(f"<@{m.id}>", "").replace(f"<@!{m.id}>", "")
         clean_prompt = clean_prompt.strip()
         if not clean_prompt:
-            await ctx.send(usage)
+            await ctx.send(usage + self._story_alias_hint(ctx, alias_name))
             return
 
         if not await enforce_cost(ctx, "story"):

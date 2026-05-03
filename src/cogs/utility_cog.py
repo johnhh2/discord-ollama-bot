@@ -333,6 +333,12 @@ class UtilityCog(commands.Cog):
             inline=False
         )
 
+        story_aliases = get_guild_cfg(ctx.guild.id).get("story_aliases", {}) if ctx.guild else {}
+        aliases_line = (
+            "Aliases: " + ", ".join(f"`!{k}`" for k in story_aliases)
+            if story_aliases
+            else "Server admins can register custom-prompt aliases via `!settings story-alias`"
+        )
         embed.add_field(
             name="📖 !story",
             value=(
@@ -340,7 +346,7 @@ class UtilityCog(commands.Cog):
                 f"Cost: **500 🪙** · `!continue` for next chapter (10 🪙) · `!tldr` to summarize\n"
                 f"Model: `{ask_model}`\n"
                 f"Usage: `!story <prompt>`\n"
-                f"Server admins can register custom-prompt aliases via `!settings story-alias`"
+                f"{aliases_line}"
             ),
             inline=False
         )
