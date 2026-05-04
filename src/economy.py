@@ -9,7 +9,8 @@ from src.config import OLLAMA_MODEL, DAILY_RESET_HOUR
 from src.persistence import (
     save_economy, save_insurance, try_set_record,
     load_balance_history, save_balance_history,
-    load_bot_stats_history, save_bot_stats_history
+    load_bot_stats_history, save_bot_stats_history,
+    load_command_usage_history, save_command_usage_history,
 )
 from src.guild_config import get_guild_cfg
 
@@ -319,6 +320,18 @@ async def snapshot_bot_stats(ai_up: bool):
     logging.info(f"[DAILY] Snapshotted bot stats for {today}: {history[today]}")
 
 
+async def snapshot_command_usage():
+    """Record today's per-cog command counts; prune entries older than 14 days."""
+    from src import state
+    today = _ct_now().date().isoformat()
+    history = await load_command_usage_history()
+    history[today] = dict(state.stats_commands_today_by_cog)
+    cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
+    history = {d: v for d, v in history.items() if d >= cutoff}
+    await save_command_usage_history(history)
+    logging.info(f"[DAILY] Snapshotted per-cog command usage for {today}: {history[today]}")
+
+
 async def do_daily_reset():
     """Reset all users' daily reward and scratchoff counts at 5am CT."""
     from src import state
@@ -327,9 +340,11 @@ async def do_daily_reset():
     await snapshot_balances()
     ai_up = await check_ollama_connected()
     await snapshot_bot_stats(ai_up)
+    await snapshot_command_usage()
     state.stats_messages_today = 0
     state.stats_commands_today = 0
     state.stats_ai_responses_today = 0
+    state.stats_commands_today_by_cog.clear()
     for user in state.economy["users"].values():
         user["daily_date"] = None
         user["scratch_used"] = 0

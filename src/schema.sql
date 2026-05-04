@@ -176,6 +176,13 @@ CREATE TABLE IF NOT EXISTS bot_stats_history (
     memory_mb     FLOAT       NOT NULL DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS bot_command_usage_history (
+    snapshot_date VARCHAR(10) NOT NULL,
+    cog_name      VARCHAR(64) NOT NULL,
+    count         INT         NOT NULL DEFAULT 0,
+    PRIMARY KEY (snapshot_date, cog_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS restart_msg (
     id         TINYINT         NOT NULL PRIMARY KEY DEFAULT 1,
     channel_id BIGINT UNSIGNED NOT NULL,

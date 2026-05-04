@@ -275,6 +275,11 @@ class EventsCog(commands.Cog):
     async def on_command_completion(self, ctx: commands.Context):
         state.stats_commands_ran += 1
         state.stats_commands_today += 1
+        cog = ctx.command.cog
+        bucket = type(cog).__name__ if cog else "Uncategorized"
+        state.stats_commands_today_by_cog[bucket] = (
+            state.stats_commands_today_by_cog.get(bucket, 0) + 1
+        )
         if ctx.guild and not ctx.author.bot:
             xp, leveled_up = await _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
             if leveled_up and get_guild_cfg(ctx.guild.id).get("levelup_channel"):

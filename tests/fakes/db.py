@@ -46,6 +46,7 @@ _TABLE_PKS = {
     "saved_quotes": ("id",),
     "balance_history": ("snapshot_date", "user_id"),
     "bot_stats_history": ("snapshot_date",),
+    "bot_command_usage_history": ("snapshot_date", "cog_name"),
     "restart_msg": ("id",),
     "ephemeral_msgs": ("id",),
     "command_perms": ("command_name",),
@@ -70,6 +71,15 @@ def _translate(sql: str) -> str:
 
     # INSERT IGNORE -> INSERT OR IGNORE
     out = re.sub(r"\bINSERT\s+IGNORE\b", "INSERT OR IGNORE", out, flags=re.IGNORECASE)
+
+    # Strip MariaDB-only table options at the end of CREATE TABLE statements.
+    # SQLite rejects ENGINE=InnoDB / DEFAULT CHARSET=utf8mb4.
+    out = re.sub(
+        r"\)\s*ENGINE\s*=\s*\w+(?:\s+DEFAULT\s+CHARSET\s*=\s*\w+)?",
+        ")",
+        out,
+        flags=re.IGNORECASE,
+    )
 
     # INSERT ... ON DUPLICATE KEY UPDATE col=VALUES(col), ...
     #   -> INSERT ... ON CONFLICT(<pk_cols>) DO UPDATE SET col=excluded.col, ...

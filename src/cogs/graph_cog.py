@@ -6,7 +6,7 @@ from discord.ext import commands
 
 from src.helpers import emb, C_GOLD, get_memory_mb
 from src.permissions import requires_perm
-from src.persistence import load_balance_history, load_bot_stats_history
+from src.persistence import load_balance_history, load_bot_stats_history, load_command_usage_history
 from src.economy import _ensure_user, get_balance, _ct_now
 from src import state
 
@@ -39,7 +39,8 @@ class GraphCog(commands.Cog):
             "📊 Graph",
             "**Subcommands:**\n"
             "`!graph balance [@user]` — Wallet balance over the last 2 weeks\n"
-            "`!graph totalbalance` — Total economy (wallet + savings) over the last 2 weeks\n"
+            "`!graph economy` — Total economy (wallet + savings) over the last 2 weeks\n"
+            "`!graph commands` — Command usage by category over the last 2 weeks\n"
             "`!graph server` — Daily message and command counts over the last 2 weeks\n"
             "`!graph memory` — Bot memory usage (MB) over the last 2 weeks\n"
             "`!graph ai` — Daily AI response count and uptime over the last 2 weeks",
@@ -111,9 +112,9 @@ class GraphCog(commands.Cog):
         plt.close(fig)
         await ctx.send(file=discord.File(buf, filename="balance.png"))
 
-    @cmd_graph.command(name="totalbalance", aliases=["total", "eco"])
+    @cmd_graph.command(name="economy", aliases=["total", "eco", "totalbalance"])
     @requires_perm
-    async def cmd_graph_totalbalance(self, ctx: commands.Context):
+    async def cmd_graph_economy(self, ctx: commands.Context):
 
         import matplotlib
         matplotlib.use("Agg")
@@ -186,7 +187,75 @@ class GraphCog(commands.Cog):
 
         buf = _render_graph(fig)
         plt.close(fig)
-        await ctx.send(file=discord.File(buf, filename="total_balance.png"))
+        await ctx.send(file=discord.File(buf, filename="economy.png"))
+
+    @cmd_graph.command(name="commands", aliases=["cmd", "cmds"])
+    @requires_perm
+    async def cmd_graph_commands(self, ctx: commands.Context):
+
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        history = await load_command_usage_history()
+        dates = _sorted_dates(history)
+
+        # Append today's live counts
+        today = _ct_now().date()
+        live_today = dict(state.stats_commands_today_by_cog)
+        if dates and dates[-1] == today.isoformat():
+            x_dates = [datetime.date.fromisoformat(d) for d in dates]
+            per_day = [history[d] for d in dates]
+        else:
+            x_dates = [datetime.date.fromisoformat(d) for d in dates] + [today]
+            per_day = [history[d] for d in dates] + [live_today]
+
+        if not x_dates or all(not d for d in per_day):
+            await ctx.send(embed=emb("📊 No Data", "No command usage recorded yet — data is captured once per day at 5am CT.", C_GOLD))
+            return
+
+        if len(x_dates) < 2:
+            await ctx.send(embed=emb("📊 Not Enough Data", "Need at least 2 days of history to draw a graph.", C_GOLD))
+            return
+
+        # Union of cog names across the window, sorted by total volume desc for readable stacking.
+        totals: dict = {}
+        for day in per_day:
+            for cog, count in day.items():
+                totals[cog] = totals.get(cog, 0) + count
+        cogs = sorted(totals.keys(), key=lambda c: totals[c], reverse=True)
+
+        def _label(cog_name: str) -> str:
+            return cog_name[:-3] if cog_name.endswith("Cog") else cog_name
+
+        fig, ax = plt.subplots(figsize=(9, 4))
+        fig.patch.set_facecolor("#2f3136")
+        ax.set_facecolor("#36393f")
+
+        x_nums = list(range(len(x_dates)))
+        bottoms = [0] * len(x_dates)
+        palette = plt.cm.tab20.colors
+        for i, cog in enumerate(cogs):
+            segment = [day.get(cog, 0) for day in per_day]
+            ax.bar(x_nums, segment, bottom=bottoms, color=palette[i % len(palette)],
+                   width=0.6, label=_label(cog))
+            bottoms = [b + s for b, s in zip(bottoms, segment)]
+
+        ax.set_xticks(x_nums)
+        ax.set_xticklabels([_fmt_date(d) for d in x_dates], rotation=35, ha="right", fontsize=8)
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{int(v):,}"))
+        ax.tick_params(colors="#dcddde", labelsize=8)
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#4f545c")
+        ax.grid(axis="y", color="#4f545c", linestyle="--", linewidth=0.5, alpha=0.7)
+
+        ax.set_title("Command Usage by Category — Last 2 Weeks", color="#ffffff", fontsize=12, pad=10)
+        ax.set_ylabel("Commands", color="#b9bbbe", fontsize=9)
+        ax.legend(facecolor="#2f3136", edgecolor="#4f545c", labelcolor="#dcddde", fontsize=8, loc="upper left")
+
+        buf = _render_graph(fig)
+        plt.close(fig)
+        await ctx.send(file=discord.File(buf, filename="command_usage.png"))
 
 
     @cmd_graph.command(name="server", aliases=["srv"])

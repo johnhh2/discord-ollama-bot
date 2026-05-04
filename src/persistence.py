@@ -533,6 +533,30 @@ async def save_bot_stats_history(history: dict):
             )
 
 
+async def load_command_usage_history() -> dict:
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT snapshot_date, cog_name, count FROM bot_command_usage_history"
+        )
+        rows = await cur.fetchall()
+    result: dict = {}
+    for date_str, cog, count in rows:
+        result.setdefault(date_str, {})[cog] = count
+    return result
+
+
+async def save_command_usage_history(history: dict):
+    async with with_cursor() as cur:
+        for date_str, cogs in history.items():
+            for cog, count in cogs.items():
+                await cur.execute(
+                    "INSERT INTO bot_command_usage_history"
+                    " (snapshot_date, cog_name, count) VALUES (%s,%s,%s)"
+                    " ON DUPLICATE KEY UPDATE count=VALUES(count)",
+                    (date_str, cog, int(count)),
+                )
+
+
 # ── Channel prompts ───────────────────────────────────────────────────────────
 
 async def save_channel_prompts(prompts: dict):
@@ -630,6 +654,21 @@ async def init_db_state():
             def wrapper(fn):
                 return fn
             return wrapper
+
+        # ── schema upgrades (self-healing) ────────────────────────────────
+        # Tables added after the initial schema deploy are created here so
+        # production picks them up on boot without a manual `mysql < schema.sql`.
+        try:
+            await cur.execute(
+                "CREATE TABLE IF NOT EXISTS bot_command_usage_history ("
+                " snapshot_date VARCHAR(10) NOT NULL,"
+                " cog_name      VARCHAR(64) NOT NULL,"
+                " count         INT         NOT NULL DEFAULT 0,"
+                " PRIMARY KEY (snapshot_date, cog_name)"
+                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+            )
+        except Exception as e:
+            logging.error(f"[init_db_state] bot_command_usage_history create failed: {e}", exc_info=True)
 
         # ── economy_users ─────────────────────────────────────────────────
         try:

@@ -80,6 +80,7 @@ stats_messages_seen: int = 0
 stats_messages_today: int = 0
 stats_commands_today: int = 0
 stats_ai_responses_today: int = 0
+stats_commands_today_by_cog: dict = {}
 
 # ── Audit log ─────────────────────────────────────────────────────────────────
 

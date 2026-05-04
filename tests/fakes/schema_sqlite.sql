@@ -184,6 +184,13 @@ CREATE TABLE IF NOT EXISTS bot_stats_history (
     memory_mb     REAL    NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS bot_command_usage_history (
+    snapshot_date TEXT    NOT NULL,
+    cog_name      TEXT    NOT NULL,
+    count         INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (snapshot_date, cog_name)
+);
+
 CREATE TABLE IF NOT EXISTS restart_msg (
     id         INTEGER NOT NULL PRIMARY KEY DEFAULT 1,
     channel_id INTEGER NOT NULL,
