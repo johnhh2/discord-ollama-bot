@@ -11,6 +11,7 @@ from src.permissions import (
 from src.persistence import (
     save_chess_games,
 )
+from src.games.ttt_c4 import _setup_pvp_game, _send_game_board
 from src import state
 
 

@@ -307,7 +307,7 @@ class ScratchoffCog(commands.Cog):
         role_line = ""
         if role_enabled:
             if effective >= GAMBLER_ROLE_STREAK_REQUIRED:
-                role_line = f"\n\n🎲 You've earned the **Gamblers** role!"
+                role_line = "\n\n🎲 You've earned the **Gamblers** role!"
             else:
                 role_line = f"\n\nFill all 3 **{GAMBLER_ROLE_STREAK_REQUIRED} days in a row** to auto-join the **Gamblers** role."
 

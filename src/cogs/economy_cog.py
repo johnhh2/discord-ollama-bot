@@ -882,6 +882,7 @@ class EconomyCog(commands.Cog):
             return
 
         from src.persistence import save_leveling
+        from src.leveling import _ensure_lvl_record, level_from_xp, display_level
 
         rec = _ensure_lvl_record(ctx.guild.id, target.id)
         if amount < 0:

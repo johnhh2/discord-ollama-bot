@@ -28,7 +28,7 @@ from src import state
 
 # ── Hangman helpers ───────────────────────────────────────────────────────────
 
-_hangman_words_path = os.path.join(os.path.dirname(__file__), "..", "..", "hangman_words.txt")
+_hangman_words_path = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "hangman_words.txt")
 with open(_hangman_words_path) as _f:
     HANGMAN_WORDS = [w.strip() for w in _f if w.strip()]
 

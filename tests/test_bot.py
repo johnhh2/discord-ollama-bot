@@ -4,9 +4,11 @@ Tests for bot.py helper functions.
 Run: pytest -v
 Dev deps: pip install pytest pytest-asyncio
 """
+import datetime
 import random
 import time
 from collections import Counter
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -363,9 +365,6 @@ class TestBuildTttDisplay:
 # ─────────────────────────────────────────────────────────────────────────────
 # Lottery
 # ─────────────────────────────────────────────────────────────────────────────
-
-import datetime
-from zoneinfo import ZoneInfo
 
 _CT = ZoneInfo("America/Chicago")
 

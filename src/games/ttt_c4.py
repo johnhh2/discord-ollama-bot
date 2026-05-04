@@ -238,7 +238,7 @@ class TttC4Cog(commands.Cog):
                     for player_uid in game["players"]:
                         await add_balance(player_uid, amount)
                 game["last_move"] = f"{name} played position {pos} — It's a draw!"
-                draw_text = f"\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
+                draw_text = "\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
                 await _edit_board(ctx.channel, game, emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
                 del state.active_ttt_games[cid]
             else:
@@ -284,7 +284,7 @@ class TttC4Cog(commands.Cog):
                     for player_uid in game["players"]:
                         await add_balance(player_uid, amount)
                 game["last_move"] = f"{name} dropped in column {pos} — It's a draw!"
-                draw_text = f"\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
+                draw_text = "\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
                 await _edit_board(ctx.channel, game, emb("🤝 Connect 4 Draw", build_c4_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
                 del state.active_c4_games[cid]
             else:

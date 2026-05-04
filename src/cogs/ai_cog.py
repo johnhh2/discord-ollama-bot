@@ -240,7 +240,6 @@ class AICog(commands.Cog):
             await ctx.send(embed=emb("❌ Threads Only", "`!tldr` only works inside an AI thread.", C_RED))
             return
 
-        uid = ctx.author.id
         guild_id = ctx.guild.id if ctx.guild else None
         last_text = None
 

@@ -31,7 +31,7 @@ pytestmark = pytest.mark.asyncio
 
 def _make_chunks(*lines: str) -> list[bytes]:
     """Each chunk is one byte-string ending with \\n, like Ollama emits."""
-    return [(l + "\n").encode("utf-8") for l in lines]
+    return [(line + "\n").encode("utf-8") for line in lines]
 
 
 def _ollama_token(text: str, *, done: bool = False) -> str:

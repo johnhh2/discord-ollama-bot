@@ -1,8 +1,12 @@
 # discord-ollama-bot
 
+[![CI](https://github.com/johnhh2/discord-ollama-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/johnhh2/discord-ollama-bot/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A feature-rich Discord bot that runs against a self-hosted [Ollama](https://ollama.com) LLM. Beyond chat, it ships with a full economy, gambling games, role/channel shop, lottery, level system, and a permission framework — all backed by MariaDB.
 
-Built as a long-running personal project to explore Discord's API, async Python, LLM streaming, and small-scale game-economy design.
+Async Python on top of `discord.py` and `aiomysql`, with streaming LLM output, a tiered permission system, and a 570+ test suite that runs against an in-memory SQLite double of the production schema. Deployed in production via GitHub Actions → GHCR → Portainer on a Synology NAS.
 
 ## Features
 
@@ -22,7 +26,7 @@ Built as a long-running personal project to explore Discord's API, async Python,
 - `!leaderboard`, `!records`, `!economy` overview, `!graph` for visualizing balance history
 
 **Games**
-- `!hangman` (with a 60k-word list and rarity-weighted payouts)
+- `!hangman` (with a ~7.5k-word list and rarity-weighted payouts)
 - `!ttt` (tic-tac-toe), `!c4` (connect 4), `!chess` (persistent games), `!race`
 - Multi-player support with channel-scoped sessions
 

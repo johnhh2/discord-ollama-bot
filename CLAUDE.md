@@ -43,7 +43,7 @@ Install dev dependencies (not in `requirements.txt`):
 pip install pytest pytest-asyncio ruff
 ```
 
-CI runs `ruff check --select F401,F811 src/ tests/` (unused-import + duplicate-import) on every push/PR. Run it locally before committing if you've added or removed imports — unused imports will fail the build. The only allowed exception is `src/__init__.py` (re-exports for tests), configured in `pyproject.toml`.
+CI runs `ruff check src/ tests/` on every push/PR. The active ruleset (`E`, `F`, `W` minus `E501`) is configured in `pyproject.toml`. Run it locally before committing.
 
 Run all tests:
 

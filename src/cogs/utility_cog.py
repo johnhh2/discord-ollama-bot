@@ -29,7 +29,11 @@ from src.ai import (
     ollama_semaphore,
 )
 from src.config import (
-    OLLAMA_MODEL, OLLAMA_BASE_URL,
+    OLLAMA_MODEL, OLLAMA_BASE_URL, PUZZLE_REWARDS,
+)
+from src.puzzle import (
+    PUZZLE_RIDDLE_PROMPT, build_coding_prompt,
+    extract_puzzle_fields, normalize_code,
 )
 from src import state
 
@@ -48,12 +52,6 @@ async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | No
             return None
     return role
 
-
-from src.config import PUZZLE_REWARDS
-from src.puzzle import (
-    PUZZLE_RIDDLE_PROMPT, build_coding_prompt,
-    extract_puzzle_fields, normalize_code,
-)
 
 PUZZLE_RIDDLE_REWARD = 20
 

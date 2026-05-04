@@ -505,7 +505,7 @@ class SettingsCog(commands.Cog):
                 await save_lottery(ctx.guild.id, lottery)
                 try:
                     await announce_new_lottery(channel, lottery["prize_pool"])
-                except:
+                except Exception:
                     pass
 
             await ctx.send(embed=emb("🎰 Lottery Channel", f"Lottery channel set to {channel.mention}\n🎟️ Lottery ready!", C_GREEN))

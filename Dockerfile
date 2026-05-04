@@ -7,6 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 COPY assets/ ./assets/
-COPY main.py hangman_words.txt ./
+COPY main.py ./
 
 CMD ["python", "main.py"]

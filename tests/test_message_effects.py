@@ -322,7 +322,6 @@ async def test_mock_deletes_entry_at_zero_and_replaces_db_row(db, cog):
 async def test_mock_does_not_fire_in_other_channel(db, cog):
     target = FakeMember(uid=3005)
     guild = FakeGuild(gid=42)
-    target_channel = _Channel(ch_id=702)
     other_channel = _Channel(ch_id=703)
 
     _state.active_mocks[target.id] = {

@@ -139,9 +139,9 @@ class LotteryCog(commands.Cog):
             total_tickets = sum(players_dict.values())
             info = f"**Prize Pool:** {pool:,} 🪙 (+1,000 🪙 per player)\n"
             info += f"**Players:** {len(players_dict)}\n"
-            info += f"**Ticket Cost:** 10 🪙 for 1 🎟️\n\n"
+            info += "**Ticket Cost:** 10 🪙 for 1 🎟️\n\n"
             info += f"**Your Tickets:** {user_tickets:,} / {total_tickets:,} total\n"
-            info += f"Use `!lottery <n>` to buy more tickets"
+            info += "Use `!lottery <n>` to buy more tickets"
 
             await ctx.send(embed=emb(f"🎰 Current Lottery • ends <t:{timestamp}:R>", info, C_PURPLE))
             return

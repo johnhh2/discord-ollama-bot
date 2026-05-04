@@ -193,7 +193,7 @@ class ShopCog(commands.Cog):
             role_items.sort(key=lambda x: x[0])
             items_list = [item[1] for item in role_items]
             if _si.get("lockrole", True):
-                items_list.append(L("unlockrole", f"`!shop unlockrole <role name>` — Unlock a role (lock owner only)"))
+                items_list.append(L("unlockrole", "`!shop unlockrole <role name>` — Unlock a role (lock owner only)"))
             sections["👑 Roles"] = items_list
 
         # Channels (sorted by cost)
@@ -212,7 +212,7 @@ class ShopCog(commands.Cog):
             channel_items.sort(key=lambda x: x[0])
             items_list = [item[1] for item in channel_items]
             if _si.get("lockchannel", True):
-                items_list.append(L("unlockchannel", f"`!shop unlockchannel #channel` — Unlock a channel (lock owner only)"))
+                items_list.append(L("unlockchannel", "`!shop unlockchannel #channel` — Unlock a channel (lock owner only)"))
             sections["📢 Channels"] = items_list
 
         # Fun & Social (sorted by cost)
@@ -1214,7 +1214,7 @@ class ShopCog(commands.Cog):
         try:
             target = await MemberConverter().convert(ctx, args[0])
         except commands.BadArgument:
-            await ctx.send(embed=emb("🛒 Shop", f"Usage: `!shop tax @user`", C_PURPLE))
+            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop tax @user`", C_PURPLE))
             return
         if target.id == uid:
             await ctx.send(embed=emb("❌ Error", "You can't tax yourself!", C_RED))

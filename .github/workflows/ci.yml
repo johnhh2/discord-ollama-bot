@@ -22,8 +22,8 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-asyncio ruff
 
-      - name: Lint (unused/duplicate imports)
-        run: ruff check --select F401,F811 src/ tests/
+      - name: Lint
+        run: ruff check src/ tests/
 
       - name: Run tests
         run: pytest -q

@@ -79,15 +79,12 @@ def display_level(internal_level: int) -> int:
     return internal_level + 1
 
 
+_LEVEL_REWARD_TIERS = ((4, 0), (9, 1), (29, 2), (59, 3), (99, 4), (149, 5))
+
+
 def levelup_coin_reward(display_lvl: int) -> int:
     """Coins awarded on reaching a given display level."""
-    if display_lvl <= 4:   tier = 0
-    elif display_lvl <= 9:  tier = 1
-    elif display_lvl <= 29: tier = 2
-    elif display_lvl <= 59: tier = 3
-    elif display_lvl <= 99: tier = 4
-    elif display_lvl <= 149: tier = 5
-    else:                    tier = 6
+    tier = next((t for max_lvl, t in _LEVEL_REWARD_TIERS if display_lvl <= max_lvl), 6)
     return 500 * (2 ** tier)
 
 
