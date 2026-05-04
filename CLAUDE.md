@@ -146,6 +146,7 @@ Schema changes ship as numbered SQL files in [migrations/](migrations/). The bot
 6. **Add the new table's PK to `tests/fakes/db.py:_TABLE_PKS`** if the table will ever be the target of `INSERT … ON DUPLICATE KEY UPDATE`. The SQLite test translator needs the PK list to rewrite that into `ON CONFLICT(...) DO UPDATE`. If you skip this and a test exercises an upsert against the new table, you'll get a clear `No PK mapping for table 'xxx'` error — but it's easier to add it up front.
 7. **Run the suite**: `python -m pytest -q`. The test fake builds its in-memory DB by running these same migration files, so any MariaDB syntax SQLite can't translate fails immediately. If that happens, extend `_translate()` in `tests/fakes/db.py` rather than rewriting the migration to be SQLite-friendly — production must keep speaking real MariaDB.
 8. **Do NOT touch `src/migrations.py:_done`** or the heuristic-baseline logic to "fix" a deploy issue. The heuristic only fires when `schema_migrations` is empty AND `economy_users` exists, exactly once per DB. If a deploy is wrong, fix it with a forward-fix migration; never edit history.
+9. **The Dockerfile must `COPY migrations/`** — the runner reads files at boot from disk. If you ever add another top-level data directory the bot needs at runtime, add a matching `COPY` line in the Dockerfile. Missing files raise `migrations dir not found: /app/migrations` and `init_db_state` never runs, leaving in-memory state empty (which presents as "all user data is gone"; data on disk is fine).
 
 ### Reverse migrations (optional)
 
