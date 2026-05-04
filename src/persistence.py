@@ -603,10 +603,24 @@ async def load_and_clear_ephemeral_msgs() -> list:
 
 # ── init_db_state ─────────────────────────────────────────────────────────────
 
+_init_db_state_done = False
+
+
 async def init_db_state():
-    """Load all persistent state from DB into src.state. Called once from on_ready."""
+    """Load all persistent state from DB into src.state.
+
+    on_ready fires on every gateway reconnect, so the second+ call is guarded
+    out — otherwise a reconnect would clobber any in-memory mutations made
+    since the last save (e.g. an in-progress chess game, an active ragebait).
+    """
+    global _init_db_state_done
     import logging
     import src.state as state
+
+    if _init_db_state_done:
+        logging.info("[init_db_state] skipping; already initialized")
+        return
+    _init_db_state_done = True
 
     async with with_cursor() as cur:
 

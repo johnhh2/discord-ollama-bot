@@ -92,7 +92,7 @@ class AdminCog(commands.Cog):
     async def cmd_botinvite(self, ctx: commands.Context):
 
         if not DISCORD_CLIENT_ID:
-            await ctx.send("❌ `DISCORD_CLIENT_ID` is not set. Add it to your `.env` to enable this command.")
+            await ctx.send(embed=emb("❌ Not Configured", "`DISCORD_CLIENT_ID` is not set. Add it to your `.env` to enable this command.", C_RED))
             return
 
         permissions = "6192724835560529"

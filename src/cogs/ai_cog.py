@@ -202,8 +202,9 @@ class AICog(commands.Cog):
         custom_prompt = story_aliases[word]
         rest = parts[1] if len(parts) > 1 else None
         ctx.invoked_with = word
-        # Set ctx.command so check_command_permission and rate-limit logic
-        # behave as if !story were invoked.
+        # Set ctx.command so any downstream code keyed on ctx.command (rate
+        # limits, level-unlock gate in core.py, future @requires_perm) treats
+        # the alias dispatch as if !story were invoked.
         ctx.command = self.cmd_story
         await self._story_with_prompt(ctx, prompt=rest, system_prompt=custom_prompt, alias_name=word)
 

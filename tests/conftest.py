@@ -75,6 +75,17 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "locked_channels", {})
     monkeypatch.setattr(_state, "locked_roles", {})
 
+    # init_db_state is one-shot in production (guarded against on_ready
+    # reconnects), but tests call it repeatedly to re-seed state from the
+    # fake DB; wrap to clear the guard before every invocation.
+    _real_init_db_state = _persistence.init_db_state
+
+    async def _init_db_state_for_tests(*args, **kwargs):
+        _persistence._init_db_state_done = False
+        return await _real_init_db_state(*args, **kwargs)
+
+    monkeypatch.setattr(_persistence, "init_db_state", _init_db_state_for_tests)
+
     # Stub all async DB save functions in persistence so tests don't need a real DB
     save_fn_names = [
         "save_economy", "save_guild_house", "save_insurance", "save_jackpot",

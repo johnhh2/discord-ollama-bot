@@ -605,6 +605,38 @@ async def test_leveling_targeted_save_overwrites_existing_row(db):
     assert _state.leveling["42"]["100"]["xp"] == 999
 
 
+# ── init_db_state reconnect guard ─────────────────────────────────────────────
+
+async def test_init_db_state_is_idempotent_across_reconnects(db, monkeypatch):
+    """on_ready fires on every gateway reconnect; the second+ call must be
+    a no-op so a reconnect can't clobber in-memory mutations made since the
+    last save (e.g. an in-progress chess game, an active ragebait).
+
+    The conftest wrapper resets the guard before every call so existing
+    tests can re-seed state freely. This test undoes that wrapper to
+    exercise the production behavior directly.
+    """
+    # Reach into conftest's wrapper closure to find the real init_db_state.
+    wrapper = _persistence.init_db_state
+    real_init = wrapper.__closure__[0].cell_contents
+
+    # First load: populates state from DB and sets the guard.
+    _state.economy["users"]["7001"] = {"balance": 100, "last_daily": 0.0}
+    await _persistence.save_economy()
+    _state.economy["users"].clear()
+    _persistence._init_db_state_done = False
+    await real_init()
+    assert _state.economy["users"]["7001"]["balance"] == 100
+    assert _persistence._init_db_state_done is True
+
+    # Mutate in-memory (simulating an unsaved live change).
+    _state.economy["users"]["7001"]["balance"] = 999
+
+    # Second call: the guard should make it a no-op so the live mutation survives.
+    await real_init()
+    assert _state.economy["users"]["7001"]["balance"] == 999
+
+
 # ── restart_msg ───────────────────────────────────────────────────────────────
 
 async def test_restart_msg_save_load_clear_cycle(db):

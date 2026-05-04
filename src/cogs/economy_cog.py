@@ -697,7 +697,7 @@ class EconomyCog(commands.Cog):
             await ctx.send("Usage: `!pay @user <amount>`")
             return
         if recipient.id == ctx.author.id:
-            await ctx.send(f"**{ctx.author.display_name}** can't pay themselves.")
+            await ctx.send(embed=emb("❌ Invalid Recipient", f"**{ctx.author.display_name}** can't pay themselves.", C_RED))
             return
         amount = await parse_amount(ctx, amount)
         if amount is None:

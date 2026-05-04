@@ -1,6 +1,5 @@
 import random
 import datetime
-from zoneinfo import ZoneInfo
 
 import discord
 from discord.ext import commands, tasks
@@ -10,14 +9,13 @@ from src.helpers import (
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, drain_bot_balance_into_lottery, announce_new_lottery,
-    _ensure_user,
+    _ensure_user, _ct_now, lottery_week_key,
 )
 from src.persistence import (
     save_lottery,
     load_lottery, try_set_record
 )
 from src.guild_config import get_guild_cfg
-from src.economy import lottery_week_key
 
 
 class LotteryCog(commands.Cog):
@@ -31,8 +29,7 @@ class LotteryCog(commands.Cog):
     @tasks.loop(minutes=1)
     async def lottery_scheduler(self):
         """Check every minute if it's Saturday 6pm CST for lottery tasks."""
-        ct = ZoneInfo("America/Chicago")
-        now = datetime.datetime.now(datetime.timezone.utc).astimezone(ct)
+        now = _ct_now()
         is_saturday = now.weekday() == 5
 
         if not is_saturday:
@@ -109,8 +106,7 @@ class LotteryCog(commands.Cog):
         lottery = await load_lottery(ctx.guild.id)
 
         # Check if we're in the 6-7pm window (draw done, new lottery not yet announced)
-        ct = ZoneInfo("America/Chicago")
-        now_cst = datetime.datetime.now(datetime.timezone.utc).astimezone(ct)
+        now_cst = _ct_now()
         current_week = lottery_week_key(now_cst)
         in_transition = (
             now_cst.weekday() == 5
