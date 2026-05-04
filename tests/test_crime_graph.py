@@ -51,29 +51,57 @@ async def test_record_crime_event_zero_is_noop():
 @pytest.mark.asyncio
 async def test_record_crime_event_writes_atomically_to_disk(db):
     """The whole point of the async upsert: every record_crime_event call
-    must hit disk immediately, not wait for the 6h scheduler. This pins that
-    a bot crash 1ms after the call still has the event durable."""
+    must hit disk immediately, not wait for the 30min scheduler. This pins
+    that a bot crash 1ms after the call still has the event durable."""
     await _economy.record_crime_event(42, gained=500, lost=100)
     await _economy.record_crime_event(43, lost=250)
 
     today = _economy._ct_now().date().isoformat()
+    bucket = _economy._current_bucket_ct()
     history = await _persistence.load_crime_history()
     assert today in history
-    assert history[today]["42"] == {"gained": 500, "lost": 100}
-    assert history[today]["43"] == {"gained": 0, "lost": 250}
+    assert history[today][bucket]["42"] == {"gained": 500, "lost": 100}
+    assert history[today][bucket]["43"] == {"gained": 0, "lost": 250}
 
 
 @pytest.mark.asyncio
 async def test_record_crime_event_increments_existing_row(db):
-    """Two calls for the same user same day should add, not replace.
-    MariaDB's `gained = gained + VALUES(gained)` is doing the work."""
+    """Multiple calls for the same user in the same bucket should add,
+    not replace. MariaDB's `gained = gained + VALUES(gained)` does it."""
     await _economy.record_crime_event(42, gained=100)
     await _economy.record_crime_event(42, gained=50, lost=20)
     await _economy.record_crime_event(42, lost=30)
 
     today = _economy._ct_now().date().isoformat()
+    bucket = _economy._current_bucket_ct()
     history = await _persistence.load_crime_history()
-    assert history[today]["42"] == {"gained": 150, "lost": 50}
+    assert history[today][bucket]["42"] == {"gained": 150, "lost": 50}
+
+
+@pytest.mark.asyncio
+async def test_record_crime_event_clears_dict_on_bucket_rollover(db, monkeypatch):
+    """When the 6h CT bucket rolls over between two record_* calls, the
+    in-memory cache must reset so it only reflects the current bucket.
+    Disk rows for the previous bucket stay frozen as historical points."""
+    # First event lands in bucket B0.
+    monkeypatch.setattr(_economy, "_current_bucket_ct", lambda: 0)
+    await _economy.record_crime_event(42, gained=500)
+    assert _state.crime_today_by_user["42"]["gained"] == 500
+    assert _state._crime_bucket == 0
+
+    # Wall clock advances past a 6h boundary; next event lands in B1.
+    monkeypatch.setattr(_economy, "_current_bucket_ct", lambda: 1)
+    await _economy.record_crime_event(42, gained=200)
+
+    # Cache reflects ONLY the new bucket (200, not 700).
+    assert _state.crime_today_by_user["42"]["gained"] == 200
+    assert _state._crime_bucket == 1
+
+    # Disk has both buckets, frozen as separate data points.
+    today = _economy._ct_now().date().isoformat()
+    history = await _persistence.load_crime_history()
+    assert history[today][0]["42"]["gained"] == 500
+    assert history[today][1]["42"]["gained"] == 200
 
 
 @pytest.mark.asyncio
@@ -114,9 +142,10 @@ async def test_build_series_crime_returns_gained_and_lost_segments(monkeypatch):
     if yest is None:
         pytest.skip("Edge case: today is the 1st; skipping date-arithmetic shortcut.")
 
+    cur_bucket = graph_series._current_bucket_ct()
     fake_history = {
-        yest.isoformat(): {"42": {"gained": 100, "lost": 50}},
-        today.isoformat(): {"42": {"gained": 200, "lost": 80}},
+        yest.isoformat(): {0: {"42": {"gained": 100, "lost": 50}}},
+        today.isoformat(): {cur_bucket: {"42": {"gained": 200, "lost": 80}}},
     }
 
     async def _load(): return fake_history
@@ -128,7 +157,7 @@ async def test_build_series_crime_returns_gained_and_lost_segments(monkeypatch):
 
     labels = {seg.label for seg in data.segments}
     assert labels == {"Gained", "Lost"}
-    assert len(data.x_dates) >= 2
+    assert len(data.x_points) >= 2
 
     gained = next(s for s in data.segments if s.label == "Gained")
     lost = next(s for s in data.segments if s.label == "Lost")
@@ -147,8 +176,8 @@ async def test_build_series_crime_skips_days_user_was_inactive(monkeypatch):
 
     # Day-1 has activity for user 42, day-2 doesn't.
     fake_history = {
-        yest.isoformat(): {"42": {"gained": 100, "lost": 50}},
-        today.isoformat(): {"99": {"gained": 1, "lost": 1}},  # other user only
+        yest.isoformat(): {0: {"42": {"gained": 100, "lost": 50}}},
+        today.isoformat(): {0: {"99": {"gained": 1, "lost": 1}}},  # other user only
     }
 
     async def _load(): return fake_history
@@ -157,9 +186,10 @@ async def test_build_series_crime_skips_days_user_was_inactive(monkeypatch):
     member = _stub_member(42, "alice")
     data = await graph_series.build_series_crime(member)
 
-    # User 42 only has yesterday — no live today entry, so just one date.
-    assert len(data.x_dates) == 1
-    assert data.x_dates[0] == yest
+    # User 42 only has yesterday's bucket-0 — no live today entry, just one point.
+    assert len(data.x_points) == 1
+    # x_points hold UTC datetimes; date() should match yesterday.
+    assert data.x_points[0].astimezone(_economy._ct_now().tzinfo).date() == yest
 
 
 # ── token parsing ────────────────────────────────────────────────────────────

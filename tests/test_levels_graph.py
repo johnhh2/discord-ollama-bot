@@ -50,9 +50,10 @@ async def test_record_levelup_writes_atomically_to_disk(db):
     await _leveling.record_levelup(100, 99, count=1)
 
     today = _economy._ct_now().date().isoformat()
+    bucket = _economy._current_bucket_ct()
     history = await _persistence.load_levelup_history()
-    assert history[today][(100, "42")] == 2
-    assert history[today][(100, "99")] == 1
+    assert history[today][bucket][(100, "42")] == 2
+    assert history[today][bucket][(100, "99")] == 1
 
 
 @pytest.mark.asyncio
@@ -60,8 +61,9 @@ async def test_record_levelup_increments_existing_row(db):
     await _leveling.record_levelup(100, 42, count=1)
     await _leveling.record_levelup(100, 42, count=3)
     today = _economy._ct_now().date().isoformat()
+    bucket = _economy._current_bucket_ct()
     history = await _persistence.load_levelup_history()
-    assert history[today][(100, "42")] == 4
+    assert history[today][bucket][(100, "42")] == 4
 
 
 @pytest.mark.asyncio
@@ -97,15 +99,16 @@ async def test_build_series_levels_filters_to_guild_and_user(monkeypatch):
     if yest is None:
         pytest.skip("Edge case: today is the 1st; skipping date-arithmetic shortcut.")
 
+    cur_bucket = graph_series._current_bucket_ct()
     fake_history = {
-        yest.isoformat(): {
+        yest.isoformat(): {0: {
             (100, "42"): 1,
             (100, "99"): 5,   # different user, same guild — must NOT appear
             (200, "42"): 7,   # same user, different guild — must NOT appear
-        },
-        today.isoformat(): {
+        }},
+        today.isoformat(): {cur_bucket: {
             (100, "42"): 2,
-        },
+        }},
     }
 
     async def _load(): return fake_history
@@ -117,7 +120,7 @@ async def test_build_series_levels_filters_to_guild_and_user(monkeypatch):
 
     seg = data.segments[0]
     assert seg.label == "Level-ups"
-    # Two days of activity for (100, "42"): yesterday=1, today=2. Other rows ignored.
+    # Two activity buckets for (100, "42"): yesterday=1, today=2. Others ignored.
     assert seg.y_values == [1, 2]
 
 
@@ -129,8 +132,8 @@ async def test_build_series_levels_skips_inactive_days(monkeypatch):
         pytest.skip("Edge case: today is the 1st; skipping date-arithmetic shortcut.")
 
     fake_history = {
-        yest.isoformat(): {(100, "42"): 1},
-        today.isoformat(): {(100, "99"): 3},  # other user only
+        yest.isoformat(): {0: {(100, "42"): 1}},
+        today.isoformat(): {0: {(100, "99"): 3}},  # other user only
     }
     async def _load(): return fake_history
     monkeypatch.setattr(graph_series, "load_levelup_history", _load)
@@ -138,8 +141,8 @@ async def test_build_series_levels_skips_inactive_days(monkeypatch):
     member = _stub_member(42, "alice")
     data = await graph_series.build_series_levels(member, 100)
 
-    assert len(data.x_dates) == 1
-    assert data.x_dates[0] == yest
+    assert len(data.x_points) == 1
+    assert data.x_points[0].astimezone(_economy._ct_now().tzinfo).date() == yest
 
 
 # ── token parsing ────────────────────────────────────────────────────────────

@@ -26,7 +26,14 @@ from typing import Awaitable, Callable, Optional
 import discord
 
 from src import state
-from src.economy import _ct_today_date, _calendar_today_date, get_balance
+from src.economy import (
+    _ct_today_date, _calendar_today_date,  # re-exported for tests
+    _current_bucket_ct, _bucket_start_dt,
+    get_balance,
+)
+# Silence unused-import warnings — these names are part of this module's
+# test-facing surface even though graph_series itself doesn't reference them.
+__all_test_reexports__ = (_ct_today_date, _calendar_today_date)
 from src.helpers import get_memory_mb
 from src.persistence import (
     load_balance_history, load_bot_stats_history, load_command_usage_history,
@@ -63,10 +70,14 @@ class Segment:
 @dataclass
 class SeriesData:
     """Result of building one series. Multi-segment when the source produces
-    more than one stripe (e.g. economy = wallets/savings/total)."""
+    more than one stripe (e.g. economy = wallets/savings/total).
+
+    `x_points` are full datetime values (bucket-start timestamps in CT) so
+    each calendar day produces up to 4 plotted points (one per 6h bucket).
+    """
     title: str            # short identifier for legend prefixing in combined mode
     segments: list[Segment]
-    x_dates: list[datetime.date]
+    x_points: list[datetime.datetime]
     native_style: str     # "line" or "bar"
     # Optional extras only used by ai in single-mode:
     extras: dict = field(default_factory=dict)
@@ -98,67 +109,90 @@ def _date_to_iso(d: datetime.date) -> str:
     return d.isoformat()
 
 
+def _iter_points(history: dict, limit_days: int = 14):
+    """Walk a {date_str: {bucket: payload}} history in chronological order,
+    yielding (point_dt, payload) for each (date, bucket) pair. `point_dt` is
+    the bucket's CT-start as a UTC-aware datetime — used directly as the
+    matplotlib x position.
+    """
+    for date_str in _sorted_dates(history, limit=limit_days):
+        by_bucket = history[date_str]
+        if not isinstance(by_bucket, dict):
+            continue
+        for bucket in sorted(by_bucket.keys()):
+            yield _bucket_start_dt(date_str, bucket), by_bucket[bucket]
+
+
+def _live_now_point() -> datetime.datetime:
+    """Bucket-start timestamp for the current 6h CT bucket."""
+    return _bucket_start_dt(_ct_now_iso_date(), _current_bucket_ct())
+
+
+def _ct_now_iso_date() -> str:
+    """Calendar date in CT as ISO string. Inlined small helper so this
+    module doesn't need to import _ct_now from economy just for one use.
+    """
+    from src.economy import _ct_now
+    return _ct_now().date().isoformat()
+
+
 # ── build_series for each registered command ─────────────────────────────────
 
 
 async def build_series_balance(member: discord.Member) -> SeriesData:
     history = await load_balance_history()
-    dates = _sorted_dates(history)
     uid_str = str(member.id)
 
-    x_dates: list[datetime.date] = []
+    x_points: list[datetime.datetime] = []
     y_wallet: list[float] = []
-    for d in dates:
-        snap = history[d].get(uid_str)
+    for point_dt, snap_by_user in _iter_points(history):
+        snap = snap_by_user.get(uid_str)
         if snap is not None:
-            x_dates.append(datetime.date.fromisoformat(d))
+            x_points.append(point_dt)
             y_wallet.append(snap["wallet"])
 
-    today = _ct_today_date()
+    # Append live "now" point for the current bucket if we don't already have it.
+    now_point = _live_now_point()
     live_wallet = await get_balance(member.id)
-    if not x_dates or x_dates[-1] != today:
-        x_dates.append(today)
+    if not x_points or x_points[-1] != now_point:
+        x_points.append(now_point)
         y_wallet.append(live_wallet)
 
     return SeriesData(
         title=f"{member.display_name}'s Wallet",
         segments=[Segment(label="Wallet", color="#2ecc71", y_values=y_wallet)],
-        x_dates=x_dates,
+        x_points=x_points,
         native_style="line",
     )
 
 
 async def build_series_crime(member: discord.Member) -> SeriesData:
-    """Per-user daily totals of coins gained/lost via !steal and !mug.
+    """Per-(date, bucket) totals of coins gained/lost via !steal and !mug.
 
-    `gained` = winnings from successful steal.
-    `lost`   = fines from failed steal + coins stolen by others + mug fee + coins
-               taken in a mug.
+    Each calendar day produces up to 4 plotted points (one per 6h CT bucket).
+    Days/buckets where the user had no crime activity are skipped — no noisy
+    zero line for inactive users.
     """
     history = await load_crime_history()
-    dates = _sorted_dates(history)
     uid_str = str(member.id)
 
-    x_dates: list[datetime.date] = []
+    x_points: list[datetime.datetime] = []
     y_gained: list[float] = []
     y_lost: list[float] = []
-    for d in dates:
-        rec = history[d].get(uid_str)
+    for point_dt, by_user in _iter_points(history):
+        rec = by_user.get(uid_str)
         if rec is None:
-            # Skip days where this user had no crime activity recorded — the
-            # graph would otherwise plot a noisy zero line for inactive users.
             continue
-        x_dates.append(datetime.date.fromisoformat(d))
+        x_points.append(point_dt)
         y_gained.append(rec.get("gained", 0))
         y_lost.append(rec.get("lost", 0))
 
-    # Append today's live totals. Crime rows are keyed by calendar date on
-    # disk (record_crime_event uses _ct_now().date()), so this graph reads
-    # by calendar date too — not the 5am gameplay-day boundary.
-    today = _calendar_today_date()
+    # Append the current bucket's live totals if we don't already have a row
+    # for that bucket on disk.
+    now_point = _live_now_point()
     live = state.crime_today_by_user.get(uid_str)
-    if live is not None and (not x_dates or x_dates[-1] != today):
-        x_dates.append(today)
+    if live is not None and (not x_points or x_points[-1] != now_point):
+        x_points.append(now_point)
         y_gained.append(live.get("gained", 0))
         y_lost.append(live.get("lost", 0))
 
@@ -168,38 +202,36 @@ async def build_series_crime(member: discord.Member) -> SeriesData:
             Segment(label="Gained", color="#2ecc71", y_values=y_gained),
             Segment(label="Lost",   color="#e74c3c", y_values=y_lost),
         ],
-        x_dates=x_dates,
+        x_points=x_points,
         native_style="line",
     )
 
 
 async def build_series_gambling(member: discord.Member) -> SeriesData:
-    """Per-user daily P/L from games and gambling commands.
+    """Per-(date, bucket) P/L from games and gambling commands.
 
     Tracks net wins/losses across slots, flip, blackjack, scratchoff, hangman,
     ttt, c4, race, lottery. Refunds and pushes are not recorded (net 0). The
     Net line is dashed, mirroring economy's Total line.
     """
     history = await load_gambling_history()
-    dates = _sorted_dates(history)
     uid_str = str(member.id)
 
-    x_dates: list[datetime.date] = []
+    x_points: list[datetime.datetime] = []
     y_gained: list[float] = []
     y_lost: list[float] = []
-    for d in dates:
-        rec = history[d].get(uid_str)
+    for point_dt, by_user in _iter_points(history):
+        rec = by_user.get(uid_str)
         if rec is None:
             continue
-        x_dates.append(datetime.date.fromisoformat(d))
+        x_points.append(point_dt)
         y_gained.append(rec.get("gained", 0))
         y_lost.append(rec.get("lost", 0))
 
-    # Calendar-date keying — see build_series_crime for the same rationale.
-    today = _calendar_today_date()
+    now_point = _live_now_point()
     live = state.gambling_today_by_user.get(uid_str)
-    if live is not None and (not x_dates or x_dates[-1] != today):
-        x_dates.append(today)
+    if live is not None and (not x_points or x_points[-1] != now_point):
+        x_points.append(now_point)
         y_gained.append(live.get("gained", 0))
         y_lost.append(live.get("lost", 0))
 
@@ -212,7 +244,7 @@ async def build_series_gambling(member: discord.Member) -> SeriesData:
             Segment(label="Lost",   color="#e74c3c", y_values=y_lost),
             Segment(label="Net",    color="#f1c40f", y_values=y_net),
         ],
-        x_dates=x_dates,
+        x_points=x_points,
         native_style="line",
     )
 
@@ -225,24 +257,22 @@ async def build_series_levels(member: discord.Member, guild_id: int) -> SeriesDa
     are skipped (no noisy zero line for inactive users).
     """
     history = await load_levelup_history()
-    dates = _sorted_dates(history)
     uid_str = str(member.id)
     key = (int(guild_id), uid_str)
 
-    x_dates: list[datetime.date] = []
+    x_points: list[datetime.datetime] = []
     y_count: list[float] = []
-    for d in dates:
-        count = history[d].get(key)
+    for point_dt, by_key in _iter_points(history):
+        count = by_key.get(key)
         if count is None or count == 0:
             continue
-        x_dates.append(datetime.date.fromisoformat(d))
+        x_points.append(point_dt)
         y_count.append(count)
 
-    # Calendar-date keying — see build_series_crime for the same rationale.
-    today = _calendar_today_date()
+    now_point = _live_now_point()
     live = state.levelups_today.get(key)
-    if live and (not x_dates or x_dates[-1] != today):
-        x_dates.append(today)
+    if live and (not x_points or x_points[-1] != now_point):
+        x_points.append(now_point)
         y_count.append(live)
 
     return SeriesData(
@@ -250,25 +280,23 @@ async def build_series_levels(member: discord.Member, guild_id: int) -> SeriesDa
         segments=[
             Segment(label="Level-ups", color="#9b59b6", y_values=y_count),
         ],
-        x_dates=x_dates,
+        x_points=x_points,
         native_style="bar",
     )
 
 
 async def build_series_economy() -> SeriesData:
     history = await load_balance_history()
-    dates = _sorted_dates(history)
 
-    x_dates: list[datetime.date] = []
+    x_points: list[datetime.datetime] = []
     y_wallet: list[float] = []
     y_savings: list[float] = []
-    for d in dates:
-        snap = history[d]
-        x_dates.append(datetime.date.fromisoformat(d))
-        y_wallet.append(sum(u["wallet"] for u in snap.values()))
-        y_savings.append(sum(u["savings"] for u in snap.values()))
+    for point_dt, snap_by_user in _iter_points(history):
+        x_points.append(point_dt)
+        y_wallet.append(sum(u["wallet"] for u in snap_by_user.values()))
+        y_savings.append(sum(u["savings"] for u in snap_by_user.values()))
 
-    today = _ct_today_date()
+    now_point = _live_now_point()
     now = _time.time()
     live_wallet = sum(u.get("balance", 0) for u in state.economy["users"].values())
     live_savings = int(sum(
@@ -276,8 +304,8 @@ async def build_series_economy() -> SeriesData:
         for u in state.economy["users"].values()
         for e in u.get("savings", [])
     ))
-    if not x_dates or x_dates[-1] != today:
-        x_dates.append(today)
+    if not x_points or x_points[-1] != now_point:
+        x_points.append(now_point)
         y_wallet.append(live_wallet)
         y_savings.append(live_savings)
 
@@ -289,28 +317,31 @@ async def build_series_economy() -> SeriesData:
             Segment(label="Savings", color="#9b59b6", y_values=y_savings),
             Segment(label="Total",   color="#f1c40f", y_values=y_total),
         ],
-        x_dates=x_dates,
+        x_points=x_points,
         native_style="line",
     )
 
 
 async def build_series_commands() -> SeriesData:
     history = await load_command_usage_history()
-    dates = _sorted_dates(history)
-    today = _ct_today_date()
-    live_today = dict(state.stats_commands_today_by_cog)
 
-    if dates and dates[-1] == today.isoformat():
-        x_dates = [datetime.date.fromisoformat(d) for d in dates]
-        per_day = [history[d] for d in dates]
-    else:
-        x_dates = [datetime.date.fromisoformat(d) for d in dates] + [today]
-        per_day = [history[d] for d in dates] + [live_today]
+    x_points: list[datetime.datetime] = []
+    per_point: list[dict] = []
+    for point_dt, by_cog in _iter_points(history):
+        x_points.append(point_dt)
+        per_point.append(by_cog)
+
+    # Append the live current-bucket data point.
+    now_point = _live_now_point()
+    live_now = dict(state.stats_commands_today_by_cog)
+    if not x_points or x_points[-1] != now_point:
+        x_points.append(now_point)
+        per_point.append(live_now)
 
     # Union of cog names across the window, sorted by total volume desc.
     totals: dict[str, int] = {}
-    for day in per_day:
-        for cog, count in day.items():
+    for slot in per_point:
+        for cog, count in slot.items():
             totals[cog] = totals.get(cog, 0) + count
     cogs = sorted(totals.keys(), key=lambda c: totals[c], reverse=True)
 
@@ -325,33 +356,31 @@ async def build_series_commands() -> SeriesData:
         Segment(
             label=_label(cog),
             color=palette[i % len(palette)],
-            y_values=[float(day.get(cog, 0)) for day in per_day],
+            y_values=[float(slot.get(cog, 0)) for slot in per_point],
         )
         for i, cog in enumerate(cogs)
     ]
     return SeriesData(
         title="Commands by Cog",
         segments=segments,
-        x_dates=x_dates,
+        x_points=x_points,
         native_style="bar",
     )
 
 
 async def build_series_server() -> SeriesData:
     history = await load_bot_stats_history()
-    dates = _sorted_dates(history)
-    x_dates: list[datetime.date] = []
+    x_points: list[datetime.datetime] = []
     y_messages: list[float] = []
     y_commands: list[float] = []
-    for d in dates:
-        snap = history[d]
-        x_dates.append(datetime.date.fromisoformat(d))
+    for point_dt, snap in _iter_points(history):
+        x_points.append(point_dt)
         y_messages.append(snap.get("messages", 0))
         y_commands.append(snap.get("commands", 0))
 
-    today = _ct_today_date()
-    if not x_dates or x_dates[-1] != today:
-        x_dates.append(today)
+    now_point = _live_now_point()
+    if not x_points or x_points[-1] != now_point:
+        x_points.append(now_point)
         y_messages.append(state.stats_messages_today)
         y_commands.append(state.stats_commands_today)
 
@@ -361,33 +390,31 @@ async def build_series_server() -> SeriesData:
             Segment(label="Messages", color="#3498db", y_values=y_messages),
             Segment(label="Commands", color="#e67e22", y_values=y_commands),
         ],
-        x_dates=x_dates,
+        x_points=x_points,
         native_style="line",
     )
 
 
 async def build_series_ai() -> SeriesData:
     history = await load_bot_stats_history()
-    dates = _sorted_dates(history)
-    x_dates: list[datetime.date] = []
+    x_points: list[datetime.datetime] = []
     y_responses: list[float] = []
     ai_up_flags: list[Optional[bool]] = []
-    for d in dates:
-        snap = history[d]
-        x_dates.append(datetime.date.fromisoformat(d))
+    for point_dt, snap in _iter_points(history):
+        x_points.append(point_dt)
         y_responses.append(snap.get("ai_responses", 0))
         ai_up_flags.append(snap.get("ai_up", False))
 
-    today = _ct_today_date()
-    if not x_dates or x_dates[-1] != today:
-        x_dates.append(today)
+    now_point = _live_now_point()
+    if not x_points or x_points[-1] != now_point:
+        x_points.append(now_point)
         y_responses.append(state.stats_ai_responses_today)
         ai_up_flags.append(None)
 
     return SeriesData(
         title="AI Activity",
         segments=[Segment(label="AI Responses", color="#1abc9c", y_values=y_responses)],
-        x_dates=x_dates,
+        x_points=x_points,
         native_style="bar",
         extras={"ai_up_flags": ai_up_flags},
     )
@@ -395,25 +422,24 @@ async def build_series_ai() -> SeriesData:
 
 async def build_series_memory() -> SeriesData:
     history = await load_bot_stats_history()
-    dates = _sorted_dates(history)
-    x_dates: list[datetime.date] = []
+    x_points: list[datetime.datetime] = []
     y_mem: list[float] = []
-    for d in dates:
-        mb = history[d].get("memory_mb", 0)
+    for point_dt, snap in _iter_points(history):
+        mb = snap.get("memory_mb", 0)
         if mb > 0:
-            x_dates.append(datetime.date.fromisoformat(d))
+            x_points.append(point_dt)
             y_mem.append(mb)
 
-    today = _ct_today_date()
+    now_point = _live_now_point()
     live_mem = get_memory_mb()
-    if live_mem > 0 and (not x_dates or x_dates[-1] != today):
-        x_dates.append(today)
+    if live_mem > 0 and (not x_points or x_points[-1] != now_point):
+        x_points.append(now_point)
         y_mem.append(live_mem)
 
     return SeriesData(
         title="Bot Memory",
         segments=[Segment(label="RSS Memory", color="#e74c3c", y_values=y_mem)],
-        x_dates=x_dates,
+        x_points=x_points,
         native_style="line",
     )
 
@@ -523,22 +549,29 @@ async def parse_tokens(
 # ── Rendering ────────────────────────────────────────────────────────────────
 
 
-def _fmt_date(d: datetime.date) -> str:
-    return f"{d.strftime('%b')} {d.day}"
+def _fmt_point(p: datetime.datetime) -> str:
+    """Tick label for a bucket-start timestamp.
+
+    Shows date for bucket 0 of the day; just the time for the other 3
+    buckets — keeps the x-axis legible across ~14 days × 4 buckets.
+    """
+    if p.hour == 0:
+        return f"{p.strftime('%b')} {p.day}"
+    return f"{p.hour:02d}:00"
 
 
-def _common_axes(history_list: list[SeriesData]) -> list[datetime.date]:
-    """Union of x_dates across all series, sorted."""
-    seen: set[datetime.date] = set()
+def _common_axes(history_list: list[SeriesData]) -> list[datetime.datetime]:
+    """Union of x_points across all series, sorted."""
+    seen: set[datetime.datetime] = set()
     for s in history_list:
-        seen.update(s.x_dates)
+        seen.update(s.x_points)
     return sorted(seen)
 
 
-def _aligned_y(seg: Segment, src_x: list[datetime.date], target_x: list[datetime.date]) -> list[float]:
-    """Re-index a segment's y_values onto target_x. Missing dates → 0."""
-    by_date = dict(zip(src_x, seg.y_values))
-    return [by_date.get(d, 0.0) for d in target_x]
+def _aligned_y(seg: Segment, src_x: list[datetime.datetime], target_x: list[datetime.datetime]) -> list[float]:
+    """Re-index a segment's y_values onto target_x. Missing points → 0."""
+    by_point = dict(zip(src_x, seg.y_values))
+    return [by_point.get(p, 0.0) for p in target_x]
 
 
 async def render_combined(serieses: list[SeriesData], group: str, y_unit_label: str, title: str):
@@ -569,62 +602,62 @@ async def render_combined(serieses: list[SeriesData], group: str, y_unit_label: 
     ax.set_facecolor("#36393f")
 
     n = len(serieses)
-    x_dates = _common_axes(serieses)
+    x_points = _common_axes(serieses)
 
     if n == 1:
         s = serieses[0]
         if s.native_style == "line":
             for seg in s.segments:
-                y = _aligned_y(seg, s.x_dates, x_dates)
+                y = _aligned_y(seg, s.x_points, x_points)
                 is_summary = seg.label in ("Total", "Net")
                 style = "--" if is_summary else "-"
                 marker = "s" if is_summary else "o"
-                ax.plot(x_dates, y, color=seg.color, linewidth=2, marker=marker,
+                ax.plot(x_points, y, color=seg.color, linewidth=2, marker=marker,
                         markersize=4, linestyle=style, label=seg.label)
                 if not is_summary:
-                    ax.fill_between(x_dates, y, alpha=0.10, color=seg.color)
-            ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: _fmt_date(mdates.num2date(v).date())))
-            ax.xaxis.set_major_locator(mdates.DayLocator())
+                    ax.fill_between(x_points, y, alpha=0.10, color=seg.color)
+            ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: _fmt_point(mdates.num2date(v))))
+            ax.xaxis.set_major_locator(mdates.AutoDateLocator())
             fig.autofmt_xdate(rotation=35, ha="right")
         else:  # native_style == "bar" → stacked bar
-            x_nums = list(range(len(x_dates)))
-            bottoms = [0.0] * len(x_dates)
+            x_nums = list(range(len(x_points)))
+            bottoms = [0.0] * len(x_points)
             for seg in s.segments:
-                y = _aligned_y(seg, s.x_dates, x_dates)
+                y = _aligned_y(seg, s.x_points, x_points)
                 ax.bar(x_nums, y, bottom=bottoms, color=seg.color,
                        width=0.6, label=seg.label)
                 bottoms = [b + v for b, v in zip(bottoms, y)]
             ax.set_xticks(x_nums)
-            ax.set_xticklabels([_fmt_date(d) for d in x_dates], rotation=35, ha="right", fontsize=8)
+            ax.set_xticklabels([_fmt_point(p) for p in x_points], rotation=35, ha="right", fontsize=8)
     else:
         if group == GROUP_COINS:
             # Multiple series, all coins → overlaid lines, prefix labels with source.
             for s in serieses:
                 for seg in s.segments:
-                    y = _aligned_y(seg, s.x_dates, x_dates)
+                    y = _aligned_y(seg, s.x_points, x_points)
                     label = f"[{s.title}] {seg.label}"
-                    ax.plot(x_dates, y, color=seg.color, linewidth=2, marker="o",
+                    ax.plot(x_points, y, color=seg.color, linewidth=2, marker="o",
                             markersize=3, label=label)
-            ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: _fmt_date(mdates.num2date(v).date())))
-            ax.xaxis.set_major_locator(mdates.DayLocator())
+            ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: _fmt_point(mdates.num2date(v))))
+            ax.xaxis.set_major_locator(mdates.AutoDateLocator())
             fig.autofmt_xdate(rotation=35, ha="right")
         else:
             # Multiple series, all counts → grouped stacked bars.
-            x_nums = list(range(len(x_dates)))
+            x_nums = list(range(len(x_points)))
             group_total_width = 0.8
             bar_width = group_total_width / n
             for i, s in enumerate(serieses):
                 offset = (i - (n - 1) / 2) * bar_width
                 bar_x = [xn + offset for xn in x_nums]
-                bottoms = [0.0] * len(x_dates)
+                bottoms = [0.0] * len(x_points)
                 for seg in s.segments:
-                    y = _aligned_y(seg, s.x_dates, x_dates)
+                    y = _aligned_y(seg, s.x_points, x_points)
                     label = f"[{s.title}] {seg.label}"
                     ax.bar(bar_x, y, bottom=bottoms, color=seg.color,
                            width=bar_width * 0.95, label=label)
                     bottoms = [b + v for b, v in zip(bottoms, y)]
             ax.set_xticks(x_nums)
-            ax.set_xticklabels([_fmt_date(d) for d in x_dates], rotation=35, ha="right", fontsize=8)
+            ax.set_xticklabels([_fmt_point(p) for p in x_points], rotation=35, ha="right", fontsize=8)
 
     if y_unit_label == "MB":
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f} MB"))
@@ -658,7 +691,7 @@ def render_ai_uptime_strip(series: SeriesData):
     from matplotlib.patches import Patch
 
     flags: list = series.extras.get("ai_up_flags", [])
-    x_dates = series.x_dates
+    x_points = series.x_points
     seg = series.segments[0]
     y_responses = seg.y_values
 
@@ -669,7 +702,7 @@ def render_ai_uptime_strip(series: SeriesData):
     for ax in (ax_bar, ax_line):
         ax.set_facecolor("#36393f")
 
-    x_nums = list(range(len(x_dates)))
+    x_nums = list(range(len(x_points)))
     bar_colors = []
     for flag in flags:
         if flag is True:
@@ -681,7 +714,7 @@ def render_ai_uptime_strip(series: SeriesData):
     ax_bar.bar(x_nums, y_responses, color=bar_colors, alpha=0.85, width=0.6)
     ax_bar.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{int(v):,}"))
     ax_bar.set_xticks(x_nums)
-    ax_bar.set_xticklabels([_fmt_date(d) for d in x_dates], rotation=35, ha="right", fontsize=8)
+    ax_bar.set_xticklabels([_fmt_point(p) for p in x_points], rotation=35, ha="right", fontsize=8)
     ax_bar.tick_params(colors="#dcddde", labelsize=8)
     for spine in ax_bar.spines.values():
         spine.set_edgecolor("#4f545c")
@@ -699,7 +732,7 @@ def render_ai_uptime_strip(series: SeriesData):
     for i, flag in enumerate(flags):
         color = "#2ecc71" if flag is True else ("#e74c3c" if flag is False else "#95a5a6")
         ax_line.barh(0, 1, left=i, color=color, height=1, alpha=0.85)
-    ax_line.set_xlim(0, len(x_dates))
+    ax_line.set_xlim(0, len(x_points))
     ax_line.set_ylim(-0.5, 0.5)
     ax_line.set_xticks([])
     ax_line.set_yticks([])

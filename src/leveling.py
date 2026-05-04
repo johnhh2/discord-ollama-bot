@@ -200,18 +200,21 @@ async def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tup
 
 
 async def record_levelup(guild_id: int, uid: int, *, count: int = 1):
-    """Atomically write today's level-up delta for (guild, user) to
-    levelup_history AND bump the in-memory cache. Called by grant_xp on every
-    level boundary crossing — multi-step grants pass count > 1.
+    """Atomically write the current bucket's level-up delta for (guild, user)
+    to levelup_history AND bump the in-memory cache. Called by grant_xp on
+    every level boundary crossing — multi-step grants pass count > 1.
+
+    Bucket rollover (every 6h CT) is detected and the cache is reset.
     """
     if count <= 0:
         return
-    import datetime
-    from zoneinfo import ZoneInfo
-    today = datetime.datetime.now(datetime.timezone.utc).astimezone(
-        ZoneInfo("America/Chicago")
-    ).date().isoformat()
-    await upsert_levelup_delta(today, int(guild_id), int(uid), count=int(count))
+    from src.economy import _ct_now, _current_bucket_ct
+    today = _ct_now().date().isoformat()
+    bucket = _current_bucket_ct()
+    if state._levelups_bucket != bucket:
+        state.levelups_today.clear()
+        state._levelups_bucket = bucket
+    await upsert_levelup_delta(today, bucket, int(guild_id), int(uid), count=int(count))
     key = (int(guild_id), str(uid))
     state.levelups_today[key] = state.levelups_today.get(key, 0) + int(count)
 

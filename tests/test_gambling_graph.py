@@ -57,9 +57,10 @@ async def test_record_gambling_event_writes_atomically_to_disk(db):
     await _economy.record_gambling_event(43, lost=250)
 
     today = _economy._ct_now().date().isoformat()
+    bucket = _economy._current_bucket_ct()
     history = await _persistence.load_gambling_history()
-    assert history[today]["42"] == {"gained": 500, "lost": 100}
-    assert history[today]["43"] == {"gained": 0, "lost": 250}
+    assert history[today][bucket]["42"] == {"gained": 500, "lost": 100}
+    assert history[today][bucket]["43"] == {"gained": 0, "lost": 250}
 
 
 @pytest.mark.asyncio
@@ -67,8 +68,9 @@ async def test_record_gambling_event_increments_existing_row(db):
     await _economy.record_gambling_event(42, gained=100)
     await _economy.record_gambling_event(42, gained=50, lost=20)
     today = _economy._ct_now().date().isoformat()
+    bucket = _economy._current_bucket_ct()
     history = await _persistence.load_gambling_history()
-    assert history[today]["42"] == {"gained": 150, "lost": 20}
+    assert history[today][bucket]["42"] == {"gained": 150, "lost": 20}
 
 
 @pytest.mark.asyncio
@@ -103,9 +105,10 @@ async def test_build_series_gambling_returns_gained_lost_net(monkeypatch):
     if yest is None:
         pytest.skip("Edge case: today is the 1st; skipping date-arithmetic shortcut.")
 
+    cur_bucket = graph_series._current_bucket_ct()
     fake_history = {
-        yest.isoformat(): {"42": {"gained": 100, "lost": 50}},
-        today.isoformat(): {"42": {"gained": 300, "lost": 80}},
+        yest.isoformat(): {0: {"42": {"gained": 100, "lost": 50}}},
+        today.isoformat(): {cur_bucket: {"42": {"gained": 300, "lost": 80}}},
     }
     async def _load(): return fake_history
     monkeypatch.setattr(graph_series, "load_gambling_history", _load)
@@ -134,8 +137,8 @@ async def test_build_series_gambling_skips_inactive_days(monkeypatch):
         pytest.skip("Edge case: today is the 1st; skipping date-arithmetic shortcut.")
 
     fake_history = {
-        yest.isoformat(): {"42": {"gained": 100, "lost": 50}},
-        today.isoformat(): {"99": {"gained": 1, "lost": 1}},  # other user only
+        yest.isoformat(): {0: {"42": {"gained": 100, "lost": 50}}},
+        today.isoformat(): {0: {"99": {"gained": 1, "lost": 1}}},  # other user only
     }
     async def _load(): return fake_history
     monkeypatch.setattr(graph_series, "load_gambling_history", _load)
@@ -143,8 +146,8 @@ async def test_build_series_gambling_skips_inactive_days(monkeypatch):
     member = _stub_member(42, "alice")
     data = await graph_series.build_series_gambling(member)
 
-    assert len(data.x_dates) == 1
-    assert data.x_dates[0] == yest
+    assert len(data.x_points) == 1
+    assert data.x_points[0].astimezone(_economy._ct_now().tzinfo).date() == yest
 
 
 # ── token parsing ────────────────────────────────────────────────────────────

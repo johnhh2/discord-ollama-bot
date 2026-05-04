@@ -74,8 +74,9 @@ async def test_do_daily_reset_idempotent_within_same_day(db, monkeypatch):
 
     await _economy.do_daily_reset()
     today = _state.economy["last_daily_reset"]
+    bucket = _economy._current_bucket_ct()
     history_after_first = await _persistence.load_balance_history()
-    bal_after_first = history_after_first[today]["1"]["wallet"]
+    bal_after_first = history_after_first[today][bucket]["1"]["wallet"]
 
     # Mutate balance, run reset again
     await _economy.add_balance(1, 500)
@@ -84,29 +85,30 @@ async def test_do_daily_reset_idempotent_within_same_day(db, monkeypatch):
     # last_daily_reset still today; second snapshot OVERWROTE first (upsert).
     assert _state.economy["last_daily_reset"] == today
     history_after_second = await _persistence.load_balance_history()
-    assert history_after_second[today]["1"]["wallet"] == 1500
+    assert history_after_second[today][bucket]["1"]["wallet"] == 1500
     assert bal_after_first == 1000  # first snapshot was 1000 before mutation
 
 
 async def test_snapshot_all_refreshes_today_row_on_repeated_calls(db, monkeypatch):
-    """The 6h GraphCog scheduler calls snapshot_all() multiple times per day.
-    Each call should overwrite today's row with current values, not append.
-    """
+    """The 30min GraphCog scheduler calls snapshot_all() many times per
+    bucket. Each call within the same bucket should overwrite that bucket's
+    row, not append."""
     await _economy.add_balance(7, 200)
 
     async def _ollama_up(): return True
     monkeypatch.setattr("src.ai.check_ollama_connected", _ollama_up)
 
     await _economy.snapshot_all()
-    today = _economy._ct_today()
+    today = _economy._ct_now().date().isoformat()
+    bucket = _economy._current_bucket_ct()
     history_first = await _persistence.load_balance_history()
-    assert history_first[today]["7"]["wallet"] == 200
+    assert history_first[today][bucket]["7"]["wallet"] == 200
 
     # Mutate balance, snapshot again — should refresh, not duplicate.
     await _economy.add_balance(7, 300)
     await _economy.snapshot_all()
     history_second = await _persistence.load_balance_history()
-    assert history_second[today]["7"]["wallet"] == 500
+    assert history_second[today][bucket]["7"]["wallet"] == 500
     # Same number of date keys — no new row got added.
     assert sorted(history_first.keys()) == sorted(history_second.keys())
 
@@ -364,18 +366,18 @@ async def test_jail_until_expires_naturally_across_downtime(db):
 # ── balance history gaps ──────────────────────────────────────────────────────
 
 async def test_balance_history_has_gaps_for_missed_days_not_crashes(db, monkeypatch):
-    """do_daily_reset snapshots today only. Days where the bot was offline
-    simply don't exist in history. The graph cog should tolerate this; we
-    verify load_balance_history returns the sparse dict without error."""
+    """The 30min snapshot loop writes per-bucket rows. Days where the bot
+    was offline simply don't exist in history. The graph cog should
+    tolerate this; we verify load_balance_history returns the sparse dict
+    without error."""
     # Fake snapshots from a working bot, then a 3-day gap, then today.
     history = {
-        "2026-04-25": {"1": {"wallet": 100, "savings": 0}},
-        "2026-04-26": {"1": {"wallet": 110, "savings": 0}},
+        "2026-04-25": {0: {"1": {"wallet": 100, "savings": 0}}},
+        "2026-04-26": {2: {"1": {"wallet": 110, "savings": 0}}},
         # gap: 04-27, 04-28, 04-29 missing
-        "2026-04-30": {"1": {"wallet": 200, "savings": 0}},
+        "2026-04-30": {1: {"1": {"wallet": 200, "savings": 0}}},
     }
     await _persistence.save_balance_history(history)
     loaded = await _persistence.load_balance_history()
     assert set(loaded.keys()) == {"2026-04-25", "2026-04-26", "2026-04-30"}
-    # Sparse — graph code must handle missing dates without ZeroDivisionError
-    # or KeyError. This test just pins the storage shape.
+    # Sparse — graph code must handle missing buckets without crashes.

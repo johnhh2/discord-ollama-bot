@@ -144,20 +144,25 @@ async def test_parse_two_mentions_of_same_user_is_ok(patch_member_converter):
 
 
 async def _seed_history(monkeypatch):
-    """Stub out the persistence loaders so build_series_* doesn't hit the DB."""
+    """Stub out the persistence loaders so build_series_* doesn't hit the DB.
+
+    Shape is {date: {bucket: payload}} — one bucket per day is enough for
+    a render smoke test; full bucket-rollover semantics are covered in the
+    domain-specific test files.
+    """
     today = graph_series._ct_today_date()
     yest = today - datetime.timedelta(days=1)
     bal_history = {
-        yest.isoformat(): {"42": {"wallet": 100, "savings": 50}},
-        today.isoformat(): {"42": {"wallet": 200, "savings": 80}},
+        yest.isoformat(): {0: {"42": {"wallet": 100, "savings": 50}}},
+        today.isoformat(): {2: {"42": {"wallet": 200, "savings": 80}}},
     }
     bot_history = {
-        yest.isoformat(): {"messages": 10, "commands": 3, "ai_responses": 1, "ai_up": True, "memory_mb": 80.0},
-        today.isoformat(): {"messages": 22, "commands": 7, "ai_responses": 4, "ai_up": True, "memory_mb": 95.0},
+        yest.isoformat(): {0: {"messages": 10, "commands": 3, "ai_responses": 1, "ai_up": True, "memory_mb": 80.0}},
+        today.isoformat(): {2: {"messages": 22, "commands": 7, "ai_responses": 4, "ai_up": True, "memory_mb": 95.0}},
     }
     cmd_history = {
-        yest.isoformat(): {"GraphCog": 2, "EconomyCog": 5},
-        today.isoformat(): {"GraphCog": 4, "EconomyCog": 9, "AICog": 1},
+        yest.isoformat(): {0: {"GraphCog": 2, "EconomyCog": 5}},
+        today.isoformat(): {2: {"GraphCog": 4, "EconomyCog": 9, "AICog": 1}},
     }
 
     async def _bal(): return bal_history

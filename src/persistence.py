@@ -486,144 +486,169 @@ async def try_set_record(guild_id: int, category: str, value: int, holder_id: in
 # ── Balance / bot stats history ───────────────────────────────────────────────
 
 async def load_balance_history() -> dict:
+    """Return {date_str: {bucket: {uid_str: {"wallet": int, "savings": int}}}}.
+    The bucket layer (0..3) splits each calendar day into 6h CT windows.
+    """
     async with with_cursor() as cur:
-        await cur.execute("SELECT snapshot_date, user_id, wallet, savings FROM balance_history")
+        await cur.execute(
+            "SELECT snapshot_date, bucket, user_id, wallet, savings FROM balance_history"
+        )
         rows = await cur.fetchall()
-    result = {}
-    for date_str, uid, wallet, savings in rows:
-        result.setdefault(date_str, {})[str(uid)] = {"wallet": wallet, "savings": savings}
+    result: dict = {}
+    for date_str, bucket, uid, wallet, savings in rows:
+        result.setdefault(date_str, {}).setdefault(int(bucket), {})[str(uid)] = {
+            "wallet": wallet, "savings": savings,
+        }
     return result
 
 
 async def save_balance_history(history: dict):
+    """Accepts {date_str: {bucket: {uid_str: {"wallet": …, "savings": …}}}}."""
     async with with_cursor() as cur:
-        for date_str, users in history.items():
-            for uid_str, vals in users.items():
-                await cur.execute(
-                    "INSERT INTO balance_history (snapshot_date, user_id, wallet, savings)"
-                    " VALUES (%s,%s,%s,%s)"
-                    " ON DUPLICATE KEY UPDATE wallet=VALUES(wallet), savings=VALUES(savings)",
-                    (date_str, int(uid_str), vals.get("wallet", 0), vals.get("savings", 0)),
-                )
+        for date_str, by_bucket in history.items():
+            for bucket, users in by_bucket.items():
+                for uid_str, vals in users.items():
+                    await cur.execute(
+                        "INSERT INTO balance_history"
+                        " (snapshot_date, bucket, user_id, wallet, savings)"
+                        " VALUES (%s,%s,%s,%s,%s)"
+                        " ON DUPLICATE KEY UPDATE wallet=VALUES(wallet), savings=VALUES(savings)",
+                        (date_str, int(bucket), int(uid_str),
+                         vals.get("wallet", 0), vals.get("savings", 0)),
+                    )
 
 
 async def load_bot_stats_history() -> dict:
+    """Return {date_str: {bucket: {"messages": …, "commands": …, ...}}}."""
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT snapshot_date, messages, commands, ai_responses, ai_up, memory_mb FROM bot_stats_history"
-        )
-        rows = await cur.fetchall()
-    return {
-        r[0]: {"messages": r[1], "commands": r[2], "ai_responses": r[3], "ai_up": bool(r[4]), "memory_mb": r[5]}
-        for r in rows
-    }
-
-
-async def save_bot_stats_history(history: dict):
-    async with with_cursor() as cur:
-        for date_str, vals in history.items():
-            await cur.execute(
-                "INSERT INTO bot_stats_history"
-                " (snapshot_date, messages, commands, ai_responses, ai_up, memory_mb)"
-                " VALUES (%s,%s,%s,%s,%s,%s)"
-                " ON DUPLICATE KEY UPDATE messages=VALUES(messages), commands=VALUES(commands),"
-                " ai_responses=VALUES(ai_responses), ai_up=VALUES(ai_up), memory_mb=VALUES(memory_mb)",
-                (date_str, vals.get("messages", 0), vals.get("commands", 0),
-                 vals.get("ai_responses", 0), vals.get("ai_up", False), vals.get("memory_mb", 0.0)),
-            )
-
-
-async def load_command_usage_history() -> dict:
-    async with with_cursor() as cur:
-        await cur.execute(
-            "SELECT snapshot_date, cog_name, count FROM bot_command_usage_history"
+            "SELECT snapshot_date, bucket, messages, commands, ai_responses, ai_up, memory_mb"
+            " FROM bot_stats_history"
         )
         rows = await cur.fetchall()
     result: dict = {}
-    for date_str, cog, count in rows:
-        result.setdefault(date_str, {})[cog] = count
+    for date_str, bucket, msgs, cmds, ai_resp, ai_up, mem in rows:
+        result.setdefault(date_str, {})[int(bucket)] = {
+            "messages": msgs, "commands": cmds, "ai_responses": ai_resp,
+            "ai_up": bool(ai_up), "memory_mb": mem,
+        }
+    return result
+
+
+async def save_bot_stats_history(history: dict):
+    """Accepts {date_str: {bucket: {"messages": …, ...}}}."""
+    async with with_cursor() as cur:
+        for date_str, by_bucket in history.items():
+            for bucket, vals in by_bucket.items():
+                await cur.execute(
+                    "INSERT INTO bot_stats_history"
+                    " (snapshot_date, bucket, messages, commands, ai_responses, ai_up, memory_mb)"
+                    " VALUES (%s,%s,%s,%s,%s,%s,%s)"
+                    " ON DUPLICATE KEY UPDATE messages=VALUES(messages), commands=VALUES(commands),"
+                    " ai_responses=VALUES(ai_responses), ai_up=VALUES(ai_up), memory_mb=VALUES(memory_mb)",
+                    (date_str, int(bucket), vals.get("messages", 0), vals.get("commands", 0),
+                     vals.get("ai_responses", 0), vals.get("ai_up", False), vals.get("memory_mb", 0.0)),
+                )
+
+
+async def load_command_usage_history() -> dict:
+    """Return {date_str: {bucket: {cog_name: count}}}."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT snapshot_date, bucket, cog_name, count FROM bot_command_usage_history"
+        )
+        rows = await cur.fetchall()
+    result: dict = {}
+    for date_str, bucket, cog, count in rows:
+        result.setdefault(date_str, {}).setdefault(int(bucket), {})[cog] = count
     return result
 
 
 async def save_command_usage_history(history: dict):
+    """Accepts {date_str: {bucket: {cog_name: count}}}."""
     async with with_cursor() as cur:
-        for date_str, cogs in history.items():
-            for cog, count in cogs.items():
-                await cur.execute(
-                    "INSERT INTO bot_command_usage_history"
-                    " (snapshot_date, cog_name, count) VALUES (%s,%s,%s)"
-                    " ON DUPLICATE KEY UPDATE count=VALUES(count)",
-                    (date_str, cog, int(count)),
-                )
+        for date_str, by_bucket in history.items():
+            for bucket, cogs in by_bucket.items():
+                for cog, count in cogs.items():
+                    await cur.execute(
+                        "INSERT INTO bot_command_usage_history"
+                        " (snapshot_date, bucket, cog_name, count) VALUES (%s,%s,%s,%s)"
+                        " ON DUPLICATE KEY UPDATE count=VALUES(count)",
+                        (date_str, int(bucket), cog, int(count)),
+                    )
 
 
 async def load_crime_history() -> dict:
-    """Returns {date_str: {uid_str: {"gained": int, "lost": int}}}."""
+    """Returns {date_str: {bucket: {uid_str: {"gained": int, "lost": int}}}}."""
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT snapshot_date, user_id, gained, lost FROM crime_history"
+            "SELECT snapshot_date, bucket, user_id, gained, lost FROM crime_history"
         )
         rows = await cur.fetchall()
     result: dict = {}
-    for date_str, uid, gained, lost in rows:
-        result.setdefault(date_str, {})[str(uid)] = {"gained": gained, "lost": lost}
+    for date_str, bucket, uid, gained, lost in rows:
+        result.setdefault(date_str, {}).setdefault(int(bucket), {})[str(uid)] = {
+            "gained": gained, "lost": lost,
+        }
     return result
 
 
 async def load_gambling_history() -> dict:
-    """Returns {date_str: {uid_str: {"gained": int, "lost": int}}}."""
+    """Returns {date_str: {bucket: {uid_str: {"gained": int, "lost": int}}}}."""
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT snapshot_date, user_id, gained, lost FROM gambling_history"
+            "SELECT snapshot_date, bucket, user_id, gained, lost FROM gambling_history"
         )
         rows = await cur.fetchall()
     result: dict = {}
-    for date_str, uid, gained, lost in rows:
-        result.setdefault(date_str, {})[str(uid)] = {"gained": gained, "lost": lost}
+    for date_str, bucket, uid, gained, lost in rows:
+        result.setdefault(date_str, {}).setdefault(int(bucket), {})[str(uid)] = {
+            "gained": gained, "lost": lost,
+        }
     return result
 
 
-async def upsert_crime_delta(date_str: str, uid: int, *, gained: int = 0, lost: int = 0):
-    """Atomically add `gained` and `lost` deltas to the (date, user) row in
-    crime_history. Caller passes the per-event delta, not the running total —
-    MariaDB increments in place via ON DUPLICATE KEY UPDATE x = x + VALUES(x).
+async def upsert_crime_delta(date_str: str, bucket: int, uid: int, *, gained: int = 0, lost: int = 0):
+    """Atomically add `gained` and `lost` deltas to the (date, bucket, user)
+    row in crime_history. Caller passes the per-event delta, not the running
+    total — MariaDB increments in place via x = x + VALUES(x).
     """
     if gained == 0 and lost == 0:
         return
     async with with_cursor() as cur:
         await cur.execute(
-            "INSERT INTO crime_history (snapshot_date, user_id, gained, lost)"
-            " VALUES (%s,%s,%s,%s)"
+            "INSERT INTO crime_history (snapshot_date, bucket, user_id, gained, lost)"
+            " VALUES (%s,%s,%s,%s,%s)"
             " ON DUPLICATE KEY UPDATE"
             " gained = gained + VALUES(gained),"
             " lost   = lost   + VALUES(lost)",
-            (date_str, int(uid), int(gained), int(lost)),
+            (date_str, int(bucket), int(uid), int(gained), int(lost)),
         )
 
 
-async def upsert_gambling_delta(date_str: str, uid: int, *, gained: int = 0, lost: int = 0):
+async def upsert_gambling_delta(date_str: str, bucket: int, uid: int, *, gained: int = 0, lost: int = 0):
     if gained == 0 and lost == 0:
         return
     async with with_cursor() as cur:
         await cur.execute(
-            "INSERT INTO gambling_history (snapshot_date, user_id, gained, lost)"
-            " VALUES (%s,%s,%s,%s)"
+            "INSERT INTO gambling_history (snapshot_date, bucket, user_id, gained, lost)"
+            " VALUES (%s,%s,%s,%s,%s)"
             " ON DUPLICATE KEY UPDATE"
             " gained = gained + VALUES(gained),"
             " lost   = lost   + VALUES(lost)",
-            (date_str, int(uid), int(gained), int(lost)),
+            (date_str, int(bucket), int(uid), int(gained), int(lost)),
         )
 
 
-async def upsert_levelup_delta(date_str: str, guild_id: int, uid: int, *, count: int = 0):
+async def upsert_levelup_delta(date_str: str, bucket: int, guild_id: int, uid: int, *, count: int = 0):
     if count == 0:
         return
     async with with_cursor() as cur:
         await cur.execute(
-            "INSERT INTO levelup_history (snapshot_date, guild_id, user_id, count)"
-            " VALUES (%s,%s,%s,%s)"
+            "INSERT INTO levelup_history (snapshot_date, bucket, guild_id, user_id, count)"
+            " VALUES (%s,%s,%s,%s,%s)"
             " ON DUPLICATE KEY UPDATE count = count + VALUES(count)",
-            (date_str, int(guild_id), int(uid), int(count)),
+            (date_str, int(bucket), int(guild_id), int(uid), int(count)),
         )
 
 
@@ -631,48 +656,51 @@ async def upsert_levelup_delta(date_str: str, guild_id: int, uid: int, *, count:
 # the in-memory dicts (used as a fast-read cache by the graph cog) reflect
 # the truth on disk. Called from init_db_state.
 
-async def load_today_crime_row(date_str: str) -> dict:
-    """{uid_str: {"gained": int, "lost": int}} for today's date."""
+async def load_today_crime_row(date_str: str, bucket: int) -> dict:
+    """{uid_str: {"gained": int, "lost": int}} for today's (date, bucket)."""
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT user_id, gained, lost FROM crime_history WHERE snapshot_date = %s",
-            (date_str,),
+            "SELECT user_id, gained, lost FROM crime_history"
+            " WHERE snapshot_date = %s AND bucket = %s",
+            (date_str, int(bucket)),
         )
         rows = await cur.fetchall()
     return {str(uid): {"gained": int(g), "lost": int(l)} for uid, g, l in rows}
 
 
-async def load_today_gambling_row(date_str: str) -> dict:
+async def load_today_gambling_row(date_str: str, bucket: int) -> dict:
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT user_id, gained, lost FROM gambling_history WHERE snapshot_date = %s",
-            (date_str,),
+            "SELECT user_id, gained, lost FROM gambling_history"
+            " WHERE snapshot_date = %s AND bucket = %s",
+            (date_str, int(bucket)),
         )
         rows = await cur.fetchall()
     return {str(uid): {"gained": int(g), "lost": int(l)} for uid, g, l in rows}
 
 
-async def load_today_levelups_row(date_str: str) -> dict:
-    """{(guild_id_int, uid_str): count} for today's date."""
+async def load_today_levelups_row(date_str: str, bucket: int) -> dict:
+    """{(guild_id_int, uid_str): count} for today's (date, bucket)."""
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT guild_id, user_id, count FROM levelup_history WHERE snapshot_date = %s",
-            (date_str,),
+            "SELECT guild_id, user_id, count FROM levelup_history"
+            " WHERE snapshot_date = %s AND bucket = %s",
+            (date_str, int(bucket)),
         )
         rows = await cur.fetchall()
     return {(int(gid), str(uid)): int(c) for gid, uid, c in rows}
 
 
 async def load_levelup_history() -> dict:
-    """Returns {date_str: {(guild_id_int, uid_str): count}}."""
+    """Returns {date_str: {bucket: {(guild_id_int, uid_str): count}}}."""
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT snapshot_date, guild_id, user_id, count FROM levelup_history"
+            "SELECT snapshot_date, bucket, guild_id, user_id, count FROM levelup_history"
         )
         rows = await cur.fetchall()
     result: dict = {}
-    for date_str, gid, uid, count in rows:
-        result.setdefault(date_str, {})[(int(gid), str(uid))] = int(count)
+    for date_str, bucket, gid, uid, count in rows:
+        result.setdefault(date_str, {}).setdefault(int(bucket), {})[(int(gid), str(uid))] = int(count)
     return result
 
 
@@ -1046,11 +1074,18 @@ async def init_db_state():
         # event). The in-memory dicts are a fast-read cache for the graph cog's
         # live-today append; on boot they're empty, so re-hydrate today's row.
         try:
-            from src.economy import _ct_now
+            from src.economy import _ct_now, _current_bucket_ct
             today = _ct_now().date().isoformat()
-            state.crime_today_by_user = await load_today_crime_row(today)
-            state.gambling_today_by_user = await load_today_gambling_row(today)
-            state.levelups_today = await load_today_levelups_row(today)
+            bucket = _current_bucket_ct()
+            state.crime_today_by_user = await load_today_crime_row(today, bucket)
+            state.gambling_today_by_user = await load_today_gambling_row(today, bucket)
+            state.levelups_today = await load_today_levelups_row(today, bucket)
+            # Mark which bucket the freshly-hydrated dicts reflect, so the
+            # first record_* call after boot doesn't see "old" bucket and
+            # wipe the just-loaded data.
+            state._crime_bucket = bucket
+            state._gambling_bucket = bucket
+            state._levelups_bucket = bucket
         except Exception as e:
             logging.error(f"[init_db_state] activity hydration failed: {e}", exc_info=True)
 

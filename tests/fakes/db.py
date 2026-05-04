@@ -45,12 +45,12 @@ _TABLE_PKS = {
     "gambler_streak": ("user_id",),
     "quote_log": ("id",),
     "saved_quotes": ("id",),
-    "balance_history": ("snapshot_date", "user_id"),
-    "bot_stats_history": ("snapshot_date",),
-    "bot_command_usage_history": ("snapshot_date", "cog_name"),
-    "crime_history": ("snapshot_date", "user_id"),
-    "gambling_history": ("snapshot_date", "user_id"),
-    "levelup_history": ("snapshot_date", "guild_id", "user_id"),
+    "balance_history": ("snapshot_date", "bucket", "user_id"),
+    "bot_stats_history": ("snapshot_date", "bucket"),
+    "bot_command_usage_history": ("snapshot_date", "bucket", "cog_name"),
+    "crime_history": ("snapshot_date", "bucket", "user_id"),
+    "gambling_history": ("snapshot_date", "bucket", "user_id"),
+    "levelup_history": ("snapshot_date", "bucket", "guild_id", "user_id"),
     "restart_msg": ("id",),
     "ephemeral_msgs": ("id",),
     "command_perms": ("command_name",),
@@ -106,6 +106,23 @@ def _translate(sql: str) -> str:
     # Inline `INDEX idx_x (col)` inside CREATE TABLE — SQLite doesn't support this
     # form. Strip the line; tests don't rely on these indexes for correctness.
     out = re.sub(r",\s*INDEX\s+\w+\s*\([^)]*\)", "", out, flags=re.IGNORECASE)
+    # SQLite's ALTER TABLE doesn't support DROP PRIMARY KEY. Drop the
+    # statement entirely; the matching ADD PRIMARY KEY below handles the
+    # full PK rewrite by recreating the table.
+    if re.match(r"\s*ALTER\s+TABLE\s+\w+\s+DROP\s+PRIMARY\s+KEY\b", out, flags=re.IGNORECASE):
+        return ""
+    # `ALTER TABLE foo ADD PRIMARY KEY (a, b, c)`. SQLite can't change a PK
+    # in place, so we mark the statement for table-rebuild handling in
+    # FakeCursor.execute (which has access to the connection). Returning a
+    # sentinel string keeps the translation pure; the cursor recognizes it.
+    m_addpk = re.match(
+        r"\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+PRIMARY\s+KEY\s*\(([^)]+)\)\s*$",
+        out, flags=re.IGNORECASE,
+    )
+    if m_addpk:
+        table = m_addpk.group(1)
+        cols = m_addpk.group(2).strip()
+        return f"--REBUILD-PK {table} ({cols})"
     # information_schema.tables → sqlite_master shim used by run_migrations'
     # _table_exists. The MariaDB form has a `DATABASE()` builtin SQLite lacks;
     # rather than rewrite the whole query, the runner already has a fallback,
@@ -149,13 +166,48 @@ class FakeCursor:
 
     async def execute(self, sql, params=()):
         translated = _translate(sql)
+        if not translated:  # translator dropped this statement (e.g. SQLite-incompatible ALTER)
+            return
+        # Rebuild-PK sentinel: SQLite can't alter a PK in place, so the
+        # translator emits this marker and we do a copy-and-rename here.
+        m_pk = re.match(r"^--REBUILD-PK (\w+) \(([^)]+)\)$", translated)
+        if m_pk:
+            self._rebuild_pk(m_pk.group(1), m_pk.group(2))
+            return
         if params is None:
             params = ()
         self._cur.execute(translated, tuple(params))
 
     async def executemany(self, sql, seq_of_params):
         translated = _translate(sql)
+        if not translated:
+            return
         self._cur.executemany(translated, [tuple(p) for p in seq_of_params])
+
+    def _rebuild_pk(self, table: str, pk_cols: str):
+        """SQLite-only: recreate `table` with PRIMARY KEY (`pk_cols`).
+        Preserves all rows and columns."""
+        self._cur.execute(f"PRAGMA table_info({table})")
+        info = self._cur.fetchall()  # (cid, name, type, notnull, dflt_value, pk)
+        col_defs = []
+        col_names = []
+        for _cid, name, ctype, notnull, dflt, _pk in info:
+            parts = [name]
+            if ctype:
+                parts.append(ctype)
+            if notnull:
+                parts.append("NOT NULL")
+            if dflt is not None:
+                parts.append(f"DEFAULT {dflt}")
+            col_defs.append(" ".join(parts))
+            col_names.append(name)
+        col_defs_sql = ",\n  ".join(col_defs)
+        col_names_sql = ", ".join(col_names)
+        tmp = f"{table}__rebuild"
+        self._cur.execute(f"CREATE TABLE {tmp} (\n  {col_defs_sql},\n  PRIMARY KEY ({pk_cols})\n)")
+        self._cur.execute(f"INSERT INTO {tmp} ({col_names_sql}) SELECT {col_names_sql} FROM {table}")
+        self._cur.execute(f"DROP TABLE {table}")
+        self._cur.execute(f"ALTER TABLE {tmp} RENAME TO {table}")
 
     async def fetchall(self):
         return self._cur.fetchall()

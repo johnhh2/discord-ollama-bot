@@ -94,16 +94,20 @@ class GraphCog(commands.Cog):
     def cog_unload(self):
         self._snapshot_loop.cancel()
 
-    @tasks.loop(hours=6)
+    @tasks.loop(minutes=30)
     async def _snapshot_loop(self):
-        """Capture graph data (balances, bot stats, per-cog command usage) every
-        6 hours. Each snapshot upserts the row keyed by `_ct_today()`, so multiple
-        ticks within the same gameplay-day refresh the same row with running totals.
+        """Refresh the snapshot-style graph data (balances, bot stats, per-cog
+        command usage) every 30 minutes. Each tick UPSERTs the (date, bucket)
+        row for the CURRENT 6h CT bucket — ticks within the same bucket
+        overwrite the same row, while bucket boundaries (00, 06, 12, 18 CT)
+        roll to a fresh row, freezing the previous bucket's value as a
+        permanent data point on the chart (4 points/day).
 
-        The first tick fires ~immediately on boot, which doubles as a recovery
-        path for any time the bot was offline at the previous expected tick.
-        Final-of-day capture is handled by `do_daily_reset` at 5am CT (the loop
-        cadence isn't aligned to the gameplay-day boundary).
+        First tick fires ~immediately on boot, doubling as a recovery path
+        for any downtime that crossed a tick.
+
+        Atomic-write series (crime / gambling / level-ups) are NOT touched
+        here — they persist per-event and read directly from disk.
         """
         try:
             await snapshot_all()

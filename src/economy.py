@@ -178,6 +178,33 @@ def _calendar_today_date() -> datetime.date:
     return _ct_now().date()
 
 
+# ── 6-hour bucket scheme ─────────────────────────────────────────────────────
+# Each calendar day is split into 4 fixed CT buckets:
+#   0 = 00:00–05:59 CT  (overnight)
+#   1 = 06:00–11:59 CT  (morning)
+#   2 = 12:00–17:59 CT  (afternoon)
+#   3 = 18:00–23:59 CT  (evening)
+# History tables key rows by (snapshot_date, bucket, ...), giving the graphs
+# 4 data points per day. The 30-minute snapshot loop UPSERTs into the current
+# bucket; once the bucket rolls over (every 6h CT), the next write creates a
+# new row, freezing the previous bucket's value.
+
+def _current_bucket_ct() -> int:
+    """Return 0..3 based on the current CT hour."""
+    return _ct_now().hour // 6
+
+
+def _bucket_start_dt(date_iso: str, bucket: int) -> datetime.datetime:
+    """Given a calendar-date string and a 0..3 bucket, return the UTC
+    timestamp of the bucket's start (CT 00:00, 06:00, 12:00, or 18:00).
+    Used by the graph cog as the x-axis position for each data point.
+    """
+    d = datetime.date.fromisoformat(date_iso)
+    return datetime.datetime.combine(
+        d, datetime.time(bucket * 6, 0), tzinfo=ZoneInfo("America/Chicago")
+    ).astimezone(datetime.timezone.utc)
+
+
 def lottery_week_key(now_ct: datetime.datetime) -> int:
     """Year-qualified ISO week key: iso_year * 100 + iso_week.
 
@@ -303,10 +330,14 @@ async def seize_from_savings(uid: int, max_amount: int) -> int:
 
 
 async def snapshot_balances():
-    """Record each user's wallet and savings value keyed by today's date; prune entries older than 14 days."""
+    """Record each user's wallet and savings value into the CURRENT 6h bucket
+    of today's date. Prune entries older than 14 days. Called by the 30min
+    snapshot loop — multiple ticks within the same bucket overwrite the same
+    row; the bucket boundary creates a fresh row."""
     from src import state
     import time as _time
     today = _ct_now().date().isoformat()
+    bucket = _current_bucket_ct()
     history = await load_balance_history()
     snapshot = {}
     now = _time.time()
@@ -315,20 +346,22 @@ async def snapshot_balances():
         deps = user.get("savings", [])
         savings = int(sum(e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0)) for e in deps))
         snapshot[uid_str] = {"wallet": wallet, "savings": savings}
-    history[today] = snapshot
+    history.setdefault(today, {})[bucket] = snapshot
     cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
     history = {d: v for d, v in history.items() if d >= cutoff}
     await save_balance_history(history)
-    logging.info(f"[DAILY] Snapshotted {len(snapshot)} user balances for {today}")
+    logging.info(f"[snapshot] balances for {today} bucket {bucket}: {len(snapshot)} users")
 
 
 async def snapshot_bot_stats(ai_up: bool):
-    """Record today's message/command/AI counts and memory; prune entries older than 14 days."""
+    """Write current message/command/AI counts and memory into today's
+    CURRENT 6h bucket. Prune entries older than 14 days."""
     from src import state
     from src.helpers import get_memory_mb
     today = _ct_now().date().isoformat()
+    bucket = _current_bucket_ct()
     history = await load_bot_stats_history()
-    history[today] = {
+    history.setdefault(today, {})[bucket] = {
         "messages": state.stats_messages_today,
         "commands": state.stats_commands_today,
         "ai_responses": state.stats_ai_responses_today,
@@ -338,53 +371,66 @@ async def snapshot_bot_stats(ai_up: bool):
     cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
     history = {d: v for d, v in history.items() if d >= cutoff}
     await save_bot_stats_history(history)
-    logging.info(f"[DAILY] Snapshotted bot stats for {today}: {history[today]}")
+    logging.info(f"[snapshot] bot stats for {today} bucket {bucket}: {history[today][bucket]}")
 
 
 async def snapshot_command_usage():
-    """Record today's per-cog command counts; prune entries older than 14 days."""
+    """Write current per-cog command counts into today's CURRENT 6h bucket.
+    Prune entries older than 14 days."""
     from src import state
     today = _ct_now().date().isoformat()
+    bucket = _current_bucket_ct()
     history = await load_command_usage_history()
-    history[today] = dict(state.stats_commands_today_by_cog)
+    history.setdefault(today, {})[bucket] = dict(state.stats_commands_today_by_cog)
     cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
     history = {d: v for d, v in history.items() if d >= cutoff}
     await save_command_usage_history(history)
-    logging.info(f"[DAILY] Snapshotted per-cog command usage for {today}: {history[today]}")
+    logging.info(f"[snapshot] per-cog command usage for {today} bucket {bucket}: {history[today][bucket]}")
 
 
 async def record_crime_event(uid: int, *, gained: int = 0, lost: int = 0):
-    """Atomically write today's crime delta for `uid` to crime_history AND
-    bump the in-memory cache (used by the graph cog's live-today read).
+    """Atomically write the current bucket's crime delta for `uid` to
+    crime_history AND bump the in-memory cache for the same bucket.
 
     Called by !steal / !mug on every outcome (win/lose, attacker/victim).
-    Persists synchronously — no data loss on bot restart.
+    Persists synchronously — no data loss on bot restart. If the 6h CT
+    bucket has rolled over since the last recorded event, the in-memory
+    cache is cleared first so it only reflects the current bucket.
     """
     from src import state
     if gained == 0 and lost == 0:
         return
     today = _ct_now().date().isoformat()
-    await upsert_crime_delta(today, uid, gained=gained, lost=lost)
-    bucket = state.crime_today_by_user.setdefault(str(uid), {"gained": 0, "lost": 0})
-    bucket["gained"] += int(gained)
-    bucket["lost"] += int(lost)
+    bucket = _current_bucket_ct()
+    if state._crime_bucket != bucket:
+        state.crime_today_by_user.clear()
+        state._crime_bucket = bucket
+    await upsert_crime_delta(today, bucket, uid, gained=gained, lost=lost)
+    rec = state.crime_today_by_user.setdefault(str(uid), {"gained": 0, "lost": 0})
+    rec["gained"] += int(gained)
+    rec["lost"] += int(lost)
 
 
 async def record_gambling_event(uid: int, *, gained: int = 0, lost: int = 0):
-    """Atomically write today's gambling delta for `uid` to gambling_history
-    AND bump the in-memory cache.
+    """Atomically write the current bucket's gambling delta for `uid` to
+    gambling_history AND bump the in-memory cache.
 
     Called by games/gambling commands at outcome resolution (net P/L
     semantics: refunds and pushes record nothing). Persists synchronously.
+    Bucket rollover is detected and the cache is reset accordingly.
     """
     from src import state
     if gained == 0 and lost == 0:
         return
     today = _ct_now().date().isoformat()
-    await upsert_gambling_delta(today, uid, gained=gained, lost=lost)
-    bucket = state.gambling_today_by_user.setdefault(str(uid), {"gained": 0, "lost": 0})
-    bucket["gained"] += int(gained)
-    bucket["lost"] += int(lost)
+    bucket = _current_bucket_ct()
+    if state._gambling_bucket != bucket:
+        state.gambling_today_by_user.clear()
+        state._gambling_bucket = bucket
+    await upsert_gambling_delta(today, bucket, uid, gained=gained, lost=lost)
+    rec = state.gambling_today_by_user.setdefault(str(uid), {"gained": 0, "lost": 0})
+    rec["gained"] += int(gained)
+    rec["lost"] += int(lost)
 
 
 async def snapshot_all():

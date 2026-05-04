@@ -231,9 +231,11 @@ async def test_try_set_record_only_updates_when_higher(db):
 # ── balance history ───────────────────────────────────────────────────────────
 
 async def test_balance_history_roundtrip(db):
+    """History is keyed {date: {bucket: {uid: payload}}} — bucket 0..3
+    splits each calendar day into 6h CT windows."""
     history = {
-        "2026-04-30": {"1": {"wallet": 100, "savings": 50}},
-        "2026-05-01": {"1": {"wallet": 110, "savings": 55}, "2": {"wallet": 0, "savings": 0}},
+        "2026-04-30": {0: {"1": {"wallet": 100, "savings": 50}}},
+        "2026-05-01": {1: {"1": {"wallet": 110, "savings": 55}, "2": {"wallet": 0, "savings": 0}}},
     }
     await _persistence.save_balance_history(history)
     loaded = await _persistence.load_balance_history()

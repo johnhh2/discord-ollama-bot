@@ -82,17 +82,21 @@ stats_commands_today: int = 0
 stats_ai_responses_today: int = 0
 stats_commands_today_by_cog: dict = {}
 
-# Per-user crime totals for the current gameplay-day.
-# {uid_str: {"gained": int, "lost": int}}.
-crime_today_by_user: dict = {}
+# Per-user totals for the CURRENT 6h CT bucket. The graph cog reads these
+# for the live-now point; the values get rolled to a fresh row in the disk
+# table whenever a record_* call detects the bucket has advanced.
+# Each dict carries an "_bucket" key alongside the user entries to detect
+# rollovers ({"_bucket": int, uid_str_or_tuple: data}).
 
-# Per-user gambling/games net totals for the current gameplay-day.
-# {uid_str: {"gained": int, "lost": int}}.
-gambling_today_by_user: dict = {}
+crime_today_by_user: dict = {}      # {uid_str: {"gained": int, "lost": int}}
+gambling_today_by_user: dict = {}   # {uid_str: {"gained": int, "lost": int}}
+levelups_today: dict = {}           # {(guild_id, uid_str): count}
 
-# Per-(guild, user) level-up counts for the current gameplay-day.
-# {(guild_id_int, uid_str): count_of_level_boundaries_crossed}.
-levelups_today: dict = {}
+# Tracks which 6h bucket each of the above dicts currently reflects. None
+# means "fresh process; dict is empty." Updated by the record_* helpers.
+_crime_bucket: int | None = None
+_gambling_bucket: int | None = None
+_levelups_bucket: int | None = None
 
 # ── Audit log ─────────────────────────────────────────────────────────────────
 
