@@ -157,6 +157,16 @@ def _ct_today() -> str:
     return now_ct.date().isoformat()
 
 
+def _ct_today_date() -> datetime.date:
+    """Same as _ct_today() but returns a datetime.date instead of an ISO string.
+    Convenience for graph code that needs to compare/append dates directly.
+    """
+    now_ct = _ct_now()
+    if now_ct.hour < DAILY_RESET_HOUR:
+        return now_ct.date() - datetime.timedelta(days=1)
+    return now_ct.date()
+
+
 def lottery_week_key(now_ct: datetime.datetime) -> int:
     """Year-qualified ISO week key: iso_year * 100 + iso_week.
 
@@ -332,15 +342,30 @@ async def snapshot_command_usage():
     logging.info(f"[DAILY] Snapshotted per-cog command usage for {today}: {history[today]}")
 
 
-async def do_daily_reset():
-    """Reset all users' daily reward and scratchoff counts at 5am CT."""
-    from src import state
+async def snapshot_all():
+    """Run all three graph-data snapshots. Called by the GraphCog scheduler
+    every 6 hours and once on boot. Each snapshot upserts a row keyed by
+    `_ct_today()`, so multiple calls within the same gameplay-day overwrite
+    the same row with refreshed values.
+    """
     from src.ai import check_ollama_connected
-    today = _ct_today()
     await snapshot_balances()
     ai_up = await check_ollama_connected()
     await snapshot_bot_stats(ai_up)
     await snapshot_command_usage()
+
+
+async def do_daily_reset():
+    """Reset all users' daily reward and scratchoff counts at 5am CT.
+
+    Captures a final snapshot of yesterday's counters BEFORE clearing them —
+    the 6h GraphCog scheduler can't be relied on to fire exactly at 5am, so
+    without this, the last hours of the gameplay-day would be lost. After
+    the clears, the next 6h tick starts a fresh row for the new day.
+    """
+    from src import state
+    today = _ct_today()
+    await snapshot_all()
     state.stats_messages_today = 0
     state.stats_commands_today = 0
     state.stats_ai_responses_today = 0

@@ -88,6 +88,29 @@ async def test_do_daily_reset_idempotent_within_same_day(db, monkeypatch):
     assert bal_after_first == 1000  # first snapshot was 1000 before mutation
 
 
+async def test_snapshot_all_refreshes_today_row_on_repeated_calls(db, monkeypatch):
+    """The 6h GraphCog scheduler calls snapshot_all() multiple times per day.
+    Each call should overwrite today's row with current values, not append.
+    """
+    await _economy.add_balance(7, 200)
+
+    async def _ollama_up(): return True
+    monkeypatch.setattr("src.ai.check_ollama_connected", _ollama_up)
+
+    await _economy.snapshot_all()
+    today = _economy._ct_today()
+    history_first = await _persistence.load_balance_history()
+    assert history_first[today]["7"]["wallet"] == 200
+
+    # Mutate balance, snapshot again — should refresh, not duplicate.
+    await _economy.add_balance(7, 300)
+    await _economy.snapshot_all()
+    history_second = await _persistence.load_balance_history()
+    assert history_second[today]["7"]["wallet"] == 500
+    # Same number of date keys — no new row got added.
+    assert sorted(history_first.keys()) == sorted(history_second.keys())
+
+
 async def test_cmd_daily_across_multi_day_gap_grants_once(db):
     """User had stale daily_date=3 days ago. !daily should grant once,
     second invocation in same day should reject."""

@@ -1,13 +1,14 @@
 import io
 import datetime
+import logging
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from src.helpers import emb, C_GOLD, get_memory_mb
 from src.permissions import requires_perm
 from src.persistence import load_balance_history, load_bot_stats_history, load_command_usage_history
-from src.economy import _ensure_user, get_balance, _ct_now
+from src.economy import _ensure_user, get_balance, _ct_today_date, snapshot_all
 from src import state
 
 
@@ -31,6 +32,31 @@ def _fmt_date(d: datetime.date) -> str:
 class GraphCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._snapshot_loop.start()
+
+    def cog_unload(self):
+        self._snapshot_loop.cancel()
+
+    @tasks.loop(hours=6)
+    async def _snapshot_loop(self):
+        """Capture graph data (balances, bot stats, per-cog command usage) every
+        6 hours. Each snapshot upserts the row keyed by `_ct_today()`, so multiple
+        ticks within the same gameplay-day refresh the same row with running totals.
+
+        The first tick fires ~immediately on boot, which doubles as a recovery
+        path for any time the bot was offline at the previous expected tick.
+        Final-of-day capture is handled by `do_daily_reset` at 5am CT (the loop
+        cadence isn't aligned to the gameplay-day boundary).
+        """
+        try:
+            await snapshot_all()
+        except Exception:
+            logging.exception("[graph] snapshot loop failed")
+
+    @_snapshot_loop.before_loop
+    async def _wait_for_ready(self):
+        # Don't snapshot before init_db_state has loaded user balances.
+        await self.bot.wait_until_ready()
 
     @commands.group(name="graph", invoke_without_command=True)
     @requires_perm
@@ -77,7 +103,7 @@ class GraphCog(commands.Cog):
                 y_wallet.append(snap["wallet"])
 
         # Append today's live balance
-        today = _ct_now().date()
+        today = _ct_today_date()
         live_wallet = await get_balance(member.id)
         if not x_dates or x_dates[-1] != today:
             x_dates.append(today)
@@ -141,7 +167,7 @@ class GraphCog(commands.Cog):
             y_savings.append(total_s)
 
         # Append today's live totals
-        today = _ct_now().date()
+        today = _ct_today_date()
         now = _time.time()
         live_wallet = sum(u.get("balance", 0) for u in state.economy["users"].values())
         live_savings = int(sum(
@@ -201,7 +227,7 @@ class GraphCog(commands.Cog):
         dates = _sorted_dates(history)
 
         # Append today's live counts
-        today = _ct_now().date()
+        today = _ct_today_date()
         live_today = dict(state.stats_commands_today_by_cog)
         if dates and dates[-1] == today.isoformat():
             x_dates = [datetime.date.fromisoformat(d) for d in dates]
@@ -284,7 +310,7 @@ class GraphCog(commands.Cog):
             y_commands.append(snap.get("commands", 0))
 
         # Append today's live counts
-        today = _ct_now().date()
+        today = _ct_today_date()
         if not x_dates or x_dates[-1] != today:
             x_dates.append(today)
             y_messages.append(state.stats_messages_today)
@@ -347,7 +373,7 @@ class GraphCog(commands.Cog):
                 y_mem.append(mb)
 
         # Append live reading
-        today = _ct_now().date()
+        today = _ct_today_date()
         live_mem = get_memory_mb()
         if live_mem > 0 and (not x_dates or x_dates[-1] != today):
             x_dates.append(today)
@@ -407,7 +433,7 @@ class GraphCog(commands.Cog):
             ai_up_flags.append(snap.get("ai_up", False))
 
         # Append today's live counts
-        today = _ct_now().date()
+        today = _ct_today_date()
         if not x_dates or x_dates[-1] != today:
             x_dates.append(today)
             y_responses.append(state.stats_ai_responses_today)
