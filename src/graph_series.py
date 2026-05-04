@@ -30,7 +30,7 @@ from src.economy import _ct_today_date, get_balance
 from src.helpers import get_memory_mb
 from src.persistence import (
     load_balance_history, load_bot_stats_history, load_command_usage_history,
-    load_crime_history, load_gambling_history,
+    load_crime_history, load_gambling_history, load_levelup_history,
 )
 
 
@@ -39,11 +39,13 @@ from src.persistence import (
 GROUP_COINS = "coins"
 GROUP_COUNTS = "counts"
 GROUP_MB = "mb"
+GROUP_XP = "xp"
 
 _GROUP_LABEL = {
     GROUP_COINS: "coins",
     GROUP_COUNTS: "counts",
     GROUP_MB: "MB",
+    GROUP_XP: "xp",
 }
 
 
@@ -81,6 +83,7 @@ class SeriesSpec:
     group: str
     build: BuildFn
     accepts_member: bool = False
+    accepts_guild: bool = False   # build needs current guild context (e.g. levels)
     y_unit_label: str = ""        # e.g. "🪙 Coins", "Count", "MB"
 
 
@@ -208,6 +211,43 @@ async def build_series_gambling(member: discord.Member) -> SeriesData:
         ],
         x_dates=x_dates,
         native_style="line",
+    )
+
+
+async def build_series_levels(member: discord.Member, guild_id: int) -> SeriesData:
+    """Per-day count of level-ups for `member` within guild `guild_id`.
+
+    A single XP grant can cross multiple level boundaries; the count records
+    boundaries crossed, not events triggered. Days the user didn't level up
+    are skipped (no noisy zero line for inactive users).
+    """
+    history = await load_levelup_history()
+    dates = _sorted_dates(history)
+    uid_str = str(member.id)
+    key = (int(guild_id), uid_str)
+
+    x_dates: list[datetime.date] = []
+    y_count: list[float] = []
+    for d in dates:
+        count = history[d].get(key)
+        if count is None or count == 0:
+            continue
+        x_dates.append(datetime.date.fromisoformat(d))
+        y_count.append(count)
+
+    today = _ct_today_date()
+    live = state.levelups_today.get(key)
+    if live and (not x_dates or x_dates[-1] != today):
+        x_dates.append(today)
+        y_count.append(live)
+
+    return SeriesData(
+        title=f"{member.display_name}'s Level-ups",
+        segments=[
+            Segment(label="Level-ups", color="#9b59b6", y_values=y_count),
+        ],
+        x_dates=x_dates,
+        native_style="bar",
     )
 
 
@@ -385,6 +425,7 @@ REGISTRY: list[SeriesSpec] = [
     SeriesSpec("server",   ("server", "srv"),                           GROUP_COUNTS, build_series_server,                           y_unit_label="Count"),
     SeriesSpec("ai",       ("ai",),                                     GROUP_COUNTS, build_series_ai,                               y_unit_label="Count"),
     SeriesSpec("memory",   ("memory", "mem", "ram"),                    GROUP_MB,     build_series_memory,                           y_unit_label="MB"),
+    SeriesSpec("levels",   ("levels", "level", "lvl"),                  GROUP_XP,     build_series_levels,   accepts_member=True, accepts_guild=True, y_unit_label="Level-ups"),
 ]
 
 
@@ -404,6 +445,7 @@ def find_spec(token: str) -> Optional[SeriesSpec]:
 class ParseResult:
     specs: list[SeriesSpec]
     member: Optional[discord.Member]
+    guild_id: Optional[int] = None
     error: Optional[str] = None
 
 
@@ -416,7 +458,8 @@ async def parse_tokens(
     token that is neither a known series alias nor a resolvable member is
     rejected with a clear error.
 
-    Validates: at least one series, all in same group, no duplicates.
+    Validates: at least one series, all in same group, no duplicates,
+    guild-scoped series (e.g. `levels`) require ctx.guild.
     """
     from discord.ext import commands as _cmds
 
@@ -429,7 +472,7 @@ async def parse_tokens(
         spec = find_spec(tok)
         if spec is not None:
             if spec.name in seen_names:
-                return ParseResult([], None, f"duplicate series: `{spec.name}`")
+                return ParseResult([], None, error=f"duplicate series: `{spec.name}`")
             specs.append(spec)
             seen_names.add(spec.name)
             continue
@@ -439,14 +482,14 @@ async def parse_tokens(
         except _cmds.BadArgument:
             return ParseResult(
                 [], None,
-                f"unknown token `{tok}` — expected a graph name or @user mention",
+                error=f"unknown token `{tok}` — expected a graph name or @user mention",
             )
         if member is not None and resolved.id != member.id:
-            return ParseResult([], None, "more than one user mention provided")
+            return ParseResult([], None, error="more than one user mention provided")
         member = resolved
 
     if not specs:
-        return ParseResult([], None, "no graph specified")
+        return ParseResult([], None, error="no graph specified")
 
     groups = {s.group for s in specs}
     if len(groups) > 1:
@@ -454,14 +497,23 @@ async def parse_tokens(
         readable = " + ".join(_GROUP_LABEL[g] for g in sorted(groups))
         return ParseResult(
             [], None,
-            f"cannot combine `{names}` — incompatible y-axes ({readable})",
+            error=f"cannot combine `{names}` — incompatible y-axes ({readable})",
         )
 
-    # `balance` requires a member (defaults to invoker if none given).
+    # `balance`/`crime`/`gambling`/`levels` accept a member; default to invoker.
     if any(s.accepts_member for s in specs) and member is None:
         member = ctx.author
 
-    return ParseResult(specs=specs, member=member)
+    # Guild-scoped series need a guild — reject in DMs with a clear error.
+    guild_id: Optional[int] = ctx.guild.id if ctx.guild else None
+    if any(s.accepts_guild for s in specs) and guild_id is None:
+        guilded = ", ".join(s.name for s in specs if s.accepts_guild)
+        return ParseResult(
+            [], None,
+            error=f"`{guilded}` is per-server; run this command inside a server, not in a DM",
+        )
+
+    return ParseResult(specs=specs, member=member, guild_id=guild_id)
 
 
 # ── Rendering ────────────────────────────────────────────────────────────────

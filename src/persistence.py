@@ -607,6 +607,31 @@ async def save_gambling_history(history: dict):
                 )
 
 
+async def load_levelup_history() -> dict:
+    """Returns {date_str: {(guild_id_int, uid_str): count}}."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT snapshot_date, guild_id, user_id, count FROM levelup_history"
+        )
+        rows = await cur.fetchall()
+    result: dict = {}
+    for date_str, gid, uid, count in rows:
+        result.setdefault(date_str, {})[(int(gid), str(uid))] = int(count)
+    return result
+
+
+async def save_levelup_history(history: dict):
+    async with with_cursor() as cur:
+        for date_str, entries in history.items():
+            for (gid, uid_str), count in entries.items():
+                await cur.execute(
+                    "INSERT INTO levelup_history"
+                    " (snapshot_date, guild_id, user_id, count) VALUES (%s,%s,%s,%s)"
+                    " ON DUPLICATE KEY UPDATE count=VALUES(count)",
+                    (date_str, int(gid), int(uid_str), int(count)),
+                )
+
+
 # ── Channel prompts ───────────────────────────────────────────────────────────
 
 async def save_channel_prompts(prompts: dict):

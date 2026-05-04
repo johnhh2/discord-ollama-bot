@@ -27,6 +27,7 @@ _PERSISTENCE_SAVE_NAMES = [
     "save_leveling", "save_command_perms", "save_channel_prompts",
     "save_balance_history", "save_bot_stats_history",
     "save_command_usage_history", "save_crime_history", "save_gambling_history",
+    "save_levelup_history",
     "add_ephemeral_msg",
 ]
 

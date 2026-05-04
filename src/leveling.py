@@ -192,8 +192,22 @@ async def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tup
     new_level = level_from_xp(rec["xp"])
     rec["level"] = new_level
     leveled_up = new_level > old_level
+    if leveled_up:
+        # A single grant can cross multiple thresholds — record each crossing.
+        record_levelup(guild_id, uid, count=new_level - old_level)
     await save_leveling(guild_id=guild_id, uid=uid)
     return xp, leveled_up
+
+
+def record_levelup(guild_id: int, uid: int, *, count: int = 1):
+    """Bump the day's level-up count for (guild, user). Called by grant_xp on
+    every successful level boundary crossing. Persistence happens via
+    snapshot_levelups() on the 6h scheduler and at do_daily_reset.
+    """
+    if count <= 0:
+        return
+    key = (int(guild_id), str(uid))
+    state.levelups_today[key] = state.levelups_today.get(key, 0) + int(count)
 
 
 # ── XP bar renderer ───────────────────────────────────────────────────────────

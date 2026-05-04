@@ -34,13 +34,16 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
         await ctx.send(embed=emb("📊 Invalid Combination", parsed.error, C_GOLD))
         return
 
-    # Build each series.
+    # Build each series. Pass kwargs based on what the spec accepts.
     serieses = []
     for spec in parsed.specs:
+        kwargs = {}
+        args = []
         if spec.accepts_member:
-            data = await spec.build(parsed.member)
-        else:
-            data = await spec.build()
+            args.append(parsed.member)
+        if spec.accepts_guild:
+            args.append(parsed.guild_id)
+        data = await spec.build(*args, **kwargs)
         serieses.append(data)
 
     # If there's no data at all, bail with a friendly note.
@@ -69,6 +72,8 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
         title = f"{parsed.member.display_name}'s Crime — Last 2 Weeks"
     elif len(parsed.specs) == 1 and parsed.specs[0].name == "gambling":
         title = f"{parsed.member.display_name}'s Gambling P/L — Last 2 Weeks"
+    elif len(parsed.specs) == 1 and parsed.specs[0].name == "levels":
+        title = f"{parsed.member.display_name}'s Level-ups — Last 2 Weeks"
     elif len(parsed.specs) == 1 and parsed.specs[0].name == "commands":
         title = "Command Usage by Category — Last 2 Weeks"
     elif len(parsed.specs) == 1 and parsed.specs[0].name == "server":
@@ -119,6 +124,7 @@ class GraphCog(commands.Cog):
             "`!graph economy` — Total economy (wallet + savings) over the last 2 weeks\n"
             "`!graph crime [@user]` — Coins gained/lost via !steal and !mug\n"
             "`!graph gambling [@user]` — Net P/L from games and gambling\n"
+            "`!graph levels [@user]` — Level-ups per day in this server\n"
             "`!graph commands` — Command usage by category over the last 2 weeks\n"
             "`!graph server` — Daily message and command counts over the last 2 weeks\n"
             "`!graph memory` — Bot memory usage (MB) over the last 2 weeks\n"
@@ -149,6 +155,11 @@ class GraphCog(commands.Cog):
     @requires_perm
     async def cmd_graph_gambling(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("gambling"))
+
+    @cmd_graph.command(name="levels", aliases=["level", "lvl"])
+    @requires_perm
+    async def cmd_graph_levels(self, ctx: commands.Context, *tokens: str):
+        await _build_and_render(ctx, tokens, find_spec("levels"))
 
     @cmd_graph.command(name="commands", aliases=["cmd", "cmds"])
     @requires_perm

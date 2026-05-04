@@ -90,6 +90,10 @@ crime_today_by_user: dict = {}
 # {uid_str: {"gained": int, "lost": int}}.
 gambling_today_by_user: dict = {}
 
+# Per-(guild, user) level-up counts for the current gameplay-day.
+# {(guild_id_int, uid_str): count_of_level_boundaries_crossed}.
+levelups_today: dict = {}
+
 # ── Audit log ─────────────────────────────────────────────────────────────────
 
 audit_log: deque = deque(maxlen=20)

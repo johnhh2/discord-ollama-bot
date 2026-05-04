@@ -40,7 +40,7 @@ def _stub_ctx(invoker_id: int = 100):
     ctx = SimpleNamespace()
     ctx.author = _stub_member(invoker_id, "invoker")
     ctx.bot = SimpleNamespace()
-    ctx.guild = SimpleNamespace(get_member=lambda _id: _stub_member(_id, f"u{_id}"))
+    ctx.guild = SimpleNamespace(id=42, get_member=lambda _id: _stub_member(_id, f"u{_id}"))
     ctx.message = SimpleNamespace(mentions=[])
     return ctx
 

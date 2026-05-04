@@ -13,6 +13,7 @@ from src.persistence import (
     load_command_usage_history, save_command_usage_history,
     load_crime_history, save_crime_history,
     load_gambling_history, save_gambling_history,
+    load_levelup_history, save_levelup_history,
 )
 from src.guild_config import get_guild_cfg
 
@@ -398,6 +399,18 @@ async def snapshot_gambling():
     await save_gambling_history(history)
 
 
+async def snapshot_levelups():
+    """Record today's per-(guild, user) level-up counts; prune older than 14 days."""
+    from src import state
+    today = _ct_now().date().isoformat()
+    history = await load_levelup_history()
+    if state.levelups_today:
+        history[today] = dict(state.levelups_today)
+    cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
+    history = {d: v for d, v in history.items() if d >= cutoff}
+    await save_levelup_history(history)
+
+
 async def snapshot_all():
     """Run all three graph-data snapshots. Called by the GraphCog scheduler
     every 6 hours and once on boot. Each snapshot upserts a row keyed by
@@ -411,6 +424,7 @@ async def snapshot_all():
     await snapshot_command_usage()
     await snapshot_crime()
     await snapshot_gambling()
+    await snapshot_levelups()
 
 
 async def do_daily_reset():
@@ -430,6 +444,7 @@ async def do_daily_reset():
     state.stats_commands_today_by_cog.clear()
     state.crime_today_by_user.clear()
     state.gambling_today_by_user.clear()
+    state.levelups_today.clear()
     for user in state.economy["users"].values():
         user["daily_date"] = None
         user["scratch_used"] = 0
