@@ -266,8 +266,8 @@ class EconomyCog(commands.Cog):
                 else:
                     await deduct_balance(victim_id, steal_amount)
                     await add_balance(thief_id, steal_amount, guild_id=ctx.guild.id if ctx.guild else None, holder_name=ctx.author.display_name)
-                    record_crime_event(thief_id, gained=steal_amount)
-                    record_crime_event(victim_id, lost=steal_amount)
+                    await record_crime_event(thief_id, gained=steal_amount)
+                    await record_crime_event(victim_id, lost=steal_amount)
                     result_embed = emb(
                         "🦹 Successful Heist!",
                         f"**{ctx.author.display_name}** stole **{steal_amount:,} 🪙** from **{target.display_name}**!\n"
@@ -280,7 +280,7 @@ class EconomyCog(commands.Cog):
                 await deduct_balance(thief_id, from_wallet)
                 from_savings = await seize_from_savings(thief_id, fee - from_wallet)
                 actual_fine = from_wallet + from_savings
-                record_crime_event(thief_id, lost=actual_fine)
+                await record_crime_event(thief_id, lost=actual_fine)
                 fine_line = f"Fined **{actual_fine:,} 🪙**"
                 if from_savings > 0:
                     fine_line += f" (**{from_savings:,}** taken from savings)"
@@ -484,8 +484,8 @@ class EconomyCog(commands.Cog):
             await deduct_balance(target.id, actual_steal)
             # Attacker paid `parsed` upfront (muggers' fee, charged via shop_charge);
             # victim loses `actual_steal`. Neither gains.
-            record_crime_event(uid, lost=parsed)
-            record_crime_event(target.id, lost=actual_steal)
+            await record_crime_event(uid, lost=parsed)
+            await record_crime_event(target.id, lost=actual_steal)
 
             if jailed:
                 jail_until_ts = time.time() + 86400

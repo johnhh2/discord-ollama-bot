@@ -16,7 +16,7 @@ lives in src/cogs/leveling_cog.py.
 """
 import time
 
-from src.persistence import save_leveling
+from src.persistence import save_leveling, upsert_levelup_delta
 from src import state
 
 # ── XP constants ──────────────────────────────────────────────────────────────
@@ -194,18 +194,24 @@ async def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tup
     leveled_up = new_level > old_level
     if leveled_up:
         # A single grant can cross multiple thresholds — record each crossing.
-        record_levelup(guild_id, uid, count=new_level - old_level)
+        await record_levelup(guild_id, uid, count=new_level - old_level)
     await save_leveling(guild_id=guild_id, uid=uid)
     return xp, leveled_up
 
 
-def record_levelup(guild_id: int, uid: int, *, count: int = 1):
-    """Bump the day's level-up count for (guild, user). Called by grant_xp on
-    every successful level boundary crossing. Persistence happens via
-    snapshot_levelups() on the 6h scheduler and at do_daily_reset.
+async def record_levelup(guild_id: int, uid: int, *, count: int = 1):
+    """Atomically write today's level-up delta for (guild, user) to
+    levelup_history AND bump the in-memory cache. Called by grant_xp on every
+    level boundary crossing — multi-step grants pass count > 1.
     """
     if count <= 0:
         return
+    import datetime
+    from zoneinfo import ZoneInfo
+    today = datetime.datetime.now(datetime.timezone.utc).astimezone(
+        ZoneInfo("America/Chicago")
+    ).date().isoformat()
+    await upsert_levelup_delta(today, int(guild_id), int(uid), count=int(count))
     key = (int(guild_id), str(uid))
     state.levelups_today[key] = state.levelups_today.get(key, 0) + int(count)
 

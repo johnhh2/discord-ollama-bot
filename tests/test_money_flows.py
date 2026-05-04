@@ -353,6 +353,86 @@ async def test_mug_insufficient_funds_blocked_before_action(db):
     assert await _economy.get_balance(victim.id) == 10_000
 
 
+# ── !steal / !mug crime-event recording (powers !graph crime) ────────────────
+#
+# These pin the side-effect that the standalone test_crime_graph.py can't —
+# that cmd_steal and cmd_mug actually CALL record_crime_event at every outcome
+# branch. If a future refactor accidentally drops one of these calls, the
+# unit-level "record_crime_event aggregates correctly" tests would still pass
+# while the graph silently goes blank in prod.
+
+
+async def test_steal_success_records_thief_gained_and_victim_lost(db, monkeypatch):
+    cog = EconomyCog(bot=_StubBot())
+    thief = FakeMember(uid=1100, display_name="thief")
+    victim = FakeMember(uid=1200, display_name="victim")
+    await _economy.add_balance(thief.id, 5000)
+    await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 4)
+
+    monkeypatch.setattr(random, "random", lambda: 0.05)  # tier 1 success
+    monkeypatch.setattr(random, "randint", lambda a, b: a)
+
+    ctx = _make_ctx(thief, victim)
+    await cog.cmd_steal.callback(cog, ctx, target=victim)
+
+    expected_steal = int(10_000 * 0.10)
+    thief_rec = _state.crime_today_by_user.get(str(thief.id), {})
+    victim_rec = _state.crime_today_by_user.get(str(victim.id), {})
+    assert thief_rec.get("gained") == expected_steal
+    assert thief_rec.get("lost", 0) == 0
+    assert victim_rec.get("lost") == expected_steal
+    assert victim_rec.get("gained", 0) == 0
+
+
+async def test_steal_fail_records_thief_lost_only(db, monkeypatch):
+    cog = EconomyCog(bot=_StubBot())
+    thief = FakeMember(uid=1101)
+    victim = FakeMember(uid=1201)
+    await _economy.add_balance(thief.id, 5000)
+    await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 4)
+
+    # Steal fails (>= 0.10), jail also fails — thief just pays the 1000 fee.
+    rolls = iter([0.99, 0.99])
+    monkeypatch.setattr(random, "random", lambda: next(rolls))
+    monkeypatch.setattr(random, "randint", lambda a, b: a)
+
+    ctx = _make_ctx(thief, victim)
+    await cog.cmd_steal.callback(cog, ctx, target=victim)
+
+    thief_rec = _state.crime_today_by_user.get(str(thief.id), {})
+    assert thief_rec.get("lost") == 1000
+    assert thief_rec.get("gained", 0) == 0
+    # Victim's row should not exist on a failed steal — they weren't touched.
+    assert str(victim.id) not in _state.crime_today_by_user
+
+
+async def test_mug_records_both_attacker_lost_and_victim_lost(db, monkeypatch):
+    """Mug semantics: attacker pays the muggers' fee (lost), victim is robbed
+    (lost), nobody gains — the muggers keep it all."""
+    cog = EconomyCog(bot=_StubBot())
+    thief = FakeMember(uid=1300)
+    victim = FakeMember(uid=1400)
+    await _economy.add_balance(thief.id, 5000)
+    await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 9)
+
+    monkeypatch.setattr(random, "random", lambda: 0.99)  # no jail
+    monkeypatch.setattr(random, "randint", lambda a, b: a)
+
+    ctx = FakeCtx(author=thief, guild=FakeGuild(gid=42))
+    ctx.bot = _StubBot()
+    await cog.cmd_mug.callback(cog, ctx, target=victim, amount="1000")
+
+    thief_rec = _state.crime_today_by_user.get(str(thief.id), {})
+    victim_rec = _state.crime_today_by_user.get(str(victim.id), {})
+    assert thief_rec.get("lost") == 1000   # paid muggers
+    assert thief_rec.get("gained", 0) == 0
+    assert victim_rec.get("lost") == 1000  # robbed
+    assert victim_rec.get("gained", 0) == 0
+
+
 # ── !pay ──────────────────────────────────────────────────────────────────────
 
 async def test_pay_transfers_coins_and_persists(db):

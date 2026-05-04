@@ -607,6 +607,86 @@ async def save_gambling_history(history: dict):
                 )
 
 
+async def upsert_crime_delta(date_str: str, uid: int, *, gained: int = 0, lost: int = 0):
+    """Atomically add `gained` and `lost` deltas to the (date, user) row in
+    crime_history. Caller passes the per-event delta, not the running total —
+    MariaDB increments in place via ON DUPLICATE KEY UPDATE x = x + VALUES(x).
+    """
+    if gained == 0 and lost == 0:
+        return
+    async with with_cursor() as cur:
+        await cur.execute(
+            "INSERT INTO crime_history (snapshot_date, user_id, gained, lost)"
+            " VALUES (%s,%s,%s,%s)"
+            " ON DUPLICATE KEY UPDATE"
+            " gained = gained + VALUES(gained),"
+            " lost   = lost   + VALUES(lost)",
+            (date_str, int(uid), int(gained), int(lost)),
+        )
+
+
+async def upsert_gambling_delta(date_str: str, uid: int, *, gained: int = 0, lost: int = 0):
+    if gained == 0 and lost == 0:
+        return
+    async with with_cursor() as cur:
+        await cur.execute(
+            "INSERT INTO gambling_history (snapshot_date, user_id, gained, lost)"
+            " VALUES (%s,%s,%s,%s)"
+            " ON DUPLICATE KEY UPDATE"
+            " gained = gained + VALUES(gained),"
+            " lost   = lost   + VALUES(lost)",
+            (date_str, int(uid), int(gained), int(lost)),
+        )
+
+
+async def upsert_levelup_delta(date_str: str, guild_id: int, uid: int, *, count: int = 0):
+    if count == 0:
+        return
+    async with with_cursor() as cur:
+        await cur.execute(
+            "INSERT INTO levelup_history (snapshot_date, guild_id, user_id, count)"
+            " VALUES (%s,%s,%s,%s)"
+            " ON DUPLICATE KEY UPDATE count = count + VALUES(count)",
+            (date_str, int(guild_id), int(uid), int(count)),
+        )
+
+
+# Boot-time hydration helpers — load TODAY's row from each activity table so
+# the in-memory dicts (used as a fast-read cache by the graph cog) reflect
+# the truth on disk. Called from init_db_state.
+
+async def load_today_crime_row(date_str: str) -> dict:
+    """{uid_str: {"gained": int, "lost": int}} for today's date."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT user_id, gained, lost FROM crime_history WHERE snapshot_date = %s",
+            (date_str,),
+        )
+        rows = await cur.fetchall()
+    return {str(uid): {"gained": int(g), "lost": int(l)} for uid, g, l in rows}
+
+
+async def load_today_gambling_row(date_str: str) -> dict:
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT user_id, gained, lost FROM gambling_history WHERE snapshot_date = %s",
+            (date_str,),
+        )
+        rows = await cur.fetchall()
+    return {str(uid): {"gained": int(g), "lost": int(l)} for uid, g, l in rows}
+
+
+async def load_today_levelups_row(date_str: str) -> dict:
+    """{(guild_id_int, uid_str): count} for today's date."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT guild_id, user_id, count FROM levelup_history WHERE snapshot_date = %s",
+            (date_str,),
+        )
+        rows = await cur.fetchall()
+    return {(int(gid), str(uid)): int(c) for gid, uid, c in rows}
+
+
 async def load_levelup_history() -> dict:
     """Returns {date_str: {(guild_id_int, uid_str): count}}."""
     async with with_cursor() as cur:
@@ -996,6 +1076,19 @@ async def init_db_state():
             }
         except Exception as e:
             logging.error(f"[init_db_state] command_perms failed: {e}", exc_info=True)
+
+        # ── activity caches (crime / gambling / levelups) ─────────────────
+        # Each *_history table is the source of truth (atomic UPSERT on every
+        # event). The in-memory dicts are a fast-read cache for the graph cog's
+        # live-today append; on boot they're empty, so re-hydrate today's row.
+        try:
+            from src.economy import _ct_now
+            today = _ct_now().date().isoformat()
+            state.crime_today_by_user = await load_today_crime_row(today)
+            state.gambling_today_by_user = await load_today_gambling_row(today)
+            state.levelups_today = await load_today_levelups_row(today)
+        except Exception as e:
+            logging.error(f"[init_db_state] activity hydration failed: {e}", exc_info=True)
 
     # bot_admins: always from env, never DB
     state.bot_admins = set(INITIAL_BOT_ADMIN_IDS)

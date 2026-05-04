@@ -239,7 +239,7 @@ class ScratchoffCog(commands.Cog):
 
             await add_balance(uid, payout)
             if payout > 0:
-                record_gambling_event(uid, gained=payout)
+                await record_gambling_event(uid, gained=payout)
             user["scratch_used"] += 1
             await save_economy(uid=uid)
 

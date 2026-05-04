@@ -20,20 +20,22 @@ def _stub_member(uid: int, name: str = "tester"):
 # ── record_levelup ────────────────────────────────────────────────────────────
 
 
-def test_record_levelup_aggregates_per_guild_user():
-    _leveling.record_levelup(1, 7, count=1)
-    _leveling.record_levelup(1, 7, count=2)  # multi-step
-    _leveling.record_levelup(2, 7, count=1)  # different guild, same user
-    _leveling.record_levelup(1, 8, count=1)  # different user
+@pytest.mark.asyncio
+async def test_record_levelup_aggregates_per_guild_user():
+    await _leveling.record_levelup(1, 7, count=1)
+    await _leveling.record_levelup(1, 7, count=2)  # multi-step
+    await _leveling.record_levelup(2, 7, count=1)  # different guild, same user
+    await _leveling.record_levelup(1, 8, count=1)  # different user
 
     assert _state.levelups_today[(1, "7")] == 3
     assert _state.levelups_today[(2, "7")] == 1
     assert _state.levelups_today[(1, "8")] == 1
 
 
-def test_record_levelup_zero_or_negative_is_noop():
-    _leveling.record_levelup(1, 7, count=0)
-    _leveling.record_levelup(1, 7, count=-1)
+@pytest.mark.asyncio
+async def test_record_levelup_zero_or_negative_is_noop():
+    await _leveling.record_levelup(1, 7, count=0)
+    await _leveling.record_levelup(1, 7, count=-1)
     assert (1, "7") not in _state.levelups_today
 
 
@@ -41,9 +43,39 @@ def test_record_levelup_zero_or_negative_is_noop():
 
 
 @pytest.mark.asyncio
+async def test_record_levelup_writes_atomically_to_disk(db):
+    """Atomic-write contract: every level boundary crossing must persist
+    immediately."""
+    await _leveling.record_levelup(100, 42, count=2)
+    await _leveling.record_levelup(100, 99, count=1)
+
+    today = _economy._ct_now().date().isoformat()
+    history = await _persistence.load_levelup_history()
+    assert history[today][(100, "42")] == 2
+    assert history[today][(100, "99")] == 1
+
+
+@pytest.mark.asyncio
+async def test_record_levelup_increments_existing_row(db):
+    await _leveling.record_levelup(100, 42, count=1)
+    await _leveling.record_levelup(100, 42, count=3)
+    today = _economy._ct_now().date().isoformat()
+    history = await _persistence.load_levelup_history()
+    assert history[today][(100, "42")] == 4
+
+
+@pytest.mark.asyncio
+async def test_init_db_state_hydrates_today_levelups_dict(db):
+    await _leveling.record_levelup(100, 42, count=2)
+    _state.levelups_today.clear()
+    await _persistence.init_db_state()
+    assert _state.levelups_today[(100, "42")] == 2
+
+
+@pytest.mark.asyncio
 async def test_snapshot_levelups_persists_and_loads(db):
-    _leveling.record_levelup(100, 42, count=2)
-    _leveling.record_levelup(100, 99, count=1)
+    await _leveling.record_levelup(100, 42, count=2)
+    await _leveling.record_levelup(100, 99, count=1)
 
     await _economy.snapshot_levelups()
 
@@ -55,10 +87,10 @@ async def test_snapshot_levelups_persists_and_loads(db):
 
 @pytest.mark.asyncio
 async def test_snapshot_levelups_refreshes_today_on_repeat(db):
-    _leveling.record_levelup(100, 42, count=1)
+    await _leveling.record_levelup(100, 42, count=1)
     await _economy.snapshot_levelups()
 
-    _leveling.record_levelup(100, 42, count=3)
+    await _leveling.record_levelup(100, 42, count=3)
     await _economy.snapshot_levelups()
 
     today = _economy._ct_now().date().isoformat()

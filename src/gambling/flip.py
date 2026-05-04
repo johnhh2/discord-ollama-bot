@@ -49,12 +49,12 @@ class FlipCog(commands.Cog):
             gid = ctx.guild.id if ctx.guild else None
             await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name)
             if uid not in state.godmode_users:
-                record_gambling_event(uid, gained=amount)  # net: paid `amount`, received `2*amount`
+                await record_gambling_event(uid, gained=amount)  # net: paid `amount`, received `2*amount`
             await try_set_record(gid, "flip", winnings, uid, ctx.author.display_name)
             await ctx.send(embed=emb("🪙 Heads!", f"**{ctx.author.display_name}** won **{amount:,} 🪙**! Balance: {await get_balance(uid):,} 🪙", C_GREEN))
         else:
             if uid not in state.godmode_users:
-                record_gambling_event(uid, lost=amount)
+                await record_gambling_event(uid, lost=amount)
             await ctx.send(embed=emb("🪙 Tails!", f"**{ctx.author.display_name}** lost **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙", C_RED))
 
 

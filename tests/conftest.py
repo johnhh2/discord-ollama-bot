@@ -101,6 +101,7 @@ def reset_bot_state(monkeypatch):
         "save_balance_history", "save_bot_stats_history",
         "save_command_usage_history", "save_crime_history", "save_gambling_history",
         "save_levelup_history",
+        "upsert_crime_delta", "upsert_gambling_delta", "upsert_levelup_delta",
         "add_ephemeral_msg",
     ]
     for fn_name in save_fn_names:
@@ -115,6 +116,13 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_economy, "try_set_record", _noop_bool)
     monkeypatch.setattr(_economy, "save_balance_history", _noop)
     monkeypatch.setattr(_economy, "save_bot_stats_history", _noop)
+    # Activity-stat upserters: src.economy and src.leveling import them at module
+    # scope, so patching src.persistence isn't enough — the bound names in those
+    # modules need stubs too.
+    monkeypatch.setattr(_economy, "upsert_crime_delta", _noop, raising=False)
+    monkeypatch.setattr(_economy, "upsert_gambling_delta", _noop, raising=False)
+    import src.leveling as _leveling
+    monkeypatch.setattr(_leveling, "upsert_levelup_delta", _noop, raising=False)
 
 
 @pytest_asyncio.fixture

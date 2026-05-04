@@ -252,3 +252,66 @@ async def test_slots_rigged_jackpot_pays_progressive_pot_and_resets(db, monkeypa
     assert await _read_jackpot() == SLOT_JACKPOT_SEED
     # Rigging entry consumed.
     assert 4 not in _state.rigged_slots
+
+
+# ── Gambling-event recording (powers !graph gambling) ────────────────────────
+#
+# Pin the side-effect that test_gambling_graph.py can't catch on its own:
+# cmd_slots actually CALLS record_gambling_event at every outcome branch
+# (no-win → lost; normal win → gained=net; jackpot → gained=net). If a
+# refactor drops one, the unit-level "record_gambling_event aggregates"
+# tests still pass, but !graph gambling silently goes blank in prod.
+
+
+@pytest.mark.asyncio
+async def test_slots_no_win_records_gambling_lost(db, monkeypatch):
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=10)
+    await _economy.add_balance(10, 100_000)
+
+    # Force a guaranteed-loss spin: house-edge branch with three DISTINCT
+    # non-cherry, non-blank symbols (no match, no cherry retention).
+    monkeypatch.setattr(random, "random", lambda: 0.01)  # < SLOT_HOUSE_CHANCE
+    monkeypatch.setattr(random, "sample", lambda seq, k: ["🎰", "🍋", "🔔"])
+
+    bet = 1000
+    await cog.cmd_slots.callback(cog, ctx, amount=str(bet))
+
+    rec = _state.gambling_today_by_user.get("10", {})
+    assert rec.get("lost") == bet
+    assert rec.get("gained", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_slots_three_cherry_win_records_gambling_gained_net(db, monkeypatch):
+    """A 3🍒 win pays SLOT_MULT_3CHERRY × bet. Net P/L = winnings - bet."""
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=11)
+    await _economy.add_balance(11, 100_000)
+    _state.rigged_slots[11] = "🍒"   # forces three cherries
+
+    bet = 100
+    await cog.cmd_slots.callback(cog, ctx, amount=str(bet))
+
+    expected_winnings = bet * SLOT_MULT_3CHERRY
+    expected_net = expected_winnings - bet
+    rec = _state.gambling_today_by_user.get("11", {})
+    assert rec.get("gained") == expected_net
+    assert rec.get("lost", 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_slots_godmode_user_doesnt_record_gambling(db, monkeypatch):
+    """Godmode bypasses shop_charge (no real bet deduction), so the recorder
+    must skip too — otherwise the graph would show fictional P/L."""
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=12)
+    await _economy.add_balance(12, 100_000)
+    _state.godmode_users.add(12)
+
+    monkeypatch.setattr(random, "random", lambda: 0.01)
+    monkeypatch.setattr(random, "sample", lambda seq, k: ["🍒", "🍋", "🔔"])
+
+    await cog.cmd_slots.callback(cog, ctx, amount="1000")
+
+    assert "12" not in _state.gambling_today_by_user

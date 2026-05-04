@@ -14,6 +14,7 @@ from src.persistence import (
     load_crime_history, save_crime_history,
     load_gambling_history, save_gambling_history,
     load_levelup_history, save_levelup_history,
+    upsert_crime_delta, upsert_gambling_delta,
 )
 from src.guild_config import get_guild_cfg
 
@@ -345,14 +346,18 @@ async def snapshot_command_usage():
     logging.info(f"[DAILY] Snapshotted per-cog command usage for {today}: {history[today]}")
 
 
-def record_crime_event(uid: int, *, gained: int = 0, lost: int = 0):
-    """Bump the day's running per-user crime totals. Called by !steal / !mug
-    on every outcome (win/lose, attacker/victim). Persistence happens via
-    snapshot_crime() on the 6h scheduler and at do_daily_reset.
+async def record_crime_event(uid: int, *, gained: int = 0, lost: int = 0):
+    """Atomically write today's crime delta for `uid` to crime_history AND
+    bump the in-memory cache (used by the graph cog's live-today read).
+
+    Called by !steal / !mug on every outcome (win/lose, attacker/victim).
+    Persists synchronously — no data loss on bot restart.
     """
     from src import state
     if gained == 0 and lost == 0:
         return
+    today = _ct_now().date().isoformat()
+    await upsert_crime_delta(today, uid, gained=gained, lost=lost)
     bucket = state.crime_today_by_user.setdefault(str(uid), {"gained": 0, "lost": 0})
     bucket["gained"] += int(gained)
     bucket["lost"] += int(lost)
@@ -373,15 +378,18 @@ async def snapshot_crime():
     await save_crime_history(history)
 
 
-def record_gambling_event(uid: int, *, gained: int = 0, lost: int = 0):
-    """Bump the day's running per-user gambling totals. Called by the
-    games/gambling commands at outcome resolution (net P/L semantics:
-    refunds and pushes record nothing). Persistence happens via
-    snapshot_gambling() on the 6h scheduler and at do_daily_reset.
+async def record_gambling_event(uid: int, *, gained: int = 0, lost: int = 0):
+    """Atomically write today's gambling delta for `uid` to gambling_history
+    AND bump the in-memory cache.
+
+    Called by games/gambling commands at outcome resolution (net P/L
+    semantics: refunds and pushes record nothing). Persists synchronously.
     """
     from src import state
     if gained == 0 and lost == 0:
         return
+    today = _ct_now().date().isoformat()
+    await upsert_gambling_delta(today, uid, gained=gained, lost=lost)
     bucket = state.gambling_today_by_user.setdefault(str(uid), {"gained": 0, "lost": 0})
     bucket["gained"] += int(gained)
     bucket["lost"] += int(lost)
@@ -412,19 +420,19 @@ async def snapshot_levelups():
 
 
 async def snapshot_all():
-    """Run all three graph-data snapshots. Called by the GraphCog scheduler
-    every 6 hours and once on boot. Each snapshot upserts a row keyed by
-    `_ct_today()`, so multiple calls within the same gameplay-day overwrite
-    the same row with refreshed values.
+    """Run the periodic graph-data snapshots. Called by the GraphCog scheduler
+    every 6 hours and once on boot.
+
+    Note: crime, gambling, and level-ups are NOT snapshotted here — they're
+    written atomically at event time via the `record_*_event` helpers, so the
+    *_history tables are always current. Only the aggregate counters
+    (balances, bot stats, per-cog command usage) need periodic flushing.
     """
     from src.ai import check_ollama_connected
     await snapshot_balances()
     ai_up = await check_ollama_connected()
     await snapshot_bot_stats(ai_up)
     await snapshot_command_usage()
-    await snapshot_crime()
-    await snapshot_gambling()
-    await snapshot_levelups()
 
 
 async def do_daily_reset():

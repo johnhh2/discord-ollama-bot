@@ -116,7 +116,7 @@ async def _distribute_hangman_rewards(cid: int, game: dict) -> str:
         name = names.get(pid, f"<@{pid}>")
         await add_balance(pid, reward, guild_id=gid if gid else None, holder_name=name)
         if reward > 0:
-            record_gambling_event(pid, gained=reward)
+            await record_gambling_event(pid, gained=reward)
         msg += f"**{name}**: +{reward:,} 🪙 | Balance: {await get_balance(pid):,} 🪙\n"
         # Track most hangman wins per player
         if gid:

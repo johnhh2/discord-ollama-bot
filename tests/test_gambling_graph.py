@@ -29,18 +29,20 @@ def _stub_member(uid: int, name: str = "tester"):
 # ── record_gambling_event ─────────────────────────────────────────────────────
 
 
-def test_record_gambling_event_aggregates_per_user():
-    _economy.record_gambling_event(7, gained=100)
-    _economy.record_gambling_event(7, lost=30)
-    _economy.record_gambling_event(7, gained=200)
-    _economy.record_gambling_event(8, lost=50)
+@pytest.mark.asyncio
+async def test_record_gambling_event_aggregates_per_user():
+    await _economy.record_gambling_event(7, gained=100)
+    await _economy.record_gambling_event(7, lost=30)
+    await _economy.record_gambling_event(7, gained=200)
+    await _economy.record_gambling_event(8, lost=50)
 
     assert _state.gambling_today_by_user["7"] == {"gained": 300, "lost": 30}
     assert _state.gambling_today_by_user["8"] == {"gained": 0, "lost": 50}
 
 
-def test_record_gambling_event_zero_is_noop():
-    _economy.record_gambling_event(7, gained=0, lost=0)
+@pytest.mark.asyncio
+async def test_record_gambling_event_zero_is_noop():
+    await _economy.record_gambling_event(7, gained=0, lost=0)
     assert "7" not in _state.gambling_today_by_user
 
 
@@ -48,9 +50,39 @@ def test_record_gambling_event_zero_is_noop():
 
 
 @pytest.mark.asyncio
+async def test_record_gambling_event_writes_atomically_to_disk(db):
+    """Atomic-write contract: a record_gambling_event call must persist
+    immediately, so a bot crash mid-game-session can't lose stats."""
+    await _economy.record_gambling_event(42, gained=500, lost=100)
+    await _economy.record_gambling_event(43, lost=250)
+
+    today = _economy._ct_now().date().isoformat()
+    history = await _persistence.load_gambling_history()
+    assert history[today]["42"] == {"gained": 500, "lost": 100}
+    assert history[today]["43"] == {"gained": 0, "lost": 250}
+
+
+@pytest.mark.asyncio
+async def test_record_gambling_event_increments_existing_row(db):
+    await _economy.record_gambling_event(42, gained=100)
+    await _economy.record_gambling_event(42, gained=50, lost=20)
+    today = _economy._ct_now().date().isoformat()
+    history = await _persistence.load_gambling_history()
+    assert history[today]["42"] == {"gained": 150, "lost": 20}
+
+
+@pytest.mark.asyncio
+async def test_init_db_state_hydrates_today_gambling_dict(db):
+    await _economy.record_gambling_event(42, gained=500, lost=100)
+    _state.gambling_today_by_user.clear()
+    await _persistence.init_db_state()
+    assert _state.gambling_today_by_user["42"] == {"gained": 500, "lost": 100}
+
+
+@pytest.mark.asyncio
 async def test_snapshot_gambling_persists_and_loads(db):
-    _economy.record_gambling_event(42, gained=500, lost=100)
-    _economy.record_gambling_event(43, lost=250)
+    await _economy.record_gambling_event(42, gained=500, lost=100)
+    await _economy.record_gambling_event(43, lost=250)
 
     await _economy.snapshot_gambling()
 
@@ -63,10 +95,10 @@ async def test_snapshot_gambling_persists_and_loads(db):
 
 @pytest.mark.asyncio
 async def test_snapshot_gambling_refreshes_today_on_repeat(db):
-    _economy.record_gambling_event(42, gained=200)
+    await _economy.record_gambling_event(42, gained=200)
     await _economy.snapshot_gambling()
 
-    _economy.record_gambling_event(42, gained=300)
+    await _economy.record_gambling_event(42, gained=300)
     await _economy.snapshot_gambling()
 
     today = _economy._ct_now().date().isoformat()
@@ -79,7 +111,7 @@ async def test_snapshot_gambling_preserves_existing_day_when_buffer_empty(db):
     """If the in-memory dict is empty at snapshot time (just after the 5am
     daily clear, on a no-activity day), the existing row should not be wiped.
     """
-    _economy.record_gambling_event(42, gained=200)
+    await _economy.record_gambling_event(42, gained=200)
     await _economy.snapshot_gambling()
 
     _state.gambling_today_by_user.clear()

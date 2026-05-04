@@ -56,10 +56,10 @@ async def _run_race(channel, cid: int, race_msg: discord.Message):
                 if share > 0:
                     await add_balance(winners[0], share)
                 if amount > 0:
-                    record_gambling_event(winners[0], gained=max(0, share - amount))
+                    await record_gambling_event(winners[0], gained=max(0, share - amount))
                     for loser in game["players"]:
                         if loser != winners[0]:
-                            record_gambling_event(loser, lost=amount)
+                            await record_gambling_event(loser, lost=amount)
                 result = f"{board}\n\n🏆 **{winner_name}** wins" + (f" **{share:,} 🪙**!" if share else "!")
             else:
                 for w in winners:
@@ -70,12 +70,12 @@ async def _run_race(channel, cid: int, race_msg: discord.Message):
                     for w in winners:
                         net = share - amount
                         if net > 0:
-                            record_gambling_event(w, gained=net)
+                            await record_gambling_event(w, gained=net)
                         elif net < 0:
-                            record_gambling_event(w, lost=-net)
+                            await record_gambling_event(w, lost=-net)
                     for loser in game["players"]:
                         if loser not in winner_set:
-                            record_gambling_event(loser, lost=amount)
+                            await record_gambling_event(loser, lost=amount)
                 names = ", ".join(f"**{game['names'][w]}**" for w in winners)
                 result = f"{board}\n\n🤝 Tie! {names} each get **{share:,} 🪙**"
 

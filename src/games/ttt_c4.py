@@ -229,8 +229,8 @@ class TttC4Cog(commands.Cog):
                     await add_balance(winner_uid, winnings)
                 if amount > 0:
                     loser_uid = next(p for p in game["players"] if p != winner_uid)
-                    record_gambling_event(winner_uid, gained=amount)
-                    record_gambling_event(loser_uid, lost=amount)
+                    await record_gambling_event(winner_uid, gained=amount)
+                    await record_gambling_event(loser_uid, lost=amount)
                 winner_name = ctx.guild.get_member(winner_uid).display_name if ctx.guild else str(winner_uid)
                 game["last_move"] = f"{name} played position {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
                 winner_mention = ctx.guild.get_member(winner_uid).mention if ctx.guild else str(winner_uid)
@@ -279,8 +279,8 @@ class TttC4Cog(commands.Cog):
                     await add_balance(winner_uid, winnings)
                 if amount > 0:
                     loser_uid = next(p for p in game["players"] if p != winner_uid)
-                    record_gambling_event(winner_uid, gained=amount)
-                    record_gambling_event(loser_uid, lost=amount)
+                    await record_gambling_event(winner_uid, gained=amount)
+                    await record_gambling_event(loser_uid, lost=amount)
                 winner_name = ctx.guild.get_member(winner_uid).display_name if ctx.guild else str(winner_uid)
                 game["last_move"] = f"{name} dropped in column {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
                 winner_mention = ctx.guild.get_member(winner_uid).mention if ctx.guild else str(winner_uid)

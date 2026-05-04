@@ -12,6 +12,7 @@ Importing this module is what actually performs the snapshot — keep it cheap
 Each entry is `(target_module, attr_name, real_callable)`.
 """
 import src.economy as _economy
+import src.leveling as _leveling
 import src.persistence as _persistence
 
 
@@ -28,6 +29,7 @@ _PERSISTENCE_SAVE_NAMES = [
     "save_balance_history", "save_bot_stats_history",
     "save_command_usage_history", "save_crime_history", "save_gambling_history",
     "save_levelup_history",
+    "upsert_crime_delta", "upsert_gambling_delta", "upsert_levelup_delta",
     "add_ephemeral_msg",
 ]
 
@@ -43,6 +45,11 @@ ALL.append((_persistence, "try_set_record", _persistence.try_set_record))
 # Mirrors on src.economy (it imports save_economy/save_insurance/try_set_record/
 # save_balance_history/save_bot_stats_history directly).
 for _name in ("save_economy", "save_insurance", "try_set_record",
-              "save_balance_history", "save_bot_stats_history"):
+              "save_balance_history", "save_bot_stats_history",
+              "upsert_crime_delta", "upsert_gambling_delta"):
     if hasattr(_economy, _name):
         ALL.append((_economy, _name, getattr(_economy, _name)))
+
+# Mirror on src.leveling for upsert_levelup_delta.
+if hasattr(_leveling, "upsert_levelup_delta"):
+    ALL.append((_leveling, "upsert_levelup_delta", _leveling.upsert_levelup_delta))
