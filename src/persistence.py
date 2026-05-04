@@ -631,7 +631,7 @@ _init_db_state_done = False
 
 
 async def init_db_state():
-    """Load all persistent state from DB into src.state.
+    """Apply pending migrations, then load all persistent state from DB into src.state.
 
     on_ready fires on every gateway reconnect, so the second+ call is guarded
     out — otherwise a reconnect would clobber any in-memory mutations made
@@ -640,11 +640,16 @@ async def init_db_state():
     global _init_db_state_done
     import logging
     import src.state as state
+    from src.migrations import run_migrations
 
     if _init_db_state_done:
         logging.info("[init_db_state] skipping; already initialized")
         return
     _init_db_state_done = True
+
+    # Apply pending schema migrations BEFORE any SELECT — if the schema is
+    # behind, we want to fail fast rather than blow up on a missing column.
+    await run_migrations()
 
     async with with_cursor() as cur:
 
@@ -654,21 +659,6 @@ async def init_db_state():
             def wrapper(fn):
                 return fn
             return wrapper
-
-        # ── schema upgrades (self-healing) ────────────────────────────────
-        # Tables added after the initial schema deploy are created here so
-        # production picks them up on boot without a manual `mysql < schema.sql`.
-        try:
-            await cur.execute(
-                "CREATE TABLE IF NOT EXISTS bot_command_usage_history ("
-                " snapshot_date VARCHAR(10) NOT NULL,"
-                " cog_name      VARCHAR(64) NOT NULL,"
-                " count         INT         NOT NULL DEFAULT 0,"
-                " PRIMARY KEY (snapshot_date, cog_name)"
-                ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-            )
-        except Exception as e:
-            logging.error(f"[init_db_state] bot_command_usage_history create failed: {e}", exc_info=True)
 
         # ── economy_users ─────────────────────────────────────────────────
         try:

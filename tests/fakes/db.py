@@ -2,23 +2,24 @@
 
 Lets persistence tests exercise real `save_*`/`load_*` SQL paths without a real
 MariaDB. The translator handles the small number of MariaDB-isms the codebase
-actually uses (`%s` placeholders, `INSERT IGNORE`, and
-`INSERT ... ON DUPLICATE KEY UPDATE col=VALUES(col)`).
+actually uses (`%s` placeholders, `INSERT IGNORE`,
+`INSERT ... ON DUPLICATE KEY UPDATE col=VALUES(col)`, and a handful of MariaDB
+type/syntax bits that appear in migration files).
 
 If a query string here ever fails to translate, prefer extending the translator
 over rewriting production SQL — production has to keep speaking MariaDB.
+
+Schema in tests is built by running `src.migrations.run_migrations()` against
+the SQLite DB through this same translator — so test-prod parity is the
+migration files themselves, not a parallel hand-translated schema.
 """
 import re
 import sqlite3
-from pathlib import Path
-
-
-_SCHEMA_PATH = Path(__file__).parent / "schema_sqlite.sql"
 
 
 # Per-table primary key column(s). Keyed by table name (lowercase).
 # Used to translate `ON DUPLICATE KEY UPDATE` -> `ON CONFLICT(pk) DO UPDATE`.
-# Must stay in sync with tests/fakes/schema_sqlite.sql.
+# Must stay in sync with the migration files in migrations/.
 _TABLE_PKS = {
     "economy_users": ("user_id",),
     "economy_meta": ("key_name",),
@@ -50,6 +51,7 @@ _TABLE_PKS = {
     "restart_msg": ("id",),
     "ephemeral_msgs": ("id",),
     "command_perms": ("command_name",),
+    "schema_migrations": ("version",),
 }
 
 
@@ -80,6 +82,31 @@ def _translate(sql: str) -> str:
         out,
         flags=re.IGNORECASE,
     )
+
+    # ── MariaDB-isms that show up in migration files ─────────────────────
+    # JSON_ARRAY() default -> '[]' (SQLite has no JSON_ARRAY function).
+    out = re.sub(r"JSON_ARRAY\s*\(\s*\)", "'[]'", out, flags=re.IGNORECASE)
+    # ENUM('a','b','c') -> TEXT (SQLite has no ENUM type).
+    out = re.sub(r"\bENUM\s*\([^)]*\)", "TEXT", out, flags=re.IGNORECASE)
+    # `<inttype> [UNSIGNED] NOT NULL AUTO_INCREMENT PRIMARY KEY`
+    #     -> `INTEGER PRIMARY KEY AUTOINCREMENT`
+    # SQLite only accepts AUTOINCREMENT after `INTEGER PRIMARY KEY`, so we
+    # normalize the whole MariaDB idiom.
+    out = re.sub(
+        r"\b(?:BIGINT|INT|TINYINT|SMALLINT)(?:\s+UNSIGNED)?\s+NOT\s+NULL\s+AUTO_INCREMENT\s+PRIMARY\s+KEY\b",
+        "INTEGER PRIMARY KEY AUTOINCREMENT",
+        out,
+        flags=re.IGNORECASE,
+    )
+    # Catch any remaining bare AUTO_INCREMENT.
+    out = re.sub(r"\bAUTO_INCREMENT\b", "AUTOINCREMENT", out, flags=re.IGNORECASE)
+    # Inline `INDEX idx_x (col)` inside CREATE TABLE — SQLite doesn't support this
+    # form. Strip the line; tests don't rely on these indexes for correctness.
+    out = re.sub(r",\s*INDEX\s+\w+\s*\([^)]*\)", "", out, flags=re.IGNORECASE)
+    # information_schema.tables → sqlite_master shim used by run_migrations'
+    # _table_exists. The MariaDB form has a `DATABASE()` builtin SQLite lacks;
+    # rather than rewrite the whole query, the runner already has a fallback,
+    # so we let the original query fail naturally and rely on that fallback.
 
     # INSERT ... ON DUPLICATE KEY UPDATE col=VALUES(col), ...
     #   -> INSERT ... ON CONFLICT(<pk_cols>) DO UPDATE SET col=excluded.col, ...
@@ -192,13 +219,26 @@ class FakePool:
         return None
 
 
-def _load_schema_sql() -> str:
-    return _SCHEMA_PATH.read_text(encoding="utf-8")
-
-
 async def make_fake_pool() -> FakePool:
-    """Build a fresh in-memory SQLite, run the test schema, return a FakePool."""
+    """Build a fresh in-memory SQLite, apply migrations through the same runner
+    production uses, and return a FakePool.
+
+    Test-prod parity comes from the migration files themselves — there is no
+    parallel hand-translated test schema to drift out of sync.
+    """
+    # Avoid an import-time cycle (src.migrations -> src.db is fine, but keeping
+    # this import local matches the rest of this module's lazy-import style).
+    from src import migrations as _migrations
+
     # isolation_level=None -> autocommit, mirroring aiomysql's autocommit=True.
     conn = sqlite3.connect(":memory:", isolation_level=None)
-    conn.executescript(_load_schema_sql())
-    return FakePool(conn)
+    pool = FakePool(conn)
+
+    # Apply migrations directly against a cursor we hand the runner. We can't
+    # rely on `with_cursor()` here because the global pool/get_pool patch
+    # hasn't been wired yet (this function builds the pool that patch points at).
+    fake_cur = FakeCursor(conn.cursor())
+    # Reset the runner's per-process guard so each fresh pool gets a fresh run.
+    _migrations._done = False
+    await _migrations.run_migrations(cur=fake_cur)
+    return pool
