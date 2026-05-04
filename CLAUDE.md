@@ -147,6 +147,10 @@ Schema changes ship as numbered SQL files in [migrations/](migrations/). The bot
 7. **Run the suite**: `python -m pytest -q`. The test fake builds its in-memory DB by running these same migration files, so any MariaDB syntax SQLite can't translate fails immediately. If that happens, extend `_translate()` in `tests/fakes/db.py` rather than rewriting the migration to be SQLite-friendly — production must keep speaking real MariaDB.
 8. **Do NOT touch `src/migrations.py:_done`** or the heuristic-baseline logic to "fix" a deploy issue. The heuristic only fires when `schema_migrations` is empty AND `economy_users` exists, exactly once per DB. If a deploy is wrong, fix it with a forward-fix migration; never edit history.
 
+### Reverse migrations (optional)
+
+Opt-in, operator-only. To make a migration revertible, drop a paired `migrations/NNNN_name.down.sql`; revert with `python -m src.migrations down N`. Never invoked automatically. Don't write no-op down files — absence is meaningful.
+
 ### How the heuristic baseline works (relevant context)
 
 On the very first boot after the migration system landed, prod already had every table from the old `schema.sql`. The runner detects this state (`schema_migrations` empty + sentinel table `economy_users` present) and records `0001_baseline` as already-applied **without executing it**, then proceeds with later migrations normally. This is the only reason `0001_baseline.sql` is allowed to be a 200-line file — fresh DBs run it; existing DBs skip it.

@@ -8,10 +8,18 @@ Adding a new migration: drop a `migrations/NNNN_short_description.sql` file.
 The runner picks it up on next boot. Write idempotent SQL where possible
 (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE … ADD COLUMN IF NOT EXISTS`)
 so a half-applied migration can be retried by simply rerunning.
+
+Reverse (.down.sql) is optional, never automatic. If you ship a
+`migrations/NNNN_name.down.sql` alongside the forward file, an operator
+can run `python -m src.migrations down N` to undo migration N. Without
+a .down.sql, reverts must be done manually (or by restoring a backup).
 """
+import argparse
+import asyncio
 import hashlib
 import logging
 import re
+import sys
 from pathlib import Path
 
 from src.db import with_cursor
@@ -19,19 +27,31 @@ from src.db import with_cursor
 
 _MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 _FILE_RE = re.compile(r"^(\d{4})_[a-zA-Z0-9_]+\.sql$")
+_DOWN_RE = re.compile(r"^(\d{4})_[a-zA-Z0-9_]+\.down\.sql$")
 _BASELINE_SENTINEL_TABLE = "economy_users"
 
 _done = False
 
 
 def _discover(migrations_dir: Path) -> list[tuple[int, str, Path]]:
-    """Return [(version, name, path), ...] sorted by version. Validates filenames + ordering."""
+    """Return [(version, name, path), ...] of forward migrations sorted by version.
+
+    Validates filenames + ordering. Skips .down.sql files (they're paired
+    reverses, looked up on demand by `_find_down`).
+    """
     if not migrations_dir.is_dir():
         raise RuntimeError(f"migrations dir not found: {migrations_dir}")
 
     found: list[tuple[int, str, Path]] = []
     for path in sorted(migrations_dir.iterdir()):
         if not path.is_file() or not path.name.endswith(".sql"):
+            continue
+        # Paired reverse migrations are picked up by version, not enumerated here.
+        if path.name.endswith(".down.sql"):
+            if not _DOWN_RE.match(path.name):
+                raise RuntimeError(
+                    f"reverse migration file does not match NNNN_name.down.sql: {path.name}"
+                )
             continue
         m = _FILE_RE.match(path.name)
         if not m:
@@ -56,6 +76,17 @@ def _discover(migrations_dir: Path) -> list[tuple[int, str, Path]]:
             )
 
     return found
+
+
+def _find_down(migrations_dir: Path, version: int) -> Path | None:
+    """Return the .down.sql for `version` if one exists, else None."""
+    for path in migrations_dir.iterdir():
+        if not path.is_file():
+            continue
+        m = _DOWN_RE.match(path.name)
+        if m and int(m.group(1)) == version:
+            return path
+    return None
 
 
 def _checksum(path: Path) -> str:
@@ -212,3 +243,94 @@ async def run_migrations(*, migrations_dir: Path = _MIGRATIONS_DIR, cur=None) ->
     if cur is None:
         _done = True
     return applied_versions
+
+
+async def _revert_one(cur, version: int, migrations_dir: Path) -> str:
+    """Run version N's .down.sql and delete its row from schema_migrations.
+    Returns the name of the reverted migration. Caller manages connection.
+    """
+    await _ensure_tracking_table(cur)
+    applied = await _load_applied(cur)
+    if version not in applied:
+        raise RuntimeError(
+            f"migration {version} is not recorded as applied; nothing to revert"
+        )
+    name, _checksum_unused = applied[version]
+
+    down_path = _find_down(migrations_dir, version)
+    if down_path is None:
+        raise RuntimeError(
+            f"no .down.sql for migration {version} ({name}); "
+            f"reverse must be performed manually or by restoring a backup"
+        )
+
+    logging.info("[migrations] reverting %s using %s", name, down_path.name)
+    sql = down_path.read_text(encoding="utf-8")
+    try:
+        for stmt in _split_statements(sql):
+            await cur.execute(stmt)
+        await cur.execute(
+            "DELETE FROM schema_migrations WHERE version = %s",
+            (version,),
+        )
+    except Exception:
+        logging.exception("[migrations] failed to revert %s", name)
+        raise
+    logging.info("[migrations] reverted %s", name)
+    return name
+
+
+async def revert_migration(
+    version: int,
+    *,
+    migrations_dir: Path = _MIGRATIONS_DIR,
+    cur=None,
+) -> str:
+    """Run the .down.sql for `version` and remove its row from schema_migrations.
+
+    Returns the name of the reverted migration. Raises if the version isn't
+    recorded as applied, or if no .down.sql exists for it. Never invoked
+    automatically — operator-only emergency tool, exposed via the
+    `python -m src.migrations down N` CLI.
+    """
+    if cur is not None:
+        return await _revert_one(cur, version, migrations_dir)
+    async with with_cursor() as own_cur:
+        return await _revert_one(own_cur, version, migrations_dir)
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+def _cli_main(argv: list[str] | None = None) -> int:
+    """`python -m src.migrations down N [--yes]` — revert one applied migration."""
+    parser = argparse.ArgumentParser(prog="python -m src.migrations")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_down = sub.add_parser("down", help="revert a single applied migration")
+    p_down.add_argument("version", type=int, help="migration version to revert (e.g. 7)")
+    p_down.add_argument("-y", "--yes", action="store_true", help="skip confirmation prompt")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    if args.cmd == "down":
+        if not args.yes:
+            answer = input(
+                f"About to revert migration {args.version} against the live DB. "
+                f"Type 'yes' to continue: "
+            ).strip().lower()
+            if answer != "yes":
+                print("aborted", file=sys.stderr)
+                return 1
+        try:
+            name = asyncio.run(revert_migration(args.version))
+        except Exception as e:
+            print(f"revert failed: {e}", file=sys.stderr)
+            return 2
+        print(f"reverted {name}")
+        return 0
+
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli_main())

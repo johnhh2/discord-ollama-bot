@@ -131,3 +131,68 @@ async def test_real_migrations_apply_against_empty_db(fake_cur):
     await fake_cur.execute("SELECT COUNT(*) FROM schema_migrations")
     (count,) = await fake_cur.fetchone()
     assert count == len(applied)
+
+
+# ── Reverse migrations ────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_revert_runs_down_and_removes_row(tmp_path, fake_cur):
+    _write(tmp_path, "0001_first.sql", "CREATE TABLE foo (id INTEGER PRIMARY KEY);")
+    _write(tmp_path, "0002_add_bar.sql", "CREATE TABLE bar (id INTEGER PRIMARY KEY);")
+    _write(tmp_path, "0002_add_bar.down.sql", "DROP TABLE bar;")
+
+    await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+
+    name = await _migrations.revert_migration(2, migrations_dir=tmp_path, cur=fake_cur)
+    assert name == "0002_add_bar"
+
+    # Row gone from schema_migrations
+    await fake_cur.execute("SELECT version FROM schema_migrations ORDER BY version")
+    rows = await fake_cur.fetchall()
+    assert rows == [(1,)]
+
+    # bar table actually dropped
+    await fake_cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bar'")
+    assert await fake_cur.fetchone() is None
+
+    # And re-applying the forward migration on next boot just works
+    applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+    assert applied == [2]
+    await fake_cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bar'")
+    assert await fake_cur.fetchone() is not None
+
+
+@pytest.mark.asyncio
+async def test_revert_without_down_file_raises(tmp_path, fake_cur):
+    _write(tmp_path, "0001_first.sql", "CREATE TABLE foo (id INTEGER PRIMARY KEY);")
+    # No 0001_first.down.sql.
+    await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+
+    with pytest.raises(RuntimeError, match="no .down.sql"):
+        await _migrations.revert_migration(1, migrations_dir=tmp_path, cur=fake_cur)
+
+
+@pytest.mark.asyncio
+async def test_revert_version_never_applied_raises(tmp_path, fake_cur):
+    _write(tmp_path, "0001_first.sql", "CREATE TABLE foo (id INTEGER PRIMARY KEY);")
+    _write(tmp_path, "0001_first.down.sql", "DROP TABLE foo;")
+    # schema_migrations table will be created by revert_migration but stay empty
+    # because we never call run_migrations.
+
+    with pytest.raises(RuntimeError, match="not recorded as applied"):
+        await _migrations.revert_migration(1, migrations_dir=tmp_path, cur=fake_cur)
+
+
+@pytest.mark.asyncio
+async def test_down_files_dont_count_as_forward_migrations(tmp_path, fake_cur):
+    """A NNNN_xxx.down.sql with no matching forward at NNNN must not create a
+    phantom forward migration that would trigger gap/duplicate errors.
+    """
+    _write(tmp_path, "0001_first.sql", "CREATE TABLE foo (id INTEGER PRIMARY KEY);")
+    _write(tmp_path, "0001_first.down.sql", "DROP TABLE foo;")
+    _write(tmp_path, "0002_second.sql", "CREATE TABLE bar (id INTEGER PRIMARY KEY);")
+    _write(tmp_path, "0002_second.down.sql", "DROP TABLE bar;")
+
+    applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+    assert applied == [1, 2]
