@@ -47,11 +47,11 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
         serieses.append(data)
 
     # If there's no data at all, bail with a friendly note.
-    if all(not s.x_dates for s in serieses):
-        await ctx.send(embed=emb("📊 No Data", "No history recorded yet — data is captured every 6 hours.", C_GOLD))
+    if all(not s.x_points for s in serieses):
+        await ctx.send(embed=emb("📊 No Data", "No history recorded yet — data is captured every 30 minutes.", C_GOLD))
         return
-    if all(len(s.x_dates) < 2 for s in serieses):
-        await ctx.send(embed=emb("📊 Not Enough Data", "Need at least 2 days of history to draw a graph.", C_GOLD))
+    if all(len(s.x_points) < 2 for s in serieses):
+        await ctx.send(embed=emb("📊 Not Enough Data", "Need at least 2 data points to draw a graph.", C_GOLD))
         return
 
     group = parsed.specs[0].group  # all the same after validation

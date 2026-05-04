@@ -74,6 +74,25 @@ async def test_record_gambling_event_increments_existing_row(db):
 
 
 @pytest.mark.asyncio
+async def test_record_gambling_event_clears_dict_on_bucket_rollover(db, monkeypatch):
+    """Bucket rollover invariant for gambling — same as crime."""
+    monkeypatch.setattr(_economy, "_current_bucket_ct", lambda: 0)
+    await _economy.record_gambling_event(42, gained=300)
+    assert _state.gambling_today_by_user["42"]["gained"] == 300
+
+    monkeypatch.setattr(_economy, "_current_bucket_ct", lambda: 1)
+    await _economy.record_gambling_event(42, lost=100)
+
+    # Cache reflects only the new bucket.
+    assert _state.gambling_today_by_user["42"] == {"gained": 0, "lost": 100}
+
+    today = _economy._ct_now().date().isoformat()
+    history = await _persistence.load_gambling_history()
+    assert history[today][0]["42"]["gained"] == 300
+    assert history[today][1]["42"]["lost"] == 100
+
+
+@pytest.mark.asyncio
 async def test_gambling_dict_survives_do_daily_reset(db, monkeypatch):
     """Gambling totals are calendar-keyed; the 5am gameplay reset must NOT
     clear them. Same invariant as crime."""

@@ -67,6 +67,25 @@ async def test_record_levelup_increments_existing_row(db):
 
 
 @pytest.mark.asyncio
+async def test_record_levelup_clears_dict_on_bucket_rollover(db, monkeypatch):
+    """Bucket rollover invariant for level-ups — same as crime/gambling."""
+    monkeypatch.setattr(_economy, "_current_bucket_ct", lambda: 2)
+    await _leveling.record_levelup(100, 42, count=1)
+    assert _state.levelups_today[(100, "42")] == 1
+
+    monkeypatch.setattr(_economy, "_current_bucket_ct", lambda: 3)
+    await _leveling.record_levelup(100, 42, count=2)
+
+    # Cache reflects only the new bucket (2, not 1+2=3).
+    assert _state.levelups_today[(100, "42")] == 2
+
+    today = _economy._ct_now().date().isoformat()
+    history = await _persistence.load_levelup_history()
+    assert history[today][2][(100, "42")] == 1
+    assert history[today][3][(100, "42")] == 2
+
+
+@pytest.mark.asyncio
 async def test_levelups_dict_survives_do_daily_reset(db, monkeypatch):
     """Level-up counts are calendar-keyed on disk. The 5am gameplay reset
     must NOT clear them — clearing would desync the cache from the row that
