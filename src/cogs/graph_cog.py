@@ -65,6 +65,10 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
         title = f"{parsed.member.display_name}'s Balance — Last 2 Weeks"
     elif len(parsed.specs) == 1 and parsed.specs[0].name == "economy":
         title = "Total Economy Balance — Last 2 Weeks"
+    elif len(parsed.specs) == 1 and parsed.specs[0].name == "crime":
+        title = f"{parsed.member.display_name}'s Crime — Last 2 Weeks"
+    elif len(parsed.specs) == 1 and parsed.specs[0].name == "gambling":
+        title = f"{parsed.member.display_name}'s Gambling P/L — Last 2 Weeks"
     elif len(parsed.specs) == 1 and parsed.specs[0].name == "commands":
         title = "Command Usage by Category — Last 2 Weeks"
     elif len(parsed.specs) == 1 and parsed.specs[0].name == "server":
@@ -113,12 +117,14 @@ class GraphCog(commands.Cog):
             "**Subcommands:**\n"
             "`!graph balance [@user]` — Wallet balance over the last 2 weeks\n"
             "`!graph economy` — Total economy (wallet + savings) over the last 2 weeks\n"
+            "`!graph crime [@user]` — Coins gained/lost via !steal and !mug\n"
+            "`!graph gambling [@user]` — Net P/L from games and gambling\n"
             "`!graph commands` — Command usage by category over the last 2 weeks\n"
             "`!graph server` — Daily message and command counts over the last 2 weeks\n"
             "`!graph memory` — Bot memory usage (MB) over the last 2 weeks\n"
             "`!graph ai` — Daily AI response count and uptime over the last 2 weeks\n"
             "\n**Combine compatible graphs** by listing multiple names:\n"
-            "`!graph balance economy [@user]` — overlay coins-group graphs\n"
+            "`!graph balance crime [@user]` — overlay coins-group graphs\n"
             "`!graph commands server ai` — grouped stacked bars for counts-group graphs\n"
             "Coins, counts, and MB graphs cannot be mixed (different y-axes).",
             C_GOLD,
@@ -133,6 +139,16 @@ class GraphCog(commands.Cog):
     @requires_perm
     async def cmd_graph_economy(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("economy"))
+
+    @cmd_graph.command(name="crime")
+    @requires_perm
+    async def cmd_graph_crime(self, ctx: commands.Context, *tokens: str):
+        await _build_and_render(ctx, tokens, find_spec("crime"))
+
+    @cmd_graph.command(name="gambling", aliases=["gamble", "games", "game"])
+    @requires_perm
+    async def cmd_graph_gambling(self, ctx: commands.Context, *tokens: str):
+        await _build_and_render(ctx, tokens, find_spec("gambling"))
 
     @cmd_graph.command(name="commands", aliases=["cmd", "cmds"])
     @requires_perm

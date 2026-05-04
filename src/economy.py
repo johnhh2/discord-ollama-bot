@@ -11,6 +11,8 @@ from src.persistence import (
     load_balance_history, save_balance_history,
     load_bot_stats_history, save_bot_stats_history,
     load_command_usage_history, save_command_usage_history,
+    load_crime_history, save_crime_history,
+    load_gambling_history, save_gambling_history,
 )
 from src.guild_config import get_guild_cfg
 
@@ -342,6 +344,60 @@ async def snapshot_command_usage():
     logging.info(f"[DAILY] Snapshotted per-cog command usage for {today}: {history[today]}")
 
 
+def record_crime_event(uid: int, *, gained: int = 0, lost: int = 0):
+    """Bump the day's running per-user crime totals. Called by !steal / !mug
+    on every outcome (win/lose, attacker/victim). Persistence happens via
+    snapshot_crime() on the 6h scheduler and at do_daily_reset.
+    """
+    from src import state
+    if gained == 0 and lost == 0:
+        return
+    bucket = state.crime_today_by_user.setdefault(str(uid), {"gained": 0, "lost": 0})
+    bucket["gained"] += int(gained)
+    bucket["lost"] += int(lost)
+
+
+async def snapshot_crime():
+    """Record today's per-user crime totals; prune entries older than 14 days."""
+    from src import state
+    today = _ct_now().date().isoformat()
+    history = await load_crime_history()
+    # Merge in-memory today's totals into history. We REPLACE today's row
+    # rather than add — counters reset only at the 5am gameplay boundary, so
+    # within a gameplay-day the running totals are authoritative.
+    if state.crime_today_by_user:
+        history[today] = {uid: dict(vals) for uid, vals in state.crime_today_by_user.items()}
+    cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
+    history = {d: v for d, v in history.items() if d >= cutoff}
+    await save_crime_history(history)
+
+
+def record_gambling_event(uid: int, *, gained: int = 0, lost: int = 0):
+    """Bump the day's running per-user gambling totals. Called by the
+    games/gambling commands at outcome resolution (net P/L semantics:
+    refunds and pushes record nothing). Persistence happens via
+    snapshot_gambling() on the 6h scheduler and at do_daily_reset.
+    """
+    from src import state
+    if gained == 0 and lost == 0:
+        return
+    bucket = state.gambling_today_by_user.setdefault(str(uid), {"gained": 0, "lost": 0})
+    bucket["gained"] += int(gained)
+    bucket["lost"] += int(lost)
+
+
+async def snapshot_gambling():
+    """Record today's per-user gambling totals; prune entries older than 14 days."""
+    from src import state
+    today = _ct_now().date().isoformat()
+    history = await load_gambling_history()
+    if state.gambling_today_by_user:
+        history[today] = {uid: dict(vals) for uid, vals in state.gambling_today_by_user.items()}
+    cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
+    history = {d: v for d, v in history.items() if d >= cutoff}
+    await save_gambling_history(history)
+
+
 async def snapshot_all():
     """Run all three graph-data snapshots. Called by the GraphCog scheduler
     every 6 hours and once on boot. Each snapshot upserts a row keyed by
@@ -353,6 +409,8 @@ async def snapshot_all():
     ai_up = await check_ollama_connected()
     await snapshot_bot_stats(ai_up)
     await snapshot_command_usage()
+    await snapshot_crime()
+    await snapshot_gambling()
 
 
 async def do_daily_reset():
@@ -370,6 +428,8 @@ async def do_daily_reset():
     state.stats_commands_today = 0
     state.stats_ai_responses_today = 0
     state.stats_commands_today_by_cog.clear()
+    state.crime_today_by_user.clear()
+    state.gambling_today_by_user.clear()
     for user in state.economy["users"].values():
         user["daily_date"] = None
         user["scratch_used"] = 0

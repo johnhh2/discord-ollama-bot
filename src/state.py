@@ -82,6 +82,14 @@ stats_commands_today: int = 0
 stats_ai_responses_today: int = 0
 stats_commands_today_by_cog: dict = {}
 
+# Per-user crime totals for the current gameplay-day.
+# {uid_str: {"gained": int, "lost": int}}.
+crime_today_by_user: dict = {}
+
+# Per-user gambling/games net totals for the current gameplay-day.
+# {uid_str: {"gained": int, "lost": int}}.
+gambling_today_by_user: dict = {}
+
 # ── Audit log ─────────────────────────────────────────────────────────────────
 
 audit_log: deque = deque(maxlen=20)

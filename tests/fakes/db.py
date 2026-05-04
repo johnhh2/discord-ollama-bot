@@ -48,6 +48,8 @@ _TABLE_PKS = {
     "balance_history": ("snapshot_date", "user_id"),
     "bot_stats_history": ("snapshot_date",),
     "bot_command_usage_history": ("snapshot_date", "cog_name"),
+    "crime_history": ("snapshot_date", "user_id"),
+    "gambling_history": ("snapshot_date", "user_id"),
     "restart_msg": ("id",),
     "ephemeral_msgs": ("id",),
     "command_perms": ("command_name",),

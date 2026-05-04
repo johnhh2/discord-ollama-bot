@@ -72,6 +72,8 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "active_puzzles", {})
     monkeypatch.setattr(_state, "ai_threads", {})
     monkeypatch.setattr(_state, "channel_prompts", {})
+    monkeypatch.setattr(_state, "crime_today_by_user", {})
+    monkeypatch.setattr(_state, "gambling_today_by_user", {})
     monkeypatch.setattr(_state, "locked_channels", {})
     monkeypatch.setattr(_state, "locked_roles", {})
 
@@ -95,7 +97,9 @@ def reset_bot_state(monkeypatch):
         "save_gambler_streak", "save_ai_threads",
         "save_quote_log", "save_saved_quotes", "save_lottery", "save_records",
         "save_leveling", "save_command_perms", "save_channel_prompts",
-        "save_balance_history", "save_bot_stats_history", "add_ephemeral_msg",
+        "save_balance_history", "save_bot_stats_history",
+        "save_command_usage_history", "save_crime_history", "save_gambling_history",
+        "add_ephemeral_msg",
     ]
     for fn_name in save_fn_names:
         if hasattr(_persistence, fn_name):

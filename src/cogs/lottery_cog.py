@@ -9,7 +9,7 @@ from src.helpers import (
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, drain_bot_balance_into_lottery, announce_new_lottery,
-    _ensure_user, _ct_now, lottery_week_key,
+    _ensure_user, _ct_now, lottery_week_key, record_gambling_event,
 )
 from src.persistence import (
     save_lottery,
@@ -60,6 +60,7 @@ class LotteryCog(commands.Cog):
                     winner_id = random.choices(player_ids, weights=weights, k=1)[0]
                     winner = await self.bot.fetch_user(int(winner_id))
                     await add_balance(int(winner_id), pool, guild_id=guild.id, holder_name=winner.display_name)
+                    record_gambling_event(int(winner_id), gained=pool)
                     await try_set_record(guild.id, "lottery", pool, int(winner_id), winner.display_name)
 
                     embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
@@ -162,6 +163,7 @@ class LotteryCog(commands.Cog):
         if not await deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"Need {cost:,} 🪙. Balance: {await get_balance(uid):,} 🪙", C_RED))
             return
+        record_gambling_event(uid, lost=cost)
 
         # Add to lottery
         players = lottery.setdefault("players", {})

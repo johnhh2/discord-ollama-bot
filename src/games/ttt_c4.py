@@ -8,7 +8,7 @@ from src.helpers import (
     _delete_after, _edit_board,
 )
 from src.economy import (
-    add_balance, deduct_balance, get_balance,
+    add_balance, deduct_balance, get_balance, record_gambling_event,
 )
 from src.permissions import (
     check_game_channel,
@@ -227,6 +227,10 @@ class TttC4Cog(commands.Cog):
                 winnings = amount * 2
                 if winnings > 0:
                     await add_balance(winner_uid, winnings)
+                if amount > 0:
+                    loser_uid = next(p for p in game["players"] if p != winner_uid)
+                    record_gambling_event(winner_uid, gained=amount)
+                    record_gambling_event(loser_uid, lost=amount)
                 winner_name = ctx.guild.get_member(winner_uid).display_name if ctx.guild else str(winner_uid)
                 game["last_move"] = f"{name} played position {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
                 winner_mention = ctx.guild.get_member(winner_uid).mention if ctx.guild else str(winner_uid)
@@ -273,6 +277,10 @@ class TttC4Cog(commands.Cog):
                 winnings = amount * 2
                 if winnings > 0:
                     await add_balance(winner_uid, winnings)
+                if amount > 0:
+                    loser_uid = next(p for p in game["players"] if p != winner_uid)
+                    record_gambling_event(winner_uid, gained=amount)
+                    record_gambling_event(loser_uid, lost=amount)
                 winner_name = ctx.guild.get_member(winner_uid).display_name if ctx.guild else str(winner_uid)
                 game["last_move"] = f"{name} dropped in column {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
                 winner_mention = ctx.guild.get_member(winner_uid).mention if ctx.guild else str(winner_uid)

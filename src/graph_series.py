@@ -30,6 +30,7 @@ from src.economy import _ct_today_date, get_balance
 from src.helpers import get_memory_mb
 from src.persistence import (
     load_balance_history, load_bot_stats_history, load_command_usage_history,
+    load_crime_history, load_gambling_history,
 )
 
 
@@ -119,6 +120,92 @@ async def build_series_balance(member: discord.Member) -> SeriesData:
     return SeriesData(
         title=f"{member.display_name}'s Wallet",
         segments=[Segment(label="Wallet", color="#2ecc71", y_values=y_wallet)],
+        x_dates=x_dates,
+        native_style="line",
+    )
+
+
+async def build_series_crime(member: discord.Member) -> SeriesData:
+    """Per-user daily totals of coins gained/lost via !steal and !mug.
+
+    `gained` = winnings from successful steal.
+    `lost`   = fines from failed steal + coins stolen by others + mug fee + coins
+               taken in a mug.
+    """
+    history = await load_crime_history()
+    dates = _sorted_dates(history)
+    uid_str = str(member.id)
+
+    x_dates: list[datetime.date] = []
+    y_gained: list[float] = []
+    y_lost: list[float] = []
+    for d in dates:
+        rec = history[d].get(uid_str)
+        if rec is None:
+            # Skip days where this user had no crime activity recorded — the
+            # graph would otherwise plot a noisy zero line for inactive users.
+            continue
+        x_dates.append(datetime.date.fromisoformat(d))
+        y_gained.append(rec.get("gained", 0))
+        y_lost.append(rec.get("lost", 0))
+
+    # Append today's live totals.
+    today = _ct_today_date()
+    live = state.crime_today_by_user.get(uid_str)
+    if live is not None and (not x_dates or x_dates[-1] != today):
+        x_dates.append(today)
+        y_gained.append(live.get("gained", 0))
+        y_lost.append(live.get("lost", 0))
+
+    return SeriesData(
+        title=f"{member.display_name}'s Crime",
+        segments=[
+            Segment(label="Gained", color="#2ecc71", y_values=y_gained),
+            Segment(label="Lost",   color="#e74c3c", y_values=y_lost),
+        ],
+        x_dates=x_dates,
+        native_style="line",
+    )
+
+
+async def build_series_gambling(member: discord.Member) -> SeriesData:
+    """Per-user daily P/L from games and gambling commands.
+
+    Tracks net wins/losses across slots, flip, blackjack, scratchoff, hangman,
+    ttt, c4, race, lottery. Refunds and pushes are not recorded (net 0). The
+    Net line is dashed, mirroring economy's Total line.
+    """
+    history = await load_gambling_history()
+    dates = _sorted_dates(history)
+    uid_str = str(member.id)
+
+    x_dates: list[datetime.date] = []
+    y_gained: list[float] = []
+    y_lost: list[float] = []
+    for d in dates:
+        rec = history[d].get(uid_str)
+        if rec is None:
+            continue
+        x_dates.append(datetime.date.fromisoformat(d))
+        y_gained.append(rec.get("gained", 0))
+        y_lost.append(rec.get("lost", 0))
+
+    today = _ct_today_date()
+    live = state.gambling_today_by_user.get(uid_str)
+    if live is not None and (not x_dates or x_dates[-1] != today):
+        x_dates.append(today)
+        y_gained.append(live.get("gained", 0))
+        y_lost.append(live.get("lost", 0))
+
+    y_net = [g - l for g, l in zip(y_gained, y_lost)]
+
+    return SeriesData(
+        title=f"{member.display_name}'s Gambling",
+        segments=[
+            Segment(label="Gained", color="#2ecc71", y_values=y_gained),
+            Segment(label="Lost",   color="#e74c3c", y_values=y_lost),
+            Segment(label="Net",    color="#f1c40f", y_values=y_net),
+        ],
         x_dates=x_dates,
         native_style="line",
     )
@@ -292,6 +379,8 @@ async def build_series_memory() -> SeriesData:
 REGISTRY: list[SeriesSpec] = [
     SeriesSpec("balance",  ("balance", "bal"),                          GROUP_COINS,  build_series_balance,  accepts_member=True,  y_unit_label="🪙 Coins"),
     SeriesSpec("economy",  ("economy", "eco", "total", "totalbalance"), GROUP_COINS,  build_series_economy,                          y_unit_label="🪙 Coins"),
+    SeriesSpec("crime",    ("crime",),                                  GROUP_COINS,  build_series_crime,    accepts_member=True,  y_unit_label="🪙 Coins"),
+    SeriesSpec("gambling", ("gambling", "gamble", "games", "game"),     GROUP_COINS,  build_series_gambling, accepts_member=True,  y_unit_label="🪙 Coins"),
     SeriesSpec("commands", ("commands", "cmd", "cmds"),                 GROUP_COUNTS, build_series_commands,                         y_unit_label="Count"),
     SeriesSpec("server",   ("server", "srv"),                           GROUP_COUNTS, build_series_server,                           y_unit_label="Count"),
     SeriesSpec("ai",       ("ai",),                                     GROUP_COUNTS, build_series_ai,                               y_unit_label="Count"),
@@ -431,11 +520,12 @@ async def render_combined(serieses: list[SeriesData], group: str, y_unit_label: 
         if s.native_style == "line":
             for seg in s.segments:
                 y = _aligned_y(seg, s.x_dates, x_dates)
-                style = "--" if seg.label == "Total" else "-"
-                marker = "s" if seg.label == "Total" else "o"
+                is_summary = seg.label in ("Total", "Net")
+                style = "--" if is_summary else "-"
+                marker = "s" if is_summary else "o"
                 ax.plot(x_dates, y, color=seg.color, linewidth=2, marker=marker,
                         markersize=4, linestyle=style, label=seg.label)
-                if seg.label != "Total":
+                if not is_summary:
                     ax.fill_between(x_dates, y, alpha=0.10, color=seg.color)
             ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: _fmt_date(mdates.num2date(v).date())))
             ax.xaxis.set_major_locator(mdates.DayLocator())

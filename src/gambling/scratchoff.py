@@ -10,7 +10,7 @@ from src.helpers import (
     toggle_member_role,
 )
 from src.economy import (
-    add_balance, _ct_now, _ct_today, do_daily_reset, _ensure_user,
+    add_balance, _ct_now, _ct_today, do_daily_reset, _ensure_user, record_gambling_event,
 )
 from src.permissions import (
     check_game_channel,
@@ -238,6 +238,8 @@ class ScratchoffCog(commands.Cog):
                 match_text = f"💎 4 Matches! **{ctx.author.display_name}** won 100,000 🪙!"
 
             await add_balance(uid, payout)
+            if payout > 0:
+                record_gambling_event(uid, gained=payout)
             user["scratch_used"] += 1
             await save_economy(uid=uid)
 

@@ -10,7 +10,7 @@ from src.helpers import (
     emb, C_GREEN, C_RED, C_ORANGE, _delete_after, _edit_board,
 )
 from src.economy import (
-    add_balance, get_balance,
+    add_balance, get_balance, record_gambling_event,
 )
 from src.permissions import (
     check_game_channel,
@@ -115,6 +115,8 @@ async def _distribute_hangman_rewards(cid: int, game: dict) -> str:
         reward = per_player + bonus
         name = names.get(pid, f"<@{pid}>")
         await add_balance(pid, reward, guild_id=gid if gid else None, holder_name=name)
+        if reward > 0:
+            record_gambling_event(pid, gained=reward)
         msg += f"**{name}**: +{reward:,} 🪙 | Balance: {await get_balance(pid):,} 🪙\n"
         # Track most hangman wins per player
         if gid:
