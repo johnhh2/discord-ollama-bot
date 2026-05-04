@@ -173,6 +173,17 @@ class EconomyCog(commands.Cog):
             await ctx.send("You can't steal from the house.")
             return
 
+        from src.level_unlocks import is_locked_for
+        gid = ctx.guild.id if ctx.guild else 0
+        victim_lock = is_locked_for("steal", victim_id, gid)
+        if victim_lock is not None:
+            await ctx.send(embed=emb(
+                "🛡️ Off-Limits",
+                f"**{target.display_name}** hasn't unlocked `!steal` yet (Level **{victim_lock}**) — you can't rob them.",
+                C_GOLD,
+            ))
+            return
+
         await _ensure_user(thief_id)
         await _ensure_user(victim_id)
 
@@ -391,6 +402,17 @@ class EconomyCog(commands.Cog):
             return
         if self.bot.user and target.id == self.bot.user.id:
             await ctx.send(embed=emb("❌ Invalid Target", "You can't mug the house.", C_RED))
+            return
+
+        from src.level_unlocks import is_locked_for
+        gid = ctx.guild.id if ctx.guild else 0
+        victim_lock = is_locked_for("mug", target.id, gid)
+        if victim_lock is not None:
+            await ctx.send(embed=emb(
+                "🛡️ Off-Limits",
+                f"**{target.display_name}** hasn't unlocked `!mug` yet (Level **{victim_lock}**) — you can't mug them.",
+                C_GOLD,
+            ))
             return
 
         parsed = await parse_amount(ctx, amount)

@@ -72,6 +72,13 @@ def _make_ctx(thief: FakeMember, victim: FakeMember, content: str = "!steal @vic
     return ctx
 
 
+def _grant_level(uid: int, internal_level: int, gid: int = 42) -> None:
+    """Force a user to a given internal level so they pass the !steal/!mug
+    target-side level gate. Internal level N → display level N+1; steal needs
+    display 5 (internal 4), mug needs display 10 (internal 9)."""
+    _state.leveling.setdefault(str(gid), {})[str(uid)] = {"xp": 0, "level": internal_level}
+
+
 # ── !steal ────────────────────────────────────────────────────────────────────
 
 async def test_steal_success_transfers_coins_and_persists(db, monkeypatch):
@@ -81,6 +88,7 @@ async def test_steal_success_transfers_coins_and_persists(db, monkeypatch):
     victim = FakeMember(uid=200, display_name="victim")
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 4)  # unlock !steal for victim
 
     # Tier 1: steal_chance=0.10, steal_pct=0.10. Roll < 0.10 -> success.
     monkeypatch.setattr(random, "random", lambda: 0.05)
@@ -106,6 +114,7 @@ async def test_steal_caught_and_jailed_deducts_fee_and_sets_jail(db, monkeypatch
     starting = 5000
     await _economy.add_balance(thief.id, starting)
     await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 4)
 
     # Tier 1: steal_chance=0.10, jail_chance=0.25, fee=1000, jail_days=1.
     # First random.random() = steal roll (need >= 0.10 to fail).
@@ -136,6 +145,7 @@ async def test_steal_caught_no_jail_just_fee(db, monkeypatch):
     victim = FakeMember(uid=202)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 4)
 
     # Steal fails (>= 0.10), jail also fails (>= 0.25)
     rolls = iter([0.99, 0.99])
@@ -156,6 +166,7 @@ async def test_steal_blocked_by_insurance_no_money_moves(db, monkeypatch):
     victim = FakeMember(uid=203)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 4)
     _state.insurance[str(victim.id)] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["steal"],
@@ -185,6 +196,7 @@ async def test_steal_while_jailed_blocked(db):
     victim = FakeMember(uid=205)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 4)
     _state.economy["users"][str(thief.id)]["jail_until"] = time.time() + 3600
 
     ctx = _make_ctx(thief, victim)
@@ -203,6 +215,7 @@ async def test_steal_rigged_force_success(db, monkeypatch):
     victim = FakeMember(uid=206)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 4)
     _state.rigged_steal[thief.id] = 2
 
     # Even with random.random() = 0.99 (would normally fail), rigged forces success.
@@ -222,6 +235,7 @@ async def test_steal_concurrent_lock_blocks_second_attempt(db):
     victim = FakeMember(uid=207)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 4)
     cog._crime_active.add(thief.id)  # simulate one already running
 
     ctx = _make_ctx(thief, victim)
@@ -244,6 +258,7 @@ async def test_mug_clean_getaway_target_loses_amount(db, monkeypatch):
 
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 9)  # unlock !mug for victim
 
     # No jail (random >= 0.5).
     monkeypatch.setattr(random, "random", lambda: 0.99)
@@ -265,6 +280,7 @@ async def test_mug_caught_jails_thief_for_one_day(db, monkeypatch):
     victim = FakeMember(uid=401)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 9)
 
     # First random.random < 0.5 -> jailed.
     monkeypatch.setattr(random, "random", lambda: 0.10)
@@ -288,6 +304,7 @@ async def test_mug_blocked_by_insurance_no_charge(db, monkeypatch):
     victim = FakeMember(uid=402)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 9)
     _state.insurance[str(victim.id)] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["steal"],
@@ -309,6 +326,7 @@ async def test_mug_target_too_poor_relative_to_thief(db, monkeypatch):
     victim = FakeMember(uid=403)
     await _economy.add_balance(thief.id, 10_000)
     await _economy.add_balance(victim.id, 100)  # 1% of thief's
+    _grant_level(victim.id, 9)
 
     ctx = FakeCtx(author=thief, guild=FakeGuild(gid=42))
     ctx.bot = _StubBot()
@@ -324,6 +342,7 @@ async def test_mug_insufficient_funds_blocked_before_action(db):
     victim = FakeMember(uid=404)
     await _economy.add_balance(thief.id, 100)  # not enough to pay muggers
     await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 9)
 
     ctx = FakeCtx(author=thief, guild=FakeGuild(gid=42))
     ctx.bot = _StubBot()
