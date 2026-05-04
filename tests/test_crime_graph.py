@@ -2,7 +2,8 @@
 
 Covers:
   - record_crime_event aggregates by user across multiple events.
-  - snapshot_crime round-trips through the persistence layer.
+  - record_crime_event persists each event atomically (no data loss on restart).
+  - init_db_state hydrates the in-memory cache from disk on boot.
   - build_series_crime returns Gained/Lost segments and skips inactive days.
   - parse_tokens resolves "crime" alias and pairs with @member.
   - "crime" combines with "balance" / "economy" (all coins group).
@@ -44,7 +45,7 @@ async def test_record_crime_event_zero_is_noop():
     assert "7" not in _state.crime_today_by_user
 
 
-# ── snapshot_crime round-trip ─────────────────────────────────────────────────
+# ── atomic-write contract ─────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -76,6 +77,22 @@ async def test_record_crime_event_increments_existing_row(db):
 
 
 @pytest.mark.asyncio
+async def test_crime_dict_survives_do_daily_reset(db, monkeypatch):
+    """Crime totals are calendar-keyed on disk, so the 5am gameplay reset
+    must NOT clear them — clearing would put the in-memory cache out of
+    sync with the still-current disk row."""
+    await _economy.record_crime_event(42, gained=500, lost=100)
+
+    async def _ollama_up(): return True
+    monkeypatch.setattr("src.ai.check_ollama_connected", _ollama_up)
+
+    await _economy.do_daily_reset()
+
+    # Dict still holds today's totals — not cleared.
+    assert _state.crime_today_by_user["42"] == {"gained": 500, "lost": 100}
+
+
+@pytest.mark.asyncio
 async def test_init_db_state_hydrates_today_crime_dict(db):
     """After a "restart" (clear in-memory + re-run init_db_state), the dict
     is repopulated from disk so the graph cog's live-today read is correct."""
@@ -85,49 +102,6 @@ async def test_init_db_state_hydrates_today_crime_dict(db):
     # Re-run init_db_state.
     await _persistence.init_db_state()
     assert _state.crime_today_by_user["42"] == {"gained": 500, "lost": 100}
-
-
-@pytest.mark.asyncio
-async def test_snapshot_crime_persists_and_loads(db):
-    await _economy.record_crime_event(42, gained=500, lost=100)
-    await _economy.record_crime_event(43, lost=250)
-
-    await _economy.snapshot_crime()
-
-    today = _economy._ct_now().date().isoformat()
-    history = await _persistence.load_crime_history()
-    assert today in history
-    assert history[today]["42"] == {"gained": 500, "lost": 100}
-    assert history[today]["43"] == {"gained": 0, "lost": 250}
-
-
-@pytest.mark.asyncio
-async def test_snapshot_crime_refreshes_today_on_repeat(db):
-    """Multiple snapshots within the same gameplay-day should overwrite, not append."""
-    await _economy.record_crime_event(42, gained=200)
-    await _economy.snapshot_crime()
-
-    await _economy.record_crime_event(42, gained=300)
-    await _economy.snapshot_crime()
-
-    today = _economy._ct_now().date().isoformat()
-    history = await _persistence.load_crime_history()
-    assert history[today]["42"]["gained"] == 500
-
-
-@pytest.mark.asyncio
-async def test_snapshot_crime_with_no_events_doesnt_overwrite_existing_day(db):
-    """If the in-memory dict is empty (e.g. just after do_daily_reset cleared it
-    on a no-activity day), snapshot_crime should NOT wipe the existing row."""
-    await _economy.record_crime_event(42, gained=200)
-    await _economy.snapshot_crime()
-
-    _state.crime_today_by_user.clear()
-    await _economy.snapshot_crime()
-
-    today = _economy._ct_now().date().isoformat()
-    history = await _persistence.load_crime_history()
-    assert history[today]["42"]["gained"] == 200
 
 
 # ── build_series_crime ────────────────────────────────────────────────────────

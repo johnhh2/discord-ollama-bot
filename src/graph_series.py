@@ -26,7 +26,7 @@ from typing import Awaitable, Callable, Optional
 import discord
 
 from src import state
-from src.economy import _ct_today_date, get_balance
+from src.economy import _ct_today_date, _calendar_today_date, get_balance
 from src.helpers import get_memory_mb
 from src.persistence import (
     load_balance_history, load_bot_stats_history, load_command_usage_history,
@@ -152,8 +152,10 @@ async def build_series_crime(member: discord.Member) -> SeriesData:
         y_gained.append(rec.get("gained", 0))
         y_lost.append(rec.get("lost", 0))
 
-    # Append today's live totals.
-    today = _ct_today_date()
+    # Append today's live totals. Crime rows are keyed by calendar date on
+    # disk (record_crime_event uses _ct_now().date()), so this graph reads
+    # by calendar date too — not the 5am gameplay-day boundary.
+    today = _calendar_today_date()
     live = state.crime_today_by_user.get(uid_str)
     if live is not None and (not x_dates or x_dates[-1] != today):
         x_dates.append(today)
@@ -193,7 +195,8 @@ async def build_series_gambling(member: discord.Member) -> SeriesData:
         y_gained.append(rec.get("gained", 0))
         y_lost.append(rec.get("lost", 0))
 
-    today = _ct_today_date()
+    # Calendar-date keying — see build_series_crime for the same rationale.
+    today = _calendar_today_date()
     live = state.gambling_today_by_user.get(uid_str)
     if live is not None and (not x_dates or x_dates[-1] != today):
         x_dates.append(today)
@@ -235,7 +238,8 @@ async def build_series_levels(member: discord.Member, guild_id: int) -> SeriesDa
         x_dates.append(datetime.date.fromisoformat(d))
         y_count.append(count)
 
-    today = _ct_today_date()
+    # Calendar-date keying — see build_series_crime for the same rationale.
+    today = _calendar_today_date()
     live = state.levelups_today.get(key)
     if live and (not x_dates or x_dates[-1] != today):
         x_dates.append(today)

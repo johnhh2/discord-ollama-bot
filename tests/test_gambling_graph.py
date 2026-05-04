@@ -3,7 +3,7 @@ that feeds it.
 
 Covers:
   - record_gambling_event aggregates by user across multiple events.
-  - snapshot_gambling round-trips through the persistence layer.
+  - record_gambling_event persists each event atomically (no data loss on restart).
   - build_series_gambling returns Gained / Lost / Net segments with the
     correct net = gained - lost relationship.
   - parse_tokens resolves "gambling" / "gamble" / "games" aliases.
@@ -46,7 +46,7 @@ async def test_record_gambling_event_zero_is_noop():
     assert "7" not in _state.gambling_today_by_user
 
 
-# ── snapshot_gambling round-trip ──────────────────────────────────────────────
+# ── atomic-write contract ─────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -72,54 +72,25 @@ async def test_record_gambling_event_increments_existing_row(db):
 
 
 @pytest.mark.asyncio
+async def test_gambling_dict_survives_do_daily_reset(db, monkeypatch):
+    """Gambling totals are calendar-keyed; the 5am gameplay reset must NOT
+    clear them. Same invariant as crime."""
+    await _economy.record_gambling_event(42, gained=500, lost=100)
+
+    async def _ollama_up(): return True
+    monkeypatch.setattr("src.ai.check_ollama_connected", _ollama_up)
+
+    await _economy.do_daily_reset()
+
+    assert _state.gambling_today_by_user["42"] == {"gained": 500, "lost": 100}
+
+
+@pytest.mark.asyncio
 async def test_init_db_state_hydrates_today_gambling_dict(db):
     await _economy.record_gambling_event(42, gained=500, lost=100)
     _state.gambling_today_by_user.clear()
     await _persistence.init_db_state()
     assert _state.gambling_today_by_user["42"] == {"gained": 500, "lost": 100}
-
-
-@pytest.mark.asyncio
-async def test_snapshot_gambling_persists_and_loads(db):
-    await _economy.record_gambling_event(42, gained=500, lost=100)
-    await _economy.record_gambling_event(43, lost=250)
-
-    await _economy.snapshot_gambling()
-
-    today = _economy._ct_now().date().isoformat()
-    history = await _persistence.load_gambling_history()
-    assert today in history
-    assert history[today]["42"] == {"gained": 500, "lost": 100}
-    assert history[today]["43"] == {"gained": 0, "lost": 250}
-
-
-@pytest.mark.asyncio
-async def test_snapshot_gambling_refreshes_today_on_repeat(db):
-    await _economy.record_gambling_event(42, gained=200)
-    await _economy.snapshot_gambling()
-
-    await _economy.record_gambling_event(42, gained=300)
-    await _economy.snapshot_gambling()
-
-    today = _economy._ct_now().date().isoformat()
-    history = await _persistence.load_gambling_history()
-    assert history[today]["42"]["gained"] == 500
-
-
-@pytest.mark.asyncio
-async def test_snapshot_gambling_preserves_existing_day_when_buffer_empty(db):
-    """If the in-memory dict is empty at snapshot time (just after the 5am
-    daily clear, on a no-activity day), the existing row should not be wiped.
-    """
-    await _economy.record_gambling_event(42, gained=200)
-    await _economy.snapshot_gambling()
-
-    _state.gambling_today_by_user.clear()
-    await _economy.snapshot_gambling()
-
-    today = _economy._ct_now().date().isoformat()
-    history = await _persistence.load_gambling_history()
-    assert history[today]["42"]["gained"] == 200
 
 
 # ── build_series_gambling ─────────────────────────────────────────────────────

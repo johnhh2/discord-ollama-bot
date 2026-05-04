@@ -570,18 +570,6 @@ async def load_crime_history() -> dict:
     return result
 
 
-async def save_crime_history(history: dict):
-    async with with_cursor() as cur:
-        for date_str, users in history.items():
-            for uid_str, vals in users.items():
-                await cur.execute(
-                    "INSERT INTO crime_history"
-                    " (snapshot_date, user_id, gained, lost) VALUES (%s,%s,%s,%s)"
-                    " ON DUPLICATE KEY UPDATE gained=VALUES(gained), lost=VALUES(lost)",
-                    (date_str, int(uid_str), int(vals.get("gained", 0)), int(vals.get("lost", 0))),
-                )
-
-
 async def load_gambling_history() -> dict:
     """Returns {date_str: {uid_str: {"gained": int, "lost": int}}}."""
     async with with_cursor() as cur:
@@ -593,18 +581,6 @@ async def load_gambling_history() -> dict:
     for date_str, uid, gained, lost in rows:
         result.setdefault(date_str, {})[str(uid)] = {"gained": gained, "lost": lost}
     return result
-
-
-async def save_gambling_history(history: dict):
-    async with with_cursor() as cur:
-        for date_str, users in history.items():
-            for uid_str, vals in users.items():
-                await cur.execute(
-                    "INSERT INTO gambling_history"
-                    " (snapshot_date, user_id, gained, lost) VALUES (%s,%s,%s,%s)"
-                    " ON DUPLICATE KEY UPDATE gained=VALUES(gained), lost=VALUES(lost)",
-                    (date_str, int(uid_str), int(vals.get("gained", 0)), int(vals.get("lost", 0))),
-                )
 
 
 async def upsert_crime_delta(date_str: str, uid: int, *, gained: int = 0, lost: int = 0):
@@ -698,18 +674,6 @@ async def load_levelup_history() -> dict:
     for date_str, gid, uid, count in rows:
         result.setdefault(date_str, {})[(int(gid), str(uid))] = int(count)
     return result
-
-
-async def save_levelup_history(history: dict):
-    async with with_cursor() as cur:
-        for date_str, entries in history.items():
-            for (gid, uid_str), count in entries.items():
-                await cur.execute(
-                    "INSERT INTO levelup_history"
-                    " (snapshot_date, guild_id, user_id, count) VALUES (%s,%s,%s,%s)"
-                    " ON DUPLICATE KEY UPDATE count=VALUES(count)",
-                    (date_str, int(gid), int(uid_str), int(count)),
-                )
 
 
 # ── Channel prompts ───────────────────────────────────────────────────────────

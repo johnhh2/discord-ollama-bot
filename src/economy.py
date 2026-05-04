@@ -11,9 +11,6 @@ from src.persistence import (
     load_balance_history, save_balance_history,
     load_bot_stats_history, save_bot_stats_history,
     load_command_usage_history, save_command_usage_history,
-    load_crime_history, save_crime_history,
-    load_gambling_history, save_gambling_history,
-    load_levelup_history, save_levelup_history,
     upsert_crime_delta, upsert_gambling_delta,
 )
 from src.guild_config import get_guild_cfg
@@ -169,6 +166,16 @@ def _ct_today_date() -> datetime.date:
     if now_ct.hour < DAILY_RESET_HOUR:
         return now_ct.date() - datetime.timedelta(days=1)
     return now_ct.date()
+
+
+def _calendar_today_date() -> datetime.date:
+    """Calendar date in CT (rolls at midnight, NOT at the 5am gameplay
+    boundary). Used by graph series whose disk rows are keyed by calendar
+    date — crime, gambling, and level-ups all write `_ct_now().date()` on
+    every event, so their graph build functions must read by calendar date
+    too, otherwise the live-today bar would lag for 5 hours every morning.
+    """
+    return _ct_now().date()
 
 
 def lottery_week_key(now_ct: datetime.datetime) -> int:
@@ -363,21 +370,6 @@ async def record_crime_event(uid: int, *, gained: int = 0, lost: int = 0):
     bucket["lost"] += int(lost)
 
 
-async def snapshot_crime():
-    """Record today's per-user crime totals; prune entries older than 14 days."""
-    from src import state
-    today = _ct_now().date().isoformat()
-    history = await load_crime_history()
-    # Merge in-memory today's totals into history. We REPLACE today's row
-    # rather than add — counters reset only at the 5am gameplay boundary, so
-    # within a gameplay-day the running totals are authoritative.
-    if state.crime_today_by_user:
-        history[today] = {uid: dict(vals) for uid, vals in state.crime_today_by_user.items()}
-    cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
-    history = {d: v for d, v in history.items() if d >= cutoff}
-    await save_crime_history(history)
-
-
 async def record_gambling_event(uid: int, *, gained: int = 0, lost: int = 0):
     """Atomically write today's gambling delta for `uid` to gambling_history
     AND bump the in-memory cache.
@@ -393,30 +385,6 @@ async def record_gambling_event(uid: int, *, gained: int = 0, lost: int = 0):
     bucket = state.gambling_today_by_user.setdefault(str(uid), {"gained": 0, "lost": 0})
     bucket["gained"] += int(gained)
     bucket["lost"] += int(lost)
-
-
-async def snapshot_gambling():
-    """Record today's per-user gambling totals; prune entries older than 14 days."""
-    from src import state
-    today = _ct_now().date().isoformat()
-    history = await load_gambling_history()
-    if state.gambling_today_by_user:
-        history[today] = {uid: dict(vals) for uid, vals in state.gambling_today_by_user.items()}
-    cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
-    history = {d: v for d, v in history.items() if d >= cutoff}
-    await save_gambling_history(history)
-
-
-async def snapshot_levelups():
-    """Record today's per-(guild, user) level-up counts; prune older than 14 days."""
-    from src import state
-    today = _ct_now().date().isoformat()
-    history = await load_levelup_history()
-    if state.levelups_today:
-        history[today] = dict(state.levelups_today)
-    cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
-    history = {d: v for d, v in history.items() if d >= cutoff}
-    await save_levelup_history(history)
 
 
 async def snapshot_all():
@@ -438,10 +406,13 @@ async def snapshot_all():
 async def do_daily_reset():
     """Reset all users' daily reward and scratchoff counts at 5am CT.
 
-    Captures a final snapshot of yesterday's counters BEFORE clearing them —
-    the 6h GraphCog scheduler can't be relied on to fire exactly at 5am, so
-    without this, the last hours of the gameplay-day would be lost. After
-    the clears, the next 6h tick starts a fresh row for the new day.
+    Captures a final snapshot of yesterday's aggregate counters BEFORE clearing
+    them — the 6h GraphCog scheduler can't be relied on to fire exactly at 5am,
+    so without this the last hours of the gameplay-day would be lost.
+
+    The crime/gambling/levelup dicts are NOT cleared here — they're keyed
+    by calendar date on the disk side and persisted atomically per-event,
+    so they roll over naturally at calendar midnight (not gameplay 5am).
     """
     from src import state
     today = _ct_today()
@@ -450,9 +421,6 @@ async def do_daily_reset():
     state.stats_commands_today = 0
     state.stats_ai_responses_today = 0
     state.stats_commands_today_by_cog.clear()
-    state.crime_today_by_user.clear()
-    state.gambling_today_by_user.clear()
-    state.levelups_today.clear()
     for user in state.economy["users"].values():
         user["daily_date"] = None
         user["scratch_used"] = 0

@@ -39,7 +39,7 @@ async def test_record_levelup_zero_or_negative_is_noop():
     assert (1, "7") not in _state.levelups_today
 
 
-# ── snapshot_levelups round-trip ──────────────────────────────────────────────
+# ── atomic-write contract ─────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -65,37 +65,26 @@ async def test_record_levelup_increments_existing_row(db):
 
 
 @pytest.mark.asyncio
+async def test_levelups_dict_survives_do_daily_reset(db, monkeypatch):
+    """Level-up counts are calendar-keyed on disk. The 5am gameplay reset
+    must NOT clear them — clearing would desync the cache from the row that
+    just keeps accumulating until calendar midnight."""
+    await _leveling.record_levelup(100, 42, count=2)
+
+    async def _ollama_up(): return True
+    monkeypatch.setattr("src.ai.check_ollama_connected", _ollama_up)
+
+    await _economy.do_daily_reset()
+
+    assert _state.levelups_today[(100, "42")] == 2
+
+
+@pytest.mark.asyncio
 async def test_init_db_state_hydrates_today_levelups_dict(db):
     await _leveling.record_levelup(100, 42, count=2)
     _state.levelups_today.clear()
     await _persistence.init_db_state()
     assert _state.levelups_today[(100, "42")] == 2
-
-
-@pytest.mark.asyncio
-async def test_snapshot_levelups_persists_and_loads(db):
-    await _leveling.record_levelup(100, 42, count=2)
-    await _leveling.record_levelup(100, 99, count=1)
-
-    await _economy.snapshot_levelups()
-
-    today = _economy._ct_now().date().isoformat()
-    history = await _persistence.load_levelup_history()
-    assert history[today][(100, "42")] == 2
-    assert history[today][(100, "99")] == 1
-
-
-@pytest.mark.asyncio
-async def test_snapshot_levelups_refreshes_today_on_repeat(db):
-    await _leveling.record_levelup(100, 42, count=1)
-    await _economy.snapshot_levelups()
-
-    await _leveling.record_levelup(100, 42, count=3)
-    await _economy.snapshot_levelups()
-
-    today = _economy._ct_now().date().isoformat()
-    history = await _persistence.load_levelup_history()
-    assert history[today][(100, "42")] == 4
 
 
 # ── build_series_levels ───────────────────────────────────────────────────────
