@@ -107,11 +107,66 @@ class FakeTextChannel(_discord.TextChannel):
         self.edit = AsyncMock()
 
 
+class FakeThread(_discord.Thread):
+    """Subclasses discord.Thread so `isinstance(ch, discord.Thread)` checks
+    in cmd_continue / cmd_tldr / respond() pick the thread branch.
+
+    Bypasses discord.Thread.__init__ (which requires a State object and a
+    parent guild we don't have). Set `history_messages` to a list of
+    FakeMessage to make `.history(limit=N)` async-iterable for cmd_reverse.
+    """
+    def __init__(self, thread_id: int = 200, name: str = "test-thread"):
+        self.id = thread_id
+        self.name = name
+        self.send = AsyncMock(return_value=FakeMessage())
+        self.edit = AsyncMock()
+        self.delete = AsyncMock()
+        self.add_user = AsyncMock()
+        self.history_messages: list = []
+
+    def history(self, limit: int = 100):
+        items = list(self.history_messages[:limit])
+
+        class _AsyncIter:
+            def __init__(self, xs):
+                self._iter = iter(xs)
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self._iter)
+                except StopIteration:
+                    raise StopAsyncIteration
+        return _AsyncIter(items)
+
+
 class FakeMessage:
-    def __init__(self, content: str = ""):
+    """Stand-in for discord.Message.
+
+    `create_thread` returns a FakeThread when called; tests can swap in their
+    own thread via `fake_msg.create_thread = AsyncMock(return_value=...)` if
+    they want to inspect the thread before the cog mutates it.
+    """
+    def __init__(self, content: str = "", author: "FakeMember | None" = None,
+                 message_id: int = 1):
+        self.id = message_id
         self.content = content
+        self.author = author or FakeMember(uid=1)
+        self.mentions: list = []
+        self.channel_mentions: list = []
+        self.reference = None
         self.delete = AsyncMock()
         self.edit = AsyncMock()
+        self.reply = AsyncMock(return_value=None)
+        self.add_reaction = AsyncMock()
+        self.create_thread = AsyncMock(side_effect=self._default_create_thread)
+
+    async def _default_create_thread(self, name: str = "test-thread", **kwargs):
+        # Default: hand back a fresh FakeThread. Tests that need to inspect
+        # the thread before/after can patch `create_thread` directly.
+        return FakeThread(name=name)
 
 
 class FakeCtx:
