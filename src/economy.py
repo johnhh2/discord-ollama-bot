@@ -12,6 +12,8 @@ from src.persistence import (
     load_bot_stats_history, save_bot_stats_history,
     load_command_usage_history, save_command_usage_history,
     upsert_crime_delta, upsert_gambling_delta,
+    prune_balance_history, prune_bot_stats_history, prune_command_usage_history,
+    prune_crime_history, prune_gambling_history,
 )
 from src.guild_config import get_guild_cfg
 
@@ -194,6 +196,12 @@ def _current_bucket_ct() -> int:
     return _ct_now().hour // 6
 
 
+# How many days of graph history we retain on disk. The graph cog only
+# reads the last 14 days for rendering today; the longer retention is
+# headroom for future "show me 90 days" / "show me a year" features.
+GRAPH_HISTORY_RETENTION_DAYS = 3650  # ~10 years
+
+
 def _bucket_start_dt(date_iso: str, bucket: int) -> datetime.datetime:
     """Given a calendar-date string and a 0..3 bucket, return the UTC
     timestamp of the bucket's start (CT 00:00, 06:00, 12:00, or 18:00).
@@ -331,9 +339,12 @@ async def seize_from_savings(uid: int, max_amount: int) -> int:
 
 async def snapshot_balances():
     """Record each user's wallet and savings value into the CURRENT 6h bucket
-    of today's date. Prune entries older than 14 days. Called by the 30min
-    snapshot loop — multiple ticks within the same bucket overwrite the same
-    row; the bucket boundary creates a fresh row."""
+    of today's date. Called by the 30min snapshot loop — multiple ticks
+    within the same bucket overwrite the same row; the bucket boundary
+    creates a fresh row.
+
+    Pruning lives in `do_daily_reset` (DB-level DELETE), not here — the
+    snapshot loop runs every 30min and shouldn't churn through old rows."""
     from src import state
     import time as _time
     today = _ct_now().date().isoformat()
@@ -347,15 +358,13 @@ async def snapshot_balances():
         savings = int(sum(e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0)) for e in deps))
         snapshot[uid_str] = {"wallet": wallet, "savings": savings}
     history.setdefault(today, {})[bucket] = snapshot
-    cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
-    history = {d: v for d, v in history.items() if d >= cutoff}
     await save_balance_history(history)
     logging.info(f"[snapshot] balances for {today} bucket {bucket}: {len(snapshot)} users")
 
 
 async def snapshot_bot_stats(ai_up: bool):
     """Write current message/command/AI counts and memory into today's
-    CURRENT 6h bucket. Prune entries older than 14 days."""
+    CURRENT 6h bucket. Pruning lives in do_daily_reset."""
     from src import state
     from src.helpers import get_memory_mb
     today = _ct_now().date().isoformat()
@@ -368,22 +377,18 @@ async def snapshot_bot_stats(ai_up: bool):
         "ai_up": ai_up,
         "memory_mb": get_memory_mb(),
     }
-    cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
-    history = {d: v for d, v in history.items() if d >= cutoff}
     await save_bot_stats_history(history)
     logging.info(f"[snapshot] bot stats for {today} bucket {bucket}: {history[today][bucket]}")
 
 
 async def snapshot_command_usage():
     """Write current per-cog command counts into today's CURRENT 6h bucket.
-    Prune entries older than 14 days."""
+    Pruning lives in do_daily_reset."""
     from src import state
     today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
     history = await load_command_usage_history()
     history.setdefault(today, {})[bucket] = dict(state.stats_commands_today_by_cog)
-    cutoff = (_ct_now().date() - datetime.timedelta(days=14)).isoformat()
-    history = {d: v for d, v in history.items() if d >= cutoff}
     await save_command_usage_history(history)
     logging.info(f"[snapshot] per-cog command usage for {today} bucket {bucket}: {history[today][bucket]}")
 
@@ -474,4 +479,16 @@ async def do_daily_reset():
         user["jailbreak_used"] = False
     state.economy["last_daily_reset"] = today
     await save_economy()
+
+    # Prune all graph-history tables once per gameplay-day via a single
+    # DB-level DELETE per table — cheap, correct, and uniform across the
+    # snapshot-style and atomic-write tables. levelup_history is left
+    # unbounded; it grows slowly enough that a pruner isn't worth it.
+    cutoff = (_ct_now().date() - datetime.timedelta(days=GRAPH_HISTORY_RETENTION_DAYS)).isoformat()
+    await prune_balance_history(before_date=cutoff)
+    await prune_bot_stats_history(before_date=cutoff)
+    await prune_command_usage_history(before_date=cutoff)
+    await prune_crime_history(before_date=cutoff)
+    await prune_gambling_history(before_date=cutoff)
+
     logging.info(f"[DAILY] Reset daily reward and scratchoff counts for {today}")

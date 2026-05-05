@@ -29,6 +29,9 @@ _PERSISTENCE_SAVE_NAMES = [
     "save_balance_history", "save_bot_stats_history",
     "save_command_usage_history",
     "upsert_crime_delta", "upsert_gambling_delta", "upsert_levelup_delta",
+    "prune_balance_history", "prune_bot_stats_history",
+    "prune_command_usage_history",
+    "prune_crime_history", "prune_gambling_history",
     "add_ephemeral_msg",
 ]
 
@@ -45,7 +48,10 @@ ALL.append((_persistence, "try_set_record", _persistence.try_set_record))
 # save_balance_history/save_bot_stats_history directly).
 for _name in ("save_economy", "save_insurance", "try_set_record",
               "save_balance_history", "save_bot_stats_history",
-              "upsert_crime_delta", "upsert_gambling_delta"):
+              "upsert_crime_delta", "upsert_gambling_delta",
+              "prune_balance_history", "prune_bot_stats_history",
+              "prune_command_usage_history",
+              "prune_crime_history", "prune_gambling_history"):
     if hasattr(_economy, _name):
         ALL.append((_economy, _name, getattr(_economy, _name)))
 

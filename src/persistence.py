@@ -608,6 +608,49 @@ async def load_gambling_history() -> dict:
     return result
 
 
+async def prune_balance_history(*, before_date: str):
+    """DELETE all rows with snapshot_date < before_date. Server-side
+    prune (not load/filter/save) — these tables can grow large over
+    years and we don't want to round-trip every row through Python."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "DELETE FROM balance_history WHERE snapshot_date < %s",
+            (before_date,),
+        )
+
+
+async def prune_bot_stats_history(*, before_date: str):
+    async with with_cursor() as cur:
+        await cur.execute(
+            "DELETE FROM bot_stats_history WHERE snapshot_date < %s",
+            (before_date,),
+        )
+
+
+async def prune_command_usage_history(*, before_date: str):
+    async with with_cursor() as cur:
+        await cur.execute(
+            "DELETE FROM bot_command_usage_history WHERE snapshot_date < %s",
+            (before_date,),
+        )
+
+
+async def prune_crime_history(*, before_date: str):
+    async with with_cursor() as cur:
+        await cur.execute(
+            "DELETE FROM crime_history WHERE snapshot_date < %s",
+            (before_date,),
+        )
+
+
+async def prune_gambling_history(*, before_date: str):
+    async with with_cursor() as cur:
+        await cur.execute(
+            "DELETE FROM gambling_history WHERE snapshot_date < %s",
+            (before_date,),
+        )
+
+
 async def upsert_crime_delta(date_str: str, bucket: int, uid: int, *, gained: int = 0, lost: int = 0):
     """Atomically add `gained` and `lost` deltas to the (date, bucket, user)
     row in crime_history. Caller passes the per-event delta, not the running

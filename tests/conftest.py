@@ -101,6 +101,9 @@ def reset_bot_state(monkeypatch):
         "save_balance_history", "save_bot_stats_history",
         "save_command_usage_history",
         "upsert_crime_delta", "upsert_gambling_delta", "upsert_levelup_delta",
+        "prune_balance_history", "prune_bot_stats_history",
+        "prune_command_usage_history",
+        "prune_crime_history", "prune_gambling_history",
         "add_ephemeral_msg",
     ]
     for fn_name in save_fn_names:
@@ -120,6 +123,11 @@ def reset_bot_state(monkeypatch):
     # modules need stubs too.
     monkeypatch.setattr(_economy, "upsert_crime_delta", _noop, raising=False)
     monkeypatch.setattr(_economy, "upsert_gambling_delta", _noop, raising=False)
+    monkeypatch.setattr(_economy, "prune_balance_history", _noop, raising=False)
+    monkeypatch.setattr(_economy, "prune_bot_stats_history", _noop, raising=False)
+    monkeypatch.setattr(_economy, "prune_command_usage_history", _noop, raising=False)
+    monkeypatch.setattr(_economy, "prune_crime_history", _noop, raising=False)
+    monkeypatch.setattr(_economy, "prune_gambling_history", _noop, raising=False)
     import src.leveling as _leveling
     monkeypatch.setattr(_leveling, "upsert_levelup_delta", _noop, raising=False)
 
