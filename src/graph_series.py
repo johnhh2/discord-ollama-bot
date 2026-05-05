@@ -140,27 +140,44 @@ def _ct_now_iso_date() -> str:
 
 
 async def build_series_balance(member: discord.Member) -> SeriesData:
+    """Per-(date, bucket) wallet, savings, and total for `member`.
+
+    Mirrors the segment shape of build_series_economy (Wallets/Savings/Total)
+    but scoped to a single user. The renderer dashes the Total line as a
+    summary, matching the existing economy graph's style.
+    """
+    from src.economy import get_savings_value
+
     history = await load_balance_history()
     uid_str = str(member.id)
 
     x_points: list[datetime.datetime] = []
     y_wallet: list[float] = []
+    y_savings: list[float] = []
     for point_dt, snap_by_user in _iter_points(history):
         snap = snap_by_user.get(uid_str)
         if snap is not None:
             x_points.append(point_dt)
             y_wallet.append(snap["wallet"])
+            y_savings.append(snap.get("savings", 0))
 
     # Append live "now" point for the current bucket if we don't already have it.
     now_point = _live_now_point()
     live_wallet = await get_balance(member.id)
+    live_savings = int(await get_savings_value(member.id))
     if not x_points or x_points[-1] != now_point:
         x_points.append(now_point)
         y_wallet.append(live_wallet)
+        y_savings.append(live_savings)
 
+    y_total = [w + s for w, s in zip(y_wallet, y_savings)]
     return SeriesData(
-        title=f"{member.display_name}'s Wallet",
-        segments=[Segment(label="Wallet", color="#2ecc71", y_values=y_wallet)],
+        title=f"{member.display_name}'s Balance",
+        segments=[
+            Segment(label="Wallet",  color="#2ecc71", y_values=y_wallet),
+            Segment(label="Savings", color="#9b59b6", y_values=y_savings),
+            Segment(label="Total",   color="#f1c40f", y_values=y_total),
+        ],
         x_points=x_points,
         native_style="line",
     )

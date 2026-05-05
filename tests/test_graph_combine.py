@@ -181,6 +181,35 @@ async def _seed_history(monkeypatch):
     _state.stats_commands_today_by_cog = {"GraphCog": 4, "EconomyCog": 9, "AICog": 1}
 
 
+async def test_build_series_balance_has_wallet_savings_total_segments(monkeypatch):
+    """Pin the 3-segment shape: Wallet + Savings + Total (with Total = Wallet
+    + Savings at every point). Catches accidental drops of the savings line
+    in a future refactor."""
+    await _seed_history(monkeypatch)
+    # Give the user some live savings so the live-now point also has both
+    # halves populated.
+    import time
+    _state.economy["users"]["42"] = {
+        "balance": 200,
+        "savings": [{"amount": 80, "deposited_at": time.time()}],
+    }
+
+    member = _stub_member(42, "alice")
+    data = await graph_series.build_series_balance(member)
+
+    labels = [seg.label for seg in data.segments]
+    assert labels == ["Wallet", "Savings", "Total"]
+
+    wallet = next(s for s in data.segments if s.label == "Wallet")
+    savings = next(s for s in data.segments if s.label == "Savings")
+    total = next(s for s in data.segments if s.label == "Total")
+
+    # Total must equal Wallet + Savings at every point.
+    assert len(total.y_values) == len(wallet.y_values) == len(savings.y_values)
+    for w, s, t in zip(wallet.y_values, savings.y_values, total.y_values):
+        assert t == w + s
+
+
 @needs_matplotlib
 async def test_render_single_balance(monkeypatch):
     await _seed_history(monkeypatch)
