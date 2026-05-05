@@ -7,7 +7,15 @@ streak/role logic) is integration territory; the daily-limit invariant
 is what matters here.
 """
 
-from src.gambling.scratchoff import scratchoff_attempts_remaining
+import pytest
+
+import src.state as _state
+import src.economy as _economy
+from src.gambling.scratchoff import (
+    ScratchoffCog, scratchoff_attempts_remaining,
+)
+
+from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild, FakeChannel
 
 
 class TestScratchoffAttemptsRemaining:
@@ -59,3 +67,96 @@ class TestScratchoffAttemptsRemaining:
         user = {"scratch_date": "2026-05-02", "scratch_used": 2}
         scratchoff_attempts_remaining(user, "2026-05-02")
         assert user == {"scratch_date": "2026-05-02", "scratch_used": 2}
+
+
+class _StubBot:
+    def __init__(self):
+        self.user = type("U", (), {"id": 999_999_999})()
+        self.cogs = {}
+
+
+@pytest.mark.asyncio
+async def test_scratches_role_grant_announced_after_third_card(db, monkeypatch):
+    """!scratches plays 3 scratchoffs in one invocation. When the user crosses
+    the 3-day full-scratch streak on the third card, the Gamblers role-grant
+    announcement must arrive AFTER the third card embed — not between cards
+    2 and 3, where it used to land."""
+    today = "2026-05-02"
+    yesterday = "2026-05-01"
+
+    # Pin "today" so the test is deterministic regardless of clock/DST.
+    monkeypatch.setattr("src.gambling.scratchoff._ct_today", lambda: today)
+
+    # Enable the Gamblers role for this guild.
+    guild_id = 42
+    _state.guild_settings[str(guild_id)] = {"gambler_role_enabled": True}
+
+    # Seed a 2-day streak ending yesterday — the third card today bumps it
+    # to 3 and trips the role grant.
+    _state.gambler_streak[str(1)] = {"date": yesterday, "count": 2}
+
+    # Fund + reset the user so all 3 attempts are available.
+    await _economy._ensure_user(1)
+    _state.economy["users"]["1"]["scratch_date"] = today
+    _state.economy["users"]["1"]["scratch_used"] = 0
+
+    # Build a ctx whose ctx.send and ctx.channel.send share a single ordered
+    # event log. The role announcement uses `channel.send`; the card embeds
+    # use `ctx.send`. Interleaving them in one list is what proves ordering.
+    author = FakeMember(uid=1, display_name="player")
+    guild = FakeGuild(gid=guild_id)
+    channel = FakeChannel(ch_id=100)
+    ctx = FakeCtx(author=author, guild=guild, channel=channel)
+    ctx.bot = _StubBot()
+
+    events: list[tuple[str, str]] = []
+
+    async def record_ctx_send(content=None, *, embed=None, **kwargs):
+        # Card embeds post via ctx.send(embed=...).
+        events.append(("card", embed.title if embed is not None else str(content)))
+        return None
+
+    async def record_channel_send(content=None, *, embed=None, **kwargs):
+        events.append(("role_announce", content or ""))
+        return None
+
+    ctx.send = record_ctx_send
+    ctx.channel.send = record_channel_send
+
+    # Stub out the role-acquisition machinery: real toggle_member_role would
+    # call discord.Member.add_roles, which our FakeMember doesn't implement.
+    # We only care that the announcement send() lands at the right point.
+    class _StubRole:
+        pass
+
+    async def _fake_get_role(g):
+        return _StubRole()
+
+    async def _fake_toggle(member, role, add, reason=""):
+        return True
+
+    monkeypatch.setattr(
+        "src.gambling.scratchoff.get_or_create_gamblers_role", _fake_get_role
+    )
+    monkeypatch.setattr(
+        "src.gambling.scratchoff.toggle_member_role", _fake_toggle
+    )
+
+    cog = ScratchoffCog(bot=_StubBot())
+    # !scratches is a thin wrapper that invokes cmd_scratchoff with count=3.
+    # Calling the underlying callback directly avoids needing a real
+    # discord.py Context.invoke().
+    await cog.cmd_scratchoff.callback(cog, ctx, count=3)
+
+    # Three card embeds, one role announcement, all in this list.
+    card_indices = [i for i, (kind, _) in enumerate(events) if kind == "card"]
+    role_indices = [i for i, (kind, _) in enumerate(events) if kind == "role_announce"]
+
+    assert len(card_indices) == 3, f"expected 3 cards, got events={events}"
+    assert len(role_indices) == 1, f"expected 1 role announcement, got events={events}"
+
+    # The fix: announcement must come after the third (final) card, not between
+    # the 2nd and 3rd cards as the previous version did.
+    assert role_indices[0] > card_indices[2], (
+        f"role announcement landed mid-sequence: events={events}"
+    )
