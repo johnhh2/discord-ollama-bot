@@ -221,7 +221,9 @@ async def _admin_handler(ctx, tokens: tuple[str, ...], *, field: str):
         await ctx.send(embed=emb("📊 Invalid Arguments", parsed.error, C_GOLD))
         return
 
-    data = await build_admin_series(field, top_n=parsed.top_n, members=parsed.members or None)
+    data = await build_admin_series(
+        field, top_n=parsed.top_n, members=parsed.members or None, bot=ctx.bot,
+    )
 
     if not data.x_points or not data.segments:
         await ctx.send(embed=emb(

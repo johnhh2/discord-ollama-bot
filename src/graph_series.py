@@ -630,17 +630,50 @@ async def parse_admin_tokens(ctx, tokens: tuple[str, ...]) -> AdminParseResult:
     return AdminParseResult(top_n=n, members=members)
 
 
+async def _resolve_user_labels(bot, uids: list[str]) -> dict[str, str]:
+    """Look up `display_name` (or `name`) for each uid via the bot's user
+    cache, falling back to `bot.fetch_user(uid)` for uncached uids and
+    `<@uid>` mention strings if even fetch fails (e.g. user no longer
+    exists or no `bot` provided in tests).
+    """
+    labels: dict[str, str] = {}
+    for uid_str in uids:
+        label = f"<@{uid_str}>"  # mention-string fallback
+        if bot is not None:
+            try:
+                uid_int = int(uid_str)
+            except ValueError:
+                labels[uid_str] = label
+                continue
+            user = bot.get_user(uid_int)
+            if user is None:
+                # Cache miss — hit the API. Best-effort; swallow on error.
+                try:
+                    user = await bot.fetch_user(uid_int)
+                except Exception:
+                    user = None
+            if user is not None:
+                label = getattr(user, "display_name", None) or user.name
+        labels[uid_str] = label
+    return labels
+
+
 async def build_admin_series(
     field: str,
     *,
     top_n: Optional[int] = None,
     members: Optional[list] = None,
+    bot=None,
 ) -> SeriesData:
     """Build a multi-line SeriesData with one line per user.
 
     `field` is "wallet" or "savings" — the column from balance_history to
     plot. Either `top_n` (selects users with the highest current value) or
     `members` (explicit list) must be provided, not both.
+
+    `bot` is the discord.py Bot instance, used to resolve uids to display
+    names in top-N mode (we don't have member objects there). Optional
+    for tests; falls back to `<@uid>` mention strings when absent.
     """
     assert field in ("wallet", "savings"), f"unknown field {field!r}"
     assert (top_n is None) != (members is None), "exactly one of top_n/members"
@@ -693,7 +726,7 @@ async def build_admin_series(
             ranking.append((uid, latest_value))
         ranking.sort(key=lambda t: t[1], reverse=True)
         picked_ids = [uid for uid, _ in ranking[:top_n]]
-        labels_by_uid = {uid: f"<@{uid}>" for uid in picked_ids}  # mention fallback
+        labels_by_uid = await _resolve_user_labels(bot, picked_ids)
 
     # Build segments aligned to the union of all_points.
     import matplotlib.pyplot as _plt

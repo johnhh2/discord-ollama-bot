@@ -173,6 +173,89 @@ async def test_build_admin_series_top_n_picks_richest(monkeypatch):
     assert any("3" in l for l in labels)
 
 
+async def test_build_admin_series_resolves_uids_to_display_names(monkeypatch):
+    """Top-N mode passes the bot to resolve uids → user names rather than
+    leaving raw `<@uid>` mention strings in the legend (matplotlib doesn't
+    expand mentions like Discord does)."""
+    from src import graph_series as gs
+
+    today = gs._ct_now_iso_date()
+    fake_history = {
+        today: {0: {
+            "100": {"wallet": 500, "savings": 0},
+            "200": {"wallet": 200, "savings": 0},
+        }},
+    }
+    async def _load(): return fake_history
+    monkeypatch.setattr(gs, "load_balance_history", _load)
+    _state.economy["users"].clear()
+
+    # Stub bot: get_user returns objects with display_name.
+    users_by_id = {
+        100: SimpleNamespace(display_name="alice", name="alice_raw"),
+        200: SimpleNamespace(display_name="bob",   name="bob_raw"),
+    }
+    bot = SimpleNamespace(get_user=lambda uid: users_by_id.get(uid))
+
+    data = await gs.build_admin_series("wallet", top_n=2, bot=bot)
+    labels = sorted(seg.label for seg in data.segments)
+    assert labels == ["alice", "bob"]
+
+
+async def test_build_admin_series_falls_back_to_fetch_user(monkeypatch):
+    """If get_user returns None (cache miss), the resolver should fall back
+    to bot.fetch_user (an API call)."""
+    from src import graph_series as gs
+
+    today = gs._ct_now_iso_date()
+    async def _load(): return {today: {0: {"100": {"wallet": 500, "savings": 0}}}}
+    monkeypatch.setattr(gs, "load_balance_history", _load)
+    _state.economy["users"].clear()
+
+    fetch_calls = []
+    async def _fetch(uid):
+        fetch_calls.append(uid)
+        return SimpleNamespace(display_name="alice_via_api", name="alice")
+
+    bot = SimpleNamespace(get_user=lambda uid: None, fetch_user=_fetch)
+
+    data = await gs.build_admin_series("wallet", top_n=1, bot=bot)
+    assert fetch_calls == [100]
+    assert data.segments[0].label == "alice_via_api"
+
+
+async def test_build_admin_series_falls_back_to_mention_when_no_bot(monkeypatch):
+    """Without a bot (e.g. test harness), labels stay as mention strings."""
+    from src import graph_series as gs
+
+    today = gs._ct_now_iso_date()
+    async def _load(): return {today: {0: {"100": {"wallet": 500, "savings": 0}}}}
+    monkeypatch.setattr(gs, "load_balance_history", _load)
+    _state.economy["users"].clear()
+
+    data = await gs.build_admin_series("wallet", top_n=1, bot=None)
+    assert data.segments[0].label == "<@100>"
+
+
+async def test_build_admin_series_handles_fetch_user_error(monkeypatch):
+    """If fetch_user raises (deleted user, network error), label falls back
+    to the mention string rather than crashing the graph."""
+    from src import graph_series as gs
+
+    today = gs._ct_now_iso_date()
+    async def _load(): return {today: {0: {"999": {"wallet": 50, "savings": 0}}}}
+    monkeypatch.setattr(gs, "load_balance_history", _load)
+    _state.economy["users"].clear()
+
+    async def _fetch(uid):
+        raise RuntimeError("user not found")
+
+    bot = SimpleNamespace(get_user=lambda uid: None, fetch_user=_fetch)
+
+    data = await gs.build_admin_series("wallet", top_n=1, bot=bot)
+    assert data.segments[0].label == "<@999>"
+
+
 async def test_build_admin_series_explicit_members_filters_to_them(monkeypatch):
     from src import graph_series as gs
 
