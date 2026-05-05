@@ -667,16 +667,22 @@ async def build_admin_series(
 ) -> SeriesData:
     """Build a multi-line SeriesData with one line per user.
 
-    `field` is "wallet" or "savings" — the column from balance_history to
-    plot. Either `top_n` (selects users with the highest current value) or
-    `members` (explicit list) must be provided, not both.
+    `field` is "wallet", "savings", or "total" (wallet + savings) — the
+    column from balance_history to plot. Either `top_n` (selects users
+    with the highest current value) or `members` (explicit list) must be
+    provided, not both.
 
     `bot` is the discord.py Bot instance, used to resolve uids to display
     names in top-N mode (we don't have member objects there). Optional
     for tests; falls back to `<@uid>` mention strings when absent.
     """
-    assert field in ("wallet", "savings"), f"unknown field {field!r}"
+    assert field in ("wallet", "savings", "total"), f"unknown field {field!r}"
     assert (top_n is None) != (members is None), "exactly one of top_n/members"
+
+    def _row_value(snap: dict) -> float:
+        if field == "total":
+            return snap.get("wallet", 0) + snap.get("savings", 0)
+        return snap.get(field, 0)
 
     history = await load_balance_history()
 
@@ -688,7 +694,7 @@ async def build_admin_series(
         all_points.append(point_dt)
         for uid_str, snap in snap_by_user.items():
             by_user.setdefault(uid_str, []).append(
-                (point_dt, snap.get(field, 0)),
+                (point_dt, _row_value(snap)),
             )
 
     # Append today's live "now" point from in-memory state.
@@ -698,13 +704,17 @@ async def build_admin_series(
         import time as _time
         now = _time.time()
         for uid_str, user in state.economy["users"].items():
+            wallet = user.get("balance", 0)
+            savings = int(sum(
+                e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0))
+                for e in user.get("savings", [])
+            ))
             if field == "wallet":
-                value = user.get("balance", 0)
-            else:  # savings — compounded value
-                value = int(sum(
-                    e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0))
-                    for e in user.get("savings", [])
-                ))
+                value = wallet
+            elif field == "savings":
+                value = savings
+            else:  # total
+                value = wallet + savings
             if value > 0 or uid_str in by_user:
                 by_user.setdefault(uid_str, []).append((now_point, value))
 

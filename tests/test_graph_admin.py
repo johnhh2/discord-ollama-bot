@@ -278,6 +278,39 @@ async def test_build_admin_series_explicit_members_filters_to_them(monkeypatch):
     assert labels == ["alice", "bob"]  # ordered by name in this test, both present
 
 
+async def test_build_admin_series_total_field_sums_wallet_and_savings(monkeypatch):
+    """`field='total'` plots wallet + savings per user. The latest-value
+    ranking and per-point y-values should both reflect the sum."""
+    from src import graph_series as gs
+
+    today = gs._ct_now_iso_date()
+    cur_bucket = _economy._current_bucket_ct()
+    fake_history = {
+        today: {cur_bucket: {
+            "1": {"wallet": 100, "savings": 50},   # total 150
+            "2": {"wallet": 0,   "savings": 800},  # total 800
+            "3": {"wallet": 700, "savings": 0},    # total 700
+        }},
+    }
+    async def _load(): return fake_history
+    monkeypatch.setattr(gs, "load_balance_history", _load)
+    _state.economy["users"].clear()
+
+    data = await gs.build_admin_series("total", top_n=3)
+
+    # Each user's last y-value should equal wallet + savings.
+    by_label_last = {seg.label: seg.y_values[-1] for seg in data.segments}
+    assert by_label_last[next(l for l in by_label_last if "1" in l)] == 150
+    assert by_label_last[next(l for l in by_label_last if "2" in l)] == 800
+    assert by_label_last[next(l for l in by_label_last if "3" in l)] == 700
+
+    # Top-N ranking: user 2 (800) > user 3 (700) > user 1 (150).
+    # The segments themselves can be in any order; verify ranking via the
+    # picked set + position of the top one.
+    top_label = data.segments[0].label
+    assert "2" in top_label, f"expected user 2 first, got {top_label}"
+
+
 async def test_build_admin_series_savings_uses_savings_field(monkeypatch):
     """`field='savings'` reads the savings column, not wallet."""
     from src import graph_series as gs

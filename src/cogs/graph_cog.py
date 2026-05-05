@@ -199,7 +199,8 @@ class GraphCog(commands.Cog):
             "**Subcommands:**\n"
             "`!graph admin wallet [N|@users…]` — per-user wallet, top N (default 10) "
             "or specific users\n"
-            "`!graph admin savings [N|@users…]` — per-user savings, same shape",
+            "`!graph admin savings [N|@users…]` — per-user savings, same shape\n"
+            "`!graph admin total [N|@users…]` — per-user wallet + savings, same shape",
             C_GOLD,
         ))
 
@@ -212,6 +213,11 @@ class GraphCog(commands.Cog):
     @requires_perm
     async def cmd_graph_admin_savings(self, ctx: commands.Context, *tokens: str):
         await _admin_handler(ctx, tokens, field="savings")
+
+    @cmd_graph_admin.command(name="total")
+    @requires_perm
+    async def cmd_graph_admin_total(self, ctx: commands.Context, *tokens: str):
+        await _admin_handler(ctx, tokens, field="total")
 
 
 async def _admin_handler(ctx, tokens: tuple[str, ...], *, field: str):
