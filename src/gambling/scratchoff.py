@@ -251,11 +251,6 @@ class ScratchoffCog(commands.Cog):
                     if cog and isinstance(ctx.author, discord.Member):
                         asyncio.create_task(cog._announce_levelup(ctx.author, ctx.guild.id))
 
-            # Track full-day scratchoff streak for Gamblers role
-            if user["scratch_used"] >= 3 and ctx.guild:
-                new_streak = await update_gambler_streak(uid, today)
-                await maybe_assign_gambler_role(ctx.guild, ctx.author, ctx.channel, new_streak)
-
             card_str = " ".join(card)
             attempts_left = 3 - user["scratch_used"]
 
@@ -267,6 +262,13 @@ class ScratchoffCog(commands.Cog):
                 show_hint = False
 
             await ctx.send(embed=embed)
+
+            # Track full-day scratchoff streak for Gamblers role.
+            # Done after the card embed so the role-grant announcement
+            # appears after the third scratch, not between cards.
+            if user["scratch_used"] >= 3 and ctx.guild:
+                new_streak = await update_gambler_streak(uid, today)
+                await maybe_assign_gambler_role(ctx.guild, ctx.author, ctx.channel, new_streak)
 
     @commands.command(name="scratches", aliases=["scratchoffs"])
     async def cmd_scratches(self, ctx: commands.Context):
