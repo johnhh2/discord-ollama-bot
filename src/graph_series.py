@@ -563,6 +563,165 @@ async def parse_tokens(
     return ParseResult(specs=specs, member=member, guild_id=guild_id)
 
 
+# ── Admin: per-user breakouts ────────────────────────────────────────────────
+# `!graph admin wallet [N|@users…]` and `!graph admin savings [N|@users…]`
+# render one line per user. Tokens can be either (a) a single integer N
+# selecting top-N by current value, or (b) one or more @user mentions. They
+# can't be mixed — the parser rejects with a clear error.
+
+ADMIN_TOP_N_DEFAULT = 10
+ADMIN_TOP_N_CAP = 50
+
+
+@dataclass
+class AdminParseResult:
+    top_n: Optional[int] = None
+    members: list = field(default_factory=list)  # list of discord.Member
+    error: Optional[str] = None
+
+
+async def parse_admin_tokens(ctx, tokens: tuple[str, ...]) -> AdminParseResult:
+    """Tokens are either a single integer (top-N) or one-or-more @user
+    mentions, never both. Empty tokens → top-N default.
+    """
+    from discord.ext import commands as _cmds
+    converter = _cmds.MemberConverter()
+
+    n: Optional[int] = None
+    members: list = []
+    seen_member_ids: set[int] = set()
+
+    for tok in tokens:
+        # Try integer first.
+        if tok.isdigit():
+            if n is not None:
+                return AdminParseResult(error=f"multiple counts given: `{n}` and `{tok}`")
+            try:
+                value = int(tok)
+            except ValueError:
+                return AdminParseResult(error=f"invalid count `{tok}`")
+            if value < 1:
+                return AdminParseResult(error=f"count must be ≥ 1, got `{value}`")
+            if value > ADMIN_TOP_N_CAP:
+                return AdminParseResult(
+                    error=f"count `{value}` exceeds the cap of {ADMIN_TOP_N_CAP} "
+                          f"(too many lines to render legibly)"
+                )
+            n = value
+            continue
+        # Otherwise try a member mention.
+        try:
+            resolved = await converter.convert(ctx, tok)
+        except _cmds.BadArgument:
+            return AdminParseResult(
+                error=f"unknown token `{tok}` — expected an integer or @user mention",
+            )
+        if resolved.id in seen_member_ids:
+            continue  # silently dedupe rather than error
+        seen_member_ids.add(resolved.id)
+        members.append(resolved)
+
+    if n is not None and members:
+        return AdminParseResult(
+            error="specify either a count OR @user mentions, not both",
+        )
+    if n is None and not members:
+        n = ADMIN_TOP_N_DEFAULT
+    return AdminParseResult(top_n=n, members=members)
+
+
+async def build_admin_series(
+    field: str,
+    *,
+    top_n: Optional[int] = None,
+    members: Optional[list] = None,
+) -> SeriesData:
+    """Build a multi-line SeriesData with one line per user.
+
+    `field` is "wallet" or "savings" — the column from balance_history to
+    plot. Either `top_n` (selects users with the highest current value) or
+    `members` (explicit list) must be provided, not both.
+    """
+    assert field in ("wallet", "savings"), f"unknown field {field!r}"
+    assert (top_n is None) != (members is None), "exactly one of top_n/members"
+
+    history = await load_balance_history()
+
+    # Walk the history once to gather every (point_dt, uid_str -> value).
+    # We need it pivoted: per user, a list of (point_dt, value) pairs.
+    by_user: dict[str, list[tuple[datetime.datetime, float]]] = {}
+    all_points: list[datetime.datetime] = []
+    for point_dt, snap_by_user in _iter_points(history):
+        all_points.append(point_dt)
+        for uid_str, snap in snap_by_user.items():
+            by_user.setdefault(uid_str, []).append(
+                (point_dt, snap.get(field, 0)),
+            )
+
+    # Append today's live "now" point from in-memory state.
+    now_point = _live_now_point()
+    if not all_points or all_points[-1] != now_point:
+        all_points.append(now_point)
+        import time as _time
+        now = _time.time()
+        for uid_str, user in state.economy["users"].items():
+            if field == "wallet":
+                value = user.get("balance", 0)
+            else:  # savings — compounded value
+                value = int(sum(
+                    e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0))
+                    for e in user.get("savings", [])
+                ))
+            if value > 0 or uid_str in by_user:
+                by_user.setdefault(uid_str, []).append((now_point, value))
+
+    # Pick which users to plot.
+    if members is not None:
+        picked_ids = [str(m.id) for m in members]
+        # Members may not appear in history if they have no recorded balance;
+        # filter to those with at least one data point.
+        picked_ids = [uid for uid in picked_ids if uid in by_user]
+        labels_by_uid = {str(m.id): m.display_name for m in members}
+    else:
+        # Top N by most-recent value. "Most recent" = each user's last
+        # (point_dt, value) pair.
+        ranking = []
+        for uid, points in by_user.items():
+            if not points:
+                continue
+            latest_value = points[-1][1]
+            ranking.append((uid, latest_value))
+        ranking.sort(key=lambda t: t[1], reverse=True)
+        picked_ids = [uid for uid, _ in ranking[:top_n]]
+        labels_by_uid = {uid: f"<@{uid}>" for uid in picked_ids}  # mention fallback
+
+    # Build segments aligned to the union of all_points.
+    import matplotlib.pyplot as _plt
+    palette = _plt.cm.tab20.colors
+
+    segments: list[Segment] = []
+    for i, uid in enumerate(picked_ids):
+        by_pt = dict(by_user.get(uid, []))
+        y_values = [by_pt.get(p, 0) for p in all_points]
+        segments.append(Segment(
+            label=labels_by_uid.get(uid, uid),
+            color=palette[i % len(palette)],
+            y_values=y_values,
+        ))
+
+    if members is not None:
+        title = f"Per-User {field.capitalize()}"
+    else:
+        title = f"Top {top_n} {field.capitalize()}s"
+
+    return SeriesData(
+        title=title,
+        segments=segments,
+        x_points=all_points,
+        native_style="line",
+    )
+
+
 # ── Rendering ────────────────────────────────────────────────────────────────
 
 

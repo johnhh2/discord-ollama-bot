@@ -8,7 +8,7 @@ from src.permissions import requires_perm
 from src.economy import snapshot_all
 from src.graph_series import (
     find_spec, parse_tokens, render_combined, render_ai_uptime_strip,
-    SeriesSpec,
+    parse_admin_tokens, build_admin_series, SeriesSpec,
 )
 
 
@@ -133,6 +133,7 @@ class GraphCog(commands.Cog):
             "`!graph server` — Daily message and command counts over the last 2 weeks\n"
             "`!graph memory` — Bot memory usage (MB) over the last 2 weeks\n"
             "`!graph ai` — Daily AI response count and uptime over the last 2 weeks\n"
+            "`!graph admin <wallet|savings> [N|@users…]` — per-user breakout (bot admin)\n"
             "\n**Combine compatible graphs** by listing multiple names:\n"
             "`!graph balance crime [@user]` — overlay coins-group graphs\n"
             "`!graph commands server ai` — grouped stacked bars for counts-group graphs\n"
@@ -184,6 +185,69 @@ class GraphCog(commands.Cog):
     @requires_perm
     async def cmd_graph_ai(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("ai"))
+
+    # ── Admin: per-user breakouts ────────────────────────────────────────
+    # bot_admin tier — see src/command_perms.json. Renders one line per user
+    # to inspect economy distribution. Tokens are either an integer N (top
+    # N by current value) or one or more @user mentions, never both.
+
+    @cmd_graph.group(name="admin", invoke_without_command=True)
+    @requires_perm
+    async def cmd_graph_admin(self, ctx: commands.Context):
+        await ctx.send(embed=emb(
+            "📊 Graph — Admin",
+            "**Subcommands:**\n"
+            "`!graph admin wallet [N|@users…]` — per-user wallet, top N (default 10) "
+            "or specific users\n"
+            "`!graph admin savings [N|@users…]` — per-user savings, same shape",
+            C_GOLD,
+        ))
+
+    @cmd_graph_admin.command(name="wallet")
+    @requires_perm
+    async def cmd_graph_admin_wallet(self, ctx: commands.Context, *tokens: str):
+        await _admin_handler(ctx, tokens, field="wallet")
+
+    @cmd_graph_admin.command(name="savings")
+    @requires_perm
+    async def cmd_graph_admin_savings(self, ctx: commands.Context, *tokens: str):
+        await _admin_handler(ctx, tokens, field="savings")
+
+
+async def _admin_handler(ctx, tokens: tuple[str, ...], *, field: str):
+    """Shared body for `!graph admin wallet` and `!graph admin savings`."""
+    parsed = await parse_admin_tokens(ctx, tokens)
+    if parsed.error:
+        await ctx.send(embed=emb("📊 Invalid Arguments", parsed.error, C_GOLD))
+        return
+
+    data = await build_admin_series(field, top_n=parsed.top_n, members=parsed.members or None)
+
+    if not data.x_points or not data.segments:
+        await ctx.send(embed=emb(
+            "📊 No Data",
+            "No balance history yet — data is captured every 30 minutes.",
+            C_GOLD,
+        ))
+        return
+    if len(data.x_points) < 2:
+        await ctx.send(embed=emb(
+            "📊 Not Enough Data",
+            "Need at least 2 data points to draw a graph.",
+            C_GOLD,
+        ))
+        return
+
+    if parsed.members:
+        names = ", ".join(m.display_name for m in parsed.members)
+        title = f"{names} — {field.capitalize()} — Last 2 Weeks"
+    else:
+        title = f"Top {parsed.top_n} {field.capitalize()}s — Last 2 Weeks"
+
+    buf = await render_combined(
+        [data], "coins", "🪙 Coins", title,
+    )
+    await ctx.send(file=discord.File(buf, filename=f"admin_{field}.png"))
 
 
 async def setup(bot):

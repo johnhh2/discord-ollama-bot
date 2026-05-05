@@ -27,6 +27,7 @@
   "say":           {"tier": "server_admin", "hidden": false},
   "adminhelp":     {"tier": "server_admin", "hidden": false},
   "graph":         {"tier": "everyone",    "hidden": false},
+  "graph admin":   {"tier": "bot_admin",   "hidden": false},
   "economy":       {"tier": "everyone",    "hidden": false},
   "tax":           {"tier": "everyone",    "hidden": false},
   "crime":         {"tier": "everyone",    "hidden": false},
