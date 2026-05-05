@@ -1,0 +1,90 @@
+"""Persistence package — DB-backed save/load layer.
+
+Public surface preserved exactly: every name that used to live on the flat
+`src.persistence` module is re-exported here, so existing
+`from src.persistence import X` imports keep working unchanged.
+
+The `_init_db_state_done` flag intentionally lives on this package (not on
+the `init` submodule) so test fixtures can flip it via
+`src.persistence._init_db_state_done = False`.
+"""
+
+from src.db import get_pool, with_cursor  # noqa: F401
+from src.guild_config import get_guild_cfg  # noqa: F401
+
+from src.persistence._helpers import _load_json  # noqa: F401
+from src.persistence.economy import (  # noqa: F401
+    _economy_user_row,
+    _ECONOMY_UPSERT_SQL,
+    save_economy,
+    save_guild_house,
+    save_insurance,
+    save_jackpot,
+)
+from src.persistence.settings import (  # noqa: F401
+    save_guild_settings,
+    save_bot_roles,
+    save_godmode_users,
+    save_bot_settings,
+)
+from src.persistence.shop_effects import (  # noqa: F401
+    save_ragebait,
+    save_mock,
+    save_curse,
+    save_tax,
+)
+from src.persistence.rigged import (  # noqa: F401
+    save_rigged_slots,
+    save_rigged_flips,
+    save_rigged_scratch,
+    save_rigged_steal,
+)
+from src.persistence.streaks import save_gambler_streak  # noqa: F401
+from src.persistence.chess import save_chess_games  # noqa: F401
+from src.persistence.ai import save_ai_threads, save_channel_prompts  # noqa: F401
+from src.persistence.quotes import (  # noqa: F401
+    save_quote_log,
+    save_saved_quotes,
+    load_saved_quotes,
+)
+from src.persistence.leveling import save_leveling  # noqa: F401
+from src.persistence.lottery import load_lottery, save_lottery  # noqa: F401
+from src.persistence.records import (  # noqa: F401
+    load_records,
+    save_records,
+    try_set_record,
+)
+from src.persistence.history import (  # noqa: F401
+    load_balance_history,
+    save_balance_history,
+    load_bot_stats_history,
+    save_bot_stats_history,
+    load_command_usage_history,
+    save_command_usage_history,
+    load_crime_history,
+    load_gambling_history,
+    prune_balance_history,
+    prune_bot_stats_history,
+    prune_command_usage_history,
+    prune_crime_history,
+    prune_gambling_history,
+    upsert_crime_delta,
+    upsert_gambling_delta,
+    upsert_levelup_delta,
+    load_today_crime_row,
+    load_today_gambling_row,
+    load_today_levelups_row,
+    load_levelup_history,
+)
+from src.persistence.command_perms import save_command_perms  # noqa: F401
+from src.persistence.ephemeral import (  # noqa: F401
+    save_restart_msg,
+    load_restart_msg,
+    clear_restart_msg,
+    add_ephemeral_msg,
+    load_and_clear_ephemeral_msgs,
+)
+from src.persistence.init import init_db_state  # noqa: F401
+
+# Module-level guard, owned by the package so tests can patch it directly.
+_init_db_state_done = False

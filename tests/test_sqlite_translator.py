@@ -193,12 +193,17 @@ async def test_insert_or_ignore_skips_duplicate_keys():
 # ── Schema-pin: persistence.py sources stay in-sync with _TABLE_PKS ──────────
 
 def _persistence_sql_text() -> str:
+    """Concatenate every .py file under src/persistence/ so the on-duplicate
+    scanner sees all SQL whether persistence is a flat module or a package."""
+    pkg_dir = Path("src/persistence")
+    if pkg_dir.is_dir():
+        return "\n".join(p.read_text(encoding="utf-8") for p in sorted(pkg_dir.rglob("*.py")))
     return Path("src/persistence.py").read_text(encoding="utf-8")
 
 
 def _tables_used_in_on_duplicate() -> set[str]:
     """Find every `INSERT INTO <table> ... ON DUPLICATE KEY UPDATE` table name
-    in src/persistence.py. Each must have a _TABLE_PKS entry or the test
+    in the persistence layer. Each must have a _TABLE_PKS entry or the test
     suite would fail when that save_X is exercised under the `db` fixture."""
     text = _persistence_sql_text()
     # Find INSERT INTO <table> within statements that also contain ON DUPLICATE.

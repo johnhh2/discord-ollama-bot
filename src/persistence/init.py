@@ -1,0 +1,322 @@
+"""init_db_state: apply pending migrations and load all persistent state from DB.
+
+The `_init_db_state_done` guard lives on the `src.persistence` package (not
+this submodule) so test fixtures can flip it via `_persistence._init_db_state_done = False`.
+"""
+import json
+import logging
+import time as _time
+
+from src.config import COMMAND_PERMS_FILE, INITIAL_BOT_ADMIN_IDS, SLOT_JACKPOT_SEED
+from src.db import with_cursor
+from src.persistence._helpers import _load_json
+from src.persistence.history import (
+    load_today_crime_row, load_today_gambling_row, load_today_levelups_row,
+)
+
+
+async def init_db_state():
+    """Apply pending migrations, then load all persistent state from DB into src.state.
+
+    on_ready fires on every gateway reconnect, so the second+ call is guarded
+    out — otherwise a reconnect would clobber any in-memory mutations made
+    since the last save (e.g. an in-progress chess game, an active ragebait).
+    """
+    import src.persistence as _pkg
+    import src.state as state
+    from src.migrations import run_migrations
+
+    if _pkg._init_db_state_done:
+        logging.info("[init_db_state] skipping; already initialized")
+        return
+    _pkg._init_db_state_done = True
+
+    # Apply pending schema migrations BEFORE any SELECT — if the schema is
+    # behind, we want to fail fast rather than blow up on a missing column.
+    await run_migrations()
+
+    async with with_cursor() as cur:
+
+        # ── economy_users ─────────────────────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT user_id, balance, last_daily, daily_date, scratch_used,"
+                " scratch_date, jailbreak_used, jail_until, savings FROM economy_users"
+            )
+            for row in await cur.fetchall():
+                uid, bal, last_daily, daily_date, scratch_used, scratch_date, jb_used, jail_until, savings_json = row
+                state.economy["users"][str(uid)] = {
+                    "balance": bal,
+                    "last_daily": last_daily,
+                    "daily_date": daily_date,
+                    "scratch_used": scratch_used,
+                    "scratch_date": scratch_date,
+                    "jailbreak_used": bool(jb_used),
+                    "jail_until": jail_until,
+                    "savings": json.loads(savings_json) if savings_json else [],
+                }
+        except Exception as e:
+            logging.error(f"[init_db_state] economy_users failed: {e}", exc_info=True)
+
+        # ── economy_meta ──────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT value_text FROM economy_meta WHERE key_name='last_daily_reset'")
+            row = await cur.fetchone()
+            state.economy["last_daily_reset"] = row[0] if row and row[0] is not None else None
+        except Exception as e:
+            logging.error(f"[init_db_state] economy_meta failed: {e}", exc_info=True)
+
+        # ── guild_house_balance ───────────────────────────────────────────
+        try:
+            await cur.execute("SELECT guild_id, balance FROM guild_house_balance")
+            for guild_id, bal in await cur.fetchall():
+                state.economy["guild_house"][str(guild_id)] = bal
+        except Exception as e:
+            logging.error(f"[init_db_state] guild_house_balance failed: {e}", exc_info=True)
+
+        # ── guild_settings ────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT guild_id, settings_json FROM guild_settings")
+            for guild_id, settings_json in await cur.fetchall():
+                settings = json.loads(settings_json)
+                state.guild_settings[str(guild_id)] = settings
+                for k, v in settings.get("locked_channels", {}).items():
+                    state.locked_channels[int(k)] = int(v)
+                for k, v in settings.get("locked_roles", {}).items():
+                    state.locked_roles[int(k)] = int(v)
+        except Exception as e:
+            logging.error(f"[init_db_state] guild_settings failed: {e}", exc_info=True)
+
+        # ── slots_jackpot ─────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT jackpot FROM slots_jackpot WHERE id=1")
+            row = await cur.fetchone()
+            state.slot_jackpot = max(SLOT_JACKPOT_SEED, row[0] if row else SLOT_JACKPOT_SEED)
+        except Exception as e:
+            logging.error(f"[init_db_state] slots_jackpot failed: {e}", exc_info=True)
+
+        # ── bot_roles ─────────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT role_id FROM bot_roles")
+            state.bot_roles = {r[0] for r in await cur.fetchall()}
+        except Exception as e:
+            logging.error(f"[init_db_state] bot_roles failed: {e}", exc_info=True)
+
+        # ── godmode_users ─────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT user_id FROM godmode_users")
+            state.godmode_users = {r[0] for r in await cur.fetchall()}
+        except Exception as e:
+            logging.error(f"[init_db_state] godmode_users failed: {e}", exc_info=True)
+
+        # ── bot_settings ──────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT key_name, value_text FROM bot_settings")
+            for k, v in await cur.fetchall():
+                state.bot_settings[k] = v
+        except Exception as e:
+            logging.error(f"[init_db_state] bot_settings failed: {e}", exc_info=True)
+
+        # ── shop_insurance ────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT user_id, expires_at, protected_from FROM shop_insurance")
+            now = _time.time()
+            for uid, expires_at, protected_json in await cur.fetchall():
+                if expires_at > now:
+                    state.insurance[str(uid)] = {
+                        "expires_at": expires_at,
+                        "protected_from": json.loads(protected_json) if protected_json else [],
+                    }
+        except Exception as e:
+            logging.error(f"[init_db_state] shop_insurance failed: {e}", exc_info=True)
+
+        # ── shop_effects: ragebait ────────────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT user_id, remaining, started_by, history_json, channel_id"
+                " FROM shop_effects WHERE effect_type='ragebait'"
+            )
+            for uid, remaining, started_by, history_json, channel_id in await cur.fetchall():
+                state.active_ragebaits[uid] = {
+                    "remaining": remaining,
+                    "started_by": started_by,
+                    "history": json.loads(history_json) if history_json else [],
+                    "channel_id": channel_id,
+                }
+        except Exception as e:
+            logging.error(f"[init_db_state] shop_effects.ragebait failed: {e}", exc_info=True)
+
+        # ── shop_effects: mock ────────────────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT user_id, remaining, started_by, channel_id"
+                " FROM shop_effects WHERE effect_type='mock'"
+            )
+            for uid, remaining, started_by, channel_id in await cur.fetchall():
+                state.active_mocks[uid] = {
+                    "remaining": remaining,
+                    "started_by": started_by,
+                    "channel_id": channel_id,
+                }
+        except Exception as e:
+            logging.error(f"[init_db_state] shop_effects.mock failed: {e}", exc_info=True)
+
+        # ── shop_effects: curse ───────────────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT user_id, remaining, cursed_by, channel_id"
+                " FROM shop_effects WHERE effect_type='curse'"
+            )
+            for uid, remaining, cursed_by, channel_id in await cur.fetchall():
+                state.active_curses[uid] = {
+                    "remaining": remaining,
+                    "cursed_by": cursed_by,
+                    "channel_id": channel_id,
+                }
+        except Exception as e:
+            logging.error(f"[init_db_state] shop_effects.curse failed: {e}", exc_info=True)
+
+        # ── shop_effects: tax ─────────────────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT user_id, master_id, tax_type, tax_emoji, channel_id, activated_at"
+                " FROM shop_effects WHERE effect_type='tax'"
+            )
+            for uid, master_id, tax_type, tax_emoji, channel_id, activated_at in await cur.fetchall():
+                state.active_taxes[uid] = {
+                    "master": master_id,
+                    "type": tax_type,
+                    "emoji": tax_emoji,
+                    "channel_id": channel_id,
+                    "activated_at": activated_at,
+                }
+        except Exception as e:
+            logging.error(f"[init_db_state] shop_effects.tax failed: {e}", exc_info=True)
+
+        # ── rigged_slots ──────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT user_id, symbol FROM rigged_slots")
+            state.rigged_slots = {str(r[0]): r[1] for r in await cur.fetchall()}
+        except Exception as e:
+            logging.error(f"[init_db_state] rigged_slots failed: {e}", exc_info=True)
+
+        # ── rigged_flips ──────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT user_id, remaining_wins FROM rigged_flips")
+            state.rigged_flips = {r[0]: r[1] for r in await cur.fetchall()}
+        except Exception as e:
+            logging.error(f"[init_db_state] rigged_flips failed: {e}", exc_info=True)
+
+        # ── rigged_scratch ────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT user_id, symbols_count FROM rigged_scratch")
+            state.rigged_scratch = {r[0]: r[1] for r in await cur.fetchall()}
+        except Exception as e:
+            logging.error(f"[init_db_state] rigged_scratch failed: {e}", exc_info=True)
+
+        # ── rigged_steal ──────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT user_id, remaining_successes FROM rigged_steal")
+            state.rigged_steal = {r[0]: r[1] for r in await cur.fetchall()}
+        except Exception as e:
+            logging.error(f"[init_db_state] rigged_steal failed: {e}", exc_info=True)
+
+        # ── gambler_streak ────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT user_id, last_full_date, streak_count FROM gambler_streak")
+            state.gambler_streak = {
+                str(r[0]): {"date": r[1], "count": int(r[2])} for r in await cur.fetchall()
+            }
+        except Exception as e:
+            logging.error(f"[init_db_state] gambler_streak failed: {e}", exc_info=True)
+
+        # ── chess_games ───────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT channel_id, game_json FROM chess_games")
+            state.active_chess_games = {r[0]: json.loads(r[1]) for r in await cur.fetchall()}
+        except Exception as e:
+            logging.error(f"[init_db_state] chess_games failed: {e}", exc_info=True)
+
+        # ── ai_threads (ask, story, roleplay, rpg) ───────────────────────
+        try:
+            await cur.execute(
+                "SELECT thread_id, kind, owner_id, guild_id, invited_ids_json, "
+                "system_prompt, character_prompt, history_json FROM ai_threads"
+            )
+            for (
+                tid, kind, owner_id, guild_id,
+                invited_json, system_prompt, character_prompt, history_json,
+            ) in await cur.fetchall():
+                state.ai_threads[tid] = {
+                    "kind": kind,
+                    "owner_id": owner_id,
+                    "guild_id": guild_id,
+                    "invited_ids": set(json.loads(invited_json) if invited_json else []),
+                    "system_prompt": system_prompt,
+                    "character_prompt": character_prompt,
+                    "history": json.loads(history_json) if history_json else [],
+                }
+        except Exception as e:
+            logging.error(f"[init_db_state] ai_threads failed: {e}", exc_info=True)
+
+        # ── quote_log ─────────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT content FROM quote_log ORDER BY id")
+            state.quote_log = [r[0] for r in await cur.fetchall()]
+        except Exception as e:
+            logging.error(f"[init_db_state] quote_log failed: {e}", exc_info=True)
+
+        # ── leveling — nested by guild_id ─────────────────────────────────
+        try:
+            await cur.execute("SELECT guild_id, user_id, data FROM leveling")
+            for guild_id, uid, data_json in await cur.fetchall():
+                rec = json.loads(data_json) if data_json else {}
+                state.leveling.setdefault(str(guild_id), {})[str(uid)] = rec
+        except Exception as e:
+            logging.error(f"[init_db_state] leveling failed: {e}", exc_info=True)
+
+        # ── channel_prompts ───────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT channel_id, prompt_text FROM channel_prompts")
+            state.channel_prompts = {r[0]: r[1] for r in await cur.fetchall()}
+        except Exception as e:
+            logging.error(f"[init_db_state] channel_prompts failed: {e}", exc_info=True)
+
+        # ── command_perms ─────────────────────────────────────────────────
+        try:
+            json_perms = _load_json(COMMAND_PERMS_FILE, {})
+            for cmd, data in json_perms.items():
+                await cur.execute(
+                    "INSERT IGNORE INTO command_perms (command_name, tier, hidden) VALUES (%s,%s,%s)",
+                    (cmd, data.get("tier", "everyone"), bool(data.get("hidden", False))),
+                )
+            await cur.execute("SELECT command_name, tier, hidden FROM command_perms")
+            state.command_perms = {
+                r[0]: {"tier": r[1], "hidden": bool(r[2])}
+                for r in await cur.fetchall()
+            }
+        except Exception as e:
+            logging.error(f"[init_db_state] command_perms failed: {e}", exc_info=True)
+
+        # ── activity caches (crime / gambling / levelups) ─────────────────
+        # Each *_history table is the source of truth (atomic UPSERT on every
+        # event). The in-memory dicts are a fast-read cache for the graph cog's
+        # live-today append; on boot they're empty, so re-hydrate today's row.
+        try:
+            from src.economy import _ct_now, _current_bucket_ct
+            today = _ct_now().date().isoformat()
+            bucket = _current_bucket_ct()
+            state.crime_today_by_user = await load_today_crime_row(today, bucket)
+            state.gambling_today_by_user = await load_today_gambling_row(today, bucket)
+            state.levelups_today = await load_today_levelups_row(today, bucket)
+            # Mark which bucket the freshly-hydrated dicts reflect, so the
+            # first record_* call after boot doesn't see "old" bucket and
+            # wipe the just-loaded data.
+            state._crime_bucket = bucket
+            state._gambling_bucket = bucket
+            state._levelups_bucket = bucket
+        except Exception as e:
+            logging.error(f"[init_db_state] activity hydration failed: {e}", exc_info=True)
+
+    # bot_admins: always from env, never DB
+    state.bot_admins = set(INITIAL_BOT_ADMIN_IDS)

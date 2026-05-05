@@ -56,7 +56,7 @@ Async Python on top of `discord.py` and `aiomysql`, with streaming LLM output, a
 src/
 ├── core.py            # Bot factory, extension loading, level-gate check
 ├── config.py          # All env vars and tunable constants
-├── persistence.py     # MariaDB-backed save/load layer (~970 lines)
+├── persistence/       # MariaDB-backed save/load layer, split by domain
 ├── db.py              # aiomysql connection pool
 ├── schema.sql         # MariaDB schema
 ├── economy.py         # Balance, daily reset, savings, jail logic
@@ -73,7 +73,7 @@ src/
 
 Roughly **12.4k lines of source** and **3.9k lines of tests**.
 
-The persistence layer was [migrated from JSON files to MariaDB](src/persistence.py) mid-project — the schema lives in [src/schema.sql](src/schema.sql) and a SQLite-flavored version lives in [tests/fakes/schema_sqlite.sql](tests/fakes/schema_sqlite.sql) so the test suite can run against an in-memory DB with no external dependencies.
+The persistence layer was [migrated from JSON files to MariaDB](src/persistence/) mid-project — the schema lives in [src/schema.sql](src/schema.sql) and a SQLite-flavored version lives in [tests/fakes/schema_sqlite.sql](tests/fakes/schema_sqlite.sql) so the test suite can run against an in-memory DB with no external dependencies.
 
 ## Quick start (Docker)
 

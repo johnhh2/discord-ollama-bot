@@ -89,7 +89,7 @@ Never use `datetime.timezone.utc` with a hardcoded offset for CT — it won't re
 
 ## Command Permission System
 
-Every command's access tier is controlled by `src/command_perms.json` (committed to the repo, not under `data/`). Commands not listed default to `everyone` (no restriction). The JSON seeds the `command_perms` table on every boot via `INSERT IGNORE` (see `init_db_state` in `src/persistence.py`); `!setperm` mutates the DB at runtime but the JSON is the source of truth — always commit permanent changes there.
+Every command's access tier is controlled by `src/command_perms.json` (committed to the repo, not under `data/`). Commands not listed default to `everyone` (no restriction). The JSON seeds the `command_perms` table on every boot via `INSERT IGNORE` (see `init_db_state` in `src/persistence/init.py`); `!setperm` mutates the DB at runtime but the JSON is the source of truth — always commit permanent changes there.
 
 ### Tiers
 
@@ -129,7 +129,7 @@ When `hidden: true`, a denied command silently does nothing instead of sending `
 
 - `src/command_perms.json` — the permission config (committed to the repo, not in `data/`)
 - `src/permissions.py` — `check_command_permission`, `get_command_perm`
-- `src/persistence.py` — `load_command_perms`, `save_command_perms`
+- `src/persistence/command_perms.py` — `save_command_perms` (read path lives in `src/persistence/init.py`)
 - `src/state.py` — `command_perms` dict (loaded at startup)
 
 ## Schema migrations
