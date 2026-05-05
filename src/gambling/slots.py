@@ -5,6 +5,7 @@ from discord.ext import commands
 
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, parse_amount, send_ephemeral, fetch_member, shop_charge, MemberConverter,
+    announce_record,
 )
 from src.economy import (
     add_balance, get_balance, _ensure_user, record_gambling_event,
@@ -157,11 +158,12 @@ class SlotsCog(commands.Cog):
             state.slot_jackpot = SLOT_JACKPOT_SEED
             await save_jackpot(state.slot_jackpot)
             gid = ctx.guild.id if ctx.guild else None
-            await add_balance(uid, prize, guild_id=gid, holder_name=ctx.author.display_name)
+            await add_balance(uid, prize, guild_id=gid, holder_name=ctx.author.display_name, channel=ctx.channel)
             if uid not in state.godmode_users:
                 await record_gambling_event(uid, gained=max(0, prize - amount))
-            await try_set_record(gid, "slots_jackpot", prize, uid, ctx.author.display_name,
-                           bet=amount, symbols=display)
+            if await try_set_record(gid, "slots_jackpot", prize, uid, ctx.author.display_name,
+                           bet=amount, symbols=display):
+                await announce_record(ctx.channel, "slots_jackpot", ctx.author.display_name, prize)
             desc = (f"{display}\n\n🏆 **{ctx.author.display_name} hit the Progressive Jackpot!**\n"
                     f"**Won: {prize:,} 🪙** (Bet: {amount:,} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {await get_balance(uid):,} 🪙\n"
                     f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*")
@@ -204,11 +206,12 @@ class SlotsCog(commands.Cog):
 
         winnings = amount * mult
         gid = ctx.guild.id if ctx.guild else None
-        await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name)
+        await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name, channel=ctx.channel)
         if uid not in state.godmode_users:
             await record_gambling_event(uid, gained=max(0, winnings - amount))
-        await try_set_record(gid, "slots_non_jackpot", winnings, uid, ctx.author.display_name,
-                       bet=amount, symbols=display, label=label)
+        if await try_set_record(gid, "slots_non_jackpot", winnings, uid, ctx.author.display_name,
+                       bet=amount, symbols=display, label=label):
+            await announce_record(ctx.channel, "slots_non_jackpot", ctx.author.display_name, winnings)
 
         result_labels = {
             "jackpot": f"7️⃣7️⃣7️⃣ — **{mult}x** (min bet 25, bonus scales to 4x at bet 1000+)",

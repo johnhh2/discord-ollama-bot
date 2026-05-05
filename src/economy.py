@@ -32,14 +32,16 @@ async def get_balance(uid: int) -> int:
     return state.economy["users"][str(uid)]["balance"]
 
 
-async def add_balance(uid: int, n: int, guild_id: int = None, holder_name: str = None):
+async def add_balance(uid: int, n: int, guild_id: int = None, holder_name: str = None, channel=None):
     from src import state
     await _ensure_user(uid)
     state.economy["users"][str(uid)]["balance"] += n
     await save_economy(uid=uid)
     if guild_id is not None and holder_name is not None:
         new_bal = state.economy["users"][str(uid)]["balance"]
-        await try_set_record(guild_id, "highest_balance", new_bal, uid, holder_name)
+        if await try_set_record(guild_id, "highest_balance", new_bal, uid, holder_name):
+            from src.helpers import announce_record
+            await announce_record(channel, "highest_balance", holder_name, new_bal)
 
 
 async def deduct_balance(uid: int, n: int) -> bool:

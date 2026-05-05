@@ -3,7 +3,7 @@ import random
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, parse_amount, shop_charge,
+    emb, C_GREEN, C_RED, parse_amount, shop_charge, announce_record,
 )
 from src.economy import (
     add_balance, get_balance, record_gambling_event,
@@ -47,10 +47,11 @@ class FlipCog(commands.Cog):
         if win:
             winnings = amount * 2
             gid = ctx.guild.id if ctx.guild else None
-            await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name)
+            await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name, channel=ctx.channel)
             if uid not in state.godmode_users:
                 await record_gambling_event(uid, gained=amount)  # net: paid `amount`, received `2*amount`
-            await try_set_record(gid, "flip", winnings, uid, ctx.author.display_name)
+            if await try_set_record(gid, "flip", winnings, uid, ctx.author.display_name):
+                await announce_record(ctx.channel, "flip", ctx.author.display_name, winnings)
             await ctx.send(embed=emb("🪙 Heads!", f"**{ctx.author.display_name}** won **{amount:,} 🪙**! Balance: {await get_balance(uid):,} 🪙", C_GREEN))
         else:
             if uid not in state.godmode_users:

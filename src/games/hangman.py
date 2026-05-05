@@ -7,7 +7,7 @@ import discord
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_ORANGE, _delete_after, _edit_board,
+    emb, C_GREEN, C_RED, C_ORANGE, _delete_after, _edit_board, announce_record,
 )
 from src.economy import (
     add_balance, get_balance, record_gambling_event,
@@ -96,7 +96,7 @@ def calculate_hangman_reward(word: str) -> int:
     return total
 
 
-async def _distribute_hangman_rewards(cid: int, game: dict) -> str:
+async def _distribute_hangman_rewards(cid: int, game: dict, channel=None) -> str:
     """Distributes win rewards, deletes the game, and returns the reward message."""
     word = game["word"]
     gid = game.get("guild_id")
@@ -114,7 +114,7 @@ async def _distribute_hangman_rewards(cid: int, game: dict) -> str:
         bonus = 1 if i < remainder else 0
         reward = per_player + bonus
         name = names.get(pid, f"<@{pid}>")
-        await add_balance(pid, reward, guild_id=gid if gid else None, holder_name=name)
+        await add_balance(pid, reward, guild_id=gid if gid else None, holder_name=name, channel=channel)
         if reward > 0:
             await record_gambling_event(pid, gained=reward)
         msg += f"**{name}**: +{reward:,} 🪙 | Balance: {await get_balance(pid):,} 🪙\n"
@@ -123,12 +123,15 @@ async def _distribute_hangman_rewards(cid: int, game: dict) -> str:
             wins_key = f"hangman_wins_{pid}"
             records = await load_records(gid)
             current_wins = records.get(wins_key, {}).get("value", 0)
-            await try_set_record(gid, wins_key, current_wins + 1, pid, name)
+            new_wins = current_wins + 1
+            if await try_set_record(gid, wins_key, new_wins, pid, name):
+                await announce_record(channel, wins_key, name, new_wins)
     # Track biggest hangman payout (use total for multiplayer, per-player for solo)
     payout_value = total_reward if len(active_players) == 1 else per_player
     first_pid = active_players[0]
     first_name = names.get(first_pid, str(first_pid))
-    await try_set_record(gid, "hangman_payout", payout_value, first_pid, first_name, word=word)
+    if await try_set_record(gid, "hangman_payout", payout_value, first_pid, first_name, word=word):
+        await announce_record(channel, "hangman_payout", first_name, payout_value)
     return msg.strip()
 
 
@@ -153,7 +156,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
         if guess == game["word"]:
             game["last_move"] = f"{name} guessed the word! 🎉"
             game["guessed_letters"].update(game["word"])  # reveal full word for display
-            reward_msg = await _distribute_hangman_rewards(cid, game)
+            reward_msg = await _distribute_hangman_rewards(cid, game, channel=channel)
             await _edit_board(channel, game, emb("🎉 Correct!", build_hangman_display(game) + "\n\n" + reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         elif guess in game["guessed_words"]:
             game["last_move"] = f"{name} guessed `{guess}` ❌ (already tried)"
@@ -181,7 +184,7 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
     if guess in game["word"]:
         if all(c in game["guessed_letters"] for c in game["word"]):
             game["last_move"] = f"{name} guessed `{guess}` ✅ — word complete! 🎉"
-            reward_msg = await _distribute_hangman_rewards(cid, game)
+            reward_msg = await _distribute_hangman_rewards(cid, game, channel=channel)
             await _edit_board(channel, game, emb("🎉 You Got It!", build_hangman_display(game) + "\n\n" + reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         else:
             game["last_move"] = f"{name} guessed `{guess}` ✅"

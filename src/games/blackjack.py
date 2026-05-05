@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_GOLD, C_BLUE, parse_amount, shop_charge,
+    emb, C_GREEN, C_RED, C_GOLD, C_BLUE, parse_amount, shop_charge, announce_record,
 )
 from src.economy import (
     add_balance, get_balance, record_gambling_event,
@@ -102,12 +102,13 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
 
     if dval > 21 or pval > dval:
         gid = message.guild.id if message.guild else None
-        await add_balance(uid, amount * 2, guild_id=gid, holder_name=uid_name)
+        await add_balance(uid, amount * 2, guild_id=gid, holder_name=uid_name, channel=message.channel)
         if uid not in state.godmode_users:
             await record_gambling_event(uid, gained=amount)  # net: paid `amount` via shop_charge, received 2x
-        await try_set_record(gid, "blackjack", amount * 2, uid, uid_name,
+        if await try_set_record(gid, "blackjack", amount * 2, uid, uid_name,
                        player_hand=format_hand(player), player_score=pval,
-                       dealer_score=dval)
+                       dealer_score=dval):
+            await announce_record(message.channel, "blackjack", uid_name, amount * 2)
         color, result = C_GREEN, f"✅ **{uid_name}** wins **{amount:,} 🪙**! Balance: {await get_balance(uid):,} 🪙"
     elif pval == dval:
         await add_balance(uid, amount)  # push: bet refunded, no P/L recorded
@@ -168,12 +169,13 @@ class BlackjackCog(commands.Cog):
             else:
                 winnings = int(amount * BLACKJACK_NATURAL_MULT)
                 gid = ctx.guild.id if ctx.guild else None
-                await add_balance(uid, winnings, guild_id=gid, holder_name=username)
+                await add_balance(uid, winnings, guild_id=gid, holder_name=username, channel=ctx.channel)
                 if uid not in state.godmode_users:
                     await record_gambling_event(uid, gained=max(0, winnings - amount))
-                await try_set_record(gid, "blackjack", winnings, uid, username,
+                if await try_set_record(gid, "blackjack", winnings, uid, username,
                                player_hand=format_hand(player), player_score=pval,
-                               dealer_score=dval)
+                               dealer_score=dval):
+                    await announce_record(ctx.channel, "blackjack", username, winnings)
                 await ctx.send(embed=emb("🃏 Blackjack!", full_display + f"\n\n**{ctx.author.display_name}** wins **{winnings:,} 🪙**! Balance: {await get_balance(uid):,} 🪙", C_GREEN))
             return
 

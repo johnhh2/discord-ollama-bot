@@ -5,7 +5,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, C_GREY,
+    emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, C_GREY, announce_record,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, drain_bot_balance_into_lottery, announce_new_lottery,
@@ -59,9 +59,10 @@ class LotteryCog(commands.Cog):
                     weights = [players[pid] for pid in player_ids]
                     winner_id = random.choices(player_ids, weights=weights, k=1)[0]
                     winner = await self.bot.fetch_user(int(winner_id))
-                    await add_balance(int(winner_id), pool, guild_id=guild.id, holder_name=winner.display_name)
+                    await add_balance(int(winner_id), pool, guild_id=guild.id, holder_name=winner.display_name, channel=channel)
                     await record_gambling_event(int(winner_id), gained=pool)
-                    await try_set_record(guild.id, "lottery", pool, int(winner_id), winner.display_name)
+                    if await try_set_record(guild.id, "lottery", pool, int(winner_id), winner.display_name):
+                        await announce_record(channel, "lottery", winner.display_name, pool)
 
                     embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
                     embed.description = (

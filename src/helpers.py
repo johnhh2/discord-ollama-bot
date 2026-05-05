@@ -24,6 +24,39 @@ def emb(title: str, description: str, color: int) -> discord.Embed:
     return discord.Embed(title=title, description=description, color=color)
 
 
+RECORD_LABELS = {
+    "highest_balance": "highest balance",
+    "flip": "biggest flip win",
+    "slots_jackpot": "biggest slots jackpot",
+    "slots_non_jackpot": "biggest non-jackpot slots win",
+    "lottery": "biggest lottery prize",
+    "blackjack": "biggest blackjack win",
+    "hangman_payout": "biggest hangman payout",
+}
+
+
+def _record_label(category: str) -> str:
+    if category.startswith("hangman_wins_"):
+        return "most hangman wins"
+    return RECORD_LABELS.get(category, category.replace("_", " "))
+
+
+async def announce_record(channel, category: str, holder_name: str, value: int) -> None:
+    """Send a record-broken announcement embed to `channel`. Best-effort; swallows errors."""
+    if channel is None:
+        return
+    label = _record_label(category)
+    if category.startswith("hangman_wins_"):
+        suffix = f"**{value:,}** wins"
+    else:
+        suffix = f"**{value:,} 🪙**"
+    desc = f"**{holder_name}** just set a new {label} record: {suffix}"
+    try:
+        await channel.send(embed=emb("🏆 New Record!", desc, C_GOLD))
+    except Exception:
+        pass
+
+
 def mocking_font(text: str) -> str:
     """Convert text to mocking alternating case: LiKe ThIs."""
     result = []
