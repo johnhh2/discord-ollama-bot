@@ -37,8 +37,8 @@ class FlipCog(commands.Cog):
         if n < 1:
             await ctx.send("`n` must be a positive whole number.")
             return
-        if n > 100:
-            await ctx.send("You can flip at most 100 coins at a time.")
+        if n > 100_000:
+            await ctx.send("You can flip at most 100,000 coins at a time.")
             return
         total_cost = amount * n
         if not await shop_charge(ctx, uid, total_cost):
