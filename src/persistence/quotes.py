@@ -1,10 +1,10 @@
 import json
 
+from src import state
 from src.db import with_cursor
 
 
 async def save_quote_log(log: list):
-    from src import state
     trimmed = log[-10:]
     state.quote_log = trimmed
     async with with_cursor() as cur:

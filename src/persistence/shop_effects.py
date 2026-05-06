@@ -1,10 +1,10 @@
 import json
 
+from src import state
 from src.db import with_cursor
 
 
 async def save_ragebait():
-    from src import state
     async with with_cursor() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='ragebait'")
         for uid, data in state.active_ragebaits.items():
@@ -17,7 +17,6 @@ async def save_ragebait():
 
 
 async def save_mock():
-    from src import state
     async with with_cursor() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='mock'")
         for uid, data in state.active_mocks.items():
@@ -29,7 +28,6 @@ async def save_mock():
 
 
 async def save_curse(curse_data: dict):
-    from src import state
     state.active_curses = curse_data
     async with with_cursor() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='curse'")
@@ -42,7 +40,6 @@ async def save_curse(curse_data: dict):
 
 
 async def save_tax(tax_data: dict):
-    from src import state
     state.active_taxes = tax_data
     async with with_cursor() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='tax'")

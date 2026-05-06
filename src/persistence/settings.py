@@ -1,10 +1,10 @@
 import json
 
+from src import state
 from src.db import with_cursor
 
 
 async def save_guild_settings():
-    from src import state
     async with with_cursor() as cur:
         for gid_str, settings in state.guild_settings.items():
             await cur.execute(
@@ -15,7 +15,6 @@ async def save_guild_settings():
 
 
 async def save_bot_roles():
-    from src import state
     async with with_cursor() as cur:
         await cur.execute("DELETE FROM bot_roles")
         for role_id in state.bot_roles:
@@ -23,7 +22,6 @@ async def save_bot_roles():
 
 
 async def save_godmode_users():
-    from src import state
     async with with_cursor() as cur:
         await cur.execute("DELETE FROM godmode_users")
         for uid in state.godmode_users:
@@ -31,7 +29,6 @@ async def save_godmode_users():
 
 
 async def save_bot_settings():
-    from src import state
     async with with_cursor() as cur:
         for k, v in state.bot_settings.items():
             await cur.execute(

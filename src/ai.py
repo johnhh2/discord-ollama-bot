@@ -5,6 +5,7 @@ import time
 import aiohttp
 import discord
 
+from src import state
 from src.config import OLLAMA_BASE_URL, OLLAMA_MODEL
 from src.helpers import emb, C_RED, _log_audit
 from src.economy import (
@@ -55,7 +56,6 @@ _FEATURE_LABELS: dict = {
 
 async def enforce_cost(ctx, feature: str) -> bool:
     """Deduct the coin cost for *feature*. Returns True if the user can proceed."""
-    from src import state
     uid = ctx.author.id
     cost = 0 if uid in state.godmode_users else FEATURE_COSTS.get(feature, 0)
     if cost == 0:
@@ -110,7 +110,6 @@ async def stream_ollama(
     model: str = None,
     guild_id: int = None,
 ) -> str:
-    from src import state
     if not state.bot_settings.get("ai_enabled", True):
         await placeholder.edit(
             content="",
@@ -184,8 +183,7 @@ async def _execute_ollama_stream(
                 session, messages, placeholder, guild_id=guild_id, model=model
             )
         history.append({"role": "assistant", "content": full_response})
-        from src import state as _state
-        _state.stats_ai_responses_today += 1
+        state.stats_ai_responses_today += 1
         await finalize(placeholder, channel, full_response)
     except aiohttp.ClientError as e:
         history.pop()
@@ -208,7 +206,6 @@ async def respond(
     guild_id: int = None,
     author_name: str = None,
 ):
-    from src import state
     from src.helpers import get_system_prompt
     channel_id = channel.id
 

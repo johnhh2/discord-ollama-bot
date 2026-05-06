@@ -3,6 +3,7 @@ import functools
 
 from discord.ext import commands
 
+from src import state
 from src.helpers import emb, C_RED, _delete_after
 from src.guild_config import get_guild_cfg
 def requires_perm(func):
@@ -70,7 +71,6 @@ async def check_chess_channel(ctx: commands.Context) -> bool:
 
 
 def is_admin(ctx: commands.Context) -> bool:
-    from src import state
     return ctx.author.id in state.bot_admins
 
 
@@ -83,7 +83,6 @@ def can_manage_settings(ctx: commands.Context) -> bool:
 
 
 def get_command_perm(command_name: str) -> dict:
-    from src import state
     perms = state.command_perms
     # Walk from most-specific to least-specific: "settings ai-channels" → "settings" → default
     parts = command_name.split(" ")
@@ -118,7 +117,6 @@ async def check_command_permission(ctx: commands.Context) -> bool:
 
 def check_rate_limit(user_id: int) -> bool:
     import time
-    from src import state
     from src.config import RATE_LIMIT_SECONDS
     now = time.monotonic()
     last = state.user_last_request.get(user_id, 0)

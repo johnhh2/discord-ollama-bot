@@ -1,10 +1,10 @@
 import json
 
+from src import state
 from src.db import with_cursor
 
 
 async def save_chess_games():
-    from src import state
     async with with_cursor() as cur:
         await cur.execute("DELETE FROM chess_games")
         for ch_id, game in state.active_chess_games.items():

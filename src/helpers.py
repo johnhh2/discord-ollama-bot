@@ -6,6 +6,7 @@ import time
 import discord
 from discord.ext import commands
 
+from src import state
 from src.config import RACE_TRACK_LEN, EPHEMERAL_DELETE_AFTER
 from src.persistence import add_ephemeral_msg
 
@@ -95,7 +96,6 @@ def get_memory_mb() -> float:
 
 
 def format_uptime() -> str:
-    from src import state
     seconds = int(time.monotonic() - state.bot_start_time)
     days, r = divmod(seconds, 86400)
     hours, r = divmod(r, 3600)
@@ -123,13 +123,11 @@ def get_version() -> str:
 
 
 def get_system_prompt(channel_id: int) -> str:
-    from src import state
     from src.config import SYSTEM_PROMPT
     return state.channel_prompts.get(channel_id, SYSTEM_PROMPT)
 
 
 def log_bot_permission_error(ctx: commands.Context, error_msg: str):
-    from src import state
     state.audit_log.append({
         "time": time.time(),
         "user": f"{ctx.author.display_name} ({ctx.author.id})",
@@ -139,7 +137,6 @@ def log_bot_permission_error(ctx: commands.Context, error_msg: str):
 
 
 def _log_audit(user: str, command: str, error: str):
-    from src import state
     state.audit_log.append({
         "time": time.time(),
         "user": user,
@@ -263,7 +260,6 @@ async def shop_charge(
     ctx: commands.Context, uid: int, cost: int, cost_label: str = None
 ) -> bool:
     """Check and deduct *cost* coins for a shop action. Returns True if the user can proceed."""
-    from src import state
     from src.economy import deduct_balance, get_balance
     if uid in state.godmode_users or cost == 0:
         return True

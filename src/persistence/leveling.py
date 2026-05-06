@@ -1,5 +1,6 @@
 import json
 
+from src import state
 from src.db import with_cursor
 
 
@@ -10,7 +11,6 @@ async def save_leveling(guild_id: int = None, uid: int = None):
     even if state.leveling was never fully loaded. If both are None, writes
     every row in state (bulk; should rarely be needed now).
     """
-    from src import state
     async with with_cursor() as cur:
         if guild_id is not None and uid is not None:
             rec = state.leveling.get(str(guild_id), {}).get(str(uid))

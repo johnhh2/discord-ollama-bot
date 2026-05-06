@@ -1,8 +1,8 @@
+from src import state
 from src.db import with_cursor
 
 
 async def save_command_perms():
-    from src import state
     async with with_cursor() as cur:
         for cmd, data in state.command_perms.items():
             await cur.execute(

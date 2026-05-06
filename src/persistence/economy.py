@@ -1,5 +1,6 @@
 import json
 
+from src import state
 from src.db import with_cursor
 
 
@@ -40,7 +41,6 @@ async def save_economy(uid: int = None):
     fully loaded. If `uid` is None, writes ALL rows in state (legacy bulk save,
     used by do_daily_reset).
     """
-    from src import state
     async with with_cursor() as cur:
         if uid is not None:
             u = state.economy["users"].get(str(uid))
@@ -68,7 +68,6 @@ async def save_economy(uid: int = None):
 
 async def save_guild_house(guild_id: int):
     """Write a single guild's house balance."""
-    from src import state
     bal = state.economy.get("guild_house", {}).get(str(guild_id), 0)
     async with with_cursor() as cur:
         await cur.execute(
@@ -79,7 +78,6 @@ async def save_guild_house(guild_id: int):
 
 
 async def save_insurance():
-    from src import state
     async with with_cursor() as cur:
         await cur.execute("DELETE FROM shop_insurance")
         for uid_str, entry in state.insurance.items():
@@ -90,7 +88,6 @@ async def save_insurance():
 
 
 async def save_jackpot(value: int):
-    from src import state
     state.slot_jackpot = value
     async with with_cursor() as cur:
         await cur.execute(

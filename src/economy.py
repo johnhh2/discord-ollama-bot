@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 import discord
 
+from src import state
 from src.config import OLLAMA_MODEL, DAILY_RESET_HOUR
 from src.persistence import (
     save_economy, save_insurance, try_set_record,
@@ -19,7 +20,6 @@ from src.guild_config import get_guild_cfg
 
 
 async def _ensure_user(uid: int):
-    from src import state
     key = str(uid)
     if key not in state.economy["users"]:
         state.economy["users"][key] = {"balance": 0, "last_daily": 0.0}
@@ -27,14 +27,12 @@ async def _ensure_user(uid: int):
 
 
 async def get_balance(uid: int) -> int:
-    from src import state
     await _ensure_user(uid)
     return state.economy["users"][str(uid)]["balance"]
 
 
 async def add_balance(uid: int, n: int, guild_id: int = None, holder_name: str = None) -> bool:
     """Adds `n` to uid's balance. Returns True if this caused a new highest_balance record."""
-    from src import state
     await _ensure_user(uid)
     state.economy["users"][str(uid)]["balance"] += n
     await save_economy(uid=uid)
@@ -45,7 +43,6 @@ async def add_balance(uid: int, n: int, guild_id: int = None, holder_name: str =
 
 
 async def deduct_balance(uid: int, n: int) -> bool:
-    from src import state
     await _ensure_user(uid)
     key = str(uid)
     if state.economy["users"][key]["balance"] < n:
@@ -56,12 +53,10 @@ async def deduct_balance(uid: int, n: int) -> bool:
 
 
 def get_guild_house_balance(guild_id: int) -> int:
-    from src import state
     return state.economy.get("guild_house", {}).get(str(guild_id), 0)
 
 
 async def add_guild_house(guild_id: int, amount: int):
-    from src import state
     from src.persistence import save_guild_house
     state.economy.setdefault("guild_house", {})
     key = str(guild_id)
@@ -71,7 +66,6 @@ async def add_guild_house(guild_id: int, amount: int):
 
 async def drain_bot_balance_into_lottery(lottery: dict, guild_id: int) -> int:
     """Transfer this guild's house balance into the lottery prize pool. Returns the amount transferred."""
-    from src import state
     from src.persistence import save_guild_house
     state.economy.setdefault("guild_house", {})
     key = str(guild_id)
@@ -114,7 +108,6 @@ async def announce_new_lottery(
 
 
 async def is_insured(uid: int, against: str) -> bool:
-    from src import state
     if str(uid) not in state.insurance:
         return False
     entry = state.insurance[str(uid)]
@@ -127,7 +120,6 @@ async def is_insured(uid: int, against: str) -> bool:
 
 def get_insurance_expiry(uid: int) -> int | None:
     """Return the insurance expiry timestamp for uid, or None if not insured."""
-    from src import state
     entry = state.insurance.get(str(uid))
     if entry and entry.get("expires_at", 0) > time.time():
         return int(entry["expires_at"])
@@ -248,7 +240,6 @@ def next_daily_reset_ts() -> int:
 
 async def get_savings_value(uid: int) -> float:
     """Return the current compound value of a user's savings (1% daily interest per deposit)."""
-    from src import state
     await _ensure_user(uid)
     deposits = state.economy["users"][str(uid)].get("savings", [])
     now = time.time()
@@ -261,7 +252,6 @@ async def get_savings_value(uid: int) -> float:
 
 async def add_savings(uid: int, amount: int) -> bool:
     """Deduct amount from balance and add a new savings deposit. Returns False if insufficient funds."""
-    from src import state
     if not await deduct_balance(uid, amount):
         return False
     await _ensure_user(uid)
@@ -274,7 +264,6 @@ async def add_savings(uid: int, amount: int) -> bool:
 
 async def remove_savings(uid: int, amount: int) -> bool:
     """Withdraw amount from savings back to balance. Returns False if savings value < amount."""
-    from src import state
     await _ensure_user(uid)
     user = state.economy["users"][str(uid)]
     deposits = user.get("savings", [])
@@ -309,7 +298,6 @@ async def remove_savings(uid: int, amount: int) -> bool:
 async def seize_from_savings(uid: int, max_amount: int) -> int:
     """Drain up to max_amount from savings without crediting the wallet.
     Returns the actual amount seized (0 if savings empty or max_amount <= 0)."""
-    from src import state
     if max_amount <= 0:
         return 0
     await _ensure_user(uid)
@@ -347,7 +335,6 @@ async def snapshot_balances():
 
     Pruning lives in `do_daily_reset` (DB-level DELETE), not here — the
     snapshot loop runs every 30min and shouldn't churn through old rows."""
-    from src import state
     import time as _time
     today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
@@ -367,7 +354,6 @@ async def snapshot_balances():
 async def snapshot_bot_stats(ai_up: bool):
     """Write current message/command/AI counts and memory into today's
     CURRENT 6h bucket. Pruning lives in do_daily_reset."""
-    from src import state
     from src.helpers import get_memory_mb
     today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
@@ -386,7 +372,6 @@ async def snapshot_bot_stats(ai_up: bool):
 async def snapshot_command_usage():
     """Write current per-cog command counts into today's CURRENT 6h bucket.
     Pruning lives in do_daily_reset."""
-    from src import state
     today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
     history = await load_command_usage_history()
@@ -404,7 +389,6 @@ async def record_crime_event(uid: int, *, gained: int = 0, lost: int = 0):
     bucket has rolled over since the last recorded event, the in-memory
     cache is cleared first so it only reflects the current bucket.
     """
-    from src import state
     if gained == 0 and lost == 0:
         return
     today = _ct_now().date().isoformat()
@@ -426,7 +410,6 @@ async def record_gambling_event(uid: int, *, gained: int = 0, lost: int = 0):
     semantics: refunds and pushes record nothing). Persists synchronously.
     Bucket rollover is detected and the cache is reset accordingly.
     """
-    from src import state
     if gained == 0 and lost == 0:
         return
     today = _ct_now().date().isoformat()
@@ -467,7 +450,6 @@ async def do_daily_reset():
     by calendar date on the disk side and persisted atomically per-event,
     so they roll over naturally at calendar midnight (not gameplay 5am).
     """
-    from src import state
     today = _ct_today()
     await snapshot_all()
     state.stats_messages_today = 0
