@@ -164,6 +164,18 @@ class LotteryCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a positive number.", C_RED))
             return
 
+        TICKET_CAP = 5000
+        current_tickets = int(lottery.get("players", {}).get(str(uid), 0))
+        if current_tickets + tickets > TICKET_CAP:
+            remaining = TICKET_CAP - current_tickets
+            await ctx.send(embed=emb(
+                "🎟️ Ticket Cap Reached",
+                f"Each player can hold at most **{TICKET_CAP:,}** 🎟️ per lottery.\n"
+                f"You have **{current_tickets:,}**; you can buy up to **{remaining:,}** more.",
+                C_RED,
+            ))
+            return
+
         cost = tickets * 10
         if not await deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"Need {cost:,} 🪙. Balance: {await get_balance(uid):,} 🪙", C_RED))
