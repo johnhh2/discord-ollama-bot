@@ -173,29 +173,29 @@ class TestBuildBlackjackDisplay:
 
 class TestCalculateHangmanReward:
     def test_short_word_no_rare_letters(self):
-        # "abc": base=10, length_bonus=0, unique=3→9, rare=0 → total=19
-        assert calculate_hangman_reward("abc") == 19
+        # "abc": base=60, length_bonus=0, unique=3→9, rare=0 → total=69
+        assert calculate_hangman_reward("abc") == 69
 
     def test_ultra_rare_letters(self):
         # "quiz": q (ultra-rare), z (ultra-rare), u, i
-        # base=10, length_bonus=(4-3)*6=6, unique=4→12
+        # base=60, length_bonus=(4-3)*6=6, unique=4→12
         # ultra_rare_count=2 (q, z) → rare_bonus=100
-        # total = 128
-        assert calculate_hangman_reward("quiz") == 128
+        # total = 178
+        assert calculate_hangman_reward("quiz") == 178
 
     def test_rare_letters(self):
         # "sky": s, k (rare), y (rare)
-        # base=10, length_bonus=0, unique=3→9
+        # base=60, length_bonus=0, unique=3→9
         # rare_count=2 (k, y) → rare_bonus=50
-        # total=69
-        assert calculate_hangman_reward("sky") == 69
+        # total=119
+        assert calculate_hangman_reward("sky") == 119
 
     def test_longer_word(self):
         # "python": 6 chars, p,y(rare),t,h,o,n → 6 unique
-        # base=10, length_bonus=(6-3)*6=18, unique=6→18
+        # base=60, length_bonus=(6-3)*6=18, unique=6→18
         # rare_count=1 (y) → rare_bonus=25
-        # total=71
-        assert calculate_hangman_reward("python") == 71
+        # total=121
+        assert calculate_hangman_reward("python") == 121
 
 
 class TestBuildHangmanDisplay:

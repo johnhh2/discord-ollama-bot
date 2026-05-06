@@ -29,8 +29,21 @@ from src import state
 # ── Hangman helpers ───────────────────────────────────────────────────────────
 
 _hangman_words_path = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "hangman_words.txt")
+# File format: word,category,bonus  (category is "name" or "word"; bonus is added to the
+# computed reward when this word is guessed)
+HANGMAN_WORDS: list[str] = []
+HANGMAN_WORD_BONUS: dict[str, int] = {}
 with open(_hangman_words_path) as _f:
-    HANGMAN_WORDS = [w.strip() for w in _f if w.strip()]
+    for _line in _f:
+        _line = _line.strip()
+        if not _line:
+            continue
+        _parts = _line.split(",")
+        _w = _parts[0].strip()
+        _bonus = int(_parts[2].strip()) if len(_parts) >= 3 and _parts[2].strip() else 0
+        HANGMAN_WORDS.append(_w)
+        if _bonus:
+            HANGMAN_WORD_BONUS[_w] = _bonus
 
 HANGMAN_ART = [
     "```\n  +---+\n  |   |\n      |\n      |\n      |\n      |\n=========```",
@@ -92,7 +105,8 @@ def calculate_hangman_reward(word: str) -> int:
     ultra_rare_count = sum(1 for c in word_lower if c in ULTRA_RARE_LETTERS)
     rare_bonus = (rare_count * HANGMAN_RARE_MULT) + (ultra_rare_count * HANGMAN_ULTRA_RARE_MULT)
 
-    total = base + length_bonus + unique_bonus + rare_bonus
+    word_bonus = HANGMAN_WORD_BONUS.get(word_lower, 0)
+    total = base + length_bonus + unique_bonus + rare_bonus + word_bonus
     return total
 
 
