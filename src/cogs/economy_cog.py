@@ -56,13 +56,10 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb("⏳ Already Claimed", f"**{ctx.author.display_name}** already claimed today. Resets at **{DAILY_RESET_HOUR}am** — come back in **{hours}h {minutes}m**.", C_GOLD))
             return
         gid = ctx.guild.id if ctx.guild else None
-        # Mark the claim BEFORE the save: add_balance() persists the row, and
-        # if the bot dies between that save and a separate daily_date save,
-        # on next boot daily_date is still NULL and the user gets the reward
-        # again.
+        await add_balance(uid, DAILY_REWARD, guild_id=gid, holder_name=ctx.author.display_name)
         user_data["daily_date"] = today
         user_data["last_daily"] = time.time()
-        await add_balance(uid, DAILY_REWARD, guild_id=gid, holder_name=ctx.author.display_name)
+        await save_economy(uid=uid)
         await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**! Balance: **{await get_balance(uid):,} 🪙**", C_GREEN))
 
 

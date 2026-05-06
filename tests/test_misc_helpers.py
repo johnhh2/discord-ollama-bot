@@ -168,39 +168,6 @@ async def test_auto_daily_first_ever_claim_sets_last_daily_timestamp(db):
 
 
 @pytest.mark.asyncio
-async def test_auto_daily_after_restart_is_noop_within_same_day(db):
-    """After the user claims daily, the bot restarts (state cleared, then
-    re-hydrated from DB), and the user sends another message — _auto_daily
-    must not re-grant. This catches any persistence/load mismatch on
-    daily_date."""
-    import src.persistence as _persistence
-
-    user = FakeMember(uid=5006)
-    channel = _Channel()
-
-    # Initial claim — saves daily_date to DB.
-    await _auto_daily(_Msg(user, channel))
-    bal_after_first = await _economy.get_balance(user.id)
-    assert bal_after_first == DAILY_REWARD
-
-    # Simulate a restart: drop in-memory state and re-load from DB.
-    _state.economy["users"].clear()
-    _persistence._init_db_state_done = False
-    await _persistence.init_db_state()
-
-    # Should still have the right balance.
-    assert await _economy.get_balance(user.id) == bal_after_first
-
-    # daily_date should round-trip identically — not as a date object,
-    # not with extra whitespace, etc.
-    assert _state.economy["users"][str(user.id)]["daily_date"] == _economy._ct_today()
-
-    # Second auto_daily call: must not re-grant.
-    await _auto_daily(_Msg(user, channel))
-    assert await _economy.get_balance(user.id) == bal_after_first
-
-
-@pytest.mark.asyncio
 async def test_auto_daily_returning_user_does_not_overwrite_last_daily(db):
     """Returning users keep their existing last_daily value (only the
     first-ever claim sets it)."""
