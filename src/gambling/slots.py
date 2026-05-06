@@ -158,14 +158,14 @@ class SlotsCog(commands.Cog):
             state.slot_jackpot = SLOT_JACKPOT_SEED
             await save_jackpot(state.slot_jackpot)
             gid = ctx.guild.id if ctx.guild else None
-            await add_balance(uid, prize, guild_id=gid, holder_name=ctx.author.display_name, channel=ctx.channel)
+            new_bal_record = await add_balance(uid, prize, guild_id=gid, holder_name=ctx.author.display_name)
             if uid not in state.godmode_users:
                 await record_gambling_event(uid, gained=max(0, prize - amount))
-            if await try_set_record(gid, "slots_jackpot", prize, uid, ctx.author.display_name,
-                           bet=amount, symbols=display):
-                await announce_record(ctx.channel, "slots_jackpot", ctx.author.display_name, prize)
+            new_jackpot_record = await try_set_record(gid, "slots_jackpot", prize, uid, ctx.author.display_name,
+                           bet=amount, symbols=display)
+            new_bal = await get_balance(uid)
             desc = (f"{display}\n\n🏆 **{ctx.author.display_name} hit the Progressive Jackpot!**\n"
-                    f"**Won: {prize:,} 🪙** (Bet: {amount:,} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {await get_balance(uid):,} 🪙\n"
+                    f"**Won: {prize:,} 🪙** (Bet: {amount:,} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {new_bal:,} 🪙\n"
                     f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*")
             if first_time_slots:
                 desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
@@ -181,6 +181,10 @@ class SlotsCog(commands.Cog):
                     role = discord.utils.get(ctx.guild.roles, name="Gamblers")
                     if role:
                         await ctx.send(f"{role.mention} 🎰 A progressive jackpot was just won!")
+            if new_jackpot_record:
+                await announce_record(ctx.channel, "slots_jackpot", ctx.author.display_name, prize)
+            if new_bal_record:
+                await announce_record(ctx.channel, "highest_balance", ctx.author.display_name, new_bal)
             return
 
         # Money Back (cherry retention)
@@ -206,12 +210,11 @@ class SlotsCog(commands.Cog):
 
         winnings = amount * mult
         gid = ctx.guild.id if ctx.guild else None
-        await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name, channel=ctx.channel)
+        new_bal_record = await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name)
         if uid not in state.godmode_users:
             await record_gambling_event(uid, gained=max(0, winnings - amount))
-        if await try_set_record(gid, "slots_non_jackpot", winnings, uid, ctx.author.display_name,
-                       bet=amount, symbols=display, label=label):
-            await announce_record(ctx.channel, "slots_non_jackpot", ctx.author.display_name, winnings)
+        new_slots_record = await try_set_record(gid, "slots_non_jackpot", winnings, uid, ctx.author.display_name,
+                       bet=amount, symbols=display, label=label)
 
         result_labels = {
             "jackpot": f"7️⃣7️⃣7️⃣ — **{mult}x** (min bet 25, bonus scales to 4x at bet 1000+)",
@@ -223,12 +226,17 @@ class SlotsCog(commands.Cog):
         }
         desc_line = result_labels.get(label, f"**{mult}x**")
 
+        new_bal = await get_balance(uid)
         desc = (f"{display}\n\n{desc_line}\n"
-                f"**{ctx.author.display_name}** won **{winnings:,} 🪙** | Balance: {await get_balance(uid):,} 🪙\n"
+                f"**{ctx.author.display_name}** won **{winnings:,} 🪙** | Balance: {new_bal:,} 🪙\n"
                 f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
         if first_time_slots:
             desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
         await ctx.send(embed=emb("🎰 Winner!", desc, C_GREEN))
+        if new_slots_record:
+            await announce_record(ctx.channel, "slots_non_jackpot", ctx.author.display_name, winnings)
+        if new_bal_record:
+            await announce_record(ctx.channel, "highest_balance", ctx.author.display_name, new_bal)
 
 
     @commands.command(name="slotsrewards", aliases=["slotrewards", "slotreward"])

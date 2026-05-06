@@ -59,10 +59,9 @@ class LotteryCog(commands.Cog):
                     weights = [players[pid] for pid in player_ids]
                     winner_id = random.choices(player_ids, weights=weights, k=1)[0]
                     winner = await self.bot.fetch_user(int(winner_id))
-                    await add_balance(int(winner_id), pool, guild_id=guild.id, holder_name=winner.display_name, channel=channel)
+                    new_bal_record = await add_balance(int(winner_id), pool, guild_id=guild.id, holder_name=winner.display_name)
                     await record_gambling_event(int(winner_id), gained=pool)
-                    if await try_set_record(guild.id, "lottery", pool, int(winner_id), winner.display_name):
-                        await announce_record(channel, "lottery", winner.display_name, pool)
+                    new_lottery_record = await try_set_record(guild.id, "lottery", pool, int(winner_id), winner.display_name)
 
                     embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
                     embed.description = (
@@ -78,6 +77,11 @@ class LotteryCog(commands.Cog):
                         gamblers_role = discord.utils.get(guild.roles, name="Gamblers")
                         if gamblers_role:
                             await channel.send(f"{gamblers_role.mention} 🎰 The lottery was just won!")
+
+                    if new_lottery_record:
+                        await announce_record(channel, "lottery", winner.display_name, pool)
+                    if new_bal_record:
+                        await announce_record(channel, "highest_balance", winner.display_name, await get_balance(int(winner_id)))
 
                 lottery = {"prize_pool": 2000, "players": {}, "last_drawn_week": current_week, "last_posted_week": 0}
                 await drain_bot_balance_into_lottery(lottery, guild.id)

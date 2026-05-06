@@ -100,15 +100,18 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
 
     display = build_blackjack_display(player, dealer, pval, hide_dealer=False, dval=dval, username=uid_name)
 
+    new_bj_record = False
+    new_bal_record = False
+    bj_winnings = 0
     if dval > 21 or pval > dval:
         gid = message.guild.id if message.guild else None
-        await add_balance(uid, amount * 2, guild_id=gid, holder_name=uid_name, channel=message.channel)
+        bj_winnings = amount * 2
+        new_bal_record = await add_balance(uid, bj_winnings, guild_id=gid, holder_name=uid_name)
         if uid not in state.godmode_users:
             await record_gambling_event(uid, gained=amount)  # net: paid `amount` via shop_charge, received 2x
-        if await try_set_record(gid, "blackjack", amount * 2, uid, uid_name,
+        new_bj_record = await try_set_record(gid, "blackjack", bj_winnings, uid, uid_name,
                        player_hand=format_hand(player), player_score=pval,
-                       dealer_score=dval):
-            await announce_record(message.channel, "blackjack", uid_name, amount * 2)
+                       dealer_score=dval)
         color, result = C_GREEN, f"✅ **{uid_name}** wins **{amount:,} 🪙**! Balance: {await get_balance(uid):,} 🪙"
     elif pval == dval:
         await add_balance(uid, amount)  # push: bet refunded, no P/L recorded
@@ -119,6 +122,10 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
         color, result = C_RED, f"❌ Dealer wins. **{uid_name}** loses **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙"
 
     await message.channel.send(embed=emb("🃏 Blackjack", display + f"\n\n{result}", color))
+    if new_bj_record:
+        await announce_record(message.channel, "blackjack", uid_name, bj_winnings)
+    if new_bal_record:
+        await announce_record(message.channel, "highest_balance", uid_name, await get_balance(uid))
 
 
 
@@ -169,14 +176,18 @@ class BlackjackCog(commands.Cog):
             else:
                 winnings = int(amount * BLACKJACK_NATURAL_MULT)
                 gid = ctx.guild.id if ctx.guild else None
-                await add_balance(uid, winnings, guild_id=gid, holder_name=username, channel=ctx.channel)
+                new_bal_record = await add_balance(uid, winnings, guild_id=gid, holder_name=username)
                 if uid not in state.godmode_users:
                     await record_gambling_event(uid, gained=max(0, winnings - amount))
-                if await try_set_record(gid, "blackjack", winnings, uid, username,
+                new_bj_record = await try_set_record(gid, "blackjack", winnings, uid, username,
                                player_hand=format_hand(player), player_score=pval,
-                               dealer_score=dval):
+                               dealer_score=dval)
+                new_bal = await get_balance(uid)
+                await ctx.send(embed=emb("🃏 Blackjack!", full_display + f"\n\n**{ctx.author.display_name}** wins **{winnings:,} 🪙**! Balance: {new_bal:,} 🪙", C_GREEN))
+                if new_bj_record:
                     await announce_record(ctx.channel, "blackjack", username, winnings)
-                await ctx.send(embed=emb("🃏 Blackjack!", full_display + f"\n\n**{ctx.author.display_name}** wins **{winnings:,} 🪙**! Balance: {await get_balance(uid):,} 🪙", C_GREEN))
+                if new_bal_record:
+                    await announce_record(ctx.channel, "highest_balance", username, new_bal)
             return
 
         await ctx.send(embed=emb("🃏 Blackjack", display + "\n\nType `hit` to draw a card or `stand` to hold.", C_BLUE))

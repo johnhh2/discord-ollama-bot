@@ -47,12 +47,16 @@ class FlipCog(commands.Cog):
         if win:
             winnings = amount * 2
             gid = ctx.guild.id if ctx.guild else None
-            await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name, channel=ctx.channel)
+            new_bal_record = await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name)
             if uid not in state.godmode_users:
                 await record_gambling_event(uid, gained=amount)  # net: paid `amount`, received `2*amount`
-            if await try_set_record(gid, "flip", winnings, uid, ctx.author.display_name):
+            new_flip_record = await try_set_record(gid, "flip", winnings, uid, ctx.author.display_name)
+            new_bal = await get_balance(uid)
+            await ctx.send(embed=emb("🪙 Heads!", f"**{ctx.author.display_name}** won **{amount:,} 🪙**! Balance: {new_bal:,} 🪙", C_GREEN))
+            if new_flip_record:
                 await announce_record(ctx.channel, "flip", ctx.author.display_name, winnings)
-            await ctx.send(embed=emb("🪙 Heads!", f"**{ctx.author.display_name}** won **{amount:,} 🪙**! Balance: {await get_balance(uid):,} 🪙", C_GREEN))
+            if new_bal_record:
+                await announce_record(ctx.channel, "highest_balance", ctx.author.display_name, new_bal)
         else:
             if uid not in state.godmode_users:
                 await record_gambling_event(uid, lost=amount)
