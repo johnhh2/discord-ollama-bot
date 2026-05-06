@@ -139,11 +139,13 @@ async def _auto_daily(message: discord.Message):
     if user_data.get("daily_date") == today:
         return
     is_new = user_data.get("last_daily", 0.0) == 0.0
-    await add_balance(uid, DAILY_REWARD)
+    # Mark the claim BEFORE the save: add_balance() persists the row, and if
+    # the bot dies between that save and a separate daily_date save, on next
+    # boot daily_date is still NULL and the user gets the reward again.
     user_data["daily_date"] = today
     if is_new:
         user_data["last_daily"] = time.time()
-    await save_economy(uid=uid)
+    await add_balance(uid, DAILY_REWARD)
     greeting = f"Welcome, **{message.author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
     await message.channel.send(embed=emb(
         "🪙 Daily Reward",
