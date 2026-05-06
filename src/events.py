@@ -314,6 +314,13 @@ class EventsCog(commands.Cog):
         if message.author == self.bot.user:
             return
 
+        # Block until init_db_state has loaded state from the DB. Without
+        # this, a fast command after restart hits _ensure_user against an
+        # empty state.economy["users"], which overwrites the user's real
+        # row with {balance: 0, daily_date: None}.
+        import src.persistence as _pkg
+        await _pkg.init_done.wait()
+
         state.stats_messages_seen += 1
         state.stats_messages_today += 1
 

@@ -44,6 +44,12 @@ def reset_bot_state(monkeypatch):
     Uses in-place mutation rather than rebinding so test files that did
     `from src.state import economy` keep their reference live.
     """
+    # The on_message gate (src/persistence/__init__.py:init_done) starts unset
+    # in production and is .set() by init_db_state. Tests that drive on_message
+    # directly don't go through init_db_state, so default to set per-test so
+    # those tests don't hang on the await.
+    _persistence.init_done.set()
+
     _reset_dict(_state.economy, {"users": {}, "last_daily_reset": None, "guild_house": {}})
     _reset_dict(_state.guild_settings, {})
     _reset_dict(_state.insurance, {})

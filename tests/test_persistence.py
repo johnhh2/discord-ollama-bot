@@ -639,6 +639,17 @@ async def test_init_db_state_is_idempotent_across_reconnects(db, monkeypatch):
     assert _state.economy["users"]["7001"]["balance"] == 999
 
 
+async def test_init_done_event_set_after_init_db_state(db):
+    """on_message blocks on init_done so a fast command after restart can't
+    hit _ensure_user against an empty state.economy["users"] and overwrite
+    the user's real DB row with {balance: 0, daily_date: None}. The event
+    must be set by the time init_db_state returns."""
+    _persistence.init_done.clear()
+    _persistence._init_db_state_done = False
+    await _persistence.init_db_state()
+    assert _persistence.init_done.is_set()
+
+
 # ── restart_msg ───────────────────────────────────────────────────────────────
 
 async def test_restart_msg_save_load_clear_cycle(db):

@@ -86,5 +86,13 @@ from src.persistence.ephemeral import (  # noqa: F401
 )
 from src.persistence.init import init_db_state  # noqa: F401
 
+import asyncio as _asyncio
+
 # Module-level guard, owned by the package so tests can patch it directly.
 _init_db_state_done = False
+
+# Set when init_db_state has finished loading state from the DB. on_message
+# awaits this so messages received between gateway-ready and state-load can't
+# trigger _ensure_user / _grant_xp against an empty in-memory state and
+# overwrite the DB row with zeros.
+init_done = _asyncio.Event()

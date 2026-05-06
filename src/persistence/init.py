@@ -28,6 +28,7 @@ async def init_db_state():
 
     if _pkg._init_db_state_done:
         logging.info("[init_db_state] skipping; already initialized")
+        _pkg.init_done.set()
         return
     _pkg._init_db_state_done = True
 
@@ -320,3 +321,6 @@ async def init_db_state():
 
     # bot_admins: always from env, never DB
     state.bot_admins = set(INITIAL_BOT_ADMIN_IDS)
+
+    # Unblock on_message — state is now loaded from DB.
+    _pkg.init_done.set()
