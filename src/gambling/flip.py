@@ -24,43 +24,80 @@ class FlipCog(commands.Cog):
         self.bot = bot
 
     @commands.command(name="flip", aliases=["coinflip"])
-    async def cmd_flip(self, ctx: commands.Context, amount: str = None):
+    async def cmd_flip(self, ctx: commands.Context, amount: str = None, n: int = 1):
         if await check_game_channel(ctx, "Gambling"):
             return
         uid = ctx.author.id
         if amount is None:
-            await ctx.send("Usage: `!flip <amount>`")
+            await ctx.send("Usage: `!flip <amount> [n]`")
             return
         amount = await parse_amount(ctx, amount)
         if amount is None:
             return
-        if not await shop_charge(ctx, uid, amount):
+        if n < 1:
+            await ctx.send("`n` must be a positive whole number.")
             return
-        if uid in state.rigged_flips:
-            win = True
-            state.rigged_flips[uid] -= 1
-            if state.rigged_flips[uid] <= 0:
-                del state.rigged_flips[uid]
+        if n > 100:
+            await ctx.send("You can flip at most 100 coins at a time.")
+            return
+        total_cost = amount * n
+        if not await shop_charge(ctx, uid, total_cost):
+            return
+
+        wins = 0
+        rigged_used = 0
+        for _ in range(n):
+            if uid in state.rigged_flips:
+                win = True
+                state.rigged_flips[uid] -= 1
+                if state.rigged_flips[uid] <= 0:
+                    del state.rigged_flips[uid]
+                rigged_used += 1
+            else:
+                win = random.random() < 0.5
+            if win:
+                wins += 1
+        if rigged_used:
             await save_rigged_flips()
+
+        losses = n - wins
+        winnings_per = amount * 2
+        total_winnings = wins * winnings_per
+        net = total_winnings - total_cost  # signed net P/L
+
+        gid = ctx.guild.id if ctx.guild else None
+        new_bal_record = False
+        if total_winnings:
+            new_bal_record = await add_balance(uid, total_winnings, guild_id=gid, holder_name=ctx.author.display_name)
+        if uid not in state.godmode_users:
+            if net >= 0:
+                await record_gambling_event(uid, gained=net)
+            else:
+                await record_gambling_event(uid, lost=-net)
+        new_flip_record = False
+        if wins:
+            new_flip_record = await try_set_record(gid, "flip", winnings_per, uid, ctx.author.display_name)
+        new_bal = await get_balance(uid)
+
+        if n == 1:
+            if wins:
+                await ctx.send(embed=emb("🪙 Heads!", f"**{ctx.author.display_name}** won **{amount:,} 🪙**! Balance: {new_bal:,} 🪙", C_GREEN))
+            else:
+                await ctx.send(embed=emb("🪙 Tails!", f"**{ctx.author.display_name}** lost **{amount:,} 🪙**. Balance: {new_bal:,} 🪙", C_RED))
         else:
-            win = random.random() < 0.5
-        if win:
-            winnings = amount * 2
-            gid = ctx.guild.id if ctx.guild else None
-            new_bal_record = await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name)
-            if uid not in state.godmode_users:
-                await record_gambling_event(uid, gained=amount)  # net: paid `amount`, received `2*amount`
-            new_flip_record = await try_set_record(gid, "flip", winnings, uid, ctx.author.display_name)
-            new_bal = await get_balance(uid)
-            await ctx.send(embed=emb("🪙 Heads!", f"**{ctx.author.display_name}** won **{amount:,} 🪙**! Balance: {new_bal:,} 🪙", C_GREEN))
-            if new_flip_record:
-                await announce_record(ctx.channel, "flip", ctx.author.display_name, winnings)
-            if new_bal_record:
-                await announce_record(ctx.channel, "highest_balance", ctx.author.display_name, new_bal)
-        else:
-            if uid not in state.godmode_users:
-                await record_gambling_event(uid, lost=amount)
-            await ctx.send(embed=emb("🪙 Tails!", f"**{ctx.author.display_name}** lost **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙", C_RED))
+            color = C_GREEN if net >= 0 else C_RED
+            sign = "+" if net >= 0 else "-"
+            title = f"🪙 Flipped {n} coins"
+            desc = (
+                f"**{ctx.author.display_name}** — {wins} heads / {losses} tails\n"
+                f"Net: **{sign}{abs(net):,} 🪙** • Balance: {new_bal:,} 🪙"
+            )
+            await ctx.send(embed=emb(title, desc, color))
+
+        if new_flip_record:
+            await announce_record(ctx.channel, "flip", ctx.author.display_name, winnings_per)
+        if new_bal_record:
+            await announce_record(ctx.channel, "highest_balance", ctx.author.display_name, new_bal)
 
 
     # Mini Cactpot payout table
