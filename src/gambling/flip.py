@@ -24,12 +24,12 @@ class FlipCog(commands.Cog):
         self.bot = bot
 
     @commands.command(name="flip", aliases=["coinflip"])
-    async def cmd_flip(self, ctx: commands.Context, amount: str = None, n: int = 1):
+    async def cmd_flip(self, ctx: commands.Context, amount: str = None, n: int = 1, side: str = "heads"):
         if await check_game_channel(ctx, "Gambling"):
             return
         uid = ctx.author.id
         if amount is None:
-            await ctx.send("Usage: `!flip <amount> [n]`")
+            await ctx.send("Usage: `!flip <amount> [n] [heads|tails]`")
             return
         amount = await parse_amount(ctx, amount)
         if amount is None:
@@ -40,27 +40,37 @@ class FlipCog(commands.Cog):
         if n > 100_000:
             await ctx.send("You can flip at most 100,000 coins at a time.")
             return
+        side = side.lower()
+        if side in ("h", "head"):
+            side = "heads"
+        elif side in ("t", "tail"):
+            side = "tails"
+        if side not in ("heads", "tails"):
+            await ctx.send("Side must be `heads` or `tails`.")
+            return
         total_cost = amount * n
         if not await shop_charge(ctx, uid, total_cost):
             return
 
-        wins = 0
+        heads = 0
         rigged_used = 0
         for _ in range(n):
             if uid in state.rigged_flips:
-                win = True
+                # Rigged flips force a win for whichever side the player picked.
+                face = side
                 state.rigged_flips[uid] -= 1
                 if state.rigged_flips[uid] <= 0:
                     del state.rigged_flips[uid]
                 rigged_used += 1
             else:
-                win = random.random() < 0.5
-            if win:
-                wins += 1
+                face = "heads" if random.random() < 0.5 else "tails"
+            if face == "heads":
+                heads += 1
         if rigged_used:
             await save_rigged_flips()
 
-        losses = n - wins
+        tails = n - heads
+        wins = heads if side == "heads" else tails
         winnings_per = amount * 2
         total_winnings = wins * winnings_per
         net = total_winnings - total_cost  # signed net P/L
@@ -80,17 +90,18 @@ class FlipCog(commands.Cog):
         new_bal = await get_balance(uid)
 
         if n == 1:
+            face = "Heads" if heads == 1 else "Tails"
             if wins:
-                await ctx.send(embed=emb("🪙 Heads!", f"**{ctx.author.display_name}** won **{amount:,} 🪙**! Balance: {new_bal:,} 🪙", C_GREEN))
+                await ctx.send(embed=emb(f"🪙 {face}!", f"**{ctx.author.display_name}** won **{amount:,} 🪙**! Balance: {new_bal:,} 🪙", C_GREEN))
             else:
-                await ctx.send(embed=emb("🪙 Tails!", f"**{ctx.author.display_name}** lost **{amount:,} 🪙**. Balance: {new_bal:,} 🪙", C_RED))
+                await ctx.send(embed=emb(f"🪙 {face}!", f"**{ctx.author.display_name}** lost **{amount:,} 🪙**. Balance: {new_bal:,} 🪙", C_RED))
         else:
             color = C_GREEN if net >= 0 else C_RED
             sign = "+" if net >= 0 else "-"
-            title = f"🪙 Flipped {n} coins"
+            title = f"🪙 Flipped {n} coins ({side})"
             desc = (
-                f"**{ctx.author.display_name}** — {wins} heads / {losses} tails\n"
-                f"Net: **{sign}{abs(net):,} 🪙** • Balance: {new_bal:,} 🪙"
+                f"**{ctx.author.display_name}** — {heads} heads / {tails} tails\n"
+                f"Wins: **{wins}/{n}** • Net: **{sign}{abs(net):,} 🪙** • Balance: {new_bal:,} 🪙"
             )
             await ctx.send(embed=emb(title, desc, color))
 
