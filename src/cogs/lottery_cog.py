@@ -9,7 +9,7 @@ from src.helpers import (
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, drain_bot_balance_into_lottery, announce_new_lottery,
-    _ensure_user, _ct_now, lottery_week_key, record_gambling_event,
+    _ensure_user, _ct_now, lottery_week_key, record_gambling_event, add_guild_house,
 )
 from src.persistence import (
     save_lottery,
@@ -191,6 +191,8 @@ class LotteryCog(commands.Cog):
         lottery["prize_pool"] += tickets * 7
         if was_new_player:
             lottery["prize_pool"] += 1000
+
+        await add_guild_house(ctx.guild.id, tickets)
 
         await save_lottery(ctx.guild.id, lottery)
 
