@@ -136,7 +136,13 @@ async def _auto_daily(message: discord.Message):
     await _ensure_user(uid)
     today = _ct_today()
     user_data = state.economy["users"][str(uid)]
-    if user_data.get("daily_date") == today:
+    stored = user_data.get("daily_date")
+    if stored != today:
+        logging.info(
+            "[auto_daily] uid=%s firing: stored=%r (type=%s) today=%r (type=%s)",
+            uid, stored, type(stored).__name__, today, type(today).__name__,
+        )
+    if stored == today:
         return
     is_new = user_data.get("last_daily", 0.0) == 0.0
     await add_balance(uid, DAILY_REWARD)
