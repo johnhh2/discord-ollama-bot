@@ -2,7 +2,7 @@
 
 Read-path coverage already exists in test_permissions.py; these are the
 write-path counterparts:
-- !setperm   — writes state.command_perms + persists.
+- !setperm   — writes state.user_perm_overrides + persists.
 - !admingive — moves coins (works as positive credit, negative debit, or
   routes to guild_house when target is the bot user).
 - !godmode  — toggles state.godmode_users + persists.
@@ -55,82 +55,85 @@ async def _read_db_balance(uid: int) -> int | None:
     return row[0] if row else None
 
 
-# ── !setperm ──────────────────────────────────────────────────────────────────
+# ── !setperm (per-guild user override) ───────────────────────────────────────
 
-async def test_setperm_writes_state_and_persists(db):
-    cog = AdminCog(bot=_StubBot())
-    ctx = _admin_ctx()
-    ctx.command.qualified_name = "setperm"
-
-    await cog.cmd_setperm.callback(
-        cog, ctx, command_name="godmode", tier="bot_admin", hidden="true"
-    )
-
-    assert _state.command_perms["godmode"] == {"tier": "bot_admin", "hidden": True}
+async def _read_db_override(guild_id: int, user_id: int):
     pool = await _persistence.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT tier, hidden FROM command_perms WHERE command_name=?", ("godmode",)
+                "SELECT tier FROM user_perm_overrides WHERE guild_id=? AND user_id=?",
+                (guild_id, user_id),
             )
             row = await cur.fetchone()
-    assert row == ("bot_admin", 1)
+    return row[0] if row else None
 
 
-async def test_setperm_hidden_default_is_false(db):
+async def test_setperm_writes_override_and_persists(db):
     cog = AdminCog(bot=_StubBot())
-    ctx = _admin_ctx()
+    ctx = _admin_ctx(guild_id=42)
     ctx.command.qualified_name = "setperm"
+    target = FakeMember(uid=500)
 
-    await cog.cmd_setperm.callback(
-        cog, ctx, command_name="something", tier="everyone"
-    )
+    await cog.cmd_setperm.callback(cog, ctx, user=target, tier="server_admin")
 
-    assert _state.command_perms["something"] == {"tier": "everyone", "hidden": False}
+    assert _state.user_perm_overrides[(42, 500)] == "server_admin"
+    assert await _read_db_override(42, 500) == "server_admin"
+
+
+async def test_setperm_user_tier_clears_existing_override(db):
+    cog = AdminCog(bot=_StubBot())
+    ctx = _admin_ctx(guild_id=42)
+    ctx.command.qualified_name = "setperm"
+    target = FakeMember(uid=500)
+
+    _state.user_perm_overrides[(42, 500)] = "bot_admin"
+    await _persistence.save_user_perm_override(42, 500, "bot_admin")
+
+    await cog.cmd_setperm.callback(cog, ctx, user=target, tier="user")
+
+    assert (42, 500) not in _state.user_perm_overrides
+    assert await _read_db_override(42, 500) is None
 
 
 async def test_setperm_invalid_tier_does_not_write(db):
     cog = AdminCog(bot=_StubBot())
-    ctx = _admin_ctx()
+    ctx = _admin_ctx(guild_id=42)
     ctx.command.qualified_name = "setperm"
+    target = FakeMember(uid=500)
 
-    await cog.cmd_setperm.callback(
-        cog, ctx, command_name="thing", tier="moderator"
-    )
+    await cog.cmd_setperm.callback(cog, ctx, user=target, tier="moderator")
 
-    assert "thing" not in _state.command_perms
+    assert (42, 500) not in _state.user_perm_overrides
     assert any("Invalid Tier" in (e.title or "") for e in ctx.sent_embeds)
 
 
-async def test_setperm_overwrites_existing_entry(db):
+async def test_setperm_overwrites_existing_override(db):
     cog = AdminCog(bot=_StubBot())
-    ctx = _admin_ctx()
+    ctx = _admin_ctx(guild_id=42)
     ctx.command.qualified_name = "setperm"
+    target = FakeMember(uid=500)
 
-    _state.command_perms["thing"] = {"tier": "everyone", "hidden": False}
-    await cog.cmd_setperm.callback(
-        cog, ctx, command_name="thing", tier="server_admin", hidden="true"
-    )
+    _state.user_perm_overrides[(42, 500)] = "server_admin"
+    await cog.cmd_setperm.callback(cog, ctx, user=target, tier="bot_admin")
 
-    assert _state.command_perms["thing"] == {"tier": "server_admin", "hidden": True}
+    assert _state.user_perm_overrides[(42, 500)] == "bot_admin"
 
 
 async def test_setperm_blocked_when_caller_is_not_bot_admin(db):
     """Without bot_admins membership AND with a `bot_admin` tier configured,
     check_command_permission denies the call before any state mutation."""
     cog = AdminCog(bot=_StubBot())
-    # Configure setperm itself as bot_admin (matches production command_perms.json).
     _state.command_perms["setperm"] = {"tier": "bot_admin", "hidden": True}
     # Note: NOT adding to bot_admins.
-    ctx = FakeCtx(author=FakeMember(uid=99), guild=FakeGuild())
+    ctx = FakeCtx(author=FakeMember(uid=99), guild=FakeGuild(gid=42))
     ctx.bot = _StubBot()
     ctx.command.qualified_name = "setperm"
+    target = FakeMember(uid=500)
 
-    await cog.cmd_setperm.callback(
-        cog, ctx, command_name="thing", tier="everyone"
-    )
+    await cog.cmd_setperm.callback(cog, ctx, user=target, tier="server_admin")
 
-    assert "thing" not in _state.command_perms
+    assert (42, 500) not in _state.user_perm_overrides
 
 
 # ── !admingive ────────────────────────────────────────────────────────────────

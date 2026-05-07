@@ -112,7 +112,11 @@ Never use `datetime.timezone.utc` with a hardcoded offset for CT — it won't re
 
 ## Command Permission System
 
-Every command's access tier is controlled by `src/command_perms.json` (committed to the repo, not under `data/`). Commands not listed default to `everyone` (no restriction). On every boot, `init_db_state` (in `src/persistence/init.py`) reconciles the `command_perms` table with the JSON: rows in the JSON are upserted, and any DB row whose command is not in the JSON is deleted. Runtime `!setperm` changes are therefore **transient** — they survive until the next reboot. Always commit permanent changes to `src/command_perms.json`.
+Every command's access tier is controlled by `src/command_perms.json` (committed to the repo, not under `data/`). Commands not listed default to `everyone` (no restriction). On every boot, `init_db_state` (in `src/persistence/init.py`) reconciles the `command_perms` table with the JSON: rows in the JSON are upserted, and any DB row whose command is not in the JSON is deleted.
+
+### Per-user overrides via `!setperm`
+
+`!setperm @user <user|server_admin|bot_admin>` writes a row into `user_perm_overrides` (PK `(guild_id, user_id)`) that promotes that user inside that guild to act as the named tier for permission checks. `is_admin(ctx)` returns true if the user's env-driven `bot_admins` membership matches **or** they have a `bot_admin` override for the current guild; `is_server_admin(ctx)` similarly accepts a `server_admin` or `bot_admin` override. Overrides persist across reboots — they live in the DB, **not** in `command_perms.json`. `tier='user'` deletes the row.
 
 ### Tiers
 
@@ -136,7 +140,7 @@ When `hidden: true`, a denied command silently does nothing instead of sending `
 
 1. **New command** — add an entry to `src/command_perms.json`. If you don't add one, it defaults to `everyone`.
 2. **Renamed command** — update the key in the JSON to match the new `name=` in `@commands.command(...)`. Aliases do **not** need their own entries; the check uses `ctx.command.qualified_name` (the canonical name, with subgroup space-prefixed for `!settings X`-style subcommands).
-3. **Changing a permission** — edit `src/command_perms.json` directly and commit the change. `!setperm` updates the DB at runtime for testing, but the change is wiped on the next reboot when the JSON is reconciled — always commit any permanent change to the file.
+3. **Changing a permission** — edit `src/command_perms.json` directly and commit the change. `!setperm` does **not** change command tiers; it only promotes individual users within a single guild via the override system above.
 4. **Each command body** must use the `@requires_perm` decorator (from `src.permissions`):
    ```python
    from src.permissions import requires_perm
@@ -151,9 +155,10 @@ When `hidden: true`, a denied command silently does nothing instead of sending `
 ### Relevant files
 
 - `src/command_perms.json` — the permission config (committed to the repo, not in `data/`)
-- `src/permissions.py` — `check_command_permission`, `get_command_perm`
+- `src/permissions.py` — `check_command_permission`, `get_command_perm`, `is_admin`, `is_server_admin` (the latter two consult `state.user_perm_overrides`)
 - `src/persistence/command_perms.py` — `save_command_perms` (read path lives in `src/persistence/init.py`)
-- `src/state.py` — `command_perms` dict (loaded at startup)
+- `src/persistence/user_perm_overrides.py` — `save_user_perm_override`, `delete_user_perm_override`
+- `src/state.py` — `command_perms` dict and `user_perm_overrides` dict (both loaded at startup)
 
 ## Schema migrations
 

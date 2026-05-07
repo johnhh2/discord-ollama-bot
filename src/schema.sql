@@ -289,3 +289,20 @@ ALTER TABLE gambling_history ADD PRIMARY KEY (snapshot_date, bucket, user_id);
 ALTER TABLE levelup_history ADD COLUMN bucket TINYINT NOT NULL DEFAULT 0;
 ALTER TABLE levelup_history DROP PRIMARY KEY;
 ALTER TABLE levelup_history ADD PRIMARY KEY (snapshot_date, bucket, guild_id, user_id);
+
+-- ── 0005_add_user_perm_overrides.sql ──
+-- 0005: per-(guild,user) permission tier overrides used by !setperm.
+--
+-- Each row promotes a specific user inside a specific guild to act as if
+-- they held the named tier when permission checks run. tier is one of
+-- 'user', 'server_admin', 'bot_admin'; a row with tier='user' is
+-- equivalent to no override and is never written (the command deletes
+-- the row instead). The (guild_id, user_id) pair is the PK so a user
+-- has at most one override per guild.
+
+CREATE TABLE IF NOT EXISTS user_perm_overrides (
+    guild_id BIGINT      NOT NULL,
+    user_id  BIGINT      NOT NULL,
+    tier     VARCHAR(20) NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+);

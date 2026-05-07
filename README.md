@@ -41,7 +41,7 @@ Async Python on top of `discord.py` and `aiomysql`, with streaming LLM output, a
 
 **Moderation & admin**
 - Three-tier permission system (`everyone`, `server_admin`, `bot_admin`) with optional `hidden` flag for stealth admin commands
-- All command perms in a single JSON file ([src/command_perms.json](src/command_perms.json)) — runtime-editable via `!setperm`
+- All command perms in a single JSON file ([src/command_perms.json](src/command_perms.json)); per-guild user overrides via `!setperm @user <tier>`
 - Bot-admin commands: `!restart` (Docker-aware), `!godmode`, `!audit`, `!clearbot`, `!admingive`, `!adminunlock`
 - Full audit log of admin actions
 

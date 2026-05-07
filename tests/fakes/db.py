@@ -54,6 +54,7 @@ _TABLE_PKS = {
     "restart_msg": ("id",),
     "ephemeral_msgs": ("id",),
     "command_perms": ("command_name",),
+    "user_perm_overrides": ("guild_id", "user_id"),
     "schema_migrations": ("version",),
 }
 

@@ -312,6 +312,15 @@ async def init_db_state():
         except Exception as e:
             logging.error(f"[init_db_state] command_perms failed: {e}", exc_info=True)
 
+        # ── user_perm_overrides ──────────────────────────────────────────
+        try:
+            await cur.execute("SELECT guild_id, user_id, tier FROM user_perm_overrides")
+            state.user_perm_overrides = {
+                (int(r[0]), int(r[1])): r[2] for r in await cur.fetchall()
+            }
+        except Exception as e:
+            logging.error(f"[init_db_state] user_perm_overrides failed: {e}", exc_info=True)
+
         # ── activity caches (crime / gambling / levelups) ─────────────────
         # Each *_history table is the source of truth (atomic UPSERT on every
         # event). The in-memory dicts are a fast-read cache for the graph cog's

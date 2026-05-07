@@ -31,6 +31,11 @@ quote_log: list = []
 leveling: dict = {}
 command_perms: dict = {}
 
+# Per-(guild_id, user_id) -> "user" | "server_admin" | "bot_admin" tier override
+# set by !setperm. Affects is_admin() and is_server_admin() checks within that
+# guild only. Source of truth is the user_perm_overrides table; loaded at boot.
+user_perm_overrides: dict = {}
+
 # ── In-memory game state ──────────────────────────────────────────────────────
 
 active_blackjack_games: dict = {}

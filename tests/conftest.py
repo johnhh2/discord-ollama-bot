@@ -60,6 +60,7 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "bot_admins", set())
     monkeypatch.setattr(_state, "godmode_users", set())
     monkeypatch.setattr(_state, "command_perms", {})
+    monkeypatch.setattr(_state, "user_perm_overrides", {})
     monkeypatch.setattr(_state, "leveling", {})
     monkeypatch.setattr(_state, "active_taxes", {})
     monkeypatch.setattr(_state, "active_curses", {})

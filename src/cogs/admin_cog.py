@@ -14,7 +14,8 @@ from src.permissions import (
 )
 from src.persistence import (
     save_guild_settings,
-    save_godmode_users, save_ragebait, save_command_perms,
+    save_godmode_users, save_ragebait,
+    save_user_perm_override, delete_user_perm_override,
     save_restart_msg
 )
 from src.guild_config import get_guild_cfg
@@ -171,22 +172,38 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="setperm")
     @requires_perm
-    async def cmd_setperm(self, ctx: commands.Context, command_name: str = None, tier: str = None, hidden: str = "false"):
-        valid_tiers = ("everyone", "server_admin", "bot_admin")
-        if command_name is None or tier is None:
-            await ctx.send(embed=emb("⚙️ setperm", "Usage: `!setperm <command> <everyone|server_admin|bot_admin> [true|false]`", C_GOLD))
+    async def cmd_setperm(self, ctx: commands.Context, user: MemberConverter = None, tier: str = None):
+        """Promote a user inside this guild to act as user / server_admin / bot_admin
+        for permission checks. tier='user' clears any existing override."""
+        valid_tiers = ("user", "server_admin", "bot_admin")
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+            return
+        if user is None or tier is None:
+            await ctx.send(embed=emb(
+                "⚙️ setperm",
+                "Usage: `!setperm @user <user|server_admin|bot_admin>`\n"
+                "`user` clears any existing override.",
+                C_GOLD,
+            ))
             return
         if tier not in valid_tiers:
             await ctx.send(embed=emb("❌ Invalid Tier", f"Tier must be one of: {', '.join(valid_tiers)}", C_RED))
             return
-        hidden_bool = hidden.lower() in ("true", "1", "yes")
-        state.command_perms[command_name] = {"tier": tier, "hidden": hidden_bool}
-        await save_command_perms()
-        await ctx.send(embed=emb(
-            "✅ Permission Updated",
-            f"`!{command_name}` → tier: **{tier}**, hidden: **{hidden_bool}**",
-            C_GREEN,
-        ))
+
+        key = (ctx.guild.id, user.id)
+        if tier == "user":
+            had = state.user_perm_overrides.pop(key, None)
+            await delete_user_perm_override(ctx.guild.id, user.id)
+            msg = (
+                f"Cleared override for {user.mention} (was **{had}**)."
+                if had else f"{user.mention} had no override."
+            )
+        else:
+            state.user_perm_overrides[key] = tier
+            await save_user_perm_override(ctx.guild.id, user.id, tier)
+            msg = f"{user.mention} now acts as **{tier}** in this server."
+        await ctx.send(embed=emb("✅ Permission Updated", msg, C_GREEN))
 
 
     @commands.command(name="adminunlock")

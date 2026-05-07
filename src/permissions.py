@@ -70,12 +70,25 @@ async def check_chess_channel(ctx: commands.Context) -> bool:
     return False
 
 
+def _override_tier(ctx: commands.Context) -> str | None:
+    """Return the per-guild user override tier for ctx.author, or None."""
+    if ctx.guild is None:
+        return None
+    return state.user_perm_overrides.get((ctx.guild.id, ctx.author.id))
+
+
 def is_admin(ctx: commands.Context) -> bool:
-    return ctx.author.id in state.bot_admins
+    if ctx.author.id in state.bot_admins:
+        return True
+    return _override_tier(ctx) == "bot_admin"
 
 
 def is_server_admin(ctx: commands.Context) -> bool:
-    return ctx.guild is not None and ctx.author.guild_permissions.administrator
+    if ctx.guild is None:
+        return False
+    if ctx.author.guild_permissions.administrator:
+        return True
+    return _override_tier(ctx) in ("server_admin", "bot_admin")
 
 
 def can_manage_settings(ctx: commands.Context) -> bool:
