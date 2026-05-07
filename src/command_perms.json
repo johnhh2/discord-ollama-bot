@@ -23,6 +23,7 @@
   "invitelink":    {"tier": "server_admin", "hidden": false},
   "clearall":      {"tier": "server_admin", "hidden": false},
   "settings":      {"tier": "server_admin", "hidden": false},
+  "settings admin-log-channel": {"tier": "bot_admin", "hidden": true},
   "clearbot":      {"tier": "server_admin", "hidden": false},
   "say":           {"tier": "server_admin", "hidden": false},
   "adminhelp":     {"tier": "server_admin", "hidden": false},

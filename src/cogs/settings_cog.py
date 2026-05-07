@@ -11,7 +11,7 @@ from src.economy import (
     _ct_now, lottery_week_key,
 )
 from src.permissions import (
-    requires_perm,
+    requires_perm, is_admin,
 )
 from src.persistence import (
     save_guild_settings, save_bot_settings, save_channel_prompts,
@@ -96,6 +96,10 @@ class SettingsCog(commands.Cog):
         embed.add_field(name="🎲 Gambler role", value=gambler_role_val, inline=False)
         embed.add_field(name="🏷️ Tax aliases", value=tax_aliases_val, inline=False)
         embed.add_field(name="📖 Story aliases", value=story_aliases_val, inline=False)
+        if is_admin(ctx):
+            admin_log_id = state.bot_settings.get("admin_log_channel")
+            admin_log_val = f"<#{admin_log_id}>" if admin_log_id else "❌ disabled"
+            embed.add_field(name="🛡️ Admin log channel (global)", value=admin_log_val, inline=False)
         footer_text = (
             "Subcommands:\n"
             "ai-channels #ch... / clear\n"
@@ -511,6 +515,30 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("🎰 Lottery Channel", f"Lottery channel set to {channel.mention}\n🎟️ Lottery ready!", C_GREEN))
         else:
             await ctx.send(embed=emb("🎰 Lottery Channel", "Usage: `!settings lottery-channel #channel` or `!settings lottery-channel clear`", C_GREY))
+
+    # ── !settings admin-log-channel (global, bot-admin only) ─────────────────
+    @cmd_settings.command(name="admin-log-channel")
+    @requires_perm
+    async def settings_admin_log_channel(self, ctx: commands.Context, *args):
+        if args and args[0].lower() == "clear":
+            state.bot_settings.pop("admin_log_channel", None)
+            await save_bot_settings()
+            await ctx.send(embed=emb("🛡️ Admin Log Channel", "Admin command logging disabled.", C_GREEN))
+        elif ctx.message.channel_mentions:
+            channel = ctx.message.channel_mentions[0]
+            state.bot_settings["admin_log_channel"] = str(channel.id)
+            await save_bot_settings()
+            await ctx.send(embed=emb(
+                "🛡️ Admin Log Channel",
+                f"Admin command use and errors from **all servers** will be logged to {channel.mention}.",
+                C_GREEN,
+            ))
+        else:
+            await ctx.send(embed=emb(
+                "🛡️ Admin Log Channel",
+                "Usage: `!settings admin-log-channel #channel` or `!settings admin-log-channel clear`",
+                C_GREY,
+            ))
 
     # ── !settings soundboard-ratelimit ────────────────────────────────────────
     @cmd_settings.command(name="soundboard-ratelimit")

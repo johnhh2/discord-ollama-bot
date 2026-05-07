@@ -16,6 +16,7 @@ from src.economy import (
 from src.permissions import (
     check_rate_limit,
     _wrong_channel_reply,
+    get_command_perm,
 )
 from src.persistence import (
     init_db_state, save_economy, save_ragebait, save_mock, save_tax, save_curse, load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs
@@ -35,6 +36,41 @@ from src import state
 from src.games.blackjack import draw_card, hand_value, build_blackjack_display, _blackjack_stand
 from src.games.hangman import _process_hangman_guess
 from src.leveling import grant_xp as _grant_xp
+
+
+async def _log_admin_command(bot, ctx: commands.Context, error: Exception | None = None):
+    """Post a log embed to the global admin-log channel if the just-run command
+    was gated to bot_admin or server_admin. No-op when the channel isn't configured.
+    """
+    if ctx.command is None:
+        return
+    perm = get_command_perm(ctx.command.qualified_name)
+    if perm.get("tier") not in ("bot_admin", "server_admin"):
+        return
+    chan_id = state.bot_settings.get("admin_log_channel")
+    if not chan_id:
+        return
+    try:
+        channel = bot.get_channel(int(chan_id)) or await bot.fetch_channel(int(chan_id))
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
+        return
+    guild_name = ctx.guild.name if ctx.guild else "DM"
+    guild_id_str = str(ctx.guild.id) if ctx.guild else "—"
+    title = "🛡️ Admin Command Error" if error else "🛡️ Admin Command"
+    color = C_RED if error else C_BLUE
+    desc_lines = [
+        f"**User:** {ctx.author.display_name} (`{ctx.author.id}`)",
+        f"**Guild:** {guild_name} (`{guild_id_str}`)",
+        f"**Channel:** {ctx.channel.mention if hasattr(ctx.channel, 'mention') else ctx.channel}",
+        f"**Tier:** {perm.get('tier')}",
+        f"**Command:** `{ctx.message.content[:300]}`",
+    ]
+    if error is not None:
+        desc_lines.append(f"**Error:** `{type(error).__name__}: {error}`"[:1000])
+    try:
+        await channel.send(embed=emb(title, "\n".join(desc_lines), color))
+    except (discord.Forbidden, discord.HTTPException):
+        pass
 
 
 async def _roast_soundboard_spam(bot, guild_id: int, user_id: int):
@@ -275,10 +311,12 @@ class EventsCog(commands.Cog):
             "command": ctx.message.content[:100],
             "error": f"{type(error).__name__}: {error}",
         })
+        await _log_admin_command(self.bot, ctx, error=error)
         raise error
 
     @commands.Cog.listener()
     async def on_command_completion(self, ctx: commands.Context):
+        await _log_admin_command(self.bot, ctx)
         state.stats_commands_ran += 1
         state.stats_commands_today += 1
         cog = ctx.command.cog
