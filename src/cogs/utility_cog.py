@@ -295,6 +295,15 @@ class UtilityCog(commands.Cog):
             inline=False
         )
 
+        embed.add_field(
+            name="⏹️ !closeall",
+            value=(
+                "Close every active AI thread (ask/story/roleplay/rpg) in this server\n"
+                "Server-admin only · runs from any AI channel"
+            ),
+            inline=False
+        )
+
         await send_ephemeral(ctx, embed=embed)
 
     @cmd_ai.command(name="on", aliases=["online"])

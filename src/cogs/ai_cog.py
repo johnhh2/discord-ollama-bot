@@ -14,6 +14,7 @@ from src.economy import (
 from src.permissions import (
     is_admin,
     check_ai_channel,
+    requires_perm,
 )
 from src.persistence import (
     save_chess_games, save_ai_threads
@@ -707,6 +708,63 @@ class AICog(commands.Cog):
                 log_bot_permission_error(ctx.guild, "Manage Threads")
             except Exception:
                 pass
+
+    @commands.command(name="closeall")
+    @requires_perm
+    async def cmd_closeall(self, ctx: commands.Context):
+        """Close every active AI thread (ask/story/roleplay/rpg) in this guild."""
+        if await check_ai_channel(ctx):
+            return
+        if ctx.guild is None:
+            return
+
+        guild_id = ctx.guild.id
+        target_ids = [
+            tid for tid, t in state.ai_threads.items()
+            if t.get("guild_id") == guild_id
+        ]
+
+        if not target_ids:
+            await ctx.send(embed=emb(
+                "⏹️ Nothing to Close",
+                "No active AI threads in this server.",
+                C_GREY,
+            ))
+            return
+
+        counts = {"ask": 0, "story": 0, "roleplay": 0, "rpg": 0}
+        for tid in target_ids:
+            kind = state.ai_threads[tid].get("kind", "")
+            counts[kind] = counts.get(kind, 0) + 1
+            state.ai_threads.pop(tid, None)
+        await save_ai_threads()
+
+        failed = 0
+        for tid in target_ids:
+            ch = ctx.guild.get_thread(tid)
+            if ch is None:
+                try:
+                    ch = await self.bot.fetch_channel(tid)
+                except Exception:
+                    ch = None
+            if isinstance(ch, discord.Thread):
+                try:
+                    await ch.edit(archived=True, locked=True)
+                except discord.Forbidden:
+                    log_bot_permission_error(ctx.guild, "Manage Threads")
+                    failed += 1
+                except Exception:
+                    failed += 1
+
+        label_map = {"ask": "💬 Ask", "story": "📖 Story", "roleplay": "🎭 Roleplay", "rpg": "🗺️ RPG"}
+        breakdown = "\n".join(
+            f"{label_map[k]}: **{counts[k]}**"
+            for k in ("ask", "story", "roleplay", "rpg") if counts[k]
+        )
+        summary = f"Closed **{len(target_ids)}** AI thread(s)."
+        if failed:
+            summary += f" ({failed} could not be archived — check bot permissions.)"
+        await ctx.send(embed=emb("⏹️ Closed All AI Threads", f"{summary}\n\n{breakdown}", C_GREEN))
 
 
     @commands.command(name="reverse")
