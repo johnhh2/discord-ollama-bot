@@ -29,7 +29,7 @@ from src.ai import (
     ollama_semaphore, OLLAMA_NUM_PREDICT, OLLAMA_REQUEST_TIMEOUT,
 )
 from src.config import (
-    OLLAMA_MODEL, OLLAMA_BASE_URL, PUZZLE_REWARDS,
+    OLLAMA_MODEL, OLLAMA_BASE_URL, PUZZLE_REWARDS, RATE_LIMIT_SECONDS,
 )
 from src.puzzle import (
     PUZZLE_RIDDLE_PROMPT, build_coding_prompt,
@@ -209,6 +209,18 @@ class UtilityCog(commands.Cog):
         embed.add_field(
             name=f"{ai_status_emoji} Connection",
             value=f"Status: **{ai_status}** · Passive responses: {passive_status}",
+            inline=False
+        )
+
+        last = state.user_last_request.get(ctx.author.id, 0)
+        remaining = RATE_LIMIT_SECONDS - (time.monotonic() - last)
+        if remaining > 0:
+            cooldown_value = f"⏳ **{remaining:.1f}s** remaining (limit: {RATE_LIMIT_SECONDS:g}s)"
+        else:
+            cooldown_value = f"✅ Ready (limit: {RATE_LIMIT_SECONDS:g}s between requests)"
+        embed.add_field(
+            name="⏱️ Your Rate Limit",
+            value=cooldown_value,
             inline=False
         )
 
