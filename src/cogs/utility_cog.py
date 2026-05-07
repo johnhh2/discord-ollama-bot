@@ -753,7 +753,7 @@ class UtilityCog(commands.Cog):
                 "`!setprompt <prompt>` — Set a custom system prompt for this channel\n"
                 "`!clearprompt` — Reset this channel's prompt to default\n"
                 "`!godmode [user]` — Toggle free costs on/off (for yourself or a user)\n"
-                "`!setperm @user <user|server_admin|bot_admin>` — Set a per-guild permission tier for a user\n"
+                "`!setperm @user <server_admin|bot_admin|clear>` — Grant or clear a per-guild permission override for a user\n"
                 "`!vramtext [text]` — View or set the vRAM display text in !stats"
             ))
             admin_embed.add_field(name="📢 Bot Control", inline=False, value=(

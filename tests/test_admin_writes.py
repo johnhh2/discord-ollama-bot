@@ -81,7 +81,7 @@ async def test_setperm_writes_override_and_persists(db):
     assert await _read_db_override(42, 500) == "server_admin"
 
 
-async def test_setperm_user_tier_clears_existing_override(db):
+async def test_setperm_clear_removes_existing_override(db):
     cog = AdminCog(bot=_StubBot())
     ctx = _admin_ctx(guild_id=42)
     ctx.command.qualified_name = "setperm"
@@ -90,10 +90,23 @@ async def test_setperm_user_tier_clears_existing_override(db):
     _state.user_perm_overrides[(42, 500)] = "bot_admin"
     await _persistence.save_user_perm_override(42, 500, "bot_admin")
 
-    await cog.cmd_setperm.callback(cog, ctx, user=target, tier="user")
+    await cog.cmd_setperm.callback(cog, ctx, user=target, tier="clear")
 
     assert (42, 500) not in _state.user_perm_overrides
     assert await _read_db_override(42, 500) is None
+
+
+async def test_setperm_rejects_bot_target(db):
+    cog = AdminCog(bot=_StubBot())
+    ctx = _admin_ctx(guild_id=42)
+    ctx.command.qualified_name = "setperm"
+    bot_target = FakeMember(uid=600)
+    bot_target.bot = True
+
+    await cog.cmd_setperm.callback(cog, ctx, user=bot_target, tier="bot_admin")
+
+    assert (42, 600) not in _state.user_perm_overrides
+    assert any("Bots Not Allowed" in (e.title or "") for e in ctx.sent_embeds)
 
 
 async def test_setperm_invalid_tier_does_not_write(db):

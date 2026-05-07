@@ -173,36 +173,56 @@ class AdminCog(commands.Cog):
     @commands.command(name="setperm")
     @requires_perm
     async def cmd_setperm(self, ctx: commands.Context, user: MemberConverter = None, tier: str = None):
-        """Promote a user inside this guild to act as user / server_admin / bot_admin
-        for permission checks. tier='user' clears any existing override."""
-        valid_tiers = ("user", "server_admin", "bot_admin")
+        """Grant a per-guild permission override to one user.
+
+        Tiers:
+          server_admin — treat the user as a server admin in this guild
+          bot_admin    — treat the user as a bot admin in this guild
+          clear        — remove any existing override for this user in this guild
+
+        The override only adds permission. It cannot revoke permission a user
+        already has via Discord server-admin role or BOT_ADMIN_IDS env var;
+        clearing the override does not demote those users.
+        """
+        valid_tiers = ("server_admin", "bot_admin", "clear")
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
             return
         if user is None or tier is None:
             await ctx.send(embed=emb(
                 "⚙️ setperm",
-                "Usage: `!setperm @user <user|server_admin|bot_admin>`\n"
-                "`user` clears any existing override.",
+                "Usage: `!setperm @user <server_admin|bot_admin|clear>`\n"
+                "• `server_admin` / `bot_admin` — grant this guild-scoped tier to the user\n"
+                "• `clear` — remove any existing override for this user in this guild\n\n"
+                "Overrides only add permission; they cannot revoke Discord server-admin "
+                "role or `BOT_ADMIN_IDS`-granted access.",
                 C_GOLD,
             ))
             return
         if tier not in valid_tiers:
             await ctx.send(embed=emb("❌ Invalid Tier", f"Tier must be one of: {', '.join(valid_tiers)}", C_RED))
             return
+        if user.bot:
+            await ctx.send(embed=emb("❌ Bots Not Allowed", "Permission overrides cannot target bot accounts.", C_RED))
+            return
 
         key = (ctx.guild.id, user.id)
-        if tier == "user":
-            had = state.user_perm_overrides.pop(key, None)
+        if tier == "clear":
+            had = state.user_perm_overrides.get(key)
             await delete_user_perm_override(ctx.guild.id, user.id)
+            state.user_perm_overrides.pop(key, None)
             msg = (
                 f"Cleared override for {user.mention} (was **{had}**)."
                 if had else f"{user.mention} had no override."
             )
         else:
-            state.user_perm_overrides[key] = tier
             await save_user_perm_override(ctx.guild.id, user.id, tier)
-            msg = f"{user.mention} now acts as **{tier}** in this server."
+            state.user_perm_overrides[key] = tier
+            msg = (
+                f"{user.mention} now has **{tier}** permission in this server.\n"
+                "Note: this only adds permission; the user keeps any access they "
+                "already had from their Discord roles or bot-admin status."
+            )
         await ctx.send(embed=emb("✅ Permission Updated", msg, C_GREEN))
 
 

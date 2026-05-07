@@ -119,3 +119,101 @@ async def test_hidden_does_not_affect_allowed_command():
     ctx = FakeCtx(author=FakeMember(uid=40), command_name="godmode")
     ok = await check_command_permission(ctx)
     assert ok is True
+
+
+# ── per-guild user overrides (state.user_perm_overrides) ─────────────────────
+
+async def test_override_bot_admin_allows_gated_command():
+    _set_perm("godmode", "bot_admin")
+    _state.user_perm_overrides[(42, 100)] = "bot_admin"
+    ctx = FakeCtx(
+        author=FakeMember(uid=100, administrator=False),
+        guild=FakeGuild(gid=42),
+        command_name="godmode",
+    )
+    ok = await check_command_permission(ctx)
+    assert ok is True
+
+
+async def test_override_server_admin_does_not_grant_bot_admin():
+    """A server_admin override must NOT pass a bot_admin tier check."""
+    _set_perm("godmode", "bot_admin")
+    _state.user_perm_overrides[(42, 100)] = "server_admin"
+    ctx = FakeCtx(
+        author=FakeMember(uid=100, administrator=False),
+        guild=FakeGuild(gid=42),
+        command_name="godmode",
+    )
+    ok = await check_command_permission(ctx)
+    assert ok is False
+
+
+async def test_override_is_per_guild_and_does_not_leak_across_guilds():
+    """An override in guild A must not apply in guild B."""
+    _set_perm("godmode", "bot_admin")
+    _state.user_perm_overrides[(42, 100)] = "bot_admin"
+    # Same user, different guild — no override row for this (guild, user).
+    ctx = FakeCtx(
+        author=FakeMember(uid=100, administrator=False),
+        guild=FakeGuild(gid=999),
+        command_name="godmode",
+    )
+    ok = await check_command_permission(ctx)
+    assert ok is False
+
+
+async def test_override_does_not_revoke_env_bot_admin():
+    """Removing/missing an override row never demotes someone in BOT_ADMIN_IDS."""
+    _set_perm("godmode", "bot_admin")
+    _state.bot_admins.add(100)
+    # No override row — the env-driven bot_admin must still pass.
+    ctx = FakeCtx(
+        author=FakeMember(uid=100, administrator=False),
+        guild=FakeGuild(gid=42),
+        command_name="godmode",
+    )
+    ok = await check_command_permission(ctx)
+    assert ok is True
+
+
+async def test_override_does_not_revoke_discord_server_admin():
+    """A user with Discord administrator role keeps server_admin access even if no
+    override exists. Overrides are additive only — they cannot demote."""
+    _set_perm("admincmd", "server_admin")
+    # No override row for this user — they only have Discord administrator.
+    ctx = FakeCtx(
+        author=FakeMember(uid=100, administrator=True),
+        guild=FakeGuild(gid=42),
+        command_name="admincmd",
+    )
+    ok = await check_command_permission(ctx)
+    assert ok is True
+
+
+async def test_override_in_dm_context_is_ignored():
+    """ctx.guild is None → no override lookup. The bot_admin tier still gates."""
+    _set_perm("godmode", "bot_admin")
+    # Pretend the override existed for some guild_id; in a DM ctx.guild is None
+    # so no key match is even attempted.
+    _state.user_perm_overrides[(42, 100)] = "bot_admin"
+    ctx = FakeCtx(
+        author=FakeMember(uid=100, administrator=False),
+        command_name="godmode",
+    )
+    ctx.guild = None  # FakeCtx replaces None in __init__, so set it after.
+    ok = await check_command_permission(ctx)
+    assert ok is False
+
+
+async def test_override_bot_admin_grants_server_admin_too():
+    """bot_admin is strictly higher than server_admin, so a bot_admin override
+    must also pass a server_admin tier check."""
+    _set_perm("admincmd", "server_admin")
+    _state.user_perm_overrides[(42, 100)] = "bot_admin"
+    ctx = FakeCtx(
+        author=FakeMember(uid=100, administrator=False),
+        guild=FakeGuild(gid=42),
+        command_name="admincmd",
+    )
+    ok = await check_command_permission(ctx)
+    assert ok is True

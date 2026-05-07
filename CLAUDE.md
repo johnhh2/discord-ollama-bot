@@ -116,7 +116,11 @@ Every command's access tier is controlled by `src/command_perms.json` (committed
 
 ### Per-user overrides via `!setperm`
 
-`!setperm @user <user|server_admin|bot_admin>` writes a row into `user_perm_overrides` (PK `(guild_id, user_id)`) that promotes that user inside that guild to act as the named tier for permission checks. `is_admin(ctx)` returns true if the user's env-driven `bot_admins` membership matches **or** they have a `bot_admin` override for the current guild; `is_server_admin(ctx)` similarly accepts a `server_admin` or `bot_admin` override. Overrides persist across reboots — they live in the DB, **not** in `command_perms.json`. `tier='user'` deletes the row.
+`!setperm @user <server_admin|bot_admin|clear>` writes a row into `user_perm_overrides` (PK `(guild_id, user_id)`) that grants the user the named tier inside that guild. `is_admin(ctx)` returns true if the user's env-driven `bot_admins` membership matches **or** they have a `bot_admin` override for the current guild; `is_server_admin(ctx)` similarly accepts a `server_admin` or `bot_admin` override. Overrides persist across reboots — they live in the DB, **not** in `command_perms.json`. `clear` deletes the row.
+
+**Override semantics are additive only.** A row never *revokes* permission a user already has via Discord server-admin role or `BOT_ADMIN_IDS`. Clearing an override never demotes those users. Bot users cannot be targeted. `!setperm` is gated at `bot_admin`, so server admins cannot grant themselves `bot_admin` — only env-driven bot admins can. Overrides are scoped per-guild, so granting a user `bot_admin` in guild A does NOT make them `bot_admin` in guild B.
+
+**Persistence-of-elevation caveat.** A user removed from `BOT_ADMIN_IDS` who previously received a `bot_admin` override via `!setperm` retains that level inside the granting guild until another bot_admin clears it. Audit `user_perm_overrides` when revoking env-level bot_admin access.
 
 ### Tiers
 
