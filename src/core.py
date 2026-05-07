@@ -35,6 +35,12 @@ class Bot(commands.Bot):
         ctx = await self.get_context(message)
         await self.invoke(ctx)  # type: ignore
 
+    async def setup_hook(self) -> None:
+        # Start the localhost-only /healthz server before login so Docker's
+        # HEALTHCHECK has something to talk to during the start-period window.
+        from src.health import start_health_server
+        self._health_runner = await start_health_server(self)
+
 
 def create_bot() -> commands.Bot:
     intents = discord.Intents.default()
