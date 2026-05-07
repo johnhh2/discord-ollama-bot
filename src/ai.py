@@ -24,10 +24,10 @@ OLLAMA_NUM_PREDICT = 2048
 OLLAMA_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=120)
 
 # Per-user input-token budget. Bucket holds at most TOKEN_BUCKET_MAX tokens
-# and refills continuously at 512 tokens / 30 s = ~17.07 tokens/sec. Token
+# and refills continuously at 512 tokens / 60 s = ~8.53 tokens/sec. Token
 # count is approximated from prompt char length (~4 chars/token).
 TOKEN_BUCKET_MAX = 2048
-TOKEN_BUCKET_REFILL_PER_SEC = 512 / 30
+TOKEN_BUCKET_REFILL_PER_SEC = 512 / 60
 _user_token_buckets: dict = {}  # user_id -> (tokens_remaining: float, last_update: float)
 
 
@@ -56,7 +56,7 @@ async def check_token_budget_or_notify(ctx, prompt_text: str = "") -> bool:
     await ctx.send(embed=emb(
         "⏳ AI Rate Limit",
         f"You've used your AI token budget. Try again in **{wait_s:.0f}s**.\n"
-        f"Budget refills at 512 tokens / 30s (max {TOKEN_BUCKET_MAX}).",
+        f"Budget refills at 512 tokens / minute (max {TOKEN_BUCKET_MAX}).",
         C_RED,
     ))
     return False
@@ -199,7 +199,7 @@ async def stream_ollama(
                     embed=emb(
                         "⏳ AI Rate Limit",
                         f"You've used your AI token budget. Try again in **{wait_s:.0f}s**.\n"
-                        f"Budget refills at 512 tokens / 30s (max {TOKEN_BUCKET_MAX}).",
+                        f"Budget refills at 512 tokens / minute (max {TOKEN_BUCKET_MAX}).",
                         C_RED,
                     ),
                 )

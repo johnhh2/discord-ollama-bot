@@ -217,13 +217,13 @@ class UtilityCog(commands.Cog):
         if tokens_left >= TOKEN_BUCKET_MAX:
             budget_value = (
                 f"✅ **{int(tokens_left):,} / {TOKEN_BUCKET_MAX:,}** tokens — "
-                f"refills 512 per 30s"
+                f"refills 512 per minute"
             )
         else:
             seconds_to_full = (TOKEN_BUCKET_MAX - tokens_left) / TOKEN_BUCKET_REFILL_PER_SEC
             budget_value = (
                 f"⏳ **{int(tokens_left):,} / {TOKEN_BUCKET_MAX:,}** tokens "
-                f"(full in {seconds_to_full:.0f}s) — refills 512 per 30s"
+                f"(full in {seconds_to_full:.0f}s) — refills 512 per minute"
             )
         embed.add_field(
             name="🪙 Your Token Budget",

@@ -1,6 +1,6 @@
 """Per-user input-token rate limit on AI calls (src/ai.py).
 
-The bucket holds 2048 tokens max and refills at 512 / 30s. Token cost is
+The bucket holds 2048 tokens max and refills at 512 / 60s. Token cost is
 estimated at ~4 chars/token from the prompt content. stream_ollama gates
 on this when given a user_id; user_id=None bypasses (used by internal
 non-user-driven AI calls like roast/ragebait/quote-ranker).
@@ -59,8 +59,8 @@ def test_check_token_budget_refills_over_time(monkeypatch):
     t = {"v": 1000.0}
     monkeypatch.setattr(_ai.time, "monotonic", lambda: t["v"])
     assert _ai._check_token_budget(9, _ai.TOKEN_BUCKET_MAX) is None
-    # 30s later, 512 tokens have refilled.
-    t["v"] += 30.0
+    # 60s later, 512 tokens have refilled.
+    t["v"] += 60.0
     assert _ai._check_token_budget(9, 500) is None
 
 
