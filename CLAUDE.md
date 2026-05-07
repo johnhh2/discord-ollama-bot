@@ -56,10 +56,13 @@ Install dev dependencies (not in `requirements.txt`):
 
 ```bash
 pip install pytest pytest-asyncio ruff bandit pip-audit pip-tools
+# gitleaks ships as a binary, not a pip package — install from
+# https://github.com/gitleaks/gitleaks/releases (or skip locally and let CI run it)
 ```
 
-CI runs four checks on every push/PR:
+CI runs five checks on every push/PR (works on both GitHub Actions and Gitea Actions — Gitea reads `.github/workflows/` as a fallback):
 - `ruff check src/ tests/` — active ruleset (`E`, `F`, `W` minus `E501`) is configured in `pyproject.toml`.
+- `gitleaks detect --source . --redact --verbose --exit-code 1` — full-history scan for committed secrets. Currently clean; new commits with API keys, tokens, or similar are blocked at CI time.
 - `bandit -r src/ --severity-level medium` — security lint. Low-severity findings (mostly `random` in gambling code, best-effort try/except) are intentionally allowed; medium and high block CI.
 - `pip-audit -r requirements.lock --strict` — fails on any unresolved CVE in the locked dep tree. If a CVE has no fix, add `--ignore-vuln GHSA-xxxx` with a comment rather than dropping `--strict`.
 - `pytest -q` — full test suite.
