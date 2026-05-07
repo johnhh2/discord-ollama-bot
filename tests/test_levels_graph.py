@@ -113,7 +113,7 @@ async def test_init_db_state_hydrates_today_levelups_dict(db):
 
 @pytest.mark.asyncio
 async def test_build_series_levels_filters_to_guild_and_user(monkeypatch):
-    today = graph_series._ct_today_date()
+    today = graph_series._calendar_today_date()
     yest = today.replace(day=today.day - 1) if today.day > 1 else None
     if yest is None:
         pytest.skip("Edge case: today is the 1st; skipping date-arithmetic shortcut.")
@@ -145,7 +145,7 @@ async def test_build_series_levels_filters_to_guild_and_user(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_build_series_levels_skips_inactive_days(monkeypatch):
-    today = graph_series._ct_today_date()
+    today = graph_series._calendar_today_date()
     yest = today.replace(day=today.day - 1) if today.day > 1 else None
     if yest is None:
         pytest.skip("Edge case: today is the 1st; skipping date-arithmetic shortcut.")

@@ -57,9 +57,11 @@ async def test_do_daily_reset_after_three_days_down(db, monkeypatch):
     assert _state.economy["last_daily_reset"] == today
 
     # Per-user balance history was snapshotted exactly once for today —
-    # no attempt to backfill the missing days.
+    # no attempt to backfill the missing days. Snapshots are keyed by
+    # calendar date (rolls at midnight), not the 5am gameplay day.
+    snapshot_date = _economy._ct_now().date().isoformat()
     history = await _persistence.load_balance_history()
-    assert today in history
+    assert snapshot_date in history
     # Yesterday and the day before are NOT in history (legit gap).
     assert "2026-04-30" not in history or "2026-05-01" not in history
 
@@ -74,9 +76,11 @@ async def test_do_daily_reset_idempotent_within_same_day(db, monkeypatch):
 
     await _economy.do_daily_reset()
     today = _state.economy["last_daily_reset"]
+    # Snapshots are keyed by calendar date, not the 5am gameplay day.
+    snapshot_date = _economy._ct_now().date().isoformat()
     bucket = _economy._current_bucket_ct()
     history_after_first = await _persistence.load_balance_history()
-    bal_after_first = history_after_first[today][bucket]["1"]["wallet"]
+    bal_after_first = history_after_first[snapshot_date][bucket]["1"]["wallet"]
 
     # Mutate balance, run reset again
     await _economy.add_balance(1, 500)
@@ -85,7 +89,7 @@ async def test_do_daily_reset_idempotent_within_same_day(db, monkeypatch):
     # last_daily_reset still today; second snapshot OVERWROTE first (upsert).
     assert _state.economy["last_daily_reset"] == today
     history_after_second = await _persistence.load_balance_history()
-    assert history_after_second[today][bucket]["1"]["wallet"] == 1500
+    assert history_after_second[snapshot_date][bucket]["1"]["wallet"] == 1500
     assert bal_after_first == 1000  # first snapshot was 1000 before mutation
 
 
