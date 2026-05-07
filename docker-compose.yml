@@ -2,6 +2,13 @@ services:
   bot:
     build: .
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}

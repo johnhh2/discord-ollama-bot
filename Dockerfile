@@ -11,7 +11,8 @@ COPY assets/ ./assets/
 COPY migrations/ ./migrations/
 COPY main.py ./
 RUN useradd --system --uid 1001 --no-create-home bot
-ENV MPLCONFIGDIR=/tmp/matplotlib \
+ENV HOME=/tmp \
+    MPLCONFIGDIR=/tmp/matplotlib \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 USER bot
