@@ -264,7 +264,9 @@ class AICog(commands.Cog):
         try:
             async with aiohttp.ClientSession() as session:
                 model = get_guild_ask_model(guild_id) if guild_id else OLLAMA_MODEL
-                summary = await stream_ollama(session, tldr_prompt, placeholder, guild_id=guild_id, model=model)
+                summary = await stream_ollama(session, tldr_prompt, placeholder, guild_id=guild_id, model=model, user_id=ctx.author.id)
+            if not summary:
+                return
             await finalize(placeholder, ctx.channel, f"**TL;DR:** {summary}")
         except aiohttp.ClientError:
             await placeholder.edit(content="", embed=emb("", "The AI is currently offline.", C_RED))
@@ -464,8 +466,12 @@ class AICog(commands.Cog):
             async with aiohttp.ClientSession() as session:
                 model = get_guild_roleplay_model(guild_id) if guild_id else OLLAMA_MODEL
                 messages = [{"role": "system", "content": rpg_system_prompt}]
-                full_response = await stream_ollama(session, messages, placeholder, model=model)
-
+                full_response = await stream_ollama(session, messages, placeholder, model=model, user_id=uid)
+            if not full_response:
+                # Rate limited or AI disabled — placeholder explains why.
+                state.ai_threads.pop(rpg_channel_id, None)
+                await save_ai_threads()
+                return
             # Add to history with a synthetic user turn so the conversation structure is valid
             t = state.ai_threads.get(rpg_channel_id)
             if t is not None:

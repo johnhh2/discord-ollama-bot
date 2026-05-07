@@ -23,6 +23,38 @@ ollama_semaphore = asyncio.Semaphore(1)
 OLLAMA_NUM_PREDICT = 2048
 OLLAMA_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=120)
 
+# Per-user input-token budget. Bucket holds at most TOKEN_BUCKET_MAX tokens
+# and refills continuously at 512 tokens / 30 s = ~17.07 tokens/sec. Token
+# count is approximated from prompt char length (~4 chars/token).
+TOKEN_BUCKET_MAX = 2048
+TOKEN_BUCKET_REFILL_PER_SEC = 512 / 30
+_user_token_buckets: dict = {}  # user_id -> (tokens_remaining: float, last_update: float)
+
+
+def _estimate_tokens(messages: list) -> int:
+    total_chars = sum(len(m.get("content", "")) for m in messages)
+    return max(1, total_chars // 4)
+
+
+def _check_token_budget(user_id: int, cost: int) -> float | None:
+    """Refill the user's bucket and try to spend `cost` tokens.
+
+    Returns None if the spend was allowed. Otherwise returns the number of
+    seconds the user must wait until the bucket has accumulated enough
+    tokens to cover `cost`. Bot-admin godmode users bypass the limit.
+    """
+    if user_id in state.godmode_users:
+        return None
+    now = time.monotonic()
+    tokens, last = _user_token_buckets.get(user_id, (float(TOKEN_BUCKET_MAX), now))
+    tokens = min(float(TOKEN_BUCKET_MAX), tokens + (now - last) * TOKEN_BUCKET_REFILL_PER_SEC)
+    if tokens >= cost:
+        _user_token_buckets[user_id] = (tokens - cost, now)
+        return None
+    _user_token_buckets[user_id] = (tokens, now)
+    needed = min(cost, TOKEN_BUCKET_MAX) - tokens
+    return needed / TOKEN_BUCKET_REFILL_PER_SEC
+
 
 ASK_SYSTEM_PROMPT = (
     "You are a knowledgeable and helpful assistant. "
@@ -114,6 +146,7 @@ async def stream_ollama(
     placeholder: discord.Message,
     model: str = None,
     guild_id: int = None,
+    user_id: int = None,
 ) -> str:
     if not state.bot_settings.get("ai_enabled", True):
         await placeholder.edit(
@@ -121,6 +154,22 @@ async def stream_ollama(
             embed=emb("🤖 AI Offline", "Passive AI responses are currently disabled.", C_RED)
         )
         return ""
+    if user_id is not None:
+        wait_s = _check_token_budget(user_id, _estimate_tokens(messages))
+        if wait_s is not None:
+            try:
+                await placeholder.edit(
+                    content="",
+                    embed=emb(
+                        "⏳ AI Rate Limit",
+                        f"You've used your AI token budget. Try again in **{wait_s:.0f}s**.\n"
+                        f"Budget refills at 512 tokens / 30s (max {TOKEN_BUCKET_MAX}).",
+                        C_RED,
+                    ),
+                )
+            except Exception:
+                pass
+            return ""
     if model:
         used_model = model
     elif guild_id:
@@ -191,7 +240,7 @@ async def finalize(placeholder: discord.Message, channel: discord.abc.Messageabl
 
 async def _execute_ollama_stream(
     channel, reply_to, messages, history,
-    guild_id=None, model=None, placeholder=None
+    guild_id=None, model=None, placeholder=None, user_id=None
 ):
     if placeholder is None:
         placeholder = await reply_to.reply("...")
@@ -201,8 +250,15 @@ async def _execute_ollama_stream(
     try:
         async with aiohttp.ClientSession() as session:
             full_response = await stream_ollama(
-                session, messages, placeholder, guild_id=guild_id, model=model
+                session, messages, placeholder,
+                guild_id=guild_id, model=model, user_id=user_id,
             )
+        if not full_response:
+            # AI disabled or per-user token-budget denial — placeholder
+            # already shows the explanation. Drop the unanswered user turn.
+            if history and history[-1].get("role") == "user":
+                history.pop()
+            return
         history.append({"role": "assistant", "content": full_response})
         state.stats_ai_responses_today += 1
         await finalize(placeholder, channel, full_response)
@@ -252,6 +308,7 @@ async def respond(
     await _execute_ollama_stream(
         channel, reply_to, messages, history,
         model=model, guild_id=guild_id, placeholder=placeholder,
+        user_id=user_id,
     )
     if ai_thread is not None:
         await save_ai_threads()
