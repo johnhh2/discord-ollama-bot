@@ -112,7 +112,7 @@ Never use `datetime.timezone.utc` with a hardcoded offset for CT — it won't re
 
 ## Command Permission System
 
-Every command's access tier is controlled by `src/command_perms.json` (committed to the repo, not under `data/`). Commands not listed default to `everyone` (no restriction). The JSON seeds the `command_perms` table on every boot via `INSERT IGNORE` (see `init_db_state` in `src/persistence/init.py`); `!setperm` mutates the DB at runtime but the JSON is the source of truth — always commit permanent changes there.
+Every command's access tier is controlled by `src/command_perms.json` (committed to the repo, not under `data/`). Commands not listed default to `everyone` (no restriction). On every boot, `init_db_state` (in `src/persistence/init.py`) reconciles the `command_perms` table with the JSON: rows in the JSON are upserted, and any DB row whose command is not in the JSON is deleted. Runtime `!setperm` changes are therefore **transient** — they survive until the next reboot. Always commit permanent changes to `src/command_perms.json`.
 
 ### Tiers
 
@@ -136,7 +136,7 @@ When `hidden: true`, a denied command silently does nothing instead of sending `
 
 1. **New command** — add an entry to `src/command_perms.json`. If you don't add one, it defaults to `everyone`.
 2. **Renamed command** — update the key in the JSON to match the new `name=` in `@commands.command(...)`. Aliases do **not** need their own entries; the check uses `ctx.command.qualified_name` (the canonical name, with subgroup space-prefixed for `!settings X`-style subcommands).
-3. **Changing a permission** — edit `src/command_perms.json` directly and commit the change. `!setperm` can also update it at runtime, but the file is the source of truth — always commit any permanent changes.
+3. **Changing a permission** — edit `src/command_perms.json` directly and commit the change. `!setperm` updates the DB at runtime for testing, but the change is wiped on the next reboot when the JSON is reconciled — always commit any permanent change to the file.
 4. **Each command body** must use the `@requires_perm` decorator (from `src.permissions`):
    ```python
    from src.permissions import requires_perm

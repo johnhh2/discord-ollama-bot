@@ -284,13 +284,26 @@ async def init_db_state():
             logging.error(f"[init_db_state] channel_prompts failed: {e}", exc_info=True)
 
         # ── command_perms ─────────────────────────────────────────────────
+        # The JSON file is the source of truth: upsert every row from JSON,
+        # then delete any DB rows whose command isn't in the JSON. Runtime
+        # !setperm changes are intentionally transient — port them back to
+        # command_perms.json to make them permanent.
         try:
             json_perms = _load_json(COMMAND_PERMS_FILE, {})
             for cmd, data in json_perms.items():
                 await cur.execute(
-                    "INSERT IGNORE INTO command_perms (command_name, tier, hidden) VALUES (%s,%s,%s)",
+                    "INSERT INTO command_perms (command_name, tier, hidden) VALUES (%s,%s,%s)"
+                    " ON DUPLICATE KEY UPDATE tier=VALUES(tier), hidden=VALUES(hidden)",
                     (cmd, data.get("tier", "everyone"), bool(data.get("hidden", False))),
                 )
+            if json_perms:
+                placeholders = ",".join(["%s"] * len(json_perms))
+                await cur.execute(
+                    f"DELETE FROM command_perms WHERE command_name NOT IN ({placeholders})",
+                    tuple(json_perms.keys()),
+                )
+            else:
+                await cur.execute("DELETE FROM command_perms")
             await cur.execute("SELECT command_name, tier, hidden FROM command_perms")
             state.command_perms = {
                 r[0]: {"tier": r[1], "hidden": bool(r[2])}
