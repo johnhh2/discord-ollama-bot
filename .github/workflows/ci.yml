@@ -49,3 +49,15 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+      - name: Build container image
+        run: docker build -t bot:ci .
+
+      - name: Trivy scan (image)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: bot:ci
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
