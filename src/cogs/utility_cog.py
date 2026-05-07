@@ -26,7 +26,7 @@ from src.persistence import (
 from src.guild_config import get_guild_cfg
 from src.ai import (
     check_ollama_connected, keep_typing,
-    ollama_semaphore,
+    ollama_semaphore, OLLAMA_NUM_PREDICT, OLLAMA_REQUEST_TIMEOUT,
 )
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, PUZZLE_REWARDS,
@@ -489,8 +489,17 @@ class UtilityCog(commands.Cog):
                         await thinking_msg.edit(embed=emb("🧩 Generating riddle...", f"Reward: **{reward:,} 🪙**", C_BLUE))
                         typing_task = asyncio.create_task(keep_typing(ctx.channel))
                         try:
-                            payload = {"model": coding_model, "messages": messages, "stream": False}
-                            async with session.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload) as resp:
+                            payload = {
+                                "model": coding_model,
+                                "messages": messages,
+                                "stream": False,
+                                "options": {"num_predict": OLLAMA_NUM_PREDICT},
+                            }
+                            async with session.post(
+                                f"{OLLAMA_BASE_URL}/api/chat",
+                                json=payload,
+                                timeout=OLLAMA_REQUEST_TIMEOUT,
+                            ) as resp:
                                 resp.raise_for_status()
                                 data = await resp.json()
                                 raw = data.get("message", {}).get("content", "")
@@ -500,6 +509,11 @@ class UtilityCog(commands.Cog):
                 state.active_puzzles.pop(cid, None)
                 _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
                 await thinking_msg.edit(embed=emb("❌ AI Offline", "Could not connect to the AI.", C_RED))
+                return
+            except asyncio.TimeoutError:
+                state.active_puzzles.pop(cid, None)
+                _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], "Ollama riddle generation timed out (>120s)")
+                await thinking_msg.edit(embed=emb("⏱️ Timed Out", "The AI took too long to generate a riddle. Try again.", C_RED))
                 return
 
             if cid not in state.active_puzzles:
@@ -599,8 +613,17 @@ class UtilityCog(commands.Cog):
                     await thinking_msg.edit(embed=emb("🧩 Generating puzzle...", f"Difficulty: **{difficulty}** · Reward: **{reward:,} 🪙**", C_BLUE))
                     typing_task = asyncio.create_task(keep_typing(ctx.channel))
                     try:
-                        payload = {"model": coding_model, "messages": messages, "stream": False}
-                        async with session.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload) as resp:
+                        payload = {
+                            "model": coding_model,
+                            "messages": messages,
+                            "stream": False,
+                            "options": {"num_predict": OLLAMA_NUM_PREDICT},
+                        }
+                        async with session.post(
+                            f"{OLLAMA_BASE_URL}/api/chat",
+                            json=payload,
+                            timeout=OLLAMA_REQUEST_TIMEOUT,
+                        ) as resp:
                             resp.raise_for_status()
                             data = await resp.json()
                             raw = data.get("message", {}).get("content", "")
@@ -610,6 +633,11 @@ class UtilityCog(commands.Cog):
             state.active_puzzles.pop(cid, None)
             _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
             await thinking_msg.edit(embed=emb("❌ AI Offline", "Could not connect to the AI.", C_RED))
+            return
+        except asyncio.TimeoutError:
+            state.active_puzzles.pop(cid, None)
+            _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], "Ollama puzzle generation timed out (>120s)")
+            await thinking_msg.edit(embed=emb("⏱️ Timed Out", "The AI took too long to generate a puzzle. Try again.", C_RED))
             return
 
         if cid not in state.active_puzzles:

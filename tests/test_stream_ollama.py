@@ -75,7 +75,7 @@ class _FakeSession:
         self._response = response
         self.post_calls: list[tuple[str, dict]] = []
 
-    def post(self, url: str, *, json=None):
+    def post(self, url: str, *, json=None, timeout=None):
         self.post_calls.append((url, json))
         return self._response
 

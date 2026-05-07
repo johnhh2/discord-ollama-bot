@@ -18,6 +18,11 @@ from src.persistence import save_ai_threads
 # Global semaphore — only one Ollama request runs at a time to avoid GPU overload.
 ollama_semaphore = asyncio.Semaphore(1)
 
+# Per-response token cap (~1500 words) and wall-clock timeout for any single
+# Ollama call. Both bound how long one user can hold the semaphore.
+OLLAMA_NUM_PREDICT = 2048
+OLLAMA_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=120)
+
 
 ASK_SYSTEM_PROMPT = (
     "You are a knowledgeable and helpful assistant. "
@@ -122,7 +127,12 @@ async def stream_ollama(
         used_model = get_guild_ask_model(guild_id)
     else:
         used_model = OLLAMA_MODEL
-    payload = {"model": used_model, "messages": messages, "stream": True}
+    payload = {
+        "model": used_model,
+        "messages": messages,
+        "stream": True,
+        "options": {"num_predict": OLLAMA_NUM_PREDICT},
+    }
 
     full_response = ""
     last_edit = 0.0
@@ -134,29 +144,40 @@ async def stream_ollama(
         except Exception:
             pass
 
+    truncated = False
     async with ollama_semaphore:
-        async with session.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload) as resp:
-            resp.raise_for_status()
-            async for raw_line in resp.content:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                token = data.get("message", {}).get("content", "")
-                full_response += token
-                now = time.monotonic()
-                if now - last_edit >= EDIT_INTERVAL and full_response:
-                    display = full_response[-1997:] if len(full_response) > 1997 else full_response
+        try:
+            async with session.post(
+                f"{OLLAMA_BASE_URL}/api/chat",
+                json=payload,
+                timeout=OLLAMA_REQUEST_TIMEOUT,
+            ) as resp:
+                resp.raise_for_status()
+                async for raw_line in resp.content:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
                     try:
-                        await placeholder.edit(content=display + "▌")
-                        last_edit = now
-                    except discord.HTTPException:
-                        pass
-                if data.get("done"):
-                    break
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    token = data.get("message", {}).get("content", "")
+                    full_response += token
+                    now = time.monotonic()
+                    if now - last_edit >= EDIT_INTERVAL and full_response:
+                        display = full_response[-1997:] if len(full_response) > 1997 else full_response
+                        try:
+                            await placeholder.edit(content=display + "▌")
+                            last_edit = now
+                        except discord.HTTPException:
+                            pass
+                    if data.get("done"):
+                        break
+        except asyncio.TimeoutError:
+            truncated = True
+
+    if truncated:
+        full_response += "\n\n⏱️ *Response cut off after 2 minutes.*"
 
     return full_response
 
