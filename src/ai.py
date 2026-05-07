@@ -1,6 +1,8 @@
 import asyncio
 import json
+import logging
 import time
+import uuid
 
 import aiohttp
 import discord
@@ -15,8 +17,35 @@ from src.economy import (
 from src.persistence import save_ai_threads
 
 
+log = logging.getLogger(__name__)
+
 # Global semaphore — only one Ollama request runs at a time to avoid GPU overload.
 ollama_semaphore = asyncio.Semaphore(1)
+
+# In-flight AI requests, keyed by request_id. Used by graceful shutdown
+# (src/core.py) to wait for streams to finish before closing the DB pool.
+_in_flight: set[str] = set()
+
+
+def new_request_id() -> str:
+    """Short correlation ID for one AI request, threaded through logs."""
+    return uuid.uuid4().hex[:12]
+
+
+async def drain_in_flight(timeout: float) -> tuple[int, int]:
+    """Wait up to `timeout` seconds for in-flight AI requests to finish.
+
+    Returns (drained, remaining): how many were in-flight at call time,
+    and how many were still running when the wait expired (0 if all
+    finished). Caller is expected to log the result.
+    """
+    started_with = len(_in_flight)
+    if started_with == 0:
+        return 0, 0
+    deadline = time.monotonic() + timeout
+    while _in_flight and time.monotonic() < deadline:
+        await asyncio.sleep(0.1)
+    return started_with, len(_in_flight)
 
 # Per-response token cap (~1500 words) and wall-clock timeout for any single
 # Ollama call. Both bound how long one user can hold the semaphore.
@@ -141,6 +170,10 @@ async def enforce_cost(ctx, feature: str) -> bool:
             C_RED,
         ))
         return False
+    log.info(
+        "ai_cost_charged",
+        extra={"user_id": uid, "feature": feature, "cost": cost},
+    )
     return True
 
 
@@ -183,88 +216,132 @@ async def stream_ollama(
     model: str = None,
     guild_id: int = None,
     user_id: int = None,
+    request_id: str = None,
 ) -> str:
-    if not state.bot_settings.get("ai_enabled", True):
-        await placeholder.edit(
-            content="",
-            embed=emb("🤖 AI Offline", "Passive AI responses are currently disabled.", C_RED)
-        )
-        return ""
-    if user_id is not None:
-        wait_s = _check_token_budget(user_id, _estimate_tokens(messages))
-        if wait_s is not None:
-            try:
-                await placeholder.edit(
-                    content="",
-                    embed=emb(
-                        "⏳ AI Rate Limit",
-                        f"You've used your AI token budget. Try again in **{wait_s:.0f}s**.\n"
-                        f"Budget refills at 512 tokens / minute (max {TOKEN_BUCKET_MAX}).",
-                        C_RED,
-                    ),
+    if request_id is None:
+        request_id = new_request_id()
+    _in_flight.add(request_id)
+    try:
+        if not state.bot_settings.get("ai_enabled", True):
+            log.info(
+                "ai_request_denied",
+                extra={"request_id": request_id, "user_id": user_id, "reason": "ai_disabled"},
+            )
+            await placeholder.edit(
+                content="",
+                embed=emb("🤖 AI Offline", "Passive AI responses are currently disabled.", C_RED)
+            )
+            return ""
+        if user_id is not None:
+            wait_s = _check_token_budget(user_id, _estimate_tokens(messages))
+            if wait_s is not None:
+                log.info(
+                    "ai_token_budget_denied",
+                    extra={
+                        "request_id": request_id, "user_id": user_id,
+                        "wait_s": round(wait_s, 1),
+                    },
                 )
+                try:
+                    await placeholder.edit(
+                        content="",
+                        embed=emb(
+                            "⏳ AI Rate Limit",
+                            f"You've used your AI token budget. Try again in **{wait_s:.0f}s**.\n"
+                            f"Budget refills at 512 tokens / minute (max {TOKEN_BUCKET_MAX}).",
+                            C_RED,
+                        ),
+                    )
+                except Exception:
+                    pass
+                return ""
+        if model:
+            used_model = model
+        elif guild_id:
+            used_model = get_guild_ask_model(guild_id)
+        else:
+            used_model = OLLAMA_MODEL
+        payload = {
+            "model": used_model,
+            "messages": messages,
+            "stream": True,
+            "options": {"num_predict": OLLAMA_NUM_PREDICT},
+        }
+        prompt_tokens = _estimate_tokens(messages)
+        log.info(
+            "ollama_stream_started",
+            extra={
+                "request_id": request_id, "user_id": user_id, "guild_id": guild_id,
+                "model": used_model, "prompt_tokens_est": prompt_tokens,
+                "queued": ollama_semaphore.locked(),
+            },
+        )
+
+        full_response = ""
+        last_edit = 0.0
+        EDIT_INTERVAL = 0.8
+
+        if ollama_semaphore.locked():
+            try:
+                await placeholder.edit(content="⏳ Another AI request is running. You're next...")
             except Exception:
                 pass
-            return ""
-    if model:
-        used_model = model
-    elif guild_id:
-        used_model = get_guild_ask_model(guild_id)
-    else:
-        used_model = OLLAMA_MODEL
-    payload = {
-        "model": used_model,
-        "messages": messages,
-        "stream": True,
-        "options": {"num_predict": OLLAMA_NUM_PREDICT},
-    }
 
-    full_response = ""
-    last_edit = 0.0
-    EDIT_INTERVAL = 0.8
-
-    if ollama_semaphore.locked():
-        try:
-            await placeholder.edit(content="⏳ Another AI request is running. You're next...")
-        except Exception:
-            pass
-
-    truncated = False
-    async with ollama_semaphore:
-        try:
-            async with session.post(
-                f"{OLLAMA_BASE_URL}/api/chat",
-                json=payload,
-                timeout=OLLAMA_REQUEST_TIMEOUT,
-            ) as resp:
-                resp.raise_for_status()
-                async for raw_line in resp.content:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    try:
-                        data = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    token = data.get("message", {}).get("content", "")
-                    full_response += token
-                    now = time.monotonic()
-                    if now - last_edit >= EDIT_INTERVAL and full_response:
-                        display = full_response[-1997:] if len(full_response) > 1997 else full_response
+        truncated = False
+        t0 = time.monotonic()
+        async with ollama_semaphore:
+            try:
+                async with session.post(
+                    f"{OLLAMA_BASE_URL}/api/chat",
+                    json=payload,
+                    timeout=OLLAMA_REQUEST_TIMEOUT,
+                ) as resp:
+                    resp.raise_for_status()
+                    async for raw_line in resp.content:
+                        line = raw_line.strip()
+                        if not line:
+                            continue
                         try:
-                            await placeholder.edit(content=display + "▌")
-                            last_edit = now
-                        except discord.HTTPException:
-                            pass
-                    if data.get("done"):
-                        break
-        except asyncio.TimeoutError:
-            truncated = True
+                            data = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        token = data.get("message", {}).get("content", "")
+                        full_response += token
+                        now = time.monotonic()
+                        if now - last_edit >= EDIT_INTERVAL and full_response:
+                            display = full_response[-1997:] if len(full_response) > 1997 else full_response
+                            try:
+                                await placeholder.edit(content=display + "▌")
+                                last_edit = now
+                            except discord.HTTPException:
+                                pass
+                        if data.get("done"):
+                            break
+            except asyncio.TimeoutError:
+                truncated = True
 
-    if truncated:
-        full_response += "\n\n⏱️ *Response cut off after 2 minutes.*"
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        if truncated:
+            full_response += "\n\n⏱️ *Response cut off after 2 minutes.*"
+            log.warning(
+                "ollama_stream_timeout",
+                extra={
+                    "request_id": request_id, "user_id": user_id,
+                    "elapsed_ms": elapsed_ms, "response_chars": len(full_response),
+                },
+            )
+        else:
+            log.info(
+                "ollama_stream_complete",
+                extra={
+                    "request_id": request_id, "user_id": user_id,
+                    "elapsed_ms": elapsed_ms, "response_chars": len(full_response),
+                },
+            )
 
-    return full_response
+        return full_response
+    finally:
+        _in_flight.discard(request_id)
 
 
 async def finalize(placeholder: discord.Message, channel: discord.abc.Messageable, text: str):
@@ -276,8 +353,11 @@ async def finalize(placeholder: discord.Message, channel: discord.abc.Messageabl
 
 async def _execute_ollama_stream(
     channel, reply_to, messages, history,
-    guild_id=None, model=None, placeholder=None, user_id=None
+    guild_id=None, model=None, placeholder=None, user_id=None,
+    request_id=None,
 ):
+    if request_id is None:
+        request_id = new_request_id()
     if placeholder is None:
         placeholder = await reply_to.reply("...")
     typing_task = asyncio.create_task(keep_typing(channel))
@@ -288,6 +368,7 @@ async def _execute_ollama_stream(
             full_response = await stream_ollama(
                 session, messages, placeholder,
                 guild_id=guild_id, model=model, user_id=user_id,
+                request_id=request_id,
             )
         if not full_response:
             # AI disabled or per-user token-budget denial — placeholder
@@ -301,10 +382,18 @@ async def _execute_ollama_stream(
     except aiohttp.ClientError as e:
         history.pop()
         _log_audit(author, command, f"Ollama offline: {e}")
+        log.warning(
+            "ai_request_failed",
+            extra={"request_id": request_id, "user_id": user_id, "error": "ollama_offline"},
+        )
         await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
     except Exception as e:
         history.pop()
         _log_audit(author, command, f"{type(e).__name__}: {e}")
+        log.exception(
+            "ai_request_failed",
+            extra={"request_id": request_id, "user_id": user_id, "error": type(e).__name__},
+        )
         await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
     finally:
         typing_task.cancel()
@@ -321,6 +410,7 @@ async def respond(
 ):
     from src.helpers import get_system_prompt
     channel_id = channel.id
+    request_id = new_request_id()
 
     # AI thread session (ask, story, roleplay, rpg) — shared per-thread history
     ai_thread = state.ai_threads.get(channel_id)
@@ -334,7 +424,16 @@ async def respond(
     else:
         history = state.channel_histories[channel_id]
         sp = system_prompt or get_system_prompt(channel_id)
+        kind = "channel"
         model = None
+
+    log.info(
+        "ai_request_started",
+        extra={
+            "request_id": request_id, "user_id": user_id, "guild_id": guild_id,
+            "channel_id": channel_id, "kind": kind, "prompt_chars": len(content),
+        },
+    )
 
     formatted_content = f"{author_name}: {content}" if author_name else content
     history.append({"role": "user", "content": formatted_content})
@@ -344,7 +443,7 @@ async def respond(
     await _execute_ollama_stream(
         channel, reply_to, messages, history,
         model=model, guild_id=guild_id, placeholder=placeholder,
-        user_id=user_id,
+        user_id=user_id, request_id=request_id,
     )
     if ai_thread is not None:
         await save_ai_threads()
