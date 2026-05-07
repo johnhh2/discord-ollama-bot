@@ -61,7 +61,7 @@ async def test_parse_single_integer_sets_top_n(patch_member_converter):
 
 
 async def test_parse_mentions_sets_members(patch_member_converter):
-    parsed = await graph_series.parse_admin_tokens(_stub_ctx(), ("100", "200"))
+    await graph_series.parse_admin_tokens(_stub_ctx(), ("100", "200"))
     # Both digit-strings; the parser tries integer first. So this would set
     # top_n then fail on the second digit. Test the actual mention path:
 

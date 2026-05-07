@@ -26,5 +26,7 @@ Repository = "https://github.com/johnhh2/discord-ollama-bot"
 # catch syntax/whitespace issues. E501 (line length) is excluded — line
 # length is a style preference, not a correctness signal, and forcing it
 # would be a large reflow with no real value for a project this size.
+# E741 (ambiguous variable name like `l`) is disabled because short
+# loop variables in tight comprehensions read fine in context.
 select = ["E", "F", "W"]
-ignore = ["E501"]
+ignore = ["E501", "E741"]
