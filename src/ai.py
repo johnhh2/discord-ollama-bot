@@ -36,6 +36,16 @@ def _estimate_tokens(messages: list) -> int:
     return max(1, total_chars // 4)
 
 
+def _peek_token_budget(user_id: int) -> float:
+    """Return the user's current token balance without spending. Used by
+    the `!ai` status display so users can see what they have left."""
+    if user_id in state.godmode_users:
+        return float(TOKEN_BUCKET_MAX)
+    now = time.monotonic()
+    tokens, last = _user_token_buckets.get(user_id, (float(TOKEN_BUCKET_MAX), now))
+    return min(float(TOKEN_BUCKET_MAX), tokens + (now - last) * TOKEN_BUCKET_REFILL_PER_SEC)
+
+
 def _check_token_budget(user_id: int, cost: int) -> float | None:
     """Refill the user's bucket and try to spend `cost` tokens.
 

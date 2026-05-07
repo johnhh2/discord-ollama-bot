@@ -113,14 +113,3 @@ async def check_command_permission(ctx: commands.Context) -> bool:
             await ctx.send(embed=emb("❌ No Permission", "", C_RED))
         return False
     return True
-
-
-def check_rate_limit(user_id: int) -> bool:
-    import time
-    from src.config import RATE_LIMIT_SECONDS
-    now = time.monotonic()
-    last = state.user_last_request.get(user_id, 0)
-    if now - last < RATE_LIMIT_SECONDS:
-        return True
-    state.user_last_request[user_id] = now
-    return False

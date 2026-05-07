@@ -10,7 +10,6 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:1143
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "dolphin3:8b")
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant.")
 HISTORY_LIMIT = int(os.getenv("HISTORY_LIMIT", "20"))
-RATE_LIMIT_SECONDS = float(os.getenv("RATE_LIMIT_SECONDS", "5.0"))
 NSFW_API_URL = os.getenv("NSFW_API_URL", "")
 NSFW_API_KEY = os.getenv("NSFW_API_KEY")
 NSFW_API_USER_ID = os.getenv("NSFW_API_USER_ID")

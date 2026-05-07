@@ -53,7 +53,6 @@ def reset_bot_state(monkeypatch):
     _reset_dict(_state.economy, {"users": {}, "last_daily_reset": None, "guild_house": {}})
     _reset_dict(_state.guild_settings, {})
     _reset_dict(_state.insurance, {})
-    _reset_dict(_state.user_last_request, {})
     _state.quote_log[:] = []
 
     # Reset per-test state that newer tests mutate. Existing tests don't touch

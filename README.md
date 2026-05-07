@@ -115,7 +115,6 @@ All configuration is via environment variables. See [.env.example](.env.example)
 | `OLLAMA_MODEL` | `dolphin3:8b` | Default model for `!ask` |
 | `SYSTEM_PROMPT` | `You are a helpful assistant.` | Default character prompt |
 | `HISTORY_LIMIT` | `20` | Per-channel history depth fed to the model |
-| `RATE_LIMIT_SECONDS` | `5.0` | Per-user AI cooldown |
 | `ACTIVE_CHANNEL_IDS` | _(all)_ | Comma-separated channel IDs where the bot responds passively |
 
 ## Tests

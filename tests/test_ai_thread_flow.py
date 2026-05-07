@@ -46,10 +46,11 @@ pytestmark = pytest.mark.asyncio
 def _stub_respond_and_costs(monkeypatch):
     """Stub respond() so tests don't need a real Ollama; record calls.
 
-    Stub enforce_cost so balance gates don't block tests; rate limit gets
-    bypassed by giving each test a fresh user_last_request slot.
-    Also stub _send_invite (used by story/rp/rpg branches) so the
-    background reaction-listener task isn't spawned.
+    Stub enforce_cost so balance gates don't block tests. The token-bucket
+    limit lives in stream_ollama, which respond() is stubbed past, so it
+    doesn't fire here either. Also stub _send_invite (used by
+    story/rp/rpg branches) so the background reaction-listener task isn't
+    spawned.
     """
     respond_calls = []
 
@@ -69,8 +70,6 @@ def _stub_respond_and_costs(monkeypatch):
     async def _stub_enforce_cost(ctx, feature):
         return True
     monkeypatch.setattr(_ai_cog, "enforce_cost", _stub_enforce_cost)
-
-    monkeypatch.setattr(_ai_cog, "check_rate_limit", lambda uid: False)
 
     async def _stub_send_invite(*args, **kwargs):
         return None

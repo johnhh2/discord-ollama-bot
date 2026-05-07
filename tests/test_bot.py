@@ -22,7 +22,6 @@ from src.games.chess import create_chess_board, is_black_piece, is_valid_chess_m
 from src.games.hangman import HANGMAN_ART, build_hangman_display, calculate_hangman_reward
 from src.games.ttt_c4 import build_c4_display, build_ttt_display, check_c4_winner, check_ttt_winner, is_ttt_stalemate
 from src.helpers import _render_race, curse_font, mocking_font
-from src.permissions import check_rate_limit
 from src.guild_config import get_guild_cfg
 from src.state import economy, guild_settings
 
@@ -992,24 +991,6 @@ class TestInsurance:
             "1": {"expires_at": time.time() + 3600, "protected_from": ["mug"]}
         })
         assert await is_insured(1, "rob") is False
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Rate limiting
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestCheckRateLimit:
-    def test_first_call_not_limited(self):
-        # user_last_request is reset to {} by conftest autouse fixture
-        assert check_rate_limit(999) is False
-
-    def test_second_call_immediately_limited(self):
-        check_rate_limit(999)
-        assert check_rate_limit(999) is True
-
-    def test_different_users_independent(self):
-        check_rate_limit(1)
-        assert check_rate_limit(2) is False  # user 2 not rate-limited
 
 
 # ─────────────────────────────────────────────────────────────────────────────

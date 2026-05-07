@@ -19,7 +19,6 @@ Key environment variables (all optional except `DISCORD_TOKEN`):
 | `OLLAMA_MODEL` | `dolphin3:8b` | Default model for `!ask` |
 | `SYSTEM_PROMPT` | `You are a helpful assistant.` | Default system prompt |
 | `HISTORY_LIMIT` | `20` | Per-channel message history depth |
-| `RATE_LIMIT_SECONDS` | `5.0` | Per-user AI cooldown |
 | `ACTIVE_CHANNEL_IDS` | _(all channels)_ | Comma-separated channel IDs for passive AI responses |
 | `NSFW_API_URL` | — | Optional; base URL for the NSFW image API (enables `!nsfw`) |
 | `NSFW_API_KEY` / `NSFW_API_USER_ID` | — | Optional; API credentials for the NSFW image endpoint |

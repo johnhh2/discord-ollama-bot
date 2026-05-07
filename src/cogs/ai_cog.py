@@ -12,7 +12,7 @@ from src.economy import (
     add_balance, get_guild_ask_model, get_guild_roleplay_model,
 )
 from src.permissions import (
-    is_admin, check_rate_limit,
+    is_admin,
     check_ai_channel,
 )
 from src.persistence import (
@@ -49,9 +49,6 @@ class AICog(commands.Cog):
             return
         if question is None:
             await ctx.send("Usage: `!ask <question>`")
-            return
-        if check_rate_limit(ctx.author.id):
-            await ctx.send("⚠️ Slow down! Please wait a moment before sending another message.")
             return
 
         # Check cost
@@ -132,9 +129,6 @@ class AICog(commands.Cog):
         if prompt is None:
             await ctx.send(usage + self._story_alias_hint(ctx, alias_name))
             return
-        if check_rate_limit(ctx.author.id):
-            await ctx.send("⚠️ Slow down! Please wait a moment before sending another message.")
-            return
 
         uid = ctx.author.id
         invited_users = [m for m in ctx.message.mentions if m.id != uid]
@@ -213,9 +207,6 @@ class AICog(commands.Cog):
     async def cmd_continue(self, ctx: commands.Context):
         if not isinstance(ctx.channel, discord.Thread):
             await ctx.send(embed=emb("❌ Threads Only", "`!continue` only works inside an AI thread.", C_RED))
-            return
-        if check_rate_limit(ctx.author.id):
-            await ctx.send("⚠️ Slow down! Please wait a moment before sending another message.")
             return
 
         uid = ctx.author.id

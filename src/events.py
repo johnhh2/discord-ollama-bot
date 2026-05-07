@@ -14,7 +14,6 @@ from src.economy import (
     add_balance, deduct_balance, get_balance, is_insured, _ct_today, _ensure_user,
 )
 from src.permissions import (
-    check_rate_limit,
     _wrong_channel_reply,
     get_command_perm,
 )
@@ -639,11 +638,6 @@ class EventsCog(commands.Cog):
         content = message.content.replace(f"<@{self.bot.user.id}>", "").strip()
         if not content:
             await message.reply("Yes?")
-            await self.bot.process_commands(message)
-            return
-
-        if check_rate_limit(uid):
-            await message.reply("⚠️ Slow down! Please wait a moment before sending another message.")
             await self.bot.process_commands(message)
             return
 

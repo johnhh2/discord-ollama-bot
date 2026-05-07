@@ -27,9 +27,10 @@ from src.guild_config import get_guild_cfg
 from src.ai import (
     check_ollama_connected, keep_typing,
     ollama_semaphore, OLLAMA_NUM_PREDICT, OLLAMA_REQUEST_TIMEOUT,
+    TOKEN_BUCKET_MAX, TOKEN_BUCKET_REFILL_PER_SEC, _peek_token_budget,
 )
 from src.config import (
-    OLLAMA_MODEL, OLLAMA_BASE_URL, PUZZLE_REWARDS, RATE_LIMIT_SECONDS,
+    OLLAMA_MODEL, OLLAMA_BASE_URL, PUZZLE_REWARDS,
 )
 from src.puzzle import (
     PUZZLE_RIDDLE_PROMPT, build_coding_prompt,
@@ -212,15 +213,21 @@ class UtilityCog(commands.Cog):
             inline=False
         )
 
-        last = state.user_last_request.get(ctx.author.id, 0)
-        remaining = RATE_LIMIT_SECONDS - (time.monotonic() - last)
-        if remaining > 0:
-            cooldown_value = f"⏳ **{remaining:.1f}s** remaining (limit: {RATE_LIMIT_SECONDS:g}s)"
+        tokens_left = _peek_token_budget(ctx.author.id)
+        if tokens_left >= TOKEN_BUCKET_MAX:
+            budget_value = (
+                f"✅ **{int(tokens_left):,} / {TOKEN_BUCKET_MAX:,}** tokens — "
+                f"refills 512 per 30s"
+            )
         else:
-            cooldown_value = f"✅ Ready (limit: {RATE_LIMIT_SECONDS:g}s between requests)"
+            seconds_to_full = (TOKEN_BUCKET_MAX - tokens_left) / TOKEN_BUCKET_REFILL_PER_SEC
+            budget_value = (
+                f"⏳ **{int(tokens_left):,} / {TOKEN_BUCKET_MAX:,}** tokens "
+                f"(full in {seconds_to_full:.0f}s) — refills 512 per 30s"
+            )
         embed.add_field(
-            name="⏱️ Your Rate Limit",
-            value=cooldown_value,
+            name="🪙 Your Token Budget",
+            value=budget_value,
             inline=False
         )
 
