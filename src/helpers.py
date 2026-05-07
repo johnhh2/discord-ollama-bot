@@ -169,10 +169,11 @@ async def parse_amount(
     if resolved.endswith("%"):
         try:
             pct = float(resolved[:-1])
-            assert 0 < pct <= 100
+            if not (0 < pct <= 100):
+                raise ValueError
             balance = await get_balance(ctx.author.id)
             amount = max(0, int(balance * pct / 100))
-        except (ValueError, AssertionError):
+        except ValueError:
             await ctx.send("Percentage must be between 1% and 100%.")
             return None
     else:

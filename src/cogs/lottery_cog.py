@@ -159,8 +159,9 @@ class LotteryCog(commands.Cog):
 
         try:
             tickets = int(n)
-            assert tickets > 0
-        except (ValueError, AssertionError):
+            if tickets <= 0:
+                raise ValueError
+        except ValueError:
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a positive number.", C_RED))
             return
 

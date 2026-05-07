@@ -767,8 +767,9 @@ class EconomyCog(commands.Cog):
             return
         try:
             amount = int(amount)
-            assert amount > 0
-        except (ValueError, AssertionError):
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a positive whole number.", C_RED))
             return
 
@@ -779,8 +780,9 @@ class EconomyCog(commands.Cog):
             else:
                 try:
                     duration_hours = float(duration)
-                    assert duration_hours > 0
-                except (ValueError, AssertionError):
+                    if duration_hours <= 0:
+                        raise ValueError
+                except ValueError:
                     await ctx.send(embed=emb("❌ Invalid Duration", "Duration must be a positive number of hours.", C_RED))
                     return
 
@@ -843,13 +845,14 @@ class EconomyCog(commands.Cog):
             return
         try:
             amount = int(amount)
-            assert amount != 0
+            if amount == 0:
+                raise ValueError
             if amount < 0:
                 if self.bot.user and target.id == self.bot.user.id:
                     amount = max(amount, -1 * get_guild_house_balance(ctx.guild.id if ctx.guild else 0))
                 else:
                     amount = max(amount, -1 * await get_balance(target.id))
-        except (ValueError, AssertionError):
+        except ValueError:
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a non-zero whole number.", C_RED))
             return
         if self.bot.user and target.id == self.bot.user.id and ctx.guild:
@@ -883,8 +886,9 @@ class EconomyCog(commands.Cog):
             return
         try:
             amount = int(amount)
-            assert amount != 0
-        except (ValueError, AssertionError):
+            if amount == 0:
+                raise ValueError
+        except ValueError:
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a non-zero whole number.", C_RED))
             return
 
