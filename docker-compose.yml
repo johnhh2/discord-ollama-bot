@@ -19,8 +19,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "ollama:${OLLAMA_HOST_IP:-host-gateway}"
-    volumes:
-      - /volume1/docker/ollama_discord_bot:/app/data
     deploy:
       resources:
         limits:

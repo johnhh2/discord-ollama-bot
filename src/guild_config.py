@@ -1,9 +1,8 @@
 """Per-guild settings accessor.
 
-`state.guild_settings` is the in-memory cache of `data/guild_settings.json`'s
-JSON-blob equivalent (now backed by the `guild_settings` table in MariaDB).
-This module exposes the one accessor that auto-creates an empty entry for a
-guild seen for the first time. Pure dict logic — no DB I/O.
+`state.guild_settings` is the in-memory cache of the `guild_settings` table
+in MariaDB. This module exposes the one accessor that auto-creates an empty
+entry for a guild seen for the first time. Pure dict logic — no DB I/O.
 """
 from src import state
 
