@@ -19,11 +19,17 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio ruff
+          pip install --require-hashes -r requirements.lock
+          pip install pytest pytest-asyncio ruff bandit pip-audit
 
       - name: Lint
         run: ruff check src/ tests/
+
+      - name: Bandit (security lint)
+        run: bandit -r src/ --severity-level medium
+
+      - name: pip-audit (CVE scan)
+        run: pip-audit -r requirements.lock --strict
 
       - name: Run tests
         run: pytest -q
