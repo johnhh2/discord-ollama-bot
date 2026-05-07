@@ -152,6 +152,36 @@ async def test_ask_in_text_channel_creates_thread_and_seeds_state(_stub_respond_
     fake_thread.send.assert_awaited()
 
 
+async def test_ask_skips_thread_creation_when_user_is_out_of_tokens(_stub_respond_and_costs):
+    """Drained-bucket users hit the rate-limit embed before any thread is
+    created or coin cost is deducted. Otherwise we'd leave an empty Discord
+    thread the user can't actually use until the bucket refills."""
+    import src.ai as _ai
+    cog = AICog(bot=None)
+    asker = FakeMember(uid=1003, display_name="broke")
+    ctx = _make_ctx_with_text_channel(asker, message_content="!ask hello")
+    ctx.channel.history = lambda limit=11: _empty_async_iter()
+
+    # Drain the bucket directly. (godmode_users is reset by the global
+    # fixture, so this user isn't a bypassing admin.)
+    import time as _t
+    _ai._user_token_buckets[asker.id] = (0.0, _t.monotonic())
+    try:
+        await cog.cmd_ask.callback(cog, ctx, question="What is AI?")
+    finally:
+        _ai._user_token_buckets.clear()
+
+    # No thread, no respond() call, no coin deduction.
+    ctx.message.create_thread.assert_not_awaited()
+    assert _state.ai_threads == {}
+    assert _stub_respond_and_costs == []
+    # User was told why.
+    assert any(
+        getattr(m, "title", "") == "⏳ AI Rate Limit"
+        for m in ctx.sent_embeds
+    )
+
+
 async def test_ask_with_no_question_replies_usage(_stub_respond_and_costs):
     cog = AICog(bot=None)
     asker = FakeMember(uid=1002)

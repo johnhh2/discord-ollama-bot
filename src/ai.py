@@ -36,6 +36,32 @@ def _estimate_tokens(messages: list) -> int:
     return max(1, total_chars // 4)
 
 
+async def check_token_budget_or_notify(ctx, prompt_text: str = "") -> bool:
+    """Pre-flight token-budget check for AI commands.
+
+    Sends the rate-limit embed and returns False when the user's bucket
+    can't even cover what they typed (so we don't waste effort deducting
+    the coin cost or spinning up a Discord thread that's about to fail).
+    Returns True when the call should proceed; the authoritative spend
+    still happens inside `stream_ollama`. user_id=None / godmode pass.
+    """
+    if ctx.author.id in state.godmode_users:
+        return True
+    cost = max(1, len(prompt_text) // 4)
+    available = _peek_token_budget(ctx.author.id)
+    if available >= cost:
+        return True
+    needed = min(cost, TOKEN_BUCKET_MAX) - available
+    wait_s = needed / TOKEN_BUCKET_REFILL_PER_SEC
+    await ctx.send(embed=emb(
+        "⏳ AI Rate Limit",
+        f"You've used your AI token budget. Try again in **{wait_s:.0f}s**.\n"
+        f"Budget refills at 512 tokens / 30s (max {TOKEN_BUCKET_MAX}).",
+        C_RED,
+    ))
+    return False
+
+
 def _peek_token_budget(user_id: int) -> float:
     """Return the user's current token balance without spending. Used by
     the `!ai` status display so users can see what they have left."""

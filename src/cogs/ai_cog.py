@@ -22,6 +22,7 @@ from src.guild_config import get_guild_cfg
 from src.ai import (
     enforce_cost, keep_typing,
     stream_ollama, finalize, respond,
+    check_token_budget_or_notify,
     ASK_SYSTEM_PROMPT, STORY_SYSTEM_PROMPT,
 )
 from src.config import (
@@ -49,6 +50,9 @@ class AICog(commands.Cog):
             return
         if question is None:
             await ctx.send("Usage: `!ask <question>`")
+            return
+
+        if not await check_token_budget_or_notify(ctx, question):
             return
 
         # Check cost
@@ -140,6 +144,9 @@ class AICog(commands.Cog):
             await ctx.send(usage + self._story_alias_hint(ctx, alias_name))
             return
 
+        if not await check_token_budget_or_notify(ctx, clean_prompt):
+            return
+
         if not await enforce_cost(ctx, "story"):
             return
 
@@ -218,6 +225,9 @@ class AICog(commands.Cog):
             await ctx.send(embed=emb("❌ Nothing to Continue", "No story to continue in this thread.", C_RED))
             return
 
+        if not await check_token_budget_or_notify(ctx, "Continue the story."):
+            return
+
         if not await enforce_cost(ctx, "continue"):
             return
 
@@ -243,6 +253,9 @@ class AICog(commands.Cog):
 
         if not last_text:
             await ctx.send(embed=emb("❌ Nothing to Summarize", "No AI response found in this thread yet.", C_RED))
+            return
+
+        if not await check_token_budget_or_notify(ctx, last_text):
             return
 
         tldr_prompt = [
@@ -284,6 +297,9 @@ class AICog(commands.Cog):
         clean_prompt = clean_prompt.strip()
         if not clean_prompt:
             await ctx.send("Usage: `!roleplay <character prompt> [@user1 @user2 ...]`")
+            return
+
+        if not await check_token_budget_or_notify(ctx, clean_prompt):
             return
 
         if not await enforce_cost(ctx, "roleplay"):
@@ -341,6 +357,9 @@ class AICog(commands.Cog):
 
         # Parse mentions for multiplayer
         invited_users = [m for m in ctx.message.mentions if m.id != uid]
+
+        if not await check_token_budget_or_notify(ctx, "Begin the adventure."):
+            return
 
         if not await enforce_cost(ctx, "rpg"):
             return
