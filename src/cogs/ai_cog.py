@@ -712,22 +712,23 @@ class AICog(commands.Cog):
     @commands.command(name="closeall")
     @requires_perm
     async def cmd_closeall(self, ctx: commands.Context):
-        """Close every active AI thread (ask/story/roleplay/rpg) in this guild."""
+        """Close every AI thread you own (ask/story/roleplay/rpg) in this guild."""
         if await check_ai_channel(ctx):
             return
         if ctx.guild is None:
             return
 
         guild_id = ctx.guild.id
+        uid = ctx.author.id
         target_ids = [
             tid for tid, t in state.ai_threads.items()
-            if t.get("guild_id") == guild_id
+            if t.get("guild_id") == guild_id and t.get("owner_id") == uid
         ]
 
         if not target_ids:
             await ctx.send(embed=emb(
                 "⏹️ Nothing to Close",
-                "No active AI threads in this server.",
+                "You have no active AI threads in this server.",
                 C_GREY,
             ))
             return
@@ -761,10 +762,10 @@ class AICog(commands.Cog):
             f"{label_map[k]}: **{counts[k]}**"
             for k in ("ask", "story", "roleplay", "rpg") if counts[k]
         )
-        summary = f"Closed **{len(target_ids)}** AI thread(s)."
+        summary = f"Closed **{len(target_ids)}** of your AI thread(s)."
         if failed:
             summary += f" ({failed} could not be archived — check bot permissions.)"
-        await ctx.send(embed=emb("⏹️ Closed All AI Threads", f"{summary}\n\n{breakdown}", C_GREEN))
+        await ctx.send(embed=emb("⏹️ Closed Your AI Threads", f"{summary}\n\n{breakdown}", C_GREEN))
 
 
     @commands.command(name="reverse")

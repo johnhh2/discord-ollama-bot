@@ -298,8 +298,8 @@ class UtilityCog(commands.Cog):
         embed.add_field(
             name="⏹️ !closeall",
             value=(
-                "Close every active AI thread (ask/story/roleplay/rpg) in this server\n"
-                "Server-admin only · runs from any AI channel"
+                "Close every AI thread you own (ask/story/roleplay/rpg) in this server\n"
+                "Runs from any AI channel"
             ),
             inline=False
         )

@@ -22,7 +22,6 @@
   "saved":         {"tier": "bot_admin", "hidden": false},
   "invitelink":    {"tier": "server_admin", "hidden": false},
   "clearall":      {"tier": "server_admin", "hidden": false},
-  "closeall":      {"tier": "server_admin", "hidden": false},
   "settings":      {"tier": "server_admin", "hidden": false},
   "settings admin-log-channel": {"tier": "bot_admin", "hidden": true},
   "settings bug-report-channel": {"tier": "bot_admin", "hidden": true},
