@@ -139,16 +139,12 @@ async def _load_extensions(bot: commands.Bot):
 
 
 def run():
-    import logging
+    from src.logging_setup import configure_logging
 
     if not DISCORD_TOKEN:
         raise RuntimeError("DISCORD_TOKEN is not set. Copy .env.example to .env and fill it in.")
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    configure_logging()
 
     bot = create_bot()
 
