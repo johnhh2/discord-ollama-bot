@@ -293,6 +293,9 @@ class ShopCog(commands.Cog):
         if not new_name:
             await ctx.send(embed=emb("🛒 Shop", "Please provide a new nickname.", C_PURPLE))
             return
+        if len(new_name) > 32:
+            await ctx.send(embed=emb("❌ Too Long", "Nicknames must be 32 characters or fewer.", C_RED))
+            return
         if target.id != uid and await is_insured(target.id, "nickname"):
             _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be renamed (expires <t:{_exp}:R>).", C_GOLD))
@@ -354,6 +357,12 @@ class ShopCog(commands.Cog):
             return
         hex_color = args[-1].lstrip("#")
         name = " ".join(args[1:-1])
+        if not name:
+            await ctx.send(embed=emb("❌ Invalid Name", "Role name cannot be empty.", C_RED))
+            return
+        if len(name) > 100:
+            await ctx.send(embed=emb("❌ Too Long", "Role names must be 100 characters or fewer.", C_RED))
+            return
         if "admin" in name.lower():
             await ctx.send(embed=emb("❌ Invalid Name", "Role names cannot contain \"admin\".", C_RED))
             return
@@ -681,6 +690,9 @@ class ShopCog(commands.Cog):
         role_arg, new_name = [s.strip() for s in full_arg.split(" | ", 1)]
         if not new_name:
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop renamerole @role | <new name>`", C_PURPLE))
+            return
+        if len(new_name) > 100:
+            await ctx.send(embed=emb("❌ Too Long", "Role names must be 100 characters or fewer.", C_RED))
             return
         role = self._resolve_role_strict(ctx.guild, role_arg)
         if role is None or role.id not in state.bot_roles:

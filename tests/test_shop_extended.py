@@ -23,7 +23,7 @@ from src.economy import add_balance, get_balance
 from src.config import (
     SHOP_ROLE_CREATE_COST, SHOP_LOCK_COST, SHOP_MOCK_COST,
     SHOP_MOCK_MESSAGES, SHOP_CURSE_COST, SHOP_CURSE_MESSAGES,
-    SHOP_TAX_COST,
+    SHOP_TAX_COST, SHOP_NICKNAME_SELF_COST, SHOP_RENAME_COST,
 )
 
 from tests.fakes.discord import (
@@ -149,6 +149,68 @@ async def test_shop_createrole_refunds_on_forbidden(db, force_member_converter_f
     # Refunded back to starting balance.
     assert await get_balance(buyer.id) == starting
     assert await _read_db_balance(buyer.id) == starting
+
+
+# ── Length caps: rejects oversize input before charging or hitting Discord ────
+
+async def test_shop_nickname_rejects_oversize_name(db, force_member_converter_fallback):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=1101, display_name="buyer")
+    starting = SHOP_NICKNAME_SELF_COST + 1000
+    await add_balance(buyer.id, starting)
+
+    guild = FakeGuild(gid=43)
+    guild.members = [buyer]
+    ctx = FakeCtx(author=buyer, guild=guild)
+
+    long_name = "x" * 33
+    await cog.shop_nickname.callback(cog, ctx, long_name)
+
+    # Rejected before charging and before any edit attempt.
+    assert await get_balance(buyer.id) == starting
+    buyer.edit.assert_not_called()
+    assert any("Too Long" in e.title for e in ctx.sent_embeds)
+
+
+async def test_shop_createrole_rejects_oversize_name(db, force_member_converter_fallback):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=1102)
+    target = FakeMember(uid=1103, display_name="target")
+    starting = SHOP_ROLE_CREATE_COST + 1000
+    await add_balance(buyer.id, starting)
+
+    guild = FakeGuild(gid=44)
+    guild.members = [buyer, target]
+    guild.create_role = AsyncMock()
+    ctx = FakeCtx(author=buyer, guild=guild)
+
+    long_name = "r" * 101
+    await cog.shop_createrole.callback(cog, ctx, "target", long_name, "ff00aa")
+
+    assert await get_balance(buyer.id) == starting
+    guild.create_role.assert_not_called()
+    assert any("Too Long" in e.title for e in ctx.sent_embeds)
+
+
+async def test_shop_renamerole_rejects_oversize_name(db):
+    cog = ShopCog(bot=None)
+    buyer = FakeMember(uid=1104)
+    starting = SHOP_RENAME_COST + 1000
+    await add_balance(buyer.id, starting)
+
+    guild = FakeGuild(gid=45)
+    role = FakeRole(role_id=901, name="OldName")
+    guild.roles = [role]
+    _state.bot_roles.add(role.id)
+    ctx = FakeCtx(author=buyer, guild=guild)
+
+    long_name = "r" * 101
+    arg = f"<@&{role.id}> | {long_name}"
+    await cog.shop_renamerole.callback(cog, ctx, *arg.split())
+
+    assert await get_balance(buyer.id) == starting
+    role.edit.assert_not_called()
+    assert any("Too Long" in e.title for e in ctx.sent_embeds)
 
 
 # ── Channels: shop_lockchannel + shop_unlockchannel ───────────────────────────

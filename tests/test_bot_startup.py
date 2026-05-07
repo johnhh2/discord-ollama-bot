@@ -191,3 +191,14 @@ async def test_command_perms_subset_match_registered_commands(loaded_bot):
         f"command_perms.json has entries for commands that don't exist: {stale}. "
         f"They silently do nothing — either rename in the JSON or remove."
     )
+
+
+async def test_bot_blocks_everyone_and_role_mentions_by_default(loaded_bot):
+    """Hardening: shop effects (mock/curse/ragebait/tax) echo user input back
+    via channel.send. Without a global allowed_mentions default, a user could
+    type @everyone and the bot would ping. Verify the bot is constructed with
+    everyone+role pings disabled."""
+    am = loaded_bot.allowed_mentions
+    assert am is not None, "bot must define an allowed_mentions default"
+    assert am.everyone is False
+    assert am.roles is False
