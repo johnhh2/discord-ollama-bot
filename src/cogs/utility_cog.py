@@ -802,6 +802,71 @@ class UtilityCog(commands.Cog):
 
         await send_ephemeral(ctx, embed=embed)
 
+    @commands.command(name="bug", aliases=["issue", "bugreport"])
+    @requires_perm
+    async def cmd_bug(self, ctx: commands.Context, *, report: str = None):
+        if report is None or not report.strip():
+            await ctx.send(embed=emb(
+                "🐛 Bug Report",
+                "Usage: `!bug <description of the bug>`",
+                C_GREY,
+            ))
+            return
+
+        chan_id = state.bot_settings.get("bug_report_channel")
+        if not chan_id:
+            await ctx.send(embed=emb(
+                "🐛 Bug Report",
+                "Bug reporting is not configured on this bot.",
+                C_GREY,
+            ))
+            return
+
+        try:
+            channel = self.bot.get_channel(int(chan_id)) or await self.bot.fetch_channel(int(chan_id))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
+            channel = None
+        if channel is None:
+            await ctx.send(embed=emb("🐛 Bug Report", "Could not reach the bug-report channel.", C_RED))
+            return
+
+        history_lines = []
+        try:
+            async for msg in ctx.channel.history(limit=6):
+                if msg.id == ctx.message.id:
+                    continue
+                if len(history_lines) >= 5:
+                    break
+                history_lines.append(f"[{msg.author.display_name}]: {msg.content[:200]}")
+            history_lines.reverse()
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+        guild_name = ctx.guild.name if ctx.guild else "DM"
+        guild_id_str = str(ctx.guild.id) if ctx.guild else "—"
+        chan_ref = ctx.channel.mention if hasattr(ctx.channel, "mention") else str(ctx.channel)
+        desc_lines = [
+            f"**Time:** <t:{int(time.time())}:f>",
+            f"**User:** {ctx.author.display_name} (`{ctx.author.id}`)",
+            f"**Guild:** {guild_name} (`{guild_id_str}`)",
+            f"**Channel:** {chan_ref}",
+            "",
+            f"**Report:**\n{report[:1500]}",
+        ]
+        if history_lines:
+            log_block = "\n".join(history_lines)
+            if len(log_block) > 1500:
+                log_block = log_block[-1500:]
+            desc_lines.append(f"\n**Last 5 messages:**\n```\n{log_block}\n```")
+
+        try:
+            await channel.send(embed=emb("🐛 Bug Report", "\n".join(desc_lines), C_RED))
+        except (discord.Forbidden, discord.HTTPException):
+            await ctx.send(embed=emb("🐛 Bug Report", "Could not post the bug report — please try again later.", C_RED))
+            return
+
+        await ctx.send(embed=emb("🐛 Bug Report", "Thanks — your report has been sent to the bot admins.", C_GREEN))
+
 
 async def setup(bot):
     await bot.add_cog(UtilityCog(bot))

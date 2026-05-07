@@ -100,6 +100,9 @@ class SettingsCog(commands.Cog):
             admin_log_id = state.bot_settings.get("admin_log_channel")
             admin_log_val = f"<#{admin_log_id}>" if admin_log_id else "❌ disabled"
             embed.add_field(name="🛡️ Admin log channel (global)", value=admin_log_val, inline=False)
+            bug_chan_id = state.bot_settings.get("bug_report_channel")
+            bug_chan_val = f"<#{bug_chan_id}>" if bug_chan_id else "❌ disabled"
+            embed.add_field(name="🐛 Bug report channel (global)", value=bug_chan_val, inline=False)
         footer_text = (
             "Subcommands:\n"
             "ai-channels #ch... / clear\n"
@@ -537,6 +540,30 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb(
                 "🛡️ Admin Log Channel",
                 "Usage: `!settings admin-log-channel #channel` or `!settings admin-log-channel clear`",
+                C_GREY,
+            ))
+
+    # ── !settings bug-report-channel (global, bot-admin only) ────────────────
+    @cmd_settings.command(name="bug-report-channel")
+    @requires_perm
+    async def settings_bug_report_channel(self, ctx: commands.Context, *args):
+        if args and args[0].lower() == "clear":
+            state.bot_settings.pop("bug_report_channel", None)
+            await save_bot_settings()
+            await ctx.send(embed=emb("🐛 Bug Report Channel", "User bug reports disabled.", C_GREEN))
+        elif ctx.message.channel_mentions:
+            channel = ctx.message.channel_mentions[0]
+            state.bot_settings["bug_report_channel"] = str(channel.id)
+            await save_bot_settings()
+            await ctx.send(embed=emb(
+                "🐛 Bug Report Channel",
+                f"User bug reports from **all servers** will be posted to {channel.mention}.",
+                C_GREEN,
+            ))
+        else:
+            await ctx.send(embed=emb(
+                "🐛 Bug Report Channel",
+                "Usage: `!settings bug-report-channel #channel` or `!settings bug-report-channel clear`",
                 C_GREY,
             ))
 
