@@ -1,0 +1,52 @@
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# Local tooling / editors
+.claude
+.vscode
+.idea
+.github
+
+# Python caches and virtualenvs
+__pycache__
+*.py[cod]
+*$py.class
+.venv
+.venv-*
+venv
+env
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.egg-info
+build
+dist
+
+# Tests and dev-only scripts (not needed at runtime)
+tests
+scripts
+
+# Runtime/local data — never bake into the image
+data
+*.sqlite
+*.sqlite3
+*.db
+
+# Secrets and local env files
+.env
+.env.*
+!.env.example
+
+# Docs and project metadata not used at runtime
+*.md
+LICENSE
+
+# Compose overrides — used by `docker compose`, not by `docker build`
+docker-compose*.yml
+Dockerfile.*
+
+# OS junk
+.DS_Store
+Thumbs.db
