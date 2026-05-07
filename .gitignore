@@ -138,11 +138,15 @@ celerybeat.pid
 .env
 .envrc
 .venv
+.venv-*/
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Local security-scan reports
+bandit-*.json
 
 # Spyder project settings
 .spyderproject
