@@ -8,6 +8,13 @@ from discord.ext import commands
 
 from src.config import DISCORD_TOKEN
 
+# Login-time 429 backoff. discord.py's internal 5-retry-then-raise is fine for
+# normal usage but turns container restart policies into a tight crash-loop
+# during Discord-wide outages: every fresh process resets the backoff clock,
+# so a `restart: unless-stopped` policy keeps slamming /users/@me. Sleeping
+# in-process keeps the container alive and lets the throttle clear naturally.
+LOGIN_429_BACKOFFS_SECS = (60, 300, 900, 1800, 3600)  # 1m, 5m, 15m, 30m, 1h
+
 # Wall-clock budget to drain in-flight AI streams before closing the DB pool.
 # Kept under most container SIGKILL timeouts (Docker default 10s, k8s 30s).
 SHUTDOWN_DRAIN_SECONDS = 8.0
@@ -175,4 +182,30 @@ def run():
         # EventsCog.on_message handles process_commands itself.
         pass
 
-    bot.run(DISCORD_TOKEN)
+    _run_with_login_backoff(bot)
+
+
+def _run_with_login_backoff(bot: commands.Bot) -> None:
+    """Run the bot, sleeping in-process on login-time 429 instead of exiting.
+
+    discord.py raises HTTPException out of bot.run() if all 5 of its internal
+    /users/@me retries hit 429. Letting that propagate exits the process,
+    Docker restarts immediately, and the cycle repeats every ~20s — which
+    digs the rate-limit hole deeper. Sleeping here keeps the container alive
+    and the backoff state intact across attempts.
+    """
+    attempt = 0
+    while True:
+        try:
+            bot.run(DISCORD_TOKEN)
+            return
+        except discord.HTTPException as e:
+            if e.status != 429:
+                raise
+            delay = LOGIN_429_BACKOFFS_SECS[min(attempt, len(LOGIN_429_BACKOFFS_SECS) - 1)]
+            logging.warning(
+                "login_rate_limited attempt=%d status=%d code=%s sleep_s=%d",
+                attempt + 1, e.status, getattr(e, "code", None), delay,
+            )
+            time.sleep(delay)
+            attempt += 1
