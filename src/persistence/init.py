@@ -21,6 +21,10 @@ async def init_db_state():
     on_ready fires on every gateway reconnect, so the second+ call is guarded
     out — otherwise a reconnect would clobber any in-memory mutations made
     since the last save (e.g. an in-progress chess game, an active ragebait).
+
+    The guard is only set after a successful load: if migrations or the DB
+    connection raise, the next reconnect retries the full load instead of
+    skipping it and unblocking on_message against partially-loaded state.
     """
     import src.persistence as _pkg
     import src.state as state
@@ -30,8 +34,19 @@ async def init_db_state():
         logging.info("[init_db_state] skipping; already initialized")
         _pkg.init_done.set()
         return
-    _pkg._init_db_state_done = True
 
+    # Only flip the guard after a successful load. If migrations or the DB
+    # raise, the exception propagates and discord.py will retry on reconnect
+    # against the same (still-False) guard, re-doing the full load.
+    # init_done stays unset on failure: the guards in _ensure_user and
+    # grant_xp blocking forever is preferable to writing zero-baselined
+    # rows over real DB data from partially-loaded state.
+    await _init_db_state_inner(state, run_migrations)
+    _pkg._init_db_state_done = True
+    _pkg.init_done.set()
+
+
+async def _init_db_state_inner(state, run_migrations):
     # Apply pending schema migrations BEFORE any SELECT — if the schema is
     # behind, we want to fail fast rather than blow up on a missing column.
     await run_migrations()
@@ -373,6 +388,3 @@ async def init_db_state():
 
     # bot_admins: always from env, never DB
     state.bot_admins = set(INITIAL_BOT_ADMIN_IDS)
-
-    # Unblock on_message — state is now loaded from DB.
-    _pkg.init_done.set()

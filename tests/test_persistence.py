@@ -654,6 +654,33 @@ async def test_init_done_event_set_after_init_db_state(db):
     assert _persistence.init_done.is_set()
 
 
+async def test_init_db_state_failure_leaves_guard_unset(db, monkeypatch):
+    """If init_db_state raises (migrations fail, DB unreachable), the guard
+    must stay False so a reconnect retries the full load instead of skipping
+    it and unblocking on_message against partially-loaded state."""
+    wrapper = _persistence.init_db_state
+    real_init = wrapper.__closure__[0].cell_contents
+
+    _persistence._init_db_state_done = False
+    _persistence.init_done.clear()
+
+    # Make run_migrations raise to simulate a startup-time failure.
+    import src.migrations as _migrations
+
+    async def _boom():
+        raise RuntimeError("simulated migration failure")
+    monkeypatch.setattr(_migrations, "run_migrations", _boom)
+
+    with pytest.raises(RuntimeError, match="simulated migration failure"):
+        await real_init()
+
+    # Guard stayed False → next on_ready will retry instead of skipping.
+    assert _persistence._init_db_state_done is False
+    # init_done stayed unset → economy/leveling guards block instead of
+    # writing zero-baselined rows from empty state.
+    assert not _persistence.init_done.is_set()
+
+
 async def test_add_balance_blocks_until_init_done(db):
     """A background task that calls add_balance before init_db_state has loaded
     state would otherwise see an empty state.economy["users"], create a fresh
