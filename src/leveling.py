@@ -135,6 +135,11 @@ async def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tup
     """
     if not guild_id:
         return 0, False
+    # Block until init_db_state has loaded state from the DB. Without this,
+    # a background tick (e.g. the voice loop firing on bot restart) would
+    # materialize a zero-valued leveling rec and UPSERT it over the real row.
+    import src.persistence as _pkg
+    await _pkg.init_done.wait()
     rec = _ensure_lvl_record(guild_id, uid)
     now = time.time()
 

@@ -48,7 +48,14 @@ def reset_bot_state(monkeypatch):
     # in production and is .set() by init_db_state. Tests that drive on_message
     # directly don't go through init_db_state, so default to set per-test so
     # those tests don't hang on the await.
-    _persistence.init_done.set()
+    #
+    # asyncio.Event binds to the running loop on first use, so the module-level
+    # Event from import time is stale across pytest-asyncio's per-test loops.
+    # Replace it with a fresh Event each test (and re-set it).
+    import asyncio as _asyncio_for_event
+    _fresh_event = _asyncio_for_event.Event()
+    _fresh_event.set()
+    monkeypatch.setattr(_persistence, "init_done", _fresh_event)
 
     _reset_dict(_state.economy, {"users": {}, "last_daily_reset": None, "guild_house": {}})
     _reset_dict(_state.guild_settings, {})

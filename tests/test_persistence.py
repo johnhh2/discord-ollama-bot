@@ -654,6 +654,69 @@ async def test_init_done_event_set_after_init_db_state(db):
     assert _persistence.init_done.is_set()
 
 
+async def test_add_balance_blocks_until_init_done(db):
+    """A background task that calls add_balance before init_db_state has loaded
+    state would otherwise see an empty state.economy["users"], create a fresh
+    {balance: 0} entry, increment it, and UPSERT zero over the user's real row.
+    _ensure_user must block on init_done to prevent this."""
+    import asyncio
+    import src.economy as _economy
+
+    # Seed a real row in the DB and clear in-memory state to simulate a restart
+    # where init_db_state hasn't run yet.
+    _state.economy["users"]["8001"] = {"balance": 50_000, "last_daily": 0.0}
+    await _persistence.save_economy()
+    _state.economy["users"].clear()
+    _persistence.init_done.clear()
+
+    # add_balance must NOT proceed while init_done is unset.
+    add_task = asyncio.create_task(_economy.add_balance(8001, 100))
+    await asyncio.sleep(0.05)
+    assert not add_task.done(), "add_balance should block on init_done"
+
+    # Simulate init_db_state finishing: load the real row, then set the event.
+    _persistence._init_db_state_done = False
+    await _persistence.init_db_state()  # also sets init_done
+
+    await add_task
+    assert _state.economy["users"]["8001"]["balance"] == 50_100
+
+
+async def test_grant_xp_blocks_until_init_done(db):
+    """A background voice tick that calls grant_xp before init_db_state has
+    loaded state.leveling would otherwise materialize a {xp: 0, level: 0} rec
+    and UPSERT it over the user's real row. grant_xp must block on init_done."""
+    import asyncio
+    import src.leveling as _leveling
+
+    # Seed a real leveling row and clear in-memory state.
+    _state.leveling["42"] = {"8002": {"xp": 9_999, "level": 5,
+                                       "msg_last_hour": 0.0, "msg_today": 0, "msg_day_ts": 0.0,
+                                       "cmd_last_hour": 0.0, "cmd_today": 0, "cmd_day_ts": 0.0,
+                                       "voice_last_30": 0.0, "voice_today": 0, "voice_day_ts": 0.0,
+                                       "stream_last_hour": 0.0, "stream_today": 0, "stream_day_ts": 0.0}}
+    _state.leveling.clear()
+    _persistence.init_done.clear()
+
+    grant_task = asyncio.create_task(_leveling.grant_xp(8002, "voice", guild_id=42))
+    await asyncio.sleep(0.05)
+    assert not grant_task.done(), "grant_xp should block on init_done"
+
+    _persistence._init_db_state_done = False
+    _state.leveling["42"] = {"8002": {"xp": 9_999, "level": 5,
+                                       "msg_last_hour": 0.0, "msg_today": 0, "msg_day_ts": 0.0,
+                                       "cmd_last_hour": 0.0, "cmd_today": 0, "cmd_day_ts": 0.0,
+                                       "voice_last_30": 0.0, "voice_today": 0, "voice_day_ts": 0.0,
+                                       "stream_last_hour": 0.0, "stream_today": 0, "stream_day_ts": 0.0}}
+    _persistence.init_done.set()
+
+    await grant_task
+    # XP should have been added to the real seeded value, not started from 0.
+    # Without the guard, the rec would have been re-created as {xp: 0} and
+    # incremented to XP_VOICE (==10), which is the bug we're proving against.
+    assert _state.leveling["42"]["8002"]["xp"] > 9_999
+
+
 # ── restart_msg ───────────────────────────────────────────────────────────────
 
 async def test_restart_msg_save_load_clear_cycle(db):

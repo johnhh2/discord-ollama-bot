@@ -20,6 +20,12 @@ from src.guild_config import get_guild_cfg
 
 
 async def _ensure_user(uid: int):
+    # Block until init_db_state has loaded state from the DB. Without this,
+    # any caller that lands here before the load finishes (background tasks
+    # like the leveling voice tick, lottery draw, etc.) would materialize a
+    # zero-valued entry and UPSERT it over the user's real DB row.
+    import src.persistence as _pkg
+    await _pkg.init_done.wait()
     key = str(uid)
     if key not in state.economy["users"]:
         state.economy["users"][key] = {"balance": 0, "last_daily": 0.0}
