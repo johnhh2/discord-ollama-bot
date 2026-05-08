@@ -159,6 +159,7 @@ class UtilityCog(commands.Cog):
         if nsfw_enabled:
             help_embed.add_field(name="🔞 NSFW", inline=False, value=(
                 fmt_line("nsfw", "`!nsfw [tags]` — Random NSFW image", uid, gid)
+                + "\n`!ew` — Delete the last NSFW image you posted in this channel"
             ))
 
         help_embed.add_field(name="🎉 Fun", inline=False, value=(
@@ -326,6 +327,13 @@ class UtilityCog(commands.Cog):
             inline=False
         )
 
+        if is_admin(ctx):
+            embed.add_field(
+                name="⚙️ !ai on / !ai off (bot admin)",
+                value="Toggle passive AI responses globally.",
+                inline=False,
+            )
+
         await send_ephemeral(ctx, embed=embed)
 
     @cmd_ai.command(name="on", aliases=["online"])
@@ -352,7 +360,8 @@ class UtilityCog(commands.Cog):
             value=(
                 "`!flip <amount>` — 50/50 coinflip\n"
                 "`!slots <amount>` — 3-reel slot machine with progressive jackpot\n"
-                "`!scratchoff` — Daily lottery (3 attempts/day)\n"
+                "`!scratches` — Use all 3 daily scratchoffs at once\n"
+                "`!scratchoff` — Single scratchoff (3 attempts/day)\n"
                 "`!blackjack <amount>` — Interactive blackjack (type `hit` / `stand`)"
             ),
             inline=False

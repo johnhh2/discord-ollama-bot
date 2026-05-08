@@ -3,7 +3,7 @@ import logging
 import discord
 from discord.ext import commands, tasks
 
-from src.helpers import emb, C_GOLD
+from src.helpers import emb, C_GOLD, C_RED
 from src.permissions import requires_perm, is_admin
 from src.economy import snapshot_all
 from src.graph_series import (
@@ -134,7 +134,8 @@ class GraphCog(commands.Cog):
             "`!graph ai` — Daily AI response count and uptime over the last 2 weeks",
         ]
         if is_admin(ctx):
-            lines.append("`!graph admin <wallet|savings> [N|@users…]` — per-user breakout (bot admin)")
+            lines.append("`!graph wallet|savings|total [N|@users…]` — per-user breakout (bot admin)")
+            lines.append("`!graph balance|economy all [N|@users…]` — same, via the user-facing names")
         lines.extend([
             "",
             "**Combine compatible graphs** by listing multiple names:",
@@ -147,12 +148,33 @@ class GraphCog(commands.Cog):
     @cmd_graph.command(name="balance", aliases=["bal"])
     @requires_perm
     async def cmd_graph_balance(self, ctx: commands.Context, *tokens: str):
+        if tokens and tokens[0].lower() == "all":
+            await _admin_route(ctx, tokens[1:], field="wallet")
+            return
         await _build_and_render(ctx, tokens, find_spec("balance"))
 
-    @cmd_graph.command(name="economy", aliases=["total", "eco", "totalbalance"])
+    @cmd_graph.command(name="economy", aliases=["eco", "totalbalance"])
     @requires_perm
     async def cmd_graph_economy(self, ctx: commands.Context, *tokens: str):
+        if tokens and tokens[0].lower() == "all":
+            await _admin_route(ctx, tokens[1:], field="total")
+            return
         await _build_and_render(ctx, tokens, find_spec("economy"))
+
+    @cmd_graph.command(name="wallet")
+    @requires_perm
+    async def cmd_graph_wallet(self, ctx: commands.Context, *tokens: str):
+        await _admin_handler(ctx, _strip_all(tokens), field="wallet")
+
+    @cmd_graph.command(name="savings")
+    @requires_perm
+    async def cmd_graph_savings(self, ctx: commands.Context, *tokens: str):
+        await _admin_handler(ctx, _strip_all(tokens), field="savings")
+
+    @cmd_graph.command(name="total")
+    @requires_perm
+    async def cmd_graph_total(self, ctx: commands.Context, *tokens: str):
+        await _admin_handler(ctx, _strip_all(tokens), field="total")
 
     @cmd_graph.command(name="crime")
     @requires_perm
@@ -221,6 +243,27 @@ class GraphCog(commands.Cog):
     @requires_perm
     async def cmd_graph_admin_total(self, ctx: commands.Context, *tokens: str):
         await _admin_handler(ctx, tokens, field="total")
+
+
+def _strip_all(tokens: tuple[str, ...]) -> tuple[str, ...]:
+    """Drop a leading `all` keyword if present — accepted for symmetry with
+    `!graph balance all`, but redundant on the dedicated wallet/savings/total
+    subcommands.
+    """
+    if tokens and tokens[0].lower() == "all":
+        return tokens[1:]
+    return tokens
+
+
+async def _admin_route(ctx, tokens: tuple[str, ...], *, field: str):
+    """Gate on bot-admin and dispatch to `_admin_handler`. Used by the new
+    short-form subcommands (`!graph wallet|savings|total`) and the `all` arg
+    on `!graph balance|economy`.
+    """
+    if not is_admin(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        return
+    await _admin_handler(ctx, tokens, field=field)
 
 
 async def _admin_handler(ctx, tokens: tuple[str, ...], *, field: str):
