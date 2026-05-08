@@ -17,13 +17,16 @@ from src.invites import _wait_for_confirmations
 from src import state
 
 
+NUM_EMOJIS_TTT = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣"]
+NUM_EMOJIS_C4 = NUM_EMOJIS_TTT[:7]
+
+
 def build_ttt_display(game: dict) -> str:
     """Build a tic-tac-toe board display from game state."""
-    NUM_EMOJIS = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣"]
     board = game["board"]
-    row1 = (board[0] or NUM_EMOJIS[0]) + (board[1] or NUM_EMOJIS[1]) + (board[2] or NUM_EMOJIS[2])
-    row2 = (board[3] or NUM_EMOJIS[3]) + (board[4] or NUM_EMOJIS[4]) + (board[5] or NUM_EMOJIS[5])
-    row3 = (board[6] or NUM_EMOJIS[6]) + (board[7] or NUM_EMOJIS[7]) + (board[8] or NUM_EMOJIS[8])
+    row1 = (board[0] or NUM_EMOJIS_TTT[0]) + (board[1] or NUM_EMOJIS_TTT[1]) + (board[2] or NUM_EMOJIS_TTT[2])
+    row2 = (board[3] or NUM_EMOJIS_TTT[3]) + (board[4] or NUM_EMOJIS_TTT[4]) + (board[5] or NUM_EMOJIS_TTT[5])
+    row3 = (board[6] or NUM_EMOJIS_TTT[6]) + (board[7] or NUM_EMOJIS_TTT[7]) + (board[8] or NUM_EMOJIS_TTT[8])
     return f"{row1}\n{row2}\n{row3}"
 
 
@@ -93,6 +96,52 @@ def check_c4_winner(board: list) -> str | None:
                 return board[r][c]
     return None
 
+async def _add_initial_reactions(channel, msg_id: int, game_type: str) -> None:
+    """Add the bot's number-emoji reactions to a freshly-posted board message."""
+    try:
+        msg = await channel.fetch_message(msg_id)
+    except (discord.NotFound, discord.HTTPException):
+        return
+    emojis = NUM_EMOJIS_TTT if game_type == "ttt" else NUM_EMOJIS_C4
+    for e in emojis:
+        try:
+            await msg.add_reaction(e)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return
+
+
+async def _refresh_reactions(channel, game: dict, game_type: str) -> None:
+    """Clear all reactions on the board and re-add only the still-legal moves.
+
+    For TTT, a number is "legal" iff its square is still empty.
+    For C4, a column is "legal" iff it still has at least one open row.
+    """
+    if game.get("board_msg_id") is None:
+        return
+    try:
+        msg = await channel.fetch_message(game["board_msg_id"])
+    except (discord.NotFound, discord.HTTPException):
+        return
+    try:
+        await msg.clear_reactions()
+    except (discord.Forbidden, discord.HTTPException):
+        return
+    if game_type == "ttt":
+        for i, cell in enumerate(game["board"]):
+            if cell is None:
+                try:
+                    await msg.add_reaction(NUM_EMOJIS_TTT[i])
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    return
+    else:  # c4
+        for col in range(7):
+            if drop_in_column(game["board"], col) is not None:
+                try:
+                    await msg.add_reaction(NUM_EMOJIS_C4[col])
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    return
+
+
 async def _send_game_board(ctx: commands.Context, game: dict, title: str,
                            board_text: str, player1_desc: str, player2_desc: str,
                            controls: str, amount: int) -> None:
@@ -143,6 +192,119 @@ async def _setup_pvp_game(ctx, opponent, amount, invite_title):
     return True
 
 
+async def _apply_ttt_move(channel, guild, uid: int, name: str, pos: int | None) -> None:
+    """Apply a TTT move and update the board. Sends temp error embeds for invalid moves."""
+    cid = channel.id
+    if cid not in state.active_ttt_games:
+        return
+    game = state.active_ttt_games[cid]
+    if uid != game["current"]:
+        err = await channel.send(embed=emb("⏳ Not Your Turn", f"Waiting for {guild.get_member(game['current']).mention if guild else 'opponent'}.", C_GOLD))
+        asyncio.create_task(_delete_after(err))
+        return
+    if pos is None or not 1 <= pos <= 9:
+        err = await channel.send("Use `!m <1-9>` to place your mark.")
+        asyncio.create_task(_delete_after(err))
+        return
+    idx = pos - 1
+    if game["board"][idx] is not None:
+        err = await channel.send(embed=emb("❌ Taken", "That square is already taken.", C_RED))
+        asyncio.create_task(_delete_after(err))
+        return
+    game["board"][idx] = game["marks"][uid]
+    winner = check_ttt_winner(game["board"])
+    if winner:
+        winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
+        amount = game.get("amount", 0)
+        winnings = amount * 2
+        if winnings > 0:
+            await add_balance(winner_uid, winnings)
+        if amount > 0:
+            loser_uid = next(p for p in game["players"] if p != winner_uid)
+            await record_gambling_event(winner_uid, gained=amount)
+            await record_gambling_event(loser_uid, lost=amount)
+        winner_name = guild.get_member(winner_uid).display_name if guild else str(winner_uid)
+        game["last_move"] = f"{name} played position {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
+        winner_mention = guild.get_member(winner_uid).mention if guild else str(winner_uid)
+        await _edit_board(channel, game, emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
+        await _refresh_reactions(channel, game, "ttt")
+        del state.active_ttt_games[cid]
+    elif all(c is not None for c in game["board"]) or is_ttt_stalemate(game["board"]):
+        amount = game.get("amount", 0)
+        if amount > 0:
+            for player_uid in game["players"]:
+                await add_balance(player_uid, amount)
+        game["last_move"] = f"{name} played position {pos} — It's a draw!"
+        draw_text = "\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
+        await _edit_board(channel, game, emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
+        await _refresh_reactions(channel, game, "ttt")
+        del state.active_ttt_games[cid]
+    else:
+        players = game["players"]
+        game["current"] = players[1] if uid == players[0] else players[0]
+        next_player = guild.get_member(game["current"]) if guild else None
+        game["last_move"] = f"{name} played position {pos}"
+        await _edit_board(channel, game, emb("🎮 Tic-Tac-Toe", build_ttt_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!m <1-9>`\n\n**Last move:** {game['last_move']}", C_BLUE))
+        await _refresh_reactions(channel, game, "ttt")
+
+
+async def _apply_c4_move(channel, guild, uid: int, name: str, pos: int | None) -> None:
+    """Apply a C4 move and update the board. Sends temp error embeds for invalid moves."""
+    cid = channel.id
+    if cid not in state.active_c4_games:
+        return
+    game = state.active_c4_games[cid]
+    if uid != game["current"]:
+        err = await channel.send(embed=emb("⏳ Not Your Turn", f"Waiting for {guild.get_member(game['current']).mention if guild else 'opponent'}.", C_GOLD))
+        asyncio.create_task(_delete_after(err))
+        return
+    if pos is None or not 1 <= pos <= 7:
+        err = await channel.send("Use `!m <1-7>` to drop a piece.")
+        asyncio.create_task(_delete_after(err))
+        return
+    col = pos - 1
+    row = drop_in_column(game["board"], col)
+    if row is None:
+        err = await channel.send(embed=emb("❌ Column Full", "That column is full.", C_RED))
+        asyncio.create_task(_delete_after(err))
+        return
+    game["board"][row][col] = game["marks"][uid]
+    winner = check_c4_winner(game["board"])
+    if winner:
+        winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
+        amount = game.get("amount", 0)
+        winnings = amount * 2
+        if winnings > 0:
+            await add_balance(winner_uid, winnings)
+        if amount > 0:
+            loser_uid = next(p for p in game["players"] if p != winner_uid)
+            await record_gambling_event(winner_uid, gained=amount)
+            await record_gambling_event(loser_uid, lost=amount)
+        winner_name = guild.get_member(winner_uid).display_name if guild else str(winner_uid)
+        game["last_move"] = f"{name} dropped in column {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
+        winner_mention = guild.get_member(winner_uid).mention if guild else str(winner_uid)
+        await _edit_board(channel, game, emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
+        await _refresh_reactions(channel, game, "c4")
+        del state.active_c4_games[cid]
+    elif all(game["board"][r][c] is not None for r in range(6) for c in range(7)):
+        amount = game.get("amount", 0)
+        if amount > 0:
+            for player_uid in game["players"]:
+                await add_balance(player_uid, amount)
+        game["last_move"] = f"{name} dropped in column {pos} — It's a draw!"
+        draw_text = "\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
+        await _edit_board(channel, game, emb("🤝 Connect 4 Draw", build_c4_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
+        await _refresh_reactions(channel, game, "c4")
+        del state.active_c4_games[cid]
+    else:
+        players = game["players"]
+        game["current"] = players[1] if uid == players[0] else players[0]
+        next_player = guild.get_member(game["current"]) if guild else None
+        game["last_move"] = f"{name} dropped in column {pos}"
+        await _edit_board(channel, game, emb("🟡 Connect 4", build_c4_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!m <1-7>`\n\n**Last move:** {game['last_move']}", C_BLUE))
+        await _refresh_reactions(channel, game, "c4")
+
+
 class TttC4Cog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -170,7 +332,8 @@ class TttC4Cog(commands.Cog):
         await _send_game_board(ctx, state.active_ttt_games[cid], "🎮 Tic-Tac-Toe",
                                build_ttt_display(state.active_ttt_games[cid]),
                                f"{ctx.author.mention} (❌)", f"{opponent.mention} (⭕)",
-                               "Use `!m <1-9>`", amount)
+                               "Use `!m <1-9>` or click a number reaction", amount)
+        await _add_initial_reactions(ctx.channel, state.active_ttt_games[cid]["board_msg_id"], "ttt")
 
     @commands.command(name="c4")
     async def cmd_c4(self, ctx: commands.Context, opponent: discord.User = None, amount: int = 0):
@@ -195,7 +358,8 @@ class TttC4Cog(commands.Cog):
         await _send_game_board(ctx, state.active_c4_games[cid], "🟡 Connect 4",
                                build_c4_display(state.active_c4_games[cid]),
                                f"{ctx.author.mention} (🔴)", f"{opponent.mention} (🟡)",
-                               "Use `!m <1-7>`", amount)
+                               "Use `!m <1-7>` or click a number reaction", amount)
+        await _add_initial_reactions(ctx.channel, state.active_c4_games[cid]["board_msg_id"], "c4")
 
     @commands.command(name="m",)
     async def cmd_move(self, ctx: commands.Context, pos: int = None):
@@ -204,108 +368,53 @@ class TttC4Cog(commands.Cog):
         name = ctx.author.display_name
 
         if cid in state.active_ttt_games:
-            game = state.active_ttt_games[cid]
             asyncio.create_task(_delete_after(ctx.message))
-            if uid != game["current"]:
-                err = await ctx.send(embed=emb("⏳ Not Your Turn", f"Waiting for {ctx.guild.get_member(game['current']).mention if ctx.guild else 'opponent'}.", C_GOLD))
-                asyncio.create_task(_delete_after(err))
-                return
-            if pos is None or not 1 <= pos <= 9:
-                err = await ctx.send("Use `!m <1-9>` to place your mark.")
-                asyncio.create_task(_delete_after(err))
-                return
-            idx = pos - 1
-            if game["board"][idx] is not None:
-                err = await ctx.send(embed=emb("❌ Taken", "That square is already taken.", C_RED))
-                asyncio.create_task(_delete_after(err))
-                return
-            game["board"][idx] = game["marks"][uid]
-            winner = check_ttt_winner(game["board"])
-            if winner:
-                winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
-                amount = game.get("amount", 0)
-                winnings = amount * 2
-                if winnings > 0:
-                    await add_balance(winner_uid, winnings)
-                if amount > 0:
-                    loser_uid = next(p for p in game["players"] if p != winner_uid)
-                    await record_gambling_event(winner_uid, gained=amount)
-                    await record_gambling_event(loser_uid, lost=amount)
-                winner_name = ctx.guild.get_member(winner_uid).display_name if ctx.guild else str(winner_uid)
-                game["last_move"] = f"{name} played position {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
-                winner_mention = ctx.guild.get_member(winner_uid).mention if ctx.guild else str(winner_uid)
-                await _edit_board(ctx.channel, game, emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
-                del state.active_ttt_games[cid]
-            elif all(c is not None for c in game["board"]) or is_ttt_stalemate(game["board"]):
-                amount = game.get("amount", 0)
-                if amount > 0:
-                    for player_uid in game["players"]:
-                        await add_balance(player_uid, amount)
-                game["last_move"] = f"{name} played position {pos} — It's a draw!"
-                draw_text = "\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
-                await _edit_board(ctx.channel, game, emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
-                del state.active_ttt_games[cid]
-            else:
-                players = game["players"]
-                game["current"] = players[1] if uid == players[0] else players[0]
-                next_player = ctx.guild.get_member(game["current"]) if ctx.guild else None
-                game["last_move"] = f"{name} played position {pos}"
-                await _edit_board(ctx.channel, game, emb("🎮 Tic-Tac-Toe", build_ttt_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!m <1-9>`\n\n**Last move:** {game['last_move']}", C_BLUE))
-
+            await _apply_ttt_move(ctx.channel, ctx.guild, uid, name, pos)
         elif cid in state.active_c4_games:
-            game = state.active_c4_games[cid]
             asyncio.create_task(_delete_after(ctx.message))
-            if uid != game["current"]:
-                err = await ctx.send(embed=emb("⏳ Not Your Turn", f"Waiting for {ctx.guild.get_member(game['current']).mention if ctx.guild else 'opponent'}.", C_GOLD))
-                asyncio.create_task(_delete_after(err))
-                return
-            if pos is None or not 1 <= pos <= 7:
-                err = await ctx.send("Use `!m <1-7>` to drop a piece.")
-                asyncio.create_task(_delete_after(err))
-                return
-            col = pos - 1
-            row = drop_in_column(game["board"], col)
-            if row is None:
-                err = await ctx.send(embed=emb("❌ Column Full", "That column is full.", C_RED))
-                asyncio.create_task(_delete_after(err))
-                return
-            game["board"][row][col] = game["marks"][uid]
-            winner = check_c4_winner(game["board"])
-            if winner:
-                winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
-                amount = game.get("amount", 0)
-                winnings = amount * 2
-                if winnings > 0:
-                    await add_balance(winner_uid, winnings)
-                if amount > 0:
-                    loser_uid = next(p for p in game["players"] if p != winner_uid)
-                    await record_gambling_event(winner_uid, gained=amount)
-                    await record_gambling_event(loser_uid, lost=amount)
-                winner_name = ctx.guild.get_member(winner_uid).display_name if ctx.guild else str(winner_uid)
-                game["last_move"] = f"{name} dropped in column {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
-                winner_mention = ctx.guild.get_member(winner_uid).mention if ctx.guild else str(winner_uid)
-                await _edit_board(ctx.channel, game, emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
-                del state.active_c4_games[cid]
-            elif all(game["board"][r][c] is not None for r in range(6) for c in range(7)):
-                amount = game.get("amount", 0)
-                if amount > 0:
-                    for player_uid in game["players"]:
-                        await add_balance(player_uid, amount)
-                game["last_move"] = f"{name} dropped in column {pos} — It's a draw!"
-                draw_text = "\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
-                await _edit_board(ctx.channel, game, emb("🤝 Connect 4 Draw", build_c4_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
-                del state.active_c4_games[cid]
-            else:
-                players = game["players"]
-                game["current"] = players[1] if uid == players[0] else players[0]
-                next_player = ctx.guild.get_member(game["current"]) if ctx.guild else None
-                game["last_move"] = f"{name} dropped in column {pos}"
-                await _edit_board(ctx.channel, game, emb("🟡 Connect 4", build_c4_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!m <1-7>`\n\n**Last move:** {game['last_move']}", C_BLUE))
-
+            await _apply_c4_move(ctx.channel, ctx.guild, uid, name, pos)
         else:
             err = await ctx.send(embed=emb("❌ No Game", "No active tic-tac-toe or connect 4 game in this channel.", C_GREY))
             asyncio.create_task(_delete_after(err))
 
+    @commands.Cog.listener()
+    async def on_reaction_add(self, reaction: discord.Reaction, user: discord.User):
+        """Translate a number-emoji reaction on a TTT/C4 board into a move."""
+        if user.bot:
+            return
+        msg = reaction.message
+        cid = msg.channel.id
+        emoji = str(reaction.emoji)
+
+        if cid in state.active_ttt_games:
+            game = state.active_ttt_games[cid]
+            if msg.id != game.get("board_msg_id"):
+                return
+            if emoji not in NUM_EMOJIS_TTT:
+                return
+            if user.id not in game["players"] or user.id != game["current"]:
+                try:
+                    await reaction.remove(user)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    pass
+                return
+            pos = NUM_EMOJIS_TTT.index(emoji) + 1
+            await _apply_ttt_move(msg.channel, msg.guild, user.id, user.display_name, pos)
+
+        elif cid in state.active_c4_games:
+            game = state.active_c4_games[cid]
+            if msg.id != game.get("board_msg_id"):
+                return
+            if emoji not in NUM_EMOJIS_C4:
+                return
+            if user.id not in game["players"] or user.id != game["current"]:
+                try:
+                    await reaction.remove(user)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    pass
+                return
+            pos = NUM_EMOJIS_C4.index(emoji) + 1
+            await _apply_c4_move(msg.channel, msg.guild, user.id, user.display_name, pos)
 
 
 async def setup(bot):

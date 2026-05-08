@@ -1,0 +1,1 @@
+ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS jail_reason VARCHAR(255) NULL;

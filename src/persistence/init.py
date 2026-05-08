@@ -21,6 +21,10 @@ async def init_db_state():
     on_ready fires on every gateway reconnect, so the second+ call is guarded
     out — otherwise a reconnect would clobber any in-memory mutations made
     since the last save (e.g. an in-progress chess game, an active ragebait).
+
+    The guard is only set after a successful load: if migrations or the DB
+    connection raise, the next reconnect retries the full load instead of
+    skipping it and unblocking on_message against partially-loaded state.
     """
     import src.persistence as _pkg
     import src.state as state
@@ -30,8 +34,19 @@ async def init_db_state():
         logging.info("[init_db_state] skipping; already initialized")
         _pkg.init_done.set()
         return
-    _pkg._init_db_state_done = True
 
+    # Only flip the guard after a successful load. If migrations or the DB
+    # raise, the exception propagates and discord.py will retry on reconnect
+    # against the same (still-False) guard, re-doing the full load.
+    # init_done stays unset on failure: the guards in _ensure_user and
+    # grant_xp blocking forever is preferable to writing zero-baselined
+    # rows over real DB data from partially-loaded state.
+    await _init_db_state_inner(state, run_migrations)
+    _pkg._init_db_state_done = True
+    _pkg.init_done.set()
+
+
+async def _init_db_state_inner(state, run_migrations):
     # Apply pending schema migrations BEFORE any SELECT — if the schema is
     # behind, we want to fail fast rather than blow up on a missing column.
     await run_migrations()
@@ -42,10 +57,13 @@ async def init_db_state():
         try:
             await cur.execute(
                 "SELECT user_id, balance, last_daily, daily_date, scratch_used,"
-                " scratch_date, jailbreak_used, jail_until, savings FROM economy_users"
+                " scratch_date, jailbreak_used, jail_until, savings, jail_reason,"
+                " crime_eligible FROM economy_users"
             )
             for row in await cur.fetchall():
-                uid, bal, last_daily, daily_date, scratch_used, scratch_date, jb_used, jail_until, savings_json = row
+                (uid, bal, last_daily, daily_date, scratch_used, scratch_date,
+                 jb_used, jail_until, savings_json, jail_reason,
+                 crime_eligible) = row
                 state.economy["users"][str(uid)] = {
                     "balance": bal,
                     "last_daily": last_daily,
@@ -55,6 +73,8 @@ async def init_db_state():
                     "jailbreak_used": bool(jb_used),
                     "jail_until": jail_until,
                     "savings": json.loads(savings_json) if savings_json else [],
+                    "jail_reason": jail_reason,
+                    "crime_eligible": bool(crime_eligible),
                 }
         except Exception as e:
             logging.error(f"[init_db_state] economy_users failed: {e}", exc_info=True)
@@ -299,7 +319,7 @@ async def init_db_state():
             if json_perms:
                 placeholders = ",".join(["%s"] * len(json_perms))
                 await cur.execute(
-                    f"DELETE FROM command_perms WHERE command_name NOT IN ({placeholders})",
+                    f"DELETE FROM command_perms WHERE command_name NOT IN ({placeholders})",  # nosec B608 - placeholders is only "%s,%s,...", values are bound
                     tuple(json_perms.keys()),
                 )
             else:
@@ -320,6 +340,34 @@ async def init_db_state():
             }
         except Exception as e:
             logging.error(f"[init_db_state] user_perm_overrides failed: {e}", exc_info=True)
+
+        # ── blocklist (per-guild) ────────────────────────────────────────
+        try:
+            await cur.execute("SELECT guild_id, user_id, reason, banned_by, banned_at FROM blocklist")
+            state.blocklist = {
+                (int(r[0]), int(r[1])): {
+                    "reason": r[2],
+                    "banned_by": int(r[3]),
+                    "banned_at": r[4],
+                }
+                for r in await cur.fetchall()
+            }
+        except Exception as e:
+            logging.error(f"[init_db_state] blocklist failed: {e}", exc_info=True)
+
+        # ── global_blocklist ─────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT user_id, reason, banned_by, banned_at FROM global_blocklist")
+            state.global_blocklist = {
+                int(r[0]): {
+                    "reason": r[1],
+                    "banned_by": int(r[2]),
+                    "banned_at": r[3],
+                }
+                for r in await cur.fetchall()
+            }
+        except Exception as e:
+            logging.error(f"[init_db_state] global_blocklist failed: {e}", exc_info=True)
 
         # ── activity caches (crime / gambling / levelups) ─────────────────
         # Each *_history table is the source of truth (atomic UPSERT on every
@@ -343,6 +391,3 @@ async def init_db_state():
 
     # bot_admins: always from env, never DB
     state.bot_admins = set(INITIAL_BOT_ADMIN_IDS)
-
-    # Unblock on_message — state is now loaded from DB.
-    _pkg.init_done.set()

@@ -33,31 +33,12 @@ class ModerationCog(commands.Cog):
         await send_ephemeral(ctx, embed=emb("🔍 Audit Log", "\n\n".join(lines), C_GOLD))
 
 
-    @commands.command(name="clearbot")
-    @requires_perm
-    async def cmd_clear(self, ctx: commands.Context, n: int = 50):
-        deleted = 0
-        async for message in ctx.channel.history(limit=500):
-            if deleted >= n:
-                break
-            if message.author == self.bot.user:
-                await message.delete()
-                deleted += 1
-        confirm = await ctx.send(embed=emb(
-            "🗑️ Cleared",
-            f"Deleted {deleted} bot message{'s' if deleted != 1 else ''}.",
-            C_GREY,
-        ))
-        await asyncio.sleep(5)
-        await confirm.delete()
-
-
-    @commands.command(name="clearall", aliases=["clerall"])
+    @commands.command(name="clear", aliases=["clearall", "clerall"])
     @requires_perm
     async def cmd_clearall(self, ctx: commands.Context, n: str = None):
 
         if n is None:
-            await ctx.send(embed=emb("❌ Missing Argument", "Usage: `!clearall <n>` — Delete last n messages", C_RED))
+            await ctx.send(embed=emb("❌ Missing Argument", "Usage: `!clear <n>` — Delete last n messages", C_RED))
             return
 
         try:
@@ -82,17 +63,20 @@ class ModerationCog(commands.Cog):
                 return
 
             await ctx.channel.delete_messages(messages)
-            confirm = await ctx.send(embed=emb(
-                "🗑️ Cleared",
-                f"Deleted {len(messages)-1} message{'s' if len(messages) != 1 else ''}.",
-                C_GREY,
-            ))
-            await asyncio.sleep(5)
-            await confirm.delete()
         except discord.Forbidden:
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete messages.", C_RED))
-        except Exception as e:
-            await ctx.send(embed=emb("❌ Error", f"Failed to delete messages: {str(e)}", C_RED))
+            return
+
+        confirm = await ctx.send(embed=emb(
+            "🗑️ Cleared",
+            f"Deleted {len(messages)-1} message{'s' if len(messages) != 1 else ''}.",
+            C_GREY,
+        ))
+        await asyncio.sleep(5)
+        try:
+            await confirm.delete()
+        except discord.NotFound:
+            pass
 
 
 async def setup(bot):

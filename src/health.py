@@ -1,4 +1,4 @@
-"""Tiny localhost-only HTTP server exposing /healthz for Docker HEALTHCHECK.
+"""Tiny localhost-only HTTP server exposing /healthz and /metrics.
 
 Binds to 127.0.0.1:9090 inside the container — never reachable from the host or
 LAN. The /healthz endpoint reports three dependencies:
@@ -9,6 +9,11 @@ LAN. The /healthz endpoint reports three dependencies:
 
 Soft-failing on Ollama matches reality: the bot has dozens of non-AI commands
 that work fine without it, and restarting the bot doesn't fix Ollama anyway.
+
+/metrics emits Prometheus text-format. Keeping it on the same loopback port
+(rather than exposing 9090 to the host) means a Prometheus scrape needs to
+either run inside the same container/network namespace or hit it via an
+exec-based exporter — a deliberate choice over leaking process internals.
 """
 import asyncio
 import logging
@@ -16,7 +21,7 @@ import math
 
 from aiohttp import web
 
-from src import ai
+from src import ai, metrics
 from src.db import get_pool
 
 HEALTH_HOST = "127.0.0.1"
@@ -89,19 +94,27 @@ async def _healthz(request: web.Request) -> web.Response:
     }, status=code)
 
 
+async def _metrics(request: web.Request) -> web.Response:
+    # CONTENT_TYPE_LATEST includes a charset parameter, which aiohttp
+    # rejects on the `content_type=` kwarg — set the full header instead.
+    body, content_type = metrics.render()
+    return web.Response(body=body, headers={"Content-Type": content_type})
+
+
 def build_app(bot) -> web.Application:
     app = web.Application()
     app[_BOT_KEY] = bot
     app.router.add_get("/healthz", _healthz)
+    app.router.add_get("/metrics", _metrics)
     return app
 
 
 async def start_health_server(bot, host: str = HEALTH_HOST, port: int = HEALTH_PORT) -> web.AppRunner:
-    """Start the /healthz server. Returns the runner so callers can clean up."""
+    """Start the /healthz + /metrics server. Returns the runner so callers can clean up."""
     app = build_app(bot)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     await site.start()
-    logging.info("health server listening on http://%s:%d/healthz", host, port)
+    logging.info("health server listening on http://%s:%d (/healthz, /metrics)", host, port)
     return runner
