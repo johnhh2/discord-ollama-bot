@@ -612,7 +612,7 @@ class AICog(commands.Cog):
         del registry[cid]
         return line
 
-    @commands.command(name="stop", aliases=["quit", "forfeit", "q"])
+    @commands.command(name="stop", aliases=["quit", "forfeit", "q", "close"])
     async def cmd_stop(self, ctx: commands.Context):
         uid = ctx.author.id
         cid = ctx.channel.id
