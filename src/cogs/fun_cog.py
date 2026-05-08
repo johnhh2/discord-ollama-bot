@@ -50,6 +50,31 @@ def _load_tips() -> list[str]:
     except OSError:
         return []
 
+
+_tip_queue: list[str] = []
+_tip_pool_signature: frozenset[str] = frozenset()
+
+
+def _next_tip() -> str | None:
+    """Pop the next tip from a shuffled queue, reshuffling when exhausted.
+
+    Resets the cycle if the underlying tip file changes.
+    """
+    global _tip_queue, _tip_pool_signature
+    tips = _load_tips()
+    if not tips:
+        _tip_queue = []
+        _tip_pool_signature = frozenset()
+        return None
+    sig = frozenset(tips)
+    if sig != _tip_pool_signature:
+        _tip_pool_signature = sig
+        _tip_queue = []
+    if not _tip_queue:
+        _tip_queue = list(tips)
+        random.shuffle(_tip_queue)
+    return _tip_queue.pop()
+
 async def _nsfw_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[dict]:
     if not NSFW_API_URL:
         return []
@@ -419,11 +444,11 @@ class FunCog(commands.Cog):
 
     @commands.command(name="tip", aliases=["tips"])
     async def cmd_tip(self, ctx: commands.Context):
-        tips = _load_tips()
-        if not tips:
+        tip = _next_tip()
+        if tip is None:
             await ctx.send(embed=emb("💡 Tip", "No tips available right now.", C_GREY))
             return
-        await ctx.send(embed=emb("💡 Tip", random.choice(tips), C_BLUE))
+        await ctx.send(embed=emb("💡 Tip", tip, C_BLUE))
 
 
 async def setup(bot):
