@@ -166,7 +166,8 @@ class UtilityCog(commands.Cog):
             "`!dog` — Random dog picture\n"
             "`!cat` — Random cat picture\n"
             "`!quote` — Save a quoted message (reply) or display a random saved quote\n"
-            "`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote"
+            "`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote\n"
+            "`!tip` — Show a random tip about hidden commands"
         ))
         utility_val = (
             "`!stats` — Show bot statistics\n"

@@ -2,6 +2,7 @@ import asyncio
 import random
 import logging
 import re
+from pathlib import Path
 
 import aiohttp
 import discord
@@ -37,6 +38,17 @@ from src import state
 
 # Tracks the last nsfw bot message per (channel_id, user_id)
 _nsfw_last_msg: dict[tuple[int, int], discord.Message] = {}
+
+
+_TIPS_FILE = Path(__file__).resolve().parent.parent / "command_tips.txt"
+
+
+def _load_tips() -> list[str]:
+    try:
+        with _TIPS_FILE.open(encoding="utf-8") as f:
+            return [line.strip() for line in f if line.strip()]
+    except OSError:
+        return []
 
 async def _nsfw_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[dict]:
     if not NSFW_API_URL:
@@ -405,6 +417,13 @@ class FunCog(commands.Cog):
             await ctx.send(embed=emb("🐱 Cat", f"Failed to fetch: {e}", C_RED))
 
 
+    @commands.command(name="tip", aliases=["tips"])
+    async def cmd_tip(self, ctx: commands.Context):
+        tips = _load_tips()
+        if not tips:
+            await ctx.send(embed=emb("💡 Tip", "No tips available right now.", C_GREY))
+            return
+        await ctx.send(embed=emb("💡 Tip", random.choice(tips), C_BLUE))
 
 
 async def setup(bot):
