@@ -766,8 +766,7 @@ class UtilityCog(commands.Cog):
         ))
         admin_embed.add_field(name="🔍 Moderation", inline=False, value=(
             "`!audit` — Last 5 failed command attempts\n"
-            "`!clearbot [n]` — Delete last n bot messages (default 50)\n"
-            "`!clearall <n>` — Delete last n messages (any author)\n"
+            "`!clear <n>` — Delete last n messages (any author)\n"
             "`!saved` — Show saved data (admin-only)"
         ))
         if is_admin(ctx):

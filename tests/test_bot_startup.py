@@ -122,7 +122,7 @@ async def test_known_top_level_commands_are_registered(loaded_bot):
         # Admin / admin_cog
         "godmode", "say", "restart", "setperm",
         # Moderation / moderation_cog
-        "audit", "clearbot", "clearall",
+        "audit", "clear",
         # Utility / utility_cog
         "ai", "saved", "puzzle", "gambler-role",
         # Games
