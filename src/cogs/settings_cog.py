@@ -119,6 +119,12 @@ class SettingsCog(commands.Cog):
             "channel-levelup #channel / clear\n"
             "tax-aliases add|remove <word> / list / clear"
         )
+        if is_admin(ctx):
+            footer_text += (
+                "\n\nBot admin:\n"
+                "admin-log-channel #channel / clear\n"
+                "bug-report-channel #channel / clear"
+            )
         embed.set_footer(text=footer_text)
         await send_ephemeral(ctx, embed=embed)
 

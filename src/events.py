@@ -257,6 +257,25 @@ class EventsCog(commands.Cog):
                 pass
 
     @commands.Cog.listener()
+    async def on_guild_join(self, guild: discord.Guild):
+        channel = guild.system_channel
+        if channel is None or not channel.permissions_for(guild.me).send_messages:
+            channel = next(
+                (c for c in guild.text_channels if c.permissions_for(guild.me).send_messages),
+                None,
+            )
+        if channel is None:
+            return
+        try:
+            await channel.send(embed=emb(
+                "👋 Hello!",
+                f"Thanks for adding me to **{guild.name}**! Run `!help` to see what I can do.",
+                C_BLUE,
+            ))
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    @commands.Cog.listener()
     async def global_command_channel_check(self, ctx: commands.Context) -> bool:
         if ctx.guild is None:
             return True
@@ -310,6 +329,9 @@ class EventsCog(commands.Cog):
             "command": ctx.message.content[:100],
             "error": f"{type(error).__name__}: {error}",
         })
+        if ctx.command is not None:
+            from src.metrics import command_invocations
+            command_invocations.labels(command=ctx.command.qualified_name, outcome="error").inc()
         await _log_admin_command(self.bot, ctx, error=error)
         raise error
 
@@ -323,6 +345,8 @@ class EventsCog(commands.Cog):
         state.stats_commands_today_by_cog[bucket] = (
             state.stats_commands_today_by_cog.get(bucket, 0) + 1
         )
+        from src.metrics import command_invocations
+        command_invocations.labels(command=ctx.command.qualified_name, outcome="ok").inc()
         if ctx.guild and not ctx.author.bot:
             xp, leveled_up = await _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
             if leveled_up and get_guild_cfg(ctx.guild.id).get("levelup_channel"):
@@ -363,6 +387,14 @@ class EventsCog(commands.Cog):
         # row with {balance: 0, daily_date: None}.
         import src.persistence as _pkg
         await _pkg.init_done.wait()
+
+        # Bot-side blocklist: silently drop everything from banned users —
+        # no AI, no commands, no XP/economy/tax/curse side effects, no
+        # stats counted. Mirrors the hidden-permission denial pattern.
+        if message.author.id in state.global_blocklist:
+            return
+        if message.guild is not None and (message.guild.id, message.author.id) in state.blocklist:
+            return
 
         state.stats_messages_seen += 1
         state.stats_messages_today += 1

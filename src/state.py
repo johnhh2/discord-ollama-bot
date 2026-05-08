@@ -36,6 +36,18 @@ command_perms: dict = {}
 # guild only. Source of truth is the user_perm_overrides table; loaded at boot.
 user_perm_overrides: dict = {}
 
+# Per-guild bot-side blocklist set by !ban. Users present here have their
+# messages silently ignored (no AI, no commands, no XP/economy side effects)
+# inside that guild — Discord membership is untouched. Source of truth is the
+# blocklist table; loaded at boot.
+# {(guild_id, user_id): {"reason": str|None, "banned_by": int, "banned_at": datetime}}
+blocklist: dict = {}
+
+# Bot-wide blocklist set by !globalban. Same silence behavior as blocklist but
+# applies in every guild. Source of truth is the global_blocklist table.
+# {user_id: {"reason": str|None, "banned_by": int, "banned_at": datetime}}
+global_blocklist: dict = {}
+
 # ── In-memory game state ──────────────────────────────────────────────────────
 
 active_blackjack_games: dict = {}

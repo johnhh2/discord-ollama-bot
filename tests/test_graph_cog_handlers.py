@@ -35,7 +35,12 @@ def _stub_member(uid: int = 1, name: str = "tester"):
 
 def _stub_ctx(author: SimpleNamespace | None = None, guild_id: int = 42):
     """Minimal ctx for _build_and_render — has author, guild, message, send.
-    Records sent embeds on ctx.sent_embeds for assertion.
+    Records sent embeds on ctx.sent_embeds for assertion. The cog sends a
+    "Rendering…" placeholder first and then `placeholder.edit(...)` with the
+    final embed or file, so the stubbed send returns a Message-like object
+    whose edit() forwards into the same lists. The placeholder embed itself
+    is recorded in ctx.placeholder_embeds, separate from the final embeds
+    in ctx.sent_embeds, to keep assertions about the *result* clean.
     """
     ctx = SimpleNamespace()
     ctx.author = author or _stub_member()
@@ -48,12 +53,28 @@ def _stub_ctx(author: SimpleNamespace | None = None, guild_id: int = 42):
     ctx.command = SimpleNamespace(qualified_name="graph economy")
     ctx.sent_embeds = []
     ctx.sent_files = []
+    ctx.placeholder_embeds = []
+
+    class _StubMessage:
+        async def edit(self, *, embed=None, attachments=None, **kwargs):
+            if embed is not None:
+                ctx.sent_embeds.append(embed)
+            if attachments:
+                ctx.sent_files.extend(attachments)
 
     async def _send(content=None, *, embed=None, file=None, **kwargs):
+        # Direct ctx.send embeds (parse-error path) go straight to sent_embeds.
+        # Placeholder embeds (the "Rendering…" message) get separated out so
+        # tests can ignore them.
         if embed is not None:
-            ctx.sent_embeds.append(embed)
+            title = embed.title or ""
+            if "Rendering" in title:
+                ctx.placeholder_embeds.append(embed)
+            else:
+                ctx.sent_embeds.append(embed)
         if file is not None:
             ctx.sent_files.append(file)
+        return _StubMessage()
 
     ctx.send = _send
     return ctx

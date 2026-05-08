@@ -4,3 +4,4 @@ python-dotenv==1.2.2
 tzdata==2026.2
 matplotlib==3.10.9
 aiomysql==0.3.2
+prometheus-client==0.25.0

@@ -199,10 +199,10 @@ async def test_log_sends_for_bot_admin_tier_success():
 async def test_log_sends_for_server_admin_tier_success():
     """`server_admin` tier also logs (the hook is bot_admin OR server_admin)."""
     _state.bot_settings["admin_log_channel"] = "12345"
-    _state.command_perms["clearbot"] = {"tier": "server_admin", "hidden": False}
+    _state.command_perms["clear"] = {"tier": "server_admin", "hidden": False}
     log_chan = FakeTextChannel(ch_id=12345)
     bot = _FakeBot(channel=log_chan)
-    ctx = _ctx_for_command("clearbot")
+    ctx = _ctx_for_command("clear")
 
     await _log_admin_command(bot, ctx)
 
