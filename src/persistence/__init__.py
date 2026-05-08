@@ -81,6 +81,12 @@ from src.persistence.user_perm_overrides import (  # noqa: F401
     save_user_perm_override,
     delete_user_perm_override,
 )
+from src.persistence.blocklist import (  # noqa: F401
+    save_blocklist,
+    delete_blocklist,
+    save_global_blocklist,
+    delete_global_blocklist,
+)
 from src.persistence.ephemeral import (  # noqa: F401
     save_restart_msg,
     load_restart_msg,

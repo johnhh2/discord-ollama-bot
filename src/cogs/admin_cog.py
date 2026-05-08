@@ -1,5 +1,6 @@
 import os
 import re
+from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
@@ -10,12 +11,14 @@ from src.helpers import (
     log_bot_permission_error, MemberConverter,
 )
 from src.permissions import (
-    is_admin, requires_perm,
+    is_admin, is_bannable, requires_perm,
 )
 from src.persistence import (
     save_guild_settings,
     save_godmode_users, save_ragebait,
     save_user_perm_override, delete_user_perm_override,
+    save_blocklist, delete_blocklist,
+    save_global_blocklist, delete_global_blocklist,
     save_restart_msg
 )
 from src.guild_config import get_guild_cfg
@@ -295,6 +298,109 @@ class AdminCog(commands.Cog):
             return
 
         await ctx.send(embed=emb("❌ Invalid Target", "Please supply a `#channel` mention, `@role` mention, or a numeric ID.", C_RED))
+
+
+    @commands.command(name="ban")
+    @requires_perm
+    async def cmd_ban(self, ctx: commands.Context, user: MemberConverter = None, *, reason: str = None):
+        """Add a user to this guild's blocklist — bot will silently ignore them here."""
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+            return
+        if user is None:
+            await ctx.send(embed=emb(
+                "🔨 ban",
+                "Usage: `!ban @user [reason]`\n"
+                "Silently ignores the user inside this server — no AI replies, no command "
+                "processing, no XP/economy side effects. They remain in the server.",
+                C_GOLD,
+            ))
+            return
+        if not is_bannable(user):
+            await ctx.send(embed=emb(
+                "❌ Cannot Ban",
+                "Server admins and bot admins cannot be banned.",
+                C_RED,
+            ))
+            return
+
+        await save_blocklist(ctx.guild.id, user.id, reason, ctx.author.id)
+        state.blocklist[(ctx.guild.id, user.id)] = {
+            "reason": reason,
+            "banned_by": ctx.author.id,
+            "banned_at": datetime.now(timezone.utc),
+        }
+        msg = f"{user.mention} has been banned in this server."
+        if reason:
+            msg += f"\nReason: {reason}"
+        await ctx.send(embed=emb("🔨 Banned", msg, C_GREEN))
+
+
+    @commands.command(name="unban")
+    @requires_perm
+    async def cmd_unban(self, ctx: commands.Context, user: MemberConverter = None):
+        """Remove a user from this guild's blocklist."""
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
+            return
+        if user is None:
+            await ctx.send(embed=emb("🔓 unban", "Usage: `!unban @user`", C_GOLD))
+            return
+
+        key = (ctx.guild.id, user.id)
+        if key not in state.blocklist:
+            await ctx.send(embed=emb("❌ Not Banned", f"{user.mention} is not banned in this server.", C_RED))
+            return
+        await delete_blocklist(ctx.guild.id, user.id)
+        state.blocklist.pop(key, None)
+        await ctx.send(embed=emb("🔓 Unbanned", f"{user.mention} has been unbanned in this server.", C_GREEN))
+
+
+    @commands.command(name="globalban")
+    @requires_perm
+    async def cmd_globalban(self, ctx: commands.Context, user: MemberConverter = None, *, reason: str = None):
+        """Add a user to the bot-wide blocklist — silenced in every guild."""
+        if user is None:
+            await ctx.send(embed=emb(
+                "🌐 globalban",
+                "Usage: `!globalban @user [reason]`\n"
+                "Silently ignores the user across every guild the bot is in.",
+                C_GOLD,
+            ))
+            return
+        if not is_bannable(user):
+            await ctx.send(embed=emb(
+                "❌ Cannot Ban",
+                "Server admins and bot admins cannot be banned.",
+                C_RED,
+            ))
+            return
+
+        await save_global_blocklist(user.id, reason, ctx.author.id)
+        state.global_blocklist[user.id] = {
+            "reason": reason,
+            "banned_by": ctx.author.id,
+            "banned_at": datetime.now(timezone.utc),
+        }
+        msg = f"{user.mention} has been globally banned."
+        if reason:
+            msg += f"\nReason: {reason}"
+        await ctx.send(embed=emb("🌐 Globally Banned", msg, C_GREEN))
+
+
+    @commands.command(name="globalunban")
+    @requires_perm
+    async def cmd_globalunban(self, ctx: commands.Context, user: MemberConverter = None):
+        """Remove a user from the bot-wide blocklist."""
+        if user is None:
+            await ctx.send(embed=emb("🌐 globalunban", "Usage: `!globalunban @user`", C_GOLD))
+            return
+        if user.id not in state.global_blocklist:
+            await ctx.send(embed=emb("❌ Not Banned", f"{user.mention} is not globally banned.", C_RED))
+            return
+        await delete_global_blocklist(user.id)
+        state.global_blocklist.pop(user.id, None)
+        await ctx.send(embed=emb("🌐 Globally Unbanned", f"{user.mention} has been globally unbanned.", C_GREEN))
 
 
 async def setup(bot):

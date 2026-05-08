@@ -108,6 +108,20 @@ async def test_unhealthy_takes_priority_over_degraded(patch_db_and_ollama):
 
 
 @pytest.mark.asyncio
+async def test_metrics_endpoint_serves_prometheus_text(patch_db_and_ollama):
+    """The /metrics endpoint shares the health server and emits Prom text format."""
+    app = health.build_app(FakeBot())
+    async with TestClient(TestServer(app)) as client:
+        resp = await client.get("/metrics")
+        body = await resp.text()
+    assert resp.status == 200
+    assert resp.content_type.startswith("text/plain")
+    # Sanity: the registry should expose at least the bot's metric names
+    assert "bot_command_invocations" in body
+    assert "bot_ollama_stream_seconds" in body
+
+
+@pytest.mark.asyncio
 async def test_db_check_times_out(monkeypatch):
     """If the DB probe hangs longer than DB_TIMEOUT_SECS, _check_db returns down."""
     import asyncio

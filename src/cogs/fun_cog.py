@@ -2,6 +2,7 @@ import asyncio
 import random
 import logging
 import re
+from pathlib import Path
 
 import aiohttp
 import discord
@@ -37,6 +38,42 @@ from src import state
 
 # Tracks the last nsfw bot message per (channel_id, user_id)
 _nsfw_last_msg: dict[tuple[int, int], discord.Message] = {}
+
+
+_TIPS_FILE = Path(__file__).resolve().parent.parent / "command_tips.txt"
+
+
+def _load_tips() -> list[str]:
+    try:
+        with _TIPS_FILE.open(encoding="utf-8") as f:
+            return [line.strip() for line in f if line.strip()]
+    except OSError:
+        return []
+
+
+_tip_queue: list[str] = []
+_tip_pool_signature: frozenset[str] = frozenset()
+
+
+def _next_tip() -> str | None:
+    """Pop the next tip from a shuffled queue, reshuffling when exhausted.
+
+    Resets the cycle if the underlying tip file changes.
+    """
+    global _tip_queue, _tip_pool_signature
+    tips = _load_tips()
+    if not tips:
+        _tip_queue = []
+        _tip_pool_signature = frozenset()
+        return None
+    sig = frozenset(tips)
+    if sig != _tip_pool_signature:
+        _tip_pool_signature = sig
+        _tip_queue = []
+    if not _tip_queue:
+        _tip_queue = list(tips)
+        random.shuffle(_tip_queue)
+    return _tip_queue.pop()
 
 async def _nsfw_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[dict]:
     if not NSFW_API_URL:
@@ -405,6 +442,13 @@ class FunCog(commands.Cog):
             await ctx.send(embed=emb("🐱 Cat", f"Failed to fetch: {e}", C_RED))
 
 
+    @commands.command(name="tip", aliases=["tips"])
+    async def cmd_tip(self, ctx: commands.Context):
+        tip = _next_tip()
+        if tip is None:
+            await ctx.send(embed=emb("💡 Tip", "No tips available right now.", C_GREY))
+            return
+        await ctx.send(embed=emb("💡 Tip", tip, C_BLUE))
 
 
 async def setup(bot):

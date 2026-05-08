@@ -20,10 +20,38 @@ from src.guild_config import get_guild_cfg
 
 
 async def _ensure_user(uid: int):
+    # Block until init_db_state has loaded state from the DB. Without this,
+    # any caller that lands here before the load finishes (background tasks
+    # like the leveling voice tick, lottery draw, etc.) would materialize a
+    # zero-valued entry and UPSERT it over the user's real DB row.
+    import src.persistence as _pkg
+    await _pkg.init_done.wait()
     key = str(uid)
     if key not in state.economy["users"]:
         state.economy["users"][key] = {"balance": 0, "last_daily": 0.0}
         await save_economy(uid=uid)
+
+
+# Threshold above which a player becomes a valid crime target regardless
+# of level. Combined wallet + (current value of) savings.
+CRIME_ELIGIBLE_NET_WORTH = 100_000
+
+
+async def _maybe_latch_crime_eligible(uid: int) -> bool:
+    """Sticky: if the user qualifies (wallet + savings > 100k now), set the
+    flag and persist. Returns True iff this call latched the flag (i.e. the
+    user was previously ineligible and just qualified).
+    Level-based latching lives in src/leveling.py's grant_xp."""
+    user = state.economy["users"].get(str(uid))
+    if user is None or user.get("crime_eligible"):
+        return False
+    wallet = user.get("balance", 0)
+    savings_total = sum(e["amount"] for e in user.get("savings", []))
+    if wallet + savings_total > CRIME_ELIGIBLE_NET_WORTH:
+        user["crime_eligible"] = True
+        await save_economy(uid=uid)
+        return True
+    return False
 
 
 async def get_balance(uid: int) -> int:
@@ -36,6 +64,7 @@ async def add_balance(uid: int, n: int, guild_id: int = None, holder_name: str =
     await _ensure_user(uid)
     state.economy["users"][str(uid)]["balance"] += n
     await save_economy(uid=uid)
+    await _maybe_latch_crime_eligible(uid)
     if guild_id is not None and holder_name is not None:
         new_bal = state.economy["users"][str(uid)]["balance"]
         return await try_set_record(guild_id, "highest_balance", new_bal, uid, holder_name)
@@ -259,6 +288,7 @@ async def add_savings(uid: int, amount: int) -> bool:
     user.setdefault("savings", [])
     user["savings"].append({"amount": amount, "deposited_at": time.time()})
     await save_economy(uid=uid)
+    await _maybe_latch_crime_eligible(uid)
     return True
 
 

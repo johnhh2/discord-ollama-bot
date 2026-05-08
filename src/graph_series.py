@@ -794,6 +794,15 @@ def _aligned_y(seg: Segment, src_x: list[datetime.datetime], target_x: list[date
 
 
 async def render_combined(serieses: list[SeriesData], group: str, y_unit_label: str, title: str):
+    """Render `serieses` to a PNG buffer. Async wrapper that offloads the
+    matplotlib work to a worker thread so the event loop stays responsive
+    (renders take ~hundreds of ms and would otherwise block all other I/O).
+    """
+    import asyncio
+    return await asyncio.to_thread(_render_combined_sync, serieses, group, y_unit_label, title)
+
+
+def _render_combined_sync(serieses: list[SeriesData], group: str, y_unit_label: str, title: str):
     """Render `serieses` to a PNG buffer.
 
     Style rules:
