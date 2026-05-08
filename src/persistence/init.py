@@ -42,10 +42,11 @@ async def init_db_state():
         try:
             await cur.execute(
                 "SELECT user_id, balance, last_daily, daily_date, scratch_used,"
-                " scratch_date, jailbreak_used, jail_until, savings FROM economy_users"
+                " scratch_date, jailbreak_used, jail_until, savings, jail_reason FROM economy_users"
             )
             for row in await cur.fetchall():
-                uid, bal, last_daily, daily_date, scratch_used, scratch_date, jb_used, jail_until, savings_json = row
+                (uid, bal, last_daily, daily_date, scratch_used, scratch_date,
+                 jb_used, jail_until, savings_json, jail_reason) = row
                 state.economy["users"][str(uid)] = {
                     "balance": bal,
                     "last_daily": last_daily,
@@ -55,6 +56,7 @@ async def init_db_state():
                     "jailbreak_used": bool(jb_used),
                     "jail_until": jail_until,
                     "savings": json.loads(savings_json) if savings_json else [],
+                    "jail_reason": jail_reason,
                 }
         except Exception as e:
             logging.error(f"[init_db_state] economy_users failed: {e}", exc_info=True)

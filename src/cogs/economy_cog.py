@@ -27,7 +27,17 @@ from src.persistence import (
 from src.config import (
     DAILY_REWARD, DAILY_RESET_HOUR,
 )
+from src.jail_reasons import format_steal_reason, format_mug_reason
 from src import state
+
+
+def _jail_body(name: str, jail_until_ts: float, reason: str | None) -> str:
+    """Render the standard 'in jail' embed body. Omits the Reason line
+    when reason is None/empty (legacy jails written before jail_reason existed)."""
+    body = f"**{name}** is locked up! Released <t:{int(jail_until_ts)}:R>."
+    if reason:
+        body += f"\nReason: {reason}"
+    return body
 
 
 
@@ -192,9 +202,10 @@ class EconomyCog(commands.Cog):
         # Check jail
         jail_until = thief_data.get("jail_until", 0)
         if time.time() < jail_until:
+            reason = thief_data.get("jail_reason")
             await ctx.send(embed=emb(
                 "🚔 You're in Jail",
-                f"**{ctx.author.display_name}** is locked up! Released <t:{int(jail_until)}:R>.",
+                _jail_body(ctx.author.display_name, jail_until, reason),
                 C_RED,
             ))
             return
@@ -287,6 +298,7 @@ class EconomyCog(commands.Cog):
                 if jailed:
                     jail_until_ts = time.time() + jail_days * 86400
                     thief_data["jail_until"] = jail_until_ts
+                    thief_data["jail_reason"] = format_steal_reason(target.display_name)
                     await save_economy(uid=thief_id)
                     result_embed = emb(
                         "🚔 Caught & Jailed!",
@@ -313,11 +325,13 @@ class EconomyCog(commands.Cog):
     async def cmd_jail(self, ctx: commands.Context, target: MemberConverter = None):
         member = target or ctx.author
         await _ensure_user(member.id)
-        jail_until = state.economy["users"][str(member.id)].get("jail_until", 0)
+        user_data = state.economy["users"][str(member.id)]
+        jail_until = user_data.get("jail_until", 0)
         if time.time() < jail_until:
+            reason = user_data.get("jail_reason")
             await ctx.send(embed=emb(
                 "🚔 In Jail",
-                f"**{member.display_name}** is locked up! Released <t:{int(jail_until)}:R>.",
+                _jail_body(member.display_name, jail_until, reason),
                 C_RED,
             ))
         else:
@@ -355,6 +369,7 @@ class EconomyCog(commands.Cog):
 
         if random.random() < 0.20:
             user_data["jail_until"] = 0
+            user_data["jail_reason"] = None
             await save_economy(uid=uid)
             await ctx.send(embed=emb(
                 "🏃 Escaped!",
@@ -378,6 +393,7 @@ class EconomyCog(commands.Cog):
         await _ensure_user(target.id)
         user_data = state.economy["users"][str(target.id)]
         user_data["jail_until"] = 0
+        user_data["jail_reason"] = None
         await save_economy(uid=target.id)
         await ctx.send(embed=emb("🔓 Released", f"**{target.display_name}** has been freed from jail.", C_GREEN))
 
@@ -387,9 +403,14 @@ class EconomyCog(commands.Cog):
         uid = ctx.author.id
 
         await _ensure_user(uid)
-        jail_until = state.economy["users"][str(uid)].get("jail_until", 0)
+        user_data = state.economy["users"][str(uid)]
+        jail_until = user_data.get("jail_until", 0)
         if time.time() < jail_until:
-            await ctx.send(embed=emb("🚔 In Jail", f"You can't mug anyone from behind bars! Released <t:{int(jail_until)}:R>.", C_RED))
+            reason = user_data.get("jail_reason")
+            body = f"You can't mug anyone from behind bars! Released <t:{int(jail_until)}:R>."
+            if reason:
+                body += f"\nReason: {reason}"
+            await ctx.send(embed=emb("🚔 In Jail", body, C_RED))
             return
 
         if target is None or amount is None:
@@ -490,6 +511,7 @@ class EconomyCog(commands.Cog):
             if jailed:
                 jail_until_ts = time.time() + 86400
                 state.economy["users"][str(uid)]["jail_until"] = jail_until_ts
+                state.economy["users"][str(uid)]["jail_reason"] = format_mug_reason(target.display_name, parsed)
                 await save_economy(uid=uid)
                 result_embed = emb(
                     "🔪 Mugged — but Caught!",

@@ -27,6 +27,7 @@ async def test_economy_users_roundtrip(db):
         "jailbreak_used": True,
         "jail_until": 0.0,
         "savings": [{"amount": 100, "deposited_at": 999.0}],
+        "jail_reason": "Tried to steal from Alice",
     }
     _state.economy["users"]["1002"] = {
         "balance": 0,
@@ -37,6 +38,7 @@ async def test_economy_users_roundtrip(db):
         "jailbreak_used": False,
         "jail_until": 0.0,
         "savings": [],
+        "jail_reason": None,
     }
     _state.economy["last_daily_reset"] = "2026-05-02"
 
@@ -56,7 +58,9 @@ async def test_economy_users_roundtrip(db):
     assert u["scratch_date"] == "2026-05-02"
     assert u["jailbreak_used"] is True
     assert u["savings"] == [{"amount": 100, "deposited_at": 999.0}]
+    assert u["jail_reason"] == "Tried to steal from Alice"
     assert _state.economy["users"]["1002"]["balance"] == 0
+    assert _state.economy["users"]["1002"]["jail_reason"] is None
     assert _state.economy["last_daily_reset"] == "2026-05-02"
 
 

@@ -334,3 +334,6 @@ CREATE TABLE IF NOT EXISTS global_blocklist (
     banned_at  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id)
 );
+
+-- ── 0007_add_jail_reason.sql ──
+ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS jail_reason VARCHAR(255) NULL;

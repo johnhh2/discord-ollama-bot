@@ -61,6 +61,15 @@ async def _read_db_jail_until(uid: int) -> float:
     return row[0] if row else 0.0
 
 
+async def _read_db_jail_reason(uid: int) -> str | None:
+    pool = await _persistence.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT jail_reason FROM economy_users WHERE user_id=?", (uid,))
+            row = await cur.fetchone()
+    return row[0] if row else None
+
+
 def _make_ctx(thief: FakeMember, victim: FakeMember, content: str = "!steal @victim"):
     """Build a FakeCtx with the bot stubbed and ctx.message.content set so
     cmd_steal's tier-parsing can read it."""
@@ -136,6 +145,9 @@ async def test_steal_caught_and_jailed_deducts_fee_and_sets_jail(db, monkeypatch
     assert jail_until > before + 86000  # at least a day from now (give or take)
     assert jail_until < before + 87000
     assert await _read_db_jail_until(thief.id) == pytest.approx(jail_until)
+    # Reason captured at jail time, persisted to DB
+    assert _state.economy["users"][str(thief.id)]["jail_reason"] == "Tried to steal from victim"
+    assert await _read_db_jail_reason(thief.id) == "Tried to steal from victim"
 
 
 async def test_steal_caught_no_jail_just_fee(db, monkeypatch):
@@ -277,7 +289,7 @@ async def test_mug_clean_getaway_target_loses_amount(db, monkeypatch):
 async def test_mug_caught_jails_thief_for_one_day(db, monkeypatch):
     cog = EconomyCog(bot=_StubBot())
     thief = FakeMember(uid=301)
-    victim = FakeMember(uid=401)
+    victim = FakeMember(uid=401, display_name="victim")
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
     _grant_level(victim.id, 9)
@@ -296,6 +308,9 @@ async def test_mug_caught_jails_thief_for_one_day(db, monkeypatch):
     assert await _economy.get_balance(victim.id) == 9000
     jail_until = _state.economy["users"][str(thief.id)]["jail_until"]
     assert before + 86000 < jail_until < before + 87000
+    # Reason captured at jail time, persisted to DB
+    assert _state.economy["users"][str(thief.id)]["jail_reason"] == "Mugged victim for 1,000 coins"
+    assert await _read_db_jail_reason(thief.id) == "Mugged victim for 1,000 coins"
 
 
 async def test_mug_blocked_by_insurance_no_charge(db, monkeypatch):
@@ -515,6 +530,7 @@ async def test_jailbreak_success_clears_jail_until(db, monkeypatch):
     user = FakeMember(uid=700)
     await _economy._ensure_user(user.id)
     _state.economy["users"][str(user.id)]["jail_until"] = time.time() + 86400
+    _state.economy["users"][str(user.id)]["jail_reason"] = "Tried to steal from someone"
 
     monkeypatch.setattr(random, "random", lambda: 0.10)  # < 0.20 -> success
 
@@ -524,8 +540,10 @@ async def test_jailbreak_success_clears_jail_until(db, monkeypatch):
     user_data = _state.economy["users"][str(user.id)]
     assert user_data["jail_until"] == 0
     assert user_data["jailbreak_used"] is True
+    assert user_data["jail_reason"] is None
     # Persisted
     assert await _read_db_jail_until(user.id) == 0
+    assert await _read_db_jail_reason(user.id) is None
 
 
 async def test_jailbreak_failure_keeps_jail_and_marks_used(db, monkeypatch):
@@ -534,6 +552,7 @@ async def test_jailbreak_failure_keeps_jail_and_marks_used(db, monkeypatch):
     await _economy._ensure_user(user.id)
     jail_until = time.time() + 86400
     _state.economy["users"][str(user.id)]["jail_until"] = jail_until
+    _state.economy["users"][str(user.id)]["jail_reason"] = "Tried to steal from someone"
 
     monkeypatch.setattr(random, "random", lambda: 0.99)  # >= 0.20 -> failure
 
@@ -543,6 +562,8 @@ async def test_jailbreak_failure_keeps_jail_and_marks_used(db, monkeypatch):
     user_data = _state.economy["users"][str(user.id)]
     assert user_data["jail_until"] == pytest.approx(jail_until)
     assert user_data["jailbreak_used"] is True
+    # Reason still set on a failed jailbreak — only success clears it
+    assert user_data["jail_reason"] == "Tried to steal from someone"
 
 
 async def test_jailbreak_when_not_jailed_rejected(db):
