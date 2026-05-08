@@ -82,10 +82,9 @@ def _make_ctx(thief: FakeMember, victim: FakeMember, content: str = "!steal @vic
 
 
 def _grant_level(uid: int, internal_level: int, gid: int = 42) -> None:
-    """Force a user to a given internal level so they pass the !steal/!mug/!bankheist
-    target-side level gate. Internal level N → display level N+1; steal needs
-    display 10 (internal 9), mug needs display 13 (internal 12), bankheist needs
-    display 15 (internal 14)."""
+    """Force a user to a given internal level so they pass the level-10
+    crime-target gate (shared by !steal/!mug/!bankheist). Internal level N →
+    display level N+1, so internal 9 = display 10 = unlocks the gate."""
     _state.leveling.setdefault(str(gid), {})[str(uid)] = {"xp": 0, "level": internal_level}
 
 
@@ -98,7 +97,7 @@ async def test_steal_success_transfers_coins_and_persists(db, monkeypatch):
     victim = FakeMember(uid=200, display_name="victim")
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 9)  # unlock !steal for victim
+    _grant_level(victim.id, 9)  # clear the level-10 crime-target gate
 
     # Tier 1: steal_chance=0.10, steal_pct=0.10. Roll < 0.10 -> success.
     monkeypatch.setattr(random, "random", lambda: 0.05)
@@ -271,7 +270,7 @@ async def test_mug_clean_getaway_target_loses_amount(db, monkeypatch):
 
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 12)  # unlock !mug for victim
+    _grant_level(victim.id, 12)  # clear the level-10 crime-target gate
 
     # No jail (random >= 0.5).
     monkeypatch.setattr(random, "random", lambda: 0.99)

@@ -187,11 +187,12 @@ class EconomyCog(commands.Cog):
 
         from src.level_unlocks import is_locked_for
         gid = ctx.guild.id if ctx.guild else 0
+        # Crime unlocks at level 10 — under that level, the target is off-limits.
         victim_lock = is_locked_for("steal", victim_id, gid)
         if victim_lock is not None:
             await ctx.send(embed=emb(
                 "🛡️ Off-Limits",
-                f"**{target.display_name}** hasn't unlocked `!steal` yet (Level **{victim_lock}**) — you can't rob them.",
+                f"**{target.display_name}** is below Level **{victim_lock}** — they're not in the crime system yet.",
                 C_GOLD,
             ))
             return
@@ -472,11 +473,12 @@ class EconomyCog(commands.Cog):
             return
 
         from src.level_unlocks import is_locked_for
-        target_lock = is_locked_for("bankheist", target.id, gid)
+        # Crime unlocks at level 10 — under that level, the target is off-limits.
+        target_lock = is_locked_for("steal", target.id, gid)
         if target_lock is not None:
             await ctx.send(embed=emb(
                 "🛡️ Off-Limits",
-                f"**{target.display_name}** hasn't unlocked `!bankheist` yet (Level **{target_lock}**) — they're not on the menu.",
+                f"**{target.display_name}** is below Level **{target_lock}** — they're not in the crime system yet.",
                 C_GOLD,
             ))
             return
@@ -728,11 +730,12 @@ class EconomyCog(commands.Cog):
 
         from src.level_unlocks import is_locked_for
         gid = ctx.guild.id if ctx.guild else 0
-        victim_lock = is_locked_for("mug", target.id, gid)
+        # Crime unlocks at level 10 — under that level, the target is off-limits.
+        victim_lock = is_locked_for("steal", target.id, gid)
         if victim_lock is not None:
             await ctx.send(embed=emb(
                 "🛡️ Off-Limits",
-                f"**{target.display_name}** hasn't unlocked `!mug` yet (Level **{victim_lock}**) — you can't mug them.",
+                f"**{target.display_name}** is below Level **{victim_lock}** — they're not in the crime system yet.",
                 C_GOLD,
             ))
             return
