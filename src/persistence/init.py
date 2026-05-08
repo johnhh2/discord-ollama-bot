@@ -301,7 +301,7 @@ async def init_db_state():
             if json_perms:
                 placeholders = ",".join(["%s"] * len(json_perms))
                 await cur.execute(
-                    f"DELETE FROM command_perms WHERE command_name NOT IN ({placeholders})",
+                    f"DELETE FROM command_perms WHERE command_name NOT IN ({placeholders})",  # nosec B608 - placeholders is only "%s,%s,...", values are bound
                     tuple(json_perms.keys()),
                 )
             else:
