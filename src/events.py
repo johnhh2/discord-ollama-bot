@@ -257,6 +257,25 @@ class EventsCog(commands.Cog):
                 pass
 
     @commands.Cog.listener()
+    async def on_guild_join(self, guild: discord.Guild):
+        channel = guild.system_channel
+        if channel is None or not channel.permissions_for(guild.me).send_messages:
+            channel = next(
+                (c for c in guild.text_channels if c.permissions_for(guild.me).send_messages),
+                None,
+            )
+        if channel is None:
+            return
+        try:
+            await channel.send(embed=emb(
+                "👋 Hello!",
+                f"Thanks for adding me to **{guild.name}**! Run `!help` to see what I can do.",
+                C_BLUE,
+            ))
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    @commands.Cog.listener()
     async def global_command_channel_check(self, ctx: commands.Context) -> bool:
         if ctx.guild is None:
             return True
