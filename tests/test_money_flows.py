@@ -661,31 +661,33 @@ async def test_bankheist_bot_target_rejected(db):
 
 
 async def test_bankheist_chance_formula_party_size_and_levels(db):
-    """The chance table: base by party size + 0–10% for host, 0–2% per joiner."""
+    """The chance table: base by party size + 0–10% for host, 0–3% per joiner.
+    Bonus scales linearly from level 1 (0%) to level 100 (cap)."""
     cog = EconomyCog(bot=_StubBot())
     host = FakeMember(uid=810)
     j1 = FakeMember(uid=811)
     j2 = FakeMember(uid=812)
     j3 = FakeMember(uid=813)
 
-    # All level 1 (display) — bonuses are min(0.10, 1/1000)≈0.001 / min(0.02, 1/5000)≈0.0002.
-    assert cog._bankheist_chance(host, [], 42) == pytest.approx(0.01 + 1 / 1000.0)
-    assert cog._bankheist_chance(host, [j1], 42) == pytest.approx(
-        0.10 + 1 / 1000.0 + 1 / 5000.0,
-    )
-    assert cog._bankheist_chance(host, [j1, j2], 42) == pytest.approx(
-        0.15 + 1 / 1000.0 + 2 * (1 / 5000.0),
-    )
-    assert cog._bankheist_chance(host, [j1, j2, j3], 42) == pytest.approx(
-        0.25 + 1 / 1000.0 + 3 * (1 / 5000.0),
-    )
+    # All level 1 (display) — bonuses are exactly 0 at the bottom of the curve.
+    assert cog._bankheist_chance(host, [], 42) == pytest.approx(0.01)
+    assert cog._bankheist_chance(host, [j1], 42) == pytest.approx(0.10)
+    assert cog._bankheist_chance(host, [j1, j2], 42) == pytest.approx(0.15)
+    assert cog._bankheist_chance(host, [j1, j2, j3], 42) == pytest.approx(0.25)
 
-    # Maxed-out: host at internal level 99 → display 100 → 10% bonus capped.
+    # Halfway up the curve: internal level 49 → display 50.
+    # Host bonus = ((50-1)/99)*0.10 ≈ 0.04949...; joiner bonus ≈ 0.01485...
+    _grant_level(host.id, 49)
+    expected_half = 0.01 + ((50 - 1) / 99.0) * 0.10
+    assert cog._bankheist_chance(host, [], 42) == pytest.approx(expected_half)
+
+    # Maxed-out: host at internal level 99 → display 100 → 10% bonus capped;
+    # joiners at display 100 → 3% each capped.
     _grant_level(host.id, 99)
     for j in (j1, j2, j3):
-        _grant_level(j.id, 99)  # display 100 → 2% capped each
+        _grant_level(j.id, 99)
     assert cog._bankheist_chance(host, [j1, j2, j3], 42) == pytest.approx(
-        0.25 + 0.10 + 3 * 0.02,
+        0.25 + 0.10 + 3 * 0.03,
     )
 
 

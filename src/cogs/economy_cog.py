@@ -342,15 +342,16 @@ class EconomyCog(commands.Cog):
     @staticmethod
     def _bankheist_chance(host, joiners: list, guild_id: int) -> float:
         """Compute success chance from party size + per-player display level.
-        Host: 0–10% bonus linear over levels 1→100. Each joiner: 0–2% bonus."""
+        Host: 0–10% bonus linear over levels 1→100 (level 1 = 0%, level 100 = 10%).
+        Each joiner: 0–3% bonus on the same scale."""
         from src.level_unlocks import user_display_level
         party_size = 1 + len(joiners)
         base = {1: 0.01, 2: 0.10, 3: 0.15, 4: 0.25}[party_size]
         host_lvl = user_display_level(host.id, guild_id)
-        bonus = min(0.10, host_lvl / 1000.0)
+        bonus = min(0.10, max(0.0, (host_lvl - 1) / 99.0) * 0.10)
         for j in joiners:
             jl = user_display_level(j.id, guild_id)
-            bonus += min(0.02, jl / 5000.0)
+            bonus += min(0.03, max(0.0, (jl - 1) / 99.0) * 0.03)
         return min(0.95, base + bonus)
 
     def _bankheist_render(self, hstate: dict, guild_id: int, savings_value: float, last_call: bool = False):
@@ -365,7 +366,7 @@ class EconomyCog(commands.Cog):
         host_lvl = user_display_level(host.id, guild_id)
 
         # Per-player bonus inline labels — keep in sync with _bankheist_chance().
-        host_bonus_pct = int(round(min(0.10, host_lvl / 1000.0) * 100))
+        host_bonus_pct = round(min(0.10, max(0.0, (host_lvl - 1) / 99.0) * 0.10) * 100, 1)
         crew_lines = [
             f"  👑 {host.display_name}  (Lv {host_lvl}) (+{host_bonus_pct}%; up to 10%)"
         ]
@@ -375,9 +376,9 @@ class EconomyCog(commands.Cog):
                 crew_lines.append(f"  {emoji} — open —")
             else:
                 lvl = user_display_level(member.id, guild_id)
-                joiner_bonus_pct = int(round(min(0.02, lvl / 5000.0) * 100))
+                joiner_bonus_pct = round(min(0.03, max(0.0, (lvl - 1) / 99.0) * 0.03) * 100, 1)
                 crew_lines.append(
-                    f"  {emoji} {member.display_name}  (Lv {lvl}) (+{joiner_bonus_pct}%; up to 2%)"
+                    f"  {emoji} {member.display_name}  (Lv {lvl}) (+{joiner_bonus_pct}%; up to 3%)"
                 )
 
         deadline_ts = int(hstate["opened_at_wall"] + self.BANKHEIST_LOBBY_TIMEOUT)
