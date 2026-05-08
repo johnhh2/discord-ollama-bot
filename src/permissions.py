@@ -100,11 +100,8 @@ def is_bannable(member) -> bool:
 
     Server admins (Discord administrator role or server_admin/bot_admin
     override in their guild) and bot admins (env BOT_ADMIN_IDS) are
-    protected. Bots are never bannable. If the member has no guild
-    context, only bot/bot_admin protection applies.
+    protected. Bot accounts are allowed.
     """
-    if getattr(member, "bot", False):
-        return False
     if member.id in state.bot_admins:
         return False
     guild_perms = getattr(member, "guild_permissions", None)

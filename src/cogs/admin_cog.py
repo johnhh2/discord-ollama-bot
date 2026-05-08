@@ -319,7 +319,7 @@ class AdminCog(commands.Cog):
         if not is_bannable(user):
             await ctx.send(embed=emb(
                 "❌ Cannot Ban",
-                "Server admins, bot admins, and bots cannot be banned.",
+                "Server admins and bot admins cannot be banned.",
                 C_RED,
             ))
             return
@@ -371,7 +371,7 @@ class AdminCog(commands.Cog):
         if not is_bannable(user):
             await ctx.send(embed=emb(
                 "❌ Cannot Ban",
-                "Server admins, bot admins, and bots cannot be banned.",
+                "Server admins and bot admins cannot be banned.",
                 C_RED,
             ))
             return

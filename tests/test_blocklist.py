@@ -34,10 +34,11 @@ def _admin_ctx(uid: int = 1, guild_id: int = 42) -> FakeCtx:
 
 # ── is_bannable ──────────────────────────────────────────────────────────────
 
-def test_is_bannable_bot_returns_false():
+def test_is_bannable_bot_account_returns_true():
     m = FakeMember(uid=10)
     m.bot = True
-    assert is_bannable(m) is False
+    m.guild = FakeGuild(gid=42)
+    assert is_bannable(m) is True
 
 
 def test_is_bannable_bot_admin_returns_false():
@@ -151,19 +152,19 @@ async def test_ban_rejects_protected_targets(db):
     await cog.cmd_ban.callback(cog, ctx, user=admin_target, reason="x")
     assert (42, 600) not in _state.blocklist
 
-    # Bot account
-    bot_target = FakeMember(uid=601)
-    bot_target.bot = True
-    bot_target.guild = ctx.guild
-    await cog.cmd_ban.callback(cog, ctx, user=bot_target, reason="x")
-    assert (42, 601) not in _state.blocklist
-
     # Bot admin (env-driven)
     _state.bot_admins.add(602)
     botadmin_target = FakeMember(uid=602)
     botadmin_target.guild = ctx.guild
     await cog.cmd_ban.callback(cog, ctx, user=botadmin_target, reason="x")
     assert (42, 602) not in _state.blocklist
+
+    # Bot accounts ARE bannable (sanity check the inverse)
+    bot_target = FakeMember(uid=601)
+    bot_target.bot = True
+    bot_target.guild = ctx.guild
+    await cog.cmd_ban.callback(cog, ctx, user=bot_target, reason="x")
+    assert (42, 601) in _state.blocklist
 
 
 @pytest.mark.asyncio
