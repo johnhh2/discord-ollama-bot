@@ -113,6 +113,23 @@ def create_bot() -> commands.Bot:
         allowed_mentions=allowed_mentions,
     )
 
+    # Per-command latency timing. on_command_completion / on_command_error
+    # in EventsCog handle the invocation counter; this hook only owns the
+    # histogram observation so the two concerns don't fight over outcome.
+    @bot.before_invoke
+    async def _record_invoke_start(ctx: commands.Context) -> None:
+        ctx._metrics_t0 = time.monotonic()  # type: ignore[attr-defined]
+
+    @bot.after_invoke
+    async def _record_invoke_latency(ctx: commands.Context) -> None:
+        from src.metrics import command_latency
+        t0 = getattr(ctx, "_metrics_t0", None)
+        if t0 is None or ctx.command is None:
+            return
+        command_latency.labels(command=ctx.command.qualified_name).observe(
+            time.monotonic() - t0,
+        )
+
     @bot.check
     async def _level_gate(ctx: commands.Context) -> bool:
         """Block commands the author hasn't unlocked yet."""

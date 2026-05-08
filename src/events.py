@@ -310,6 +310,9 @@ class EventsCog(commands.Cog):
             "command": ctx.message.content[:100],
             "error": f"{type(error).__name__}: {error}",
         })
+        if ctx.command is not None:
+            from src.metrics import command_invocations
+            command_invocations.labels(command=ctx.command.qualified_name, outcome="error").inc()
         await _log_admin_command(self.bot, ctx, error=error)
         raise error
 
@@ -323,6 +326,8 @@ class EventsCog(commands.Cog):
         state.stats_commands_today_by_cog[bucket] = (
             state.stats_commands_today_by_cog.get(bucket, 0) + 1
         )
+        from src.metrics import command_invocations
+        command_invocations.labels(command=ctx.command.qualified_name, outcome="ok").inc()
         if ctx.guild and not ctx.author.bot:
             xp, leveled_up = await _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
             if leveled_up and get_guild_cfg(ctx.guild.id).get("levelup_channel"):

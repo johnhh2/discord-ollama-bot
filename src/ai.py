@@ -218,9 +218,11 @@ async def stream_ollama(
     user_id: int = None,
     request_id: str = None,
 ) -> str:
+    from src.metrics import ollama_stream_in_flight, ollama_stream_seconds
     if request_id is None:
         request_id = new_request_id()
     _in_flight.add(request_id)
+    ollama_stream_in_flight.set(len(_in_flight))
     try:
         if not state.bot_settings.get("ai_enabled", True):
             log.info(
@@ -320,9 +322,11 @@ async def stream_ollama(
             except asyncio.TimeoutError:
                 truncated = True
 
-        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        elapsed = time.monotonic() - t0
+        elapsed_ms = int(elapsed * 1000)
         if truncated:
             full_response += "\n\n⏱️ *Response cut off after 2 minutes.*"
+            ollama_stream_seconds.labels(outcome="timeout").observe(elapsed)
             log.warning(
                 "ollama_stream_timeout",
                 extra={
@@ -331,6 +335,7 @@ async def stream_ollama(
                 },
             )
         else:
+            ollama_stream_seconds.labels(outcome="complete").observe(elapsed)
             log.info(
                 "ollama_stream_complete",
                 extra={
@@ -342,6 +347,7 @@ async def stream_ollama(
         return full_response
     finally:
         _in_flight.discard(request_id)
+        ollama_stream_in_flight.set(len(_in_flight))
 
 
 async def finalize(placeholder: discord.Message, channel: discord.abc.Messageable, text: str):
