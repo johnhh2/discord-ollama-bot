@@ -41,6 +41,7 @@
   "economy":       {"tier": "everyone",    "hidden": false},
   "tax":           {"tier": "everyone",    "hidden": false},
   "crime":         {"tier": "everyone",    "hidden": false},
+  "bankheist":     {"tier": "everyone",    "hidden": false},
   "mug":           {"tier": "everyone",    "hidden": false},
   "jailbreak":     {"tier": "everyone",    "hidden": false},
   "tip":           {"tier": "everyone",    "hidden": false}

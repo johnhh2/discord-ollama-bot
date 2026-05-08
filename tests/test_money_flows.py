@@ -82,9 +82,10 @@ def _make_ctx(thief: FakeMember, victim: FakeMember, content: str = "!steal @vic
 
 
 def _grant_level(uid: int, internal_level: int, gid: int = 42) -> None:
-    """Force a user to a given internal level so they pass the !steal/!mug
+    """Force a user to a given internal level so they pass the !steal/!mug/!bankheist
     target-side level gate. Internal level N → display level N+1; steal needs
-    display 5 (internal 4), mug needs display 10 (internal 9)."""
+    display 10 (internal 9), mug needs display 13 (internal 12), bankheist needs
+    display 15 (internal 14)."""
     _state.leveling.setdefault(str(gid), {})[str(uid)] = {"xp": 0, "level": internal_level}
 
 
@@ -97,7 +98,7 @@ async def test_steal_success_transfers_coins_and_persists(db, monkeypatch):
     victim = FakeMember(uid=200, display_name="victim")
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 4)  # unlock !steal for victim
+    _grant_level(victim.id, 9)  # unlock !steal for victim
 
     # Tier 1: steal_chance=0.10, steal_pct=0.10. Roll < 0.10 -> success.
     monkeypatch.setattr(random, "random", lambda: 0.05)
@@ -123,7 +124,7 @@ async def test_steal_caught_and_jailed_deducts_fee_and_sets_jail(db, monkeypatch
     starting = 5000
     await _economy.add_balance(thief.id, starting)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 4)
+    _grant_level(victim.id, 9)
 
     # Tier 1: steal_chance=0.10, jail_chance=0.25, fee=1000, jail_days=1.
     # First random.random() = steal roll (need >= 0.10 to fail).
@@ -157,7 +158,7 @@ async def test_steal_caught_no_jail_just_fee(db, monkeypatch):
     victim = FakeMember(uid=202)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 4)
+    _grant_level(victim.id, 9)
 
     # Steal fails (>= 0.10), jail also fails (>= 0.25)
     rolls = iter([0.99, 0.99])
@@ -178,7 +179,7 @@ async def test_steal_blocked_by_insurance_no_money_moves(db, monkeypatch):
     victim = FakeMember(uid=203)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 4)
+    _grant_level(victim.id, 9)
     _state.insurance[str(victim.id)] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["steal"],
@@ -208,7 +209,7 @@ async def test_steal_while_jailed_blocked(db):
     victim = FakeMember(uid=205)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 4)
+    _grant_level(victim.id, 9)
     _state.economy["users"][str(thief.id)]["jail_until"] = time.time() + 3600
 
     ctx = _make_ctx(thief, victim)
@@ -227,7 +228,7 @@ async def test_steal_rigged_force_success(db, monkeypatch):
     victim = FakeMember(uid=206)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 4)
+    _grant_level(victim.id, 9)
     _state.rigged_steal[thief.id] = 2
 
     # Even with random.random() = 0.99 (would normally fail), rigged forces success.
@@ -247,7 +248,7 @@ async def test_steal_concurrent_lock_blocks_second_attempt(db):
     victim = FakeMember(uid=207)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 4)
+    _grant_level(victim.id, 9)
     cog._crime_active.add(thief.id)  # simulate one already running
 
     ctx = _make_ctx(thief, victim)
@@ -270,7 +271,7 @@ async def test_mug_clean_getaway_target_loses_amount(db, monkeypatch):
 
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 9)  # unlock !mug for victim
+    _grant_level(victim.id, 12)  # unlock !mug for victim
 
     # No jail (random >= 0.5).
     monkeypatch.setattr(random, "random", lambda: 0.99)
@@ -292,7 +293,7 @@ async def test_mug_caught_jails_thief_for_one_day(db, monkeypatch):
     victim = FakeMember(uid=401, display_name="victim")
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 9)
+    _grant_level(victim.id, 12)
 
     # First random.random < 0.5 -> jailed.
     monkeypatch.setattr(random, "random", lambda: 0.10)
@@ -319,7 +320,7 @@ async def test_mug_blocked_by_insurance_no_charge(db, monkeypatch):
     victim = FakeMember(uid=402)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 9)
+    _grant_level(victim.id, 12)
     _state.insurance[str(victim.id)] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["steal"],
@@ -341,7 +342,7 @@ async def test_mug_target_too_poor_relative_to_thief(db, monkeypatch):
     victim = FakeMember(uid=403)
     await _economy.add_balance(thief.id, 10_000)
     await _economy.add_balance(victim.id, 100)  # 1% of thief's
-    _grant_level(victim.id, 9)
+    _grant_level(victim.id, 12)
 
     ctx = FakeCtx(author=thief, guild=FakeGuild(gid=42))
     ctx.bot = _StubBot()
@@ -357,7 +358,7 @@ async def test_mug_insufficient_funds_blocked_before_action(db):
     victim = FakeMember(uid=404)
     await _economy.add_balance(thief.id, 100)  # not enough to pay muggers
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 9)
+    _grant_level(victim.id, 12)
 
     ctx = FakeCtx(author=thief, guild=FakeGuild(gid=42))
     ctx.bot = _StubBot()
@@ -383,7 +384,7 @@ async def test_steal_success_records_thief_gained_and_victim_lost(db, monkeypatc
     victim = FakeMember(uid=1200, display_name="victim")
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 4)
+    _grant_level(victim.id, 9)
 
     monkeypatch.setattr(random, "random", lambda: 0.05)  # tier 1 success
     monkeypatch.setattr(random, "randint", lambda a, b: a)
@@ -406,7 +407,7 @@ async def test_steal_fail_records_thief_lost_only(db, monkeypatch):
     victim = FakeMember(uid=1201)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 4)
+    _grant_level(victim.id, 9)
 
     # Steal fails (>= 0.10), jail also fails — thief just pays the 1000 fee.
     rolls = iter([0.99, 0.99])
@@ -431,7 +432,7 @@ async def test_mug_records_both_attacker_lost_and_victim_lost(db, monkeypatch):
     victim = FakeMember(uid=1400)
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 9)
+    _grant_level(victim.id, 12)
 
     monkeypatch.setattr(random, "random", lambda: 0.99)  # no jail
     monkeypatch.setattr(random, "randint", lambda a, b: a)
@@ -597,3 +598,214 @@ async def test_jailbreak_already_used_today_rejected(db, monkeypatch):
 
     # Still jailed — the attempt was rejected before the random roll.
     assert _state.economy["users"][str(user.id)]["jail_until"] > time.time()
+
+
+# ── !bankheist ────────────────────────────────────────────────────────────────
+# These exercise the resolution path (`_bankheist_resolve`) directly rather
+# than going through the reaction lobby loop. The lobby plumbing is just
+# `bot.wait_for` glue; the interesting logic — chance formula, slot exclusion,
+# loot split, savings drain, jail-on-fail — all lives in helpers we can call.
+
+def _seed_savings(uid: int, amount: int):
+    """Drop a savings deposit directly into state, bypassing the wallet
+    deduction in `add_savings`. Uses now() so 1% daily interest is ~zero."""
+    _state.economy.setdefault("users", {}).setdefault(str(uid), {
+        "balance": 0, "savings": [],
+    })
+    _state.economy["users"][str(uid)].setdefault("savings", []).append(
+        {"amount": amount, "deposited_at": time.time()},
+    )
+
+
+def _make_hstate(host, target, joiners: list):
+    """Build the heist state dict that _bankheist_resolve consumes."""
+    slots: list = [host, None, None, None]
+    for i, j in enumerate(joiners[:3]):
+        slots[i + 1] = j
+    return {
+        "host": host,
+        "target": target,
+        "slots": slots,
+        "message": None,
+        "opened_at": 0.0,
+        "opened_at_wall": time.time(),
+        "warned": False,
+        "started": True,
+        "cancelled": False,
+    }
+
+
+async def test_bankheist_self_target_rejected(db):
+    """Hosting a heist on yourself short-circuits before any state mutates."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=800, display_name="host")
+    _grant_level(host.id, 14)  # display level 15 — enough for !bankheist gate
+
+    ctx = _make_ctx(host, host, content="!bankheist @self")
+    await cog.cmd_bankheist.callback(cog, ctx, target=host)
+
+    assert ctx.sent_messages == ["You can't rob yourself."]
+    assert ctx.channel.id not in cog._active_heists
+
+
+async def test_bankheist_bot_target_rejected(db):
+    """Targeting the bot user is rejected up front."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=801, display_name="host")
+    bot_member = FakeMember(uid=999_999_999, display_name="bot")
+    bot_member.bot = True
+
+    ctx = _make_ctx(host, bot_member, content="!bankheist @bot")
+    await cog.cmd_bankheist.callback(cog, ctx, target=bot_member)
+
+    assert ctx.sent_messages == ["You can't rob the house."]
+
+
+async def test_bankheist_chance_formula_party_size_and_levels(db):
+    """The chance table: base by party size + 0–10% for host, 0–2% per joiner."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=810)
+    j1 = FakeMember(uid=811)
+    j2 = FakeMember(uid=812)
+    j3 = FakeMember(uid=813)
+
+    # All level 1 (display) — bonuses are min(0.10, 1/1000)≈0.001 / min(0.02, 1/5000)≈0.0002.
+    assert cog._bankheist_chance(host, [], 42) == pytest.approx(0.01 + 1 / 1000.0)
+    assert cog._bankheist_chance(host, [j1], 42) == pytest.approx(
+        0.10 + 1 / 1000.0 + 1 / 5000.0,
+    )
+    assert cog._bankheist_chance(host, [j1, j2], 42) == pytest.approx(
+        0.15 + 1 / 1000.0 + 2 * (1 / 5000.0),
+    )
+    assert cog._bankheist_chance(host, [j1, j2, j3], 42) == pytest.approx(
+        0.25 + 1 / 1000.0 + 3 * (1 / 5000.0),
+    )
+
+    # Maxed-out: host at internal level 99 → display 100 → 10% bonus capped.
+    _grant_level(host.id, 99)
+    for j in (j1, j2, j3):
+        _grant_level(j.id, 99)  # display 100 → 2% capped each
+    assert cog._bankheist_chance(host, [j1, j2, j3], 42) == pytest.approx(
+        0.25 + 0.10 + 3 * 0.02,
+    )
+
+
+async def test_bankheist_resolve_success_splits_loot_evenly(db, monkeypatch):
+    """4-player success path: 20% of victim savings drained, split among
+    host + 3 joiners. Host gets the integer-division remainder."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=820, display_name="host")
+    j1 = FakeMember(uid=821, display_name="j1")
+    j2 = FakeMember(uid=822, display_name="j2")
+    j3 = FakeMember(uid=823, display_name="j3")
+    target = FakeMember(uid=824, display_name="target")
+
+    await _economy._ensure_user(host.id)
+    await _economy._ensure_user(j1.id)
+    await _economy._ensure_user(j2.id)
+    await _economy._ensure_user(j3.id)
+    _seed_savings(target.id, 10_001)  # 20% = 2000 → split 4 → 500 each, +1 to host
+
+    monkeypatch.setattr(random, "random", lambda: 0.0)  # always under chance
+
+    hstate = _make_hstate(host, target, [j1, j2, j3])
+    ctx = _make_ctx(host, target, content="!bankheist @target")
+    result = await cog._bankheist_resolve(ctx, hstate)
+
+    assert "Successful" in result.title
+    # 10001 * 0.20 = 2000 (int truncation)
+    assert await _economy.get_balance(host.id) == 500 + 0  # remainder is 0 here (2000/4)
+    assert await _economy.get_balance(j1.id) == 500
+    assert await _economy.get_balance(j2.id) == 500
+    assert await _economy.get_balance(j3.id) == 500
+    # Victim savings drained by 2000 → about 8001 left.
+    remaining = await _economy.get_savings_value(target.id)
+    assert 8000 <= remaining <= 8002
+    # DB persistence
+    assert await _read_db_balance(host.id) == 500
+    assert await _read_db_balance(j1.id) == 500
+
+
+async def test_bankheist_resolve_success_remainder_goes_to_host(db, monkeypatch):
+    """When the seized amount doesn't divide evenly, host pockets the leftover."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=830, display_name="host")
+    j1 = FakeMember(uid=831)
+    j2 = FakeMember(uid=832)
+    target = FakeMember(uid=833, display_name="target")
+
+    # Savings of 5015 → 20% = 1003 → split among 3 → 334/334/334 with remainder 1.
+    _seed_savings(target.id, 5015)
+    monkeypatch.setattr(random, "random", lambda: 0.0)
+
+    hstate = _make_hstate(host, target, [j1, j2])
+    ctx = _make_ctx(host, target, content="!bankheist @target")
+    await cog._bankheist_resolve(ctx, hstate)
+
+    assert await _economy.get_balance(host.id) == 334 + 1
+    assert await _economy.get_balance(j1.id) == 334
+    assert await _economy.get_balance(j2.id) == 334
+
+
+async def test_bankheist_resolve_failure_no_balance_moves(db, monkeypatch):
+    """Failed roll: nobody's balance changes and victim savings are untouched."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=840, display_name="host")
+    j1 = FakeMember(uid=841)
+    target = FakeMember(uid=842, display_name="target")
+
+    await _economy.add_balance(host.id, 100)
+    await _economy.add_balance(j1.id, 200)
+    _seed_savings(target.id, 10_000)
+
+    monkeypatch.setattr(random, "random", lambda: 0.99)  # always above chance
+
+    hstate = _make_hstate(host, target, [j1])
+    ctx = _make_ctx(host, target, content="!bankheist @target")
+    result = await cog._bankheist_resolve(ctx, hstate)
+
+    assert "Failed" in result.title
+    assert await _economy.get_balance(host.id) == 100
+    assert await _economy.get_balance(j1.id) == 200
+    remaining = await _economy.get_savings_value(target.id)
+    assert 9999 <= remaining <= 10_001  # untouched (modulo float interest)
+
+
+async def test_bankheist_resolve_empty_savings_fizzles(db, monkeypatch):
+    """Lucky roll, but the victim has no savings — heist resolves cleanly with
+    no balance changes and a 'Empty Vault' embed."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=850, display_name="host")
+    target = FakeMember(uid=851, display_name="target")
+
+    monkeypatch.setattr(random, "random", lambda: 0.0)
+
+    hstate = _make_hstate(host, target, [])
+    ctx = _make_ctx(host, target, content="!bankheist @target")
+    result = await cog._bankheist_resolve(ctx, hstate)
+
+    assert "Empty Vault" in result.title
+    assert await _economy.get_balance(host.id) == 0
+
+
+async def test_bankheist_active_heist_blocks_second_in_same_channel(db):
+    """Opening a second bankheist while one is already running in the channel
+    is rejected. Preempt the first by directly seeding _active_heists."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=860, display_name="host")
+    target = FakeMember(uid=861, display_name="target")
+    _grant_level(host.id, 14)
+    _grant_level(target.id, 14)
+
+    ctx = _make_ctx(host, target, content="!bankheist @target")
+    cog._active_heists[ctx.channel.id] = {"placeholder": True}
+
+    await cog.cmd_bankheist.callback(cog, ctx, target=target)
+
+    # Still the original placeholder — the second invocation didn't replace it.
+    assert cog._active_heists[ctx.channel.id] == {"placeholder": True}
+    # Rejection embed sent
+    assert any(
+        getattr(e, "title", "") == "⏳ Heist Already Running"
+        for e in ctx.sent_embeds
+    )

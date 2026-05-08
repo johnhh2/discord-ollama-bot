@@ -53,40 +53,43 @@ def _always(_: int) -> bool:
 # appear in the next-3 unlocks list.
 
 UNLOCKS: dict[str, dict] = {
-    # Level 2 — savings (advertised: savings)
-    "savings":     {"level": 2, "enabled": _always,                       "usage": "`!savings add|remove <amount>` — piggy bank with 1% daily interest", "reward": True},
+    # Level 3 — savings (advertised: savings)
+    "savings":     {"level": 3, "enabled": _always,                       "usage": "`!savings add|remove <amount>` — piggy bank with 1% daily interest", "reward": True},
 
-    # Level 5 — steal (advertised: steal)
-    "steal":       {"level": 5, "enabled": _always,                       "usage": "`!steal @user [tier]` — pick a pocket", "reward": True},
-
-    # Level 7 — role family (advertised: createrole). lockrole/unlockrole gated separately at 12.
+    # Level 5 — role family (advertised: createrole). lockrole/unlockrole gated separately at 12.
     # !roles is the role leaderboard — never gated.
-    "createrole":  {"level": 7, "enabled": _shop_item_enabled("createrole"), "usage": "`!createrole @user <name> <hex>` — create a custom role", "reward": True},
-    "assignrole":  {"level": 7, "enabled": _shop_item_enabled("assignrole"), "usage": "`!assignrole @user <name>` — assign an existing role"},
-    "removerole":  {"level": 7, "enabled": _shop_item_enabled("removerole"), "usage": "`!removerole [@user] <name>` — remove a role"},
-    "deleterole":  {"level": 7, "enabled": _shop_item_enabled("deleterole"), "usage": "`!deleterole <name>` — permanently delete a role"},
-    "renamerole":  {"level": 7, "enabled": _always,                       "usage": "`!renamerole <old> <new>` — rename a role"},
-    "rolecolor":   {"level": 7, "enabled": _shop_item_enabled("rolecolor"),  "usage": "`!rolecolor @role <hex>` — change a role's color"},
-    "roleup":      {"level": 7, "enabled": _shop_item_enabled("roleup"),     "usage": "`!roleup <name>` — move role up one position"},
-    "roledown":    {"level": 7, "enabled": _shop_item_enabled("roledown"),   "usage": "`!roledown <name>` — move role down one position"},
+    "createrole":  {"level": 5, "enabled": _shop_item_enabled("createrole"), "usage": "`!createrole @user <name> <hex>` — create a custom role", "reward": True},
+    "assignrole":  {"level": 5, "enabled": _shop_item_enabled("assignrole"), "usage": "`!assignrole @user <name>` — assign an existing role"},
+    "removerole":  {"level": 5, "enabled": _shop_item_enabled("removerole"), "usage": "`!removerole [@user] <name>` — remove a role"},
+    "deleterole":  {"level": 5, "enabled": _shop_item_enabled("deleterole"), "usage": "`!deleterole <name>` — permanently delete a role"},
+    "renamerole":  {"level": 5, "enabled": _always,                       "usage": "`!renamerole <old> <new>` — rename a role"},
+    "rolecolor":   {"level": 5, "enabled": _shop_item_enabled("rolecolor"),  "usage": "`!rolecolor @role <hex>` — change a role's color"},
+    "roleup":      {"level": 5, "enabled": _shop_item_enabled("roleup"),     "usage": "`!roleup <name>` — move role up one position"},
+    "roledown":    {"level": 5, "enabled": _shop_item_enabled("roledown"),   "usage": "`!roledown <name>` — move role down one position"},
 
-    # Level 10 — mug (advertised: mug)
-    "mug":         {"level": 10, "enabled": _always,                      "usage": "`!mug @user <amount>` — pay muggers to take an exact amount from a target (muggers keep it)", "reward": True},
+    # Level 8 — role locking
+    "lockrole":    {"level": 8, "enabled": _always,                      "usage": "`!lockrole <name>` — lock a role against changes", "reward": True},
+    "unlockrole":  {"level": 8, "enabled": _always,                      "usage": "`!unlockrole <name>` — unlock a role (lock owner only)"},
 
-    # Level 12 — role locking
-    "lockrole":    {"level": 12, "enabled": _always,                      "usage": "`!lockrole <name>` — lock a role against changes", "reward": True},
-    "unlockrole":  {"level": 12, "enabled": _always,                      "usage": "`!unlockrole <name>` — unlock a role (lock owner only)"},
+    # Level 10 — steal (advertised: steal)
+    "steal":       {"level": 10, "enabled": _always,                       "usage": "`!steal @user [tier]` — pick a pocket", "reward": True},
 
-    # Level 15 — unoreverse (advertised: unoreverse)
-    "unoreverse":  {"level": 15, "enabled": _shop_item_enabled("unoreverse"), "usage": "`!unoreverse @user` — redirect mock/ragebait/curse to someone else", "reward": True},
+    # Level 13 — mug (advertised: mug)
+    "mug":         {"level": 13, "enabled": _always,                      "usage": "`!mug @user <amount>` — pay muggers to take an exact amount from a target (muggers keep it)", "reward": True},
 
-    # Level 20 — channel family (advertised: createchannel). lockchannel/unlockchannel gated separately at 25.
+    # Level 15 — bankheist (advertised: bankheist)
+    "bankheist":   {"level": 15, "enabled": _always,                       "usage": "`!bankheist @user` — open a 4-slot lobby and split a cut of their savings", "reward": True},
+
+    # Level 20 — unoreverse (advertised: unoreverse)
+    "unoreverse":  {"level": 18, "enabled": _shop_item_enabled("unoreverse"), "usage": "`!unoreverse @user` — redirect mock/ragebait/curse to someone else", "reward": True},
+
+    # Level 25 — channel family (advertised: createchannel). lockchannel/unlockchannel gated separately at 25.
     "createchannel": {"level": 20, "enabled": _shop_item_enabled("createchannel"), "usage": "`!createchannel <name>` — create a channel", "reward": True},
     "deletechannel": {"level": 20, "enabled": _shop_item_enabled("deletechannel"), "usage": "`!deletechannel <name>` — delete a bot-created channel"},
     "renamechannel": {"level": 20, "enabled": _shop_item_enabled("renamechannel"), "usage": "`!renamechannel <old> <new>` — rename a channel"},
     "rolechannel":   {"level": 20, "enabled": _shop_item_enabled("rolechannel"), "usage": "`!rolechannel @role <name>` — create a role-locked channel"},
 
-    # Level 25 — channel locking
+    # Level 30 — channel locking
     "lockchannel":   {"level": 25, "enabled": _always,                    "usage": "`!lockchannel <name>` — lock a channel against changes", "reward": True},
     "unlockchannel": {"level": 25, "enabled": _always,                    "usage": "`!unlockchannel <name>` — unlock a channel (lock owner only)"},
 }

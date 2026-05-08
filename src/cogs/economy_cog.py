@@ -9,7 +9,7 @@ import discord
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_GOLD, C_ORANGE, C_GREY, parse_amount, send_ephemeral, fetch_member, shop_charge, MemberConverter,
+    emb, C_GREEN, C_RED, C_GOLD, C_ORANGE, C_GREY, C_BLUE, parse_amount, send_ephemeral, fetch_member, shop_charge, MemberConverter,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
@@ -27,7 +27,7 @@ from src.persistence import (
 from src.config import (
     DAILY_REWARD, DAILY_RESET_HOUR,
 )
-from src.jail_reasons import format_steal_reason, format_mug_reason
+from src.jail_reasons import format_steal_reason, format_mug_reason, format_bankheist_reason
 from src import state
 
 
@@ -46,6 +46,8 @@ class EconomyCog(commands.Cog):
         self.bot = bot
         # uids currently mid-crime (steal/mug). In-flight per-cog state, never persisted.
         self._crime_active: set[int] = set()
+        # channel_id → heist_state. One bankheist lobby per channel at a time.
+        self._active_heists: dict[int, dict] = {}
 
     @commands.command(name="daily")
     async def cmd_daily(self, ctx: commands.Context):
@@ -319,6 +321,302 @@ class EconomyCog(commands.Cog):
             await msg.edit(embed=result_embed)
         finally:
             self._crime_active.discard(thief_id)
+
+
+    # ── !bankheist ────────────────────────────────────────────────────────────
+    # Lobby/party heist: host opens a 4-slot window (slot 1 = host, slots 2–4
+    # joinable via 2️⃣/3️⃣/4️⃣ reactions). Host starts with 🚀 or cancels with ❌;
+    # auto-starts at 60s with a 10s last-call warning. On success, seizes 20%
+    # of the target's savings via seize_from_savings and splits evenly among
+    # participants (host gets the integer-division remainder). Failure is a
+    # no-op for everyone — savings are only at risk on success.
+
+    BANKHEIST_JOIN_EMOJIS = ["2️⃣", "3️⃣", "4️⃣"]
+    BANKHEIST_START_EMOJI = "🚀"
+    BANKHEIST_CANCEL_EMOJI = "❌"
+    BANKHEIST_LOBBY_TIMEOUT = 60.0
+    BANKHEIST_LAST_CALL = 10.0
+    BANKHEIST_SEIZE_PCT = 0.20
+
+    @staticmethod
+    def _bankheist_chance(host, joiners: list, guild_id: int) -> float:
+        """Compute success chance from party size + per-player display level.
+        Host: 0–10% bonus linear over levels 1→100. Each joiner: 0–2% bonus."""
+        from src.level_unlocks import user_display_level
+        party_size = 1 + len(joiners)
+        base = {1: 0.01, 2: 0.10, 3: 0.15, 4: 0.25}[party_size]
+        host_lvl = user_display_level(host.id, guild_id)
+        bonus = min(0.10, host_lvl / 1000.0)
+        for j in joiners:
+            jl = user_display_level(j.id, guild_id)
+            bonus += min(0.02, jl / 5000.0)
+        return min(0.95, base + bonus)
+
+    def _bankheist_render(self, hstate: dict, guild_id: int, savings_value: float, last_call: bool = False):
+        """Build the lobby embed reflecting current slot occupants and chance."""
+        from src.level_unlocks import user_display_level
+        host = hstate["host"]
+        target = hstate["target"]
+        slots = hstate["slots"]
+        joiners = [m for m in slots[1:] if m is not None]
+        chance = self._bankheist_chance(host, joiners, guild_id)
+        pot = int(savings_value * self.BANKHEIST_SEIZE_PCT)
+        host_lvl = user_display_level(host.id, guild_id)
+
+        crew_lines = [f"  👑 {host.display_name}  (Lv {host_lvl})  — host"]
+        for i, emoji in enumerate(self.BANKHEIST_JOIN_EMOJIS):
+            member = slots[i + 1]
+            if member is None:
+                crew_lines.append(f"  {emoji} — open —")
+            else:
+                lvl = user_display_level(member.id, guild_id)
+                crew_lines.append(f"  {emoji} {member.display_name}  (Lv {lvl})")
+
+        deadline_ts = int(hstate["opened_at_wall"] + self.BANKHEIST_LOBBY_TIMEOUT)
+        body = (
+            f"Host: {host.mention}\n"
+            f"Crew:\n" + "\n".join(crew_lines) + "\n\n"
+            f"**Success chance:** {int(round(chance * 100))}%\n"
+            f"**Pot if successful:** ~{pot:,} 🪙 from {target.display_name}'s savings\n\n"
+            f"React 2️⃣–4️⃣ to join. Host: 🚀 to start, ❌ to cancel.\n"
+            f"{target.display_name} cannot join.\n"
+            f"Auto-starts <t:{deadline_ts}:R>."
+        )
+        if last_call:
+            body += f"\n\n⚠️ **Last call** — auto-starting <t:{deadline_ts}:R>!"
+        return emb(f"🏦 Bank Heist — targeting {target.display_name}", body, C_ORANGE)
+
+    async def _bankheist_resolve(self, ctx: commands.Context, hstate: dict) -> discord.Embed:
+        """Roll the heist and apply outcome. Returns the result embed.
+        Pure-ish: reads/writes state via the standard economy helpers, doesn't
+        touch reactions or the lobby loop. Tests call this directly."""
+        host = hstate["host"]
+        target = hstate["target"]
+        joiners = [m for m in hstate["slots"][1:] if m is not None]
+        participants = [host] + joiners
+        gid = ctx.guild.id if ctx.guild else 0
+
+        chance = self._bankheist_chance(host, joiners, gid)
+        success = random.random() < chance
+
+        if not success:
+            return emb(
+                "🚨 Heist Failed!",
+                f"The crew bailed at the door — {target.display_name}'s savings are untouched.\n"
+                f"(Roll missed a {int(round(chance * 100))}% chance.)",
+                C_RED,
+            )
+
+        savings_value = await get_savings_value(target.id)
+        intended = int(savings_value * self.BANKHEIST_SEIZE_PCT)
+        if intended <= 0:
+            return emb(
+                "💨 Empty Vault",
+                f"You broke in clean — but **{target.display_name}** had no savings to steal.",
+                C_GREY,
+            )
+
+        seized = await seize_from_savings(target.id, intended)
+        if seized <= 0:
+            return emb(
+                "💨 Empty Vault",
+                f"You broke in clean — but **{target.display_name}**'s savings were already empty.",
+                C_GREY,
+            )
+
+        share = seized // len(participants)
+        remainder = seized - share * len(participants)
+        cuts: list[tuple] = []
+        for p in participants:
+            cut = share + (remainder if p.id == host.id else 0)
+            await add_balance(
+                p.id, cut,
+                guild_id=ctx.guild.id if ctx.guild else None,
+                holder_name=p.display_name,
+            )
+            await record_crime_event(p.id, gained=cut)
+            cuts.append((p, cut))
+        await record_crime_event(target.id, lost=seized)
+
+        cut_lines = "\n".join(
+            f"  • {p.display_name}: **{cut:,} 🪙**" for p, cut in cuts
+        )
+        return emb(
+            "🏦 Heist Successful!",
+            f"The crew cracked **{target.display_name}**'s savings for **{seized:,} 🪙**!\n\n"
+            f"{cut_lines}",
+            C_GREEN,
+        )
+
+    @commands.command(name="bankheist")
+    @requires_perm
+    async def cmd_bankheist(self, ctx: commands.Context, target: MemberConverter = None):
+        if target is None:
+            await ctx.send(embed=emb(
+                "🏦 Bank Heist",
+                "Usage: `!bankheist @user` — opens a 4-slot lobby. Up to 3 others react "
+                "2️⃣/3️⃣/4️⃣ to join, then host reacts 🚀 to start (or ❌ to cancel). "
+                "Auto-starts in 60s.",
+                C_BLUE,
+            ))
+            return
+
+        host = ctx.author
+        gid = ctx.guild.id if ctx.guild else 0
+
+        if target.id == host.id:
+            await ctx.send("You can't rob yourself.")
+            return
+        if target.bot or (self.bot.user and target.id == self.bot.user.id):
+            await ctx.send("You can't rob the house.")
+            return
+
+        from src.level_unlocks import is_locked_for
+        target_lock = is_locked_for("bankheist", target.id, gid)
+        if target_lock is not None:
+            await ctx.send(embed=emb(
+                "🛡️ Off-Limits",
+                f"**{target.display_name}** hasn't unlocked `!bankheist` yet (Level **{target_lock}**) — they're not on the menu.",
+                C_GOLD,
+            ))
+            return
+
+        if await is_insured(target.id, "steal"):
+            _exp = get_insurance_expiry(target.id)
+            await ctx.send(embed=emb(
+                "🛡️ Protected",
+                f"**{target.display_name}** has insurance — their savings are off-limits! (expires <t:{_exp}:R>)",
+                C_GOLD,
+            ))
+            return
+
+        await _ensure_user(host.id)
+        host_data = state.economy["users"][str(host.id)]
+        jail_until = host_data.get("jail_until", 0)
+        if time.time() < jail_until:
+            await ctx.send(embed=emb(
+                "🚔 You're in Jail",
+                f"**{host.display_name}** is locked up! Released <t:{int(jail_until)}:R>.",
+                C_RED,
+            ))
+            return
+
+        ch_id = ctx.channel.id
+        if ch_id in self._active_heists:
+            await ctx.send(embed=emb(
+                "⏳ Heist Already Running",
+                "Another bankheist is already open in this channel — wait for it to finish.",
+                C_RED,
+            ))
+            return
+
+        slots: list = [host, None, None, None]
+        hstate: dict = {
+            "host": host,
+            "target": target,
+            "slots": slots,
+            "message": None,
+            "opened_at": asyncio.get_running_loop().time(),
+            "opened_at_wall": time.time(),
+            "warned": False,
+            "started": False,
+            "cancelled": False,
+        }
+        self._active_heists[ch_id] = hstate
+
+        try:
+            savings_value = await get_savings_value(target.id)
+            lobby_msg = await ctx.send(embed=self._bankheist_render(hstate, gid, savings_value))
+            hstate["message"] = lobby_msg
+
+            for emoji in self.BANKHEIST_JOIN_EMOJIS:
+                await lobby_msg.add_reaction(emoji)
+            await lobby_msg.add_reaction(self.BANKHEIST_START_EMOJI)
+            await lobby_msg.add_reaction(self.BANKHEIST_CANCEL_EMOJI)
+
+            def check(reaction, user):
+                if reaction.message.id != lobby_msg.id:
+                    return False
+                if user.bot or user.id == target.id:
+                    return False
+                emoji_s = str(reaction.emoji)
+                if emoji_s in self.BANKHEIST_JOIN_EMOJIS:
+                    if user.id == host.id:
+                        return False
+                    return user.id not in {m.id for m in slots if m is not None}
+                if emoji_s in (self.BANKHEIST_START_EMOJI, self.BANKHEIST_CANCEL_EMOJI):
+                    return user.id == host.id
+                return False
+
+            while True:
+                if all(s is not None for s in slots):
+                    break  # auto-start when full
+
+                elapsed = asyncio.get_running_loop().time() - hstate["opened_at"]
+                time_left = self.BANKHEIST_LOBBY_TIMEOUT - elapsed
+                if time_left <= 0:
+                    break
+
+                if not hstate["warned"] and time_left <= self.BANKHEIST_LAST_CALL:
+                    hstate["warned"] = True
+                    try:
+                        await lobby_msg.edit(embed=self._bankheist_render(
+                            hstate, gid, savings_value, last_call=True,
+                        ))
+                    except Exception:
+                        pass
+                    wait_for_timeout = time_left
+                else:
+                    time_until_warning = max(0.0, time_left - self.BANKHEIST_LAST_CALL)
+                    wait_for_timeout = time_until_warning if not hstate["warned"] else time_left
+                    if wait_for_timeout <= 0:
+                        wait_for_timeout = time_left
+
+                try:
+                    reaction, user = await ctx.bot.wait_for(
+                        "reaction_add", check=check, timeout=wait_for_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    continue  # loop re-evaluates time_left / warning state
+
+                emoji_s = str(reaction.emoji)
+                if emoji_s == self.BANKHEIST_CANCEL_EMOJI:
+                    hstate["cancelled"] = True
+                    break
+                if emoji_s == self.BANKHEIST_START_EMOJI:
+                    hstate["started"] = True
+                    break
+                # Slot reaction — fill the matching index.
+                slot_idx = self.BANKHEIST_JOIN_EMOJIS.index(emoji_s) + 1
+                if slots[slot_idx] is None:
+                    slots[slot_idx] = user
+                    try:
+                        await lobby_msg.edit(embed=self._bankheist_render(
+                            hstate, gid, savings_value, last_call=hstate["warned"],
+                        ))
+                    except Exception:
+                        pass
+
+            if hstate["cancelled"]:
+                await lobby_msg.edit(embed=emb(
+                    "🏦 Bank Heist — Cancelled",
+                    f"{host.display_name} called it off.",
+                    C_GREY,
+                ))
+                return
+
+            result_embed = await self._bankheist_resolve(ctx, hstate)
+
+            # Jail the host on failure (matches !steal's flavor for the organizer only).
+            if result_embed.title and "Failed" in result_embed.title:
+                jail_until_ts = time.time() + 86400  # 1 day
+                host_data["jail_until"] = jail_until_ts
+                host_data["jail_reason"] = format_bankheist_reason(target.display_name)
+                await save_economy(uid=host.id)
+
+            await lobby_msg.edit(embed=result_embed)
+        finally:
+            self._active_heists.pop(ch_id, None)
 
 
     @commands.command(name="jail")
