@@ -388,6 +388,14 @@ class EventsCog(commands.Cog):
         import src.persistence as _pkg
         await _pkg.init_done.wait()
 
+        # Bot-side blocklist: silently drop everything from banned users —
+        # no AI, no commands, no XP/economy/tax/curse side effects, no
+        # stats counted. Mirrors the hidden-permission denial pattern.
+        if message.author.id in state.global_blocklist:
+            return
+        if message.guild is not None and (message.guild.id, message.author.id) in state.blocklist:
+            return
+
         state.stats_messages_seen += 1
         state.stats_messages_today += 1
 

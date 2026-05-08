@@ -55,6 +55,8 @@ _TABLE_PKS = {
     "ephemeral_msgs": ("id",),
     "command_perms": ("command_name",),
     "user_perm_overrides": ("guild_id", "user_id"),
+    "blocklist": ("guild_id", "user_id"),
+    "global_blocklist": ("user_id",),
     "schema_migrations": ("version",),
 }
 

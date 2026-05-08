@@ -61,6 +61,8 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "godmode_users", set())
     monkeypatch.setattr(_state, "command_perms", {})
     monkeypatch.setattr(_state, "user_perm_overrides", {})
+    monkeypatch.setattr(_state, "blocklist", {})
+    monkeypatch.setattr(_state, "global_blocklist", {})
     monkeypatch.setattr(_state, "leveling", {})
     monkeypatch.setattr(_state, "active_taxes", {})
     monkeypatch.setattr(_state, "active_curses", {})
@@ -106,6 +108,8 @@ def reset_bot_state(monkeypatch):
         "save_leveling", "save_command_perms", "save_channel_prompts",
         "save_balance_history", "save_bot_stats_history",
         "save_command_usage_history",
+        "save_blocklist", "delete_blocklist",
+        "save_global_blocklist", "delete_global_blocklist",
         "upsert_crime_delta", "upsert_gambling_delta", "upsert_levelup_delta",
         "prune_balance_history", "prune_bot_stats_history",
         "prune_command_usage_history",

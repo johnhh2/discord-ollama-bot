@@ -95,6 +95,29 @@ def can_manage_settings(ctx: commands.Context) -> bool:
     return is_admin(ctx) or is_server_admin(ctx)
 
 
+def is_bannable(member) -> bool:
+    """True if `member` may be added to a blocklist.
+
+    Server admins (Discord administrator role or server_admin/bot_admin
+    override in their guild) and bot admins (env BOT_ADMIN_IDS) are
+    protected. Bots are never bannable. If the member has no guild
+    context, only bot/bot_admin protection applies.
+    """
+    if getattr(member, "bot", False):
+        return False
+    if member.id in state.bot_admins:
+        return False
+    guild_perms = getattr(member, "guild_permissions", None)
+    if guild_perms is not None and guild_perms.administrator:
+        return False
+    guild = getattr(member, "guild", None)
+    if guild is not None:
+        tier = state.user_perm_overrides.get((guild.id, member.id))
+        if tier in ("server_admin", "bot_admin"):
+            return False
+    return True
+
+
 def get_command_perm(command_name: str) -> dict:
     perms = state.command_perms
     # Walk from most-specific to least-specific: "settings ai-channels" → "settings" → default

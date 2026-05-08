@@ -321,6 +321,34 @@ async def init_db_state():
         except Exception as e:
             logging.error(f"[init_db_state] user_perm_overrides failed: {e}", exc_info=True)
 
+        # ── blocklist (per-guild) ────────────────────────────────────────
+        try:
+            await cur.execute("SELECT guild_id, user_id, reason, banned_by, banned_at FROM blocklist")
+            state.blocklist = {
+                (int(r[0]), int(r[1])): {
+                    "reason": r[2],
+                    "banned_by": int(r[3]),
+                    "banned_at": r[4],
+                }
+                for r in await cur.fetchall()
+            }
+        except Exception as e:
+            logging.error(f"[init_db_state] blocklist failed: {e}", exc_info=True)
+
+        # ── global_blocklist ─────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT user_id, reason, banned_by, banned_at FROM global_blocklist")
+            state.global_blocklist = {
+                int(r[0]): {
+                    "reason": r[1],
+                    "banned_by": int(r[2]),
+                    "banned_at": r[3],
+                }
+                for r in await cur.fetchall()
+            }
+        except Exception as e:
+            logging.error(f"[init_db_state] global_blocklist failed: {e}", exc_info=True)
+
         # ── activity caches (crime / gambling / levelups) ─────────────────
         # Each *_history table is the source of truth (atomic UPSERT on every
         # event). The in-memory dicts are a fast-read cache for the graph cog's
