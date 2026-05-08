@@ -385,7 +385,7 @@ class EconomyCog(commands.Cog):
         body = (
             f"Host: {host.mention}\n"
             f"Crew:\n" + "\n".join(crew_lines) + "\n\n"
-            f"**Success chance:** {int(round(chance * 100))}%\n"
+            f"**Success chance:** {round(chance * 100, 1)}%\n"
             f"**Pot if successful:** ~{pot:,} 🪙 from {target.display_name}'s savings\n\n"
             f"React 2️⃣–4️⃣ to join. Host: 🚀 to start, ❌ to cancel.\n"
             f"{target.display_name} cannot join.\n"
@@ -412,7 +412,7 @@ class EconomyCog(commands.Cog):
             return emb(
                 "🚨 Heist Failed!",
                 f"The crew bailed at the door — {target.display_name}'s savings are untouched.\n"
-                f"(Roll missed a {int(round(chance * 100))}% chance.)",
+                f"(Roll missed a {round(chance * 100, 1)}% chance.)",
                 C_RED,
             )
 
