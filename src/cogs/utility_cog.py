@@ -39,6 +39,28 @@ from src.puzzle import (
 from src import state
 
 
+def _msg_text(msg: discord.Message) -> str:
+    """Best-effort plain text from a Message, including embed title/description/fields."""
+    parts: list[str] = []
+    if msg.content:
+        parts.append(msg.content)
+    for e in msg.embeds:
+        if e.title:
+            parts.append(str(e.title))
+        if e.description:
+            parts.append(str(e.description))
+        for f in e.fields:
+            name = str(f.name) if f.name else ""
+            value = str(f.value) if f.value else ""
+            if name and value:
+                parts.append(f"{name}: {value}")
+            elif value:
+                parts.append(value)
+        if e.footer and e.footer.text:
+            parts.append(str(e.footer.text))
+    return " | ".join(p for p in parts if p)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Gambler role helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -866,7 +888,7 @@ class UtilityCog(commands.Cog):
                     continue
                 if len(history_lines) >= 5:
                     break
-                history_lines.append(f"[{msg.author.display_name}]: {msg.content[:200]}")
+                history_lines.append(f"[{msg.author.display_name}]: {_msg_text(msg)[:200]}")
             history_lines.reverse()
         except (discord.Forbidden, discord.HTTPException):
             pass

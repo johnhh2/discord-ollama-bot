@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src.helpers import emb, C_GOLD
-from src.permissions import requires_perm
+from src.permissions import requires_perm, is_admin
 from src.economy import snapshot_all
 from src.graph_series import (
     find_spec, parse_tokens, render_combined, render_ai_uptime_strip,
@@ -121,25 +121,28 @@ class GraphCog(commands.Cog):
     @commands.group(name="graph", invoke_without_command=True)
     @requires_perm
     async def cmd_graph(self, ctx: commands.Context):
-        await ctx.send(embed=emb(
-            "📊 Graph",
-            "**Subcommands:**\n"
-            "`!graph balance [@user]` — Wallet balance over the last 2 weeks\n"
-            "`!graph economy` — Total economy (wallet + savings) over the last 2 weeks\n"
-            "`!graph crime [@user]` — Coins gained/lost via !steal and !mug\n"
-            "`!graph gambling [@user]` — Net P/L from games and gambling\n"
-            "`!graph levels [@user]` — Level-ups per day in this server\n"
-            "`!graph commands` — Command usage by category over the last 2 weeks\n"
-            "`!graph server` — Daily message and command counts over the last 2 weeks\n"
-            "`!graph memory` — Bot memory usage (MB) over the last 2 weeks\n"
-            "`!graph ai` — Daily AI response count and uptime over the last 2 weeks\n"
-            "`!graph admin <wallet|savings> [N|@users…]` — per-user breakout (bot admin)\n"
-            "\n**Combine compatible graphs** by listing multiple names:\n"
-            "`!graph balance crime [@user]` — overlay coins-group graphs\n"
-            "`!graph commands server ai` — grouped stacked bars for counts-group graphs\n"
+        lines = [
+            "**Subcommands:**",
+            "`!graph balance [@user]` — Wallet balance over the last 2 weeks",
+            "`!graph economy` — Total economy (wallet + savings) over the last 2 weeks",
+            "`!graph crime [@user]` — Coins gained/lost via !steal and !mug",
+            "`!graph gambling [@user]` — Net P/L from games and gambling",
+            "`!graph levels [@user]` — Level-ups per day in this server",
+            "`!graph commands` — Command usage by category over the last 2 weeks",
+            "`!graph server` — Daily message and command counts over the last 2 weeks",
+            "`!graph memory` — Bot memory usage (MB) over the last 2 weeks",
+            "`!graph ai` — Daily AI response count and uptime over the last 2 weeks",
+        ]
+        if is_admin(ctx):
+            lines.append("`!graph admin <wallet|savings> [N|@users…]` — per-user breakout (bot admin)")
+        lines.extend([
+            "",
+            "**Combine compatible graphs** by listing multiple names:",
+            "`!graph balance crime [@user]` — overlay coins-group graphs",
+            "`!graph commands server ai` — grouped stacked bars for counts-group graphs",
             "Coins, counts, and MB graphs cannot be mixed (different y-axes).",
-            C_GOLD,
-        ))
+        ])
+        await ctx.send(embed=emb("📊 Graph", "\n".join(lines), C_GOLD))
 
     @cmd_graph.command(name="balance", aliases=["bal"])
     @requires_perm
