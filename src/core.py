@@ -169,7 +169,17 @@ def run():
         raise RuntimeError("DISCORD_TOKEN is not set. Copy .env.example to .env and fill it in.")
 
     configure_logging()
+    _run_with_login_backoff()
 
+
+def _build_bot() -> commands.Bot:
+    """Build a fresh Bot with all event handlers attached.
+
+    Called once per login attempt: discord.py's bot.run() closes the bot's
+    aiohttp session on shutdown, so retrying with the same instance fails
+    with `RuntimeError: Session is closed`. A fresh Bot per attempt sidesteps
+    that entirely.
+    """
     bot = create_bot()
 
     @bot.event
@@ -182,10 +192,10 @@ def run():
         # EventsCog.on_message handles process_commands itself.
         pass
 
-    _run_with_login_backoff(bot)
+    return bot
 
 
-def _run_with_login_backoff(bot: commands.Bot) -> None:
+def _run_with_login_backoff() -> None:
     """Run the bot, sleeping in-process on login-time 429 instead of exiting.
 
     discord.py raises HTTPException out of bot.run() if all 5 of its internal
@@ -196,6 +206,7 @@ def _run_with_login_backoff(bot: commands.Bot) -> None:
     """
     attempt = 0
     while True:
+        bot = _build_bot()
         try:
             bot.run(DISCORD_TOKEN)
             return
