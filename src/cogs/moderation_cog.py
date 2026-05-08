@@ -63,17 +63,20 @@ class ModerationCog(commands.Cog):
                 return
 
             await ctx.channel.delete_messages(messages)
-            confirm = await ctx.send(embed=emb(
-                "🗑️ Cleared",
-                f"Deleted {len(messages)-1} message{'s' if len(messages) != 1 else ''}.",
-                C_GREY,
-            ))
-            await asyncio.sleep(5)
-            await confirm.delete()
         except discord.Forbidden:
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete messages.", C_RED))
-        except Exception as e:
-            await ctx.send(embed=emb("❌ Error", f"Failed to delete messages: {str(e)}", C_RED))
+            return
+
+        confirm = await ctx.send(embed=emb(
+            "🗑️ Cleared",
+            f"Deleted {len(messages)-1} message{'s' if len(messages) != 1 else ''}.",
+            C_GREY,
+        ))
+        await asyncio.sleep(5)
+        try:
+            await confirm.delete()
+        except discord.NotFound:
+            pass
 
 
 async def setup(bot):

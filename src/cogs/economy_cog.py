@@ -364,14 +364,21 @@ class EconomyCog(commands.Cog):
         pot = int(savings_value * self.BANKHEIST_SEIZE_PCT)
         host_lvl = user_display_level(host.id, guild_id)
 
-        crew_lines = [f"  👑 {host.display_name}  (Lv {host_lvl})  — host"]
+        # Per-player bonus inline labels — keep in sync with _bankheist_chance().
+        host_bonus_pct = int(round(min(0.10, host_lvl / 1000.0) * 100))
+        crew_lines = [
+            f"  👑 {host.display_name}  (Lv {host_lvl}) (+{host_bonus_pct}%; up to 10%)"
+        ]
         for i, emoji in enumerate(self.BANKHEIST_JOIN_EMOJIS):
             member = slots[i + 1]
             if member is None:
                 crew_lines.append(f"  {emoji} — open —")
             else:
                 lvl = user_display_level(member.id, guild_id)
-                crew_lines.append(f"  {emoji} {member.display_name}  (Lv {lvl})")
+                joiner_bonus_pct = int(round(min(0.02, lvl / 5000.0) * 100))
+                crew_lines.append(
+                    f"  {emoji} {member.display_name}  (Lv {lvl}) (+{joiner_bonus_pct}%; up to 2%)"
+                )
 
         deadline_ts = int(hstate["opened_at_wall"] + self.BANKHEIST_LOBBY_TIMEOUT)
         body = (
@@ -598,6 +605,14 @@ class EconomyCog(commands.Cog):
                         ))
                     except Exception:
                         pass
+
+            # Lobby phase is over — clear the join/start/cancel reactions so
+            # nobody can react after the fact. Best-effort: in DMs the bot
+            # lacks Manage Messages and Forbidden is fine to swallow.
+            try:
+                await lobby_msg.clear_reactions()
+            except Exception:
+                pass
 
             if hstate["cancelled"]:
                 await lobby_msg.edit(embed=emb(
