@@ -810,3 +810,85 @@ async def test_bankheist_active_heist_blocks_second_in_same_channel(db):
         getattr(e, "title", "") == "⏳ Heist Already Running"
         for e in ctx.sent_embeds
     )
+
+
+async def test_bankheist_resolve_success_jails_everyone_when_rolls_low(db, monkeypatch):
+    """With random.random() = 0, every roll is below 0.25 → every participant
+    gets jailed and shows up in the Caught: line."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=870, display_name="host")
+    j1 = FakeMember(uid=871, display_name="j1")
+    target = FakeMember(uid=872, display_name="target")
+    _seed_savings(target.id, 10_000)
+
+    monkeypatch.setattr(random, "random", lambda: 0.0)
+
+    hstate = _make_hstate(host, target, [j1])
+    ctx = _make_ctx(host, target, content="!bankheist @target")
+    result = await cog._bankheist_resolve(ctx, hstate)
+
+    # Loot still split — jail rolls happen after the credit.
+    assert await _economy.get_balance(host.id) == 1000  # 2000 / 2 split
+    assert await _economy.get_balance(j1.id) == 1000
+    # Both participants jailed for ~1 day.
+    now = time.time()
+    host_jail = _state.economy["users"][str(host.id)]["jail_until"]
+    j1_jail = _state.economy["users"][str(j1.id)]["jail_until"]
+    assert now + 86_000 < host_jail < now + 87_000
+    assert now + 86_000 < j1_jail < now + 87_000
+    # Result embed body lists both as caught.
+    assert "Caught:" in result.description
+    assert host.mention in result.description
+    assert j1.mention in result.description
+
+
+async def test_bankheist_resolve_jailing_skipped_when_rolls_high(db, monkeypatch):
+    """With random.random() = 0.99, no jail rolls fire and the result embed
+    has no Caught: line."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=880)
+    j1 = FakeMember(uid=881)
+    target = FakeMember(uid=882, display_name="target")
+    _seed_savings(target.id, 10_000)
+
+    # 0.99 fails the chance roll AND fails every jail roll (>= 0.25).
+    monkeypatch.setattr(random, "random", lambda: 0.99)
+
+    hstate = _make_hstate(host, target, [j1])
+    ctx = _make_ctx(host, target, content="!bankheist @target")
+    result = await cog._bankheist_resolve(ctx, hstate)
+
+    assert "Failed" in result.title
+    assert _state.economy["users"].get(str(host.id), {}).get("jail_until", 0) <= time.time()
+    assert _state.economy["users"].get(str(j1.id), {}).get("jail_until", 0) <= time.time()
+    assert "Caught:" not in result.description
+
+
+async def test_bankheist_resolve_jail_rolls_independent_per_player(db, monkeypatch):
+    """The chance roll consumes one random; each participant then consumes one
+    more for their jail roll, in participants order (host, joiners…). Feeding
+    a deterministic sequence proves the order."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=890, display_name="host")
+    j1 = FakeMember(uid=891, display_name="j1")
+    j2 = FakeMember(uid=892, display_name="j2")
+    target = FakeMember(uid=893, display_name="target")
+    _seed_savings(target.id, 10_000)
+
+    # 1st = chance roll (0.0 → success); 2nd = host jail (0.5 → free);
+    # 3rd = j1 jail (0.0 → jailed); 4th = j2 jail (0.99 → free).
+    rolls = iter([0.0, 0.5, 0.0, 0.99])
+    monkeypatch.setattr(random, "random", lambda: next(rolls))
+
+    hstate = _make_hstate(host, target, [j1, j2])
+    ctx = _make_ctx(host, target, content="!bankheist @target")
+    result = await cog._bankheist_resolve(ctx, hstate)
+
+    now = time.time()
+    assert _state.economy["users"].get(str(host.id), {}).get("jail_until", 0) <= now
+    assert _state.economy["users"][str(j1.id)]["jail_until"] > now + 86_000
+    assert _state.economy["users"].get(str(j2.id), {}).get("jail_until", 0) <= now
+    assert "Caught:" in result.description
+    assert j1.mention in result.description
+    assert host.mention not in result.description.split("Caught:")[1]
+    assert j2.mention not in result.description.split("Caught:")[1]

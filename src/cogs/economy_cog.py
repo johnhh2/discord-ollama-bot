@@ -395,10 +395,40 @@ class EconomyCog(commands.Cog):
             body += f"\n\n⚠️ **Last call** — auto-starting <t:{deadline_ts}:R>!"
         return emb(f"🏦 Bank Heist — targeting {target.display_name}", body, C_ORANGE)
 
+    BANKHEIST_PARTICIPANT_JAIL_CHANCE = 0.25
+    BANKHEIST_PARTICIPANT_JAIL_SECONDS = 86400  # 1 day
+
+    async def _roll_participant_jail(self, participants: list, target_name: str) -> list:
+        """For each participant, roll 25% to be jailed for 1 day. Returns the
+        list of jailed Members (for embed display). Mutates state and persists."""
+        jailed: list = []
+        jail_until_ts = time.time() + self.BANKHEIST_PARTICIPANT_JAIL_SECONDS
+        for p in participants:
+            if random.random() < self.BANKHEIST_PARTICIPANT_JAIL_CHANCE:
+                await _ensure_user(p.id)
+                pdata = state.economy["users"][str(p.id)]
+                pdata["jail_until"] = jail_until_ts
+                pdata["jail_reason"] = format_bankheist_reason(target_name)
+                await save_economy(uid=p.id)
+                jailed.append(p)
+        return jailed
+
+    @staticmethod
+    def _format_caught_line(jailed: list) -> str:
+        """Render the trailing 'Caught:' line for the result embed."""
+        if not jailed:
+            return ""
+        names = ", ".join(p.mention for p in jailed)
+        return f"\n\n🚔 **Caught:** {names} — jailed for 1 day."
+
     async def _bankheist_resolve(self, ctx: commands.Context, hstate: dict) -> discord.Embed:
         """Roll the heist and apply outcome. Returns the result embed.
         Pure-ish: reads/writes state via the standard economy helpers, doesn't
-        touch reactions or the lobby loop. Tests call this directly."""
+        touch reactions or the lobby loop. Tests call this directly.
+
+        After the loot split (or on failure / empty vault), every participant
+        rolls 25% to get jailed for 1 day. Caught players are listed in a
+        trailing line on the result embed."""
         host = hstate["host"]
         target = hstate["target"]
         joiners = [m for m in hstate["slots"][1:] if m is not None]
@@ -409,27 +439,33 @@ class EconomyCog(commands.Cog):
         success = random.random() < chance
 
         if not success:
+            jailed = await self._roll_participant_jail(participants, target.display_name)
             return emb(
                 "🚨 Heist Failed!",
                 f"The crew bailed at the door — {target.display_name}'s savings are untouched.\n"
-                f"(Roll missed a {round(chance * 100, 1)}% chance.)",
+                f"(Roll missed a {round(chance * 100, 1)}% chance.)"
+                + self._format_caught_line(jailed),
                 C_RED,
             )
 
         savings_value = await get_savings_value(target.id)
         intended = int(savings_value * self.BANKHEIST_SEIZE_PCT)
         if intended <= 0:
+            jailed = await self._roll_participant_jail(participants, target.display_name)
             return emb(
                 "💨 Empty Vault",
-                f"You broke in clean — but **{target.display_name}** had no savings to steal.",
+                f"You broke in clean — but **{target.display_name}** had no savings to steal."
+                + self._format_caught_line(jailed),
                 C_GREY,
             )
 
         seized = await seize_from_savings(target.id, intended)
         if seized <= 0:
+            jailed = await self._roll_participant_jail(participants, target.display_name)
             return emb(
                 "💨 Empty Vault",
-                f"You broke in clean — but **{target.display_name}**'s savings were already empty.",
+                f"You broke in clean — but **{target.display_name}**'s savings were already empty."
+                + self._format_caught_line(jailed),
                 C_GREY,
             )
 
@@ -447,13 +483,15 @@ class EconomyCog(commands.Cog):
             cuts.append((p, cut))
         await record_crime_event(target.id, lost=seized)
 
+        jailed = await self._roll_participant_jail(participants, target.display_name)
         cut_lines = "\n".join(
             f"  • {p.display_name}: **{cut:,} 🪙**" for p, cut in cuts
         )
         return emb(
             "🏦 Heist Successful!",
             f"The crew cracked **{target.display_name}**'s savings for **{seized:,} 🪙**!\n\n"
-            f"{cut_lines}",
+            f"{cut_lines}"
+            + self._format_caught_line(jailed),
             C_GREEN,
         )
 
@@ -624,14 +662,6 @@ class EconomyCog(commands.Cog):
                 return
 
             result_embed = await self._bankheist_resolve(ctx, hstate)
-
-            # Jail the host on failure (matches !steal's flavor for the organizer only).
-            if result_embed.title and "Failed" in result_embed.title:
-                jail_until_ts = time.time() + 86400  # 1 day
-                host_data["jail_until"] = jail_until_ts
-                host_data["jail_reason"] = format_bankheist_reason(target.display_name)
-                await save_economy(uid=host.id)
-
             await lobby_msg.edit(embed=result_embed)
         finally:
             self._active_heists.pop(ch_id, None)
