@@ -15,7 +15,7 @@ from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
     add_guild_house, is_insured, get_insurance_expiry, _ct_now, _ct_today, do_daily_reset, _ensure_user,
     next_daily_reset_ts, get_savings_value, add_savings, remove_savings,
-    seize_from_savings, record_crime_event,
+    seize_from_savings, record_crime_event, CRIME_ELIGIBLE_NET_WORTH,
 )
 from src.permissions import (
     requires_perm,
@@ -185,20 +185,15 @@ class EconomyCog(commands.Cog):
             await ctx.send("You can't steal from the house.")
             return
 
-        from src.level_unlocks import is_locked_for
-        gid = ctx.guild.id if ctx.guild else 0
-        # Crime unlocks at level 10 — under that level, the target is off-limits.
-        victim_lock = is_locked_for("steal", victim_id, gid)
-        if victim_lock is not None:
+        await _ensure_user(thief_id)
+        await _ensure_user(victim_id)
+        if not state.economy["users"][str(victim_id)].get("crime_eligible"):
             await ctx.send(embed=emb(
                 "🛡️ Off-Limits",
-                f"**{target.display_name}** is below Level **{victim_lock}** — they're not in the crime system yet.",
+                f"**{target.display_name}** isn't in the crime system yet — they're below Level 10 and have never held more than {CRIME_ELIGIBLE_NET_WORTH:,} 🪙 across wallet + savings.",
                 C_GOLD,
             ))
             return
-
-        await _ensure_user(thief_id)
-        await _ensure_user(victim_id)
 
         thief_data = state.economy["users"][str(thief_id)]
 
@@ -518,13 +513,11 @@ class EconomyCog(commands.Cog):
             await ctx.send("You can't rob the house.")
             return
 
-        from src.level_unlocks import is_locked_for
-        # Crime unlocks at level 10 — under that level, the target is off-limits.
-        target_lock = is_locked_for("steal", target.id, gid)
-        if target_lock is not None:
+        await _ensure_user(target.id)
+        if not state.economy["users"][str(target.id)].get("crime_eligible"):
             await ctx.send(embed=emb(
                 "🛡️ Off-Limits",
-                f"**{target.display_name}** is below Level **{target_lock}** — they're not in the crime system yet.",
+                f"**{target.display_name}** isn't in the crime system yet — they're below Level 10 and have never held more than {CRIME_ELIGIBLE_NET_WORTH:,} 🪙 across wallet + savings.",
                 C_GOLD,
             ))
             return
@@ -774,14 +767,11 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Target", "You can't mug the house.", C_RED))
             return
 
-        from src.level_unlocks import is_locked_for
-        gid = ctx.guild.id if ctx.guild else 0
-        # Crime unlocks at level 10 — under that level, the target is off-limits.
-        victim_lock = is_locked_for("steal", target.id, gid)
-        if victim_lock is not None:
+        await _ensure_user(target.id)
+        if not state.economy["users"][str(target.id)].get("crime_eligible"):
             await ctx.send(embed=emb(
                 "🛡️ Off-Limits",
-                f"**{target.display_name}** is below Level **{victim_lock}** — they're not in the crime system yet.",
+                f"**{target.display_name}** isn't in the crime system yet — they're below Level 10 and have never held more than {CRIME_ELIGIBLE_NET_WORTH:,} 🪙 across wallet + savings.",
                 C_GOLD,
             ))
             return

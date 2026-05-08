@@ -84,8 +84,18 @@ def _make_ctx(thief: FakeMember, victim: FakeMember, content: str = "!steal @vic
 def _grant_level(uid: int, internal_level: int, gid: int = 42) -> None:
     """Force a user to a given internal level so they pass the level-10
     crime-target gate (shared by !steal/!mug/!bankheist). Internal level N →
-    display level N+1, so internal 9 = display 10 = unlocks the gate."""
+    display level N+1, so internal 9 = display 10 = unlocks the gate.
+
+    Also latches `crime_eligible` for users at internal 9+, mirroring what
+    grant_xp would do on a real level-up. Tests that want to exercise the
+    eligibility check directly should set `crime_eligible` themselves and
+    skip this helper."""
     _state.leveling.setdefault(str(gid), {})[str(uid)] = {"xp": 0, "level": internal_level}
+    if internal_level >= 9:
+        _state.economy.setdefault("users", {}).setdefault(str(uid), {
+            "balance": 0, "savings": [],
+        })
+        _state.economy["users"][str(uid)]["crime_eligible"] = True
 
 
 # ── !steal ────────────────────────────────────────────────────────────────────
@@ -892,3 +902,92 @@ async def test_bankheist_resolve_jail_rolls_independent_per_player(db, monkeypat
     assert j1.mention in result.description
     assert host.mention not in result.description.split("Caught:")[1]
     assert j2.mention not in result.description.split("Caught:")[1]
+
+
+# ── crime eligibility ────────────────────────────────────────────────────────
+# A target is gateable for !steal/!mug/!bankheist iff `crime_eligible` is
+# True. The flag latches when (a) the user reaches display level 10, or
+# (b) their wallet + savings principal exceeds 100k. Sticky once set.
+
+async def test_crime_eligible_default_false_blocks_all_three(db, monkeypatch):
+    """A fresh victim with no level and tiny balance is off-limits to every
+    crime command."""
+    cog = EconomyCog(bot=_StubBot())
+    thief = FakeMember(uid=1100, display_name="thief")
+    victim = FakeMember(uid=1101, display_name="victim")
+    await _economy.add_balance(thief.id, 5000)
+    await _economy.add_balance(victim.id, 500)  # well under 100k
+
+    # !steal → off-limits
+    ctx = _make_ctx(thief, victim, content="!steal @victim")
+    await cog.cmd_steal.callback(cog, ctx, target=victim)
+    assert any(getattr(e, "title", "") == "🛡️ Off-Limits" for e in ctx.sent_embeds)
+    assert await _economy.get_balance(victim.id) == 500
+
+    # !mug → off-limits
+    ctx2 = _make_ctx(thief, victim, content="!mug @victim 100")
+    await cog.cmd_mug.callback(cog, ctx2, target=victim, amount="100")
+    assert any(getattr(e, "title", "") == "🛡️ Off-Limits" for e in ctx2.sent_embeds)
+    assert await _economy.get_balance(victim.id) == 500
+
+    # !bankheist → off-limits
+    ctx3 = _make_ctx(thief, victim, content="!bankheist @victim")
+    _grant_level(thief.id, 14)  # let the host clear their own gate
+    await cog.cmd_bankheist.callback(cog, ctx3, target=victim)
+    assert any(getattr(e, "title", "") == "🛡️ Off-Limits" for e in ctx3.sent_embeds)
+
+
+async def test_crime_eligible_latches_when_wallet_crosses_100k(db):
+    """add_balance that pushes wallet over 100k flips crime_eligible."""
+    uid = 1110
+    await _economy.add_balance(uid, 50_000)  # under threshold
+    assert _state.economy["users"][str(uid)].get("crime_eligible", False) is False
+
+    await _economy.add_balance(uid, 60_000)  # now 110k → crosses threshold
+    assert _state.economy["users"][str(uid)]["crime_eligible"] is True
+
+    # Verify it's persisted to DB.
+    pool = await _persistence.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT crime_eligible FROM economy_users WHERE user_id=?", (uid,))
+            row = await cur.fetchone()
+    assert bool(row[0]) is True
+
+
+async def test_crime_eligible_latches_via_savings_total(db):
+    """Wallet at 60k + savings deposit of 50k → 110k combined → eligible."""
+    uid = 1120
+    await _economy.add_balance(uid, 110_000)  # crosses threshold via wallet alone first…
+    # Reset the latch to simulate the "split between wallet and savings" scenario:
+    # we need a starting state where wallet+savings each individually < 100k but
+    # the sum > 100k. Easiest: deposit some into savings, then assert.
+    _state.economy["users"][str(uid)]["crime_eligible"] = False  # un-latch for the test
+    await _economy.deduct_balance(uid, 60_000)
+    assert _state.economy["users"][str(uid)]["balance"] == 50_000
+    # Now deposit 60k into savings via add_savings → triggers the latch via the savings hook.
+    await _economy.add_balance(uid, 60_000)
+    _state.economy["users"][str(uid)]["crime_eligible"] = False  # un-latch again
+    assert await _economy.add_savings(uid, 60_000) is True
+    # Wallet now 50k, savings principal now 60k → total 110k → latched.
+    assert _state.economy["users"][str(uid)]["crime_eligible"] is True
+
+
+async def test_crime_eligible_does_not_unlatch_on_drain(db):
+    """Sticky: once set, draining wallet + savings doesn't clear the flag."""
+    uid = 1130
+    await _economy.add_balance(uid, 200_000)
+    assert _state.economy["users"][str(uid)]["crime_eligible"] is True
+    await _economy.deduct_balance(uid, 200_000)
+    # Run another mutation to give the latch a chance to "downgrade" (it shouldn't).
+    await _economy.add_balance(uid, 1)
+    assert _state.economy["users"][str(uid)]["crime_eligible"] is True
+
+
+async def test_crime_eligible_does_not_latch_below_threshold(db):
+    """Wallet of exactly 100k is NOT > 100k, so no latch."""
+    uid = 1140
+    await _economy.add_balance(uid, 100_000)
+    assert _state.economy["users"][str(uid)].get("crime_eligible", False) is False
+    await _economy.add_balance(uid, 1)  # 100_001 → just over → latched
+    assert _state.economy["users"][str(uid)]["crime_eligible"] is True

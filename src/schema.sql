@@ -337,3 +337,13 @@ CREATE TABLE IF NOT EXISTS global_blocklist (
 
 -- ── 0007_add_jail_reason.sql ──
 ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS jail_reason VARCHAR(255) NULL;
+
+-- ── 0008_add_crime_eligible.sql ──
+ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS crime_eligible BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Backfill the wallet portion of the threshold. The savings JSON column is
+-- not introspectable in pure SQL, so users whose savings push them over 100k
+-- (without their wallet alone qualifying) will get latched on their next
+-- add_balance / add_savings write. Level-based eligibility is latched by
+-- the level-up path in src/leveling.py.
+UPDATE economy_users SET crime_eligible = TRUE WHERE balance > 100000;
