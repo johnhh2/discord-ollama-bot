@@ -135,6 +135,11 @@ async def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tup
     """
     if not guild_id:
         return 0, False
+    # Block until init_db_state has loaded state from the DB. Without this,
+    # a background tick (e.g. the voice loop firing on bot restart) would
+    # materialize a zero-valued leveling rec and UPSERT it over the real row.
+    import src.persistence as _pkg
+    await _pkg.init_done.wait()
     rec = _ensure_lvl_record(guild_id, uid)
     now = time.time()
 
@@ -195,6 +200,17 @@ async def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tup
     if leveled_up:
         # A single grant can cross multiple thresholds — record each crossing.
         await record_levelup(guild_id, uid, count=new_level - old_level)
+        # Latch crime eligibility once the user reaches display level 10
+        # (internal level 9). Sticky: the flag never clears once set.
+        if old_level < 9 <= new_level:
+            from src.economy import _ensure_user as _eu
+            from src import state as _state
+            from src.persistence import save_economy as _save
+            await _eu(uid)
+            user = _state.economy["users"][str(uid)]
+            if not user.get("crime_eligible"):
+                user["crime_eligible"] = True
+                await _save(uid=uid)
     await save_leveling(guild_id=guild_id, uid=uid)
     return xp, leveled_up
 

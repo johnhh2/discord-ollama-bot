@@ -39,6 +39,28 @@ from src.puzzle import (
 from src import state
 
 
+def _msg_text(msg: discord.Message) -> str:
+    """Best-effort plain text from a Message, including embed title/description/fields."""
+    parts: list[str] = []
+    if msg.content:
+        parts.append(msg.content)
+    for e in msg.embeds:
+        if e.title:
+            parts.append(str(e.title))
+        if e.description:
+            parts.append(str(e.description))
+        for f in e.fields:
+            name = str(f.name) if f.name else ""
+            value = str(f.value) if f.value else ""
+            if name and value:
+                parts.append(f"{name}: {value}")
+            elif value:
+                parts.append(value)
+        if e.footer and e.footer.text:
+            parts.append(str(e.footer.text))
+    return " | ".join(p for p in parts if p)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Gambler role helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -137,13 +159,15 @@ class UtilityCog(commands.Cog):
         if nsfw_enabled:
             help_embed.add_field(name="🔞 NSFW", inline=False, value=(
                 fmt_line("nsfw", "`!nsfw [tags]` — Random NSFW image", uid, gid)
+                + "\n`!ew` — Delete the last NSFW image you posted in this channel"
             ))
 
         help_embed.add_field(name="🎉 Fun", inline=False, value=(
             "`!dog` — Random dog picture\n"
             "`!cat` — Random cat picture\n"
             "`!quote` — Save a quoted message (reply) or display a random saved quote\n"
-            "`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote"
+            "`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote\n"
+            "`!tip` — Show a random tip about hidden commands"
         ))
         utility_val = (
             "`!stats` — Show bot statistics\n"
@@ -304,6 +328,13 @@ class UtilityCog(commands.Cog):
             inline=False
         )
 
+        if is_admin(ctx):
+            embed.add_field(
+                name="⚙️ !ai on / !ai off (bot admin)",
+                value="Toggle passive AI responses globally.",
+                inline=False,
+            )
+
         await send_ephemeral(ctx, embed=embed)
 
     @cmd_ai.command(name="on", aliases=["online"])
@@ -330,7 +361,8 @@ class UtilityCog(commands.Cog):
             value=(
                 "`!flip <amount>` — 50/50 coinflip\n"
                 "`!slots <amount>` — 3-reel slot machine with progressive jackpot\n"
-                "`!scratchoff` — Daily lottery (3 attempts/day)\n"
+                "`!scratches` — Use all 3 daily scratchoffs at once\n"
+                "`!scratchoff` — Single scratchoff (3 attempts/day)\n"
                 "`!blackjack <amount>` — Interactive blackjack (type `hit` / `stand`)"
             ),
             inline=False
@@ -734,8 +766,7 @@ class UtilityCog(commands.Cog):
         ))
         admin_embed.add_field(name="🔍 Moderation", inline=False, value=(
             "`!audit` — Last 5 failed command attempts\n"
-            "`!clearbot [n]` — Delete last n bot messages (default 50)\n"
-            "`!clearall <n>` — Delete last n messages (any author)\n"
+            "`!clear <n>` — Delete last n messages (any author)\n"
             "`!saved` — Show saved data (admin-only)"
         ))
         if is_admin(ctx):
@@ -866,7 +897,7 @@ class UtilityCog(commands.Cog):
                     continue
                 if len(history_lines) >= 5:
                     break
-                history_lines.append(f"[{msg.author.display_name}]: {msg.content[:200]}")
+                history_lines.append(f"[{msg.author.display_name}]: {_msg_text(msg)[:200]}")
             history_lines.reverse()
         except (discord.Forbidden, discord.HTTPException):
             pass

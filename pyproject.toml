@@ -13,6 +13,7 @@ dependencies = [
     "tzdata==2026.2",
     "matplotlib==3.10.9",
     "aiomysql==0.3.2",
+    "prometheus-client==0.25.0",
 ]
 
 [project.optional-dependencies]

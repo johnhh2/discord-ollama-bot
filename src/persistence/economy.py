@@ -15,13 +15,16 @@ def _economy_user_row(uid_str: str, u: dict) -> tuple:
         bool(u.get("jailbreak_used", False)),
         u.get("jail_until", 0.0),
         json.dumps(u.get("savings", [])),
+        u.get("jail_reason"),
+        bool(u.get("crime_eligible", False)),
     )
 
 
 _ECONOMY_UPSERT_SQL = """INSERT INTO economy_users
     (user_id, balance, last_daily, daily_date, scratch_used,
-     scratch_date, jailbreak_used, jail_until, savings)
-   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+     scratch_date, jailbreak_used, jail_until, savings, jail_reason,
+     crime_eligible)
+   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
    ON DUPLICATE KEY UPDATE
      balance=VALUES(balance),
      last_daily=VALUES(last_daily),
@@ -30,7 +33,9 @@ _ECONOMY_UPSERT_SQL = """INSERT INTO economy_users
      scratch_date=VALUES(scratch_date),
      jailbreak_used=VALUES(jailbreak_used),
      jail_until=VALUES(jail_until),
-     savings=VALUES(savings)"""
+     savings=VALUES(savings),
+     jail_reason=VALUES(jail_reason),
+     crime_eligible=VALUES(crime_eligible)"""
 
 
 async def save_economy(uid: int = None):

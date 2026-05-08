@@ -55,6 +55,8 @@ _TABLE_PKS = {
     "ephemeral_msgs": ("id",),
     "command_perms": ("command_name",),
     "user_perm_overrides": ("guild_id", "user_id"),
+    "blocklist": ("guild_id", "user_id"),
+    "global_blocklist": ("user_id",),
     "schema_migrations": ("version",),
 }
 
@@ -104,6 +106,15 @@ def _translate(sql: str) -> str:
     )
     # Catch any remaining bare AUTO_INCREMENT.
     out = re.sub(r"\bAUTO_INCREMENT\b", "AUTOINCREMENT", out, flags=re.IGNORECASE)
+    # `ALTER TABLE foo ADD COLUMN IF NOT EXISTS bar` — SQLite supports
+    # ADD COLUMN but not the IF NOT EXISTS clause for it. Strip just that
+    # token; do NOT touch CREATE TABLE IF NOT EXISTS (valid in SQLite).
+    out = re.sub(
+        r"\b(ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN)\s+IF\s+NOT\s+EXISTS\b",
+        r"\1",
+        out,
+        flags=re.IGNORECASE,
+    )
     # Inline `INDEX idx_x (col)` inside CREATE TABLE — SQLite doesn't support this
     # form. Strip the line; tests don't rely on these indexes for correctness.
     out = re.sub(r",\s*INDEX\s+\w+\s*\([^)]*\)", "", out, flags=re.IGNORECASE)

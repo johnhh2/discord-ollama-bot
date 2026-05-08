@@ -1,15 +1,20 @@
+import asyncio
 import logging
 
 import discord
 from discord.ext import commands, tasks
 
-from src.helpers import emb, C_GOLD
-from src.permissions import requires_perm
+from src.helpers import emb, C_BLUE, C_GOLD, C_RED
+from src.permissions import requires_perm, is_admin
 from src.economy import snapshot_all
 from src.graph_series import (
     find_spec, parse_tokens, render_combined, render_ai_uptime_strip,
     parse_admin_tokens, build_admin_series, SeriesSpec,
 )
+
+
+def _rendering_embed():
+    return emb("📊 Rendering graph…", "Crunching the data — this usually takes a few seconds.", C_BLUE)
 
 
 # Title prefix used for combined renders.
@@ -34,6 +39,11 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
         await ctx.send(embed=emb("📊 Invalid Combination", parsed.error, C_GOLD))
         return
 
+    # Send a placeholder so the user gets immediate feedback; matplotlib
+    # rendering is heavy enough (~hundreds of ms to seconds) that the wait
+    # is otherwise silent. Final result replaces this message via edit().
+    placeholder = await ctx.send(embed=_rendering_embed())
+
     # Build each series. Pass kwargs based on what the spec accepts.
     serieses = []
     for spec in parsed.specs:
@@ -48,10 +58,10 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
 
     # If there's no data at all, bail with a friendly note.
     if all(not s.x_points for s in serieses):
-        await ctx.send(embed=emb("📊 No Data", "No history recorded yet — data is captured every 30 minutes.", C_GOLD))
+        await placeholder.edit(embed=emb("📊 No Data", "No history recorded yet — data is captured every 30 minutes.", C_GOLD))
         return
     if all(len(s.x_points) < 2 for s in serieses):
-        await ctx.send(embed=emb("📊 Not Enough Data", "Need at least 2 data points to draw a graph.", C_GOLD))
+        await placeholder.edit(embed=emb("📊 Not Enough Data", "Need at least 2 data points to draw a graph.", C_GOLD))
         return
 
     group = parsed.specs[0].group  # all the same after validation
@@ -59,8 +69,8 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
 
     # Special case: solo `ai` keeps its uptime strip layout.
     if len(parsed.specs) == 1 and parsed.specs[0].name == "ai":
-        buf = render_ai_uptime_strip(serieses[0])
-        await ctx.send(file=discord.File(buf, filename="ai_activity.png"))
+        buf = await asyncio.to_thread(render_ai_uptime_strip, serieses[0])
+        await placeholder.edit(embed=None, attachments=[discord.File(buf, filename="ai_activity.png")])
         return
 
     title = _combined_title(parsed.specs, group)
@@ -83,7 +93,7 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
 
     buf = await render_combined(serieses, group, y_unit, title)
     filename = "_".join(s.name for s in parsed.specs) + ".png"
-    await ctx.send(file=discord.File(buf, filename=filename))
+    await placeholder.edit(embed=None, attachments=[discord.File(buf, filename=filename)])
 
 
 class GraphCog(commands.Cog):
@@ -121,35 +131,60 @@ class GraphCog(commands.Cog):
     @commands.group(name="graph", invoke_without_command=True)
     @requires_perm
     async def cmd_graph(self, ctx: commands.Context):
-        await ctx.send(embed=emb(
-            "📊 Graph",
-            "**Subcommands:**\n"
-            "`!graph balance [@user]` — Wallet balance over the last 2 weeks\n"
-            "`!graph economy` — Total economy (wallet + savings) over the last 2 weeks\n"
-            "`!graph crime [@user]` — Coins gained/lost via !steal and !mug\n"
-            "`!graph gambling [@user]` — Net P/L from games and gambling\n"
-            "`!graph levels [@user]` — Level-ups per day in this server\n"
-            "`!graph commands` — Command usage by category over the last 2 weeks\n"
-            "`!graph server` — Daily message and command counts over the last 2 weeks\n"
-            "`!graph memory` — Bot memory usage (MB) over the last 2 weeks\n"
-            "`!graph ai` — Daily AI response count and uptime over the last 2 weeks\n"
-            "`!graph admin <wallet|savings> [N|@users…]` — per-user breakout (bot admin)\n"
-            "\n**Combine compatible graphs** by listing multiple names:\n"
-            "`!graph balance crime [@user]` — overlay coins-group graphs\n"
-            "`!graph commands server ai` — grouped stacked bars for counts-group graphs\n"
+        lines = [
+            "**Subcommands:**",
+            "`!graph balance [@user]` — Wallet balance over the last 2 weeks",
+            "`!graph economy` — Total economy (wallet + savings) over the last 2 weeks",
+            "`!graph crime [@user]` — Coins gained/lost via !steal and !mug",
+            "`!graph gambling [@user]` — Net P/L from games and gambling",
+            "`!graph levels [@user]` — Level-ups per day in this server",
+            "`!graph commands` — Command usage by category over the last 2 weeks",
+            "`!graph server` — Daily message and command counts over the last 2 weeks",
+            "`!graph memory` — Bot memory usage (MB) over the last 2 weeks",
+            "`!graph ai` — Daily AI response count and uptime over the last 2 weeks",
+        ]
+        if is_admin(ctx):
+            lines.append("`!graph wallet|savings|total [N|@users…]` — per-user breakout (bot admin)")
+            lines.append("`!graph balance|economy all [N|@users…]` — same, via the user-facing names")
+        lines.extend([
+            "",
+            "**Combine compatible graphs** by listing multiple names:",
+            "`!graph balance crime [@user]` — overlay coins-group graphs",
+            "`!graph commands server ai` — grouped stacked bars for counts-group graphs",
             "Coins, counts, and MB graphs cannot be mixed (different y-axes).",
-            C_GOLD,
-        ))
+        ])
+        await ctx.send(embed=emb("📊 Graph", "\n".join(lines), C_GOLD))
 
     @cmd_graph.command(name="balance", aliases=["bal"])
     @requires_perm
     async def cmd_graph_balance(self, ctx: commands.Context, *tokens: str):
+        if tokens and tokens[0].lower() == "all":
+            await _admin_route(ctx, tokens[1:], field="wallet")
+            return
         await _build_and_render(ctx, tokens, find_spec("balance"))
 
-    @cmd_graph.command(name="economy", aliases=["total", "eco", "totalbalance"])
+    @cmd_graph.command(name="economy", aliases=["eco", "totalbalance"])
     @requires_perm
     async def cmd_graph_economy(self, ctx: commands.Context, *tokens: str):
+        if tokens and tokens[0].lower() == "all":
+            await _admin_route(ctx, tokens[1:], field="total")
+            return
         await _build_and_render(ctx, tokens, find_spec("economy"))
+
+    @cmd_graph.command(name="wallet")
+    @requires_perm
+    async def cmd_graph_wallet(self, ctx: commands.Context, *tokens: str):
+        await _admin_handler(ctx, _strip_all(tokens), field="wallet")
+
+    @cmd_graph.command(name="savings")
+    @requires_perm
+    async def cmd_graph_savings(self, ctx: commands.Context, *tokens: str):
+        await _admin_handler(ctx, _strip_all(tokens), field="savings")
+
+    @cmd_graph.command(name="total")
+    @requires_perm
+    async def cmd_graph_total(self, ctx: commands.Context, *tokens: str):
+        await _admin_handler(ctx, _strip_all(tokens), field="total")
 
     @cmd_graph.command(name="crime")
     @requires_perm
@@ -220,6 +255,27 @@ class GraphCog(commands.Cog):
         await _admin_handler(ctx, tokens, field="total")
 
 
+def _strip_all(tokens: tuple[str, ...]) -> tuple[str, ...]:
+    """Drop a leading `all` keyword if present — accepted for symmetry with
+    `!graph balance all`, but redundant on the dedicated wallet/savings/total
+    subcommands.
+    """
+    if tokens and tokens[0].lower() == "all":
+        return tokens[1:]
+    return tokens
+
+
+async def _admin_route(ctx, tokens: tuple[str, ...], *, field: str):
+    """Gate on bot-admin and dispatch to `_admin_handler`. Used by the new
+    short-form subcommands (`!graph wallet|savings|total`) and the `all` arg
+    on `!graph balance|economy`.
+    """
+    if not is_admin(ctx):
+        await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+        return
+    await _admin_handler(ctx, tokens, field=field)
+
+
 async def _admin_handler(ctx, tokens: tuple[str, ...], *, field: str):
     """Shared body for `!graph admin wallet` and `!graph admin savings`."""
     parsed = await parse_admin_tokens(ctx, tokens)
@@ -227,19 +283,21 @@ async def _admin_handler(ctx, tokens: tuple[str, ...], *, field: str):
         await ctx.send(embed=emb("📊 Invalid Arguments", parsed.error, C_GOLD))
         return
 
+    placeholder = await ctx.send(embed=_rendering_embed())
+
     data = await build_admin_series(
         field, top_n=parsed.top_n, members=parsed.members or None, bot=ctx.bot,
     )
 
     if not data.x_points or not data.segments:
-        await ctx.send(embed=emb(
+        await placeholder.edit(embed=emb(
             "📊 No Data",
             "No balance history yet — data is captured every 30 minutes.",
             C_GOLD,
         ))
         return
     if len(data.x_points) < 2:
-        await ctx.send(embed=emb(
+        await placeholder.edit(embed=emb(
             "📊 Not Enough Data",
             "Need at least 2 data points to draw a graph.",
             C_GOLD,
@@ -255,7 +313,7 @@ async def _admin_handler(ctx, tokens: tuple[str, ...], *, field: str):
     buf = await render_combined(
         [data], "coins", "🪙 Coins", title,
     )
-    await ctx.send(file=discord.File(buf, filename=f"admin_{field}.png"))
+    await placeholder.edit(embed=None, attachments=[discord.File(buf, filename=f"admin_{field}.png")])
 
 
 async def setup(bot):
