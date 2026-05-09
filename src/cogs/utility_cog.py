@@ -171,7 +171,8 @@ class UtilityCog(commands.Cog):
         ))
         utility_val = (
             "`!stats` — Show bot statistics\n"
-            "`!stop` — Stop roleplay / forfeit active game"
+            "`!stop` — Stop roleplay / forfeit active game\n"
+            "`!bugreport <message>` — Send a bug report to the maintainer"
         )
         help_embed.add_field(name="🔧 Utility", inline=False, value=utility_val)
         await send_ephemeral(ctx, embed=help_embed)

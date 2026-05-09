@@ -6,3 +6,4 @@ Want to see exactly when each savings deposit happened and how much it's earned?
 Tired of typing !balance? !b, !!, and !$ all do the same thing.
 Looking for a faster !hangman? Just type !hm.
 Looking for a faster !blackjack? Just type !bj.
+Skip the steal tier picker: !steal @user 1, 2, or 3 runs that tier directly without showing the buttons.

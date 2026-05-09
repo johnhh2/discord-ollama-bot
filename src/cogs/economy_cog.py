@@ -196,13 +196,13 @@ class EconomyCog(commands.Cog):
         gid = ctx.guild.id if ctx.guild else 0
         steal_lock = lock_marker("steal", uid, gid)
         mug_lock   = lock_marker("mug",   uid, gid)
+        bankheist_lock = lock_marker("bankheist", uid, gid)
         lines = [
-            f"**`!steal @user [tier]`**{steal_lock} — Pick a pocket. Chance to steal a % of their balance; risk jail if caught. Omit tier for a button picker.",
-            "  **Tier 1** — 10% steal chance, steal 10% | Jail chance: 25% | Fine: 1,000 🪙 | Jail: 1 day",
-            "  **Tier 2** — 9% steal chance, steal 15%  | Jail chance: 30% | Fine: 1,350 🪙 | Jail: 1 day",
-            "  **Tier 3** — 8% steal chance, steal 20%  | Jail chance: 35% | Fine: 3,250 🪙 | Jail: 1 day",
+            f"**`!steal @user`**{steal_lock} — Pick a pocket. Chance to steal a % of their balance; risk jail if caught.",
             "",
             f"**`!mug @user <amount>`**{mug_lock} — Pay muggers `<amount>` 🪙 to take that amount from a target. The muggers keep it. 50% chance you get jailed 1 day.",
+            "",
+            f"**`!bankheist @user`**{bankheist_lock} — Open a 4-slot lobby; rally a crew to split a cut of the target's savings.",
             "",
             "**`!jailbreak`** — Attempt to escape jail (20% success). One attempt per day.",
             "",
