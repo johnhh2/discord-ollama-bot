@@ -89,14 +89,19 @@ async def _nsfw_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[
         headers = {"User-Agent": "Mozilla/5.0"}
         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status != 200:
+                logging.warning(f"[nsfw] api returned status={resp.status} pid={pid} tags={search_tags!r}")
                 return []
             text = (await resp.text()).strip()
-        if not text or text == "0" or text.startswith("<"):
+        if not text or text == "0":
+            return []
+        if text.startswith("<"):
+            logging.warning(f"[nsfw] api returned HTML (likely block/challenge) pid={pid} tags={search_tags!r} body={text[:200]!r}")
             return []
         try:
             import json as _json
             data = _json.loads(text)
-        except Exception:
+        except Exception as e:
+            logging.warning(f"[nsfw] api returned non-JSON pid={pid} tags={search_tags!r} err={e} body={text[:200]!r}")
             return []
         if not isinstance(data, list):
             return []
@@ -179,15 +184,23 @@ class FunCog(commands.Cog):
         post = random.choice(posts)
         file_url = post["file_url"]
         logging.info(f"[nsfw] picked id={post.get('id')} url={file_url}")
-        # Bust Discord's embed image cache
-        file_url = f"{file_url}?v={post.get('id', random.randint(0, 999999))}"
         display = search_tags.replace("+", " ") if tag_parts else "random"
 
         embed = discord.Embed(title=f"🔞 {display}", color=C_PURPLE)
         embed.set_image(url=file_url)
         tags_str = ", ".join(post.get("tags", "").split())
         embed.set_footer(text=f"Score: {post.get('score', '?')} | Rating: {post.get('rating', '?')} | Tags: {tags_str}")
-        msg = await ctx.send(embed=embed)
+        try:
+            msg = await ctx.send(embed=embed)
+        except discord.HTTPException as e:
+            # Discord 40062 = its image proxy is rate-limited by the upstream host.
+            # Fall back to posting the raw URL so the user still gets the image.
+            logging.warning(f"[nsfw] embed send failed status={e.status} code={e.code}; falling back to plain url")
+            try:
+                msg = await ctx.send(f"🔞 **{display}**\n{file_url}")
+            except discord.HTTPException as e2:
+                logging.error(f"[nsfw] fallback send also failed status={e2.status} code={e2.code}")
+                return
         _nsfw_last_msg[(ctx.channel.id, ctx.author.id)] = msg
 
 
