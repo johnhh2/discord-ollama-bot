@@ -194,18 +194,21 @@ class FakeCtx:
         self.message = FakeMessage()
         self.sent_embeds: list[Any] = []
         self.sent_messages: list[str] = []
+        self.sent_views: list[Any] = []
         self._send_mock = AsyncMock(side_effect=self._record_send)
 
-    async def _record_send(self, content=None, *, embed=None, **kwargs):
+    async def _record_send(self, content=None, *, embed=None, view=None, **kwargs):
         if embed is not None:
             self.sent_embeds.append(embed)
         if content is not None:
             self.sent_messages.append(content)
+        if view is not None:
+            self.sent_views.append(view)
         # Return a fake Message so callers that await further can keep working.
         return FakeMessage()
 
-    async def send(self, content=None, *, embed=None, **kwargs):
-        return await self._send_mock(content, embed=embed, **kwargs)
+    async def send(self, content=None, *, embed=None, view=None, **kwargs):
+        return await self._send_mock(content, embed=embed, view=view, **kwargs)
 
     @property
     def send_mock(self) -> AsyncMock:

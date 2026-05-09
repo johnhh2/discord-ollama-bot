@@ -43,5 +43,6 @@
   "bankheist":     {"tier": "everyone",    "hidden": false},
   "mug":           {"tier": "everyone",    "hidden": false},
   "jailbreak":     {"tier": "everyone",    "hidden": false},
+  "bail":          {"tier": "everyone",    "hidden": false},
   "tip":           {"tier": "everyone",    "hidden": false}
 }

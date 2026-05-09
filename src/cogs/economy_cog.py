@@ -28,6 +28,7 @@ from src.config import (
     DAILY_REWARD, DAILY_RESET_HOUR,
 )
 from src.jail_reasons import format_steal_reason, format_mug_reason, format_bankheist_reason
+from src.confirm_view import confirm_purchase
 from src import state
 
 
@@ -297,6 +298,7 @@ class EconomyCog(commands.Cog):
                     jail_until_ts = time.time() + jail_days * 86400
                     thief_data["jail_until"] = jail_until_ts
                     thief_data["jail_reason"] = format_steal_reason(target.display_name)
+                    thief_data["bail_amount"] = steal_amount
                     await save_economy(uid=thief_id)
                     result_embed = emb(
                         "🚔 Caught & Jailed!",
@@ -393,9 +395,12 @@ class EconomyCog(commands.Cog):
     BANKHEIST_PARTICIPANT_JAIL_CHANCE = 0.25
     BANKHEIST_PARTICIPANT_JAIL_SECONDS = 86400  # 1 day
 
-    async def _roll_participant_jail(self, participants: list, target_name: str) -> list:
+    async def _roll_participant_jail(self, participants: list, target_name: str, intended_per_person: int = 0) -> list:
         """For each participant, roll 25% to be jailed for 1 day. Returns the
-        list of jailed Members (for embed display). Mutates state and persists."""
+        list of jailed Members (for embed display). Mutates state and persists.
+
+        `intended_per_person` is recorded as the participant's bail_amount for
+        bail-cost calculation: the amount they tried to / did steal."""
         jailed: list = []
         jail_until_ts = time.time() + self.BANKHEIST_PARTICIPANT_JAIL_SECONDS
         for p in participants:
@@ -404,6 +409,7 @@ class EconomyCog(commands.Cog):
                 pdata = state.economy["users"][str(p.id)]
                 pdata["jail_until"] = jail_until_ts
                 pdata["jail_reason"] = format_bankheist_reason(target_name)
+                pdata["bail_amount"] = int(intended_per_person)
                 await save_economy(uid=p.id)
                 jailed.append(p)
         return jailed
@@ -434,7 +440,7 @@ class EconomyCog(commands.Cog):
         success = random.random() < chance
 
         if not success:
-            jailed = await self._roll_participant_jail(participants, target.display_name)
+            jailed = await self._roll_participant_jail(participants, target.display_name, intended_per_person=0)
             return emb(
                 "🚨 Heist Failed!",
                 f"The crew bailed at the door — {target.display_name}'s savings are untouched.\n"
@@ -446,7 +452,10 @@ class EconomyCog(commands.Cog):
         savings_value = await get_savings_value(target.id)
         intended = int(savings_value * self.BANKHEIST_SEIZE_PCT)
         if intended <= 0:
-            jailed = await self._roll_participant_jail(participants, target.display_name)
+            jailed = await self._roll_participant_jail(
+                participants, target.display_name,
+                intended_per_person=intended // len(participants),
+            )
             return emb(
                 "💨 Empty Vault",
                 f"You broke in clean — but **{target.display_name}** had no savings to steal."
@@ -456,7 +465,10 @@ class EconomyCog(commands.Cog):
 
         seized = await seize_from_savings(target.id, intended)
         if seized <= 0:
-            jailed = await self._roll_participant_jail(participants, target.display_name)
+            jailed = await self._roll_participant_jail(
+                participants, target.display_name,
+                intended_per_person=intended // len(participants),
+            )
             return emb(
                 "💨 Empty Vault",
                 f"You broke in clean — but **{target.display_name}**'s savings were already empty."
@@ -478,7 +490,9 @@ class EconomyCog(commands.Cog):
             cuts.append((p, cut))
         await record_crime_event(target.id, lost=seized)
 
-        jailed = await self._roll_participant_jail(participants, target.display_name)
+        jailed = await self._roll_participant_jail(
+            participants, target.display_name, intended_per_person=share,
+        )
         cut_lines = "\n".join(
             f"  • {p.display_name}: **{cut:,} 🪙**" for p, cut in cuts
         )
@@ -736,6 +750,73 @@ class EconomyCog(commands.Cog):
         await save_economy(uid=target.id)
         await ctx.send(embed=emb("🔓 Released", f"**{target.display_name}** has been freed from jail.", C_GREEN))
 
+    @commands.command(name="bail", aliases=["bailout"])
+    @requires_perm
+    async def cmd_bail(self, ctx: commands.Context, target: MemberConverter = None):
+        payer = ctx.author
+        jailed = target if target is not None else payer
+
+        await _ensure_user(payer.id)
+        await _ensure_user(jailed.id)
+        jdata = state.economy["users"][str(jailed.id)]
+
+        jail_until = jdata.get("jail_until", 0)
+        if time.time() >= jail_until:
+            who = "You're" if jailed.id == payer.id else f"**{jailed.display_name}** is"
+            await ctx.send(embed=emb("🔓 Not Jailed", f"{who} not in jail.", C_GOLD))
+            return
+
+        bail_amount = int(jdata.get("bail_amount", 0) or 0)
+        cost = 10_000 + (bail_amount // 2)
+
+        payer_bal = await get_balance(payer.id)
+        if payer_bal < cost:
+            await ctx.send(embed=emb(
+                "❌ Insufficient Funds",
+                f"Bail costs **{cost:,} 🪙** — you only have **{payer_bal:,} 🪙**.",
+                C_RED,
+            ))
+            return
+
+        who_text = "yourself" if jailed.id == payer.id else f"**{jailed.display_name}**"
+        confirmed = await confirm_purchase(
+            ctx,
+            title="🪙 Pay Bail",
+            description=f"Bail {who_text} out of jail.",
+            cost=cost,
+            payer=payer,
+        )
+        if not confirmed:
+            return
+
+        if time.time() >= jdata.get("jail_until", 0):
+            await ctx.send(embed=emb(
+                "🔓 Already Free",
+                f"{who_text.capitalize()} got out before you confirmed — no charge.",
+                C_GOLD,
+            ))
+            return
+        if await get_balance(payer.id) < cost:
+            await ctx.send(embed=emb(
+                "❌ Insufficient Funds",
+                f"Your balance dropped during confirmation — bail costs **{cost:,} 🪙**.",
+                C_RED,
+            ))
+            return
+
+        await deduct_balance(payer.id, cost)
+        jdata["jail_until"] = 0
+        jdata["jail_reason"] = None
+        jdata["bail_amount"] = 0
+        await save_economy(uid=jailed.id)
+
+        await ctx.send(embed=emb(
+            "🔓 Released on Bail",
+            f"**{payer.display_name}** paid **{cost:,} 🪙** to bail {who_text} out.\n"
+            f"Payer balance: **{await get_balance(payer.id):,} 🪙**",
+            C_GREEN,
+        ))
+
     @commands.command(name="mug")
     @requires_perm
     async def cmd_mug(self, ctx: commands.Context, target: MemberConverter = None, amount: str = None):
@@ -849,6 +930,7 @@ class EconomyCog(commands.Cog):
                 jail_until_ts = time.time() + 86400
                 state.economy["users"][str(uid)]["jail_until"] = jail_until_ts
                 state.economy["users"][str(uid)]["jail_reason"] = format_mug_reason(target.display_name, parsed)
+                state.economy["users"][str(uid)]["bail_amount"] = parsed
                 await save_economy(uid=uid)
                 result_embed = emb(
                     "🔪 Mugged — but Caught!",

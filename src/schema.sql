@@ -347,3 +347,6 @@ ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS crime_eligible BOOLEAN NOT NU
 -- add_balance / add_savings write. Level-based eligibility is latched by
 -- the level-up path in src/leveling.py.
 UPDATE economy_users SET crime_eligible = TRUE WHERE balance > 100000;
+
+-- ── 0009_add_bail_amount.sql ──
+ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS bail_amount BIGINT NOT NULL DEFAULT 0;

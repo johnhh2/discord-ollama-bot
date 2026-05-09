@@ -58,12 +58,12 @@ async def _init_db_state_inner(state, run_migrations):
             await cur.execute(
                 "SELECT user_id, balance, last_daily, daily_date, scratch_used,"
                 " scratch_date, jailbreak_used, jail_until, savings, jail_reason,"
-                " crime_eligible FROM economy_users"
+                " crime_eligible, bail_amount FROM economy_users"
             )
             for row in await cur.fetchall():
                 (uid, bal, last_daily, daily_date, scratch_used, scratch_date,
                  jb_used, jail_until, savings_json, jail_reason,
-                 crime_eligible) = row
+                 crime_eligible, bail_amount) = row
                 state.economy["users"][str(uid)] = {
                     "balance": bal,
                     "last_daily": last_daily,
@@ -75,6 +75,7 @@ async def _init_db_state_inner(state, run_migrations):
                     "savings": json.loads(savings_json) if savings_json else [],
                     "jail_reason": jail_reason,
                     "crime_eligible": bool(crime_eligible),
+                    "bail_amount": int(bail_amount or 0),
                 }
         except Exception as e:
             logging.error(f"[init_db_state] economy_users failed: {e}", exc_info=True)
