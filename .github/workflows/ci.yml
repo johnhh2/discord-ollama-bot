@@ -18,15 +18,7 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Cache installed packages
-        id: pip-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
-        with:
-          path: ${{ env.pythonLocation }}
-          key: pip-${{ runner.os }}-py3.10-${{ hashFiles('requirements.lock') }}-v1
-
       - name: Install dependencies
-        if: steps.pip-cache.outputs.cache-hit != 'true'
         run: |
           pip install --require-hashes -r requirements.lock
           pip install pytest pytest-asyncio ruff bandit pip-audit
