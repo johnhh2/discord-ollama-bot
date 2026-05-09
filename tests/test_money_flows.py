@@ -70,9 +70,10 @@ async def _read_db_jail_reason(uid: int) -> str | None:
     return row[0] if row else None
 
 
-def _make_ctx(thief: FakeMember, victim: FakeMember, content: str = "!steal @victim"):
+def _make_ctx(thief: FakeMember, victim: FakeMember, content: str = "!steal @victim 1"):
     """Build a FakeCtx with the bot stubbed and ctx.message.content set so
-    cmd_steal's tier-parsing can read it."""
+    cmd_steal's tier-parsing can read it. Default content includes an
+    explicit tier so we run the heist directly instead of the button picker."""
     ctx = FakeCtx(author=thief, guild=FakeGuild(gid=42))
     ctx.bot = _StubBot()
     ctx.message = FakeMessage(content=content)
@@ -114,7 +115,7 @@ async def test_steal_success_transfers_coins_and_persists(db, monkeypatch):
     # randint is called for cop_steps decoration; keep it deterministic.
     monkeypatch.setattr(random, "randint", lambda a, b: a)
 
-    ctx = _make_ctx(thief, victim, content="!steal @victim")
+    ctx = _make_ctx(thief, victim, content="!steal @victim 1")
     await cog.cmd_steal.callback(cog, ctx, target=victim)
 
     expected_steal = int(10_000 * 0.10)  # 1000
@@ -143,7 +144,7 @@ async def test_steal_caught_and_jailed_deducts_fee_and_sets_jail(db, monkeypatch
     monkeypatch.setattr(random, "randint", lambda a, b: a)
 
     before = time.time()
-    ctx = _make_ctx(thief, victim, content="!steal @victim")
+    ctx = _make_ctx(thief, victim, content="!steal @victim 1")
     await cog.cmd_steal.callback(cog, ctx, target=victim)
 
     assert await _economy.get_balance(thief.id) == starting - 1000

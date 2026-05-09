@@ -70,7 +70,8 @@ def _make_hstate(host, target, joiners: list):
 def _make_steal_ctx(thief: FakeMember, victim: FakeMember):
     ctx = FakeCtx(author=thief, guild=FakeGuild(gid=42))
     ctx.bot = _StubBot()
-    ctx.message = FakeMessage(content="!steal @victim")
+    # Explicit tier so we skip the interactive picker.
+    ctx.message = FakeMessage(content="!steal @victim 1")
     return ctx
 
 
