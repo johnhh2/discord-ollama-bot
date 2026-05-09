@@ -351,13 +351,14 @@ class EconomyCog(commands.Cog):
             bonus += min(0.03, max(0.0, (jl - 1) / 99.0) * 0.03)
         return min(0.95, base + bonus)
 
-    def _bankheist_render(self, hstate: dict, guild_id: int, savings_value: float, last_call: bool = False):
-        """Build the lobby embed reflecting current slot occupants and chance."""
+    def _bankheist_header(self, host, target, joiners: list, guild_id: int, savings_value: float, *, include_open_slots: bool = True) -> str:
+        """Render the crew roster + chance + pot block. Used by both the
+        lobby embed and every resolution embed so the result keeps the
+        context the user saw when they joined.
+
+        When `include_open_slots` is False, unfilled slots are omitted
+        (used in result embeds where 'open —' is no longer meaningful)."""
         from src.level_unlocks import user_display_level
-        host = hstate["host"]
-        target = hstate["target"]
-        slots = hstate["slots"]
-        joiners = [m for m in slots[1:] if m is not None]
         chance = self._bankheist_chance(host, joiners, guild_id)
         pot = int(savings_value * self.BANKHEIST_SEIZE_PCT)
         host_lvl = user_display_level(host.id, guild_id)
@@ -367,23 +368,36 @@ class EconomyCog(commands.Cog):
         crew_lines = [
             f"  👑 {host.display_name}  (Lv {host_lvl}) (+{host_bonus_pct}%; up to 10%)"
         ]
+        # joiners is filled left-to-right in slot 2/3/4 — render each with its emoji.
         for i, emoji in enumerate(self.BANKHEIST_JOIN_EMOJIS):
-            member = slots[i + 1]
+            member = joiners[i] if i < len(joiners) else None
             if member is None:
-                crew_lines.append(f"  {emoji} — open —")
-            else:
-                lvl = user_display_level(member.id, guild_id)
-                joiner_bonus_pct = round(min(0.03, max(0.0, (lvl - 1) / 99.0) * 0.03) * 100, 1)
-                crew_lines.append(
-                    f"  {emoji} {member.display_name}  (Lv {lvl}) (+{joiner_bonus_pct}%; up to 3%)"
-                )
+                if include_open_slots:
+                    crew_lines.append(f"  {emoji} — open —")
+                continue
+            lvl = user_display_level(member.id, guild_id)
+            joiner_bonus_pct = round(min(0.03, max(0.0, (lvl - 1) / 99.0) * 0.03) * 100, 1)
+            crew_lines.append(
+                f"  {emoji} {member.display_name}  (Lv {lvl}) (+{joiner_bonus_pct}%; up to 3%)"
+            )
 
-        deadline_ts = int(hstate["opened_at_wall"] + self.BANKHEIST_LOBBY_TIMEOUT)
-        body = (
+        return (
             f"Host: {host.mention}\n"
             f"Crew:\n" + "\n".join(crew_lines) + "\n\n"
             f"**Success chance:** {round(chance * 100, 1)}%\n"
-            f"**Pot if successful:** ~{pot:,} 🪙 from {target.display_name}'s savings\n\n"
+            f"**Pot if successful:** ~{pot:,} 🪙 from {target.display_name}'s savings"
+        )
+
+    def _bankheist_render(self, hstate: dict, guild_id: int, savings_value: float, last_call: bool = False):
+        """Build the lobby embed reflecting current slot occupants and chance."""
+        host = hstate["host"]
+        target = hstate["target"]
+        joiners = [m for m in hstate["slots"][1:] if m is not None]
+
+        deadline_ts = int(hstate["opened_at_wall"] + self.BANKHEIST_LOBBY_TIMEOUT)
+        body = (
+            self._bankheist_header(host, target, joiners, guild_id, savings_value)
+            + "\n\n"
             f"React 2️⃣–4️⃣ to join. Host: 🚀 to start, ❌ to cancel.\n"
             f"{target.display_name} cannot join.\n"
             f"Auto-starts <t:{deadline_ts}:R>."
@@ -436,6 +450,13 @@ class EconomyCog(commands.Cog):
         participants = [host] + joiners
         gid = ctx.guild.id if ctx.guild else 0
 
+        # Snapshot the lobby header (crew + chance + pot) once so every result
+        # embed below shows the user the same info they saw in the lobby.
+        savings_value = await get_savings_value(target.id)
+        header = self._bankheist_header(
+            host, target, joiners, gid, savings_value, include_open_slots=False,
+        )
+
         chance = self._bankheist_chance(host, joiners, gid)
         success = random.random() < chance
 
@@ -443,13 +464,13 @@ class EconomyCog(commands.Cog):
             jailed = await self._roll_participant_jail(participants, target.display_name, intended_per_person=0)
             return emb(
                 "🚨 Heist Failed!",
+                header + "\n\n"
                 f"The crew bailed at the door — {target.display_name}'s savings are untouched.\n"
                 f"(Roll missed a {round(chance * 100, 1)}% chance.)"
                 + self._format_caught_line(jailed),
                 C_RED,
             )
 
-        savings_value = await get_savings_value(target.id)
         intended = int(savings_value * self.BANKHEIST_SEIZE_PCT)
         if intended <= 0:
             jailed = await self._roll_participant_jail(
@@ -458,6 +479,7 @@ class EconomyCog(commands.Cog):
             )
             return emb(
                 "💨 Empty Vault",
+                header + "\n\n"
                 f"You broke in clean — but **{target.display_name}** had no savings to steal."
                 + self._format_caught_line(jailed),
                 C_GREY,
@@ -471,6 +493,7 @@ class EconomyCog(commands.Cog):
             )
             return emb(
                 "💨 Empty Vault",
+                header + "\n\n"
                 f"You broke in clean — but **{target.display_name}**'s savings were already empty."
                 + self._format_caught_line(jailed),
                 C_GREY,
@@ -498,6 +521,7 @@ class EconomyCog(commands.Cog):
         )
         return emb(
             "🏦 Heist Successful!",
+            header + "\n\n"
             f"The crew cracked **{target.display_name}**'s savings for **{seized:,} 🪙**!\n\n"
             f"{cut_lines}"
             + self._format_caught_line(jailed),
