@@ -67,7 +67,7 @@ class _StealTierView(discord.ui.View):
         styles = [discord.ButtonStyle.success, discord.ButtonStyle.primary, discord.ButtonStyle.danger]
         for i, (_escape, pct, _jail, _fine, _days) in enumerate(STEAL_TIERS):
             amount = max(1, int(victim_bal * pct))
-            label = f"Tier {i + 1}: {amount:,} 🪙"
+            label = f"{amount:,} 🪙"
             self.add_item(_StealTierButton(label=label, tier=i + 1, style=styles[i]))
 
     async def on_timeout(self):
@@ -282,18 +282,16 @@ class EconomyCog(commands.Cog):
 
         victim_bal = await get_balance(target.id)
         rows = []
-        for i, (escape, pct, jail, fine, _days) in enumerate(STEAL_TIERS, start=1):
-            amount = max(1, int(victim_bal * pct))
-            bail = 10_000 + amount // 2
+        for i, (escape, _pct, jail, fine, _days) in enumerate(STEAL_TIERS, start=1):
             rows.append(
                 f"**Tier {i}** — {int(escape*100)}% escape · "
-                f"{int(jail*100)}% jail if caught · fine **{fine:,}** · bail **{bail:,}**"
+                f"{int(jail*100)}% jail if caught · fine **{fine:,}**"
             )
         body = (
             f"Pick a tier to steal from **{target.display_name}** "
             f"(wallet: **{victim_bal:,} 🪙**).\n\n"
             + "\n".join(rows)
-            + "\n\n*Higher tiers steal more — but the **jail chance, fine, and bail** all go up too.*"
+            + "\n\n*Higher tiers steal more — but the **jail chance and fine** go up too.*"
         )
         view = _StealTierView(cog=self, ctx=ctx, target=target, victim_bal=victim_bal)
         view.message = await ctx.send(embed=emb("🦹 Choose Heist Tier", body, C_GOLD), view=view)
