@@ -52,11 +52,11 @@ def _jail_body(name: str, jail_until_ts: float, reason: str | None) -> str:
 
 class _StealTierView(discord.ui.View):
     """3-button tier picker shown when `!steal @user` runs without a tier arg.
-    Only the original invoker can click; on click we disable buttons and
-    delegate to `cog._run_steal` so the heist follows the same code path
+    Only the original invoker can click; on click we drop the buttons entirely
+    and delegate to `cog._run_steal` so the heist follows the same code path
     as `!steal @user N`."""
 
-    def __init__(self, cog, ctx, target, timeout: float = 30.0):
+    def __init__(self, cog, ctx, target, victim_bal: int, timeout: float = 30.0):
         super().__init__(timeout=timeout)
         self.cog = cog
         self.ctx = ctx
@@ -64,10 +64,11 @@ class _StealTierView(discord.ui.View):
         self.message: discord.Message | None = None
         self._fired = False
 
-        labels = [("10%", 1), ("15%", 2), ("25%", 3)]
         styles = [discord.ButtonStyle.success, discord.ButtonStyle.primary, discord.ButtonStyle.danger]
-        for (label, tier), style in zip(labels, styles):
-            self.add_item(_StealTierButton(label=label, tier=tier, style=style))
+        for i, (_escape, pct, _jail, _fine, _days) in enumerate(STEAL_TIERS):
+            amount = max(1, int(victim_bal * pct))
+            label = f"Tier {i + 1}: {amount:,} 🪙"
+            self.add_item(_StealTierButton(label=label, tier=i + 1, style=styles[i]))
 
     async def on_timeout(self):
         if self._fired or self.message is None:
@@ -91,9 +92,7 @@ class _StealTierButton(discord.ui.Button):
             await interaction.response.send_message("Not your heist.", ephemeral=True)
             return
         view._fired = True
-        for c in view.children:
-            c.disabled = True
-        await interaction.response.edit_message(view=view)
+        await interaction.response.edit_message(view=None)
         view.stop()
         await view.cog._run_steal(view.ctx, view.target, self.tier)
 
@@ -287,9 +286,8 @@ class EconomyCog(commands.Cog):
             amount = max(1, int(victim_bal * pct))
             bail = 10_000 + amount // 2
             rows.append(
-                f"**Tier {i} — {int(pct*100)}%**: ~{amount:,} 🪙 if it works "
-                f"({int(escape*100)}% escape chance · {int(jail*100)}% jail if caught · "
-                f"fine **{fine:,}** · bail **{bail:,}**)"
+                f"**Tier {i}** — {int(escape*100)}% escape · "
+                f"{int(jail*100)}% jail if caught · fine **{fine:,}** · bail **{bail:,}**"
             )
         body = (
             f"Pick a tier to steal from **{target.display_name}** "
@@ -297,7 +295,7 @@ class EconomyCog(commands.Cog):
             + "\n".join(rows)
             + "\n\n*Higher tiers steal more — but the **jail chance, fine, and bail** all go up too.*"
         )
-        view = _StealTierView(cog=self, ctx=ctx, target=target)
+        view = _StealTierView(cog=self, ctx=ctx, target=target, victim_bal=victim_bal)
         view.message = await ctx.send(embed=emb("🦹 Choose Heist Tier", body, C_GOLD), view=view)
 
     async def _run_steal(self, ctx: commands.Context, target, tier_num: int):
