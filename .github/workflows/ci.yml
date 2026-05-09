@@ -45,11 +45,24 @@ jobs:
       - name: Build container image
         run: docker build -t bot:ci .
 
-      - name: Trivy scan (image)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+      - name: Cache Trivy DB
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        continue-on-error: true
         with:
-          image-ref: bot:ci
-          severity: CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-          vuln-type: os,library
+          path: ~/.cache/trivy
+          key: trivy-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
+
+      - name: Trivy scan (image)
+        run: |
+          TRIVY_VERSION=0.70.0
+          if ! command -v trivy >/dev/null; then
+            curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+              | sudo tar -xz -C /usr/local/bin trivy
+          fi
+          trivy image bot:ci \
+            --severity CRITICAL \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --vuln-type os,library
