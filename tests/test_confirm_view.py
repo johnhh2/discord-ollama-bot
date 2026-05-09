@@ -33,7 +33,6 @@ async def test_payer_confirm_sets_value_true():
     await _confirm_coro(view)(view, _FakeInteraction(payer), view.confirm)
 
     assert view.value is True
-    assert all(c.disabled for c in view.children)
 
 
 async def test_payer_cancel_sets_value_false():
@@ -42,7 +41,6 @@ async def test_payer_cancel_sets_value_false():
     await _cancel_coro(view)(view, _FakeInteraction(payer), view.cancel)
 
     assert view.value is False
-    assert all(c.disabled for c in view.children)
 
 
 async def test_wrong_user_rejected_with_ephemeral():
@@ -58,8 +56,6 @@ async def test_wrong_user_rejected_with_ephemeral():
     assert "Not your purchase" in args[0]
     assert kwargs.get("ephemeral") is True
     assert view.value is None
-    # Buttons remain enabled — the real payer can still click.
-    assert not any(c.disabled for c in view.children)
 
 
 async def test_confirm_purchase_timeout_returns_false():

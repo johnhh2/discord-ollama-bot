@@ -25,8 +25,6 @@ class _ConfirmView(ui.View):
             await interaction.response.send_message("Not your purchase.", ephemeral=True)
             return
         self.value = True
-        for c in self.children:
-            c.disabled = True
         await interaction.response.defer()
         self.stop()
 
@@ -36,8 +34,6 @@ class _ConfirmView(ui.View):
             await interaction.response.send_message("Not your purchase.", ephemeral=True)
             return
         self.value = False
-        for c in self.children:
-            c.disabled = True
         await interaction.response.defer()
         self.stop()
 
@@ -70,7 +66,7 @@ async def confirm_purchase(
         closing, result = emb(f"🚫 {title} — Cancelled", description, C_GREY), False
 
     try:
-        await msg.edit(embed=closing, view=view)
+        await msg.edit(embed=closing, view=None)
     except discord.HTTPException:
         pass
     return result
