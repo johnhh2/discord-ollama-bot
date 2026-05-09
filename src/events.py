@@ -37,9 +37,10 @@ from src.games.hangman import _process_hangman_guess
 from src.leveling import grant_xp as _grant_xp
 
 
-async def _log_admin_command(bot, ctx: commands.Context, error: Exception | None = None):
-    """Post a log embed to the global admin-log channel if the just-run command
-    was gated to bot_admin or server_admin. No-op when the channel isn't configured.
+async def _log_admin_command(bot, ctx: commands.Context):
+    """Post a log embed to the global admin-log channel for successful runs of
+    bot_admin / server_admin commands. No-op when the channel isn't configured.
+    Errors are handled separately by `_log_command_error`.
     """
     if ctx.command is None:
         return
@@ -55,8 +56,6 @@ async def _log_admin_command(bot, ctx: commands.Context, error: Exception | None
         return
     guild_name = ctx.guild.name if ctx.guild else "DM"
     guild_id_str = str(ctx.guild.id) if ctx.guild else "—"
-    title = "🛡️ Admin Command Error" if error else "🛡️ Admin Command"
-    color = C_RED if error else C_BLUE
     desc_lines = [
         f"**User:** {ctx.author.display_name} (`{ctx.author.id}`)",
         f"**Guild:** {guild_name} (`{guild_id_str}`)",
@@ -64,10 +63,39 @@ async def _log_admin_command(bot, ctx: commands.Context, error: Exception | None
         f"**Tier:** {perm.get('tier')}",
         f"**Command:** `{ctx.message.content[:300]}`",
     ]
-    if error is not None:
-        desc_lines.append(f"**Error:** `{type(error).__name__}: {error}`"[:1000])
     try:
-        await channel.send(embed=emb(title, "\n".join(desc_lines), color))
+        await channel.send(embed=emb("🛡️ Admin Command", "\n".join(desc_lines), C_BLUE))
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+
+
+async def _log_command_error(bot, ctx: commands.Context, error: Exception):
+    """Post a command error embed to the global error-log channel. Fires for
+    every command tier (everyone / server_admin / bot_admin). No-op when the
+    channel isn't configured.
+    """
+    chan_id = state.bot_settings.get("error_log_channel")
+    if not chan_id:
+        return
+    try:
+        channel = bot.get_channel(int(chan_id)) or await bot.fetch_channel(int(chan_id))
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
+        return
+    guild_name = ctx.guild.name if ctx.guild else "DM"
+    guild_id_str = str(ctx.guild.id) if ctx.guild else "—"
+    tier = "—"
+    if ctx.command is not None:
+        tier = get_command_perm(ctx.command.qualified_name).get("tier", "—")
+    desc_lines = [
+        f"**User:** {ctx.author.display_name} (`{ctx.author.id}`)",
+        f"**Guild:** {guild_name} (`{guild_id_str}`)",
+        f"**Channel:** {ctx.channel.mention if hasattr(ctx.channel, 'mention') else ctx.channel}",
+        f"**Tier:** {tier}",
+        f"**Command:** `{ctx.message.content[:300]}`",
+        f"**Error:** `{type(error).__name__}: {error}`"[:1000],
+    ]
+    try:
+        await channel.send(embed=emb("⚠️ Command Error", "\n".join(desc_lines), C_RED))
     except (discord.Forbidden, discord.HTTPException):
         pass
 
@@ -332,7 +360,7 @@ class EventsCog(commands.Cog):
         if ctx.command is not None:
             from src.metrics import command_invocations
             command_invocations.labels(command=ctx.command.qualified_name, outcome="error").inc()
-        await _log_admin_command(self.bot, ctx, error=error)
+        await _log_command_error(self.bot, ctx, error)
         raise error
 
     @commands.Cog.listener()

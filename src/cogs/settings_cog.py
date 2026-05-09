@@ -100,6 +100,9 @@ class SettingsCog(commands.Cog):
             admin_log_id = state.bot_settings.get("admin_log_channel")
             admin_log_val = f"<#{admin_log_id}>" if admin_log_id else "❌ disabled"
             embed.add_field(name="🛡️ Admin log channel (global)", value=admin_log_val, inline=False)
+            error_log_id = state.bot_settings.get("error_log_channel")
+            error_log_val = f"<#{error_log_id}>" if error_log_id else "❌ disabled"
+            embed.add_field(name="⚠️ Error log channel (global)", value=error_log_val, inline=False)
             bug_chan_id = state.bot_settings.get("bug_report_channel")
             bug_chan_val = f"<#{bug_chan_id}>" if bug_chan_id else "❌ disabled"
             embed.add_field(name="🐛 Bug report channel (global)", value=bug_chan_val, inline=False)
@@ -123,6 +126,7 @@ class SettingsCog(commands.Cog):
             footer_text += (
                 "\n\nBot admin:\n"
                 "admin-log-channel #channel / clear\n"
+                "error-log-channel #channel / clear\n"
                 "bug-report-channel #channel / clear"
             )
         embed.set_footer(text=footer_text)
@@ -546,6 +550,30 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb(
                 "🛡️ Admin Log Channel",
                 "Usage: `!settings admin-log-channel #channel` or `!settings admin-log-channel clear`",
+                C_GREY,
+            ))
+
+    # ── !settings error-log-channel (global, bot-admin only) ─────────────────
+    @cmd_settings.command(name="error-log-channel")
+    @requires_perm
+    async def settings_error_log_channel(self, ctx: commands.Context, *args):
+        if args and args[0].lower() == "clear":
+            state.bot_settings.pop("error_log_channel", None)
+            await save_bot_settings()
+            await ctx.send(embed=emb("⚠️ Error Log Channel", "Command error logging disabled.", C_GREEN))
+        elif ctx.message.channel_mentions:
+            channel = ctx.message.channel_mentions[0]
+            state.bot_settings["error_log_channel"] = str(channel.id)
+            await save_bot_settings()
+            await ctx.send(embed=emb(
+                "⚠️ Error Log Channel",
+                f"Command errors from **all servers** will be logged to {channel.mention}.",
+                C_GREEN,
+            ))
+        else:
+            await ctx.send(embed=emb(
+                "⚠️ Error Log Channel",
+                "Usage: `!settings error-log-channel #channel` or `!settings error-log-channel clear`",
                 C_GREY,
             ))
 

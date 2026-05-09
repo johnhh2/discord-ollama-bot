@@ -20,7 +20,7 @@ import pytest
 import src.state as _state
 import src.persistence as _persistence
 from src.cogs.settings_cog import SettingsCog
-from src.events import _log_admin_command
+from src.events import _log_admin_command, _log_command_error
 
 from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild, FakeTextChannel
 
@@ -211,23 +211,52 @@ async def test_log_sends_for_server_admin_tier_success():
     assert "server_admin" in embed.description
 
 
-async def test_log_includes_error_on_error_path():
-    """When `error` is passed, the embed flips to the error variant and
-    includes the exception type and message."""
-    _state.bot_settings["admin_log_channel"] = "12345"
+async def test_error_log_routes_to_error_log_channel():
+    """`_log_command_error` posts to `error_log_channel` (separate from the
+    admin-log channel) and includes the exception type and message."""
+    _state.bot_settings["error_log_channel"] = "67890"
     _state.command_perms["adminhelp"] = {"tier": "bot_admin", "hidden": False}
-    log_chan = FakeTextChannel(ch_id=12345)
+    log_chan = FakeTextChannel(ch_id=67890)
     bot = _FakeBot(channel=log_chan)
     ctx = _ctx_for_command("adminhelp")
 
     err = RuntimeError("kaboom")
-    await _log_admin_command(bot, ctx, error=err)
+    await _log_command_error(bot, ctx, err)
 
     assert log_chan.send.await_count == 1
     embed = log_chan.send.call_args.kwargs["embed"]
     assert "Error" in embed.title
     assert "RuntimeError" in embed.description
     assert "kaboom" in embed.description
+
+
+async def test_error_log_fires_for_everyone_tier():
+    """Errors on `everyone`-tier commands also reach the error-log channel —
+    the previous admin-only gating silently dropped them."""
+    _state.bot_settings["error_log_channel"] = "67890"
+    _state.bot_settings.pop("admin_log_channel", None)
+    _state.command_perms["bug"] = {"tier": "everyone", "hidden": False}
+    log_chan = FakeTextChannel(ch_id=67890)
+    bot = _FakeBot(channel=log_chan)
+    ctx = _ctx_for_command("bug")
+
+    await _log_command_error(bot, ctx, RuntimeError("oops"))
+
+    assert log_chan.send.await_count == 1
+
+
+async def test_error_log_no_op_when_unconfigured():
+    """No `error_log_channel` set → no fetch, no send, no raise."""
+    _state.bot_settings.pop("error_log_channel", None)
+    _state.command_perms["adminhelp"] = {"tier": "bot_admin", "hidden": False}
+    log_chan = FakeTextChannel(ch_id=12345)
+    bot = _FakeBot(channel=log_chan)
+    ctx = _ctx_for_command("adminhelp")
+
+    await _log_command_error(bot, ctx, RuntimeError("kaboom"))
+
+    assert log_chan.send.await_count == 0
+    assert bot.get_channel_calls == []
 
 
 async def test_log_swallows_send_forbidden():
