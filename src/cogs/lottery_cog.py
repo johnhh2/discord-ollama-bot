@@ -193,7 +193,7 @@ class LotteryCog(commands.Cog):
         if was_new_player:
             lottery["prize_pool"] += 1000
 
-        await add_guild_house(ctx.guild.id, tickets)
+        await add_guild_house(ctx.guild.id, tickets * 3)
 
         await save_lottery(ctx.guild.id, lottery)
 
