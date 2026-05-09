@@ -125,6 +125,7 @@ class FunCog(commands.Cog):
 
     @commands.command(name="nsfw")
     async def cmd_nsfw(self, ctx: commands.Context, *, tags: str = ""):
+        logging.info(f"[nsfw] cmd start user={ctx.author.id} channel={ctx.channel.id} tags={tags!r}")
         cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
         if not cfg.get("nsfw_enabled", False):
             await ctx.send(embed=emb("🔞 Disabled", "NSFW commands are disabled in this server.", C_GREY))
@@ -137,7 +138,6 @@ class FunCog(commands.Cog):
                 names = " ".join(f"<#{cid}>" for cid in nsfw_channels)
                 await _wrong_channel_reply(ctx, f"NSFW commands are only allowed in: {names}")
                 return
-        await ctx.typing()
         tag_parts = [w for w in tags.strip().split()]
         banned = [t.lower() for t in cfg.get("nsfw_banned_tags", [])]
         tag_parts = [w for w in tag_parts if w.lower() not in banned]
@@ -167,17 +167,42 @@ class FunCog(commands.Cog):
             await ctx.send(embed=emb("❌ NSFW", "No image API configured.", C_RED))
             return
 
+        loading_label = " ".join(tag_parts) if tag_parts else "solo"
+        try:
+            loading_msg = await ctx.send(embed=emb("🔞 Loading…", f"Searching for `{loading_label}`…", C_GREY))
+        except discord.HTTPException:
+            loading_msg = None
+
         try:
             async with aiohttp.ClientSession() as session:
                 search_tags = "+".join(tag_parts) if tag_parts else "solo"
-                posts = _filter_banned(await _nsfw_fetch(session, search_tags + ban_query))
+                logging.info(f"[nsfw] fetching tags={search_tags!r} ban_query={ban_query!r}")
+                raw_posts = await _nsfw_fetch(session, search_tags + ban_query)
+                logging.info(f"[nsfw] fetch returned {len(raw_posts)} posts pre-filter")
+                posts = _filter_banned(raw_posts)
         except Exception as e:
-            await ctx.send(embed=emb("❌ NSFW", f"Request failed: {e}", C_RED))
+            logging.exception(f"[nsfw] fetch raised: {e}")
+            err_embed = emb("❌ NSFW", f"Request failed: {e}", C_RED)
+            if loading_msg is not None:
+                try:
+                    await loading_msg.edit(embed=err_embed)
+                    return
+                except discord.HTTPException:
+                    pass
+            await ctx.send(embed=err_embed)
             return
 
         if not posts:
             label = " ".join(tag_parts) if tag_parts else "solo"
-            await ctx.send(embed=emb("🔞 NSFW", f"No results for `{label}`.", C_GREY))
+            logging.info(f"[nsfw] no posts; sending no-results reply for {label!r}")
+            none_embed = emb("🔞 NSFW", f"No results for `{label}`.", C_GREY)
+            if loading_msg is not None:
+                try:
+                    await loading_msg.edit(embed=none_embed)
+                    return
+                except discord.HTTPException:
+                    pass
+            await ctx.send(embed=none_embed)
             return
 
         logging.info(f"[nsfw] {len(posts)} posts after filtering")
@@ -190,17 +215,26 @@ class FunCog(commands.Cog):
         embed.set_image(url=file_url)
         tags_str = ", ".join(post.get("tags", "").split())
         embed.set_footer(text=f"Score: {post.get('score', '?')} | Rating: {post.get('rating', '?')} | Tags: {tags_str}")
-        try:
-            msg = await ctx.send(embed=embed)
-        except discord.HTTPException as e:
-            # Discord 40062 = its image proxy is rate-limited by the upstream host.
-            # Fall back to posting the raw URL so the user still gets the image.
-            logging.warning(f"[nsfw] embed send failed status={e.status} code={e.code}; falling back to plain url")
+
+        msg = None
+        if loading_msg is not None:
             try:
-                msg = await ctx.send(f"🔞 **{display}**\n{file_url}")
-            except discord.HTTPException as e2:
-                logging.error(f"[nsfw] fallback send also failed status={e2.status} code={e2.code}")
-                return
+                await loading_msg.edit(embed=embed)
+                msg = loading_msg
+            except discord.HTTPException as e:
+                logging.warning(f"[nsfw] loading edit failed status={e.status} code={e.code}; sending new message")
+        if msg is None:
+            try:
+                msg = await ctx.send(embed=embed)
+            except discord.HTTPException as e:
+                # Discord 40062 = its image proxy is rate-limited by the upstream host.
+                # Fall back to posting the raw URL so the user still gets the image.
+                logging.warning(f"[nsfw] embed send failed status={e.status} code={e.code}; falling back to plain url")
+                try:
+                    msg = await ctx.send(f"🔞 **{display}**\n{file_url}")
+                except discord.HTTPException as e2:
+                    logging.error(f"[nsfw] fallback send also failed status={e2.status} code={e2.code}")
+                    return
         _nsfw_last_msg[(ctx.channel.id, ctx.author.id)] = msg
 
 
