@@ -385,8 +385,21 @@ class EventsCog(commands.Cog):
         # this, a fast command after restart hits _ensure_user against an
         # empty state.economy["users"], which overwrites the user's real
         # row with {balance: 0, daily_date: None}.
+        #
+        # Bounded wait: if init_db_state was cancelled mid-flight (e.g. a
+        # gateway hiccup re-dispatched on_ready and aborted the in-flight
+        # task), init_done stays unset forever and every message hangs here.
+        # 60s is well past a healthy boot's init time; if we're past that,
+        # something is wrong and silently dropping the message is better
+        # than blocking the listener task indefinitely. _ensure_user and
+        # grant_xp keep their unbounded waits — there the cost of proceeding
+        # on empty state is data corruption, not a dropped command.
         import src.persistence as _pkg
-        await _pkg.init_done.wait()
+        try:
+            await asyncio.wait_for(_pkg.init_done.wait(), timeout=60.0)
+        except asyncio.TimeoutError:
+            logging.error("[on_message] init_done not set after 60s; dropping message")
+            return
 
         # Bot-side blocklist: silently drop everything from banned users —
         # no AI, no commands, no XP/economy/tax/curse side effects, no

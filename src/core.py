@@ -54,6 +54,11 @@ class Bot(commands.Bot):
         await self.invoke(ctx)  # type: ignore
 
     async def setup_hook(self) -> None:
+        # Load cogs here, not in on_connect. on_connect fires on every gateway
+        # reconnect, so loading there raises ExtensionAlreadyLoaded on resume.
+        # setup_hook runs exactly once, before the gateway connects.
+        await _load_extensions(self)
+
         # Start the localhost-only /healthz server before login so Docker's
         # HEALTHCHECK has something to talk to during the start-period window.
         from src.health import start_health_server
@@ -181,10 +186,6 @@ def _build_bot() -> commands.Bot:
     that entirely.
     """
     bot = create_bot()
-
-    @bot.event
-    async def on_connect():
-        await _load_extensions(bot)
 
     @bot.event
     async def on_message(message):
