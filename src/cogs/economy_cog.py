@@ -143,8 +143,8 @@ class EconomyCog(commands.Cog):
         lines = [
             f"**`!steal @user [tier]`**{steal_lock} — Pick a pocket. Chance to steal a % of their balance; risk jail if caught.",
             "  **Tier 1** — 10% steal chance, steal 10% | Jail chance: 25% | Fee: 1,000 🪙 | Jail: 1 day",
-            "  **Tier 2** — 7% steal chance, steal 15%  | Jail chance: 35% | Fee: 1,000 🪙 | Jail: 2 days",
-            "  **Tier 3** — 5% steal chance, steal 25%  | Jail chance: 50% | Fee: 1,000 🪙 | Jail: 3 days",
+            "  **Tier 2** — 7% steal chance, steal 15%  | Jail chance: 35% | Fee: 1,000 🪙 | Jail: 1 day",
+            "  **Tier 3** — 5% steal chance, steal 25%  | Jail chance: 50% | Fee: 1,000 🪙 | Jail: 1 day",
             "",
             f"**`!mug @user <amount>`**{mug_lock} — Pay muggers `<amount>` 🪙 to take that amount from a target. The muggers keep it. 50% chance you get jailed 1 day.",
             "",
@@ -159,8 +159,8 @@ class EconomyCog(commands.Cog):
         TIERS = [
             # (steal_chance, steal_pct, jail_chance, fee, jail_days)
             (0.10, 0.10, 0.25, 1000, 1),
-            (0.07, 0.15, 0.35, 1000, 2),
-            (0.05, 0.25, 0.50, 1000, 3),
+            (0.07, 0.15, 0.35, 1000, 1),
+            (0.05, 0.25, 0.50, 1000, 1),
         ]
         TRACK = 20
 
@@ -297,7 +297,7 @@ class EconomyCog(commands.Cog):
                 if jailed:
                     jail_until_ts = time.time() + jail_days * 86400
                     thief_data["jail_until"] = jail_until_ts
-                    thief_data["jail_reason"] = format_steal_reason(target.display_name)
+                    thief_data["jail_reason"] = format_steal_reason(target.display_name, steal_amount)
                     thief_data["bail_amount"] = steal_amount
                     await save_economy(uid=thief_id)
                     result_embed = emb(

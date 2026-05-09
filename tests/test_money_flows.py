@@ -156,8 +156,9 @@ async def test_steal_caught_and_jailed_deducts_fee_and_sets_jail(db, monkeypatch
     assert jail_until < before + 87000
     assert await _read_db_jail_until(thief.id) == pytest.approx(jail_until)
     # Reason captured at jail time, persisted to DB
-    assert _state.economy["users"][str(thief.id)]["jail_reason"] == "Tried to steal from victim"
-    assert await _read_db_jail_reason(thief.id) == "Tried to steal from victim"
+    # Tier 1: steal_pct=0.10 → steal_amount = int(10_000 * 0.10) = 1000
+    assert _state.economy["users"][str(thief.id)]["jail_reason"] == "Tried to steal 1,000 coins from victim"
+    assert await _read_db_jail_reason(thief.id) == "Tried to steal 1,000 coins from victim"
 
 
 async def test_steal_caught_no_jail_just_fee(db, monkeypatch):

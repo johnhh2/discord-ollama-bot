@@ -7,8 +7,8 @@ legacy jails (set before this column existed) read back as NULL.
 """
 
 
-def format_steal_reason(victim_name: str) -> str:
-    return f"Tried to steal from {victim_name}"
+def format_steal_reason(victim_name: str, amount: int) -> str:
+    return f"Tried to steal {amount:,} coins from {victim_name}"
 
 
 def format_mug_reason(victim_name: str, amount: int) -> str:
