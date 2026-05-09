@@ -802,11 +802,12 @@ class EconomyCog(commands.Cog):
             ))
             return
 
-        who_text = "yourself" if jailed.id == payer.id else f"**{jailed.display_name}**"
+        is_self = jailed.id == payer.id
+        confirm_desc = "Bail yourself out of jail." if is_self else f"Bail **{jailed.display_name}** out of jail."
         confirmed = await confirm_purchase(
             ctx,
             title="🪙 Pay Bail",
-            description=f"Bail {who_text} out of jail.",
+            description=confirm_desc,
             cost=cost,
             payer=payer,
         )
@@ -814,11 +815,12 @@ class EconomyCog(commands.Cog):
             return
 
         if time.time() >= jdata.get("jail_until", 0):
-            await ctx.send(embed=emb(
-                "🔓 Already Free",
-                f"{who_text.capitalize()} got out before you confirmed — no charge.",
-                C_GOLD,
-            ))
+            free_msg = (
+                "You got out before you confirmed — no charge."
+                if is_self
+                else f"**{jailed.display_name}** got out before you confirmed — no charge."
+            )
+            await ctx.send(embed=emb("🔓 Already Free", free_msg, C_GOLD))
             return
         if await get_balance(payer.id) < cost:
             await ctx.send(embed=emb(
@@ -834,10 +836,13 @@ class EconomyCog(commands.Cog):
         jdata["bail_amount"] = 0
         await save_economy(uid=jailed.id)
 
+        if is_self:
+            released_line = f"**{payer.display_name}** paid **{cost:,} 🪙** to bail themself out of jail."
+        else:
+            released_line = f"**{payer.display_name}** paid **{cost:,} 🪙** to bail **{jailed.display_name}** out of jail."
         await ctx.send(embed=emb(
             "🔓 Released on Bail",
-            f"**{payer.display_name}** paid **{cost:,} 🪙** to bail {who_text} out.\n"
-            f"Payer balance: **{await get_balance(payer.id):,} 🪙**",
+            f"{released_line}\nPayer balance: **{await get_balance(payer.id):,} 🪙**",
             C_GREEN,
         ))
 
