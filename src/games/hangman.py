@@ -138,13 +138,19 @@ async def _distribute_hangman_rewards(cid: int, game: dict) -> tuple[str, list[t
         msg += f"**{name}**: +{reward:,} 🪙 | Balance: {new_bal:,} 🪙\n"
         if new_bal_record:
             pending.append(("highest_balance", name, new_bal))
-        # Track most hangman wins per player
+        # Per-player wins row, but announce only when it beats the guild leader's
+        # row — otherwise each win trivially beats the player's own prior count.
         if gid:
             wins_key = f"hangman_wins_{pid}"
             records = await load_records(gid)
             current_wins = records.get(wins_key, {}).get("value", 0)
             new_wins = current_wins + 1
-            if await try_set_record(gid, wins_key, new_wins, pid, name):
+            guild_leader_wins = max(
+                (v.get("value", 0) for k, v in records.items() if k.startswith("hangman_wins_")),
+                default=0,
+            )
+            updated = await try_set_record(gid, wins_key, new_wins, pid, name)
+            if updated and new_wins > guild_leader_wins:
                 pending.append((wins_key, name, new_wins))
     # Track biggest hangman payout (use total for multiplayer, per-player for solo)
     payout_value = total_reward if len(active_players) == 1 else per_player
