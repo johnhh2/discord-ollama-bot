@@ -32,6 +32,7 @@
   "settings bug-report-channel": {"tier": "bot_admin", "hidden": true},
   "bugreport":     {"tier": "everyone",    "hidden": false},
   "issue":         {"tier": "bot_admin",   "hidden": false},
+  "issues":        {"tier": "bot_admin",   "hidden": false},
   "say":           {"tier": "server_admin", "hidden": false},
   "adminhelp":     {"tier": "server_admin", "hidden": false},
   "graph":         {"tier": "everyone",    "hidden": false},

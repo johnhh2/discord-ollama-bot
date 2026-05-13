@@ -24,6 +24,7 @@ from src.permissions import (
 from src.persistence import (
     save_bot_settings, load_saved_quotes,
     insert_issue, get_issue_by_message, update_issue_status,
+    list_issues, soft_delete_issue,
     insert_error_mute, delete_error_mute,
 )
 from src.guild_config import get_guild_cfg
@@ -87,6 +88,11 @@ class UtilityCog(commands.Cog):
         self.bot = bot
         # epoch of last !puzzle generation per uid, for the per-user cooldown.
         self._last_puzzle_by_uid: dict[int, float] = {}
+        # Per-admin listing cache for `!issue delete <N>`: {uid: [issue_id, ...]}
+        # where the index in the list corresponds to the 1-indexed number the
+        # user saw in their most recent `!issues` invocation. In-memory only —
+        # if a delete comes after a restart we just tell them to re-list.
+        self._issues_listing_by_user: dict[int, list[int]] = {}
 
     @commands.command(name="gambler-role", aliases=["gamblerole", "gamblers"])
     async def cmd_gambler_role(self, ctx: commands.Context, toggle: str = None):
@@ -873,21 +879,108 @@ class UtilityCog(commands.Cog):
 
     @commands.command(name="issue")
     @requires_perm
-    async def cmd_issue(self, ctx: commands.Context, kind: str = None, *, report: str = None):
-        """Bot-admin gateway for logging non-bug items. The first token picks
-        the kind (feature/task/improvement); !bugreport remains the public
-        entry point for users to file bugs.
+    async def cmd_issue(self, ctx: commands.Context, kind: str = None, *, rest: str = None):
+        """Bot-admin gateway for logging non-bug items + maintenance.
+
+        Logging form: `!issue <bug|feature|task|improvement> <description>`.
+        Delete form:  `!issue delete <N>` (or `remove`) — soft-deletes the
+        Nth issue from the caller's most recent `!issues` listing.
         """
         kind_norm = (kind or "").lower().strip()
+        if kind_norm in ("delete", "remove"):
+            await self._delete_issue_by_number(ctx, rest)
+            return
         if kind_norm not in _ISSUE_KINDS:
             allowed = "|".join(_ISSUE_KINDS)
             await ctx.send(embed=emb(
                 "📒 Issue",
-                f"Usage: `!issue <{allowed}> <description>`",
+                f"Usage: `!issue <{allowed}> <description>` or `!issue delete <N>`",
                 C_GREY,
             ))
             return
-        await self._submit_issue(ctx, kind=kind_norm, report=report)
+        await self._submit_issue(ctx, kind=kind_norm, report=rest)
+
+    @commands.command(name="issues")
+    @requires_perm
+    async def cmd_issues(self, ctx: commands.Context, filt: str = None):
+        """List issues for triage, newest first.
+
+        Default filter is the non-terminal set (`open`, `not_started`, `wip`).
+        Optional filter argument: `all`, or one of `open` / `not_started` /
+        `wip` / `completed` / `rejected`. The displayed numbering is cached
+        per caller so `!issue delete <N>` lines up with what you just saw.
+        """
+        filt_norm = (filt or "").lower().strip()
+        if filt_norm == "":
+            statuses: tuple[str, ...] | None = ("open", "not_started", "wip")
+            header = "Open issues"
+        elif filt_norm == "all":
+            statuses = None
+            header = "All issues"
+        elif filt_norm in _ISSUE_VALID_STATUSES:
+            statuses = (filt_norm,)
+            header = f"Issues — {filt_norm}"
+        else:
+            allowed = "|".join(("all",) + tuple(_ISSUE_VALID_STATUSES))
+            await ctx.send(embed=emb(
+                "📒 Issues",
+                f"Usage: `!issues [{allowed}]`",
+                C_GREY,
+            ))
+            return
+
+        rows = await list_issues(statuses=statuses, limit=_ISSUES_LIST_LIMIT)
+        if not rows:
+            await ctx.send(embed=emb("📒 Issues", f"_No {filt_norm or 'open'} issues._", C_GREY))
+            self._issues_listing_by_user[ctx.author.id] = []
+            return
+
+        self._issues_listing_by_user[ctx.author.id] = [r["id"] for r in rows]
+
+        lines: list[str] = []
+        for n, row in enumerate(rows, start=1):
+            lines.append(_format_issue_listing_line(n, row))
+        body = "\n".join(lines)
+        if len(rows) >= _ISSUES_LIST_LIMIT:
+            body += f"\n\n_Showing first {_ISSUES_LIST_LIMIT}; older rows truncated._"
+        body += "\n\nUse `!issue delete <N>` to remove an entry from this list."
+        await ctx.send(embed=emb(f"📒 {header} ({len(rows)})", body, C_GREY))
+
+    async def _delete_issue_by_number(self, ctx: commands.Context, arg: str | None) -> None:
+        if not arg or not arg.strip().isdigit():
+            await ctx.send(embed=emb(
+                "📒 Issue",
+                "Usage: `!issue delete <N>` — number is the position in your last `!issues` listing.",
+                C_GREY,
+            ))
+            return
+        n = int(arg.strip())
+        listing = self._issues_listing_by_user.get(ctx.author.id)
+        if not listing:
+            await ctx.send(embed=emb(
+                "📒 Issue",
+                "Run `!issues` first — the number refers to the position in that listing.",
+                C_GREY,
+            ))
+            return
+        if n < 1 or n > len(listing):
+            await ctx.send(embed=emb(
+                "📒 Issue",
+                f"There are only {len(listing)} issue(s) in your last listing.",
+                C_RED,
+            ))
+            return
+        issue_id = listing[n - 1]
+        try:
+            await soft_delete_issue(issue_id)
+        except Exception as e:
+            logging.error(f"[issue] soft-delete of id={issue_id} failed: {e}", exc_info=True)
+            await ctx.send(embed=emb("📒 Issue", "Could not delete that issue — see logs.", C_RED))
+            return
+        # Drop from the cached listing so subsequent !issue delete N+1 still
+        # lines up with what's left.
+        del listing[n - 1]
+        await ctx.send(embed=emb("📒 Issue", f"Deleted issue **#{n}** from the listing.", C_GREEN))
 
     async def _submit_issue(self, ctx: commands.Context, *, kind: str, report: str | None):
         meta = _ISSUE_KINDS[kind]
@@ -996,7 +1089,7 @@ class UtilityCog(commands.Cog):
             return
 
         issue = await get_issue_by_message(payload.message_id)
-        if issue is None:
+        if issue is None or issue.get("deleted"):
             return
 
         if emoji == _ISSUE_MUTE_EMOJI:
@@ -1053,7 +1146,7 @@ class UtilityCog(commands.Cog):
             return
 
         issue = await get_issue_by_message(payload.message_id)
-        if issue is None:
+        if issue is None or issue.get("deleted"):
             return
         await self._toggle_issue_mute(payload, issue, mute=False)
 
@@ -1155,6 +1248,47 @@ _ISSUE_KINDS: dict[str, dict] = {
         "include_history": False,
     },
 }
+
+# Emojis the bot seeds onto each new issue embed. Order is the order
+# they appear in Discord's reaction bar.
+# Statuses accepted as a filter argument to `!issues`. 'open' is the seeded
+# initial status; the rest are reachable via the reaction-triage flow.
+_ISSUE_VALID_STATUSES: tuple[str, ...] = (
+    "open", "not_started", "wip", "completed", "rejected",
+)
+# Max rows returned by !issues. Keep below Discord's 4096-char embed cap; at
+# ~120 chars per line that's ~30 rows safely.
+_ISSUES_LIST_LIMIT = 25
+
+# Short single-line status indicator used in the !issues listing.
+_ISSUE_STATUS_GLYPHS: dict[str, str] = {
+    "open":        "🆕",
+    "not_started": "❌",
+    "wip":         "⚙️",
+    "completed":   "✅",
+    "rejected":    "🛑",
+}
+
+
+def _format_issue_listing_line(n: int, row: dict) -> str:
+    """One row in `!issues` output: `N. <status> <kind> — <snippet> <jumplink>`.
+
+    Snippet is the first 80 chars of `report` with newlines collapsed; the
+    jumplink lets a bot admin go straight to the embed in the bug-report
+    channel without copy-pasting an id.
+    """
+    status = row.get("status") or "open"
+    glyph = _ISSUE_STATUS_GLYPHS.get(status, "•")
+    kind = (row.get("kind") or "bug").lower()
+    snippet = (row.get("report") or "").replace("\n", " ").strip()
+    if len(snippet) > 80:
+        snippet = snippet[:77] + "…"
+    guild_id = row.get("guild_id") or "@me"
+    chan_id = row.get("channel_id")
+    msg_id = row.get("message_id")
+    link = f"https://discord.com/channels/{guild_id}/{chan_id}/{msg_id}"
+    return f"`{n:>2}.` {glyph} **{kind}** — {snippet} [↗]({link})"
+
 
 # Emojis the bot seeds onto each new issue embed. Order is the order
 # they appear in Discord's reaction bar.

@@ -98,6 +98,8 @@ from src.persistence.issues import (  # noqa: F401
     insert_issue,
     get_issue_by_message,
     update_issue_status,
+    list_issues,
+    soft_delete_issue,
     insert_error_mute,
     delete_error_mute,
     load_error_mutes,
