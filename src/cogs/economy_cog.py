@@ -16,6 +16,7 @@ from src.economy import (
     add_guild_house, is_insured, get_insurance_expiry, _ct_now, _ct_today, do_daily_reset, _ensure_user,
     next_daily_reset_ts, get_savings_value, add_savings, remove_savings,
     seize_from_savings, record_crime_event, CRIME_ELIGIBLE_NET_WORTH,
+    _maybe_latch_crime_eligible,
 )
 from src.permissions import (
     requires_perm,
@@ -244,6 +245,7 @@ class EconomyCog(commands.Cog):
 
         await _ensure_user(thief_id)
         await _ensure_user(victim_id)
+        await _maybe_latch_crime_eligible(victim_id)
 
         if not state.economy["users"][str(victim_id)].get("crime_eligible"):
             return emb(
@@ -314,6 +316,7 @@ class EconomyCog(commands.Cog):
 
         await _ensure_user(thief_id)
         await _ensure_user(victim_id)
+        await _maybe_latch_crime_eligible(victim_id)
         if not state.economy["users"][str(victim_id)].get("crime_eligible"):
             await ctx.send(embed=emb(
                 "🛡️ Off-Limits",
@@ -678,6 +681,7 @@ class EconomyCog(commands.Cog):
             return
 
         await _ensure_user(target.id)
+        await _maybe_latch_crime_eligible(target.id)
         if not state.economy["users"][str(target.id)].get("crime_eligible"):
             await ctx.send(embed=emb(
                 "🛡️ Off-Limits",
@@ -940,7 +944,12 @@ class EconomyCog(commands.Cog):
         if not confirmed:
             return
 
-        if time.time() >= jdata.get("jail_until", 0):
+        # Reserve the bail synchronously so a concurrent !bail confirmation
+        # for the same jailed user sees jail_until=0 and bails out early
+        # instead of double-charging. Snapshot the prior values first so we
+        # can roll back if deduct_balance fails.
+        prior_jail_until = jdata.get("jail_until", 0)
+        if time.time() >= prior_jail_until:
             free_msg = (
                 "You got out before you confirmed — no charge."
                 if is_self
@@ -948,7 +957,17 @@ class EconomyCog(commands.Cog):
             )
             await ctx.send(embed=emb("🔓 Already Free", free_msg, C_GOLD))
             return
-        if await get_balance(payer.id) < cost:
+        prior_jail_reason = jdata.get("jail_reason")
+        prior_bail_amount = jdata.get("bail_amount", 0)
+        jdata["jail_until"] = 0
+        jdata["jail_reason"] = None
+        jdata["bail_amount"] = 0
+
+        if not await deduct_balance(payer.id, cost):
+            # Roll back the jail state so the user stays jailed.
+            jdata["jail_until"] = prior_jail_until
+            jdata["jail_reason"] = prior_jail_reason
+            jdata["bail_amount"] = prior_bail_amount
             await ctx.send(embed=emb(
                 "❌ Insufficient Funds",
                 f"Your balance dropped during confirmation — bail costs **{cost:,} 🪙**.",
@@ -956,10 +975,6 @@ class EconomyCog(commands.Cog):
             ))
             return
 
-        await deduct_balance(payer.id, cost)
-        jdata["jail_until"] = 0
-        jdata["jail_reason"] = None
-        jdata["bail_amount"] = 0
         await save_economy(uid=jailed.id)
 
         if is_self:
@@ -1004,6 +1019,7 @@ class EconomyCog(commands.Cog):
             return
 
         await _ensure_user(target.id)
+        await _maybe_latch_crime_eligible(target.id)
         if not state.economy["users"][str(target.id)].get("crime_eligible"):
             await ctx.send(embed=emb(
                 "🛡️ Off-Limits",

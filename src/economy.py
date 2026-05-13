@@ -38,10 +38,11 @@ CRIME_ELIGIBLE_NET_WORTH = 100_000
 
 
 async def _maybe_latch_crime_eligible(uid: int) -> bool:
-    """Sticky: if the user qualifies (wallet + savings > 100k now), set the
-    flag and persist. Returns True iff this call latched the flag (i.e. the
-    user was previously ineligible and just qualified).
-    Level-based latching lives in src/leveling.py's grant_xp."""
+    """Sticky: if the user qualifies (display level >= 10 in any guild, OR
+    wallet + savings > 100k now), set the flag and persist. Returns True iff
+    this call latched the flag (i.e. the user was previously ineligible and
+    just qualified). The level-up branch of grant_xp also latches on the
+    transition into display level 10."""
     user = state.economy["users"].get(str(uid))
     if user is None or user.get("crime_eligible"):
         return False
@@ -51,6 +52,15 @@ async def _maybe_latch_crime_eligible(uid: int) -> bool:
         user["crime_eligible"] = True
         await save_economy(uid=uid)
         return True
+    # Catch users who reached display level 10 (internal 9) before this latch
+    # existed, or in any guild — grant_xp only fires on the level-up edge.
+    ukey = str(uid)
+    for guild_data in state.leveling.values():
+        rec = guild_data.get(ukey)
+        if rec and rec.get("level", 0) >= 9:
+            user["crime_eligible"] = True
+            await save_economy(uid=uid)
+            return True
     return False
 
 
