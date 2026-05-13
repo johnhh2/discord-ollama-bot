@@ -880,7 +880,7 @@ class UtilityCog(commands.Cog):
     async def cmd_bugreport(self, ctx: commands.Context, *, report: str = None):
         await self._submit_issue(ctx, kind="bug", report=report)
 
-    @commands.command(name="featurerequest", aliases=["frequest"])
+    @commands.command(name="featurerequest", aliases=["feature", "frequest"])
     @requires_perm
     async def cmd_featurerequest(self, ctx: commands.Context, *, description: str = None):
         """User-facing feature-request submission.
