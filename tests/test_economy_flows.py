@@ -3,11 +3,17 @@
 These exercise the real persistence path (`db` fixture) so the assertions
 validate both in-memory state AND what was written to the DB.
 """
+import asyncio
+
 import pytest
 
 import src.state as _state
 import src.persistence as _persistence
 import src.economy as _economy
+from src.cogs.economy_cog import EconomyCog
+from src.config import DAILY_REWARD
+
+from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild
 
 
 pytestmark = pytest.mark.asyncio
@@ -238,3 +244,72 @@ async def test_guild_house_drain_into_lottery(db):
     _state.economy["guild_house"].clear()
     await _persistence.init_db_state()
     assert _state.economy["guild_house"].get("11", 0) == 0
+
+
+# ── !daily race condition ────────────────────────────────────────────────────
+
+class _StubBotUser:
+    def __init__(self, uid: int = 999_999_999):
+        self.id = uid
+
+
+class _StubBot:
+    def __init__(self):
+        self.user = _StubBotUser()
+
+
+async def test_concurrent_daily_invocations_grant_once(monkeypatch):
+    """Spamming !daily concurrently must only credit DAILY_REWARD once.
+
+    Previously, `cmd_daily` checked daily_date == today, then awaited
+    add_balance() before stamping daily_date. Two concurrent invocations
+    could each pass the gate and both award the reward.
+
+    Forces real event-loop yielding via patched add_balance — without that,
+    the conftest noop stubs return synchronously and never expose the
+    interleaving the bug needs.
+    """
+    cog = EconomyCog(bot=_StubBot())
+    author = FakeMember(uid=7777, display_name="dailyspammer")
+    guild = FakeGuild(gid=1)
+
+    await _economy._ensure_user(author.id)
+    starting_balance = _state.economy["users"][str(author.id)]["balance"]
+
+    grant_count = [0]
+
+    async def _yielding_add_balance(uid, n, **kwargs):
+        # Let the event loop schedule another invocation here — this is the
+        # exact spot where the pre-fix code yielded between the daily-date
+        # check and the daily-date set.
+        await asyncio.sleep(0)
+        _state.economy["users"][str(uid)]["balance"] += n
+        grant_count[0] += 1
+        return False
+
+    async def _noop_save(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("src.cogs.economy_cog.add_balance", _yielding_add_balance)
+    # The cogs/economy_cog module imports save_economy by name, so the global
+    # conftest stubs (on src.persistence and src.economy) don't reach this
+    # binding. Patch the module-local one too.
+    monkeypatch.setattr("src.cogs.economy_cog.save_economy", _noop_save)
+
+    async def _invoke():
+        ctx = FakeCtx(author=author, guild=guild)
+        ctx.bot = _StubBot()
+        await cog.cmd_daily.callback(cog, ctx)
+
+    # Three concurrent claims — only one should succeed.
+    await asyncio.gather(_invoke(), _invoke(), _invoke())
+
+    final_balance = _state.economy["users"][str(author.id)]["balance"]
+    assert grant_count[0] == 1, (
+        f"daily granted {grant_count[0]} times across 3 concurrent invocations "
+        f"(expected 1)"
+    )
+    assert final_balance == starting_balance + DAILY_REWARD, (
+        f"daily double-claim: balance went {starting_balance} -> {final_balance} "
+        f"(expected +{DAILY_REWARD})"
+    )

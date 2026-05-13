@@ -124,10 +124,13 @@ class EconomyCog(commands.Cog):
             minutes = rem // 60
             await ctx.send(embed=emb("⏳ Already Claimed", f"**{ctx.author.display_name}** already claimed today. Resets at **{DAILY_RESET_HOUR}am** — come back in **{hours}h {minutes}m**.", C_GOLD))
             return
-        gid = ctx.guild.id if ctx.guild else None
-        await add_balance(uid, DAILY_REWARD, guild_id=gid, holder_name=ctx.author.display_name)
+        # Claim the day BEFORE awaiting add_balance — otherwise a user spamming
+        # !daily can pass the check above twice before either invocation
+        # increments the counter, double-collecting the reward.
         user_data["daily_date"] = today
         user_data["last_daily"] = time.time()
+        gid = ctx.guild.id if ctx.guild else None
+        await add_balance(uid, DAILY_REWARD, guild_id=gid, holder_name=ctx.author.display_name)
         await save_economy(uid=uid)
         await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**! Balance: **{await get_balance(uid):,} 🪙**", C_GREEN))
 

@@ -7,6 +7,8 @@ streak/role logic) is integration territory; the daily-limit invariant
 is what matters here.
 """
 
+import asyncio
+
 import pytest
 
 import src.state as _state
@@ -160,3 +162,81 @@ async def test_scratches_role_grant_announced_after_third_card(db, monkeypatch):
     assert role_indices[0] > card_indices[2], (
         f"role announcement landed mid-sequence: events={events}"
     )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_scratchoff_invocations_cap_at_three(monkeypatch):
+    """Spamming !scratchoff in rapid succession must not exceed the daily cap.
+
+    Previously, the command checked `scratch_used` at the top, then awaited
+    Discord I/O before incrementing the counter inside the per-card loop.
+    Three concurrent invocations could each pass the gate, run their full
+    loops, and the user would end up with 9 cards instead of 3. The fix
+    reserves the attempt counter synchronously before any await yields the
+    event loop.
+
+    Forces real event-loop yielding inside the loop body via patched
+    add_balance — without that, the conftest noop stubs return synchronously
+    and never expose the interleaving the bug needs.
+    """
+    today = "2026-05-02"
+    monkeypatch.setattr("src.gambling.scratchoff._ct_today", lambda: today)
+
+    await _economy._ensure_user(1)
+    _state.economy["users"]["1"]["scratch_date"] = today
+    _state.economy["users"]["1"]["scratch_used"] = 0
+    _state.economy["users"]["1"]["balance"] = 0
+
+    # Force the per-card await to yield to the event loop so concurrent
+    # gather() callers can interleave at exactly the spot where the unfixed
+    # code raced. add_balance is the first await inside the per-card loop.
+    async def _yielding_add_balance(*args, **kwargs):
+        await asyncio.sleep(0)
+
+    async def _noop_async(*args, **kwargs):
+        return None
+
+    async def _noop_grant_xp(*args, **kwargs):
+        return (None, False)
+
+    monkeypatch.setattr("src.gambling.scratchoff.add_balance", _yielding_add_balance)
+    # The scratchoff module imports save_economy / grant_xp by name, so the
+    # global conftest stubs don't reach these bindings. Patch them too so
+    # the test doesn't drift into real DB I/O via save_leveling.
+    monkeypatch.setattr("src.gambling.scratchoff.save_economy", _noop_async)
+    monkeypatch.setattr("src.gambling.scratchoff.grant_xp", _noop_grant_xp)
+
+    author = FakeMember(uid=1, display_name="player")
+    ctx = FakeCtx(author=author, channel=FakeChannel(ch_id=100))
+    # FakeCtx defaults to a real FakeGuild when guild=None is passed, which
+    # routes through the streak/role path; null it explicitly to keep the
+    # test focused on the cap.
+    ctx.guild = None
+    ctx.bot = _StubBot()
+
+    cards_drawn: list = []
+
+    async def record_send(content=None, *, embed=None, **kwargs):
+        if embed is not None and embed.title == "🎫 Scratchoff":
+            cards_drawn.append(embed)
+        return None
+
+    ctx.send = record_send
+
+    cog = ScratchoffCog(bot=_StubBot())
+
+    # Three concurrent invocations of `!scratchoff 3` (the alias `!scratches`
+    # uses count=3). asyncio.gather() lets all three start before any of them
+    # complete, exposing the race.
+    await asyncio.gather(
+        cog.cmd_scratchoff.callback(cog, ctx, count=3),
+        cog.cmd_scratchoff.callback(cog, ctx, count=3),
+        cog.cmd_scratchoff.callback(cog, ctx, count=3),
+    )
+
+    # The cap is 3 cards per day total — not 3 per invocation.
+    assert len(cards_drawn) == 3, (
+        f"daily cap breached: drew {len(cards_drawn)} cards across 3 concurrent "
+        f"invocations (expected 3)"
+    )
+    assert _state.economy["users"]["1"]["scratch_used"] == 3

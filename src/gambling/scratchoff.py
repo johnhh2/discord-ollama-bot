@@ -184,6 +184,13 @@ class ScratchoffCog(commands.Cog):
 
         count = min(count, remaining)
 
+        # Reserve attempts up front (sync) so concurrent invocations see the
+        # updated counter before they pass the remaining > 0 gate. Without
+        # this, a user spamming !scratchoff can cross the await boundaries
+        # below and run more than 3 cards in a single day.
+        first_attempt = user["scratch_used"]
+        user["scratch_used"] += count
+
         # Generate daily goal seeded by date (same for everyone)
         seed_val = hash(today) % (2**31)
         random.seed(seed_val)
@@ -196,8 +203,9 @@ class ScratchoffCog(commands.Cog):
         if show_hint:
             user["scratchoff_seen_rewards"] = True
 
-        for _ in range(count):
-            is_third = user["scratch_used"] == 2
+        for i in range(count):
+            attempt_idx = first_attempt + i
+            is_third = attempt_idx == 2
             rig_matches = state.rigged_scratch.get(uid) if is_third else None
 
             if rig_matches is not None:
@@ -206,12 +214,12 @@ class ScratchoffCog(commands.Cog):
                 random.shuffle(positions)
                 match_positions = set(positions[:rig_matches])
                 card = []
-                for i in range(4):
-                    if i in match_positions:
-                        card.append(goal[i])
+                for pos in range(4):
+                    if pos in match_positions:
+                        card.append(goal[pos])
                     else:
                         # Pick a symbol that doesn't match the goal at this position
-                        non_matches = [s for s in SCRATCH_SYMBOLS if s != goal[i]]
+                        non_matches = [s for s in SCRATCH_SYMBOLS if s != goal[pos]]
                         card.append(random.choice(non_matches) if non_matches else random.choice(SCRATCH_SYMBOLS))
                 del state.rigged_scratch[uid]
                 await save_rigged_scratch()
@@ -240,7 +248,6 @@ class ScratchoffCog(commands.Cog):
             await add_balance(uid, payout)
             if payout > 0:
                 await record_gambling_event(uid, gained=payout)
-            user["scratch_used"] += 1
             await save_economy(uid=uid)
 
             # Award 10 XP per scratchoff played
@@ -252,7 +259,7 @@ class ScratchoffCog(commands.Cog):
                         asyncio.create_task(cog._announce_levelup(ctx.author, ctx.guild.id))
 
             card_str = " ".join(card)
-            attempts_left = 3 - user["scratch_used"]
+            attempts_left = 3 - (attempt_idx + 1)
 
             embed = discord.Embed(title="🎫 Scratchoff", color=C_GREEN if payout > 0 else C_RED)
             embed.description = f"Daily Goal: {goal_str}\nYour Card:  {card_str}\n\n{match_text}\n\nAttempts left: {attempts_left}/3"
@@ -266,7 +273,7 @@ class ScratchoffCog(commands.Cog):
             # Track full-day scratchoff streak for Gamblers role.
             # Done after the card embed so the role-grant announcement
             # appears after the third scratch, not between cards.
-            if user["scratch_used"] >= 3 and ctx.guild:
+            if (attempt_idx + 1) >= 3 and ctx.guild:
                 new_streak = await update_gambler_streak(uid, today)
                 await maybe_assign_gambler_role(ctx.guild, ctx.author, ctx.channel, new_streak)
 
