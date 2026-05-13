@@ -1089,11 +1089,13 @@ class UtilityCog(commands.Cog):
         guild_name = ctx.guild.name if ctx.guild else "DM"
         guild_id_str = str(ctx.guild.id) if ctx.guild else "—"
         chan_ref = ctx.channel.mention if hasattr(ctx.channel, "mention") else str(ctx.channel)
+        source_link = _source_command_jumplink(ctx)
         desc_lines = [
             f"**Time:** <t:{int(time.time())}:f>",
             f"**User:** {ctx.author.display_name} (`{ctx.author.id}`)",
             f"**Guild:** {guild_name} (`{guild_id_str}`)",
             f"**Channel:** {chan_ref}",
+            f"**Source command:** {source_link}",
             "",
             f"**{meta['report_label']}:**\n{report[:1500]}",
         ]
@@ -1574,6 +1576,24 @@ _ISSUE_STATUS_GLYPHS: dict[str, str] = {
     "completed":   "✅",
     "rejected":    "🛑",
 }
+
+
+def _source_command_jumplink(ctx) -> str:
+    """Render a jumplink to the command message that produced this issue.
+
+    Returns a fallback string if the link can't be composed (e.g. DM
+    invocation has no guild id). The link goes to Discord's web routing,
+    which works in-app on every client.
+    """
+    msg = getattr(ctx, "message", None)
+    if msg is None or not getattr(msg, "id", None):
+        return "—"
+    chan = getattr(ctx, "channel", None)
+    chan_id = getattr(chan, "id", None)
+    if chan_id is None:
+        return "—"
+    guild_id = ctx.guild.id if getattr(ctx, "guild", None) else "@me"
+    return f"[Jump to message](https://discord.com/channels/{guild_id}/{chan_id}/{msg.id})"
 
 
 def _format_issue_listing_line(n: int, row: dict) -> str:

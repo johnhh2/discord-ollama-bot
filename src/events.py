@@ -119,6 +119,11 @@ async def _log_command_error(bot, ctx: commands.Context, error: Exception):
         cmd_name = ctx.command.qualified_name
     chan_ref = ctx.channel.mention if hasattr(ctx.channel, "mention") else str(ctx.channel)
     err_line = f"**Error:** `{type(error).__name__}: {error}`"[:1000]
+    src_guild_for_link = ctx.guild.id if ctx.guild else "@me"
+    source_link = (
+        f"[Jump to message]("
+        f"https://discord.com/channels/{src_guild_for_link}/{ctx.channel.id}/{ctx.message.id})"
+    )
     desc_lines = [
         f"**Time:** <t:{int(time.time())}:f>",
         f"**User:** {ctx.author.display_name} (`{ctx.author.id}`)",
@@ -126,6 +131,7 @@ async def _log_command_error(bot, ctx: commands.Context, error: Exception):
         f"**Channel:** {chan_ref}",
         f"**Tier:** {tier}",
         f"**Command:** `{ctx.message.content[:300]}`",
+        f"**Source command:** {source_link}",
         err_line,
     ]
 
