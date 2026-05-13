@@ -1225,10 +1225,10 @@ _ISSUE_KINDS: dict[str, dict] = {
     },
     "feature": {
         "emoji": "📖",
-        "title": "Feature Request",
+        "title": "Feature",
         "report_label": "Description",
-        "usage": "`!issue feature <description of the requested feature>`",
-        "ack": "Thanks — your feature request has been logged.",
+        "usage": "`!issue feature <description of the feature>`",
+        "ack": "Feature logged.",
         "include_history": False,
     },
     "task": {
