@@ -110,36 +110,49 @@ async def _add_initial_reactions(channel, msg_id: int, game_type: str) -> None:
             return
 
 
-async def _refresh_reactions(channel, game: dict, game_type: str) -> None:
-    """Clear all reactions on the board and re-add only the still-legal moves.
-
-    For TTT, a number is "legal" iff its square is still empty.
-    For C4, a column is "legal" iff it still has at least one open row.
-    """
+async def _fetch_board_msg(channel, game: dict):
+    """Fetch the board message, or None if it's gone or inaccessible."""
     if game.get("board_msg_id") is None:
+        return None
+    try:
+        return await channel.fetch_message(game["board_msg_id"])
+    except (discord.NotFound, discord.HTTPException):
+        return None
+
+
+async def _remove_user_reaction(channel, game: dict, emoji: str, user) -> None:
+    """Remove just one user's reaction for one emoji — keeps the bot's reaction in place
+    so the button stays clickable for the next move."""
+    msg = await _fetch_board_msg(channel, game)
+    if msg is None:
         return
     try:
-        msg = await channel.fetch_message(game["board_msg_id"])
-    except (discord.NotFound, discord.HTTPException):
+        await msg.remove_reaction(emoji, user)
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        return
+
+
+async def _remove_bot_reaction(channel, game: dict, emoji: str, bot_user) -> None:
+    """Remove the bot's own reaction for one emoji — used when a move is no longer
+    legal (square taken in TTT, column full in C4) so the button disappears."""
+    msg = await _fetch_board_msg(channel, game)
+    if msg is None:
+        return
+    try:
+        await msg.remove_reaction(emoji, bot_user)
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        return
+
+
+async def _clear_all_reactions(channel, game: dict) -> None:
+    """Clear every reaction on the board — used only when the game ends."""
+    msg = await _fetch_board_msg(channel, game)
+    if msg is None:
         return
     try:
         await msg.clear_reactions()
     except (discord.Forbidden, discord.HTTPException):
         return
-    if game_type == "ttt":
-        for i, cell in enumerate(game["board"]):
-            if cell is None:
-                try:
-                    await msg.add_reaction(NUM_EMOJIS_TTT[i])
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    return
-    else:  # c4
-        for col in range(7):
-            if drop_in_column(game["board"], col) is not None:
-                try:
-                    await msg.add_reaction(NUM_EMOJIS_C4[col])
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    return
 
 
 async def _send_game_board(ctx: commands.Context, game: dict, title: str,
@@ -192,8 +205,13 @@ async def _setup_pvp_game(ctx, opponent, amount, invite_title):
     return True
 
 
-async def _apply_ttt_move(channel, guild, uid: int, name: str, pos: int | None) -> None:
-    """Apply a TTT move and update the board. Sends temp error embeds for invalid moves."""
+async def _apply_ttt_move(channel, guild, mover, pos: int | None) -> None:
+    """Apply a TTT move and update the board. Sends temp error embeds for invalid moves.
+
+    `mover` is the discord.User/Member who made the move — needed to remove their
+    reaction after a successful click so they can react again on their next turn."""
+    uid = mover.id
+    name = mover.display_name if hasattr(mover, "display_name") else str(mover)
     cid = channel.id
     if cid not in state.active_ttt_games:
         return
@@ -212,6 +230,8 @@ async def _apply_ttt_move(channel, guild, uid: int, name: str, pos: int | None) 
         asyncio.create_task(_delete_after(err))
         return
     game["board"][idx] = game["marks"][uid]
+    move_emoji = NUM_EMOJIS_TTT[idx]
+    bot_user = guild.me if guild else None
     winner = check_ttt_winner(game["board"])
     if winner:
         winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
@@ -227,7 +247,7 @@ async def _apply_ttt_move(channel, guild, uid: int, name: str, pos: int | None) 
         game["last_move"] = f"{name} played position {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
         winner_mention = guild.get_member(winner_uid).mention if guild else str(winner_uid)
         await _edit_board(channel, game, emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
-        await _refresh_reactions(channel, game, "ttt")
+        await _clear_all_reactions(channel, game)
         del state.active_ttt_games[cid]
     elif all(c is not None for c in game["board"]) or is_ttt_stalemate(game["board"]):
         amount = game.get("amount", 0)
@@ -237,7 +257,7 @@ async def _apply_ttt_move(channel, guild, uid: int, name: str, pos: int | None) 
         game["last_move"] = f"{name} played position {pos} — It's a draw!"
         draw_text = "\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
         await _edit_board(channel, game, emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
-        await _refresh_reactions(channel, game, "ttt")
+        await _clear_all_reactions(channel, game)
         del state.active_ttt_games[cid]
     else:
         players = game["players"]
@@ -245,11 +265,22 @@ async def _apply_ttt_move(channel, guild, uid: int, name: str, pos: int | None) 
         next_player = guild.get_member(game["current"]) if guild else None
         game["last_move"] = f"{name} played position {pos}"
         await _edit_board(channel, game, emb("🎮 Tic-Tac-Toe", build_ttt_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!m <1-9>`\n\n**Last move:** {game['last_move']}", C_BLUE))
-        await _refresh_reactions(channel, game, "ttt")
+        # Square is now taken — remove the bot's reaction for that number so it stops
+        # being clickable. Also remove the mover's own reaction so they can react again
+        # on their next turn (Discord ignores duplicate reactions, which is the source
+        # of the "click does nothing" bug).
+        if bot_user is not None:
+            await _remove_bot_reaction(channel, game, move_emoji, bot_user)
+        await _remove_user_reaction(channel, game, move_emoji, mover)
 
 
-async def _apply_c4_move(channel, guild, uid: int, name: str, pos: int | None) -> None:
-    """Apply a C4 move and update the board. Sends temp error embeds for invalid moves."""
+async def _apply_c4_move(channel, guild, mover, pos: int | None) -> None:
+    """Apply a C4 move and update the board. Sends temp error embeds for invalid moves.
+
+    `mover` is the discord.User/Member who made the move — needed to remove their
+    reaction after a successful click so they can react again on their next turn."""
+    uid = mover.id
+    name = mover.display_name if hasattr(mover, "display_name") else str(mover)
     cid = channel.id
     if cid not in state.active_c4_games:
         return
@@ -269,6 +300,9 @@ async def _apply_c4_move(channel, guild, uid: int, name: str, pos: int | None) -
         asyncio.create_task(_delete_after(err))
         return
     game["board"][row][col] = game["marks"][uid]
+    move_emoji = NUM_EMOJIS_C4[col]
+    column_now_full = drop_in_column(game["board"], col) is None
+    bot_user = guild.me if guild else None
     winner = check_c4_winner(game["board"])
     if winner:
         winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
@@ -284,7 +318,7 @@ async def _apply_c4_move(channel, guild, uid: int, name: str, pos: int | None) -
         game["last_move"] = f"{name} dropped in column {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
         winner_mention = guild.get_member(winner_uid).mention if guild else str(winner_uid)
         await _edit_board(channel, game, emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
-        await _refresh_reactions(channel, game, "c4")
+        await _clear_all_reactions(channel, game)
         del state.active_c4_games[cid]
     elif all(game["board"][r][c] is not None for r in range(6) for c in range(7)):
         amount = game.get("amount", 0)
@@ -294,7 +328,7 @@ async def _apply_c4_move(channel, guild, uid: int, name: str, pos: int | None) -
         game["last_move"] = f"{name} dropped in column {pos} — It's a draw!"
         draw_text = "\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
         await _edit_board(channel, game, emb("🤝 Connect 4 Draw", build_c4_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
-        await _refresh_reactions(channel, game, "c4")
+        await _clear_all_reactions(channel, game)
         del state.active_c4_games[cid]
     else:
         players = game["players"]
@@ -302,7 +336,13 @@ async def _apply_c4_move(channel, guild, uid: int, name: str, pos: int | None) -
         next_player = guild.get_member(game["current"]) if guild else None
         game["last_move"] = f"{name} dropped in column {pos}"
         await _edit_board(channel, game, emb("🟡 Connect 4", build_c4_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!m <1-7>`\n\n**Last move:** {game['last_move']}", C_BLUE))
-        await _refresh_reactions(channel, game, "c4")
+        # If this drop filled the column, remove the bot's reaction for that number so
+        # nobody can click it again. Always remove the mover's own reaction so they can
+        # react again on their next turn (Discord ignores duplicate reactions, which is
+        # the source of the "click does nothing then everything fires at once" bug).
+        if column_now_full and bot_user is not None:
+            await _remove_bot_reaction(channel, game, move_emoji, bot_user)
+        await _remove_user_reaction(channel, game, move_emoji, mover)
 
 
 class TttC4Cog(commands.Cog):
@@ -364,15 +404,13 @@ class TttC4Cog(commands.Cog):
     @commands.command(name="m",)
     async def cmd_move(self, ctx: commands.Context, pos: int = None):
         cid = ctx.channel.id
-        uid = ctx.author.id
-        name = ctx.author.display_name
 
         if cid in state.active_ttt_games:
             asyncio.create_task(_delete_after(ctx.message))
-            await _apply_ttt_move(ctx.channel, ctx.guild, uid, name, pos)
+            await _apply_ttt_move(ctx.channel, ctx.guild, ctx.author, pos)
         elif cid in state.active_c4_games:
             asyncio.create_task(_delete_after(ctx.message))
-            await _apply_c4_move(ctx.channel, ctx.guild, uid, name, pos)
+            await _apply_c4_move(ctx.channel, ctx.guild, ctx.author, pos)
         else:
             err = await ctx.send(embed=emb("❌ No Game", "No active tic-tac-toe or connect 4 game in this channel.", C_GREY))
             asyncio.create_task(_delete_after(err))
@@ -399,7 +437,7 @@ class TttC4Cog(commands.Cog):
                     pass
                 return
             pos = NUM_EMOJIS_TTT.index(emoji) + 1
-            await _apply_ttt_move(msg.channel, msg.guild, user.id, user.display_name, pos)
+            await _apply_ttt_move(msg.channel, msg.guild, user, pos)
 
         elif cid in state.active_c4_games:
             game = state.active_c4_games[cid]
@@ -414,7 +452,7 @@ class TttC4Cog(commands.Cog):
                     pass
                 return
             pos = NUM_EMOJIS_C4.index(emoji) + 1
-            await _apply_c4_move(msg.channel, msg.guild, user.id, user.display_name, pos)
+            await _apply_c4_move(msg.channel, msg.guild, user, pos)
 
 
 async def setup(bot):
