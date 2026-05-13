@@ -1306,23 +1306,34 @@ _ISSUE_STATUS_TO_COLOR: dict[str, int] = {
     "wip":         C_GOLD,
     "rejected":    C_RED,
 }
-_ISSUE_STATUS_TO_FOOTER: dict[str, str] = {
-    "not_started": "**This issue has not been started**",
-    "completed":   "**This issue has been marked completed**",
-    "wip":         "**This issue is a work in progress**",
-    "rejected":    "**This issue was rejected**",
+# Human-readable label per stored status. "open" is the seeded default; we
+# don't render a status footer for it.
+_ISSUE_STATUS_LABEL: dict[str, str] = {
+    "not_started": "Not started",
+    "completed":   "Completed",
+    "wip":         "Work in progress",
+    "rejected":    "Rejected",
 }
+
+
+def _issue_status_footer(status: str) -> str | None:
+    """Render the status-line footer for non-'open' statuses, or None."""
+    label = _ISSUE_STATUS_LABEL.get(status)
+    return f"**Status:** {label}" if label else None
+
+
 _ISSUE_MUTED_FOOTER = "**This error has been muted and will not be reported again**"
 
 # Mute reaction for auto-filed error reports. The triage emojis (❌/🚧/✅) apply
 # to every kind; 🔇 only does anything on kind='error' issues.
 _ISSUE_MUTE_EMOJI = "\U0001F507"  # 🔇
 
-# Match any status footer (one of the three messages above) at the tail of an
-# embed description so we can strip and re-append on every render — avoiding
-# stacked footers across multiple transitions.
+# Match the current `Status: <Label>` footer OR the older per-status sentences
+# at the tail of an embed description, so embeds posted before this refactor
+# still get cleanly re-rendered when their status changes.
 _ISSUE_STATUS_FOOTER_RE = re.compile(
-    r"\n\n\*\*This issue (?:has not been started|has been marked completed|is a work in progress|was rejected)\*\*\s*$"
+    r"\n\n\*\*Status:\*\*\s*[^\n]+\s*$"
+    r"|\n\n\*\*This issue (?:has not been started|has been marked completed|is a work in progress|was rejected)\*\*\s*$"
 )
 _ISSUE_MUTED_FOOTER_RE = re.compile(
     r"\n\n\*\*This error has been muted and will not be reported again\*\*\s*$"
@@ -1356,7 +1367,7 @@ def _render_issue_status_embed(
     if original is None:
         return None
     desc = _strip_issue_footers(original.description or "")
-    status_footer = _ISSUE_STATUS_TO_FOOTER.get(status)
+    status_footer = _issue_status_footer(status)
     if status_footer:
         desc = f"{desc}\n\n{status_footer}"
     if muted:
