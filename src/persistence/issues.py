@@ -1,7 +1,7 @@
 """Persistence for !bug / !issue reports and auto-filed command-error reports.
 
-The issue row is keyed by `message_id` (the embed posted in the bug-report
-channel). The on_raw_reaction_add handler in utility_cog looks up rows by
+The issue row is keyed by `message_id` (the embed posted in the internal
+issue channel). The on_raw_reaction_add handler in utility_cog looks up rows by
 message_id when an admin reacts, so reactions added after a restart still
 work — Discord re-delivers the gateway event but the bot's message cache
 is empty until the message is touched.

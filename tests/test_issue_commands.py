@@ -63,7 +63,7 @@ def _admin_ctx(*, uid: int = 1, guild_id: int = 42, command: str = "bugreport") 
 
 
 def _make_posted_message(message_id: int = 5000, channel_id: int = 9000) -> FakeMessage:
-    """A FakeMessage standing in for the embed posted to bug_report_channel.
+    """A FakeMessage standing in for the embed posted to internal_issue_channel.
     Its `.channel` carries the right id so `insert_issue` records it."""
     posted = FakeMessage(message_id=message_id)
     posted.channel = FakeTextChannel(ch_id=channel_id)
@@ -73,9 +73,9 @@ def _make_posted_message(message_id: int = 5000, channel_id: int = 9000) -> Fake
 # ── !bugreport ──────────────────────────────────────────────────────────────
 
 async def test_bugreport_no_channel_configured(db):
-    """Without bug_report_channel set, the command tells the user it's
+    """Without internal_issue_channel set, the command tells the user it's
     unconfigured and does NOT write a row."""
-    _state.bot_settings.pop("bug_report_channel", None)
+    _state.bot_settings.pop("internal_issue_channel", None)
     cog = UtilityCog(bot=_StubBot())
     ctx = _admin_ctx(command="bugreport")
 
@@ -87,9 +87,9 @@ async def test_bugreport_no_channel_configured(db):
 
 
 async def test_bugreport_happy_path_persists_and_reacts(db):
-    """When configured, the command posts the embed to bug_report_channel,
+    """When configured, the command posts the embed to internal_issue_channel,
     inserts an issues row, and seeds ❌ ⚙️ ✅ 🛑 reactions."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     posted = _make_posted_message(message_id=5000, channel_id=9000)
     log_chan = FakeTextChannel(ch_id=9000)
     log_chan.send = AsyncMock(return_value=posted)
@@ -111,7 +111,7 @@ async def test_bugreport_happy_path_persists_and_reacts(db):
 
 async def test_bugreport_empty_report_shows_usage(db):
     """An empty / whitespace-only report shows usage and writes nothing."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     cog = UtilityCog(bot=_StubBot(channel=FakeTextChannel(ch_id=9000)))
     ctx = _admin_ctx(command="bugreport")
 
@@ -126,7 +126,7 @@ async def test_bugreport_empty_report_shows_usage(db):
 async def test_issue_bug_routes_to_submit_issue(db):
     """`!issue bug <desc>` is equivalent to `!bugreport <desc>` — kind='bug',
     same persistence + reactions."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     posted = _make_posted_message(message_id=5100, channel_id=9000)
     log_chan = FakeTextChannel(ch_id=9000)
     log_chan.send = AsyncMock(return_value=posted)
@@ -142,7 +142,7 @@ async def test_issue_bug_routes_to_submit_issue(db):
 
 async def test_issue_feature_sets_kind_feature(db):
     """`!issue feature <desc>` writes a kind='feature' row."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     posted = _make_posted_message(message_id=5101, channel_id=9000)
     log_chan = FakeTextChannel(ch_id=9000)
     log_chan.send = AsyncMock(return_value=posted)
@@ -159,7 +159,7 @@ async def test_issue_feature_sets_kind_feature(db):
 async def test_issue_unknown_kind_shows_usage(db):
     """An unrecognized kind (e.g. `!issue banana ...`) shows usage and
     writes nothing — including no DB row, no embed to the log channel."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     log_chan = FakeTextChannel(ch_id=9000)
     log_chan.send = AsyncMock(return_value=_make_posted_message())
     cog = UtilityCog(bot=_StubBot(channel=log_chan))

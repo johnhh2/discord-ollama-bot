@@ -1,7 +1,7 @@
 """Tests for `on_raw_reaction_add` / `on_raw_reaction_remove` on UtilityCog.
 
 Covers:
-- Issue triage (❌/⚙️/✅/🛑) in `bug_report_channel`: status updates +
+- Issue triage (❌/⚙️/✅/🛑) in `internal_issue_channel`: status updates +
   embed re-render; admin-only gate; soft-deleted-row no-op.
 - 🔇 mute / unmute for `kind='error'` issues.
 - Feature-request triage (✅/❌) in a guild's `feature_request_channel`:
@@ -102,9 +102,9 @@ def _wire_channel_fetch_message(channel: FakeTextChannel, msg: FakeMessage):
 # ── Issue triage ─────────────────────────────────────────────────────────────
 
 async def test_status_reaction_updates_db_and_rerenders_embed(db):
-    """Admin reacts ⚙️ in bug_report_channel → status persists as 'wip' and
+    """Admin reacts ⚙️ in internal_issue_channel → status persists as 'wip' and
     the embed's description gets the Status footer appended."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     _state.bot_admins.add(7)
 
     await _persistence.insert_issue(
@@ -136,7 +136,7 @@ async def test_status_reaction_updates_db_and_rerenders_embed(db):
 
 async def test_reaction_from_non_admin_is_ignored(db):
     """Non-bot-admin reacting to an issue embed → no DB change."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     # No bot_admins set → reactor 7 is not an admin
 
     await _persistence.insert_issue(
@@ -160,9 +160,9 @@ async def test_reaction_from_non_admin_is_ignored(db):
 
 
 async def test_reaction_in_wrong_channel_ignored(db):
-    """Reaction outside `bug_report_channel` and outside any
+    """Reaction outside `internal_issue_channel` and outside any
     `feature_request_channel` is a no-op."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     _state.bot_admins.add(7)
 
     await _persistence.insert_issue(
@@ -181,7 +181,7 @@ async def test_reaction_in_wrong_channel_ignored(db):
 
 async def test_reaction_on_soft_deleted_issue_is_noop(db):
     """Once an issue is soft-deleted, reactions stop having effect."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     _state.bot_admins.add(7)
 
     iid = await _persistence.insert_issue(
@@ -209,7 +209,7 @@ async def test_reaction_on_soft_deleted_issue_is_noop(db):
 async def test_mute_emoji_on_error_issue_persists(db):
     """🔇 on a kind='error' issue → mute_key added to state.error_mutes
     AND persisted to error_mutes table."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     _state.bot_admins.add(7)
     _state.error_mutes.clear()
 
@@ -236,7 +236,7 @@ async def test_mute_emoji_on_error_issue_persists(db):
 
 async def test_mute_emoji_on_non_error_issue_noop(db):
     """🔇 on a kind='bug' issue does nothing — no mute_key exists to toggle."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     _state.bot_admins.add(7)
     _state.error_mutes.clear()
 
@@ -260,7 +260,7 @@ async def test_mute_emoji_on_non_error_issue_noop(db):
 
 async def test_unmute_via_raw_reaction_remove(db):
     """Removing the 🔇 reaction → mute_key removed from state AND DB."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     _state.bot_admins.add(7)
 
     mute_key = "ping:RuntimeError:err"
@@ -293,11 +293,11 @@ async def test_unmute_via_raw_reaction_remove(db):
 async def test_feature_request_accept_spawns_linked_feature_issue(db):
     """✅ on a request in the per-guild feature_request_channel:
     - request status → 'accepted'
-    - a kind='feature' issue is posted to bug_report_channel
+    - a kind='feature' issue is posted to internal_issue_channel
     - the spawned issue is linked back via feature_issue_id
     - the request embed gets re-rendered with the linked status footer."""
     guild_id = 42
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     _state.bot_admins.add(7)
     cfg = get_guild_cfg(guild_id)
     cfg["feature_request_channel"] = "8888"
@@ -342,7 +342,7 @@ async def test_feature_request_accept_spawns_linked_feature_issue(db):
 async def test_feature_request_reject_no_spawn(db):
     """❌ on a request: status → 'rejected', NO spawned feature issue."""
     guild_id = 42
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     _state.bot_admins.add(7)
     cfg = get_guild_cfg(guild_id)
     cfg["feature_request_channel"] = "8888"
@@ -375,7 +375,7 @@ async def test_feature_issue_status_change_mirrors_to_request_embed(db):
     """When a spawned feature's status changes, the originating
     feature_request embed gets re-edited with the new feature_status."""
     guild_id = 42
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     _state.bot_admins.add(7)
     cfg = get_guild_cfg(guild_id)
     cfg["feature_request_channel"] = "8888"
@@ -393,7 +393,7 @@ async def test_feature_issue_status_change_mirrors_to_request_embed(db):
     )
     await _persistence.link_feature_to_request(6010, feature_id)
 
-    # The feature issue in bug_report_channel — admin reacts ⚙️ on it.
+    # The feature issue in internal_issue_channel — admin reacts ⚙️ on it.
     bug_chan = FakeTextChannel(ch_id=9000)
     feature_msg = _make_msg_with_embed(7100, bug_chan, emb("📖 Feature", "linked", C_RED))
     _wire_channel_fetch_message(bug_chan, feature_msg)
@@ -422,7 +422,7 @@ async def test_feature_issue_status_change_mirrors_to_request_embed(db):
 
 async def test_completed_bug_dms_reporter(db):
     """Admin marks a kind='bug' issue completed → bot DMs the reporter."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     _state.bot_admins.add(7)
 
     # source_* point at the user-visible channel where the !bugreport was
@@ -456,7 +456,7 @@ async def test_completed_bug_dms_reporter(db):
 async def test_completed_bug_without_source_coords_dms_without_link(db):
     """Legacy rows that predate the source_* columns get a plain DM with no
     jumplink rather than a link into the admin-only bug-report channel."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     _state.bot_admins.add(7)
 
     await _persistence.insert_issue(
@@ -488,7 +488,7 @@ async def test_completed_linked_feature_dms_requester(db):
     """Completing a feature issue spawned from a !featurerequest → DM goes
     to the original requester with a jumplink to the request embed."""
     guild_id = 42
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     _state.bot_admins.add(7)
 
     await _persistence.insert_feature_request(
@@ -528,7 +528,7 @@ async def test_completed_linked_feature_dms_requester(db):
 async def test_completed_admin_filed_feature_does_not_dm(db):
     """A kind='feature' row with NO linked feature_request (admin-filed via
     `!issue feature`) → no DM."""
-    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_settings["internal_issue_channel"] = "9000"
     _state.bot_admins.add(7)
 
     await _persistence.insert_issue(

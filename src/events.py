@@ -87,15 +87,15 @@ async def _log_command_error(bot, ctx: commands.Context, error: Exception):
     """File an auto-bug-report for a command exception.
 
     Replaces the older "post to error_log_channel" path: command errors now
-    route to `bug_report_channel` so the same admin reaction-triage flow
+    route to `internal_issue_channel` so the same admin reaction-triage flow
     (❌ 🚧 ✅) applies, plus a 🔇 mute reaction unique to error reports.
 
     No-op when:
-    - `bug_report_channel` isn't configured (nowhere to post)
+    - `internal_issue_channel` isn't configured (nowhere to post)
     - the (command, type, message) key is already in `state.error_mutes`
       (an admin previously muted this exact error)
     """
-    chan_id = state.bot_settings.get("bug_report_channel")
+    chan_id = state.bot_settings.get("internal_issue_channel")
     if not chan_id:
         return
 

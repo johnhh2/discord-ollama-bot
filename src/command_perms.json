@@ -29,7 +29,7 @@
   "settings":      {"tier": "server_admin", "hidden": false},
   "settings admin-log-channel": {"tier": "bot_admin", "hidden": true},
   "settings error-log-channel": {"tier": "bot_admin", "hidden": true},
-  "settings bug-report-channel": {"tier": "bot_admin", "hidden": true},
+  "settings internal-issue-channel": {"tier": "bot_admin", "hidden": true},
   "bugreport":     {"tier": "everyone",    "hidden": false},
   "featurerequest": {"tier": "everyone",   "hidden": false},
   "issue":         {"tier": "bot_admin",   "hidden": false},

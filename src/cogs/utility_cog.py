@@ -1082,7 +1082,7 @@ class UtilityCog(commands.Cog):
             await ctx.send(embed=emb(title, f"Usage: {usage}", C_GREY))
             return
 
-        chan_id = state.bot_settings.get("bug_report_channel")
+        chan_id = state.bot_settings.get("internal_issue_channel")
         if not chan_id:
             await ctx.send(embed=emb(
                 title,
@@ -1172,8 +1172,8 @@ class UtilityCog(commands.Cog):
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         """Bot-admin reaction-triage on issue and feature-request embeds.
 
-        - In `bug_report_channel`: ✅/🛑/⚙️/❌ flip the issue status (any kind);
-          🔇 mutes the error key for kind='error'.
+        - In `internal_issue_channel`: ✅/🛑/⚙️/❌ flip the issue status (any
+          kind); 🔇 mutes the error key for kind='error'.
         - In a guild's `feature_request_channel`: ✅ accepts the request
           (spawns a feature issue + links it) and ❌ rejects it.
 
@@ -1200,7 +1200,7 @@ class UtilityCog(commands.Cog):
         if emoji not in _ISSUE_EMOJI_TO_STATUS and emoji != _ISSUE_MUTE_EMOJI:
             return
 
-        chan_id = state.bot_settings.get("bug_report_channel")
+        chan_id = state.bot_settings.get("internal_issue_channel")
         if not chan_id or str(payload.channel_id) != str(chan_id):
             return
 
@@ -1269,7 +1269,7 @@ class UtilityCog(commands.Cog):
         if payload.user_id not in state.bot_admins:
             return
 
-        chan_id = state.bot_settings.get("bug_report_channel")
+        chan_id = state.bot_settings.get("internal_issue_channel")
         if not chan_id or str(payload.channel_id) != str(chan_id):
             return
 
@@ -1346,9 +1346,9 @@ class UtilityCog(commands.Cog):
         """Apply an accept/reject decision to a feature_request row.
 
         On accept: persist status='accepted', spawn a kind='feature' issue row
-        in `bug_report_channel`, link the two, and re-render the request embed
-        with the linked feature's status. On reject: persist status='rejected'
-        and re-render.
+        in `internal_issue_channel`, link the two, and re-render the request
+        embed with the linked feature's status. On reject: persist
+        status='rejected' and re-render.
 
         Same-status re-reacts are no-ops (no duplicate feature issue spawned).
         """
@@ -1370,20 +1370,20 @@ class UtilityCog(commands.Cog):
         feature_issue_id: int | None = None
 
         if decision == "accepted":
-            # Spawn a kind='feature' issue in the bug_report_channel.
-            bug_chan_id = state.bot_settings.get("bug_report_channel")
-            if not bug_chan_id:
+            # Spawn a kind='feature' issue in the internal_issue_channel.
+            issue_chan_id = state.bot_settings.get("internal_issue_channel")
+            if not issue_chan_id:
                 logging.warning(
-                    "[featurerequest] accepted but bug_report_channel unset; "
+                    "[featurerequest] accepted but internal_issue_channel unset; "
                     "skipping spawn of linked feature issue."
                 )
             else:
                 try:
-                    bug_chan = self.bot.get_channel(int(bug_chan_id)) or await self.bot.fetch_channel(int(bug_chan_id))
+                    issue_chan = self.bot.get_channel(int(issue_chan_id)) or await self.bot.fetch_channel(int(issue_chan_id))
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
-                    bug_chan = None
-                if bug_chan is not None:
-                    feature_issue_id = await self._spawn_feature_from_request(bug_chan, request)
+                    issue_chan = None
+                if issue_chan is not None:
+                    feature_issue_id = await self._spawn_feature_from_request(issue_chan, request)
                     feature_status = "not_started"
 
         try:
@@ -1412,7 +1412,7 @@ class UtilityCog(commands.Cog):
         except (discord.Forbidden, discord.HTTPException) as e:
             logging.error(f"[featurerequest] failed to edit embed for {payload.message_id}: {e}")
 
-    async def _spawn_feature_from_request(self, bug_chan, request: dict) -> int | None:
+    async def _spawn_feature_from_request(self, issue_chan, request: dict) -> int | None:
         """Post a kind='feature' issue embed mirroring the feature_request,
         seed the standard issue reactions, and return the inserted issue id.
 
@@ -1428,7 +1428,7 @@ class UtilityCog(commands.Cog):
             f"**Description:**\n{(request['description'] or '')[:1500]}",
         ]
         try:
-            issue_msg = await bug_chan.send(embed=emb(title, "\n".join(desc_lines), C_RED))
+            issue_msg = await issue_chan.send(embed=emb(title, "\n".join(desc_lines), C_RED))
         except (discord.Forbidden, discord.HTTPException) as e:
             logging.error(f"[featurerequest] could not post linked feature issue: {e}")
             return None
@@ -1505,7 +1505,7 @@ class UtilityCog(commands.Cog):
         # origin_guild/chan/msg point at a *user-visible* channel — for bugs
         # that's the channel where they ran !bugreport, for features it's the
         # !featurerequest embed in the per-guild request channel. We avoid
-        # linking to bug_report_channel itself because non-admins can't see
+        # linking to internal_issue_channel itself because non-admins can't see
         # it.
         origin_guild: int | str | None = None
         origin_chan: int | None = None

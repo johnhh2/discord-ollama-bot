@@ -211,11 +211,11 @@ async def test_log_sends_for_server_admin_tier_success():
     assert "server_admin" in embed.description
 
 
-async def test_error_log_routes_to_bug_report_channel(db):
-    """Command errors now auto-file a bug report into `bug_report_channel`
+async def test_error_log_routes_to_internal_issue_channel(db):
+    """Command errors now auto-file a bug report into `internal_issue_channel`
     instead of posting to a separate `error_log_channel`. The embed carries
     the exception details and the seeded ❌/⚙️/✅/🛑/🔇 reactions enable triage."""
-    _state.bot_settings["bug_report_channel"] = "67890"
+    _state.bot_settings["internal_issue_channel"] = "67890"
     _state.command_perms["adminhelp"] = {"tier": "bot_admin", "hidden": False}
     _state.error_mutes.clear()
     posted = FakeMessage(message_id=555)
@@ -241,7 +241,7 @@ async def test_error_log_routes_to_bug_report_channel(db):
 async def test_error_log_fires_for_everyone_tier(db):
     """Errors on `everyone`-tier commands also file an auto-bug-report — the
     previous admin-only gating silently dropped them."""
-    _state.bot_settings["bug_report_channel"] = "67890"
+    _state.bot_settings["internal_issue_channel"] = "67890"
     _state.bot_settings.pop("admin_log_channel", None)
     _state.bot_settings.pop("error_log_channel", None)
     _state.command_perms["bugreport"] = {"tier": "everyone", "hidden": False}
@@ -259,8 +259,8 @@ async def test_error_log_fires_for_everyone_tier(db):
 
 
 async def test_error_log_no_op_when_unconfigured():
-    """No `bug_report_channel` set → no fetch, no send, no raise."""
-    _state.bot_settings.pop("bug_report_channel", None)
+    """No `internal_issue_channel` set → no fetch, no send, no raise."""
+    _state.bot_settings.pop("internal_issue_channel", None)
     _state.bot_settings.pop("error_log_channel", None)
     _state.command_perms["adminhelp"] = {"tier": "bot_admin", "hidden": False}
     log_chan = FakeTextChannel(ch_id=12345)
@@ -276,7 +276,7 @@ async def test_error_log_no_op_when_unconfigured():
 async def test_error_log_skipped_when_muted(db):
     """If the (command, type, message) key is already in `state.error_mutes`,
     the error path is a silent no-op — no fetch, no send."""
-    _state.bot_settings["bug_report_channel"] = "67890"
+    _state.bot_settings["internal_issue_channel"] = "67890"
     _state.command_perms["adminhelp"] = {"tier": "bot_admin", "hidden": False}
     log_chan = FakeTextChannel(ch_id=67890)
     log_chan.send = AsyncMock(return_value=FakeMessage(message_id=557))

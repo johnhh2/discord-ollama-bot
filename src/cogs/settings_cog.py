@@ -106,9 +106,9 @@ class SettingsCog(commands.Cog):
             error_log_id = state.bot_settings.get("error_log_channel")
             error_log_val = f"<#{error_log_id}>" if error_log_id else "❌ disabled"
             embed.add_field(name="⚠️ Error log channel (global)", value=error_log_val, inline=False)
-            bug_chan_id = state.bot_settings.get("bug_report_channel")
-            bug_chan_val = f"<#{bug_chan_id}>" if bug_chan_id else "❌ disabled"
-            embed.add_field(name="🐛 Bug report channel (global)", value=bug_chan_val, inline=False)
+            issue_chan_id = state.bot_settings.get("internal_issue_channel")
+            issue_chan_val = f"<#{issue_chan_id}>" if issue_chan_id else "❌ disabled"
+            embed.add_field(name="🐛 Internal issue channel (global)", value=issue_chan_val, inline=False)
         footer_text = (
             "Subcommands:\n"
             "ai-channels #ch... / clear\n"
@@ -131,7 +131,7 @@ class SettingsCog(commands.Cog):
                 "\n\nBot admin:\n"
                 "admin-log-channel #channel / clear\n"
                 "error-log-channel #channel / clear\n"
-                "bug-report-channel #channel / clear"
+                "internal-issue-channel #channel / clear"
             )
         embed.set_footer(text=footer_text)
         await send_ephemeral(ctx, embed=embed)
@@ -614,27 +614,27 @@ class SettingsCog(commands.Cog):
                 C_GREY,
             ))
 
-    # ── !settings bug-report-channel (global, bot-admin only) ────────────────
-    @cmd_settings.command(name="bug-report-channel")
+    # ── !settings internal-issue-channel (global, bot-admin only) ────────────
+    @cmd_settings.command(name="internal-issue-channel")
     @requires_perm
-    async def settings_bug_report_channel(self, ctx: commands.Context, *args):
+    async def settings_internal_issue_channel(self, ctx: commands.Context, *args):
         if args and args[0].lower() == "clear":
-            state.bot_settings.pop("bug_report_channel", None)
+            state.bot_settings.pop("internal_issue_channel", None)
             await save_bot_settings()
-            await ctx.send(embed=emb("🐛 Bug Report Channel", "User bug reports disabled.", C_GREEN))
+            await ctx.send(embed=emb("🐛 Internal Issue Channel", "Internal issue routing disabled.", C_GREEN))
         elif ctx.message.channel_mentions:
             channel = ctx.message.channel_mentions[0]
-            state.bot_settings["bug_report_channel"] = str(channel.id)
+            state.bot_settings["internal_issue_channel"] = str(channel.id)
             await save_bot_settings()
             await ctx.send(embed=emb(
-                "🐛 Bug Report Channel",
-                f"User bug reports from **all servers** will be posted to {channel.mention}.",
+                "🐛 Internal Issue Channel",
+                f"Bug reports and internal issues from **all servers** will be posted to {channel.mention}.",
                 C_GREEN,
             ))
         else:
             await ctx.send(embed=emb(
-                "🐛 Bug Report Channel",
-                "Usage: `!settings bug-report-channel #channel` or `!settings bug-report-channel clear`",
+                "🐛 Internal Issue Channel",
+                "Usage: `!settings internal-issue-channel #channel` or `!settings internal-issue-channel clear`",
                 C_GREY,
             ))
 
