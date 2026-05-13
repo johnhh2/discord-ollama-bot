@@ -235,6 +235,10 @@ class FakeCursor:
     def rowcount(self):
         return self._cur.rowcount
 
+    @property
+    def lastrowid(self):
+        return self._cur.lastrowid
+
 
 class FakeConn:
     def __init__(self, sqlite_conn: sqlite3.Connection):
