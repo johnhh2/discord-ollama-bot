@@ -1110,7 +1110,7 @@ class UtilityCog(commands.Cog):
                         break
                     history_lines.append(f"[{msg.author.display_name}]: {_msg_text(msg)[:200]}")
                 history_lines.reverse()
-            except (discord.Forbidden, discord.HTTPException):
+            except (discord.Forbidden, discord.HTTPException, AttributeError):
                 pass
             if history_lines:
                 log_block = "\n".join(history_lines)
@@ -1131,6 +1131,7 @@ class UtilityCog(commands.Cog):
                 message_id=report_msg.id,
                 reporter_id=ctx.author.id,
                 report=report[:1500],
+                kind=kind,
             )
         except Exception as e:
             logging.error(f"[issue:{kind}] failed to persist issue row: {e}", exc_info=True)
