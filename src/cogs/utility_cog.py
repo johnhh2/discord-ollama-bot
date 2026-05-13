@@ -24,6 +24,7 @@ from src.permissions import (
 from src.persistence import (
     save_bot_settings, load_saved_quotes,
     insert_issue, get_issue_by_message, update_issue_status,
+    insert_error_mute, delete_error_mute,
 )
 from src.guild_config import get_guild_cfg
 from src.ai import (
@@ -974,12 +975,16 @@ class UtilityCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
-        """Let a bot admin mark an issue completed (✅), WIP (🚧), or rejected (❌)
-        by reacting to the bug-report embed. Uses raw events so reactions after
-        a restart still resolve to the persisted issue row.
+        """Bot-admin reaction-triage on issue embeds.
+
+        ❌/🚧/✅ flip the issue status (any kind).
+        🔇 mutes the (command, type, message) key for kind='error' issues so
+        the same error never re-fills the channel; the matching unreact in
+        `on_raw_reaction_remove` unmutes it. Uses raw events so reactions
+        after a restart still resolve to the persisted issue row.
         """
         emoji = str(payload.emoji)
-        if emoji not in _ISSUE_EMOJI_TO_STATUS:
+        if emoji not in _ISSUE_EMOJI_TO_STATUS and emoji != _ISSUE_MUTE_EMOJI:
             return
         if self.bot.user and payload.user_id == self.bot.user.id:
             return
@@ -993,6 +998,11 @@ class UtilityCog(commands.Cog):
         issue = await get_issue_by_message(payload.message_id)
         if issue is None:
             return
+
+        if emoji == _ISSUE_MUTE_EMOJI:
+            await self._toggle_issue_mute(payload, issue, mute=True)
+            return
+
         new_status = _ISSUE_EMOJI_TO_STATUS[emoji]
         if issue["status"] == new_status:
             return
@@ -1003,7 +1013,12 @@ class UtilityCog(commands.Cog):
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             return
 
-        new_embed = _render_issue_status_embed(message.embeds[0] if message.embeds else None, new_status)
+        muted = bool(issue.get("mute_key")) and issue["mute_key"] in state.error_mutes
+        new_embed = _render_issue_status_embed(
+            message.embeds[0] if message.embeds else None,
+            new_status,
+            muted=muted,
+        )
         if new_embed is None:
             return
         try:
@@ -1016,6 +1031,91 @@ class UtilityCog(commands.Cog):
             await update_issue_status(payload.message_id, new_status, payload.user_id)
         except Exception as e:
             logging.error(f"[bug] failed to persist status {new_status} for {payload.message_id}: {e}", exc_info=True)
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
+        """Bot admin unreacting 🔇 unmutes the error.
+
+        Only 🔇 is meaningful on remove — pulling a status reaction is just
+        moving between options and doesn't roll back the issue status (the
+        next status reaction wins).
+        """
+        emoji = str(payload.emoji)
+        if emoji != _ISSUE_MUTE_EMOJI:
+            return
+        if self.bot.user and payload.user_id == self.bot.user.id:
+            return
+        if payload.user_id not in state.bot_admins:
+            return
+
+        chan_id = state.bot_settings.get("bug_report_channel")
+        if not chan_id or str(payload.channel_id) != str(chan_id):
+            return
+
+        issue = await get_issue_by_message(payload.message_id)
+        if issue is None:
+            return
+        await self._toggle_issue_mute(payload, issue, mute=False)
+
+    async def _toggle_issue_mute(
+        self,
+        payload: discord.RawReactionActionEvent,
+        issue: dict,
+        *,
+        mute: bool,
+    ) -> None:
+        """Add/remove the mute_key from `state.error_mutes` + DB, then re-render
+        the embed footer to reflect the new mute state.
+
+        No-op when the issue isn't an error report (no mute_key to toggle), or
+        when the mute is already in the desired state.
+        """
+        if issue.get("kind") != "error":
+            return
+        mute_key = issue.get("mute_key")
+        if not mute_key:
+            return
+
+        currently_muted = mute_key in state.error_mutes
+        if mute and currently_muted:
+            return
+        if not mute and not currently_muted:
+            return
+
+        if mute:
+            state.error_mutes.add(mute_key)
+            try:
+                await insert_error_mute(mute_key, payload.user_id)
+            except Exception as e:
+                state.error_mutes.discard(mute_key)
+                logging.error(f"[mute] failed to persist mute {mute_key!r}: {e}", exc_info=True)
+                return
+        else:
+            state.error_mutes.discard(mute_key)
+            try:
+                await delete_error_mute(mute_key)
+            except Exception as e:
+                state.error_mutes.add(mute_key)
+                logging.error(f"[mute] failed to delete mute {mute_key!r}: {e}", exc_info=True)
+                return
+
+        try:
+            channel = self.bot.get_channel(int(payload.channel_id)) or await self.bot.fetch_channel(int(payload.channel_id))
+            message = await channel.fetch_message(payload.message_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return
+
+        new_embed = _render_issue_status_embed(
+            message.embeds[0] if message.embeds else None,
+            issue["status"],
+            muted=mute,
+        )
+        if new_embed is None:
+            return
+        try:
+            await message.edit(embed=new_embed)
+        except (discord.Forbidden, discord.HTTPException) as e:
+            logging.error(f"[mute] failed to edit embed for {payload.message_id}: {e}")
 
 
 # Per-kind metadata for !bugreport / !issue. The emoji prefixes the embed
@@ -1075,27 +1175,55 @@ _ISSUE_STATUS_TO_FOOTER: dict[str, str] = {
     "wip":       "**This issue is a work in progress**",
     "rejected":  "**This issue was rejected**",
 }
-# Match any of our status footers at the end of an embed description so we
-# can replace, not stack, when a status changes (e.g. WIP → completed).
-_ISSUE_FOOTER_SUFFIX_RE = re.compile(
+_ISSUE_MUTED_FOOTER = "**This error has been muted and will not be reported again**"
+
+# Mute reaction for auto-filed error reports. The triage emojis (❌/🚧/✅) apply
+# to every kind; 🔇 only does anything on kind='error' issues.
+_ISSUE_MUTE_EMOJI = "\U0001F507"  # 🔇
+
+# Match any status footer (one of the three messages above) at the tail of an
+# embed description so we can strip and re-append on every render — avoiding
+# stacked footers across multiple transitions.
+_ISSUE_STATUS_FOOTER_RE = re.compile(
     r"\n\n\*\*This issue (?:has been marked completed|is a work in progress|was rejected)\*\*\s*$"
+)
+_ISSUE_MUTED_FOOTER_RE = re.compile(
+    r"\n\n\*\*This error has been muted and will not be reported again\*\*\s*$"
 )
 
 
-def _render_issue_status_embed(original: discord.Embed | None, status: str) -> discord.Embed | None:
-    """Rebuild the bug-report embed with the new status color + footer line.
+def _strip_issue_footers(desc: str) -> str:
+    """Strip any combination of trailing muted + status footers, in either
+    order, so a fresh render starts from the canonical description.
+    """
+    prev = None
+    while desc != prev:
+        prev = desc
+        desc = _ISSUE_STATUS_FOOTER_RE.sub("", desc)
+        desc = _ISSUE_MUTED_FOOTER_RE.sub("", desc)
+    return desc
 
-    The description is whatever was on the original embed, with any prior
-    status footer stripped and the new one appended after a blank line.
-    Returning a fresh Embed avoids mutating the input.
+
+def _render_issue_status_embed(
+    original: discord.Embed | None,
+    status: str,
+    *,
+    muted: bool = False,
+) -> discord.Embed | None:
+    """Rebuild the bug-report embed with the current status + mute footers.
+
+    Canonical footer order is `<status>` (if any) then `<muted>` (if any),
+    each on its own blank-line-separated bold line. Returning a fresh Embed
+    avoids mutating the input.
     """
     if original is None:
         return None
-    desc = original.description or ""
-    desc = _ISSUE_FOOTER_SUFFIX_RE.sub("", desc)
-    footer = _ISSUE_STATUS_TO_FOOTER.get(status)
-    if footer:
-        desc = f"{desc}\n\n{footer}"
+    desc = _strip_issue_footers(original.description or "")
+    status_footer = _ISSUE_STATUS_TO_FOOTER.get(status)
+    if status_footer:
+        desc = f"{desc}\n\n{status_footer}"
+    if muted:
+        desc = f"{desc}\n\n{_ISSUE_MUTED_FOOTER}"
     new_embed = emb(
         str(original.title) if original.title else "📒 Issue",
         desc,

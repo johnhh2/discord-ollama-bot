@@ -58,6 +58,7 @@ _TABLE_PKS = {
     "blocklist": ("guild_id", "user_id"),
     "global_blocklist": ("user_id",),
     "schema_migrations": ("version",),
+    "error_mutes": ("mute_key",),
 }
 
 

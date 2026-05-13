@@ -98,6 +98,9 @@ from src.persistence.issues import (  # noqa: F401
     insert_issue,
     get_issue_by_message,
     update_issue_status,
+    insert_error_mute,
+    delete_error_mute,
+    load_error_mutes,
 )
 from src.persistence.init import init_db_state  # noqa: F401
 

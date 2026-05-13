@@ -370,6 +370,13 @@ async def _init_db_state_inner(state, run_migrations):
         except Exception as e:
             logging.error(f"[init_db_state] global_blocklist failed: {e}", exc_info=True)
 
+        # ── error_mutes ──────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT mute_key FROM error_mutes")
+            state.error_mutes = {r[0] for r in await cur.fetchall()}
+        except Exception as e:
+            logging.error(f"[init_db_state] error_mutes failed: {e}", exc_info=True)
+
         # ── activity caches (crime / gambling / levelups) ─────────────────
         # Each *_history table is the source of truth (atomic UPSERT on every
         # event). The in-memory dicts are a fast-read cache for the graph cog's

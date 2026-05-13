@@ -18,7 +18,8 @@ from src.permissions import (
     get_command_perm,
 )
 from src.persistence import (
-    init_db_state, save_economy, save_ragebait, save_mock, save_tax, save_curse, load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs
+    init_db_state, save_economy, save_ragebait, save_mock, save_tax, save_curse, load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs,
+    insert_issue,
 )
 from src.guild_config import get_guild_cfg
 from src.ai import (
@@ -69,35 +70,130 @@ async def _log_admin_command(bot, ctx: commands.Context):
         pass
 
 
-async def _log_command_error(bot, ctx: commands.Context, error: Exception):
-    """Post a command error embed to the global error-log channel. Fires for
-    every command tier (everyone / server_admin / bot_admin). No-op when the
-    channel isn't configured.
+_ERROR_REPORT_REACTIONS: tuple[str, ...] = ("❌", "\U0001F6A7", "✅", "\U0001F507")  # ❌ 🚧 ✅ 🔇
+
+
+def _build_error_mute_key(ctx: commands.Context, error: Exception) -> str:
+    """Compose the (command, type, message) mute key used by error_mutes.
+
+    The full exception message is included so a small wording change re-files
+    a fresh report — that's deliberate (per user preference at design time).
     """
-    chan_id = state.bot_settings.get("error_log_channel")
+    cmd_name = ctx.command.qualified_name if ctx.command is not None else "—"
+    return f"{cmd_name}:{type(error).__name__}:{error}"[:255]
+
+
+async def _log_command_error(bot, ctx: commands.Context, error: Exception):
+    """File an auto-bug-report for a command exception.
+
+    Replaces the older "post to error_log_channel" path: command errors now
+    route to `bug_report_channel` so the same admin reaction-triage flow
+    (❌ 🚧 ✅) applies, plus a 🔇 mute reaction unique to error reports.
+
+    No-op when:
+    - `bug_report_channel` isn't configured (nowhere to post)
+    - the (command, type, message) key is already in `state.error_mutes`
+      (an admin previously muted this exact error)
+    """
+    chan_id = state.bot_settings.get("bug_report_channel")
     if not chan_id:
         return
+
+    mute_key = _build_error_mute_key(ctx, error)
+    if mute_key in state.error_mutes:
+        return
+
     try:
         channel = bot.get_channel(int(chan_id)) or await bot.fetch_channel(int(chan_id))
     except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
         return
+    if channel is None:
+        return
+
     guild_name = ctx.guild.name if ctx.guild else "DM"
     guild_id_str = str(ctx.guild.id) if ctx.guild else "—"
     tier = "—"
+    cmd_name = "—"
     if ctx.command is not None:
         tier = get_command_perm(ctx.command.qualified_name).get("tier", "—")
+        cmd_name = ctx.command.qualified_name
+    chan_ref = ctx.channel.mention if hasattr(ctx.channel, "mention") else str(ctx.channel)
+    err_line = f"**Error:** `{type(error).__name__}: {error}`"[:1000]
     desc_lines = [
+        f"**Time:** <t:{int(time.time())}:f>",
         f"**User:** {ctx.author.display_name} (`{ctx.author.id}`)",
         f"**Guild:** {guild_name} (`{guild_id_str}`)",
-        f"**Channel:** {ctx.channel.mention if hasattr(ctx.channel, 'mention') else ctx.channel}",
+        f"**Channel:** {chan_ref}",
         f"**Tier:** {tier}",
         f"**Command:** `{ctx.message.content[:300]}`",
-        f"**Error:** `{type(error).__name__}: {error}`"[:1000],
+        err_line,
     ]
+
+    history_lines = await _collect_recent_history(ctx)
+    if history_lines:
+        log_block = "\n".join(history_lines)
+        if len(log_block) > 1500:
+            log_block = log_block[-1500:]
+        desc_lines.append(f"\n**Last 5 messages:**\n```\n{log_block}\n```")
+
     try:
-        await channel.send(embed=emb("⚠️ Command Error", "\n".join(desc_lines), C_RED))
+        report_msg = await channel.send(embed=emb("⚠️ Command Error", "\n".join(desc_lines), C_RED))
     except (discord.Forbidden, discord.HTTPException):
-        pass
+        return
+
+    try:
+        await insert_issue(
+            guild_id=ctx.guild.id if ctx.guild else None,
+            channel_id=report_msg.channel.id,
+            message_id=report_msg.id,
+            reporter_id=ctx.author.id,
+            report=f"{cmd_name}: {type(error).__name__}: {error}"[:1500],
+            kind="error",
+            mute_key=mute_key,
+        )
+    except Exception as e:
+        logging.error(f"[error-report] failed to persist issue row: {e}", exc_info=True)
+
+    for emoji in _ERROR_REPORT_REACTIONS:
+        try:
+            await report_msg.add_reaction(emoji)
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+
+async def _collect_recent_history(ctx: commands.Context) -> list[str]:
+    """Best-effort: return up to the last 5 messages in `ctx.channel` (oldest
+    first), excluding the failing invocation itself. Empty list on any error.
+    """
+    history_lines: list[str] = []
+    try:
+        async for msg in ctx.channel.history(limit=6):
+            if msg.id == ctx.message.id:
+                continue
+            if len(history_lines) >= 5:
+                break
+            text = _short_msg_text(msg)
+            history_lines.append(f"[{msg.author.display_name}]: {text[:200]}")
+        history_lines.reverse()
+    except (discord.Forbidden, discord.HTTPException, AttributeError):
+        return []
+    return history_lines
+
+
+def _short_msg_text(msg) -> str:
+    """Compact a message down to its content or first embed line for the
+    'Last 5 messages' block. Mirrors what utility_cog._msg_text does, kept
+    local to avoid a cog-on-events import cycle.
+    """
+    if getattr(msg, "content", None):
+        return msg.content
+    embeds = getattr(msg, "embeds", None) or []
+    for e in embeds:
+        if getattr(e, "title", None):
+            return str(e.title)
+        if getattr(e, "description", None):
+            return str(e.description)
+    return ""
 
 
 async def _roast_soundboard_spam(bot, guild_id: int, user_id: int):

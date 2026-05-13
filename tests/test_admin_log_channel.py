@@ -22,7 +22,7 @@ import src.persistence as _persistence
 from src.cogs.settings_cog import SettingsCog
 from src.events import _log_admin_command, _log_command_error
 
-from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild, FakeTextChannel
+from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild, FakeTextChannel, FakeMessage
 
 
 pytestmark = pytest.mark.asyncio
@@ -211,12 +211,17 @@ async def test_log_sends_for_server_admin_tier_success():
     assert "server_admin" in embed.description
 
 
-async def test_error_log_routes_to_error_log_channel():
-    """`_log_command_error` posts to `error_log_channel` (separate from the
-    admin-log channel) and includes the exception type and message."""
-    _state.bot_settings["error_log_channel"] = "67890"
+async def test_error_log_routes_to_bug_report_channel(db):
+    """Command errors now auto-file a bug report into `bug_report_channel`
+    instead of posting to a separate `error_log_channel`. The embed carries
+    the exception details and the seeded ❌/🚧/✅/🔇 reactions enable triage."""
+    _state.bot_settings["bug_report_channel"] = "67890"
     _state.command_perms["adminhelp"] = {"tier": "bot_admin", "hidden": False}
+    _state.error_mutes.clear()
+    posted = FakeMessage(message_id=555)
+    posted.channel = FakeTextChannel(ch_id=67890)
     log_chan = FakeTextChannel(ch_id=67890)
+    log_chan.send = AsyncMock(return_value=posted)
     bot = _FakeBot(channel=log_chan)
     ctx = _ctx_for_command("adminhelp")
 
@@ -228,15 +233,23 @@ async def test_error_log_routes_to_error_log_channel():
     assert "Error" in embed.title
     assert "RuntimeError" in embed.description
     assert "kaboom" in embed.description
+    # All four triage reactions seeded on the posted embed (order: ❌ 🚧 ✅ 🔇).
+    reactions = [c.args[0] for c in posted.add_reaction.await_args_list]
+    assert reactions == ["❌", "\U0001F6A7", "✅", "\U0001F507"]
 
 
-async def test_error_log_fires_for_everyone_tier():
-    """Errors on `everyone`-tier commands also reach the error-log channel —
-    the previous admin-only gating silently dropped them."""
-    _state.bot_settings["error_log_channel"] = "67890"
+async def test_error_log_fires_for_everyone_tier(db):
+    """Errors on `everyone`-tier commands also file an auto-bug-report — the
+    previous admin-only gating silently dropped them."""
+    _state.bot_settings["bug_report_channel"] = "67890"
     _state.bot_settings.pop("admin_log_channel", None)
+    _state.bot_settings.pop("error_log_channel", None)
     _state.command_perms["bugreport"] = {"tier": "everyone", "hidden": False}
+    _state.error_mutes.clear()
+    posted = FakeMessage(message_id=556)
+    posted.channel = FakeTextChannel(ch_id=67890)
     log_chan = FakeTextChannel(ch_id=67890)
+    log_chan.send = AsyncMock(return_value=posted)
     bot = _FakeBot(channel=log_chan)
     ctx = _ctx_for_command("bugreport")
 
@@ -246,7 +259,8 @@ async def test_error_log_fires_for_everyone_tier():
 
 
 async def test_error_log_no_op_when_unconfigured():
-    """No `error_log_channel` set → no fetch, no send, no raise."""
+    """No `bug_report_channel` set → no fetch, no send, no raise."""
+    _state.bot_settings.pop("bug_report_channel", None)
     _state.bot_settings.pop("error_log_channel", None)
     _state.command_perms["adminhelp"] = {"tier": "bot_admin", "hidden": False}
     log_chan = FakeTextChannel(ch_id=12345)
@@ -254,6 +268,28 @@ async def test_error_log_no_op_when_unconfigured():
     ctx = _ctx_for_command("adminhelp")
 
     await _log_command_error(bot, ctx, RuntimeError("kaboom"))
+
+    assert log_chan.send.await_count == 0
+    assert bot.get_channel_calls == []
+
+
+async def test_error_log_skipped_when_muted(db):
+    """If the (command, type, message) key is already in `state.error_mutes`,
+    the error path is a silent no-op — no fetch, no send."""
+    _state.bot_settings["bug_report_channel"] = "67890"
+    _state.command_perms["adminhelp"] = {"tier": "bot_admin", "hidden": False}
+    log_chan = FakeTextChannel(ch_id=67890)
+    log_chan.send = AsyncMock(return_value=FakeMessage(message_id=557))
+    bot = _FakeBot(channel=log_chan)
+    ctx = _ctx_for_command("adminhelp")
+
+    # Pre-seed the mute set with the key we know _build_error_mute_key will compose.
+    from src.events import _build_error_mute_key
+    err = RuntimeError("kaboom")
+    _state.error_mutes.clear()
+    _state.error_mutes.add(_build_error_mute_key(ctx, err))
+
+    await _log_command_error(bot, ctx, err)
 
     assert log_chan.send.await_count == 0
     assert bot.get_channel_calls == []

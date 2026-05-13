@@ -31,6 +31,12 @@ quote_log: list = []
 leveling: dict = {}
 command_perms: dict = {}
 
+# Mute keys for auto-filed command-error bug reports — see _log_command_error.
+# A key is "<command>:<ExceptionType>:<message>"; entries here cause the error
+# path to drop the report without posting. Source of truth is the error_mutes
+# table; loaded at boot.
+error_mutes: set = set()
+
 # Per-(guild_id, user_id) -> "user" | "server_admin" | "bot_admin" tier override
 # set by !setperm. Affects is_admin() and is_server_admin() checks within that
 # guild only. Source of truth is the user_perm_overrides table; loaded at boot.
