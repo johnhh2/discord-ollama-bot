@@ -70,7 +70,7 @@ async def _log_admin_command(bot, ctx: commands.Context):
         pass
 
 
-_ERROR_REPORT_REACTIONS: tuple[str, ...] = ("✖️", "⚙️", "✅", "🛑", "\U0001F507")  # ✖️ ⚙️ ✅ 🛑 🔇
+_ERROR_REPORT_REACTIONS: tuple[str, ...] = ("❌", "⚙️", "✅", "🛑", "\U0001F507")  # ❌ ⚙️ ✅ 🛑 🔇
 
 
 def _build_error_mute_key(ctx: commands.Context, error: Exception) -> str:
