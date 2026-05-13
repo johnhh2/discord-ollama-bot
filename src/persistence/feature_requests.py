@@ -55,7 +55,7 @@ _FR_COLS = (
 async def get_feature_request_by_message(message_id: int) -> dict | None:
     async with with_cursor() as cur:
         await cur.execute(
-            f"SELECT {_FR_COLS} FROM feature_requests WHERE message_id=%s",
+            f"SELECT {_FR_COLS} FROM feature_requests WHERE message_id=%s",  # nosec B608 - _FR_COLS is a literal
             (message_id,),
         )
         row = await cur.fetchone()
@@ -65,7 +65,7 @@ async def get_feature_request_by_message(message_id: int) -> dict | None:
 async def get_feature_request_by_feature_id(feature_issue_id: int) -> dict | None:
     async with with_cursor() as cur:
         await cur.execute(
-            f"SELECT {_FR_COLS} FROM feature_requests WHERE feature_issue_id=%s",
+            f"SELECT {_FR_COLS} FROM feature_requests WHERE feature_issue_id=%s",  # nosec B608 - _FR_COLS is a literal
             (feature_issue_id,),
         )
         row = await cur.fetchone()

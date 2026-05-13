@@ -80,7 +80,7 @@ async def get_issue_by_message(message_id: int) -> dict | None:
     """Fetch the issue row for a given embed message_id, or None."""
     async with with_cursor() as cur:
         await cur.execute(
-            f"SELECT {_ISSUE_COLS} FROM issues WHERE message_id=%s",
+            f"SELECT {_ISSUE_COLS} FROM issues WHERE message_id=%s",  # nosec B608 - _ISSUE_COLS is a literal
             (message_id,),
         )
         row = await cur.fetchone()
@@ -91,7 +91,7 @@ async def get_issue_by_id(issue_id: int) -> dict | None:
     """Fetch an issue row by its primary-key id, or None."""
     async with with_cursor() as cur:
         await cur.execute(
-            f"SELECT {_ISSUE_COLS} FROM issues WHERE id=%s",
+            f"SELECT {_ISSUE_COLS} FROM issues WHERE id=%s",  # nosec B608 - _ISSUE_COLS is a literal
             (issue_id,),
         )
         row = await cur.fetchone()
@@ -123,7 +123,7 @@ async def list_issues(
     None means no status filter (include every status). `deleted=1` rows
     are excluded unless `include_deleted=True`.
     """
-    sql = f"SELECT {_ISSUE_COLS} FROM issues WHERE 1=1"
+    sql = f"SELECT {_ISSUE_COLS} FROM issues WHERE 1=1"  # nosec B608 - _ISSUE_COLS is a literal
     params: list = []
     if not include_deleted:
         sql += " AND deleted=0"
