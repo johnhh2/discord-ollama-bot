@@ -94,6 +94,11 @@ from src.persistence.ephemeral import (  # noqa: F401
     add_ephemeral_msg,
     load_and_clear_ephemeral_msgs,
 )
+from src.persistence.issues import (  # noqa: F401
+    insert_issue,
+    get_issue_by_message,
+    update_issue_status,
+)
 from src.persistence.init import init_db_state  # noqa: F401
 
 import asyncio as _asyncio

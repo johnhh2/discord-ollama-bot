@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import random
 import re
 import time
@@ -21,7 +22,8 @@ from src.permissions import (
     requires_perm,
 )
 from src.persistence import (
-    save_bot_settings, load_saved_quotes
+    save_bot_settings, load_saved_quotes,
+    insert_issue, get_issue_by_message, update_issue_status,
 )
 from src.guild_config import get_guild_cfg
 from src.ai import (
@@ -921,12 +923,125 @@ class UtilityCog(commands.Cog):
             desc_lines.append(f"\n**Last 5 messages:**\n```\n{log_block}\n```")
 
         try:
-            await channel.send(embed=emb("🐛 Bug Report", "\n".join(desc_lines), C_RED))
+            report_msg = await channel.send(embed=emb("🐛 Bug Report", "\n".join(desc_lines), C_RED))
         except (discord.Forbidden, discord.HTTPException):
             await ctx.send(embed=emb("🐛 Bug Report", "Could not post the bug report — please try again later.", C_RED))
             return
 
+        try:
+            await insert_issue(
+                guild_id=ctx.guild.id if ctx.guild else None,
+                channel_id=report_msg.channel.id,
+                message_id=report_msg.id,
+                reporter_id=ctx.author.id,
+                report=report[:1500],
+            )
+        except Exception as e:
+            logging.error(f"[bug] failed to persist issue row: {e}", exc_info=True)
+            # Still seed the reactions — admins can mark it during the same
+            # uptime via the message cache even without a DB row. (Persistence
+            # only matters across restarts.)
+
+        for emoji in _ISSUE_STATUS_EMOJIS:
+            try:
+                await report_msg.add_reaction(emoji)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
         await ctx.send(embed=emb("🐛 Bug Report", "Thanks — your report has been sent to the bot admins.", C_GREEN))
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        """Let a bot admin mark an issue completed (✅), WIP (🚧), or rejected (❌)
+        by reacting to the bug-report embed. Uses raw events so reactions after
+        a restart still resolve to the persisted issue row.
+        """
+        emoji = str(payload.emoji)
+        if emoji not in _ISSUE_EMOJI_TO_STATUS:
+            return
+        if self.bot.user and payload.user_id == self.bot.user.id:
+            return
+        if payload.user_id not in state.bot_admins:
+            return
+
+        chan_id = state.bot_settings.get("bug_report_channel")
+        if not chan_id or str(payload.channel_id) != str(chan_id):
+            return
+
+        issue = await get_issue_by_message(payload.message_id)
+        if issue is None:
+            return
+        new_status = _ISSUE_EMOJI_TO_STATUS[emoji]
+        if issue["status"] == new_status:
+            return
+
+        try:
+            channel = self.bot.get_channel(int(chan_id)) or await self.bot.fetch_channel(int(chan_id))
+            message = await channel.fetch_message(payload.message_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return
+
+        new_embed = _render_issue_status_embed(message.embeds[0] if message.embeds else None, new_status)
+        if new_embed is None:
+            return
+        try:
+            await message.edit(embed=new_embed)
+        except (discord.Forbidden, discord.HTTPException) as e:
+            logging.error(f"[bug] failed to edit issue embed {payload.message_id}: {e}")
+            return
+
+        try:
+            await update_issue_status(payload.message_id, new_status, payload.user_id)
+        except Exception as e:
+            logging.error(f"[bug] failed to persist status {new_status} for {payload.message_id}: {e}", exc_info=True)
+
+
+# Emojis the bot seeds onto each new bug-report embed. Order is the order
+# they appear in Discord's reaction bar.
+_ISSUE_STATUS_EMOJIS: tuple[str, ...] = ("✅", "\U0001F6A7", "❌")  # ✅ 🚧 ❌
+_ISSUE_EMOJI_TO_STATUS: dict[str, str] = {
+    "✅": "completed",
+    "\U0001F6A7": "wip",
+    "❌": "rejected",
+}
+_ISSUE_STATUS_TO_COLOR: dict[str, int] = {
+    "open":      C_RED,
+    "completed": C_GREEN,
+    "wip":       C_GOLD,
+    "rejected":  C_RED,
+}
+_ISSUE_STATUS_TO_FOOTER: dict[str, str] = {
+    "completed": "**This issue has been marked completed**",
+    "wip":       "**This issue is a work in progress**",
+    "rejected":  "**This issue was rejected**",
+}
+# Match any of our status footers at the end of an embed description so we
+# can replace, not stack, when a status changes (e.g. WIP → completed).
+_ISSUE_FOOTER_SUFFIX_RE = re.compile(
+    r"\n\n\*\*This issue (?:has been marked completed|is a work in progress|was rejected)\*\*\s*$"
+)
+
+
+def _render_issue_status_embed(original: discord.Embed | None, status: str) -> discord.Embed | None:
+    """Rebuild the bug-report embed with the new status color + footer line.
+
+    The description is whatever was on the original embed, with any prior
+    status footer stripped and the new one appended after a blank line.
+    Returning a fresh Embed avoids mutating the input.
+    """
+    if original is None:
+        return None
+    desc = original.description or ""
+    desc = _ISSUE_FOOTER_SUFFIX_RE.sub("", desc)
+    footer = _ISSUE_STATUS_TO_FOOTER.get(status)
+    if footer:
+        desc = f"{desc}\n\n{footer}"
+    new_embed = emb(
+        str(original.title) if original.title else "🐛 Bug Report",
+        desc,
+        _ISSUE_STATUS_TO_COLOR.get(status, C_RED),
+    )
+    return new_embed
 
 
 async def setup(bot):
