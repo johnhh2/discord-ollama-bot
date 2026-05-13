@@ -26,6 +26,9 @@ from src.persistence import (
     insert_issue, get_issue_by_message, update_issue_status,
     list_issues, soft_delete_issue,
     insert_error_mute, delete_error_mute,
+    insert_feature_request, get_feature_request_by_message,
+    get_feature_request_by_feature_id,
+    update_feature_request_status, link_feature_to_request,
 )
 from src.guild_config import get_guild_cfg
 from src.ai import (
@@ -877,6 +880,81 @@ class UtilityCog(commands.Cog):
     async def cmd_bugreport(self, ctx: commands.Context, *, report: str = None):
         await self._submit_issue(ctx, kind="bug", report=report)
 
+    @commands.command(name="featurerequest", aliases=["frequest"])
+    @requires_perm
+    async def cmd_featurerequest(self, ctx: commands.Context, *, description: str = None):
+        """User-facing feature-request submission.
+
+        Posts an embed to the per-guild `feature_request_channel` and seeds
+        only two reactions: ✅ (accept → spawns a feature issue) and 🛑
+        (reject). Distinct from `!issue feature` which is bot-admin only.
+        """
+        title = "📖 Feature Request"
+        if description is None or not description.strip():
+            await ctx.send(embed=emb(
+                title,
+                "Usage: `!featurerequest <description of the feature>`",
+                C_GREY,
+            ))
+            return
+        if ctx.guild is None:
+            await ctx.send(embed=emb(title, "Feature requests can only be filed in a server.", C_RED))
+            return
+
+        cfg = get_guild_cfg(ctx.guild.id)
+        chan_id = cfg.get("feature_request_channel")
+        if not chan_id:
+            await ctx.send(embed=emb(
+                title,
+                "Feature requests are not configured for this server. Ask an admin to run `!settings feature-request-channel #channel`.",
+                C_GREY,
+            ))
+            return
+
+        try:
+            channel = self.bot.get_channel(int(chan_id)) or await self.bot.fetch_channel(int(chan_id))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
+            channel = None
+        if channel is None:
+            await ctx.send(embed=emb(title, "Could not reach the feature-request channel.", C_RED))
+            return
+
+        guild_name = ctx.guild.name
+        chan_ref = ctx.channel.mention if hasattr(ctx.channel, "mention") else str(ctx.channel)
+        desc_lines = [
+            f"**Time:** <t:{int(time.time())}:f>",
+            f"**User:** {ctx.author.display_name} (`{ctx.author.id}`)",
+            f"**Guild:** {guild_name} (`{ctx.guild.id}`)",
+            f"**Channel:** {chan_ref}",
+            "",
+            f"**Description:**\n{description[:1500]}",
+        ]
+
+        try:
+            request_msg = await channel.send(embed=emb(title, "\n".join(desc_lines), C_GOLD))
+        except (discord.Forbidden, discord.HTTPException):
+            await ctx.send(embed=emb(title, "Could not post the feature request — please try again later.", C_RED))
+            return
+
+        try:
+            await insert_feature_request(
+                guild_id=ctx.guild.id,
+                channel_id=request_msg.channel.id,
+                message_id=request_msg.id,
+                reporter_id=ctx.author.id,
+                description=description[:1500],
+            )
+        except Exception as e:
+            logging.error(f"[featurerequest] failed to persist row: {e}", exc_info=True)
+
+        for emoji in _FEATURE_REQUEST_REACTIONS:
+            try:
+                await request_msg.add_reaction(emoji)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+
+        await ctx.send(embed=emb(title, "Thanks — your feature request has been submitted.", C_GREEN))
+
     @commands.command(name="issue")
     @requires_perm
     async def cmd_issue(self, ctx: commands.Context, kind: str = None, *, rest: str = None):
@@ -1068,20 +1146,34 @@ class UtilityCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
-        """Bot-admin reaction-triage on issue embeds.
+        """Bot-admin reaction-triage on issue and feature-request embeds.
 
-        ❌/🚧/✅ flip the issue status (any kind).
-        🔇 mutes the (command, type, message) key for kind='error' issues so
-        the same error never re-fills the channel; the matching unreact in
-        `on_raw_reaction_remove` unmutes it. Uses raw events so reactions
-        after a restart still resolve to the persisted issue row.
+        - In `bug_report_channel`: ✅/🛑/⚙️/❌ flip the issue status (any kind);
+          🔇 mutes the error key for kind='error'.
+        - In a guild's `feature_request_channel`: ✅ accepts the request
+          (spawns a feature issue + links it) and ❌ rejects it.
+
+        Uses raw events so reactions after a restart still resolve to the
+        persisted row.
         """
-        emoji = str(payload.emoji)
-        if emoji not in _ISSUE_EMOJI_TO_STATUS and emoji != _ISSUE_MUTE_EMOJI:
-            return
         if self.bot.user and payload.user_id == self.bot.user.id:
             return
         if payload.user_id not in state.bot_admins:
+            return
+
+        emoji = str(payload.emoji)
+
+        # Feature-request channel branch — short-circuit before falling through
+        # to the issue triage logic. Lookup is keyed by guild so two servers
+        # using the same channel id (unlikely but possible) don't collide.
+        if emoji in _FEATURE_REQUEST_EMOJI_TO_DECISION and payload.guild_id is not None:
+            cfg = get_guild_cfg(payload.guild_id)
+            fr_chan_id = cfg.get("feature_request_channel")
+            if fr_chan_id and str(payload.channel_id) == str(fr_chan_id):
+                await self._handle_feature_request_reaction(payload, emoji)
+                return
+
+        if emoji not in _ISSUE_EMOJI_TO_STATUS and emoji != _ISSUE_MUTE_EMOJI:
             return
 
         chan_id = state.bot_settings.get("bug_report_channel")
@@ -1124,6 +1216,11 @@ class UtilityCog(commands.Cog):
             await update_issue_status(payload.message_id, new_status, payload.user_id)
         except Exception as e:
             logging.error(f"[bug] failed to persist status {new_status} for {payload.message_id}: {e}", exc_info=True)
+
+        # Propagate to the originating feature_request, if this issue is a
+        # spawned feature linked to one.
+        if issue.get("kind") == "feature":
+            await self._refresh_feature_request_for_issue(issue["id"], feature_status=new_status)
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
@@ -1209,6 +1306,154 @@ class UtilityCog(commands.Cog):
             await message.edit(embed=new_embed)
         except (discord.Forbidden, discord.HTTPException) as e:
             logging.error(f"[mute] failed to edit embed for {payload.message_id}: {e}")
+
+    async def _handle_feature_request_reaction(
+        self,
+        payload: discord.RawReactionActionEvent,
+        emoji: str,
+    ) -> None:
+        """Apply an accept/reject decision to a feature_request row.
+
+        On accept: persist status='accepted', spawn a kind='feature' issue row
+        in `bug_report_channel`, link the two, and re-render the request embed
+        with the linked feature's status. On reject: persist status='rejected'
+        and re-render.
+
+        Same-status re-reacts are no-ops (no duplicate feature issue spawned).
+        """
+        request = await get_feature_request_by_message(payload.message_id)
+        if request is None:
+            return
+        decision = _FEATURE_REQUEST_EMOJI_TO_DECISION[emoji]
+        if request["status"] == decision:
+            return
+
+        # Fetch the request embed up front; if we can't, bail before mutating.
+        try:
+            req_channel = self.bot.get_channel(int(payload.channel_id)) or await self.bot.fetch_channel(int(payload.channel_id))
+            req_message = await req_channel.fetch_message(payload.message_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            return
+
+        feature_status: str | None = None
+        feature_issue_id: int | None = None
+
+        if decision == "accepted":
+            # Spawn a kind='feature' issue in the bug_report_channel.
+            bug_chan_id = state.bot_settings.get("bug_report_channel")
+            if not bug_chan_id:
+                logging.warning(
+                    "[featurerequest] accepted but bug_report_channel unset; "
+                    "skipping spawn of linked feature issue."
+                )
+            else:
+                try:
+                    bug_chan = self.bot.get_channel(int(bug_chan_id)) or await self.bot.fetch_channel(int(bug_chan_id))
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
+                    bug_chan = None
+                if bug_chan is not None:
+                    feature_issue_id = await self._spawn_feature_from_request(bug_chan, request)
+                    feature_status = "open"
+
+        try:
+            await update_feature_request_status(payload.message_id, decision, payload.user_id)
+        except Exception as e:
+            logging.error(
+                f"[featurerequest] failed to persist status={decision} for "
+                f"message_id={payload.message_id}: {e}", exc_info=True,
+            )
+
+        if feature_issue_id is not None:
+            try:
+                await link_feature_to_request(payload.message_id, feature_issue_id)
+            except Exception as e:
+                logging.error(f"[featurerequest] failed to link feature {feature_issue_id}: {e}", exc_info=True)
+
+        new_embed = _render_feature_request_embed(
+            req_message.embeds[0] if req_message.embeds else None,
+            decision,
+            feature_status=feature_status,
+        )
+        if new_embed is None:
+            return
+        try:
+            await req_message.edit(embed=new_embed)
+        except (discord.Forbidden, discord.HTTPException) as e:
+            logging.error(f"[featurerequest] failed to edit embed for {payload.message_id}: {e}")
+
+    async def _spawn_feature_from_request(self, bug_chan, request: dict) -> int | None:
+        """Post a kind='feature' issue embed mirroring the feature_request,
+        seed the standard issue reactions, and return the inserted issue id.
+
+        Returns None on any failure so the caller can persist the request
+        status without forcing a link to a non-existent issue.
+        """
+        title = "📖 Feature"
+        desc_lines = [
+            f"**Time:** <t:{int(time.time())}:f>",
+            f"**Reporter:** <@{request['reporter_id']}> (`{request['reporter_id']}`)",
+            f"**From feature request:** [↗](https://discord.com/channels/{request['guild_id']}/{request['channel_id']}/{request['message_id']})",
+            "",
+            f"**Description:**\n{(request['description'] or '')[:1500]}",
+        ]
+        try:
+            issue_msg = await bug_chan.send(embed=emb(title, "\n".join(desc_lines), C_RED))
+        except (discord.Forbidden, discord.HTTPException) as e:
+            logging.error(f"[featurerequest] could not post linked feature issue: {e}")
+            return None
+
+        try:
+            issue_id = await insert_issue(
+                guild_id=request.get("guild_id"),
+                channel_id=issue_msg.channel.id,
+                message_id=issue_msg.id,
+                reporter_id=request["reporter_id"],
+                report=(request["description"] or "")[:1500],
+                kind="feature",
+            )
+        except Exception as e:
+            logging.error(f"[featurerequest] failed to insert spawned feature issue row: {e}", exc_info=True)
+            return None
+
+        for em in _ISSUE_STATUS_EMOJIS:
+            try:
+                await issue_msg.add_reaction(em)
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+        return issue_id
+
+    async def _refresh_feature_request_for_issue(
+        self, feature_issue_id: int, *, feature_status: str,
+    ) -> None:
+        """Re-render the originating feature_request embed (if any) to reflect
+        a status change on its spawned feature issue.
+
+        No-op when no feature_request points at this issue id, or when we
+        can't reach the request channel/message.
+        """
+        try:
+            request = await get_feature_request_by_feature_id(feature_issue_id)
+        except Exception as e:
+            logging.error(f"[featurerequest] lookup by feature_issue_id={feature_issue_id} failed: {e}", exc_info=True)
+            return
+        if request is None:
+            return
+        try:
+            req_chan = self.bot.get_channel(int(request["channel_id"])) or await self.bot.fetch_channel(int(request["channel_id"]))
+            req_message = await req_chan.fetch_message(int(request["message_id"]))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
+            return
+        new_embed = _render_feature_request_embed(
+            req_message.embeds[0] if req_message.embeds else None,
+            request["status"],
+            feature_status=feature_status,
+        )
+        if new_embed is None:
+            return
+        try:
+            await req_message.edit(embed=new_embed)
+        except (discord.Forbidden, discord.HTTPException) as e:
+            logging.error(f"[featurerequest] failed to mirror status to request {request['message_id']}: {e}")
 
 
 # Per-kind metadata for !bugreport / !issue. The emoji prefixes the embed
@@ -1378,6 +1623,65 @@ def _render_issue_status_embed(
         _ISSUE_STATUS_TO_COLOR.get(status, C_RED),
     )
     return new_embed
+
+
+# ── Feature requests ─────────────────────────────────────────────────────────
+
+# Seed reactions on a fresh !featurerequest embed. ✅ accepts and spawns a
+# feature issue; 🛑 rejects. No 'not started' / 'wip' here — those statuses
+# live on the spawned feature issue and are mirrored back via
+# _render_feature_request_embed when the issue's status changes.
+_FEATURE_REQUEST_REACTIONS: tuple[str, ...] = ("✅", "❌")
+_FEATURE_REQUEST_EMOJI_TO_DECISION: dict[str, str] = {
+    "✅": "accepted",
+    "❌": "rejected",
+}
+
+_FEATURE_REQUEST_FOOTER_RE = re.compile(
+    r"\n\n\*\*Status:\*\*\s*[^\n]+(?:\s+\(linked feature[^\n]*\))?\s*$"
+)
+
+
+def _render_feature_request_embed(
+    original: discord.Embed | None,
+    decision: str,
+    *,
+    feature_status: str | None = None,
+) -> discord.Embed | None:
+    """Re-render the feature-request embed with the current decision footer.
+
+    `decision` is one of 'open' | 'accepted' | 'rejected'. If `feature_status`
+    is provided (only meaningful when decision='accepted'), the footer also
+    surfaces the spawned feature issue's current status so the reporter can
+    see progress without leaving the request channel.
+    """
+    if original is None:
+        return None
+    desc = (original.description or "")
+    # Strip any prior status footer first so transitions don't stack.
+    prev = None
+    while desc != prev:
+        prev = desc
+        desc = _FEATURE_REQUEST_FOOTER_RE.sub("", desc)
+
+    if decision == "accepted":
+        if feature_status and feature_status != "open":
+            label = _ISSUE_STATUS_LABEL.get(feature_status, feature_status)
+            footer = f"**Status:** Accepted (linked feature — {label})"
+        else:
+            footer = "**Status:** Accepted"
+        color = _ISSUE_STATUS_TO_COLOR.get(feature_status or "open", C_BLUE)
+    elif decision == "rejected":
+        footer = "**Status:** Rejected"
+        color = C_RED
+    else:
+        footer = None
+        color = C_GOLD
+
+    if footer:
+        desc = f"{desc}\n\n{footer}"
+    title = str(original.title) if original.title else "📖 Feature Request"
+    return emb(title, desc, color)
 
 
 async def setup(bot):

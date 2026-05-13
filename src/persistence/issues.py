@@ -69,6 +69,35 @@ async def get_issue_by_message(message_id: int) -> dict | None:
     }
 
 
+async def get_issue_by_id(issue_id: int) -> dict | None:
+    """Fetch an issue row by its primary-key id, or None."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT id, guild_id, channel_id, message_id, reporter_id, report, status,"
+            " created_at, resolved_by, resolved_at, kind, mute_key, deleted"
+            " FROM issues WHERE id=%s",
+            (issue_id,),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        return None
+    return {
+        "id": row[0],
+        "guild_id": row[1],
+        "channel_id": row[2],
+        "message_id": row[3],
+        "reporter_id": row[4],
+        "report": row[5],
+        "status": row[6],
+        "created_at": row[7],
+        "resolved_by": row[8],
+        "resolved_at": row[9],
+        "kind": row[10],
+        "mute_key": row[11],
+        "deleted": bool(row[12]),
+    }
+
+
 async def update_issue_status(
     message_id: int, status: str, resolved_by: int | None
 ) -> None:

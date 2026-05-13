@@ -97,12 +97,20 @@ from src.persistence.ephemeral import (  # noqa: F401
 from src.persistence.issues import (  # noqa: F401
     insert_issue,
     get_issue_by_message,
+    get_issue_by_id,
     update_issue_status,
     list_issues,
     soft_delete_issue,
     insert_error_mute,
     delete_error_mute,
     load_error_mutes,
+)
+from src.persistence.feature_requests import (  # noqa: F401
+    insert_feature_request,
+    get_feature_request_by_message,
+    get_feature_request_by_feature_id,
+    update_feature_request_status,
+    link_feature_to_request,
 )
 from src.persistence.init import init_db_state  # noqa: F401
 

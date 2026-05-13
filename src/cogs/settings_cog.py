@@ -66,6 +66,8 @@ class SettingsCog(commands.Cog):
         lottery_val = f"<#{lottery_channel_id}>" if lottery_channel_id else "❌ disabled"
         levelup_channel_id = cfg.get("levelup_channel")
         levelup_val = f"<#{levelup_channel_id}>" if levelup_channel_id else "❌ disabled"
+        feature_req_channel_id = cfg.get("feature_request_channel")
+        feature_req_val = f"<#{feature_req_channel_id}>" if feature_req_channel_id else "❌ disabled"
         soundboard_rl = cfg.get("soundboard_ratelimit", [])
         if soundboard_rl:
             rl_names = []
@@ -92,6 +94,7 @@ class SettingsCog(commands.Cog):
         embed.add_field(name="🔞 NSFW", value=nsfw_val, inline=False)
         embed.add_field(name="🎰 Lottery channel", value=lottery_val, inline=False)
         embed.add_field(name="📊 Level-up channel", value=levelup_val, inline=False)
+        embed.add_field(name="📖 Feature request channel", value=feature_req_val, inline=False)
         embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
         embed.add_field(name="🎲 Gambler role", value=gambler_role_val, inline=False)
         embed.add_field(name="🏷️ Tax aliases", value=tax_aliases_val, inline=False)
@@ -120,7 +123,8 @@ class SettingsCog(commands.Cog):
             "soundboard-ratelimit add|remove @user|<userid> / list\n"
             "gambler-role on|off\n"
             "channel-levelup #channel / clear\n"
-            "tax-aliases add|remove <word> / list / clear"
+            "tax-aliases add|remove <word> / list / clear\n"
+            "feature-request-channel #channel / clear"
         )
         if is_admin(ctx):
             footer_text += (
@@ -574,6 +578,38 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb(
                 "⚠️ Error Log Channel",
                 "Usage: `!settings error-log-channel #channel` or `!settings error-log-channel clear`",
+                C_GREY,
+            ))
+
+    # ── !settings feature-request-channel (per-guild, server admin) ─────────
+    @cmd_settings.command(name="feature-request-channel")
+    @requires_perm
+    async def settings_feature_request_channel(self, ctx: commands.Context, *args):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        if args and args[0].lower() == "clear":
+            cfg.pop("feature_request_channel", None)
+            await save_guild_settings()
+            await ctx.send(embed=emb(
+                "📖 Feature Request Channel",
+                "User feature requests disabled in this server.",
+                C_GREEN,
+            ))
+        elif ctx.message.channel_mentions:
+            channel = ctx.message.channel_mentions[0]
+            cfg["feature_request_channel"] = str(channel.id)
+            await save_guild_settings()
+            await ctx.send(embed=emb(
+                "📖 Feature Request Channel",
+                f"Feature requests in this server will be posted to {channel.mention}.",
+                C_GREEN,
+            ))
+        else:
+            await ctx.send(embed=emb(
+                "📖 Feature Request Channel",
+                "Usage: `!settings feature-request-channel #channel` or `!settings feature-request-channel clear`",
                 C_GREY,
             ))
 
