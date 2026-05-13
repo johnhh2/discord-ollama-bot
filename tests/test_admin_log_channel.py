@@ -235,10 +235,10 @@ async def test_error_log_fires_for_everyone_tier():
     the previous admin-only gating silently dropped them."""
     _state.bot_settings["error_log_channel"] = "67890"
     _state.bot_settings.pop("admin_log_channel", None)
-    _state.command_perms["bug"] = {"tier": "everyone", "hidden": False}
+    _state.command_perms["bugreport"] = {"tier": "everyone", "hidden": False}
     log_chan = FakeTextChannel(ch_id=67890)
     bot = _FakeBot(channel=log_chan)
-    ctx = _ctx_for_command("bug")
+    ctx = _ctx_for_command("bugreport")
 
     await _log_command_error(bot, ctx, RuntimeError("oops"))
 

@@ -865,22 +865,43 @@ class UtilityCog(commands.Cog):
 
         await send_ephemeral(ctx, embed=embed)
 
-    @commands.command(name="bug", aliases=["issue", "bugreport"])
+    @commands.command(name="bugreport", aliases=["bug"])
     @requires_perm
-    async def cmd_bug(self, ctx: commands.Context, *, report: str = None):
-        if report is None or not report.strip():
+    async def cmd_bugreport(self, ctx: commands.Context, *, report: str = None):
+        await self._submit_issue(ctx, kind="bug", report=report)
+
+    @commands.command(name="issue")
+    @requires_perm
+    async def cmd_issue(self, ctx: commands.Context, kind: str = None, *, report: str = None):
+        """Bot-admin gateway for logging non-bug items. The first token picks
+        the kind (feature/task/improvement); !bugreport remains the public
+        entry point for users to file bugs.
+        """
+        kind_norm = (kind or "").lower().strip()
+        if kind_norm not in _ISSUE_KINDS or kind_norm == "bug":
+            allowed = "|".join(k for k in _ISSUE_KINDS if k != "bug")
             await ctx.send(embed=emb(
-                "🐛 Bug Report",
-                "Usage: `!bug <description of the bug>`",
+                "📒 Issue",
+                f"Usage: `!issue <{allowed}> <description>` (use `!bugreport` for bug reports)",
                 C_GREY,
             ))
+            return
+        await self._submit_issue(ctx, kind=kind_norm, report=report)
+
+    async def _submit_issue(self, ctx: commands.Context, *, kind: str, report: str | None):
+        meta = _ISSUE_KINDS[kind]
+        title = f"{meta['emoji']} {meta['title']}"
+
+        if report is None or not report.strip():
+            usage = meta["usage"]
+            await ctx.send(embed=emb(title, f"Usage: {usage}", C_GREY))
             return
 
         chan_id = state.bot_settings.get("bug_report_channel")
         if not chan_id:
             await ctx.send(embed=emb(
-                "🐛 Bug Report",
-                "Bug reporting is not configured on this bot.",
+                title,
+                f"{meta['title']} submission is not configured on this bot.",
                 C_GREY,
             ))
             return
@@ -890,20 +911,8 @@ class UtilityCog(commands.Cog):
         except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
             channel = None
         if channel is None:
-            await ctx.send(embed=emb("🐛 Bug Report", "Could not reach the bug-report channel.", C_RED))
+            await ctx.send(embed=emb(title, f"Could not reach the {meta['title'].lower()} channel.", C_RED))
             return
-
-        history_lines = []
-        try:
-            async for msg in ctx.channel.history(limit=6):
-                if msg.id == ctx.message.id:
-                    continue
-                if len(history_lines) >= 5:
-                    break
-                history_lines.append(f"[{msg.author.display_name}]: {_msg_text(msg)[:200]}")
-            history_lines.reverse()
-        except (discord.Forbidden, discord.HTTPException):
-            pass
 
         guild_name = ctx.guild.name if ctx.guild else "DM"
         guild_id_str = str(ctx.guild.id) if ctx.guild else "—"
@@ -914,18 +923,31 @@ class UtilityCog(commands.Cog):
             f"**Guild:** {guild_name} (`{guild_id_str}`)",
             f"**Channel:** {chan_ref}",
             "",
-            f"**Report:**\n{report[:1500]}",
+            f"**{meta['report_label']}:**\n{report[:1500]}",
         ]
-        if history_lines:
-            log_block = "\n".join(history_lines)
-            if len(log_block) > 1500:
-                log_block = log_block[-1500:]
-            desc_lines.append(f"\n**Last 5 messages:**\n```\n{log_block}\n```")
+
+        if meta["include_history"]:
+            history_lines = []
+            try:
+                async for msg in ctx.channel.history(limit=6):
+                    if msg.id == ctx.message.id:
+                        continue
+                    if len(history_lines) >= 5:
+                        break
+                    history_lines.append(f"[{msg.author.display_name}]: {_msg_text(msg)[:200]}")
+                history_lines.reverse()
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+            if history_lines:
+                log_block = "\n".join(history_lines)
+                if len(log_block) > 1500:
+                    log_block = log_block[-1500:]
+                desc_lines.append(f"\n**Last 5 messages:**\n```\n{log_block}\n```")
 
         try:
-            report_msg = await channel.send(embed=emb("🐛 Bug Report", "\n".join(desc_lines), C_RED))
+            report_msg = await channel.send(embed=emb(title, "\n".join(desc_lines), C_RED))
         except (discord.Forbidden, discord.HTTPException):
-            await ctx.send(embed=emb("🐛 Bug Report", "Could not post the bug report — please try again later.", C_RED))
+            await ctx.send(embed=emb(title, f"Could not post the {meta['title'].lower()} — please try again later.", C_RED))
             return
 
         try:
@@ -937,7 +959,7 @@ class UtilityCog(commands.Cog):
                 report=report[:1500],
             )
         except Exception as e:
-            logging.error(f"[bug] failed to persist issue row: {e}", exc_info=True)
+            logging.error(f"[issue:{kind}] failed to persist issue row: {e}", exc_info=True)
             # Still seed the reactions — admins can mark it during the same
             # uptime via the message cache even without a DB row. (Persistence
             # only matters across restarts.)
@@ -948,7 +970,7 @@ class UtilityCog(commands.Cog):
             except (discord.Forbidden, discord.HTTPException):
                 pass
 
-        await ctx.send(embed=emb("🐛 Bug Report", "Thanks — your report has been sent to the bot admins.", C_GREEN))
+        await ctx.send(embed=emb(title, meta["ack"], C_GREEN))
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
@@ -996,7 +1018,45 @@ class UtilityCog(commands.Cog):
             logging.error(f"[bug] failed to persist status {new_status} for {payload.message_id}: {e}", exc_info=True)
 
 
-# Emojis the bot seeds onto each new bug-report embed. Order is the order
+# Per-kind metadata for !bugreport / !issue. The emoji prefixes the embed
+# title and the rest drives the usage/ack copy and whether to include the
+# last-5 in-channel messages (only bug reports get the history block).
+_ISSUE_KINDS: dict[str, dict] = {
+    "bug": {
+        "emoji": "⚠️",
+        "title": "Bug Report",
+        "report_label": "Report",
+        "usage": "`!bugreport <description of the bug>`",
+        "ack": "Thanks — your bug report has been sent to the bot admins.",
+        "include_history": True,
+    },
+    "feature": {
+        "emoji": "📖",
+        "title": "Feature Request",
+        "report_label": "Request",
+        "usage": "`!issue feature <description of the requested feature>`",
+        "ack": "Thanks — your feature request has been logged.",
+        "include_history": False,
+    },
+    "task": {
+        "emoji": "☑️",
+        "title": "Task",
+        "report_label": "Task",
+        "usage": "`!issue task <description of the task>`",
+        "ack": "Task logged.",
+        "include_history": False,
+    },
+    "improvement": {
+        "emoji": "⬆️",
+        "title": "Improvement",
+        "report_label": "Suggestion",
+        "usage": "`!issue improvement <description of the improvement>`",
+        "ack": "Improvement suggestion logged.",
+        "include_history": False,
+    },
+}
+
+# Emojis the bot seeds onto each new issue embed. Order is the order
 # they appear in Discord's reaction bar.
 _ISSUE_STATUS_EMOJIS: tuple[str, ...] = ("✅", "\U0001F6A7", "❌")  # ✅ 🚧 ❌
 _ISSUE_EMOJI_TO_STATUS: dict[str, str] = {
@@ -1037,7 +1097,7 @@ def _render_issue_status_embed(original: discord.Embed | None, status: str) -> d
     if footer:
         desc = f"{desc}\n\n{footer}"
     new_embed = emb(
-        str(original.title) if original.title else "🐛 Bug Report",
+        str(original.title) if original.title else "📒 Issue",
         desc,
         _ISSUE_STATUS_TO_COLOR.get(status, C_RED),
     )
