@@ -31,7 +31,7 @@ async def test_insert_and_get_issue_round_trip(db):
     assert row["message_id"] == 1000
     assert row["reporter_id"] == 7
     assert row["report"] == "something is broken"
-    assert row["status"] == "open"
+    assert row["status"] == "not_started"
     assert row["kind"] == "bug"
     assert row["mute_key"] is None
     assert row["deleted"] is False
@@ -139,10 +139,12 @@ async def test_list_issues_default_excludes_deleted_and_orders_desc(db):
 
 async def test_list_issues_status_filter(db):
     await _seed_issues_for_listing(db)
-    open_rows = await _persistence.list_issues(statuses=("open",))
-    statuses = [r["status"] for r in open_rows]
-    assert all(s == "open" for s in statuses)
-    assert len(statuses) == 1  # only message_id 2001 is still 'open'
+    # 2001 keeps the seeded default 'not_started'; 2005 was explicitly
+    # re-stamped 'not_started'. So the not_started filter yields 2 rows.
+    not_started_rows = await _persistence.list_issues(statuses=("not_started",))
+    statuses = [r["status"] for r in not_started_rows]
+    assert all(s == "not_started" for s in statuses)
+    assert len(statuses) == 2
 
     multi = await _persistence.list_issues(statuses=("wip", "completed"))
     multi_statuses = sorted(r["status"] for r in multi)

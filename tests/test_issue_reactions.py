@@ -155,7 +155,7 @@ async def test_reaction_from_non_admin_is_ignored(db):
     await cog.on_raw_reaction_add(payload)
 
     row = await _persistence.get_issue_by_message(5001)
-    assert row["status"] == "open"
+    assert row["status"] == "not_started"
     issue_msg.edit.assert_not_awaited()
 
 
@@ -176,7 +176,7 @@ async def test_reaction_in_wrong_channel_ignored(db):
     await cog.on_raw_reaction_add(payload)
 
     row = await _persistence.get_issue_by_message(5002)
-    assert row["status"] == "open"
+    assert row["status"] == "not_started"
 
 
 async def test_reaction_on_soft_deleted_issue_is_noop(db):
@@ -200,7 +200,7 @@ async def test_reaction_on_soft_deleted_issue_is_noop(db):
     await cog.on_raw_reaction_add(payload)
 
     row = await _persistence.get_issue_by_message(5003)
-    assert row["status"] == "open"
+    assert row["status"] == "not_started"
     issue_msg.edit.assert_not_awaited()
 
 

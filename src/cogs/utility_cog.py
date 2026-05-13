@@ -953,7 +953,20 @@ class UtilityCog(commands.Cog):
             except (discord.Forbidden, discord.HTTPException):
                 pass
 
-        await ctx.send(embed=emb(title, "Thanks — your feature request has been submitted.", C_GREEN))
+        # When the user filed from the feature-request channel itself, the
+        # posted embed is its own confirmation — skip the redundant ack.
+        if ctx.channel.id == request_msg.channel.id:
+            return
+
+        jumplink = (
+            f"https://discord.com/channels/{ctx.guild.id}/"
+            f"{request_msg.channel.id}/{request_msg.id}"
+        )
+        await ctx.send(embed=emb(
+            title,
+            f"Thanks — [your feature request]({jumplink}) has been submitted.",
+            C_GREEN,
+        ))
 
     @commands.command(name="issue")
     @requires_perm
@@ -1363,7 +1376,7 @@ class UtilityCog(commands.Cog):
                     bug_chan = None
                 if bug_chan is not None:
                     feature_issue_id = await self._spawn_feature_from_request(bug_chan, request)
-                    feature_status = "open"
+                    feature_status = "not_started"
 
         try:
             await update_feature_request_status(payload.message_id, decision, payload.user_id)
@@ -1402,7 +1415,7 @@ class UtilityCog(commands.Cog):
         desc_lines = [
             f"**Time:** <t:{int(time.time())}:f>",
             f"**Reporter:** <@{request['reporter_id']}> (`{request['reporter_id']}`)",
-            f"**From feature request:** [↗](https://discord.com/channels/{request['guild_id']}/{request['channel_id']}/{request['message_id']})",
+            f"**From request:** [Jump to request](https://discord.com/channels/{request['guild_id']}/{request['channel_id']}/{request['message_id']})",
             "",
             f"**Description:**\n{(request['description'] or '')[:1500]}",
         ]
@@ -1720,7 +1733,7 @@ _FEATURE_REQUEST_EMOJI_TO_DECISION: dict[str, str] = {
 }
 
 _FEATURE_REQUEST_FOOTER_RE = re.compile(
-    r"\n\n\*\*Status:\*\*\s*[^\n]+(?:\s+\(linked feature[^\n]*\))?\s*$"
+    r"\n\n\*\*Status:\*\*\s*[^\n]+\s*$"
 )
 
 
@@ -1730,12 +1743,19 @@ def _render_feature_request_embed(
     *,
     feature_status: str | None = None,
 ) -> discord.Embed | None:
-    """Re-render the feature-request embed with the current decision footer.
+    """Re-render the feature-request embed with the current status footer.
 
-    `decision` is one of 'open' | 'accepted' | 'rejected'. If `feature_status`
-    is provided (only meaningful when decision='accepted'), the footer also
-    surfaces the spawned feature issue's current status so the reporter can
-    see progress without leaving the request channel.
+    `decision` is 'open' | 'accepted' | 'rejected'. While accepted the embed
+    mirrors the linked feature issue's status:
+
+      accepted + not_started → yellow, **Status:** Not started
+      accepted + wip         → yellow, **Status:** Work in progress
+      accepted + completed   → green,  **Status:** Completed
+      accepted + rejected    → red,    **Status:** Rejected
+      accepted + (None)      → yellow, **Status:** Accepted
+                               (only seen if the spawn step failed)
+      rejected               → red,    **Status:** Rejected
+      open                   → gold,   no footer
     """
     if original is None:
         return None
@@ -1746,13 +1766,23 @@ def _render_feature_request_embed(
         prev = desc
         desc = _FEATURE_REQUEST_FOOTER_RE.sub("", desc)
 
+    footer: str | None
+    color: int
     if decision == "accepted":
-        if feature_status and feature_status != "open":
+        if feature_status == "completed":
+            footer = "**Status:** Completed"
+            color = C_GREEN
+        elif feature_status == "rejected":
+            footer = "**Status:** Rejected"
+            color = C_RED
+        elif feature_status in ("not_started", "wip"):
             label = _ISSUE_STATUS_LABEL.get(feature_status, feature_status)
-            footer = f"**Status:** Accepted (linked feature — {label})"
+            footer = f"**Status:** {label}"
+            color = C_GOLD
         else:
+            # No linked feature yet (spawn failed) — fall back to a generic ack.
             footer = "**Status:** Accepted"
-        color = _ISSUE_STATUS_TO_COLOR.get(feature_status or "open", C_BLUE)
+            color = C_GOLD
     elif decision == "rejected":
         footer = "**Status:** Rejected"
         color = C_RED

@@ -103,7 +103,7 @@ async def test_bugreport_happy_path_persists_and_reacts(db):
     row = await _persistence.get_issue_by_message(5000)
     assert row is not None
     assert row["kind"] == "bug"
-    assert row["status"] == "open"
+    assert row["status"] == "not_started"
     assert "repro: do X" in row["report"]
     reactions = [c.args[0] for c in posted.add_reaction.await_args_list]
     assert reactions == ["❌", "⚙️", "✅", "🛑"]
@@ -174,14 +174,18 @@ async def test_issue_unknown_kind_shows_usage(db):
 # ── !issues listing ─────────────────────────────────────────────────────────
 
 async def _seed_three_issues(reporter_id: int = 1) -> list[int]:
-    """Seed open / wip / completed rows. Returns the ids in insertion order."""
+    """Seed not_started / wip / completed rows. Returns the ids in insertion order.
+
+    The first row keeps the seeded default ('not_started'); the other two
+    are re-stamped via update_issue_status.
+    """
     ids = []
-    for i, status in enumerate(["open", "wip", "completed"]):
+    for i, status in enumerate(["not_started", "wip", "completed"]):
         iid = await _persistence.insert_issue(
             guild_id=42, channel_id=9000, message_id=7000 + i,
             reporter_id=reporter_id, report=f"row {i}",
         )
-        if status != "open":
+        if status != "not_started":
             await _persistence.update_issue_status(7000 + i, status, resolved_by=99)
         ids.append(iid)
     return ids

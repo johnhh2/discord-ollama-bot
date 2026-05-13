@@ -24,18 +24,21 @@ async def insert_issue(
     report: str,
     kind: str = "bug",
     mute_key: str | None = None,
+    status: str = "not_started",
 ) -> int:
-    """Insert a new open issue row. Returns the inserted id.
+    """Insert a new issue row. Returns the inserted id.
 
     `kind` is one of 'bug' | 'feature' | 'task' | 'improvement' | 'error'.
     `mute_key` is set for kind='error' only; it lets the 🔇 reaction handler
     toggle the matching error_mutes row without recomputing the key.
+    `status` defaults to 'not_started' so the ❌ reaction reads as "reset
+    to the seeded state" rather than implicitly setting a fresh state.
     """
     async with with_cursor() as cur:
         await cur.execute(
             "INSERT INTO issues (guild_id, channel_id, message_id, reporter_id, report, status, kind, mute_key)"
-            " VALUES (%s,%s,%s,%s,%s,'open',%s,%s)",
-            (guild_id, channel_id, message_id, reporter_id, report, kind, mute_key),
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (guild_id, channel_id, message_id, reporter_id, report, status, kind, mute_key),
         )
         return cur.lastrowid
 
