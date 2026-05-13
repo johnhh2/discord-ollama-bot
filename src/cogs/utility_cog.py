@@ -1131,6 +1131,12 @@ class UtilityCog(commands.Cog):
                     log_block = log_block[-1500:]
                 desc_lines.append(f"\n**Last 5 messages:**\n```\n{log_block}\n```")
 
+        # Bake the initial status footer into the description at creation so
+        # admins see "Status: Not started" without waiting for a reaction.
+        seeded_footer = _issue_status_footer("not_started")
+        if seeded_footer:
+            desc_lines.append(f"\n{seeded_footer}")
+
         try:
             report_msg = await channel.send(embed=emb(title, "\n".join(desc_lines), C_RED))
         except (discord.Forbidden, discord.HTTPException):

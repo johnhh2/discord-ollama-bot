@@ -142,6 +142,10 @@ async def _log_command_error(bot, ctx: commands.Context, error: Exception):
             log_block = log_block[-1500:]
         desc_lines.append(f"\n**Last 5 messages:**\n```\n{log_block}\n```")
 
+    # Seeded status footer — matches utility_cog._issue_status_footer for
+    # 'not_started'. Inlined to avoid an events-on-cog import.
+    desc_lines.append("\n**Status:** Not started")
+
     try:
         report_msg = await channel.send(embed=emb("⚠️ Command Error", "\n".join(desc_lines), C_RED))
     except (discord.Forbidden, discord.HTTPException):
