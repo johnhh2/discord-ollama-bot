@@ -425,9 +425,12 @@ async def test_completed_bug_dms_reporter(db):
     _state.bot_settings["bug_report_channel"] = "9000"
     _state.bot_admins.add(7)
 
+    # source_* point at the user-visible channel where the !bugreport was
+    # typed; channel_id/message_id are the admin-only bug-report embed.
     await _persistence.insert_issue(
         guild_id=42, channel_id=9000, message_id=5200,
         reporter_id=99, report="x",
+        source_channel_id=4242, source_message_id=8484,
     )
     bug_chan = FakeTextChannel(ch_id=9000)
     issue_msg = _make_msg_with_embed(5200, bug_chan, emb("⚠️ Bug Report", "x", C_RED))
@@ -445,7 +448,40 @@ async def test_completed_bug_dms_reporter(db):
     reporter.send.assert_awaited_once()
     body = reporter.send.await_args.kwargs["embed"].description
     assert "completed" in body.lower()
-    assert "/9000/5200" in body  # jumplink points to the bug-report embed
+    # DM links to the user-visible source command, NOT the admin-only embed.
+    assert "/4242/8484" in body
+    assert "/9000/5200" not in body
+
+
+async def test_completed_bug_without_source_coords_dms_without_link(db):
+    """Legacy rows that predate the source_* columns get a plain DM with no
+    jumplink rather than a link into the admin-only bug-report channel."""
+    _state.bot_settings["bug_report_channel"] = "9000"
+    _state.bot_admins.add(7)
+
+    await _persistence.insert_issue(
+        guild_id=42, channel_id=9000, message_id=5201,
+        reporter_id=99, report="x",
+        # No source_channel_id / source_message_id → fall back to no link.
+    )
+    bug_chan = FakeTextChannel(ch_id=9000)
+    issue_msg = _make_msg_with_embed(5201, bug_chan, emb("⚠️ Bug Report", "x", C_RED))
+    _wire_channel_fetch_message(bug_chan, issue_msg)
+
+    reporter = _FakeUser(uid=99)
+    bot = _StubBot()
+    bot.register_channel(bug_chan)
+    bot.register_user(reporter)
+    cog = UtilityCog(bot=bot)
+
+    payload = _FakePayload(emoji="✅", user_id=7, channel_id=9000, message_id=5201)
+    await cog.on_raw_reaction_add(payload)
+
+    reporter.send.assert_awaited_once()
+    body = reporter.send.await_args.kwargs["embed"].description
+    assert "completed" in body.lower()
+    # No jumplink anywhere — neither to source nor to the admin embed.
+    assert "https://discord.com/channels/" not in body
 
 
 async def test_completed_linked_feature_dms_requester(db):

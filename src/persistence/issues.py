@@ -15,6 +15,33 @@ import time
 from src.db import with_cursor
 
 
+_ISSUE_COLS = (
+    "id, guild_id, channel_id, message_id, reporter_id, report, status,"
+    " created_at, resolved_by, resolved_at, kind, mute_key, deleted,"
+    " source_channel_id, source_message_id"
+)
+
+
+def _row_to_issue(row) -> dict:
+    return {
+        "id": row[0],
+        "guild_id": row[1],
+        "channel_id": row[2],
+        "message_id": row[3],
+        "reporter_id": row[4],
+        "report": row[5],
+        "status": row[6],
+        "created_at": row[7],
+        "resolved_by": row[8],
+        "resolved_at": row[9],
+        "kind": row[10],
+        "mute_key": row[11],
+        "deleted": bool(row[12]),
+        "source_channel_id": row[13],
+        "source_message_id": row[14],
+    }
+
+
 async def insert_issue(
     *,
     guild_id: int | None,
@@ -25,6 +52,8 @@ async def insert_issue(
     kind: str = "bug",
     mute_key: str | None = None,
     status: str = "not_started",
+    source_channel_id: int | None = None,
+    source_message_id: int | None = None,
 ) -> int:
     """Insert a new issue row. Returns the inserted id.
 
@@ -33,12 +62,16 @@ async def insert_issue(
     toggle the matching error_mutes row without recomputing the key.
     `status` defaults to 'not_started' so the ❌ reaction reads as "reset
     to the seeded state" rather than implicitly setting a fresh state.
+    `source_*` point at the command message that produced this issue so the
+    completion DM can deep-link the reporter back to a channel they can see.
     """
     async with with_cursor() as cur:
         await cur.execute(
-            "INSERT INTO issues (guild_id, channel_id, message_id, reporter_id, report, status, kind, mute_key)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-            (guild_id, channel_id, message_id, reporter_id, report, status, kind, mute_key),
+            "INSERT INTO issues (guild_id, channel_id, message_id, reporter_id, report, status, kind, mute_key,"
+            " source_channel_id, source_message_id)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (guild_id, channel_id, message_id, reporter_id, report, status, kind, mute_key,
+             source_channel_id, source_message_id),
         )
         return cur.lastrowid
 
@@ -47,58 +80,22 @@ async def get_issue_by_message(message_id: int) -> dict | None:
     """Fetch the issue row for a given embed message_id, or None."""
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT id, guild_id, channel_id, message_id, reporter_id, report, status,"
-            " created_at, resolved_by, resolved_at, kind, mute_key, deleted"
-            " FROM issues WHERE message_id=%s",
+            f"SELECT {_ISSUE_COLS} FROM issues WHERE message_id=%s",
             (message_id,),
         )
         row = await cur.fetchone()
-    if row is None:
-        return None
-    return {
-        "id": row[0],
-        "guild_id": row[1],
-        "channel_id": row[2],
-        "message_id": row[3],
-        "reporter_id": row[4],
-        "report": row[5],
-        "status": row[6],
-        "created_at": row[7],
-        "resolved_by": row[8],
-        "resolved_at": row[9],
-        "kind": row[10],
-        "mute_key": row[11],
-        "deleted": bool(row[12]),
-    }
+    return _row_to_issue(row) if row else None
 
 
 async def get_issue_by_id(issue_id: int) -> dict | None:
     """Fetch an issue row by its primary-key id, or None."""
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT id, guild_id, channel_id, message_id, reporter_id, report, status,"
-            " created_at, resolved_by, resolved_at, kind, mute_key, deleted"
-            " FROM issues WHERE id=%s",
+            f"SELECT {_ISSUE_COLS} FROM issues WHERE id=%s",
             (issue_id,),
         )
         row = await cur.fetchone()
-    if row is None:
-        return None
-    return {
-        "id": row[0],
-        "guild_id": row[1],
-        "channel_id": row[2],
-        "message_id": row[3],
-        "reporter_id": row[4],
-        "report": row[5],
-        "status": row[6],
-        "created_at": row[7],
-        "resolved_by": row[8],
-        "resolved_at": row[9],
-        "kind": row[10],
-        "mute_key": row[11],
-        "deleted": bool(row[12]),
-    }
+    return _row_to_issue(row) if row else None
 
 
 async def update_issue_status(
@@ -126,11 +123,7 @@ async def list_issues(
     None means no status filter (include every status). `deleted=1` rows
     are excluded unless `include_deleted=True`.
     """
-    sql = (
-        "SELECT id, guild_id, channel_id, message_id, reporter_id, report, status,"
-        " created_at, resolved_by, resolved_at, kind, mute_key, deleted"
-        " FROM issues WHERE 1=1"
-    )
+    sql = f"SELECT {_ISSUE_COLS} FROM issues WHERE 1=1"
     params: list = []
     if not include_deleted:
         sql += " AND deleted=0"
@@ -144,24 +137,7 @@ async def list_issues(
     async with with_cursor() as cur:
         await cur.execute(sql, tuple(params))
         rows = await cur.fetchall()
-    return [
-        {
-            "id": r[0],
-            "guild_id": r[1],
-            "channel_id": r[2],
-            "message_id": r[3],
-            "reporter_id": r[4],
-            "report": r[5],
-            "status": r[6],
-            "created_at": r[7],
-            "resolved_by": r[8],
-            "resolved_at": r[9],
-            "kind": r[10],
-            "mute_key": r[11],
-            "deleted": bool(r[12]),
-        }
-        for r in rows
-    ]
+    return [_row_to_issue(r) for r in rows]
 
 
 async def soft_delete_issue(issue_id: int) -> None:

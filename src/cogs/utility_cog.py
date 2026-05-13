@@ -1145,6 +1145,8 @@ class UtilityCog(commands.Cog):
                 reporter_id=ctx.author.id,
                 report=report[:1500],
                 kind=kind,
+                source_channel_id=ctx.channel.id if hasattr(ctx.channel, "id") else None,
+                source_message_id=ctx.message.id if getattr(ctx, "message", None) else None,
             )
         except Exception as e:
             logging.error(f"[issue:{kind}] failed to persist issue row: {e}", exc_info=True)
@@ -1494,10 +1496,18 @@ class UtilityCog(commands.Cog):
         if not reporter_id:
             return
 
+        # origin_guild/chan/msg point at a *user-visible* channel — for bugs
+        # that's the channel where they ran !bugreport, for features it's the
+        # !featurerequest embed in the per-guild request channel. We avoid
+        # linking to bug_report_channel itself because non-admins can't see
+        # it.
+        origin_guild: int | str | None = None
+        origin_chan: int | None = None
+        origin_msg: int | None = None
         if kind == "bug":
             origin_guild = issue.get("guild_id") or "@me"
-            origin_chan = issue.get("channel_id")
-            origin_msg = issue.get("message_id")
+            origin_chan = issue.get("source_channel_id")
+            origin_msg = issue.get("source_message_id")
             label = "bug report"
         elif kind == "feature":
             try:
@@ -1515,10 +1525,6 @@ class UtilityCog(commands.Cog):
         else:
             return
 
-        if not (origin_chan and origin_msg):
-            return
-        jumplink = f"https://discord.com/channels/{origin_guild}/{origin_chan}/{origin_msg}"
-
         try:
             user = self.bot.get_user(int(reporter_id)) or await self.bot.fetch_user(int(reporter_id))
         except (discord.NotFound, discord.HTTPException):
@@ -1526,7 +1532,14 @@ class UtilityCog(commands.Cog):
         if user is None:
             return
 
-        body = f"Your {label} has been marked **completed**.\n\n[Jump to your submission]({jumplink})"
+        if origin_chan and origin_msg:
+            jumplink = f"https://discord.com/channels/{origin_guild}/{origin_chan}/{origin_msg}"
+            body = f"Your {label} has been marked **completed**.\n\n[Jump to your submission]({jumplink})"
+        else:
+            # Older rows (pre-source-columns) or any case where the source
+            # coords weren't captured — DM without a link rather than
+            # leading the user to the admin-only bug-report channel.
+            body = f"Your {label} has been marked **completed**."
         try:
             await user.send(embed=emb("✅ Resolved", body, C_GREEN))
         except (discord.Forbidden, discord.HTTPException) as e:

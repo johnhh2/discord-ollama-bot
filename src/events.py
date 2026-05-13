@@ -156,6 +156,8 @@ async def _log_command_error(bot, ctx: commands.Context, error: Exception):
             report=f"{cmd_name}: {type(error).__name__}: {error}"[:1500],
             kind="error",
             mute_key=mute_key,
+            source_channel_id=ctx.channel.id if hasattr(ctx.channel, "id") else None,
+            source_message_id=ctx.message.id if getattr(ctx, "message", None) else None,
         )
     except Exception as e:
         logging.error(f"[error-report] failed to persist issue row: {e}", exc_info=True)
