@@ -199,6 +199,82 @@ If you ever clone the prod DB to dev and want a fresh migrations history, drop b
 - [tests/test_migrations.py](tests/test_migrations.py) — covers ordering, checksum, baseline-detection, and that real migrations apply against a fresh DB.
 - [tests/fakes/db.py](tests/fakes/db.py) — the MariaDB→SQLite translator. Extend `_translate()` when migrations introduce new MariaDB syntax tests can't yet handle.
 
+## Concurrency: per-user command races
+
+Discord users can fire several invocations of the same command before the first finishes (spam-typing, multi-device, scripted clients). Because asyncio is cooperative, a coroutine only loses control at an `await` — so a sequence like *check counter → await network/DB → mutate counter* is racey: two invocations both pass the check before either mutates, and the user gets the resource twice. This bot has had four of these bugs in one month (`!scratchoff`, `!daily`, `!bail`, `!shop insurance`, `!shop unoreverse`). The pattern is easy to introduce and easy to miss in code review.
+
+### Smell — when to be suspicious
+
+Inside any command body, look for this shape:
+
+```python
+if user_state[uid].some_condition:        # gate
+    return
+await some_async_call(...)                # YIELDS — other invocations interleave here
+user_state[uid].some_condition = False    # claim — happens too late
+```
+
+Concretely, this command is probably racey if **all** of the following are true:
+1. There is a per-user/per-channel/per-guild check that decides whether the user is allowed to proceed (daily cap, cooldown, "already in jail", "already has an active mock", "insurance still active", …).
+2. The mutation that would *fail* the check on a subsequent invocation happens after at least one `await` — typically `add_balance`, `deduct_balance`, `save_*`, `confirm_purchase`, `ctx.send`, `is_insured`, Discord HTTP calls, or any `await asyncio.sleep`.
+3. The check is on in-memory state that a sibling invocation will also read (rather than e.g. a DB row with a row-level lock).
+
+Pure **balance** debits via `deduct_balance` are not racey — they're a single atomic sync mutation against an in-memory dict. Concurrent debits either both succeed (user pays N×) or one fails when the balance drops. The race lives in the *gate*, not the *money*.
+
+### Fix — claim synchronously, roll back on failure
+
+The pattern that works everywhere:
+
+```python
+prior = user_state[uid].some_condition
+if not prior:
+    return                                    # gate
+user_state[uid].some_condition = False        # claim, sync, atomic
+if not await some_async_call(...):            # may yield
+    user_state[uid].some_condition = prior    # roll back on failure
+    return
+await save_state(uid)                         # commit
+```
+
+Because Python coroutines never suspend without an explicit `await`, the gate-and-claim block runs to completion before any sibling invocation can read it. The sibling either sees the claimed state and bails on the gate, or it already passed the gate before this one started and we have two legitimate concurrent runs (charge twice, in the balance case — that's correct behavior, not a race).
+
+For commands that just increment a counter (scratchoff, daily), reserve the *count* up front:
+
+```python
+remaining = cap - user["used"]
+if remaining <= 0:
+    return
+count = min(requested, remaining)
+user["used"] += count                         # claim sync, before any await
+for i in range(count):
+    await do_one_iteration(...)               # safe to yield now
+```
+
+### Alternative — explicit lock set
+
+When the body has too many awaits to reasonably roll back, use the `_active_*` set pattern already in this codebase:
+- `EconomyCog._crime_active: set[int]` for `!steal` / `!mug`
+- `EconomyCog._active_heists: dict[int, dict]` for `!bankheist`
+- `state.active_blackjack_games` for `!bj` / `!hit` / `!stand`
+- `state.active_puzzles` for `!puzzle`
+
+The shape is: synchronously check `uid in _active`, return early if so, else `.add(uid)` synchronously. Run the body inside `try: … finally: _active.discard(uid)` so a crash or early-return still releases the slot. This is the right tool when the body does many awaits and partial rollback is awkward.
+
+### Test that catches the race
+
+`tests/fakes/db.py` is synchronous sqlite3 wrapped in async methods, so `await save_economy()` in tests does **not** yield like real aiomysql does. A concurrent-invocation test that just calls `asyncio.gather(invoke(), invoke())` will pass on the unfixed code. To make the race visible in tests, patch the first awaitable inside the suspect window with a yielding stub:
+
+```python
+async def _yielding_charge(ctx, uid, cost, **kwargs):
+    await asyncio.sleep(0)                    # force a real event-loop yield
+    ...                                       # then run the real charge logic
+monkeypatch.setattr("src.cogs.x_cog.shop_charge", _yielding_charge)
+```
+
+Then `asyncio.gather(invoke(), invoke())` actually interleaves at the yield, exposing the race. See [tests/test_scratchoff_flow.py::test_concurrent_scratchoff_invocations_cap_at_three](tests/test_scratchoff_flow.py), [tests/test_economy_flows.py::test_concurrent_daily_invocations_grant_once](tests/test_economy_flows.py), and the three tests in [tests/test_shop.py](tests/test_shop.py) / [tests/test_bail.py](tests/test_bail.py) for working examples.
+
+Module-local imports (e.g. `from src.economy import add_balance` at the top of `src/cogs/economy_cog.py`) create a binding the conftest stubs don't reach — patch `src.cogs.economy_cog.add_balance`, not just `src.economy.add_balance`.
+
 ## Docker
 
 ```bash
