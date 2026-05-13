@@ -879,11 +879,11 @@ class UtilityCog(commands.Cog):
         entry point for users to file bugs.
         """
         kind_norm = (kind or "").lower().strip()
-        if kind_norm not in _ISSUE_KINDS or kind_norm == "bug":
-            allowed = "|".join(k for k in _ISSUE_KINDS if k != "bug")
+        if kind_norm not in _ISSUE_KINDS:
+            allowed = "|".join(_ISSUE_KINDS)
             await ctx.send(embed=emb(
                 "📒 Issue",
-                f"Usage: `!issue <{allowed}> <description>` (use `!bugreport` for bug reports)",
+                f"Usage: `!issue <{allowed}> <description>`",
                 C_GREY,
             ))
             return
@@ -1125,7 +1125,7 @@ _ISSUE_KINDS: dict[str, dict] = {
     "bug": {
         "emoji": "⚠️",
         "title": "Bug Report",
-        "report_label": "Report",
+        "report_label": "Description",
         "usage": "`!bugreport <description of the bug>`",
         "ack": "Thanks — your bug report has been sent to the bot admins.",
         "include_history": True,
@@ -1133,7 +1133,7 @@ _ISSUE_KINDS: dict[str, dict] = {
     "feature": {
         "emoji": "📖",
         "title": "Feature Request",
-        "report_label": "Request",
+        "report_label": "Description",
         "usage": "`!issue feature <description of the requested feature>`",
         "ack": "Thanks — your feature request has been logged.",
         "include_history": False,
@@ -1141,7 +1141,7 @@ _ISSUE_KINDS: dict[str, dict] = {
     "task": {
         "emoji": "☑️",
         "title": "Task",
-        "report_label": "Task",
+        "report_label": "Description",
         "usage": "`!issue task <description of the task>`",
         "ack": "Task logged.",
         "include_history": False,
@@ -1149,7 +1149,7 @@ _ISSUE_KINDS: dict[str, dict] = {
     "improvement": {
         "emoji": "⬆️",
         "title": "Improvement",
-        "report_label": "Suggestion",
+        "report_label": "Description",
         "usage": "`!issue improvement <description of the improvement>`",
         "ack": "Improvement suggestion logged.",
         "include_history": False,
@@ -1158,22 +1158,25 @@ _ISSUE_KINDS: dict[str, dict] = {
 
 # Emojis the bot seeds onto each new issue embed. Order is the order
 # they appear in Discord's reaction bar.
-_ISSUE_STATUS_EMOJIS: tuple[str, ...] = ("❌", "\U0001F6A7", "✅")  # ❌ 🚧 ✅
+_ISSUE_STATUS_EMOJIS: tuple[str, ...] = ("✖️", "⚙️", "✅", "🛑")  # ✖️ ⚙️ ✅ 🛑
 _ISSUE_EMOJI_TO_STATUS: dict[str, str] = {
+    "✖️": "not_started",
+    "⚙️": "wip",
     "✅": "completed",
-    "\U0001F6A7": "wip",
-    "❌": "rejected",
+    "🛑": "rejected",
 }
 _ISSUE_STATUS_TO_COLOR: dict[str, int] = {
-    "open":      C_RED,
-    "completed": C_GREEN,
-    "wip":       C_GOLD,
-    "rejected":  C_RED,
+    "open":        C_RED,
+    "not_started": C_RED,
+    "completed":   C_GREEN,
+    "wip":         C_GOLD,
+    "rejected":    C_RED,
 }
 _ISSUE_STATUS_TO_FOOTER: dict[str, str] = {
-    "completed": "**This issue has been marked completed**",
-    "wip":       "**This issue is a work in progress**",
-    "rejected":  "**This issue was rejected**",
+    "not_started": "**This issue has not been started**",
+    "completed":   "**This issue has been marked completed**",
+    "wip":         "**This issue is a work in progress**",
+    "rejected":    "**This issue was rejected**",
 }
 _ISSUE_MUTED_FOOTER = "**This error has been muted and will not be reported again**"
 
@@ -1185,7 +1188,7 @@ _ISSUE_MUTE_EMOJI = "\U0001F507"  # 🔇
 # embed description so we can strip and re-append on every render — avoiding
 # stacked footers across multiple transitions.
 _ISSUE_STATUS_FOOTER_RE = re.compile(
-    r"\n\n\*\*This issue (?:has been marked completed|is a work in progress|was rejected)\*\*\s*$"
+    r"\n\n\*\*This issue (?:has not been started|has been marked completed|is a work in progress|was rejected)\*\*\s*$"
 )
 _ISSUE_MUTED_FOOTER_RE = re.compile(
     r"\n\n\*\*This error has been muted and will not be reported again\*\*\s*$"

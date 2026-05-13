@@ -214,7 +214,7 @@ async def test_log_sends_for_server_admin_tier_success():
 async def test_error_log_routes_to_bug_report_channel(db):
     """Command errors now auto-file a bug report into `bug_report_channel`
     instead of posting to a separate `error_log_channel`. The embed carries
-    the exception details and the seeded ❌/🚧/✅/🔇 reactions enable triage."""
+    the exception details and the seeded ✖️/⚙️/✅/🛑/🔇 reactions enable triage."""
     _state.bot_settings["bug_report_channel"] = "67890"
     _state.command_perms["adminhelp"] = {"tier": "bot_admin", "hidden": False}
     _state.error_mutes.clear()
@@ -233,9 +233,9 @@ async def test_error_log_routes_to_bug_report_channel(db):
     assert "Error" in embed.title
     assert "RuntimeError" in embed.description
     assert "kaboom" in embed.description
-    # All four triage reactions seeded on the posted embed (order: ❌ 🚧 ✅ 🔇).
+    # All five triage reactions seeded on the posted embed (order: ✖️ ⚙️ ✅ 🛑 🔇).
     reactions = [c.args[0] for c in posted.add_reaction.await_args_list]
-    assert reactions == ["❌", "\U0001F6A7", "✅", "\U0001F507"]
+    assert reactions == ["✖️", "⚙️", "✅", "🛑", "\U0001F507"]
 
 
 async def test_error_log_fires_for_everyone_tier(db):
