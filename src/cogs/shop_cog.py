@@ -968,14 +968,22 @@ class ShopCog(commands.Cog):
                 ))
                 return
 
+        # Stamp the new insurance synchronously before shop_charge so a
+        # concurrent !shop insurance sees the fresh expires_at and bails on
+        # the "half expired" check instead of double-charging.
         cost = 0 if uid in state.godmode_users else SHOP_INSURANCE_COST
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST:,}"):
-            return
         expires_at = int(time.time() + SHOP_INSURANCE_DURATION_SECS)
         state.insurance[key] = {
             "expires_at": expires_at,
             "protected_from": ["ragebait", "mock", "nickname", "role", "steal", "tax"],
         }
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST:,}"):
+            # Roll back to whatever insurance state existed before.
+            if existing is None:
+                state.insurance.pop(key, None)
+            else:
+                state.insurance[key] = existing
+            return
         await save_insurance()
         await ctx.send(embed=emb(
             "🛡️ Insurance Purchased",
@@ -1149,13 +1157,26 @@ class ShopCog(commands.Cog):
         if target.id == uid:
             await ctx.send(embed=emb("❌ Self Reverse", "You can't uno reverse yourself!", C_RED))
             return
-        has_mock     = uid in state.active_mocks
-        has_ragebait = uid in state.active_ragebaits
-        has_curse    = uid in state.active_curses
-        if not (has_mock or has_ragebait or has_curse):
+        # Claim the active effects synchronously up front so a concurrent
+        # !shop unoreverse can't both pay the cost AND crash on .pop(KeyError)
+        # when it tries to redirect the same effect a second time.
+        mock_data = state.active_mocks.pop(uid, None)
+        rage_data = state.active_ragebaits.pop(uid, None)
+        curse_data = state.active_curses.pop(uid, None)
+        if mock_data is None and rage_data is None and curse_data is None:
             await ctx.send(embed=emb("🔄 Uno Reverse", "You don't have any active mock, ragebait, or curse on you to reverse!", C_GREY))
             return
+
+        def _restore_claimed():
+            if mock_data is not None:
+                state.active_mocks[uid] = mock_data
+            if rage_data is not None:
+                state.active_ragebaits[uid] = rage_data
+            if curse_data is not None:
+                state.active_curses[uid] = curse_data
+
         if await is_insured(target.id, "mock"):
+            _restore_claimed()
             _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb(
                 "🛡️ Protected",
@@ -1165,22 +1186,20 @@ class ShopCog(commands.Cog):
             return
         cost = 0 if uid in state.godmode_users else SHOP_UNOREVERSE_COST
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_UNOREVERSE_COST:,}"):
+            _restore_claimed()
             return
         redirected = []
-        if has_mock:
-            mock_data = state.active_mocks.pop(uid)
+        if mock_data is not None:
             mock_data["started_by"] = uid
             state.active_mocks[target.id] = mock_data
             await save_mock()
             redirected.append("mock")
-        if has_ragebait:
-            rage_data = state.active_ragebaits.pop(uid)
+        if rage_data is not None:
             rage_data["history"] = []
             state.active_ragebaits[target.id] = rage_data
             await save_ragebait()
             redirected.append("ragebait")
-        if has_curse:
-            curse_data = state.active_curses.pop(uid)
+        if curse_data is not None:
             curse_data["cursed_by"] = uid
             state.active_curses[target.id] = curse_data
             await save_curse(state.active_curses)

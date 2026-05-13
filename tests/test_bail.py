@@ -319,3 +319,59 @@ async def test_bail_balance_drops_during_confirm(db, monkeypatch):
     assert await _economy.get_balance(payer.id) == 5_000
     assert _state.economy["users"][str(jailed.id)]["jail_until"] > time.time()
     assert any("Insufficient Funds" in (e.title or "") for e in ctx.sent_embeds)
+
+
+async def test_concurrent_bail_confirms_charge_once(monkeypatch):
+    """Two concurrent !bail confirmations for the same jailed user must charge
+    the payer once, not twice.
+
+    Previously, cmd_bail checked `jail_until > now` then awaited deduct_balance
+    before clearing jail_until — so two confirmations both passed the gate and
+    both deducted the cost. The fix clears jail_until synchronously up front
+    so the second confirmation sees jail_until=0 and bails out on the
+    'Already Free' branch.
+    """
+    cog = EconomyCog(bot=_StubBot())
+    payer = FakeMember(uid=2_070, display_name="payer")
+    jailed = FakeMember(uid=2_071, display_name="jailed")
+    await _economy._ensure_user(payer.id)
+    _state.economy["users"][str(payer.id)]["balance"] = 50_000
+    await _set_jailed(jailed.id, bail_amount=0)  # cost = 10k
+    _patch_confirm(monkeypatch, return_value=True)
+
+    # Force deduct_balance to yield to the event loop so the second
+    # invocation can interleave at exactly the spot where the unfixed code
+    # raced. Use the real balance math but insert an awaitable break.
+    async def _yielding_deduct(uid, n):
+        await asyncio.sleep(0)
+        user = _state.economy["users"][str(uid)]
+        if user["balance"] < n:
+            return False
+        user["balance"] -= n
+        return True
+
+    async def _noop_save(*a, **kw):
+        return None
+
+    monkeypatch.setattr(_economy_cog, "deduct_balance", _yielding_deduct)
+    # cmd_bail also imports save_economy / get_balance by name; the global
+    # conftest stubs don't reach those bindings.
+    monkeypatch.setattr(_economy_cog, "save_economy", _noop_save)
+
+    async def _get_balance(uid):
+        return _state.economy["users"][str(uid)]["balance"]
+
+    monkeypatch.setattr(_economy_cog, "get_balance", _get_balance)
+
+    async def _invoke():
+        ctx = FakeCtx(author=payer, guild=FakeGuild(gid=42))
+        await cog.cmd_bail.callback(cog, ctx, target=jailed)
+
+    await asyncio.gather(_invoke(), _invoke())
+
+    # 50k - 10k = 40k. With the race, balance would be 30k.
+    assert _state.economy["users"][str(payer.id)]["balance"] == 40_000, (
+        f"bail double-charged: balance is "
+        f"{_state.economy['users'][str(payer.id)]['balance']}, expected 40000"
+    )
+    assert _state.economy["users"][str(jailed.id)]["jail_until"] == 0

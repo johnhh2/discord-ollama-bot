@@ -4,6 +4,7 @@ Strategy: drive the helpers (`shop_charge`) and a representative cog method
 (`shop_insurance`, `shop_removenickname`) directly. ShopCog's __init__ does no
 work beyond stashing `bot`, so we can instantiate it with a dummy bot.
 """
+import asyncio
 from unittest.mock import AsyncMock
 
 import discord
@@ -11,6 +12,7 @@ import pytest
 
 import src.state as _state
 import src.persistence as _persistence
+import src.cogs.shop_cog as _shop_cog
 from src.economy import add_balance, get_balance
 from src.helpers import shop_charge
 
@@ -165,3 +167,128 @@ async def test_shop_removenickname_refunds_on_forbidden(db):
     assert await _read_db_balance(uid) == starting_balance
     # An error embed was sent.
     assert any("No Permission" in (e.title or "") for e in ctx.sent_embeds)
+
+
+# ── concurrent invocation races ──────────────────────────────────────────────
+
+async def test_concurrent_shop_insurance_charges_once(monkeypatch):
+    """Two concurrent !shop insurance purchases must charge once, not twice.
+
+    Pre-fix: shop_insurance checked the 'half expired' gate, then awaited
+    shop_charge, then wrote the new entry to state.insurance. Two
+    concurrent invocations both passed the gate (no existing entry yet)
+    and both paid.
+    """
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_INSURANCE_COST
+
+    cog = ShopCog(bot=None)
+    uid = 6010
+    starting_balance = SHOP_INSURANCE_COST * 3
+    _state.economy.setdefault("users", {})[str(uid)] = {
+        "balance": starting_balance, "savings": [],
+    }
+
+    charge_count = [0]
+
+    async def _yielding_charge(ctx, charge_uid, cost, **kwargs):
+        # Yield once so a concurrent invocation can interleave between
+        # the gate check and the state.insurance write.
+        await asyncio.sleep(0)
+        if cost == 0:
+            return True
+        user = _state.economy["users"][str(charge_uid)]
+        if user["balance"] < cost:
+            return False
+        user["balance"] -= cost
+        charge_count[0] += 1
+        return True
+
+    async def _noop_save(*a, **kw):
+        return None
+
+    monkeypatch.setattr(_shop_cog, "shop_charge", _yielding_charge)
+    monkeypatch.setattr(_shop_cog, "save_insurance", _noop_save)
+
+    async def _invoke():
+        ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+        await cog.shop_insurance.callback(cog, ctx)
+
+    await asyncio.gather(_invoke(), _invoke())
+
+    assert charge_count[0] == 1, (
+        f"shop_insurance double-charged: charged {charge_count[0]}× across 2 "
+        f"concurrent invocations (expected 1)"
+    )
+    assert _state.economy["users"][str(uid)]["balance"] == starting_balance - SHOP_INSURANCE_COST
+
+
+async def test_concurrent_shop_unoreverse_charges_once(monkeypatch):
+    """Two concurrent !shop unoreverse calls must claim the effect once, not crash.
+
+    Pre-fix: shop_unoreverse read `has_mock` etc. via `in`, then awaited
+    is_insured / shop_charge, then called state.active_mocks.pop(uid). Two
+    concurrent calls both saw `has_mock=True`, both paid, and the second
+    one crashed on .pop(KeyError).
+    """
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_UNOREVERSE_COST
+
+    cog = ShopCog(bot=None)
+    uid = 6020
+    target_uid = 6021
+    _state.economy.setdefault("users", {})[str(uid)] = {
+        "balance": SHOP_UNOREVERSE_COST * 3, "savings": [],
+    }
+    _state.active_mocks[uid] = {"remaining": 5, "history": []}
+
+    charge_count = [0]
+
+    async def _yielding_charge(ctx, charge_uid, cost, **kwargs):
+        await asyncio.sleep(0)
+        if cost == 0:
+            return True
+        user = _state.economy["users"][str(charge_uid)]
+        if user["balance"] < cost:
+            return False
+        user["balance"] -= cost
+        charge_count[0] += 1
+        return True
+
+    async def _noop(*a, **kw):
+        return None
+
+    async def _not_insured(*a, **kw):
+        return False
+
+    monkeypatch.setattr(_shop_cog, "shop_charge", _yielding_charge)
+    monkeypatch.setattr(_shop_cog, "is_insured", _not_insured)
+    monkeypatch.setattr(_shop_cog, "save_mock", _noop)
+    monkeypatch.setattr(_shop_cog, "save_ragebait", _noop)
+    monkeypatch.setattr(_shop_cog, "save_curse", _noop)
+
+    target = FakeMember(uid=target_uid)
+
+    async def _invoke():
+        ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+        # MemberConverter().convert reads ctx.message.content; stub by
+        # invoking with a positional arg the cog parses directly.
+        await cog.shop_unoreverse.callback(cog, ctx, f"<@{target_uid}>")
+
+    # Stub MemberConverter so the test doesn't need a real Bot.
+    class _StubConverter:
+        async def convert(self, ctx, arg):
+            return target
+
+    monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+
+    # Must not raise — pre-fix code raised KeyError on the second .pop(uid).
+    await asyncio.gather(_invoke(), _invoke())
+
+    assert charge_count[0] == 1, (
+        f"shop_unoreverse double-charged: charged {charge_count[0]}× across 2 "
+        f"concurrent invocations (expected 1)"
+    )
+    # The effect should be on the target, not the original uid.
+    assert target_uid in _state.active_mocks
+    assert uid not in _state.active_mocks
