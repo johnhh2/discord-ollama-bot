@@ -1058,7 +1058,7 @@ _ISSUE_KINDS: dict[str, dict] = {
 
 # Emojis the bot seeds onto each new issue embed. Order is the order
 # they appear in Discord's reaction bar.
-_ISSUE_STATUS_EMOJIS: tuple[str, ...] = ("✅", "\U0001F6A7", "❌")  # ✅ 🚧 ❌
+_ISSUE_STATUS_EMOJIS: tuple[str, ...] = ("❌", "\U0001F6A7", "✅")  # ❌ 🚧 ✅
 _ISSUE_EMOJI_TO_STATUS: dict[str, str] = {
     "✅": "completed",
     "\U0001F6A7": "wip",
