@@ -1222,6 +1222,13 @@ class UtilityCog(commands.Cog):
         if issue.get("kind") == "feature":
             await self._refresh_feature_request_for_issue(issue["id"], feature_status=new_status)
 
+        # Notify the original reporter on completion. Bug reports DM the
+        # !bugreport author; spawned features DM the !featurerequest author
+        # only if a feature_request row links back. Other kinds (admin-filed
+        # feature/task/improvement/error) don't DM.
+        if new_status == "completed":
+            await self._dm_reporter_on_completion(issue)
+
     @commands.Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
         """Bot admin unreacting 🔇 unmutes the error.
@@ -1454,6 +1461,60 @@ class UtilityCog(commands.Cog):
             await req_message.edit(embed=new_embed)
         except (discord.Forbidden, discord.HTTPException) as e:
             logging.error(f"[featurerequest] failed to mirror status to request {request['message_id']}: {e}")
+
+    async def _dm_reporter_on_completion(self, issue: dict) -> None:
+        """DM the original reporter that their bug/feature has been resolved.
+
+        For kind='bug', the jumplink targets the bug-report embed itself
+        (that *is* the user's submission). For kind='feature', look up a
+        linked feature_request and use the request embed as the original;
+        if the feature was admin-filed (no linked request), don't DM.
+
+        Best-effort: DM failures (Forbidden / closed DMs) are logged and
+        swallowed so the status change still completes cleanly.
+        """
+        kind = issue.get("kind")
+        reporter_id = issue.get("reporter_id")
+        if not reporter_id:
+            return
+
+        if kind == "bug":
+            origin_guild = issue.get("guild_id") or "@me"
+            origin_chan = issue.get("channel_id")
+            origin_msg = issue.get("message_id")
+            label = "bug report"
+        elif kind == "feature":
+            try:
+                request = await get_feature_request_by_feature_id(issue["id"])
+            except Exception as e:
+                logging.error(f"[notify-complete] feature_request lookup failed: {e}", exc_info=True)
+                return
+            if request is None:
+                return  # admin-filed via !issue feature, no user to notify
+            origin_guild = request.get("guild_id") or "@me"
+            origin_chan = request.get("channel_id")
+            origin_msg = request.get("message_id")
+            reporter_id = request.get("reporter_id") or reporter_id
+            label = "feature request"
+        else:
+            return
+
+        if not (origin_chan and origin_msg):
+            return
+        jumplink = f"https://discord.com/channels/{origin_guild}/{origin_chan}/{origin_msg}"
+
+        try:
+            user = self.bot.get_user(int(reporter_id)) or await self.bot.fetch_user(int(reporter_id))
+        except (discord.NotFound, discord.HTTPException):
+            return
+        if user is None:
+            return
+
+        body = f"Your {label} has been marked **completed**.\n\n[Jump to your submission]({jumplink})"
+        try:
+            await user.send(embed=emb("✅ Resolved", body, C_GREEN))
+        except (discord.Forbidden, discord.HTTPException) as e:
+            logging.info(f"[notify-complete] could not DM reporter {reporter_id}: {e}")
 
 
 # Per-kind metadata for !bugreport / !issue. The emoji prefixes the embed

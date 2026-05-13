@@ -606,6 +606,7 @@ class SettingsCog(commands.Cog):
                 f"Feature requests in this server will be posted to {channel.mention}.",
                 C_GREEN,
             ))
+            await _post_feature_request_hint(channel)
         else:
             await ctx.send(embed=emb(
                 "📖 Feature Request Channel",
@@ -889,6 +890,32 @@ class SettingsCog(commands.Cog):
         state.channel_prompts.pop(ctx.channel.id, None)
         await save_channel_prompts(state.channel_prompts)
         await ctx.send(embed=emb("⚙️ Prompt Cleared", "Using default system prompt.", C_GREY))
+
+
+_FEATURE_REQUEST_HINT_TITLE = "📖 Feature Requests"
+_FEATURE_REQUEST_HINT_BODY = (
+    "Submit feature ideas with **`!featurerequest <description>`**.\n\n"
+    "A bot admin will react ✅ to accept (an internal feature ticket is then "
+    "created and tracked here) or ❌ to reject."
+)
+
+
+async def _post_feature_request_hint(channel) -> None:
+    """Post the !featurerequest hint embed in `channel` and pin it.
+
+    Both the send and the pin are best-effort — missing Manage Messages or
+    a hit Discord pin cap (50) shouldn't block the setting save.
+    """
+    try:
+        msg = await channel.send(embed=emb(
+            _FEATURE_REQUEST_HINT_TITLE, _FEATURE_REQUEST_HINT_BODY, C_BLUE,
+        ))
+    except (discord.Forbidden, discord.HTTPException):
+        return
+    try:
+        await msg.pin()
+    except (discord.Forbidden, discord.HTTPException):
+        pass
 
 
 async def setup(bot):
