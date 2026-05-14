@@ -836,9 +836,15 @@ class EconomyCog(commands.Cog):
         jail_until = user_data.get("jail_until", 0)
         if time.time() < jail_until:
             reason = user_data.get("jail_reason")
+            body = _jail_body(member.display_name, jail_until, reason)
+            if member.id == ctx.author.id:
+                options = ["`!bail`"]
+                if not user_data.get("jailbreak_used", False):
+                    options.insert(0, "`!jailbreak`")
+                body += f"\nGet out with {' or '.join(options)}."
             await ctx.send(embed=emb(
                 "🚔 In Jail",
-                _jail_body(member.display_name, jail_until, reason),
+                body,
                 C_RED,
             ))
         else:
