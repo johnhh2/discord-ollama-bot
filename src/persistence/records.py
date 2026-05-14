@@ -19,6 +19,25 @@ async def load_records(guild_id: int) -> dict:
     return result
 
 
+async def load_global_records() -> dict:
+    """Top record per category across every guild."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT category, value, holder_id, holder_name, extra_json FROM records",
+        )
+        rows = await cur.fetchall()
+    result = {}
+    for cat, val, holder_id, holder_name, extra_json in rows:
+        existing = result.get(cat)
+        if existing is not None and val <= existing["value"]:
+            continue
+        entry = {"value": val, "holder_id": holder_id, "holder_name": holder_name}
+        if extra_json:
+            entry.update(json.loads(extra_json))
+        result[cat] = entry
+    return result
+
+
 async def save_records(guild_id: int, records: dict):
     async with with_cursor() as cur:
         for cat, data in records.items():

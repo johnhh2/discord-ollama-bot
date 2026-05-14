@@ -23,7 +23,7 @@ from src.permissions import (
 )
 from src.persistence import (
     save_economy, save_rigged_steal,
-    load_lottery, load_records,
+    load_lottery, load_records, load_global_records,
 )
 from src.config import (
     DAILY_REWARD, DAILY_RESET_HOUR,
@@ -1130,13 +1130,26 @@ class EconomyCog(commands.Cog):
             self._crime_active.discard(uid)
 
     @commands.command(name="records", aliases=["record", "rec"])
-    async def cmd_records(self, ctx: commands.Context):
-        """Display all-time records for economy and games."""
-        if ctx.guild is None:
-            await ctx.send(embed=emb("🏆 Records", "Records are only available in servers.", C_RED))
+    async def cmd_records(self, ctx: commands.Context, scope: str = "server"):
+        """Display all-time records. `!records global` spans all servers; default is this server."""
+        scope = scope.lower()
+        if scope not in ("server", "global"):
+            await ctx.send(embed=emb(
+                "🏆 Records",
+                "Usage: `!records [server|global]` — `global` spans all servers, default is this server.",
+                C_RED,
+            ))
             return
 
-        r = await load_records(ctx.guild.id)
+        if scope == "global":
+            r = await load_global_records()
+            title = "🏆 Global All-Time Records"
+        else:
+            if ctx.guild is None:
+                await ctx.send(embed=emb("🏆 Records", "Server records are only available in servers.", C_RED))
+                return
+            r = await load_records(ctx.guild.id)
+            title = "🏆 All-Time Records"
 
         def fmt(cat: str, label: str, extra_fn=None) -> str:
             rec = r.get(cat)
@@ -1175,7 +1188,7 @@ class EconomyCog(commands.Cog):
             hm_wins_str,
         ]
 
-        embed = discord.Embed(title="🏆 All-Time Records", color=C_GOLD)
+        embed = discord.Embed(title=title, color=C_GOLD)
         embed.description = "\n".join(lines)
         await ctx.send(embed=embed)
 

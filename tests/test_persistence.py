@@ -213,6 +213,26 @@ async def test_records_roundtrip_and_extra_meta(db):
     assert loaded["best_streak"]["set_at"] == "2026-04-01"
 
 
+async def test_load_global_records_picks_top_across_guilds(db):
+    await _persistence.save_records(1, {
+        "highest_balance": {"value": 500, "holder_id": 1, "holder_name": "alice"},
+        "lottery": {"value": 9000, "holder_id": 1, "holder_name": "alice"},
+    })
+    await _persistence.save_records(2, {
+        "highest_balance": {"value": 8000, "holder_id": 2, "holder_name": "bob"},
+    })
+    await _persistence.save_records(3, {
+        "highest_balance": {"value": 3000, "holder_id": 3, "holder_name": "carol"},
+    })
+    g = await _persistence.load_global_records()
+    # highest_balance: guild 2's bob wins
+    assert g["highest_balance"]["value"] == 8000
+    assert g["highest_balance"]["holder_name"] == "bob"
+    # lottery: only guild 1 has it
+    assert g["lottery"]["value"] == 9000
+    assert g["lottery"]["holder_name"] == "alice"
+
+
 async def test_try_set_record_only_updates_when_higher(db):
     ok1 = await _persistence.try_set_record(7, "score", 100, 1, "alice")
     assert ok1 is True
