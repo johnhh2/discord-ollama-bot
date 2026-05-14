@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, parse_amount, send_ephemeral, fetch_member, shop_charge, MemberConverter,
+    emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, parse_amount, send_ephemeral, fetch_member, shop_charge, OptionalMember,
     announce_record,
 )
 from src.economy import (
@@ -320,7 +320,7 @@ class SlotsCog(commands.Cog):
     }
 
     @cmd_rig.command(name="slots", hidden=True)
-    async def cmd_rig_slots(self, ctx: commands.Context, target: MemberConverter = None, mult: str = "75"):
+    async def cmd_rig_slots(self, ctx: commands.Context, target: OptionalMember = None, mult: str = "75"):
         """Hidden admin-only command: rig the next slots spin. mult: 75/15/7/4/3/cancel."""
         if target is None:
             target = ctx.author
@@ -358,7 +358,7 @@ class SlotsCog(commands.Cog):
         ))
 
     @cmd_rig.command(name="flip", hidden=True)
-    async def cmd_rig_flip(self, ctx: commands.Context, target: MemberConverter = None, n: str = "1"):
+    async def cmd_rig_flip(self, ctx: commands.Context, target: OptionalMember = None, n: str = "1"):
         """Hidden admin-only command: rig the next n coin flips to win. n can be 'cancel'."""
         if target is None:
             target = ctx.author
@@ -393,7 +393,7 @@ class SlotsCog(commands.Cog):
         ))
 
     @cmd_rig.command(name="scratch", hidden=True)
-    async def cmd_rig_scratch(self, ctx: commands.Context, target: MemberConverter = None, n: str = "4"):
+    async def cmd_rig_scratch(self, ctx: commands.Context, target: OptionalMember = None, n: str = "4"):
         """Hidden admin-only command: rig the 3rd daily scratchoff to match N symbols (1-4)."""
         if target is None:
             target = ctx.author
@@ -429,7 +429,7 @@ class SlotsCog(commands.Cog):
         ))
 
     @cmd_rig.command(name="steal", hidden=True)
-    async def cmd_rig_steal(self, ctx: commands.Context, target: MemberConverter = None, n: str = "1"):
+    async def cmd_rig_steal(self, ctx: commands.Context, target: OptionalMember = None, n: str = "1"):
         """Hidden admin-only command: rig the next n steal attempts to succeed. n can be 'cancel'."""
         if target is None:
             target = ctx.author

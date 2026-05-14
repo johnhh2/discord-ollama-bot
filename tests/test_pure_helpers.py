@@ -306,6 +306,55 @@ class TestMemberConverter:
             await MemberConverter().convert(ctx, "alice")
 
 
+@pytest.mark.asyncio
+class TestOptionalMember:
+    """`OptionalMember` wraps `MemberConverter` but never lets `BadArgument`
+    reach the command — it returns `None` instead, so a junk arg like `!pay 1`
+    is treated the same as a missing arg (command shows its usage)."""
+
+    @pytest.fixture(autouse=True)
+    def _force_fallback(self, monkeypatch):
+        from discord.ext import commands as dpy_commands
+
+        async def _always_bad_argument(self, ctx, argument):
+            raise dpy_commands.BadArgument(f"forced fallback for {argument!r}")
+
+        monkeypatch.setattr(
+            dpy_commands.MemberConverter, "convert", _always_bad_argument
+        )
+
+    async def test_unique_match_returns_member(self):
+        from src.helpers import OptionalMember
+        alice = FakeMember(uid=1, display_name="alice")
+        ctx = _ctx_with_members([alice])
+        assert await OptionalMember().convert(ctx, "alic") is alice
+
+    async def test_no_match_returns_none(self):
+        """`!pay 1` style input: not found → None, not BadArgument."""
+        from src.helpers import OptionalMember
+        ctx = _ctx_with_members([FakeMember(uid=1, display_name="alice")])
+        assert await OptionalMember().convert(ctx, "1") is None
+
+    async def test_ambiguous_match_sends_message_and_returns_none(self):
+        """Ambiguous input: converter sends its own embed and returns None, so
+        commands don't each need a BadArgument handler for this case."""
+        from src.helpers import OptionalMember
+        ctx = _ctx_with_members([
+            FakeMember(uid=1, display_name="alice_smith"),
+            FakeMember(uid=2, display_name="alice_jones"),
+        ])
+        assert await OptionalMember().convert(ctx, "alice") is None
+        assert any(
+            "alice_smith" in (e.description or "") for e in ctx.sent_embeds
+        )
+
+    async def test_no_guild_context_returns_none(self):
+        from src.helpers import OptionalMember
+        ctx = FakeCtx()
+        ctx.guild = None
+        assert await OptionalMember().convert(ctx, "alice") is None
+
+
 # ── get_command_perm hierarchical fallback ────────────────────────────────────
 
 class TestGetCommandPermFallback:

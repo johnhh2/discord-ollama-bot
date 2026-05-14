@@ -241,6 +241,35 @@ class MemberConverter(commands.Converter):
         raise commands.BadArgument(f"Member '{argument}' not found.")
 
 
+class OptionalMember(commands.Converter):
+    """Like `MemberConverter`, but never raises `BadArgument` back to the command.
+
+    - **Not found** → returns `None`, so the command sees the same value as a
+      missing argument and can fall through to its own usage message. This
+      avoids `BadArgument: Member '1' not found.` for inputs like `!pay 1`.
+    - **Ambiguous** (substring matched several members) → sends its own
+      disambiguation embed to the channel and returns `None`, so individual
+      commands don't each have to catch and handle that case.
+
+    Use this for command-signature annotations that already default to `None`.
+    Code paths that need to distinguish not-found from a real member (e.g.
+    `shop_cog`'s "no @user → target self" logic) should keep using
+    `MemberConverter` and catch `BadArgument` themselves.
+    """
+
+    async def convert(self, ctx: commands.Context, argument: str) -> "discord.Member | None":
+        try:
+            return await MemberConverter().convert(ctx, argument)
+        except commands.BadArgument as exc:
+            msg = str(exc)
+            if "matched multiple members" in msg:
+                try:
+                    await ctx.send(embed=emb("❌ Ambiguous Member", msg, C_RED))
+                except Exception:
+                    pass
+            return None
+
+
 async def toggle_member_role(
     member: discord.Member, role: discord.Role, add: bool, reason: str = ""
 ) -> bool:

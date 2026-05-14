@@ -8,7 +8,7 @@ from discord import ui
 
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, C_GREY,
-    log_bot_permission_error, MemberConverter,
+    log_bot_permission_error, OptionalMember,
 )
 from src.permissions import (
     is_admin, is_bannable, requires_perm,
@@ -35,7 +35,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="godmode")
     @requires_perm
-    async def cmd_godmode(self, ctx: commands.Context, user: MemberConverter = None):
+    async def cmd_godmode(self, ctx: commands.Context, user: OptionalMember = None):
 
         target_user = user if user else ctx.author
         if target_user.id in state.godmode_users:
@@ -51,7 +51,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="adminragebait")
     @requires_perm
-    async def cmd_adminragebait(self, ctx: commands.Context, target: MemberConverter = None, n: str = None):
+    async def cmd_adminragebait(self, ctx: commands.Context, target: OptionalMember = None, n: str = None):
 
         if target is None:
             await ctx.send(embed=emb("❌ Missing User", "Usage: `!adminragebait @user [n]` or `!adminragebait <userid> [n]`", C_RED))
@@ -175,7 +175,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="setperm")
     @requires_perm
-    async def cmd_setperm(self, ctx: commands.Context, user: MemberConverter = None, tier: str = None):
+    async def cmd_setperm(self, ctx: commands.Context, user: OptionalMember = None, tier: str = None):
         """Grant a per-guild permission override to one user.
 
         Tiers:
@@ -302,7 +302,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="ban")
     @requires_perm
-    async def cmd_ban(self, ctx: commands.Context, user: MemberConverter = None, *, reason: str = None):
+    async def cmd_ban(self, ctx: commands.Context, user: OptionalMember = None, *, reason: str = None):
         """Add a user to this guild's blocklist — bot will silently ignore them here."""
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
@@ -338,7 +338,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="unban")
     @requires_perm
-    async def cmd_unban(self, ctx: commands.Context, user: MemberConverter = None):
+    async def cmd_unban(self, ctx: commands.Context, user: OptionalMember = None):
         """Remove a user from this guild's blocklist."""
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
@@ -358,7 +358,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="globalban")
     @requires_perm
-    async def cmd_globalban(self, ctx: commands.Context, user: MemberConverter = None, *, reason: str = None):
+    async def cmd_globalban(self, ctx: commands.Context, user: OptionalMember = None, *, reason: str = None):
         """Add a user to the bot-wide blocklist — silenced in every guild."""
         if user is None:
             await ctx.send(embed=emb(
@@ -390,7 +390,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="globalunban")
     @requires_perm
-    async def cmd_globalunban(self, ctx: commands.Context, user: MemberConverter = None):
+    async def cmd_globalunban(self, ctx: commands.Context, user: OptionalMember = None):
         """Remove a user from the bot-wide blocklist."""
         if user is None:
             await ctx.send(embed=emb("🌐 globalunban", "Usage: `!globalunban @user`", C_GOLD))

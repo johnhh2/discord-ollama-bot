@@ -9,7 +9,7 @@ import discord
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_GOLD, C_ORANGE, C_GREY, C_BLUE, parse_amount, send_ephemeral, fetch_member, shop_charge, MemberConverter,
+    emb, C_GREEN, C_RED, C_GOLD, C_ORANGE, C_GREY, C_BLUE, parse_amount, send_ephemeral, fetch_member, shop_charge, OptionalMember,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
@@ -137,7 +137,7 @@ class EconomyCog(commands.Cog):
 
 
     @commands.command(name="balance", aliases=["bal", "b", "!", "$"])
-    async def cmd_balance(self, ctx: commands.Context, target: MemberConverter = None):
+    async def cmd_balance(self, ctx: commands.Context, target: OptionalMember = None):
         target = target or ctx.author
         if self.bot.user and target.id == self.bot.user.id and ctx.guild:
             bal = get_guild_house_balance(ctx.guild.id)
@@ -215,7 +215,7 @@ class EconomyCog(commands.Cog):
         await send_ephemeral(ctx, embed=emb("🦹 Crime", "\n".join(lines), C_GOLD))
 
     @commands.command(name="steal")
-    async def cmd_steal(self, ctx: commands.Context, target: MemberConverter = None):
+    async def cmd_steal(self, ctx: commands.Context, target: OptionalMember = None):
         if target is None:
             await ctx.invoke(self.cmd_crime)
             return
@@ -659,7 +659,7 @@ class EconomyCog(commands.Cog):
 
     @commands.command(name="bankheist")
     @requires_perm
-    async def cmd_bankheist(self, ctx: commands.Context, target: MemberConverter = None):
+    async def cmd_bankheist(self, ctx: commands.Context, target: OptionalMember = None):
         if target is None:
             await ctx.send(embed=emb(
                 "🏦 Bank Heist",
@@ -829,7 +829,7 @@ class EconomyCog(commands.Cog):
 
 
     @commands.command(name="jail")
-    async def cmd_jail(self, ctx: commands.Context, target: MemberConverter = None):
+    async def cmd_jail(self, ctx: commands.Context, target: OptionalMember = None):
         member = target or ctx.author
         await _ensure_user(member.id)
         user_data = state.economy["users"][str(member.id)]
@@ -893,7 +893,7 @@ class EconomyCog(commands.Cog):
 
     @commands.command(name="adminjailbreak")
     @requires_perm
-    async def cmd_adminjailbreak(self, ctx: commands.Context, target: MemberConverter = None):
+    async def cmd_adminjailbreak(self, ctx: commands.Context, target: OptionalMember = None):
         if target is None:
             await ctx.send(embed=emb("❌ Usage", "`!adminjailbreak @user`", C_RED))
             return
@@ -906,7 +906,7 @@ class EconomyCog(commands.Cog):
 
     @commands.command(name="bail", aliases=["bailout"])
     @requires_perm
-    async def cmd_bail(self, ctx: commands.Context, target: MemberConverter = None):
+    async def cmd_bail(self, ctx: commands.Context, target: OptionalMember = None):
         payer = ctx.author
         jailed = target if target is not None else payer
 
@@ -989,7 +989,7 @@ class EconomyCog(commands.Cog):
 
     @commands.command(name="mug")
     @requires_perm
-    async def cmd_mug(self, ctx: commands.Context, target: MemberConverter = None, amount: str = None):
+    async def cmd_mug(self, ctx: commands.Context, target: OptionalMember = None, amount: str = None):
         uid = ctx.author.id
 
         await _ensure_user(uid)
@@ -1333,7 +1333,7 @@ class EconomyCog(commands.Cog):
         await send_ephemeral(ctx, embed=emb("📊 Economy", stats, C_GOLD))
 
     @commands.command(name="pay", aliases=["give", "gift", "donate"])
-    async def cmd_pay(self, ctx: commands.Context, recipient: MemberConverter = None, amount: str = None):
+    async def cmd_pay(self, ctx: commands.Context, recipient: OptionalMember = None, amount: str = None):
         if recipient is None or amount is None:
             await ctx.send("Usage: `!pay @user <amount>`")
             return
@@ -1451,7 +1451,7 @@ class EconomyCog(commands.Cog):
 
     @commands.command(name="admingive", aliases=["adminpay"])
     @requires_perm
-    async def cmd_give(self, ctx: commands.Context, target: MemberConverter = None, amount: str = None):
+    async def cmd_give(self, ctx: commands.Context, target: OptionalMember = None, amount: str = None):
         if target is None or amount is None:
             await ctx.send(embed=emb("⚙️ Give", "Usage: `!give @user <amount>`", C_GREY))
             return
@@ -1489,7 +1489,7 @@ class EconomyCog(commands.Cog):
 
     @commands.command(name="admingivexp", aliases=["adminxp", "adminpayxp"])
     @requires_perm
-    async def cmd_givexp(self, ctx: commands.Context, target: MemberConverter = None, amount: str = None):
+    async def cmd_givexp(self, ctx: commands.Context, target: OptionalMember = None, amount: str = None):
         if target is None or amount is None:
             await ctx.send(embed=emb("⚙️ Give XP", "Usage: `!admingivexp @user <amount>`", C_GREY))
             return
