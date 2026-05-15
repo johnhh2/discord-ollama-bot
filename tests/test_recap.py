@@ -273,6 +273,68 @@ async def test_recap_skips_bot_messages(_stub_recap_deps, monkeypatch):
     assert "beep boop" not in transcript
 
 
+async def test_recap_keep_message_filters_commands():
+    """_recap_keep_message: non-command chat always kept; game/gambling/
+    crime commands kept; every other !command dropped; bare game-turn
+    words (hit/stand) pass through (they're not commands).
+
+    Sync logic, but kept async to match this module's asyncio pytestmark.
+    """
+    cog = AICog(bot=None)
+
+    # Plain conversation — always kept.
+    assert cog._recap_keep_message("anyone around tonight?")
+    assert cog._recap_keep_message("that movie was a hit")  # 'hit' as a word
+    # Bare game-turn words aren't commands — pass through.
+    assert cog._recap_keep_message("hit")
+    assert cog._recap_keep_message("stand")
+    # Game / gambling / crime commands — kept (alias-aware, case-insensitive).
+    assert cog._recap_keep_message("!bj 5000")
+    assert cog._recap_keep_message("!blackjack 200")
+    assert cog._recap_keep_message("!scratch")
+    assert cog._recap_keep_message("!Flip 100")
+    assert cog._recap_keep_message("!steal @someone")
+    assert cog._recap_keep_message("!slots")
+    # Non-game commands — dropped.
+    assert not cog._recap_keep_message("!pay @someone 500")
+    assert not cog._recap_keep_message("!balance")
+    assert not cog._recap_keep_message("!daily")
+    assert not cog._recap_keep_message("!shop")
+    assert not cog._recap_keep_message("!help")
+    # A bare "!" is not a game command.
+    assert not cog._recap_keep_message("!")
+
+
+async def test_recap_drops_non_game_commands_from_transcript(_stub_recap_deps, monkeypatch):
+    """Integration: !pay (a one-off utility command) must not reach the
+    model, while !bj and plain chat do. This is the deterministic fix for
+    'Xeph completed a !pay command' showing up as a quip."""
+    captured = {}
+    async def _capture_stream(session, messages, placeholder, **kwargs):
+        captured["messages"] = messages
+        return "- recap"
+    monkeypatch.setattr(_ai_cog, "stream_ollama", _capture_stream)
+
+    cog = AICog(bot=None)
+    author = FakeMember(uid=1010, display_name="runner")
+    chan = _channel(100, "general", messages=[
+        _msg("hey what's everyone up to", "Joseph", uid=1),
+        _msg("!bj 5000", "Xeph", uid=2),
+        _msg("!pay @Joseph 500", "Xeph", uid=2),
+        _msg("!balance", "Gary", uid=3),
+    ])
+    guild = _make_guild_with_channels(chan)
+    ctx, _ = _ctx(author, guild, chan)
+
+    await cog.cmd_recap.callback(cog, ctx, focus=None)
+
+    transcript = captured["messages"][1]["content"]
+    assert "hey what's everyone up to" in transcript
+    assert "!bj 5000" in transcript          # game command — kept
+    assert "!pay" not in transcript          # one-off utility — dropped
+    assert "!balance" not in transcript      # one-off utility — dropped
+
+
 async def test_recap_with_no_messages_does_not_consume_daily_slot(_stub_recap_deps):
     """If there's nothing to recap, the user's once-a-day slot is rolled
     back so they aren't burned for an empty server."""

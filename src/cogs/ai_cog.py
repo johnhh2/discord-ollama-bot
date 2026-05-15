@@ -837,6 +837,22 @@ class AICog(commands.Cog):
     # Per-channel ceiling so one spammy channel can't eat the whole budget.
     RECAP_PER_CHANNEL_LIMIT = 300
 
+    # Game / gambling / crime command roots (canonical names + aliases) that
+    # ARE recap-worthy. A `!`-prefixed message whose first word is in this
+    # set is kept; every other `!command` (e.g. !pay, !balance, !daily) is
+    # dropped from the transcript before the model sees it — those one-offs
+    # aren't recap material and the model would otherwise quip about them.
+    # Non-command chat is never touched by this filter.
+    RECAP_GAME_COMMANDS = frozenset({
+        "blackjack", "bj", "blackj",
+        "flip", "coinflip",
+        "slots", "slot",
+        "scratchoff", "scratch", "scratches", "scratchoffs",
+        "steal", "mug", "bankheist",
+        "race", "hangman", "hang", "hm", "chess", "ttt", "c4",
+        "guess", "g", "lottery", "puzzle",
+    })
+
     RECAP_SYSTEM_PROMPT = (
         "You are writing a daily recap of a Discord server's activity. "
         "You are given the day's chat logs from several channels, in the form "
@@ -853,13 +869,16 @@ class AICog(commands.Cog):
         "whether a hot dog is a sandwich; no conclusion was reached.'\n"
         "- Group by channel only if it reads naturally; otherwise just list "
         "the quips. Use as many quips as the day needs.\n"
-        "- Some logged messages are bot commands (they start with `!`) — "
-        "things like `!scratch`, `!flip`, `!bj`, `!slots`. Treat this as "
-        "real activity worth a quip, but roll it up per person: "
-        "'cleanmeanbean spent the afternoon on scratchoffs and flips', not "
-        "one quip per command. Never invent an outcome (who won, what a "
-        "hand was) — the logs only show the command was run, not its "
-        "result. If you don't know the result, don't state one.\n"
+        "- Some logged messages are game/gambling commands (`!bj`, "
+        "`!scratch`, `!flip`, `!slots`, `!steal`, ...) or game-turn words "
+        "(`hit`, `stand`). The logs do NOT show how any game went — no "
+        "cards, no dealer, no winner, no payout. So for games, only say "
+        "THAT someone played, rolled up per person: 'Xeph played a few "
+        "hands of blackjack' or 'cleanmeanbean spent the afternoon on "
+        "scratchoffs and flips'. NEVER describe a hit, a hand, a card, who "
+        "won, or how much — you do not have that information and would be "
+        "making it up. (Real outcomes that matter come from the "
+        "<notable_events> block below, not from these commands.)\n"
         "- You may also be given a <notable_events> block of economy/game "
         "facts (lottery wins, broken records, big gambling/crime hauls). "
         "Fold the interesting ones in as their own quips; ignore dull ones. "
@@ -877,6 +896,22 @@ class AICog(commands.Cog):
     # that, only hauls clearing the floor, up to RECAP_EVENT_MAX total.
     RECAP_EVENT_MAX = 3
     RECAP_EVENT_FLOOR = 25_000
+
+    def _recap_keep_message(self, content: str) -> bool:
+        """Decide whether a message belongs in the recap transcript.
+
+        Non-command chat is always kept. A `!`-prefixed message is kept
+        only if its command root (first word, lowercased, alias-aware) is
+        a game/gambling/crime command — those are recap-worthy activity.
+        Every other `!command` (!pay, !balance, !daily, !shop, ...) is a
+        one-off utility action and gets dropped, so the model can't quip
+        about it. Bare game-turn words like `hit`/`stand` aren't commands,
+        so they pass through here; the prompt handles not narrating them.
+        """
+        if not content.startswith("!"):
+            return True
+        root = content[1:].split(None, 1)[0].lower() if len(content) > 1 else ""
+        return root in self.RECAP_GAME_COMMANDS
 
     def _recap_channel_visible(self, channel: discord.TextChannel) -> bool:
         """True if the @everyone role can read `channel` and it isn't NSFW."""
@@ -1093,6 +1128,8 @@ class AICog(commands.Cog):
                             continue
                         content = msg.content.strip()
                         if not content:
+                            continue
+                        if not self._recap_keep_message(content):
                             continue
                         collected.append((
                             msg.created_at,
