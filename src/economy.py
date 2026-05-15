@@ -14,7 +14,7 @@ from src.persistence import (
     load_command_usage_history, save_command_usage_history,
     upsert_crime_delta, upsert_gambling_delta,
     prune_balance_history, prune_bot_stats_history, prune_command_usage_history,
-    prune_crime_history, prune_gambling_history,
+    prune_crime_history, prune_gambling_history, prune_notable_events,
 )
 from src.guild_config import get_guild_cfg
 
@@ -514,5 +514,6 @@ async def do_daily_reset():
     await prune_command_usage_history(before_date=cutoff)
     await prune_crime_history(before_date=cutoff)
     await prune_gambling_history(before_date=cutoff)
+    await prune_notable_events(before_date=cutoff)
 
     logging.info(f"[DAILY] Reset daily reward and scratchoff counts for {today}")

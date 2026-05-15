@@ -9,11 +9,11 @@ from src.helpers import (
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, drain_bot_balance_into_lottery, announce_new_lottery,
-    _ensure_user, _ct_now, lottery_week_key, record_gambling_event, add_guild_house,
+    _ensure_user, _ct_now, _ct_today, lottery_week_key, record_gambling_event, add_guild_house,
 )
 from src.persistence import (
     save_lottery,
-    load_lottery, try_set_record
+    load_lottery, try_set_record, log_notable_event,
 )
 from src.guild_config import get_guild_cfg
 
@@ -62,6 +62,15 @@ class LotteryCog(commands.Cog):
                     new_bal_record = await add_balance(int(winner_id), pool, guild_id=guild.id, holder_name=winner.display_name)
                     await record_gambling_event(int(winner_id), gained=pool)
                     new_lottery_record = await try_set_record(guild.id, "lottery", pool, int(winner_id), winner.display_name)
+                    # Log every lottery win for !recap — a non-record win
+                    # never reaches announce_record, so log it here directly.
+                    try:
+                        await log_notable_event(
+                            guild.id, _ct_today(), "lottery_win", None,
+                            winner.display_name, pool,
+                        )
+                    except Exception:
+                        pass
 
                     embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
                     embed.description = (

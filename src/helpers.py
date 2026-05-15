@@ -43,7 +43,12 @@ def _record_label(category: str) -> str:
 
 
 async def announce_record(channel, category: str, holder_name: str, value: int) -> None:
-    """Send a record-broken announcement embed to `channel`. Best-effort; swallows errors."""
+    """Send a record-broken announcement embed to `channel`. Best-effort; swallows errors.
+
+    Also logs the break to `notable_events` so !recap can mention records
+    set today. This is the single hook point for every record category —
+    callers in lottery/gambling/games all funnel through here.
+    """
     if channel is None:
         return
     label = _record_label(category)
@@ -54,6 +59,19 @@ async def announce_record(channel, category: str, holder_name: str, value: int) 
     desc = f"**{holder_name}** just set a new {label} record: {suffix}"
     try:
         await channel.send(embed=emb("🏆 New Record!", desc, C_GOLD))
+    except Exception:
+        pass
+    # Best-effort notable-events log — failures here must never break the
+    # announcement path. Function-local imports dodge the helpers↔economy
+    # import cycle.
+    try:
+        guild = getattr(channel, "guild", None)
+        if guild is not None:
+            from src.economy import _ct_today
+            from src.persistence import log_notable_event
+            await log_notable_event(
+                guild.id, _ct_today(), "record", category, holder_name, value,
+            )
     except Exception:
         pass
 

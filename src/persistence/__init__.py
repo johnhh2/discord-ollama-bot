@@ -40,6 +40,12 @@ from src.persistence.rigged import (  # noqa: F401
     save_rigged_steal,
 )
 from src.persistence.streaks import save_gambler_streak  # noqa: F401
+from src.persistence.recap_usage import save_recap_usage  # noqa: F401
+from src.persistence.notable_events import (  # noqa: F401
+    log_notable_event,
+    load_notable_events_today,
+    prune_notable_events,
+)
 from src.persistence.chess import save_chess_games  # noqa: F401
 from src.persistence.ai import save_ai_threads, save_channel_prompts  # noqa: F401
 from src.persistence.quotes import (  # noqa: F401

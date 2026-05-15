@@ -43,6 +43,7 @@ _TABLE_PKS = {
     "ai_threads": ("thread_id",),
     "leveling": ("guild_id", "user_id"),
     "gambler_streak": ("user_id",),
+    "recap_usage": ("guild_id", "user_id"),
     "quote_log": ("id",),
     "saved_quotes": ("id",),
     "balance_history": ("snapshot_date", "bucket", "user_id"),

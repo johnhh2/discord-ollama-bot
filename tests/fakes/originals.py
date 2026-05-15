@@ -34,6 +34,7 @@ _PERSISTENCE_SAVE_NAMES = [
     "prune_balance_history", "prune_bot_stats_history",
     "prune_command_usage_history",
     "prune_crime_history", "prune_gambling_history",
+    "log_notable_event", "prune_notable_events",
     "add_ephemeral_msg",
 ]
 
@@ -53,7 +54,8 @@ for _name in ("save_economy", "save_insurance", "try_set_record",
               "upsert_crime_delta", "upsert_gambling_delta",
               "prune_balance_history", "prune_bot_stats_history",
               "prune_command_usage_history",
-              "prune_crime_history", "prune_gambling_history"):
+              "prune_crime_history", "prune_gambling_history",
+              "prune_notable_events"):
     if hasattr(_economy, _name):
         ALL.append((_economy, _name, getattr(_economy, _name)))
 

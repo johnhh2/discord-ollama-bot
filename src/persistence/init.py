@@ -252,6 +252,15 @@ async def _init_db_state_inner(state, run_migrations):
         except Exception as e:
             logging.error(f"[init_db_state] gambler_streak failed: {e}", exc_info=True)
 
+        # ── recap_usage ───────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT guild_id, user_id, last_date FROM recap_usage")
+            state.recap_usage = {
+                (int(r[0]), int(r[1])): r[2] for r in await cur.fetchall()
+            }
+        except Exception as e:
+            logging.error(f"[init_db_state] recap_usage failed: {e}", exc_info=True)
+
         # ── chess_games ───────────────────────────────────────────────────
         try:
             await cur.execute("SELECT channel_id, game_json FROM chess_games")

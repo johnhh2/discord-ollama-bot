@@ -27,6 +27,7 @@ rigged_flips: dict = {}
 rigged_scratch: dict = {}
 rigged_steal: dict = {}
 gambler_streak: dict = {}
+recap_usage: dict = {}   # {(guild_id, user_id): last_recap_date_str} — !recap daily cap
 quote_log: list = []
 leveling: dict = {}
 command_perms: dict = {}

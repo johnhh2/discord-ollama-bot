@@ -1,4 +1,6 @@
 import asyncio
+import datetime
+from zoneinfo import ZoneInfo
 
 import aiohttp
 import discord
@@ -10,6 +12,7 @@ from src.helpers import (
 )
 from src.economy import (
     add_balance, get_guild_ask_model, get_guild_roleplay_model,
+    _ct_today, next_daily_reset_ts,
 )
 from src.permissions import (
     is_admin,
@@ -17,7 +20,7 @@ from src.permissions import (
     requires_perm,
 )
 from src.persistence import (
-    save_chess_games, save_ai_threads
+    save_chess_games, save_ai_threads, save_recap_usage
 )
 from src.guild_config import get_guild_cfg
 from src.ai import (
@@ -815,6 +818,316 @@ class AICog(commands.Cog):
                 pass
         confirm = await ctx.reply(embed=emb("", "Last AI response removed from history.", C_GREEN))
         asyncio.create_task(_delete_after(confirm, delay=10.0))
+
+
+    # ── !recap ────────────────────────────────────────────────────────────
+    # Daily server recap: pulls today's messages from every channel the
+    # @everyone role can read (and that isn't NSFW-flagged) and asks Ollama
+    # to summarize the day as a list of short, dry quips. `everyone` tier,
+    # but capped at one run per user per guild per 5am-CT day.
+
+    # Total budget fed to the model. ~400 messages OR ~60k chars of context,
+    # whichever comes first; oldest messages are dropped when over budget.
+    RECAP_MAX_MESSAGES = 400
+    RECAP_MAX_CHARS = 60_000
+    # Per-channel ceiling so one spammy channel can't eat the whole budget.
+    RECAP_PER_CHANNEL_LIMIT = 300
+
+    RECAP_SYSTEM_PROMPT = (
+        "You are writing a daily recap of a Discord server's activity. "
+        "You are given the day's chat logs from several channels, in the form "
+        "`[#channel] Name: message`. Summarize the day as a bulleted list of "
+        "short, dry, deadpan quips — each one or two sentences. Each quip "
+        "describes one conversation, exchange, or thing that happened.\n\n"
+        "Rules:\n"
+        "- Be specific (quote people, name names) ONLY when little was said in "
+        "an exchange, or when the literal exchange is funny on its own. "
+        "Example: 'Joseph asked if anyone wanted to play RV There Yet in "
+        "general. Nick replied \"fuck off.\"'\n"
+        "- For longer or substantive conversations, write a looser one-line "
+        "summary instead of quoting — e.g. 'A long argument broke out over "
+        "whether a hot dog is a sandwich; no conclusion was reached.'\n"
+        "- Group by channel only if it reads naturally; otherwise just list "
+        "the quips. Use as many quips as the day needs.\n"
+        "- You may also be given a <notable_events> block of economy/game "
+        "facts (lottery wins, broken records, big gambling/crime hauls). "
+        "Fold the interesting ones in as their own quips; ignore dull ones.\n"
+        "- Do not invent anything not in the logs or notable events. Do not "
+        "add a preamble, intro, or closing remark — output only the list.\n"
+        "- Keep the tone dry and a little amused. Never enthusiastic."
+    )
+
+    # How many of the day's biggest gambling wins / successful crimes to
+    # surface, and a floor so a quiet day's "biggest" isn't pocket change.
+    RECAP_TOP_N = 5
+
+    def _recap_channel_visible(self, channel: discord.TextChannel) -> bool:
+        """True if the @everyone role can read `channel` and it isn't NSFW."""
+        if getattr(channel, "nsfw", False):
+            return False
+        everyone = channel.guild.default_role
+        perms = channel.permissions_for(everyone)
+        return perms.read_messages
+
+    async def _build_recap_events_block(self, guild_id: int, today: str) -> str:
+        """Assemble the structured 'notable events' context for !recap.
+
+        Three sources, all keyed on data rather than scraped from bot
+        embeds:
+          • notable_events — records broken + lottery wins logged today.
+          • gambling_history — today's biggest gambling net wins.
+          • crime_history — today's biggest successful crimes (gained > 0).
+
+        Returns a `<notable_events>...</notable_events>` block (plain lines
+        the AI can weave into quips), or "" if nothing notable happened.
+        Best-effort: a DB hiccup degrades the recap to chat-only, never
+        fails it.
+        """
+        from src.persistence import load_notable_events_today
+        from src.persistence.history import load_crime_history, load_gambling_history
+        from src.helpers import _record_label
+
+        lines: list[str] = []
+        try:
+            events = await load_notable_events_today(guild_id, today)
+        except Exception:
+            events = []
+        for ev in events:
+            if ev["kind"] == "lottery_win":
+                lines.append(f"{ev['holder_name']} won the lottery ({ev['value']:,} coins)")
+            elif ev["kind"] == "record":
+                label = _record_label(ev["category"] or "")
+                if (ev["category"] or "").startswith("hangman_wins_"):
+                    lines.append(
+                        f"{ev['holder_name']} set a new server record — "
+                        f"{label} ({ev['value']:,} wins)"
+                    )
+                else:
+                    lines.append(
+                        f"{ev['holder_name']} set a new server record — "
+                        f"{label} ({ev['value']:,} coins)"
+                    )
+
+        # crime_history / gambling_history are keyed by plain CT calendar
+        # date (not the 5am-rollover day string). They overlap the recap
+        # window closely enough; sum across today's 6h buckets.
+        from src.economy import _ct_now
+        cal_today = _ct_now().date().isoformat()
+
+        async def _top_gained(loader, label_fn):
+            try:
+                hist = await loader()
+            except Exception:
+                return
+            by_user: dict[str, int] = {}
+            for bucket in hist.get(cal_today, {}).values():
+                for uid_str, rec in bucket.items():
+                    by_user[uid_str] = by_user.get(uid_str, 0) + int(rec.get("gained", 0))
+            top = sorted(
+                ((u, g) for u, g in by_user.items() if g > 0),
+                key=lambda t: t[1], reverse=True,
+            )[:self.RECAP_TOP_N]
+            for uid_str, gained in top:
+                name = self._recap_display_name(guild_id, uid_str)
+                lines.append(label_fn(name, gained))
+
+        await _top_gained(
+            load_gambling_history,
+            lambda name, g: f"{name} won {g:,} coins gambling",
+        )
+        await _top_gained(
+            load_crime_history,
+            lambda name, g: f"{name} pulled off {g:,} coins in crime (steal/mug)",
+        )
+
+        if not lines:
+            return ""
+        body = "\n".join(f"- {ln}" for ln in lines)
+        return (
+            "\n\nThese are notable economy/game events that happened today "
+            "(treat them as facts — work the interesting ones into the recap "
+            "as quips, skip any that are dull):\n"
+            f"<notable_events>\n{body}\n</notable_events>"
+        )
+
+    def _recap_display_name(self, guild_id: int, uid_str: str) -> str:
+        """Best-effort display name for a user id string. Falls back to the
+        id itself if the member isn't cached — the recap is dry either way."""
+        guild = self.bot.get_guild(guild_id) if self.bot else None
+        if guild is not None:
+            member = guild.get_member(int(uid_str))
+            if member is not None:
+                return member.display_name
+        return f"user {uid_str}"
+
+    @commands.command(name="recap", aliases=["dailyrecap"])
+    @requires_perm
+    async def cmd_recap(self, ctx: commands.Context, *, focus: str = None):
+        """Summarize today's server-wide chat as a list of dry quips.
+
+        `!recap` recaps everything; `!recap <topic or @user>` narrows the
+        recap to a person or subject. One run per user per guild per day.
+        """
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Servers Only", "`!recap` only works in a server.", C_RED))
+            return
+        if await check_ai_channel(ctx):
+            return
+
+        guild_id = ctx.guild.id
+        uid = ctx.author.id
+        today = _ct_today()
+        key = (guild_id, uid)
+
+        # Gate-and-claim: reserve today's slot synchronously, before any
+        # await, so a spam-fired second invocation sees the claim and bails.
+        # godmode users skip the cap entirely.
+        prior = state.recap_usage.get(key)
+        if uid not in state.godmode_users:
+            if prior == today:
+                await ctx.send(embed=emb(
+                    "🗒️ Already Recapped",
+                    f"You've already run `!recap` today. Next one available "
+                    f"<t:{next_daily_reset_ts()}:R>.",
+                    C_GREY,
+                ))
+                return
+            state.recap_usage[key] = today  # claim
+
+        # Collect today's messages from every @everyone-visible, non-NSFW
+        # text channel. cutoff = the most recent 5am-CT reset, in UTC.
+        now_ct = datetime.datetime.now(ZoneInfo("America/Chicago"))
+        reset_date = now_ct.date()
+        if now_ct.hour < 5:
+            reset_date -= datetime.timedelta(days=1)
+        cutoff = datetime.datetime.combine(
+            reset_date, datetime.time(5, 0), tzinfo=ZoneInfo("America/Chicago"),
+        ).astimezone(datetime.timezone.utc)
+
+        focus = focus.strip() if focus else None
+        placeholder = await ctx.send("🗒️ Reading today's messages...")
+        typing_task = asyncio.create_task(keep_typing(ctx.channel))
+        try:
+            collected: list[tuple[datetime.datetime, str]] = []
+            for channel in ctx.guild.text_channels:
+                if not self._recap_channel_visible(channel):
+                    continue
+                me = channel.guild.me
+                if me is None or not channel.permissions_for(me).read_message_history:
+                    continue
+                try:
+                    async for msg in channel.history(
+                        limit=self.RECAP_PER_CHANNEL_LIMIT, after=cutoff, oldest_first=False,
+                    ):
+                        if msg.author.bot:
+                            continue
+                        content = msg.content.strip()
+                        if not content:
+                            continue
+                        collected.append((
+                            msg.created_at,
+                            f"[#{channel.name}] {msg.author.display_name}: {content[:300]}",
+                        ))
+                except discord.Forbidden:
+                    continue
+
+            if not collected:
+                if uid not in state.godmode_users:
+                    state.recap_usage[key] = prior  # roll back the claim
+                    if prior is None:
+                        state.recap_usage.pop(key, None)
+                await placeholder.edit(content="", embed=emb(
+                    "🗒️ Nothing to Recap",
+                    "No messages in any public channel since the 5am reset yet.",
+                    C_GREY,
+                ))
+                return
+
+            # Newest-first budget: keep the most recent messages, drop the
+            # oldest when over the message or char cap, then sort chronological.
+            collected.sort(key=lambda t: t[0], reverse=True)
+            kept: list[str] = []
+            total_chars = 0
+            for _, line in collected:
+                if len(kept) >= self.RECAP_MAX_MESSAGES:
+                    break
+                if total_chars + len(line) > self.RECAP_MAX_CHARS:
+                    break
+                kept.append(line)
+                total_chars += len(line)
+            truncated = len(kept) < len(collected)
+            kept.reverse()  # chronological for the model
+            transcript = "\n".join(kept)
+
+            # Structured economy/game events (records, lottery wins, top
+            # gambling/crime of the day) — keyed on data, not scraped from
+            # bot embeds. Appended to whichever prompt branch we take.
+            events_block = await self._build_recap_events_block(guild_id, today)
+
+            if focus:
+                user_prompt = (
+                    f"Here are today's chat logs. Write the recap, but focus "
+                    f"ONLY on anything related to: {focus}. Ignore unrelated "
+                    f"conversations. If nothing relates to it, say so in one "
+                    f"line.\n\n<logs>\n{transcript}\n</logs>{events_block}"
+                )
+            else:
+                user_prompt = (
+                    f"Here are today's chat logs. Write the recap.\n\n"
+                    f"<logs>\n{transcript}\n</logs>{events_block}"
+                )
+
+            messages = [
+                {"role": "system", "content": self.RECAP_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ]
+
+            await placeholder.edit(content="🗒️ Writing the recap...")
+            async with aiohttp.ClientSession() as session:
+                model = get_guild_ask_model(guild_id)
+                recap = await stream_ollama(
+                    session, messages, placeholder,
+                    guild_id=guild_id, model=model, user_id=uid,
+                )
+            if not recap:
+                # AI disabled / rate-limited — placeholder already explains.
+                # Refund the daily slot so the user isn't burned for nothing.
+                if uid not in state.godmode_users:
+                    state.recap_usage[key] = prior
+                    if prior is None:
+                        state.recap_usage.pop(key, None)
+                return
+
+            header = f"🗒️ **Daily Recap — {today}**"
+            if focus:
+                header += f" · focus: *{focus[:80]}*"
+            footer = ""
+            if truncated:
+                footer = (
+                    f"\n\n*Recapped the most recent {len(kept)} of "
+                    f"{len(collected)} messages — earlier ones were trimmed.*"
+                )
+            await finalize(placeholder, ctx.channel, f"{header}\n\n{recap}{footer}")
+
+            # Commit the daily-cap claim now that the recap actually landed.
+            if uid not in state.godmode_users:
+                await save_recap_usage(guild_id, uid, today)
+        except aiohttp.ClientError as e:
+            if uid not in state.godmode_users:
+                state.recap_usage[key] = prior
+                if prior is None:
+                    state.recap_usage.pop(key, None)
+            _log_audit(f"{ctx.author.display_name} ({uid})", ctx.message.content[:100], f"Ollama offline: {e}")
+            await placeholder.edit(content="", embed=emb("", "The AI is currently offline.", C_RED))
+        except Exception as e:
+            if uid not in state.godmode_users:
+                state.recap_usage[key] = prior
+                if prior is None:
+                    state.recap_usage.pop(key, None)
+            _log_audit(f"{ctx.author.display_name} ({uid})", ctx.message.content[:100], f"{type(e).__name__}: {e}")
+            await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
+        finally:
+            typing_task.cancel()
 
 
 async def setup(bot):
