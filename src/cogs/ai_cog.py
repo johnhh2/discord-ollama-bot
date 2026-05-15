@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import logging
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -42,6 +43,9 @@ from src.invites import _wait_for_confirmations, _send_invite
 from src.games.ttt_c4 import build_ttt_display, build_c4_display
 from src.games.chess import build_chess_display
 from src.games.hangman import build_hangman_display
+
+
+log = logging.getLogger(__name__)
 
 
 class AICog(commands.Cog):
@@ -849,17 +853,29 @@ class AICog(commands.Cog):
         "whether a hot dog is a sandwich; no conclusion was reached.'\n"
         "- Group by channel only if it reads naturally; otherwise just list "
         "the quips. Use as many quips as the day needs.\n"
+        "- Priority: real conversation between people first. Some logged "
+        "messages are just bot commands (they start with `!`). Routine "
+        "game/economy commands — `!scratch`, `!flip`, `!hit`, `!bj`, "
+        "`!slots`, `!daily`, `!steal`, `!mug` and the like — are NOT "
+        "conversation; do NOT write quips about someone running them. The "
+        "outcomes that matter already appear in the <notable_events> block. "
+        "A non-routine command (`!ask`, `!story`, `!roleplay`, or a funny "
+        "one-off) is only worth a quip if it actually led to something.\n"
         "- You may also be given a <notable_events> block of economy/game "
         "facts (lottery wins, broken records, big gambling/crime hauls). "
-        "Fold the interesting ones in as their own quips; ignore dull ones.\n"
+        "Fold the interesting ones in as their own quips; ignore dull ones. "
+        "Do not double-report: if a haul is in <notable_events>, don't also "
+        "quip about the commands that produced it.\n"
         "- Do not invent anything not in the logs or notable events. Do not "
         "add a preamble, intro, or closing remark — output only the list.\n"
         "- Keep the tone dry and a little amused. Never enthusiastic."
     )
 
-    # How many of the day's biggest gambling wins / successful crimes to
-    # surface, and a floor so a quiet day's "biggest" isn't pocket change.
-    RECAP_TOP_N = 5
+    # Notable-event trimming for gambling wins / successful crimes. The
+    # single biggest of each always shows (even on a quiet day); beyond
+    # that, only hauls clearing the floor, up to RECAP_EVENT_MAX total.
+    RECAP_EVENT_MAX = 3
+    RECAP_EVENT_FLOOR = 10_000
 
     def _recap_channel_visible(self, channel: discord.TextChannel) -> bool:
         """True if the @everyone role can read `channel` and it isn't NSFW."""
@@ -923,12 +939,23 @@ class AICog(commands.Cog):
             for bucket in hist.get(cal_today, {}).values():
                 for uid_str, rec in bucket.items():
                     by_user[uid_str] = by_user.get(uid_str, 0) + int(rec.get("gained", 0))
-            top = sorted(
+            ranked = sorted(
                 ((u, g) for u, g in by_user.items() if g > 0),
                 key=lambda t: t[1], reverse=True,
-            )[:self.RECAP_TOP_N]
-            for uid_str, gained in top:
-                name = self._recap_display_name(guild_id, uid_str)
+            )
+            if not ranked:
+                return
+            # The single biggest always shows; subsequent entries only if
+            # they clear the floor, capped at RECAP_EVENT_MAX total.
+            chosen = [ranked[0]]
+            for uid_str, gained in ranked[1:]:
+                if len(chosen) >= self.RECAP_EVENT_MAX or gained < self.RECAP_EVENT_FLOOR:
+                    break
+                chosen.append((uid_str, gained))
+            names = await asyncio.gather(*(
+                self._recap_resolve_name(guild_id, uid_str) for uid_str, _ in chosen
+            ))
+            for (uid_str, gained), name in zip(chosen, names):
                 lines.append(label_fn(name, gained))
 
         await _top_gained(
@@ -950,14 +977,53 @@ class AICog(commands.Cog):
             f"<notable_events>\n{body}\n</notable_events>"
         )
 
-    def _recap_display_name(self, guild_id: int, uid_str: str) -> str:
-        """Best-effort display name for a user id string. Falls back to the
-        id itself if the member isn't cached — the recap is dry either way."""
+    async def _recap_resolve_name(self, guild_id: int, uid_str: str) -> str:
+        """Resolve a user id string to a display name.
+
+        The bot runs without the Server Members intent, so the member
+        cache is unreliable — `guild.get_member()` returns None for most
+        users. Resolution chain: cache → `guild.fetch_member()` (API) →
+        `bot.fetch_user()` (API, works for bots and non-members too) →
+        bare id as last resort.
+
+        The `fetch_member`/`fetch_user` steps are inlined here rather than
+        delegated to `helpers.fetch_member` so each failure is logged with
+        its cause — recaps were printing raw ids for a bot account and the
+        swallowed exception hid which step (and why) was missing. If the
+        bare-id path is still hit, `recap_name_unresolved` in the logs
+        says exactly what threw.
+        """
+        uid = int(uid_str)
         guild = self.bot.get_guild(guild_id) if self.bot else None
+
         if guild is not None:
-            member = guild.get_member(int(uid_str))
-            if member is not None:
+            cached = guild.get_member(uid)
+            if cached is not None:
+                return cached.display_name
+            try:
+                member = await guild.fetch_member(uid)
                 return member.display_name
+            except Exception as e:
+                member_err = f"{type(e).__name__}: {e}"
+        else:
+            member_err = "no guild"
+
+        if self.bot is not None:
+            try:
+                user = await self.bot.fetch_user(uid)
+                return user.display_name
+            except Exception as e:
+                user_err = f"{type(e).__name__}: {e}"
+        else:
+            user_err = "no bot"
+
+        log.warning(
+            "recap_name_unresolved",
+            extra={
+                "guild_id": guild_id, "user_id": uid,
+                "fetch_member_error": member_err, "fetch_user_error": user_err,
+            },
+        )
         return f"user {uid_str}"
 
     @commands.command(name="recap", aliases=["dailyrecap"])
