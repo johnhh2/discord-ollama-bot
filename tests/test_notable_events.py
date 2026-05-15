@@ -153,9 +153,11 @@ async def test_recap_events_block_includes_top_gambling_and_crime(db, monkeypatc
     bucket = _current_bucket_ct()
 
     # Two gamblers (one big winner, one net loser → excluded) and one thief.
-    await upsert_gambling_delta(cal_today, bucket, 1001, gained=8_000, lost=0)
-    await upsert_gambling_delta(cal_today, bucket, 1002, gained=0, lost=3_000)
-    await upsert_crime_delta(cal_today, bucket, 1003, gained=4_200, lost=0)
+    # crime/gambling history is guild-scoped now — insert into guild 42,
+    # which is the guild _build_recap_events_block is called for below.
+    await upsert_gambling_delta(cal_today, bucket, 42, 1001, gained=8_000, lost=0)
+    await upsert_gambling_delta(cal_today, bucket, 42, 1002, gained=0, lost=3_000)
+    await upsert_crime_delta(cal_today, bucket, 42, 1003, gained=4_200, lost=0)
 
     # _recap_resolve_name resolves ids via fetch_member() — get_member()
     # finds these because they're in guild.members.
@@ -189,7 +191,7 @@ async def test_recap_resolve_name_falls_back_to_api_fetch(db):
 
     cal_today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
-    await upsert_gambling_delta(cal_today, bucket, 555, gained=20_000, lost=0)
+    await upsert_gambling_delta(cal_today, bucket, 42, 555, gained=20_000, lost=0)
 
     # Guild with an EMPTY member cache — get_member(555) returns None.
     guild = FakeGuild(gid=42)
@@ -224,7 +226,7 @@ async def test_recap_resolve_name_resolves_a_bot_via_fetch_user(db):
 
     cal_today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
-    await upsert_gambling_delta(cal_today, bucket, 888, gained=30_000, lost=0)
+    await upsert_gambling_delta(cal_today, bucket, 42, 888, gained=30_000, lost=0)
 
     guild = FakeGuild(gid=42)
     guild.members = []
@@ -260,7 +262,7 @@ async def test_recap_resolve_name_logs_diagnostic_when_all_paths_fail(db, caplog
 
     cal_today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
-    await upsert_gambling_delta(cal_today, bucket, 999, gained=5_000, lost=0)
+    await upsert_gambling_delta(cal_today, bucket, 42, 999, gained=5_000, lost=0)
 
     guild = FakeGuild(gid=42)
     guild.members = []
@@ -298,10 +300,10 @@ async def test_recap_events_block_top1_unconditional_then_floor(db):
     cal_today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
     # One huge, one clearly over the 25k floor, two clearly under.
-    await upsert_gambling_delta(cal_today, bucket, 1, gained=74_173, lost=0)
-    await upsert_gambling_delta(cal_today, bucket, 2, gained=30_000, lost=0)
-    await upsert_gambling_delta(cal_today, bucket, 3, gained=14_073, lost=0)
-    await upsert_gambling_delta(cal_today, bucket, 4, gained=11_100, lost=0)
+    await upsert_gambling_delta(cal_today, bucket, 42, 1, gained=74_173, lost=0)
+    await upsert_gambling_delta(cal_today, bucket, 42, 2, gained=30_000, lost=0)
+    await upsert_gambling_delta(cal_today, bucket, 42, 3, gained=14_073, lost=0)
+    await upsert_gambling_delta(cal_today, bucket, 42, 4, gained=11_100, lost=0)
 
     guild = FakeGuild(gid=42)
     guild.members = [FakeMember(uid=i, display_name=f"u{i}") for i in range(1, 5)]
@@ -328,7 +330,7 @@ async def test_recap_events_block_lone_small_win_still_shows(db):
 
     cal_today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
-    await upsert_gambling_delta(cal_today, bucket, 1, gained=300, lost=0)
+    await upsert_gambling_delta(cal_today, bucket, 42, 1, gained=300, lost=0)
 
     guild = FakeGuild(gid=42)
     guild.members = [FakeMember(uid=1, display_name="QuietDayWinner")]
@@ -341,6 +343,43 @@ async def test_recap_events_block_lone_small_win_still_shows(db):
     block = await cog._build_recap_events_block(42, _ct_today())
 
     assert "QuietDayWinner won 300 coins gambling" in block
+
+
+async def test_recap_events_block_does_not_leak_other_guilds_gambling(db):
+    """The reported bug: a user's gambling in server B showed up in server
+    A's recap, because crime/gambling history wasn't guild-scoped. Since
+    migration 0018 the per-bucket dict is keyed (guild_id, uid) and
+    _build_recap_events_block filters to its own guild. Pin that here."""
+    from src.persistence.history import upsert_gambling_delta
+    from src.economy import _current_bucket_ct
+
+    cal_today = _ct_now().date().isoformat()
+    bucket = _current_bucket_ct()
+    # Same user (id 7) gambled in two different guilds on the same day.
+    await upsert_gambling_delta(cal_today, bucket, 100, 7, gained=99_999, lost=0)  # guild 100
+    await upsert_gambling_delta(cal_today, bucket, 200, 7, gained=12_000, lost=0)  # guild 200
+
+    g100 = FakeGuild(gid=100)
+    g100.members = [FakeMember(uid=7, display_name="Gary")]
+    g200 = FakeGuild(gid=200)
+    g200.members = [FakeMember(uid=7, display_name="Gary")]
+
+    class _Bot:
+        def get_guild(self, gid):
+            return {100: g100, 200: g200}.get(gid)
+
+    cog = AICog(bot=_Bot())
+
+    # Guild 100's recap sees only guild 100's number.
+    block_100 = await cog._build_recap_events_block(100, _ct_today())
+    assert "99,999" in block_100
+    assert "12,000" not in block_100
+
+    # Guild 200's recap sees only guild 200's number — the big haul from
+    # guild 100 does NOT leak in.
+    block_200 = await cog._build_recap_events_block(200, _ct_today())
+    assert "12,000" in block_200
+    assert "99,999" not in block_200
 
 
 async def test_recap_events_block_empty_when_nothing_notable(db):

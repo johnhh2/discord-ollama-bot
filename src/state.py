@@ -104,8 +104,8 @@ stats_commands_today_by_cog: dict = {}
 # Each dict carries an "_bucket" key alongside the user entries to detect
 # rollovers ({"_bucket": int, uid_str_or_tuple: data}).
 
-crime_today_by_user: dict = {}      # {uid_str: {"gained": int, "lost": int}}
-gambling_today_by_user: dict = {}   # {uid_str: {"gained": int, "lost": int}}
+crime_today_by_user: dict = {}      # {(guild_id, uid_str): {"gained": int, "lost": int}}
+gambling_today_by_user: dict = {}   # {(guild_id, uid_str): {"gained": int, "lost": int}}
 levelups_today: dict = {}           # {(guild_id, uid_str): count}
 
 # Tracks which 6h bucket each of the above dicts currently reflects. None

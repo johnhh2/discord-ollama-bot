@@ -53,10 +53,10 @@ async def test_do_daily_reset_prunes_all_pruned_tables(db, monkeypatch):
     await _persistence.save_command_usage_history({
         very_old: {0: {"GraphCog": 5}},
     })
-    await _persistence.upsert_crime_delta(very_old, 0, 42, gained=999)
-    await _persistence.upsert_gambling_delta(very_old, 0, 42, gained=999)
+    await _persistence.upsert_crime_delta(very_old, 0, 1, 42, gained=999)
+    await _persistence.upsert_gambling_delta(very_old, 0, 1, 42, gained=999)
     # Also a recent row to confirm it's untouched.
-    await _persistence.upsert_crime_delta(recent, 0, 42, gained=10)
+    await _persistence.upsert_crime_delta(recent, 0, 1, 42, gained=10)
 
     async def _ai_up(): return True
     monkeypatch.setattr("src.ai.check_ollama_connected", _ai_up)
@@ -74,7 +74,7 @@ async def test_do_daily_reset_prunes_all_pruned_tables(db, monkeypatch):
 async def test_do_daily_reset_keeps_rows_within_retention(db, monkeypatch):
     """A row from 5 years back is well within the 10y window — must survive."""
     five_years_back = _ancient_date_iso(5)
-    await _persistence.upsert_crime_delta(five_years_back, 0, 42, gained=100)
+    await _persistence.upsert_crime_delta(five_years_back, 0, 1, 42, gained=100)
 
     async def _ai_up(): return True
     monkeypatch.setattr("src.ai.check_ollama_connected", _ai_up)
@@ -107,8 +107,8 @@ async def test_prune_crime_history_strictly_before_cutoff(db):
     cutoff = "2026-01-01"
     older = "2025-12-31"
 
-    await _persistence.upsert_crime_delta(older, 0, 1, gained=1)
-    await _persistence.upsert_crime_delta(cutoff, 0, 2, gained=1)
+    await _persistence.upsert_crime_delta(older, 0, 1, 1, gained=1)
+    await _persistence.upsert_crime_delta(cutoff, 0, 1, 2, gained=1)
 
     await _persistence.prune_crime_history(before_date=cutoff)
 
@@ -121,8 +121,8 @@ async def test_prune_gambling_history_strictly_before_cutoff(db):
     cutoff = "2026-01-01"
     older = "2025-12-31"
 
-    await _persistence.upsert_gambling_delta(older, 0, 1, gained=1)
-    await _persistence.upsert_gambling_delta(cutoff, 0, 2, gained=1)
+    await _persistence.upsert_gambling_delta(older, 0, 1, 1, gained=1)
+    await _persistence.upsert_gambling_delta(cutoff, 0, 1, 2, gained=1)
 
     await _persistence.prune_gambling_history(before_date=cutoff)
 

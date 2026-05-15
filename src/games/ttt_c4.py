@@ -241,8 +241,9 @@ async def _apply_ttt_move(channel, guild, mover, pos: int | None) -> None:
             await add_balance(winner_uid, winnings)
         if amount > 0:
             loser_uid = next(p for p in game["players"] if p != winner_uid)
-            await record_gambling_event(winner_uid, gained=amount)
-            await record_gambling_event(loser_uid, lost=amount)
+            gid = guild.id if guild else None
+            await record_gambling_event(gid, winner_uid, gained=amount)
+            await record_gambling_event(gid, loser_uid, lost=amount)
         winner_name = guild.get_member(winner_uid).display_name if guild else str(winner_uid)
         game["last_move"] = f"{name} played position {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
         winner_mention = guild.get_member(winner_uid).mention if guild else str(winner_uid)
@@ -312,8 +313,9 @@ async def _apply_c4_move(channel, guild, mover, pos: int | None) -> None:
             await add_balance(winner_uid, winnings)
         if amount > 0:
             loser_uid = next(p for p in game["players"] if p != winner_uid)
-            await record_gambling_event(winner_uid, gained=amount)
-            await record_gambling_event(loser_uid, lost=amount)
+            gid = guild.id if guild else None
+            await record_gambling_event(gid, winner_uid, gained=amount)
+            await record_gambling_event(gid, loser_uid, lost=amount)
         winner_name = guild.get_member(winner_uid).display_name if guild else str(winner_uid)
         game["last_move"] = f"{name} dropped in column {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
         winner_mention = guild.get_member(winner_uid).mention if guild else str(winner_uid)

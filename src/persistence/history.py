@@ -97,30 +97,38 @@ async def save_command_usage_history(history: dict):
 
 
 async def load_crime_history() -> dict:
-    """Returns {date_str: {bucket: {uid_str: {"gained": int, "lost": int}}}}."""
+    """Returns {date_str: {bucket: {(guild_id_int, uid_str): {"gained", "lost"}}}}.
+
+    Keyed by (guild_id, user) — crime P/L is per-server (see migration
+    0018). Pre-0018 rows carry guild_id=0 and naturally age out.
+    """
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT snapshot_date, bucket, user_id, gained, lost FROM crime_history"
+            "SELECT snapshot_date, bucket, guild_id, user_id, gained, lost FROM crime_history"
         )
         rows = await cur.fetchall()
     result: dict = {}
-    for date_str, bucket, uid, gained, lost in rows:
-        result.setdefault(date_str, {}).setdefault(int(bucket), {})[str(uid)] = {
+    for date_str, bucket, gid, uid, gained, lost in rows:
+        result.setdefault(date_str, {}).setdefault(int(bucket), {})[(int(gid), str(uid))] = {
             "gained": gained, "lost": lost,
         }
     return result
 
 
 async def load_gambling_history() -> dict:
-    """Returns {date_str: {bucket: {uid_str: {"gained": int, "lost": int}}}}."""
+    """Returns {date_str: {bucket: {(guild_id_int, uid_str): {"gained", "lost"}}}}.
+
+    Keyed by (guild_id, user) — gambling P/L is per-server (see migration
+    0018). Pre-0018 rows carry guild_id=0 and naturally age out.
+    """
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT snapshot_date, bucket, user_id, gained, lost FROM gambling_history"
+            "SELECT snapshot_date, bucket, guild_id, user_id, gained, lost FROM gambling_history"
         )
         rows = await cur.fetchall()
     result: dict = {}
-    for date_str, bucket, uid, gained, lost in rows:
-        result.setdefault(date_str, {}).setdefault(int(bucket), {})[str(uid)] = {
+    for date_str, bucket, gid, uid, gained, lost in rows:
+        result.setdefault(date_str, {}).setdefault(int(bucket), {})[(int(gid), str(uid))] = {
             "gained": gained, "lost": lost,
         }
     return result
@@ -169,35 +177,36 @@ async def prune_gambling_history(*, before_date: str):
         )
 
 
-async def upsert_crime_delta(date_str: str, bucket: int, uid: int, *, gained: int = 0, lost: int = 0):
-    """Atomically add `gained` and `lost` deltas to the (date, bucket, user)
-    row in crime_history. Caller passes the per-event delta, not the running
-    total — MariaDB increments in place via x = x + VALUES(x).
+async def upsert_crime_delta(date_str: str, bucket: int, guild_id: int, uid: int, *, gained: int = 0, lost: int = 0):
+    """Atomically add `gained` and `lost` deltas to the
+    (date, bucket, guild, user) row in crime_history. Caller passes the
+    per-event delta, not the running total — MariaDB increments in place
+    via x = x + VALUES(x).
     """
     if gained == 0 and lost == 0:
         return
     async with with_cursor() as cur:
         await cur.execute(
-            "INSERT INTO crime_history (snapshot_date, bucket, user_id, gained, lost)"
-            " VALUES (%s,%s,%s,%s,%s)"
+            "INSERT INTO crime_history (snapshot_date, bucket, guild_id, user_id, gained, lost)"
+            " VALUES (%s,%s,%s,%s,%s,%s)"
             " ON DUPLICATE KEY UPDATE"
             " gained = gained + VALUES(gained),"
             " lost   = lost   + VALUES(lost)",
-            (date_str, int(bucket), int(uid), int(gained), int(lost)),
+            (date_str, int(bucket), int(guild_id), int(uid), int(gained), int(lost)),
         )
 
 
-async def upsert_gambling_delta(date_str: str, bucket: int, uid: int, *, gained: int = 0, lost: int = 0):
+async def upsert_gambling_delta(date_str: str, bucket: int, guild_id: int, uid: int, *, gained: int = 0, lost: int = 0):
     if gained == 0 and lost == 0:
         return
     async with with_cursor() as cur:
         await cur.execute(
-            "INSERT INTO gambling_history (snapshot_date, bucket, user_id, gained, lost)"
-            " VALUES (%s,%s,%s,%s,%s)"
+            "INSERT INTO gambling_history (snapshot_date, bucket, guild_id, user_id, gained, lost)"
+            " VALUES (%s,%s,%s,%s,%s,%s)"
             " ON DUPLICATE KEY UPDATE"
             " gained = gained + VALUES(gained),"
             " lost   = lost   + VALUES(lost)",
-            (date_str, int(bucket), int(uid), int(gained), int(lost)),
+            (date_str, int(bucket), int(guild_id), int(uid), int(gained), int(lost)),
         )
 
 
@@ -218,26 +227,33 @@ async def upsert_levelup_delta(date_str: str, bucket: int, guild_id: int, uid: i
 # the truth on disk. Called from init_db_state.
 
 async def load_today_crime_row(date_str: str, bucket: int) -> dict:
-    """{uid_str: {"gained": int, "lost": int}} for today's (date, bucket)."""
+    """{(guild_id_int, uid_str): {"gained", "lost"}} for today's (date, bucket)."""
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT user_id, gained, lost FROM crime_history"
+            "SELECT guild_id, user_id, gained, lost FROM crime_history"
             " WHERE snapshot_date = %s AND bucket = %s",
             (date_str, int(bucket)),
         )
         rows = await cur.fetchall()
-    return {str(uid): {"gained": int(g), "lost": int(l)} for uid, g, l in rows}
+    return {
+        (int(gid), str(uid)): {"gained": int(g), "lost": int(l)}
+        for gid, uid, g, l in rows
+    }
 
 
 async def load_today_gambling_row(date_str: str, bucket: int) -> dict:
+    """{(guild_id_int, uid_str): {"gained", "lost"}} for today's (date, bucket)."""
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT user_id, gained, lost FROM gambling_history"
+            "SELECT guild_id, user_id, gained, lost FROM gambling_history"
             " WHERE snapshot_date = %s AND bucket = %s",
             (date_str, int(bucket)),
         )
         rows = await cur.fetchall()
-    return {str(uid): {"gained": int(g), "lost": int(l)} for uid, g, l in rows}
+    return {
+        (int(gid), str(uid)): {"gained": int(g), "lost": int(l)}
+        for gid, uid, g, l in rows
+    }
 
 
 async def load_today_levelups_row(date_str: str, bucket: int) -> dict:

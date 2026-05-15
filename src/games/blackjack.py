@@ -108,7 +108,7 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
         bj_winnings = amount * 2
         new_bal_record = await add_balance(uid, bj_winnings, guild_id=gid, holder_name=uid_name)
         if uid not in state.godmode_users:
-            await record_gambling_event(uid, gained=amount)  # net: paid `amount` via shop_charge, received 2x
+            await record_gambling_event(gid, uid, gained=amount)  # net: paid `amount` via shop_charge, received 2x
         new_bj_record = await try_set_record(gid, "blackjack", bj_winnings, uid, uid_name,
                        player_hand=format_hand(player), player_score=pval,
                        dealer_score=dval)
@@ -118,7 +118,7 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
         color, result = C_GOLD, f"🤝 Push! Bet returned. Balance: {await get_balance(uid):,} 🪙"
     else:
         if uid not in state.godmode_users:
-            await record_gambling_event(uid, lost=amount)
+            await record_gambling_event(message.guild.id if message.guild else None, uid, lost=amount)
         color, result = C_RED, f"❌ Dealer wins. **{uid_name}** loses **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙"
 
     await message.channel.send(embed=emb("🃏 Blackjack", display + f"\n\n{result}", color))
@@ -178,7 +178,7 @@ class BlackjackCog(commands.Cog):
                 gid = ctx.guild.id if ctx.guild else None
                 new_bal_record = await add_balance(uid, winnings, guild_id=gid, holder_name=username)
                 if uid not in state.godmode_users:
-                    await record_gambling_event(uid, gained=max(0, winnings - amount))
+                    await record_gambling_event(gid, uid, gained=max(0, winnings - amount))
                 new_bj_record = await try_set_record(gid, "blackjack", winnings, uid, username,
                                player_hand=format_hand(player), player_score=pval,
                                dealer_score=dval)

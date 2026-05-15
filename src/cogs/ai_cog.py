@@ -962,7 +962,10 @@ class AICog(commands.Cog):
 
         # crime_history / gambling_history are keyed by plain CT calendar
         # date (not the 5am-rollover day string). They overlap the recap
-        # window closely enough; sum across today's 6h buckets.
+        # window closely enough; sum across today's 6h buckets. Since
+        # migration 0018 the per-bucket dict is keyed (guild_id, uid_str) —
+        # only this guild's rows are summed, so a user's activity in
+        # another server can't leak into this recap.
         from src.economy import _ct_now
         cal_today = _ct_now().date().isoformat()
 
@@ -973,7 +976,9 @@ class AICog(commands.Cog):
                 return
             by_user: dict[str, int] = {}
             for bucket in hist.get(cal_today, {}).values():
-                for uid_str, rec in bucket.items():
+                for (gid, uid_str), rec in bucket.items():
+                    if gid != guild_id:
+                        continue
                     by_user[uid_str] = by_user.get(uid_str, 0) + int(rec.get("gained", 0))
             ranked = sorted(
                 ((u, g) for u, g in by_user.items() if g > 0),

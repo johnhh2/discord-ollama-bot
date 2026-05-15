@@ -133,7 +133,7 @@ async def _distribute_hangman_rewards(cid: int, game: dict) -> tuple[str, list[t
         name = names.get(pid, f"<@{pid}>")
         new_bal_record = await add_balance(pid, reward, guild_id=gid if gid else None, holder_name=name)
         if reward > 0:
-            await record_gambling_event(pid, gained=reward)
+            await record_gambling_event(gid, pid, gained=reward)
         new_bal = await get_balance(pid)
         msg += f"**{name}**: +{reward:,} 🪙 | Balance: {new_bal:,} 🪙\n"
         if new_bal_record:

@@ -404,8 +404,9 @@ async def test_steal_success_records_thief_gained_and_victim_lost(db, monkeypatc
     await cog.cmd_steal.callback(cog, ctx, target=victim)
 
     expected_steal = int(10_000 * 0.10)
-    thief_rec = _state.crime_today_by_user.get(str(thief.id), {})
-    victim_rec = _state.crime_today_by_user.get(str(victim.id), {})
+    # crime_today_by_user is keyed (guild_id, uid_str) — ctx guild is 42.
+    thief_rec = _state.crime_today_by_user.get((42, str(thief.id)), {})
+    victim_rec = _state.crime_today_by_user.get((42, str(victim.id)), {})
     assert thief_rec.get("gained") == expected_steal
     assert thief_rec.get("lost", 0) == 0
     assert victim_rec.get("lost") == expected_steal
@@ -428,11 +429,11 @@ async def test_steal_fail_records_thief_lost_only(db, monkeypatch):
     ctx = _make_ctx(thief, victim)
     await cog.cmd_steal.callback(cog, ctx, target=victim)
 
-    thief_rec = _state.crime_today_by_user.get(str(thief.id), {})
+    thief_rec = _state.crime_today_by_user.get((42, str(thief.id)), {})
     assert thief_rec.get("lost") == 1000
     assert thief_rec.get("gained", 0) == 0
     # Victim's row should not exist on a failed steal — they weren't touched.
-    assert str(victim.id) not in _state.crime_today_by_user
+    assert (42, str(victim.id)) not in _state.crime_today_by_user
 
 
 async def test_mug_records_both_attacker_lost_and_victim_lost(db, monkeypatch):
@@ -452,8 +453,8 @@ async def test_mug_records_both_attacker_lost_and_victim_lost(db, monkeypatch):
     ctx.bot = _StubBot()
     await cog.cmd_mug.callback(cog, ctx, target=victim, amount="1000")
 
-    thief_rec = _state.crime_today_by_user.get(str(thief.id), {})
-    victim_rec = _state.crime_today_by_user.get(str(victim.id), {})
+    thief_rec = _state.crime_today_by_user.get((42, str(thief.id)), {})
+    victim_rec = _state.crime_today_by_user.get((42, str(victim.id)), {})
     assert thief_rec.get("lost") == 1000   # paid muggers
     assert thief_rec.get("gained", 0) == 0
     assert victim_rec.get("lost") == 1000  # robbed

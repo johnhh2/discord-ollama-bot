@@ -60,7 +60,7 @@ class LotteryCog(commands.Cog):
                     winner_id = random.choices(player_ids, weights=weights, k=1)[0]
                     winner = await self.bot.fetch_user(int(winner_id))
                     new_bal_record = await add_balance(int(winner_id), pool, guild_id=guild.id, holder_name=winner.display_name)
-                    await record_gambling_event(int(winner_id), gained=pool)
+                    await record_gambling_event(guild.id, int(winner_id), gained=pool)
                     new_lottery_record = await try_set_record(guild.id, "lottery", pool, int(winner_id), winner.display_name)
                     # Log every lottery win for !recap — a non-record win
                     # never reaches announce_record, so log it here directly.
@@ -190,7 +190,7 @@ class LotteryCog(commands.Cog):
         if not await deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"Need {cost:,} 🪙. Balance: {await get_balance(uid):,} 🪙", C_RED))
             return
-        await record_gambling_event(uid, lost=cost)
+        await record_gambling_event(ctx.guild.id, uid, lost=cost)
 
         # Add to lottery
         players = lottery.setdefault("players", {})

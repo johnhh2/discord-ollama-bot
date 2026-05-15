@@ -26,10 +26,13 @@ from src.cogs.graph_cog import _build_and_render
 pytestmark = pytest.mark.asyncio
 
 
-def _stub_member(uid: int = 1, name: str = "tester"):
+def _stub_member(uid: int = 1, name: str = "tester", guild_id: int = 42):
     m = SimpleNamespace()
     m.id = uid
     m.display_name = name
+    # build_series_crime/gambling read member.guild.id (guild-scoped since
+    # migration 0018) — give the stub a guild so those paths don't AttributeError.
+    m.guild = SimpleNamespace(id=guild_id)
     return m
 
 

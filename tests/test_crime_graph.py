@@ -17,11 +17,15 @@ import src.persistence as _persistence
 import src.state as _state
 from src import graph_series
 
+# crime_history is guild-scoped since migration 0018 — tests pin a guild.
+GID = 99
 
-def _stub_member(uid: int, name: str = "tester"):
+
+def _stub_member(uid: int, name: str = "tester", guild_id: int = GID):
     m = SimpleNamespace()
     m.id = uid
     m.display_name = name
+    m.guild = SimpleNamespace(id=guild_id)
     return m
 
 
@@ -30,19 +34,19 @@ def _stub_member(uid: int, name: str = "tester"):
 
 @pytest.mark.asyncio
 async def test_record_crime_event_aggregates_per_user():
-    await _economy.record_crime_event(7, gained=100)
-    await _economy.record_crime_event(7, lost=30)
-    await _economy.record_crime_event(7, gained=50, lost=10)
-    await _economy.record_crime_event(8, lost=40)
+    await _economy.record_crime_event(GID, 7, gained=100)
+    await _economy.record_crime_event(GID, 7, lost=30)
+    await _economy.record_crime_event(GID, 7, gained=50, lost=10)
+    await _economy.record_crime_event(GID, 8, lost=40)
 
-    assert _state.crime_today_by_user["7"] == {"gained": 150, "lost": 40}
-    assert _state.crime_today_by_user["8"] == {"gained": 0, "lost": 40}
+    assert _state.crime_today_by_user[(GID, "7")] == {"gained": 150, "lost": 40}
+    assert _state.crime_today_by_user[(GID, "8")] == {"gained": 0, "lost": 40}
 
 
 @pytest.mark.asyncio
 async def test_record_crime_event_zero_is_noop():
-    await _economy.record_crime_event(7, gained=0, lost=0)
-    assert "7" not in _state.crime_today_by_user
+    await _economy.record_crime_event(GID, 7, gained=0, lost=0)
+    assert (GID, "7") not in _state.crime_today_by_user
 
 
 # ── atomic-write contract ─────────────────────────────────────────────────────
@@ -53,29 +57,29 @@ async def test_record_crime_event_writes_atomically_to_disk(db):
     """The whole point of the async upsert: every record_crime_event call
     must hit disk immediately, not wait for the 30min scheduler. This pins
     that a bot crash 1ms after the call still has the event durable."""
-    await _economy.record_crime_event(42, gained=500, lost=100)
-    await _economy.record_crime_event(43, lost=250)
+    await _economy.record_crime_event(GID, 42, gained=500, lost=100)
+    await _economy.record_crime_event(GID, 43, lost=250)
 
     today = _economy._ct_now().date().isoformat()
     bucket = _economy._current_bucket_ct()
     history = await _persistence.load_crime_history()
     assert today in history
-    assert history[today][bucket]["42"] == {"gained": 500, "lost": 100}
-    assert history[today][bucket]["43"] == {"gained": 0, "lost": 250}
+    assert history[today][bucket][(GID, "42")] == {"gained": 500, "lost": 100}
+    assert history[today][bucket][(GID, "43")] == {"gained": 0, "lost": 250}
 
 
 @pytest.mark.asyncio
 async def test_record_crime_event_increments_existing_row(db):
     """Multiple calls for the same user in the same bucket should add,
     not replace. MariaDB's `gained = gained + VALUES(gained)` does it."""
-    await _economy.record_crime_event(42, gained=100)
-    await _economy.record_crime_event(42, gained=50, lost=20)
-    await _economy.record_crime_event(42, lost=30)
+    await _economy.record_crime_event(GID, 42, gained=100)
+    await _economy.record_crime_event(GID, 42, gained=50, lost=20)
+    await _economy.record_crime_event(GID, 42, lost=30)
 
     today = _economy._ct_now().date().isoformat()
     bucket = _economy._current_bucket_ct()
     history = await _persistence.load_crime_history()
-    assert history[today][bucket]["42"] == {"gained": 150, "lost": 50}
+    assert history[today][bucket][(GID, "42")] == {"gained": 150, "lost": 50}
 
 
 @pytest.mark.asyncio
@@ -85,23 +89,23 @@ async def test_record_crime_event_clears_dict_on_bucket_rollover(db, monkeypatch
     Disk rows for the previous bucket stay frozen as historical points."""
     # First event lands in bucket B0.
     monkeypatch.setattr(_economy, "_current_bucket_ct", lambda: 0)
-    await _economy.record_crime_event(42, gained=500)
-    assert _state.crime_today_by_user["42"]["gained"] == 500
+    await _economy.record_crime_event(GID, 42, gained=500)
+    assert _state.crime_today_by_user[(GID, "42")]["gained"] == 500
     assert _state._crime_bucket == 0
 
     # Wall clock advances past a 6h boundary; next event lands in B1.
     monkeypatch.setattr(_economy, "_current_bucket_ct", lambda: 1)
-    await _economy.record_crime_event(42, gained=200)
+    await _economy.record_crime_event(GID, 42, gained=200)
 
     # Cache reflects ONLY the new bucket (200, not 700).
-    assert _state.crime_today_by_user["42"]["gained"] == 200
+    assert _state.crime_today_by_user[(GID, "42")]["gained"] == 200
     assert _state._crime_bucket == 1
 
     # Disk has both buckets, frozen as separate data points.
     today = _economy._ct_now().date().isoformat()
     history = await _persistence.load_crime_history()
-    assert history[today][0]["42"]["gained"] == 500
-    assert history[today][1]["42"]["gained"] == 200
+    assert history[today][0][(GID, "42")]["gained"] == 500
+    assert history[today][1][(GID, "42")]["gained"] == 200
 
 
 @pytest.mark.asyncio
@@ -109,7 +113,7 @@ async def test_crime_dict_survives_do_daily_reset(db, monkeypatch):
     """Crime totals are calendar-keyed on disk, so the 5am gameplay reset
     must NOT clear them — clearing would put the in-memory cache out of
     sync with the still-current disk row."""
-    await _economy.record_crime_event(42, gained=500, lost=100)
+    await _economy.record_crime_event(GID, 42, gained=500, lost=100)
 
     async def _ollama_up(): return True
     monkeypatch.setattr("src.ai.check_ollama_connected", _ollama_up)
@@ -117,19 +121,19 @@ async def test_crime_dict_survives_do_daily_reset(db, monkeypatch):
     await _economy.do_daily_reset()
 
     # Dict still holds today's totals — not cleared.
-    assert _state.crime_today_by_user["42"] == {"gained": 500, "lost": 100}
+    assert _state.crime_today_by_user[(GID, "42")] == {"gained": 500, "lost": 100}
 
 
 @pytest.mark.asyncio
 async def test_init_db_state_hydrates_today_crime_dict(db):
     """After a "restart" (clear in-memory + re-run init_db_state), the dict
     is repopulated from disk so the graph cog's live-today read is correct."""
-    await _economy.record_crime_event(42, gained=500, lost=100)
+    await _economy.record_crime_event(GID, 42, gained=500, lost=100)
     # Simulate restart: dict cleared.
     _state.crime_today_by_user.clear()
     # Re-run init_db_state.
     await _persistence.init_db_state()
-    assert _state.crime_today_by_user["42"] == {"gained": 500, "lost": 100}
+    assert _state.crime_today_by_user[(GID, "42")] == {"gained": 500, "lost": 100}
 
 
 # ── build_series_crime ────────────────────────────────────────────────────────
@@ -144,13 +148,13 @@ async def test_build_series_crime_returns_gained_and_lost_segments(monkeypatch):
 
     cur_bucket = graph_series._current_bucket_ct()
     fake_history = {
-        yest.isoformat(): {0: {"42": {"gained": 100, "lost": 50}}},
-        today.isoformat(): {cur_bucket: {"42": {"gained": 200, "lost": 80}}},
+        yest.isoformat(): {0: {(GID, "42"): {"gained": 100, "lost": 50}}},
+        today.isoformat(): {cur_bucket: {(GID, "42"): {"gained": 200, "lost": 80}}},
     }
 
     async def _load(): return fake_history
     monkeypatch.setattr(graph_series, "load_crime_history", _load)
-    _state.crime_today_by_user["42"] = {"gained": 200, "lost": 80}
+    _state.crime_today_by_user[(GID, "42")] = {"gained": 200, "lost": 80}
 
     member = _stub_member(42, "alice")
     data = await graph_series.build_series_crime(member)
@@ -176,8 +180,8 @@ async def test_build_series_crime_skips_days_user_was_inactive(monkeypatch):
 
     # Day-1 has activity for user 42, day-2 doesn't.
     fake_history = {
-        yest.isoformat(): {0: {"42": {"gained": 100, "lost": 50}}},
-        today.isoformat(): {0: {"99": {"gained": 1, "lost": 1}}},  # other user only
+        yest.isoformat(): {0: {(GID, "42"): {"gained": 100, "lost": 50}}},
+        today.isoformat(): {0: {(GID, "77"): {"gained": 1, "lost": 1}}},  # other user only
     }
 
     async def _load(): return fake_history

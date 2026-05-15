@@ -160,7 +160,7 @@ class SlotsCog(commands.Cog):
             gid = ctx.guild.id if ctx.guild else None
             new_bal_record = await add_balance(uid, prize, guild_id=gid, holder_name=ctx.author.display_name)
             if uid not in state.godmode_users:
-                await record_gambling_event(uid, gained=max(0, prize - amount))
+                await record_gambling_event(gid, uid, gained=max(0, prize - amount))
             new_jackpot_record = await try_set_record(gid, "slots_jackpot", prize, uid, ctx.author.display_name,
                            bet=amount, symbols=display)
             new_bal = await get_balance(uid)
@@ -200,7 +200,7 @@ class SlotsCog(commands.Cog):
 
         if mult == 0:
             if uid not in state.godmode_users:
-                await record_gambling_event(uid, lost=amount)
+                await record_gambling_event(ctx.guild.id if ctx.guild else None, uid, lost=amount)
             desc = (f"{display}\n\n**{ctx.author.display_name}** lost **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙\n"
                     f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
             if first_time_slots:
@@ -212,7 +212,7 @@ class SlotsCog(commands.Cog):
         gid = ctx.guild.id if ctx.guild else None
         new_bal_record = await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name)
         if uid not in state.godmode_users:
-            await record_gambling_event(uid, gained=max(0, winnings - amount))
+            await record_gambling_event(gid, uid, gained=max(0, winnings - amount))
         new_slots_record = await try_set_record(gid, "slots_non_jackpot", winnings, uid, ctx.author.display_name,
                        bet=amount, symbols=display, label=label)
 

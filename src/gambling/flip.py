@@ -81,9 +81,9 @@ class FlipCog(commands.Cog):
             new_bal_record = await add_balance(uid, total_winnings, guild_id=gid, holder_name=ctx.author.display_name)
         if uid not in state.godmode_users:
             if net >= 0:
-                await record_gambling_event(uid, gained=net)
+                await record_gambling_event(gid, uid, gained=net)
             else:
-                await record_gambling_event(uid, lost=-net)
+                await record_gambling_event(gid, uid, lost=-net)
         new_flip_record = False
         if wins:
             new_flip_record = await try_set_record(gid, "flip", winnings_per, uid, ctx.author.display_name)

@@ -53,7 +53,8 @@ async def test_flip_n_consumes_one_rigged_per_coin_and_settles_net(db, monkeypat
     # All 3 rigged uses were consumed and the entry was removed.
     assert 77 not in _state.rigged_flips
 
-    # Gambling event recorded the signed net (gained=bet, since net > 0).
-    rec = _state.gambling_today_by_user.get("77", {})
+    # Gambling event recorded the signed net (gained=bet, since net > 0),
+    # keyed (guild_id, uid_str) — the ctx guild is 42.
+    rec = _state.gambling_today_by_user.get((42, "77"), {})
     assert rec.get("gained") == bet
     assert rec.get("lost", 0) == 0

@@ -277,7 +277,7 @@ async def test_slots_no_win_records_gambling_lost(db, monkeypatch):
     bet = 1000
     await cog.cmd_slots.callback(cog, ctx, amount=str(bet))
 
-    rec = _state.gambling_today_by_user.get("10", {})
+    rec = _state.gambling_today_by_user.get((42, "10"), {})
     assert rec.get("lost") == bet
     assert rec.get("gained", 0) == 0
 
@@ -295,7 +295,7 @@ async def test_slots_three_cherry_win_records_gambling_gained_net(db, monkeypatc
 
     expected_winnings = bet * SLOT_MULT_3CHERRY
     expected_net = expected_winnings - bet
-    rec = _state.gambling_today_by_user.get("11", {})
+    rec = _state.gambling_today_by_user.get((42, "11"), {})
     assert rec.get("gained") == expected_net
     assert rec.get("lost", 0) == 0
 
@@ -314,4 +314,4 @@ async def test_slots_godmode_user_doesnt_record_gambling(db, monkeypatch):
 
     await cog.cmd_slots.callback(cog, ctx, amount="1000")
 
-    assert "12" not in _state.gambling_today_by_user
+    assert (42, "12") not in _state.gambling_today_by_user

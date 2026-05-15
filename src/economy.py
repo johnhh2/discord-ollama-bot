@@ -420,45 +420,48 @@ async def snapshot_command_usage():
     logging.info(f"[snapshot] per-cog command usage for {today} bucket {bucket}: {history[today][bucket]}")
 
 
-async def record_crime_event(uid: int, *, gained: int = 0, lost: int = 0):
-    """Atomically write the current bucket's crime delta for `uid` to
-    crime_history AND bump the in-memory cache for the same bucket.
+async def record_crime_event(guild_id: int, uid: int, *, gained: int = 0, lost: int = 0):
+    """Atomically write the current bucket's crime delta for `uid` in
+    `guild_id` to crime_history AND bump the in-memory cache for the same
+    bucket.
 
     Called by !steal / !mug on every outcome (win/lose, attacker/victim).
     Persists synchronously — no data loss on bot restart. If the 6h CT
     bucket has rolled over since the last recorded event, the in-memory
-    cache is cleared first so it only reflects the current bucket.
+    cache is cleared first so it only reflects the current bucket. A
+    falsy `guild_id` (DM context — shouldn't happen for crime) is a no-op.
     """
-    if gained == 0 and lost == 0:
+    if gained == 0 and lost == 0 or not guild_id:
         return
     today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
     if state._crime_bucket != bucket:
         state.crime_today_by_user.clear()
         state._crime_bucket = bucket
-    await upsert_crime_delta(today, bucket, uid, gained=gained, lost=lost)
-    rec = state.crime_today_by_user.setdefault(str(uid), {"gained": 0, "lost": 0})
+    await upsert_crime_delta(today, bucket, guild_id, uid, gained=gained, lost=lost)
+    rec = state.crime_today_by_user.setdefault((int(guild_id), str(uid)), {"gained": 0, "lost": 0})
     rec["gained"] += int(gained)
     rec["lost"] += int(lost)
 
 
-async def record_gambling_event(uid: int, *, gained: int = 0, lost: int = 0):
-    """Atomically write the current bucket's gambling delta for `uid` to
-    gambling_history AND bump the in-memory cache.
+async def record_gambling_event(guild_id: int, uid: int, *, gained: int = 0, lost: int = 0):
+    """Atomically write the current bucket's gambling delta for `uid` in
+    `guild_id` to gambling_history AND bump the in-memory cache.
 
     Called by games/gambling commands at outcome resolution (net P/L
     semantics: refunds and pushes record nothing). Persists synchronously.
-    Bucket rollover is detected and the cache is reset accordingly.
+    Bucket rollover is detected and the cache is reset accordingly. A
+    falsy `guild_id` (DM context) is a no-op — gambling P/L is per-server.
     """
-    if gained == 0 and lost == 0:
+    if gained == 0 and lost == 0 or not guild_id:
         return
     today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
     if state._gambling_bucket != bucket:
         state.gambling_today_by_user.clear()
         state._gambling_bucket = bucket
-    await upsert_gambling_delta(today, bucket, uid, gained=gained, lost=lost)
-    rec = state.gambling_today_by_user.setdefault(str(uid), {"gained": 0, "lost": 0})
+    await upsert_gambling_delta(today, bucket, guild_id, uid, gained=gained, lost=lost)
+    rec = state.gambling_today_by_user.setdefault((int(guild_id), str(uid)), {"gained": 0, "lost": 0})
     rec["gained"] += int(gained)
     rec["lost"] += int(lost)
 

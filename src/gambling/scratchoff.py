@@ -247,7 +247,7 @@ class ScratchoffCog(commands.Cog):
 
             await add_balance(uid, payout)
             if payout > 0:
-                await record_gambling_event(uid, gained=payout)
+                await record_gambling_event(ctx.guild.id if ctx.guild else None, uid, gained=payout)
             await save_economy(uid=uid)
 
             # Award 10 XP per scratchoff played

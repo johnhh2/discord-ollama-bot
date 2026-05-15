@@ -50,16 +50,17 @@ async def _run_race(channel, cid: int, race_msg: discord.Message):
             amount = game["amount"]
             total_pot = amount * len(game["players"])
             share = total_pot // len(winners) if winners else 0
+            gid = race_msg.guild.id if race_msg.guild else None
 
             if len(winners) == 1:
                 winner_name = game["names"][winners[0]]
                 if share > 0:
                     await add_balance(winners[0], share)
                 if amount > 0:
-                    await record_gambling_event(winners[0], gained=max(0, share - amount))
+                    await record_gambling_event(gid, winners[0], gained=max(0, share - amount))
                     for loser in game["players"]:
                         if loser != winners[0]:
-                            await record_gambling_event(loser, lost=amount)
+                            await record_gambling_event(gid, loser, lost=amount)
                 result = f"{board}\n\n🏆 **{winner_name}** wins" + (f" **{share:,} 🪙**!" if share else "!")
             else:
                 for w in winners:
@@ -70,12 +71,12 @@ async def _run_race(channel, cid: int, race_msg: discord.Message):
                     for w in winners:
                         net = share - amount
                         if net > 0:
-                            await record_gambling_event(w, gained=net)
+                            await record_gambling_event(gid, w, gained=net)
                         elif net < 0:
-                            await record_gambling_event(w, lost=-net)
+                            await record_gambling_event(gid, w, lost=-net)
                     for loser in game["players"]:
                         if loser not in winner_set:
-                            await record_gambling_event(loser, lost=amount)
+                            await record_gambling_event(gid, loser, lost=amount)
                 names = ", ".join(f"**{game['names'][w]}**" for w in winners)
                 result = f"{board}\n\n🤝 Tie! {names} each get **{share:,} 🪙**"
 

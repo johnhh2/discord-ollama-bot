@@ -191,13 +191,15 @@ async def build_series_crime(member: discord.Member) -> SeriesData:
     zero line for inactive users.
     """
     history = await load_crime_history()
-    uid_str = str(member.id)
+    # crime_history is keyed (guild_id, user) since migration 0018 — scope
+    # the chart to crime committed in THIS member's guild.
+    key = (member.guild.id, str(member.id))
 
     x_points: list[datetime.datetime] = []
     y_gained: list[float] = []
     y_lost: list[float] = []
-    for point_dt, by_user in _iter_points(history):
-        rec = by_user.get(uid_str)
+    for point_dt, by_key in _iter_points(history):
+        rec = by_key.get(key)
         if rec is None:
             continue
         x_points.append(point_dt)
@@ -207,7 +209,7 @@ async def build_series_crime(member: discord.Member) -> SeriesData:
     # Append the current bucket's live totals if we don't already have a row
     # for that bucket on disk.
     now_point = _live_now_point()
-    live = state.crime_today_by_user.get(uid_str)
+    live = state.crime_today_by_user.get(key)
     if live is not None and (not x_points or x_points[-1] != now_point):
         x_points.append(now_point)
         y_gained.append(live.get("gained", 0))
@@ -232,13 +234,15 @@ async def build_series_gambling(member: discord.Member) -> SeriesData:
     Net line is dashed, mirroring economy's Total line.
     """
     history = await load_gambling_history()
-    uid_str = str(member.id)
+    # gambling_history is keyed (guild_id, user) since migration 0018 —
+    # scope the chart to gambling done in THIS member's guild.
+    key = (member.guild.id, str(member.id))
 
     x_points: list[datetime.datetime] = []
     y_gained: list[float] = []
     y_lost: list[float] = []
-    for point_dt, by_user in _iter_points(history):
-        rec = by_user.get(uid_str)
+    for point_dt, by_key in _iter_points(history):
+        rec = by_key.get(key)
         if rec is None:
             continue
         x_points.append(point_dt)
@@ -246,7 +250,7 @@ async def build_series_gambling(member: discord.Member) -> SeriesData:
         y_lost.append(rec.get("lost", 0))
 
     now_point = _live_now_point()
-    live = state.gambling_today_by_user.get(uid_str)
+    live = state.gambling_today_by_user.get(key)
     if live is not None and (not x_points or x_points[-1] != now_point):
         x_points.append(now_point)
         y_gained.append(live.get("gained", 0))

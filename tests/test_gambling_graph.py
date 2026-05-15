@@ -18,11 +18,15 @@ import src.persistence as _persistence
 import src.state as _state
 from src import graph_series
 
+# gambling_history is guild-scoped since migration 0018 — tests pin a guild.
+GID = 99
 
-def _stub_member(uid: int, name: str = "tester"):
+
+def _stub_member(uid: int, name: str = "tester", guild_id: int = GID):
     m = SimpleNamespace()
     m.id = uid
     m.display_name = name
+    m.guild = SimpleNamespace(id=guild_id)
     return m
 
 
@@ -31,19 +35,19 @@ def _stub_member(uid: int, name: str = "tester"):
 
 @pytest.mark.asyncio
 async def test_record_gambling_event_aggregates_per_user():
-    await _economy.record_gambling_event(7, gained=100)
-    await _economy.record_gambling_event(7, lost=30)
-    await _economy.record_gambling_event(7, gained=200)
-    await _economy.record_gambling_event(8, lost=50)
+    await _economy.record_gambling_event(GID, 7, gained=100)
+    await _economy.record_gambling_event(GID, 7, lost=30)
+    await _economy.record_gambling_event(GID, 7, gained=200)
+    await _economy.record_gambling_event(GID, 8, lost=50)
 
-    assert _state.gambling_today_by_user["7"] == {"gained": 300, "lost": 30}
-    assert _state.gambling_today_by_user["8"] == {"gained": 0, "lost": 50}
+    assert _state.gambling_today_by_user[(GID, "7")] == {"gained": 300, "lost": 30}
+    assert _state.gambling_today_by_user[(GID, "8")] == {"gained": 0, "lost": 50}
 
 
 @pytest.mark.asyncio
 async def test_record_gambling_event_zero_is_noop():
-    await _economy.record_gambling_event(7, gained=0, lost=0)
-    assert "7" not in _state.gambling_today_by_user
+    await _economy.record_gambling_event(GID, 7, gained=0, lost=0)
+    assert (GID, "7") not in _state.gambling_today_by_user
 
 
 # ── atomic-write contract ─────────────────────────────────────────────────────
@@ -53,65 +57,65 @@ async def test_record_gambling_event_zero_is_noop():
 async def test_record_gambling_event_writes_atomically_to_disk(db):
     """Atomic-write contract: a record_gambling_event call must persist
     immediately, so a bot crash mid-game-session can't lose stats."""
-    await _economy.record_gambling_event(42, gained=500, lost=100)
-    await _economy.record_gambling_event(43, lost=250)
+    await _economy.record_gambling_event(GID, 42, gained=500, lost=100)
+    await _economy.record_gambling_event(GID, 43, lost=250)
 
     today = _economy._ct_now().date().isoformat()
     bucket = _economy._current_bucket_ct()
     history = await _persistence.load_gambling_history()
-    assert history[today][bucket]["42"] == {"gained": 500, "lost": 100}
-    assert history[today][bucket]["43"] == {"gained": 0, "lost": 250}
+    assert history[today][bucket][(GID, "42")] == {"gained": 500, "lost": 100}
+    assert history[today][bucket][(GID, "43")] == {"gained": 0, "lost": 250}
 
 
 @pytest.mark.asyncio
 async def test_record_gambling_event_increments_existing_row(db):
-    await _economy.record_gambling_event(42, gained=100)
-    await _economy.record_gambling_event(42, gained=50, lost=20)
+    await _economy.record_gambling_event(GID, 42, gained=100)
+    await _economy.record_gambling_event(GID, 42, gained=50, lost=20)
     today = _economy._ct_now().date().isoformat()
     bucket = _economy._current_bucket_ct()
     history = await _persistence.load_gambling_history()
-    assert history[today][bucket]["42"] == {"gained": 150, "lost": 20}
+    assert history[today][bucket][(GID, "42")] == {"gained": 150, "lost": 20}
 
 
 @pytest.mark.asyncio
 async def test_record_gambling_event_clears_dict_on_bucket_rollover(db, monkeypatch):
     """Bucket rollover invariant for gambling — same as crime."""
     monkeypatch.setattr(_economy, "_current_bucket_ct", lambda: 0)
-    await _economy.record_gambling_event(42, gained=300)
-    assert _state.gambling_today_by_user["42"]["gained"] == 300
+    await _economy.record_gambling_event(GID, 42, gained=300)
+    assert _state.gambling_today_by_user[(GID, "42")]["gained"] == 300
 
     monkeypatch.setattr(_economy, "_current_bucket_ct", lambda: 1)
-    await _economy.record_gambling_event(42, lost=100)
+    await _economy.record_gambling_event(GID, 42, lost=100)
 
     # Cache reflects only the new bucket.
-    assert _state.gambling_today_by_user["42"] == {"gained": 0, "lost": 100}
+    assert _state.gambling_today_by_user[(GID, "42")] == {"gained": 0, "lost": 100}
 
     today = _economy._ct_now().date().isoformat()
     history = await _persistence.load_gambling_history()
-    assert history[today][0]["42"]["gained"] == 300
-    assert history[today][1]["42"]["lost"] == 100
+    assert history[today][0][(GID, "42")]["gained"] == 300
+    assert history[today][1][(GID, "42")]["lost"] == 100
 
 
 @pytest.mark.asyncio
 async def test_gambling_dict_survives_do_daily_reset(db, monkeypatch):
     """Gambling totals are calendar-keyed; the 5am gameplay reset must NOT
     clear them. Same invariant as crime."""
-    await _economy.record_gambling_event(42, gained=500, lost=100)
+    await _economy.record_gambling_event(GID, 42, gained=500, lost=100)
 
     async def _ollama_up(): return True
     monkeypatch.setattr("src.ai.check_ollama_connected", _ollama_up)
 
     await _economy.do_daily_reset()
 
-    assert _state.gambling_today_by_user["42"] == {"gained": 500, "lost": 100}
+    assert _state.gambling_today_by_user[(GID, "42")] == {"gained": 500, "lost": 100}
 
 
 @pytest.mark.asyncio
 async def test_init_db_state_hydrates_today_gambling_dict(db):
-    await _economy.record_gambling_event(42, gained=500, lost=100)
+    await _economy.record_gambling_event(GID, 42, gained=500, lost=100)
     _state.gambling_today_by_user.clear()
     await _persistence.init_db_state()
-    assert _state.gambling_today_by_user["42"] == {"gained": 500, "lost": 100}
+    assert _state.gambling_today_by_user[(GID, "42")] == {"gained": 500, "lost": 100}
 
 
 # ── build_series_gambling ─────────────────────────────────────────────────────
@@ -126,12 +130,12 @@ async def test_build_series_gambling_returns_gained_lost_net(monkeypatch):
 
     cur_bucket = graph_series._current_bucket_ct()
     fake_history = {
-        yest.isoformat(): {0: {"42": {"gained": 100, "lost": 50}}},
-        today.isoformat(): {cur_bucket: {"42": {"gained": 300, "lost": 80}}},
+        yest.isoformat(): {0: {(GID, "42"): {"gained": 100, "lost": 50}}},
+        today.isoformat(): {cur_bucket: {(GID, "42"): {"gained": 300, "lost": 80}}},
     }
     async def _load(): return fake_history
     monkeypatch.setattr(graph_series, "load_gambling_history", _load)
-    _state.gambling_today_by_user["42"] = {"gained": 300, "lost": 80}
+    _state.gambling_today_by_user[(GID, "42")] = {"gained": 300, "lost": 80}
 
     member = _stub_member(42, "alice")
     data = await graph_series.build_series_gambling(member)
@@ -156,8 +160,8 @@ async def test_build_series_gambling_skips_inactive_days(monkeypatch):
         pytest.skip("Edge case: today is the 1st; skipping date-arithmetic shortcut.")
 
     fake_history = {
-        yest.isoformat(): {0: {"42": {"gained": 100, "lost": 50}}},
-        today.isoformat(): {0: {"99": {"gained": 1, "lost": 1}}},  # other user only
+        yest.isoformat(): {0: {(GID, "42"): {"gained": 100, "lost": 50}}},
+        today.isoformat(): {0: {(GID, "77"): {"gained": 1, "lost": 1}}},  # other user only
     }
     async def _load(): return fake_history
     monkeypatch.setattr(graph_series, "load_gambling_history", _load)
