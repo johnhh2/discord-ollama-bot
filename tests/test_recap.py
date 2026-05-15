@@ -137,9 +137,11 @@ def _recording_send(ctx, placeholder):
 def _clear_recap_state():
     _state.recap_usage.clear()
     _state.godmode_users.clear()
+    _state.bot_admins.clear()
     yield
     _state.recap_usage.clear()
     _state.godmode_users.clear()
+    _state.bot_admins.clear()
 
 
 # ── happy path ────────────────────────────────────────────────────────────────
@@ -197,6 +199,26 @@ async def test_recap_godmode_user_bypasses_cap(_stub_recap_deps):
     await cog.cmd_recap.callback(cog, ctx2, focus=None)
 
     assert (42, 1003) not in _state.recap_usage
+    assert _stub_recap_deps == []
+    assert not any("Already Recapped" in getattr(e, "title", "") for e in ctx2.sent_embeds)
+
+
+async def test_recap_bot_admin_bypasses_cap(_stub_recap_deps):
+    """Bot admins (BOT_ADMIN_IDS / bot_admin override) skip the once-a-day
+    cap just like godmode users — no claim, no persisted usage row."""
+    cog = AICog(bot=None)
+    author = FakeMember(uid=1009, display_name="botadmin")
+    _state.bot_admins.add(1009)  # is_admin(ctx) → True
+    chan = _channel(100, "general", messages=[_msg("hi", "Joseph", uid=1)])
+    guild = _make_guild_with_channels(chan)
+
+    # Two runs back-to-back; the second must not be blocked.
+    ctx1, _ = _ctx(author, guild, chan)
+    await cog.cmd_recap.callback(cog, ctx1, focus=None)
+    ctx2, _ = _ctx(author, guild, chan)
+    await cog.cmd_recap.callback(cog, ctx2, focus=None)
+
+    assert (42, 1009) not in _state.recap_usage
     assert _stub_recap_deps == []
     assert not any("Already Recapped" in getattr(e, "title", "") for e in ctx2.sent_embeds)
 

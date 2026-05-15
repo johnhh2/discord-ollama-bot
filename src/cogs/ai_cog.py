@@ -1045,11 +1045,14 @@ class AICog(commands.Cog):
         today = _ct_today()
         key = (guild_id, uid)
 
+        # godmode users and bot admins skip the once-a-day cap entirely —
+        # no claim, no rollback, no persisted usage row.
+        bypass_cap = uid in state.godmode_users or is_admin(ctx)
+
         # Gate-and-claim: reserve today's slot synchronously, before any
         # await, so a spam-fired second invocation sees the claim and bails.
-        # godmode users skip the cap entirely.
         prior = state.recap_usage.get(key)
-        if uid not in state.godmode_users:
+        if not bypass_cap:
             if prior == today:
                 await ctx.send(embed=emb(
                     "🗒️ Already Recapped",
@@ -1098,7 +1101,7 @@ class AICog(commands.Cog):
                     continue
 
             if not collected:
-                if uid not in state.godmode_users:
+                if not bypass_cap:
                     state.recap_usage[key] = prior  # roll back the claim
                     if prior is None:
                         state.recap_usage.pop(key, None)
@@ -1158,7 +1161,7 @@ class AICog(commands.Cog):
             if not recap:
                 # AI disabled / rate-limited — placeholder already explains.
                 # Refund the daily slot so the user isn't burned for nothing.
-                if uid not in state.godmode_users:
+                if not bypass_cap:
                     state.recap_usage[key] = prior
                     if prior is None:
                         state.recap_usage.pop(key, None)
@@ -1176,17 +1179,17 @@ class AICog(commands.Cog):
             await finalize(placeholder, ctx.channel, f"{header}\n\n{recap}{footer}")
 
             # Commit the daily-cap claim now that the recap actually landed.
-            if uid not in state.godmode_users:
+            if not bypass_cap:
                 await save_recap_usage(guild_id, uid, today)
         except aiohttp.ClientError as e:
-            if uid not in state.godmode_users:
+            if not bypass_cap:
                 state.recap_usage[key] = prior
                 if prior is None:
                     state.recap_usage.pop(key, None)
             _log_audit(f"{ctx.author.display_name} ({uid})", ctx.message.content[:100], f"Ollama offline: {e}")
             await placeholder.edit(content="", embed=emb("", "The AI is currently offline.", C_RED))
         except Exception as e:
-            if uid not in state.godmode_users:
+            if not bypass_cap:
                 state.recap_usage[key] = prior
                 if prior is None:
                     state.recap_usage.pop(key, None)
