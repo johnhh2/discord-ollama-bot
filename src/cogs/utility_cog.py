@@ -1241,6 +1241,14 @@ class UtilityCog(commands.Cog):
         except Exception as e:
             logging.error(f"[bug] failed to persist status {new_status} for {payload.message_id}: {e}", exc_info=True)
 
+        # A completed issue is done with triage — clear its reaction bar so it
+        # reads as closed and can't be re-triaged with a stale reaction.
+        if new_status == "completed":
+            try:
+                await message.clear_reactions()
+            except (discord.Forbidden, discord.HTTPException) as e:
+                logging.error(f"[bug] failed to clear reactions on {payload.message_id}: {e}")
+
         # Propagate to the originating feature_request, if this issue is a
         # spawned feature linked to one.
         if issue.get("kind") == "feature":
@@ -1485,6 +1493,14 @@ class UtilityCog(commands.Cog):
             await req_message.edit(embed=new_embed)
         except (discord.Forbidden, discord.HTTPException) as e:
             logging.error(f"[featurerequest] failed to mirror status to request {request['message_id']}: {e}")
+
+        # When the linked feature issue is completed, the request is done too —
+        # clear its reaction bar to match the completed issue embed.
+        if feature_status == "completed":
+            try:
+                await req_message.clear_reactions()
+            except (discord.Forbidden, discord.HTTPException) as e:
+                logging.error(f"[featurerequest] failed to clear reactions on request {request['message_id']}: {e}")
 
     async def _dm_reporter_on_completion(self, issue: dict) -> None:
         """DM the original reporter that their bug/feature has been resolved.

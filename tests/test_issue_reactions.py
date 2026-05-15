@@ -418,6 +418,97 @@ async def test_feature_issue_status_change_mirrors_to_request_embed(db):
     assert "Work in progress" in last_edit.description
 
 
+# ── Completion clears the reaction bar ──────────────────────────────────────
+
+async def test_completing_issue_clears_its_reactions(db):
+    """Marking an issue ✅ completed strips every reaction off the embed so it
+    reads as closed and can't be re-triaged with a stale reaction."""
+    _state.bot_settings["internal_issue_channel"] = "9000"
+    _state.bot_admins.add(7)
+
+    await _persistence.insert_issue(
+        guild_id=42, channel_id=9000, message_id=5400,
+        reporter_id=99, report="x",
+    )
+    bug_chan = FakeTextChannel(ch_id=9000)
+    issue_msg = _make_msg_with_embed(5400, bug_chan, emb("⚠️ Bug Report", "x", C_RED))
+    _wire_channel_fetch_message(bug_chan, issue_msg)
+
+    bot = _StubBot()
+    bot.register_channel(bug_chan)
+    cog = UtilityCog(bot=bot)
+
+    payload = _FakePayload(emoji="✅", user_id=7, channel_id=9000, message_id=5400)
+    await cog.on_raw_reaction_add(payload)
+
+    issue_msg.clear_reactions.assert_awaited_once()
+
+
+async def test_non_completing_status_keeps_reactions(db):
+    """A status change that isn't 'completed' (e.g. ⚙️ → wip) leaves the
+    reaction bar intact — triage isn't finished yet."""
+    _state.bot_settings["internal_issue_channel"] = "9000"
+    _state.bot_admins.add(7)
+
+    await _persistence.insert_issue(
+        guild_id=42, channel_id=9000, message_id=5401,
+        reporter_id=99, report="x",
+    )
+    bug_chan = FakeTextChannel(ch_id=9000)
+    issue_msg = _make_msg_with_embed(5401, bug_chan, emb("⚠️ Bug Report", "x", C_RED))
+    _wire_channel_fetch_message(bug_chan, issue_msg)
+
+    bot = _StubBot()
+    bot.register_channel(bug_chan)
+    cog = UtilityCog(bot=bot)
+
+    payload = _FakePayload(emoji="⚙️", user_id=7, channel_id=9000, message_id=5401)
+    await cog.on_raw_reaction_add(payload)
+
+    issue_msg.clear_reactions.assert_not_awaited()
+
+
+async def test_completing_linked_feature_clears_request_reactions(db):
+    """Completing a feature issue spawned from a !featurerequest clears the
+    reaction bar on BOTH the feature issue and the originating request embed."""
+    guild_id = 42
+    _state.bot_settings["internal_issue_channel"] = "9000"
+    _state.bot_admins.add(7)
+    cfg = get_guild_cfg(guild_id)
+    cfg["feature_request_channel"] = "8888"
+
+    await _persistence.insert_feature_request(
+        guild_id=guild_id, channel_id=8888, message_id=6030,
+        reporter_id=50, description="x",
+    )
+    await _persistence.update_feature_request_status(6030, "accepted", resolved_by=7)
+    feature_id = await _persistence.insert_issue(
+        guild_id=guild_id, channel_id=9000, message_id=7300,
+        reporter_id=50, report="x", kind="feature",
+    )
+    await _persistence.link_feature_to_request(6030, feature_id)
+
+    bug_chan = FakeTextChannel(ch_id=9000)
+    feature_msg = _make_msg_with_embed(7300, bug_chan, emb("📖 Feature", "x", C_RED))
+    _wire_channel_fetch_message(bug_chan, feature_msg)
+    fr_chan = FakeTextChannel(ch_id=8888)
+    fr_msg = _make_msg_with_embed(6030, fr_chan, emb("📖 Feature Request", "x", C_GOLD))
+    _wire_channel_fetch_message(fr_chan, fr_msg)
+
+    requester = _FakeUser(uid=50)
+    bot = _StubBot()
+    bot.register_channel(bug_chan)
+    bot.register_channel(fr_chan)
+    bot.register_user(requester)
+    cog = UtilityCog(bot=bot)
+
+    payload = _FakePayload(emoji="✅", user_id=7, channel_id=9000, message_id=7300)
+    await cog.on_raw_reaction_add(payload)
+
+    feature_msg.clear_reactions.assert_awaited_once()
+    fr_msg.clear_reactions.assert_awaited_once()
+
+
 # ── DM-on-completion ────────────────────────────────────────────────────────
 
 async def test_completed_bug_dms_reporter(db):

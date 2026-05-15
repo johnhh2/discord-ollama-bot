@@ -161,6 +161,7 @@ class FakeMessage:
         self.edit = AsyncMock()
         self.reply = AsyncMock(return_value=None)
         self.add_reaction = AsyncMock()
+        self.clear_reactions = AsyncMock()
         self.create_thread = AsyncMock(side_effect=self._default_create_thread)
 
     async def _default_create_thread(self, name: str = "test-thread", **kwargs):
