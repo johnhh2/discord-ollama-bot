@@ -290,21 +290,21 @@ async def test_recap_resolve_name_logs_diagnostic_when_all_paths_fail(db, caplog
 
 async def test_recap_events_block_top1_unconditional_then_floor(db):
     """Trim rule: the single biggest gambling win always shows; further
-    entries only if they clear RECAP_EVENT_FLOOR, capped at RECAP_EVENT_MAX."""
+    entries only if they clear RECAP_EVENT_FLOOR (25k), capped at
+    RECAP_EVENT_MAX. Values straddle the floor so the boundary is tested."""
     from src.persistence.history import upsert_gambling_delta
     from src.economy import _current_bucket_ct
 
     cal_today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
-    # Mirrors the user's real output: one huge, two over-floor, two under.
+    # One huge, one clearly over the 25k floor, two clearly under.
     await upsert_gambling_delta(cal_today, bucket, 1, gained=74_173, lost=0)
-    await upsert_gambling_delta(cal_today, bucket, 2, gained=14_073, lost=0)
-    await upsert_gambling_delta(cal_today, bucket, 3, gained=11_100, lost=0)
-    await upsert_gambling_delta(cal_today, bucket, 4, gained=2_600, lost=0)
-    await upsert_gambling_delta(cal_today, bucket, 5, gained=1_100, lost=0)
+    await upsert_gambling_delta(cal_today, bucket, 2, gained=30_000, lost=0)
+    await upsert_gambling_delta(cal_today, bucket, 3, gained=14_073, lost=0)
+    await upsert_gambling_delta(cal_today, bucket, 4, gained=11_100, lost=0)
 
     guild = FakeGuild(gid=42)
-    guild.members = [FakeMember(uid=i, display_name=f"u{i}") for i in range(1, 6)]
+    guild.members = [FakeMember(uid=i, display_name=f"u{i}") for i in range(1, 5)]
 
     class _Bot:
         def get_guild(self, gid):
@@ -313,12 +313,11 @@ async def test_recap_events_block_top1_unconditional_then_floor(db):
     cog = AICog(bot=_Bot())
     block = await cog._build_recap_events_block(42, _ct_today())
 
-    # Top-1 (74,173) + two over the 10k floor; the 2,600 and 1,100 drop.
+    # Top-1 (74,173) + the one entry over the 25k floor; sub-floor ones drop.
     assert "u1 won 74,173" in block
-    assert "u2 won 14,073" in block
-    assert "u3 won 11,100" in block
-    assert "u4" not in block
-    assert "u5" not in block
+    assert "u2 won 30,000" in block
+    assert "u3" not in block  # 14,073 — under the 25k floor
+    assert "u4" not in block  # 11,100 — under the 25k floor
 
 
 async def test_recap_events_block_lone_small_win_still_shows(db):

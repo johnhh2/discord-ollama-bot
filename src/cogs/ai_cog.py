@@ -853,19 +853,20 @@ class AICog(commands.Cog):
         "whether a hot dog is a sandwich; no conclusion was reached.'\n"
         "- Group by channel only if it reads naturally; otherwise just list "
         "the quips. Use as many quips as the day needs.\n"
-        "- Priority: real conversation between people first. Some logged "
-        "messages are just bot commands (they start with `!`). Routine "
-        "game/economy commands — `!scratch`, `!flip`, `!hit`, `!bj`, "
-        "`!slots`, `!daily`, `!steal`, `!mug` and the like — are NOT "
-        "conversation; do NOT write quips about someone running them. The "
-        "outcomes that matter already appear in the <notable_events> block. "
-        "A non-routine command (`!ask`, `!story`, `!roleplay`, or a funny "
-        "one-off) is only worth a quip if it actually led to something.\n"
+        "- Some logged messages are bot commands (they start with `!`) — "
+        "things like `!scratch`, `!flip`, `!bj`, `!slots`. Treat this as "
+        "real activity worth a quip, but roll it up per person: "
+        "'cleanmeanbean spent the afternoon on scratchoffs and flips', not "
+        "one quip per command. Never invent an outcome (who won, what a "
+        "hand was) — the logs only show the command was run, not its "
+        "result. If you don't know the result, don't state one.\n"
         "- You may also be given a <notable_events> block of economy/game "
         "facts (lottery wins, broken records, big gambling/crime hauls). "
         "Fold the interesting ones in as their own quips; ignore dull ones. "
-        "Do not double-report: if a haul is in <notable_events>, don't also "
-        "quip about the commands that produced it.\n"
+        "Do not double-report: if someone's haul is already in "
+        "<notable_events>, don't restate the coin amount when quipping "
+        "about their gambling — mention the activity, not the number "
+        "again.\n"
         "- Do not invent anything not in the logs or notable events. Do not "
         "add a preamble, intro, or closing remark — output only the list.\n"
         "- Keep the tone dry and a little amused. Never enthusiastic."
@@ -875,7 +876,7 @@ class AICog(commands.Cog):
     # single biggest of each always shows (even on a quiet day); beyond
     # that, only hauls clearing the floor, up to RECAP_EVENT_MAX total.
     RECAP_EVENT_MAX = 3
-    RECAP_EVENT_FLOOR = 10_000
+    RECAP_EVENT_FLOOR = 25_000
 
     def _recap_channel_visible(self, channel: discord.TextChannel) -> bool:
         """True if the @everyone role can read `channel` and it isn't NSFW."""
