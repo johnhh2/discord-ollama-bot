@@ -4,12 +4,12 @@ from src.db import with_cursor
 
 _CHESS_GAME_UPSERT_SQL = (
     "INSERT INTO chess_games "
-    "(channel_id, fen, pgn, white_id, black_id, current_id, amount, last_move, board_msg_id) "
-    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+    "(channel_id, fen, pgn, white_id, black_id, current_id, amount, last_move, board_msg_id, elo) "
+    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
     "ON DUPLICATE KEY UPDATE "
     "fen=VALUES(fen), pgn=VALUES(pgn), white_id=VALUES(white_id), black_id=VALUES(black_id), "
     "current_id=VALUES(current_id), amount=VALUES(amount), last_move=VALUES(last_move), "
-    "board_msg_id=VALUES(board_msg_id)"
+    "board_msg_id=VALUES(board_msg_id), elo=VALUES(elo)"
 )
 
 
@@ -24,6 +24,7 @@ def _row_for_game(channel_id: int, game: dict) -> tuple:
         int(game.get("amount", 0)),
         game.get("last_move", ""),
         int(game["board_msg_id"]) if game.get("board_msg_id") is not None else None,
+        int(game["elo"]) if game.get("elo") is not None else None,
     )
 
 

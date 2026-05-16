@@ -351,6 +351,43 @@ async def test_chess_games_roundtrip(db):
     assert _state.active_chess_games[67890]["amount"] == 500
 
 
+async def test_chess_game_elo_roundtrip_for_bot_game(db):
+    """Bot-vs-human games carry an elo field; persistence preserves it so
+    a bot restart resumes at the right strength."""
+    _state.active_chess_games.clear()
+    _state.active_chess_games[44444] = {
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "pgn": "", "white_id": 11, "black_id": 22, "current_id": 11,
+        "amount": 0, "last_move": "", "board_msg_id": None,
+        "elo": 1750,
+    }
+    await _persistence.save_chess_game(44444)
+
+    _state.active_chess_games.clear()
+    await _persistence.init_db_state()
+
+    g = _state.active_chess_games[44444]
+    assert g.get("elo") == 1750
+
+
+async def test_chess_game_no_elo_for_pvp(db):
+    """PvP games omit the elo field; persistence + reload must NOT inject
+    a spurious elo key on PvP rows (the bot-mention branch keys off its
+    presence to know whether to spawn Stockfish)."""
+    _state.active_chess_games.clear()
+    _state.active_chess_games[55555] = {
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "pgn": "", "white_id": 33, "black_id": 44, "current_id": 33,
+        "amount": 0, "last_move": "", "board_msg_id": None,
+    }
+    await _persistence.save_chess_game(55555)
+
+    _state.active_chess_games.clear()
+    await _persistence.init_db_state()
+
+    assert "elo" not in _state.active_chess_games[55555]
+
+
 async def test_chess_game_delete_removes_row(db):
     """delete_chess_game removes a single row; other games unaffected."""
     _state.active_chess_games.clear()

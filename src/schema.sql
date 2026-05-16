@@ -616,3 +616,9 @@ CREATE INDEX IF NOT EXISTS idx_chess_reports_black
     ON chess_reports (black_id);
 CREATE INDEX IF NOT EXISTS idx_chess_reports_finished
     ON chess_reports (finished_at);
+
+-- ── 0021_add_chess_elo.sql ──
+-- 0021: add `elo` to chess_games so bot-vs-human games resume at the right
+-- strength after a bot restart. NULL for PvP games (no engine involved).
+
+ALTER TABLE chess_games ADD COLUMN IF NOT EXISTS elo INT UNSIGNED NULL;

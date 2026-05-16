@@ -280,10 +280,12 @@ async def _init_db_state_inner(state, run_migrations):
         try:
             await cur.execute(
                 "SELECT channel_id, fen, pgn, white_id, black_id, current_id, "
-                "amount, last_move, board_msg_id FROM chess_games"
+                "amount, last_move, board_msg_id, elo FROM chess_games"
             )
-            state.active_chess_games = {
-                r[0]: {
+            rows = await cur.fetchall()
+            state.active_chess_games = {}
+            for r in rows:
+                game = {
                     "fen": r[1],
                     "pgn": r[2],
                     "white_id": r[3],
@@ -293,8 +295,9 @@ async def _init_db_state_inner(state, run_migrations):
                     "last_move": r[7],
                     "board_msg_id": r[8],
                 }
-                for r in await cur.fetchall()
-            }
+                if r[9] is not None:
+                    game["elo"] = r[9]
+                state.active_chess_games[r[0]] = game
         except Exception as e:
             logging.error(f"[init_db_state] chess_games failed: {e}", exc_info=True)
 
