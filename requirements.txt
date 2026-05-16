@@ -5,3 +5,5 @@ tzdata==2026.2
 matplotlib==3.10.9
 aiomysql==0.3.2
 prometheus-client==0.25.0
+chess==1.11.2
+cairosvg==2.9.0

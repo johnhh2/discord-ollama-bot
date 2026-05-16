@@ -34,8 +34,8 @@ def _stub_edit_board(monkeypatch):
     embed-render itself isn't the test concern — only the state mutation
     + payout. Stub it so no fetch_message is required."""
     edit_calls = []
-    async def _stub(channel, game, embed):
-        edit_calls.append((channel, game, embed))
+    async def _stub(channel, game, embed, *, file=None):
+        edit_calls.append((channel, game, embed, file))
     monkeypatch.setattr(_ai_cog, "_edit_board", _stub)
     return edit_calls
 
@@ -134,62 +134,63 @@ async def test_stop_c4_with_wager_pays_opponent(db, _stub_edit_board):
     assert await _economy.get_balance(opponent.id) == 200
 
 
-async def test_stop_chess_as_black_renders_board_from_black_perspective(db, _stub_edit_board, monkeypatch):
-    """Regression test for the cmd_stop chess refactor: when the BLACK
-    player forfeits, the 🏳️ board embed must call build_chess_display
-    with is_black_perspective=True so the rendered board isn't flipped."""
+def _starter_chess_game(white_id: int, black_id: int, amount: int = 0) -> dict:
+    from src.games import chess_engine
+    pgn = (
+        '[Event "Discord chess"]\n[Site "Discord"]\n[Date "2026.05.16"]\n'
+        '[Round "?"]\n[White "Alice"]\n[Black "Bob"]\n[Result "*"]\n\n*\n'
+    )
+    return {
+        "fen": chess_engine.STARTING_FEN,
+        "pgn": pgn,
+        "white_id": white_id,
+        "black_id": black_id,
+        "current_id": white_id,
+        "amount": amount,
+        "last_move": "",
+        "board_msg_id": None,
+    }
+
+
+async def test_stop_chess_as_black_with_wager_pays_white_and_archives_report(db, _stub_edit_board):
     cog = AICog(bot=None)
     white = FakeMember(uid=1007)
     black = FakeMember(uid=1008)
     ctx = _ctx(black, channel_id=503)
 
-    # players[0] = white, players[1] = black per the existing convention
-    # in src/cogs/ai_cog.py:_stop_pvp_game's chess display_kwargs_for.
-    _state.active_chess_games[503] = {
-        "players": [white.id, black.id],
-        "amount": 50,
-        "board": [["wp"] * 8] * 8,
-    }
-
-    captured_kwargs: dict = {}
-    real_build = _ai_cog.build_chess_display
-    def _spy_build(board, **kwargs):
-        captured_kwargs.update(kwargs)
-        return real_build(board, **kwargs)
-    monkeypatch.setattr(_ai_cog, "build_chess_display", _spy_build)
+    _state.active_chess_games[503] = _starter_chess_game(white.id, black.id, amount=50)
 
     await cog.cmd_stop.callback(cog, ctx)
 
     assert 503 not in _state.active_chess_games
+    # Wager pot (50 * 2 = 100) goes to opponent (white).
     assert await _economy.get_balance(white.id) == 100
-    # The load-bearing assertion: black-perspective flag was set.
-    assert captured_kwargs.get("is_black_perspective") is True
+    # Forfeit produced a chess_reports row so `!chess view <id>` works.
+    from src.persistence import load_chess_report
+    report = await load_chess_report(1)
+    assert report is not None
+    assert report["winner_id"] == white.id
+    assert report["result"] == "1-0"
+    assert '[Result "1-0"]' in report["pgn"]
 
 
-async def test_stop_chess_as_white_uses_default_perspective(db, _stub_edit_board, monkeypatch):
-    """Mirror of the above: white forfeiting → is_black_perspective=False."""
+async def test_stop_chess_as_white_with_wager_pays_black(db, _stub_edit_board):
     cog = AICog(bot=None)
     white = FakeMember(uid=1009)
     black = FakeMember(uid=1010)
     ctx = _ctx(white, channel_id=504)
 
-    _state.active_chess_games[504] = {
-        "players": [white.id, black.id],
-        "amount": 50,
-        "board": [["wp"] * 8] * 8,
-    }
-
-    captured_kwargs: dict = {}
-    real_build = _ai_cog.build_chess_display
-    def _spy_build(board, **kwargs):
-        captured_kwargs.update(kwargs)
-        return real_build(board, **kwargs)
-    monkeypatch.setattr(_ai_cog, "build_chess_display", _spy_build)
+    _state.active_chess_games[504] = _starter_chess_game(white.id, black.id, amount=50)
 
     await cog.cmd_stop.callback(cog, ctx)
 
-    # White is players[0], black is players[1]; white.id != players[1] → False.
-    assert captured_kwargs.get("is_black_perspective") is False
+    assert 504 not in _state.active_chess_games
+    assert await _economy.get_balance(black.id) == 100
+    from src.persistence import load_chess_report
+    report = await load_chess_report(1)
+    assert report is not None
+    assert report["winner_id"] == black.id
+    assert report["result"] == "0-1"
 
 
 async def test_stop_pvp_game_in_other_channel_returns_none(db, _stub_edit_board):

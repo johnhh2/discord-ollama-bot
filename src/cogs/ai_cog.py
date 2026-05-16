@@ -1,9 +1,11 @@
 import asyncio
 import datetime
+import io
 import logging
 from zoneinfo import ZoneInfo
 
 import aiohttp
+import chess
 import discord
 from discord.ext import commands
 
@@ -13,7 +15,7 @@ from src.helpers import (
 )
 from src.economy import (
     add_balance, get_guild_ask_model, get_guild_roleplay_model,
-    _ct_today, next_daily_reset_ts,
+    record_gambling_event, _ct_today, next_daily_reset_ts,
 )
 from src.permissions import (
     is_admin,
@@ -21,7 +23,7 @@ from src.permissions import (
     requires_perm,
 )
 from src.persistence import (
-    save_chess_games, save_ai_threads, save_recap_usage
+    delete_chess_game, save_chess_report, save_ai_threads, save_recap_usage,
 )
 from src.guild_config import get_guild_cfg
 from src.ai import (
@@ -41,8 +43,9 @@ from src.invites import _wait_for_confirmations, _send_invite
 # test_cmd_stop.py now cover this. Don't drop these without adjusting
 # the cmd_stop coverage.
 from src.games.ttt_c4 import build_ttt_display, build_c4_display
-from src.games.chess import build_chess_display
 from src.games.hangman import build_hangman_display
+from src.games import chess_engine, chess_render
+from src.games.chess import BOARD_IMG_FILENAME
 
 
 log = logging.getLogger(__name__)
@@ -588,7 +591,7 @@ class AICog(commands.Cog):
         build_display,
         display_kwargs_for=lambda game, uid: {},
     ) -> str | None:
-        """Forfeit a 2-player PvP game (ttt/c4/chess) in this channel.
+        """Forfeit a 2-player PvP game (ttt/c4) in this channel.
 
         Returns the human-readable line to append to the !stop summary, or
         None if there's no matching game / the user isn't in it. Pays out
@@ -617,6 +620,76 @@ class AICog(commands.Cog):
             emb(title, display + f"\n\n**Last move:** {game['last_move']}", C_RED),
         ))
         del registry[cid]
+        return line
+
+    async def _stop_chess_game(self, ctx: commands.Context) -> str | None:
+        cid = ctx.channel.id
+        uid = ctx.author.id
+        game = state.active_chess_games.get(cid)
+        if game is None or uid not in (game.get("white_id"), game.get("black_id")):
+            return None
+
+        is_white = uid == game["white_id"]
+        opponent_id = game["black_id"] if is_white else game["white_id"]
+        result = "0-1" if is_white else "1-0"
+        amount = int(game.get("amount", 0))
+        guild = ctx.guild
+
+        if amount > 0:
+            winnings = amount * 2
+            await add_balance(opponent_id, winnings)
+            await record_gambling_event(guild.id if guild else None, opponent_id, gained=amount)
+            await record_gambling_event(guild.id if guild else None, uid, lost=amount)
+            line = f"♟️ Chess (forfeited, opponent wins {winnings:,} 🪙)"
+        else:
+            line = "♟️ Chess (forfeited)"
+
+        final_pgn = game["pgn"].replace('[Result "*"]', f'[Result "{result}"]')
+
+        try:
+            board = chess_engine.board_from_fen(game["fen"])
+            final_fen = board.fen()
+        except Exception:
+            board = chess_engine.new_board()
+            final_fen = game.get("fen", board.fen())
+
+        report_id: int | None = None
+        try:
+            report_id = await save_chess_report(
+                guild_id=guild.id if guild else None,
+                channel_id=cid,
+                white_id=game["white_id"],
+                black_id=game["black_id"],
+                winner_id=opponent_id,
+                result=result,
+                pgn=final_pgn,
+                final_fen=final_fen,
+            )
+        except Exception as e:
+            logging.error(f"chess save_chess_report (forfeit) failed: {e}", exc_info=True)
+
+        try:
+            await delete_chess_game(cid)
+        except Exception as e:
+            logging.error(f"chess delete_chess_game (forfeit) failed: {e}", exc_info=True)
+        state.active_chess_games.pop(cid, None)
+
+        view_line = f" View: `!chess view {report_id}`" if report_id is not None else ""
+        desc = f"{ctx.author.display_name} forfeited.{view_line}"
+        file = None
+        try:
+            png = chess_render.render_board_png(board, orientation=chess.WHITE)
+            file = discord.File(io.BytesIO(png), filename=BOARD_IMG_FILENAME)
+        except RuntimeError as e:
+            logging.warning(f"chess render unavailable in forfeit: {e}")
+
+        forfeit_embed = emb("🏳️ Chess Forfeited", desc, C_RED)
+        if file is not None:
+            forfeit_embed.set_image(url=f"attachment://{BOARD_IMG_FILENAME}")
+            asyncio.create_task(_edit_board(ctx.channel, game, forfeit_embed, file=file))
+        else:
+            asyncio.create_task(_edit_board(ctx.channel, game, forfeit_embed))
+
         return line
 
     @commands.command(name="stop", aliases=["quit", "forfeit", "q", "close"])
@@ -678,14 +751,15 @@ class AICog(commands.Cog):
         for line in (
             await self._stop_pvp_game(ctx, state.active_ttt_games, "🎮 Tic-Tac-Toe", build_ttt_display),
             await self._stop_pvp_game(ctx, state.active_c4_games,  "🟡 Connect 4",   build_c4_display),
-            await self._stop_pvp_game(
-                ctx, state.active_chess_games, "♟️ Chess",
-                lambda game, **k: build_chess_display(game["board"], **k),
-                display_kwargs_for=lambda game, uid: {"is_black_perspective": uid == game["players"][1]},
-            ),
         ):
             if line:
                 stopped.append(line)
+
+        # Chess has its own state shape (white_id/black_id/fen/pgn) and needs to
+        # produce a chess_reports row on forfeit so `!chess view <id>` works.
+        chess_line = await self._stop_chess_game(ctx)
+        if chess_line:
+            stopped.append(chess_line)
 
         # Race: multi-player; pot splits across opponents instead of paying one.
         if cid in state.active_race_games and uid in state.active_race_games[cid]["players"]:
@@ -705,7 +779,6 @@ class AICog(commands.Cog):
             await ctx.send(embed=emb("⏹️ Nothing to Stop", "No active game or roleplay.", C_GREY))
             return
 
-        await save_chess_games()
         await ctx.send(embed=emb("⏹️ Stopped", "\n".join(stopped), C_GREY))
 
         if close_thread and isinstance(ctx.channel, discord.Thread):

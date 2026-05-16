@@ -1,164 +1,106 @@
-import asyncio
+from __future__ import annotations
 
+import asyncio
+import datetime
+import io
+import logging
+
+import chess
+import chess.pgn
+import discord
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_RED, C_GOLD, C_BLUE, _delete_after, _edit_board,
+    emb, C_RED, C_GOLD, C_BLUE, C_GREEN, C_GREY,
+    _delete_after, _edit_board,
 )
-from src.permissions import (
-    is_admin, check_chess_channel,
+from src.economy import (
+    add_balance, record_gambling_event,
 )
+from src.permissions import check_chess_channel
 from src.persistence import (
-    save_chess_games,
+    save_chess_game, delete_chess_game, save_chess_report, load_chess_report,
 )
-from src.games.ttt_c4 import _setup_pvp_game, _send_game_board
+from src.games.ttt_c4 import _setup_pvp_game
+from src.games import chess_engine, chess_render
 from src import state
 
 
-def create_chess_board() -> list:
-    """Create a standard chess board with pieces in starting position.
-    Using Unicode chess symbols. Index 0 = rank 8 (black's side), Index 7 = rank 1 (white's side)."""
-    return [
-        ['♜', '♞', '♝', '♛', '♚', '♝', '♞', '♜'],  # Black pieces (rank 8)
-        ['♟'] * 8,                                    # Black pawns (rank 7)
-        [None] * 8,                                   # Rank 6
-        [None] * 8,                                   # Rank 5
-        [None] * 8,                                   # Rank 4
-        [None] * 8,                                   # Rank 3
-        ['♙'] * 8,                                    # White pawns (rank 2)
-        ['♖', '♘', '♗', '♕', '♔', '♗', '♘', '♖'],  # White pieces (rank 1)
-    ]
+BOARD_IMG_FILENAME = "board.png"
 
 
-def build_chess_display(board: list, is_black_perspective: bool = False) -> str:
-    """Build a chess board display from game state. Shows the board from the current player's perspective."""
-    FILE_LABELS = ["a", "b", "c", "d", "e", "f", "g", "h"]
-    RANK_LABELS = ["8", "7", "6", "5", "4", "3", "2", "1"]
-
-    # Build file label line with dots on both sides
-    files_to_show = list(reversed(FILE_LABELS)) if is_black_perspective else FILE_LABELS
-    file_labels_str = " . ".join(files_to_show)
-    file_line = f"... {file_labels_str} .\n"
-    display = file_line
-
-    # Determine which rows to iterate based on perspective
-    if is_black_perspective:
-        board_to_display = list(reversed(board))
-        rank_labels_order = list(reversed(RANK_LABELS))
-    else:
-        board_to_display = board
-        rank_labels_order = RANK_LABELS
-
-    for rank_idx, row in enumerate(board_to_display):
-        rank_num = rank_labels_order[rank_idx]
-
-        line = f"{rank_num} "
-
-        # Reverse row order for black perspective
-        row_to_display = list(reversed(row)) if is_black_perspective else row
-
-        for piece in row_to_display:
-            if piece:
-                line += piece + " "
-            else:
-                line += ".... "
-
-        line += f"{rank_num}"
-        display += line + "\n"
-
-    display += file_line
-    return display
+def _render_file_for_game(game: dict, *, orientation_for_uid: int | None = None) -> discord.File | None:
+    try:
+        board = chess_engine.board_from_fen(game["fen"])
+    except Exception:
+        return None
+    orientation = chess.WHITE
+    if orientation_for_uid is not None and orientation_for_uid == game.get("black_id"):
+        orientation = chess.BLACK
+    last_move = None
+    if board.move_stack:
+        last_move = board.peek()
+    try:
+        png = chess_render.render_board_png(
+            board, orientation=orientation, last_move=last_move,
+        )
+    except RuntimeError as e:
+        logging.warning(f"chess render unavailable: {e}")
+        return None
+    return discord.File(io.BytesIO(png), filename=BOARD_IMG_FILENAME)
 
 
-def parse_chess_move(move_str: str) -> tuple[int, int, int, int] | None:
-    """Parse chess move in algebraic notation (e.g., 'e2e4', 'e2 e4').
-    Returns (from_row, from_col, to_row, to_col) or None if invalid."""
-    move_str = move_str.lower().strip().replace(" ", "")
-
-    if len(move_str) == 4:  # e2e4 format
-        try:
-            from_col = ord(move_str[0]) - ord('a')
-            from_row = 8 - int(move_str[1])
-            to_col = ord(move_str[2]) - ord('a')
-            to_row = 8 - int(move_str[3])
-
-            if all(0 <= x <= 7 for x in [from_row, from_col, to_row, to_col]):
-                return (from_row, from_col, to_row, to_col)
-        except (ValueError, IndexError):
-            pass
-
-    return None
+def _board_embed(title: str, description: str, color: int) -> discord.Embed:
+    e = emb(title, description, color)
+    e.set_image(url=f"attachment://{BOARD_IMG_FILENAME}")
+    return e
 
 
-def is_white_piece(piece: str | None) -> bool:
-    """Check if piece is white (lowercase unicode symbols)."""
-    if not piece:
-        return False
-    # White pieces: ♔♕♖♗♘♙
-    return piece in '♔♕♖♗♘♙'
+def _initial_pgn(white_name: str, black_name: str, guild_name: str | None) -> str:
+    game = chess.pgn.Game()
+    game.headers["Event"] = f"Discord chess ({guild_name})" if guild_name else "Discord chess"
+    game.headers["Site"] = "Discord"
+    game.headers["Date"] = datetime.date.today().strftime("%Y.%m.%d")
+    game.headers["White"] = white_name
+    game.headers["Black"] = black_name
+    game.headers["Result"] = "*"
+    return str(game)
 
 
-def is_black_piece(piece: str | None) -> bool:
-    """Check if piece is black (uppercase unicode symbols)."""
-    if not piece:
-        return False
-    # Black pieces: ♚♛♜♝♞♟
-    return piece in '♚♛♜♝♞♟'
+def _append_san_to_pgn(pgn_str: str, san: str) -> str:
+    g = chess.pgn.read_game(io.StringIO(pgn_str))
+    if g is None:
+        return pgn_str
+    board = g.end().board()
+    try:
+        move = board.parse_san(san)
+    except Exception:
+        return pgn_str
+    g.end().add_variation(move)
+    return str(g)
 
 
-def is_valid_chess_move(board: list, from_r: int, from_c: int, to_r: int, to_c: int, is_white: bool) -> bool:
-    """Basic chess move validation."""
-    if not (0 <= from_r <= 7 and 0 <= from_c <= 7 and 0 <= to_r <= 7 and 0 <= to_c <= 7):
-        return False
-
-    piece = board[from_r][from_c]
-    target = board[to_r][to_c]
-
-    # Can't move empty square
-    if not piece:
-        return False
-
-    # Check piece ownership
-    if is_white and not is_white_piece(piece):
-        return False
-    if not is_white and not is_black_piece(piece):
-        return False
-
-    # Can't capture own pieces
-    if target and ((is_white and is_white_piece(target)) or (not is_white and is_black_piece(target))):
-        return False
-
-    return True
+def _player_display_name(guild: discord.Guild | None, uid: int, fallback: str) -> str:
+    if guild is not None:
+        m = guild.get_member(uid)
+        if m is not None:
+            return m.display_name
+    return fallback
 
 
 class ChessCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    # ── !chess: dispatch on subcommand ──────────────────────────────────────
     @commands.command(name="chess")
     async def cmd_chess(self, ctx: commands.Context, *args):
-        # Special admin preview commands
-        if args and args[0].lower() == "preview":
-            if not is_admin(ctx):
-                await ctx.send(embed=emb("❌ No Permission", "", C_RED))
-                return
-            preview_board = create_chess_board()
-            await ctx.send(embed=emb("♟️ Chess Board Preview (White)", build_chess_display(preview_board, is_black_perspective=False), C_BLUE))
+        if args and args[0].lower() == "view":
+            await self._cmd_view(ctx, args[1:])
             return
 
-        if args and args[0].lower() == "blackpreview":
-            if not is_admin(ctx):
-                await ctx.send(embed=emb("❌ No Permission", "", C_RED))
-                return
-            preview_board = create_chess_board()
-            await ctx.send(embed=emb("♟️ Chess Board Preview (Black)", build_chess_display(preview_board, is_black_perspective=True), C_BLUE))
-            return
-
-        # Parse opponent and amount from args
-        opponent = None
+        opponent = ctx.message.mentions[0] if ctx.message.mentions else None
         amount = 0
-        if ctx.message.mentions:
-            opponent = ctx.message.mentions[0]
         if args:
             try:
                 amount = int(args[-1])
@@ -171,28 +113,98 @@ class ChessCog(commands.Cog):
         cid = ctx.channel.id
         uid = ctx.author.id
 
-        if cid in state.active_ttt_games or cid in state.active_c4_games or cid in state.active_chess_games:
+        if (
+            cid in state.active_ttt_games
+            or cid in state.active_c4_games
+            or cid in state.active_chess_games
+        ):
             await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
             return
 
         if not await _setup_pvp_game(ctx, opponent, amount, "♟️ Chess Invite"):
             return
 
-        state.active_chess_games[cid] = {
-            "board": create_chess_board(),
-            "players": [uid, opponent.id],  # [white, black]
-            "current": uid,  # white moves first
-            "moves": [],
-            "amount": amount,
-            "board_msg_id": None,
-            "last_move": f"{ctx.author.display_name}'s turn (White)",
-        }
-        await _send_game_board(ctx, state.active_chess_games[cid], "♟️ Chess",
-                               build_chess_display(state.active_chess_games[cid]["board"], is_black_perspective=False),
-                               f"{ctx.author.mention} (White ♙)", f"{opponent.mention} (Black ♟)",
-                               "Use `!move <e2e4>`", amount)
-        await save_chess_games()
+        white_id, black_id = uid, opponent.id
+        white_name = ctx.author.display_name
+        black_name = opponent.display_name
+        guild_name = ctx.guild.name if ctx.guild else None
 
+        game = {
+            "fen": chess_engine.STARTING_FEN,
+            "pgn": _initial_pgn(white_name, black_name, guild_name),
+            "white_id": white_id,
+            "black_id": black_id,
+            "current_id": white_id,
+            "amount": amount,
+            "last_move": f"{white_name}'s turn (White)",
+            "board_msg_id": None,
+        }
+        state.active_chess_games[cid] = game
+
+        wager_info = f"\nWager: {amount:,} 🪙 each" if amount > 0 else ""
+        desc = (
+            f"{ctx.author.mention} (White ♙) vs {opponent.mention} (Black ♟){wager_info}\n"
+            f"{ctx.author.mention}'s turn. Use `!move <e2e4>` or SAN (`Nf3`)\n\n"
+            f"**Last move:** {game['last_move']}"
+        )
+        file = _render_file_for_game(game, orientation_for_uid=white_id)
+        send_kwargs: dict = {"embed": _board_embed("♟️ Chess", desc, C_BLUE)}
+        if file is not None:
+            send_kwargs["file"] = file
+        else:
+            # Fallback: render failed (Cairo missing). Strip the image-ref so the embed isn't broken.
+            send_kwargs["embed"] = emb("♟️ Chess", desc, C_BLUE)
+        msg = await ctx.send(**send_kwargs)
+        game["board_msg_id"] = msg.id
+        await save_chess_game(cid)
+
+    # ── !chess view <report_id> ─────────────────────────────────────────────
+    async def _cmd_view(self, ctx: commands.Context, args: tuple[str, ...]):
+        if not args:
+            await ctx.send(embed=emb("❌ Usage", "Use `!chess view <report_id>`", C_RED))
+            return
+        try:
+            report_id = int(args[0])
+        except ValueError:
+            await ctx.send(embed=emb("❌ Invalid", "Report id must be a number.", C_RED))
+            return
+        report = await load_chess_report(report_id)
+        if report is None:
+            await ctx.send(embed=emb("❌ Not Found", f"No chess game with report id `{report_id}`.", C_RED))
+            return
+
+        winner_id = report["winner_id"]
+        if winner_id is None:
+            outcome_line = f"Draw ({report['result']})"
+        elif winner_id == report["white_id"]:
+            outcome_line = f"White ({_player_display_name(ctx.guild, winner_id, str(winner_id))}) wins ({report['result']})"
+        else:
+            outcome_line = f"Black ({_player_display_name(ctx.guild, winner_id, str(winner_id))}) wins ({report['result']})"
+
+        try:
+            board = chess.Board(fen=report["final_fen"])
+        except Exception:
+            board = chess_engine.new_board()
+        file = None
+        try:
+            png = chess_render.render_board_png(board, orientation=chess.WHITE)
+            file = discord.File(io.BytesIO(png), filename=BOARD_IMG_FILENAME)
+        except RuntimeError as e:
+            logging.warning(f"chess render unavailable in view: {e}")
+
+        pgn_block = f"```pgn\n{report['pgn']}\n```"
+        # Embeds cap description at 4096 chars; trim PGN if needed.
+        if len(pgn_block) > 3800:
+            pgn_block = f"```pgn\n{report['pgn'][:3600]}\n... (truncated)```"
+        desc = f"{outcome_line}\n\n{pgn_block}"
+        e = emb(f"♟️ Chess Game #{report_id}", desc, C_GREY)
+        if file is not None:
+            e.set_image(url=f"attachment://{BOARD_IMG_FILENAME}")
+            await ctx.send(embed=e, file=file)
+        else:
+            await ctx.send(embed=e)
+
+    # ── !move ───────────────────────────────────────────────────────────────
     @commands.command(name="move")
     async def cmd_move_chess(self, ctx: commands.Context, *args):
         cid = ctx.channel.id
@@ -206,53 +218,156 @@ class ChessCog(commands.Cog):
             return
 
         game = state.active_chess_games[cid]
-        if uid != game["current"]:
-            opponent_id = game["current"]
-            opponent = ctx.guild.get_member(opponent_id) if ctx.guild else None
-            err = await ctx.send(embed=emb("⏳ Not Your Turn", f"Waiting for {opponent.mention if opponent else 'opponent'}.", C_GOLD))
+        if uid != game["current_id"]:
+            opponent_id = game["current_id"]
+            opp = ctx.guild.get_member(opponent_id) if ctx.guild else None
+            err = await ctx.send(embed=emb("⏳ Not Your Turn", f"Waiting for {opp.mention if opp else 'opponent'}.", C_GOLD))
             asyncio.create_task(_delete_after(err))
             return
 
         if not args:
-            err = await ctx.send("Usage: `!move <e2e4>` or `!move e2 e4` (from square to square in algebraic notation)")
+            err = await ctx.send("Usage: `!move <e2e4>` or `!move Nf3`")
             asyncio.create_task(_delete_after(err))
             return
 
-        move = " ".join(args)
+        move_str = " ".join(args).strip()
 
-        parsed = parse_chess_move(move)
-        if not parsed:
-            err = await ctx.send("Invalid move format. Use algebraic notation like `e2e4`")
+        # Parse + validate against the live board built from FEN.
+        board = chess_engine.board_from_fen(game["fen"])
+        move, err_msg = chess_engine.try_move(board, move_str)
+        if move is None:
+            err = await ctx.send(embed=emb("❌ Invalid Move", err_msg or "Invalid move.", C_RED))
             asyncio.create_task(_delete_after(err))
             return
 
-        from_r, from_c, to_r, to_c = parsed
-        is_white = uid == game["players"][0]
+        # Gate-and-claim: flip current_id synchronously BEFORE any await so racing !move
+        # invocations bail at the gate above. Roll back only if the save fails.
+        prior_current = game["current_id"]
+        prior_fen = game["fen"]
+        prior_pgn = game["pgn"]
+        prior_last_move = game["last_move"]
 
-        if not is_valid_chess_move(game["board"], from_r, from_c, to_r, to_c, is_white):
-            err = await ctx.send("Invalid move. The piece can't move there or it's not your piece.")
+        san = chess_engine.push_with_san(board, move)
+        new_fen = board.fen()
+        new_pgn = _append_san_to_pgn(game["pgn"], san)
+        mover_name = ctx.author.display_name
+
+        opponent_id = game["black_id"] if uid == game["white_id"] else game["white_id"]
+
+        game["fen"] = new_fen
+        game["pgn"] = new_pgn
+        game["current_id"] = opponent_id
+        game["last_move"] = f"{mover_name} played {san}"
+
+        # Game-over detection before persistence — if the move ended the game we
+        # delete the row and insert a report instead of upserting.
+        result, reason = chess_engine.game_over_info(board)
+        if result is not None:
+            await self._finalize_game(ctx.channel, cid, game, board, result, reason, mover_name=mover_name, san=san)
+            return
+
+        try:
+            await save_chess_game(cid)
+        except Exception as e:
+            # Rollback state on save failure so the user can retry.
+            game["fen"] = prior_fen
+            game["pgn"] = prior_pgn
+            game["current_id"] = prior_current
+            game["last_move"] = prior_last_move
+            logging.error(f"chess save_chess_game failed: {e}", exc_info=True)
+            err = await ctx.send(embed=emb("❌ Save Failed", "Couldn't save the move. Try again.", C_RED))
             asyncio.create_task(_delete_after(err))
             return
 
-        # Make the move
-        board = game["board"]
-        piece = board[from_r][from_c]
-        board[to_r][to_c] = piece
-        board[from_r][from_c] = None
+        # Re-render from the next player's perspective.
+        file = _render_file_for_game(game, orientation_for_uid=opponent_id)
+        next_player = ctx.guild.get_member(opponent_id) if ctx.guild else None
+        next_mention = next_player.mention if next_player else "Next player"
+        check_note = " — **check!**" if board.is_check() else ""
+        desc = (
+            f"{next_mention}'s turn{check_note}. Use `!move <e2e4>` or SAN (`Nf3`)\n\n"
+            f"**Last move:** {game['last_move']}"
+        )
+        if file is not None:
+            await _edit_board(ctx.channel, game, _board_embed("♟️ Chess", desc, C_BLUE), file=file)
+        else:
+            await _edit_board(ctx.channel, game, emb("♟️ Chess", desc, C_BLUE))
 
-        move_notation = f"{chr(ord('a') + from_c)}{8 - from_r}{chr(ord('a') + to_c)}{8 - to_r}"
-        game["moves"].append(move_notation)
+    async def _finalize_game(
+        self, channel: discord.abc.Messageable, cid: int, game: dict,
+        board: chess.Board, result: str, reason: str | None,
+        *, mover_name: str, san: str,
+    ):
+        # Patch PGN's Result header to the final outcome before persisting the report.
+        final_pgn = game["pgn"].replace('[Result "*"]', f'[Result "{result}"]')
+        game["pgn"] = final_pgn
 
-        # Switch turns
-        game["current"] = game["players"][1] if uid == game["players"][0] else game["players"][0]
-        next_player = ctx.guild.get_member(game["current"]) if ctx.guild else None
+        winner_color = chess_engine.winner_color(board)
+        if winner_color is None:
+            winner_id = None
+        else:
+            winner_id = game["white_id"] if winner_color else game["black_id"]
 
-        game["last_move"] = f"{ctx.author.display_name} played {move_notation}"
-        await save_chess_games()
+        amount = int(game.get("amount", 0))
+        guild = channel.guild if hasattr(channel, "guild") else None
+        gid = guild.id if guild is not None else None
 
-        # Display from the next player's perspective
-        is_black_perspective = game["current"] == game["players"][1]  # True if it's black's turn next
-        await _edit_board(ctx.channel, game, emb("♟️ Chess", build_chess_display(board, is_black_perspective) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!move <e2e4>`\n\n**Last move:** {game['last_move']}", C_BLUE))
+        payout_line = ""
+        if amount > 0:
+            if winner_id is None:
+                # Draw — refund both players.
+                await add_balance(game["white_id"], amount)
+                await add_balance(game["black_id"], amount)
+                payout_line = f" Both players get {amount:,} 🪙 back."
+            else:
+                winnings = amount * 2
+                await add_balance(winner_id, winnings)
+                loser_id = game["black_id"] if winner_id == game["white_id"] else game["white_id"]
+                await record_gambling_event(gid, winner_id, gained=amount)
+                await record_gambling_event(gid, loser_id, lost=amount)
+                payout_line = f" Winner takes {winnings:,} 🪙."
+
+        try:
+            report_id = await save_chess_report(
+                guild_id=gid,
+                channel_id=cid,
+                white_id=game["white_id"],
+                black_id=game["black_id"],
+                winner_id=winner_id,
+                result=result,
+                pgn=final_pgn,
+                final_fen=board.fen(),
+            )
+        except Exception as e:
+            logging.error(f"chess save_chess_report failed: {e}", exc_info=True)
+            report_id = None
+
+        try:
+            await delete_chess_game(cid)
+        except Exception as e:
+            logging.error(f"chess delete_chess_game failed: {e}", exc_info=True)
+        state.active_chess_games.pop(cid, None)
+
+        if winner_id is None:
+            headline = f"Draw by {reason}." if reason else "Draw."
+            color = C_GOLD
+        else:
+            winner_name = _player_display_name(guild, winner_id, str(winner_id))
+            headline = f"{winner_name} wins by {reason}." if reason else f"{winner_name} wins."
+            color = C_GREEN
+
+        view_line = f"\n\nView this game: `!chess view {report_id}`" if report_id is not None else ""
+        desc = (
+            f"{mover_name} played **{san}**.\n\n"
+            f"**{headline}**{payout_line}"
+            f"{view_line}"
+        )
+
+        file = _render_file_for_game(game, orientation_for_uid=None)
+        if file is not None:
+            await _edit_board(channel, game, _board_embed("♟️ Chess — Game Over", desc, color), file=file)
+        else:
+            await _edit_board(channel, game, emb("♟️ Chess — Game Over", desc, color))
 
 
 async def setup(bot):

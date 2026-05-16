@@ -52,7 +52,13 @@ from src.persistence.notable_events import (  # noqa: F401
     load_notable_events_today,
     prune_notable_events,
 )
-from src.persistence.chess import save_chess_games  # noqa: F401
+from src.persistence.chess import (  # noqa: F401
+    save_chess_game,
+    save_chess_games,
+    delete_chess_game,
+    save_chess_report,
+    load_chess_report,
+)
 from src.persistence.ai import save_ai_threads, save_channel_prompts  # noqa: F401
 from src.persistence.quotes import (  # noqa: F401
     save_quote_log,

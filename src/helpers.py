@@ -342,11 +342,22 @@ async def _delete_after(message: discord.Message, delay: float = 5.0):
 
 
 async def _edit_board(
-    channel: discord.abc.Messageable, game: dict, embed: discord.Embed
+    channel: discord.abc.Messageable, game: dict, embed: discord.Embed,
+    *, file: discord.File | None = None,
 ):
-    """Edit the persistent board message in-place; falls back to a new send if deleted."""
+    """Edit the persistent board message in-place; falls back to a new send if deleted.
+
+    When `file` is given, it replaces the message's attachments — caller must
+    have set embed.set_image(url=f"attachment://{file.filename}") for it to show.
+    """
+    edit_kwargs: dict = {"embed": embed}
+    if file is not None:
+        edit_kwargs["attachments"] = [file]
     try:
         msg = await channel.fetch_message(game["board_msg_id"])
-        await msg.edit(embed=embed)
+        await msg.edit(**edit_kwargs)
     except (discord.NotFound, discord.HTTPException):
-        await channel.send(embed=embed)
+        send_kwargs: dict = {"embed": embed}
+        if file is not None:
+            send_kwargs["file"] = file
+        await channel.send(**send_kwargs)

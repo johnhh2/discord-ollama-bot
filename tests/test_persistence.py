@@ -313,52 +313,98 @@ async def test_jackpot_roundtrip(db):
 # ── chess_games ───────────────────────────────────────────────────────────────
 
 async def test_chess_games_roundtrip(db):
-    """save_chess_games does DELETE + INSERT; verify nested dict round-trips
-    cleanly through json column."""
+    """save_chess_game writes one row via per-row upsert; verify FEN/PGN
+    and player ids round-trip through the column-per-field schema."""
     _state.active_chess_games.clear()
     _state.active_chess_games[12345] = {
-        "white": 100,
-        "black": 200,
-        "turn": "white",
-        "board": [["r", "n", "b"], ["p", "p", "p"]],
-        "moves": ["e2e4", "e7e5"],
+        "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        "pgn": "1. e4",
+        "white_id": 100,
+        "black_id": 200,
+        "current_id": 200,
+        "amount": 0,
+        "last_move": "Alice played e4",
+        "board_msg_id": 555,
     }
     _state.active_chess_games[67890] = {
-        "white": 300,
-        "black": 400,
-        "turn": "black",
-        "board": [],
-        "moves": [],
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "pgn": "",
+        "white_id": 300,
+        "black_id": 400,
+        "current_id": 300,
+        "amount": 500,
+        "last_move": "",
+        "board_msg_id": None,
     }
-    await _persistence.save_chess_games()
+    await _persistence.save_chess_game(12345)
+    await _persistence.save_chess_game(67890)
 
     _state.active_chess_games.clear()
     await _persistence.init_db_state()
 
     assert 12345 in _state.active_chess_games
     g = _state.active_chess_games[12345]
-    assert g["white"] == 100 and g["black"] == 200
-    assert g["turn"] == "white"
-    assert g["moves"] == ["e2e4", "e7e5"]
-    assert g["board"] == [["r", "n", "b"], ["p", "p", "p"]]
-    assert _state.active_chess_games[67890]["turn"] == "black"
+    assert g["white_id"] == 100 and g["black_id"] == 200
+    assert g["current_id"] == 200
+    assert g["pgn"] == "1. e4"
+    assert "e4" in g["fen"] or "4P3" in g["fen"]
+    assert _state.active_chess_games[67890]["amount"] == 500
 
 
-async def test_chess_games_save_replaces_full_table(db):
-    """save_chess_games does DELETE FROM chess_games before inserting — confirm
-    that removing a game from in-memory state and re-saving drops its DB row."""
+async def test_chess_game_delete_removes_row(db):
+    """delete_chess_game removes a single row; other games unaffected."""
     _state.active_chess_games.clear()
-    _state.active_chess_games[1] = {"x": 1}
-    _state.active_chess_games[2] = {"x": 2}
-    await _persistence.save_chess_games()
+    base = {
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "pgn": "",
+        "white_id": 1, "black_id": 2, "current_id": 1,
+        "amount": 0, "last_move": "", "board_msg_id": None,
+    }
+    _state.active_chess_games[1] = dict(base, white_id=1)
+    _state.active_chess_games[2] = dict(base, white_id=3)
+    await _persistence.save_chess_game(1)
+    await _persistence.save_chess_game(2)
 
-    del _state.active_chess_games[2]
-    await _persistence.save_chess_games()
+    await _persistence.delete_chess_game(2)
 
     _state.active_chess_games.clear()
     await _persistence.init_db_state()
     assert 1 in _state.active_chess_games
     assert 2 not in _state.active_chess_games
+
+
+async def test_chess_report_save_and_load(db):
+    """save_chess_report returns the new auto-increment id; load_chess_report
+    returns the row as a dict."""
+    rid = await _persistence.save_chess_report(
+        guild_id=42, channel_id=999, white_id=10, black_id=20,
+        winner_id=10, result="1-0", pgn="1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7#",
+        final_fen="r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4",
+    )
+    assert rid is not None and rid > 0
+
+    report = await _persistence.load_chess_report(rid)
+    assert report is not None
+    assert report["white_id"] == 10
+    assert report["black_id"] == 20
+    assert report["winner_id"] == 10
+    assert report["result"] == "1-0"
+    assert "Qxf7#" in report["pgn"]
+
+
+async def test_chess_report_load_missing_returns_none(db):
+    assert await _persistence.load_chess_report(999999) is None
+
+
+async def test_chess_report_draw_has_null_winner(db):
+    rid = await _persistence.save_chess_report(
+        guild_id=42, channel_id=999, white_id=10, black_id=20,
+        winner_id=None, result="1/2-1/2", pgn="1. e4 e5 (stalemate)",
+        final_fen="8/8/8/8/8/3k4/3p4/3K4 w - - 0 1",
+    )
+    report = await _persistence.load_chess_report(rid)
+    assert report["winner_id"] is None
+    assert report["result"] == "1/2-1/2"
 
 
 # ── ai_threads (ask, story, roleplay, rpg) ───────────────────────────────────

@@ -278,8 +278,23 @@ async def _init_db_state_inner(state, run_migrations):
 
         # ── chess_games ───────────────────────────────────────────────────
         try:
-            await cur.execute("SELECT channel_id, game_json FROM chess_games")
-            state.active_chess_games = {r[0]: json.loads(r[1]) for r in await cur.fetchall()}
+            await cur.execute(
+                "SELECT channel_id, fen, pgn, white_id, black_id, current_id, "
+                "amount, last_move, board_msg_id FROM chess_games"
+            )
+            state.active_chess_games = {
+                r[0]: {
+                    "fen": r[1],
+                    "pgn": r[2],
+                    "white_id": r[3],
+                    "black_id": r[4],
+                    "current_id": r[5],
+                    "amount": r[6],
+                    "last_move": r[7],
+                    "board_msg_id": r[8],
+                }
+                for r in await cur.fetchall()
+            }
         except Exception as e:
             logging.error(f"[init_db_state] chess_games failed: {e}", exc_info=True)
 

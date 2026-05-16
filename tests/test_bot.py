@@ -18,7 +18,6 @@ from src.economy import _ensure_user, add_balance, announce_new_lottery, deduct_
 from src.gambling.scratchoff import MiniCactpotGame
 from src.gambling.slots import eval_slots
 from src.games.blackjack import RANKS, SUITS, build_blackjack_display, draw_card, format_hand, hand_value, new_deck
-from src.games.chess import create_chess_board, is_black_piece, is_valid_chess_move, is_white_piece, parse_chess_move
 from src.games.hangman import HANGMAN_ART, build_hangman_display, calculate_hangman_reward
 from src.games.ttt_c4 import build_c4_display, build_ttt_display, check_c4_winner, check_ttt_winner, is_ttt_stalemate
 from src.helpers import _render_race, curse_font, mocking_font
@@ -697,109 +696,6 @@ class TestBuildC4Display:
         game = {"board": _empty_c4_board()}
         result = build_c4_display(game)
         assert "⚫" in result
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Chess helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestCreateChessBoard:
-    def test_board_dimensions(self):
-        board = create_chess_board()
-        assert len(board) == 8
-        assert all(len(row) == 8 for row in board)
-
-    def test_white_pieces_on_rank_1(self):
-        board = create_chess_board()
-        assert board[7][0] == "♖"  # white rook
-        assert board[7][4] == "♔"  # white king
-        assert board[7][7] == "♖"  # white rook
-
-    def test_black_pieces_on_rank_8(self):
-        board = create_chess_board()
-        assert board[0][4] == "♚"  # black king
-        assert board[0][0] == "♜"  # black rook
-
-    def test_white_pawns_on_rank_2(self):
-        board = create_chess_board()
-        assert all(board[6][c] == "♙" for c in range(8))
-
-    def test_black_pawns_on_rank_7(self):
-        board = create_chess_board()
-        assert all(board[1][c] == "♟" for c in range(8))
-
-
-class TestParseChessMove:
-    def test_valid_move_e2e4(self):
-        assert parse_chess_move("e2e4") == (6, 4, 4, 4)
-
-    def test_valid_move_a1a8(self):
-        assert parse_chess_move("a1a8") == (7, 0, 0, 0)
-
-    def test_case_insensitive(self):
-        assert parse_chess_move("E2E4") == (6, 4, 4, 4)
-
-    def test_space_separated(self):
-        assert parse_chess_move("e2 e4") == (6, 4, 4, 4)
-
-    def test_too_short(self):
-        assert parse_chess_move("e2") is None
-
-    def test_out_of_bounds_rank(self):
-        assert parse_chess_move("a9a1") is None
-
-    def test_garbage(self):
-        assert parse_chess_move("invalid") is None
-
-
-class TestPieceIdentification:
-    def test_white_pieces(self):
-        for p in "♔♕♖♗♘♙":
-            assert is_white_piece(p) is True
-
-    def test_black_pieces_not_white(self):
-        for p in "♚♛♜♝♞♟":
-            assert is_white_piece(p) is False
-
-    def test_none_not_white(self):
-        assert is_white_piece(None) is False
-
-    def test_black_pieces(self):
-        for p in "♚♛♜♝♞♟":
-            assert is_black_piece(p) is True
-
-    def test_white_pieces_not_black(self):
-        for p in "♔♕♖♗♘♙":
-            assert is_black_piece(p) is False
-
-    def test_none_not_black(self):
-        assert is_black_piece(None) is False
-
-
-class TestIsValidChessMove:
-    def setup_method(self):
-        self.board = create_chess_board()
-
-    def test_white_pawn_forward(self):
-        assert is_valid_chess_move(self.board, 6, 0, 5, 0, True) is True
-
-    def test_white_cannot_move_black_piece(self):
-        # board[0][0] is black rook
-        assert is_valid_chess_move(self.board, 0, 0, 1, 0, True) is False
-
-    def test_white_cannot_capture_own_piece(self):
-        # board[6][0] and board[6][1] are both white pawns
-        assert is_valid_chess_move(self.board, 6, 0, 6, 1, True) is False
-
-    def test_out_of_bounds_target(self):
-        assert is_valid_chess_move(self.board, 6, 0, 8, 0, True) is False
-
-    def test_empty_square_cannot_move(self):
-        assert is_valid_chess_move(self.board, 4, 4, 3, 4, True) is False
-
-    def test_black_can_move_black_piece(self):
-        # board[1][0] is black pawn
-        assert is_valid_chess_move(self.board, 1, 0, 2, 0, False) is True
 
 
 # ─────────────────────────────────────────────────────────────────────────────

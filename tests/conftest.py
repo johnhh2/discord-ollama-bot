@@ -108,7 +108,8 @@ def reset_bot_state(monkeypatch):
     save_fn_names = [
         "save_economy", "save_guild_house", "save_insurance", "save_jackpot",
         "save_guild_settings", "save_bot_roles", "save_bot_settings", "save_godmode_users",
-        "save_chess_games", "save_ragebait", "save_mock", "save_curse", "save_tax",
+        "save_chess_games", "save_chess_game", "delete_chess_game", "save_chess_report",
+        "save_ragebait", "save_mock", "save_curse", "save_tax",
         "save_rigged_slots", "save_rigged_flips", "save_rigged_scratch", "save_rigged_steal",
         "save_gambler_streak", "save_ai_threads",
         "save_quote_log", "save_saved_quotes", "save_lottery", "save_records",
