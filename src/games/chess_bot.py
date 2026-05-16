@@ -21,14 +21,21 @@ STOCKFISH_NATIVE_ELO_MAX = 3190
 MULTIPV_FLOOR = 300
 MULTIPV_COUNT = 10
 
-# Analysis depth scale for the MultiPV tier. Picking "rank N of top-10" from a
-# full-strength search produces moves that are too strong (full Stockfish's
-# 2nd-best move is still a strong move). Limiting analysis depth weakens the
-# top-10 itself, so even rank 1 isn't a deep-tactical-best. Span 1..4 keeps
-# the upper MultiPV range close to native-1320 strength without making the
-# boundary jarring.
-MULTIPV_DEPTH_MIN = 1
-MULTIPV_DEPTH_MAX = 4
+# Analysis depth in the MultiPV tier is INVERTED with respect to Elo:
+#   - Low Elo (300):  high depth (4 plies) + worst rank (10th of top-10).
+#     Stockfish actually sees one-move-deep threats so it doesn't blunder
+#     captures/mates, but it picks the worst defensive option from that
+#     position-aware analysis. Plays bad chess, not blind chess.
+#   - High Elo (1319): low depth (2 plies) + best rank (1st). Stockfish at
+#     depth 2 is genuinely weak (~1500 effective Elo, no 3-ply tactics) —
+#     picking its best move at that depth produces a coherent but limited
+#     player just below the native UCI_Elo floor.
+# This inversion fixes the prior problem where Elo 1100-1319 felt stronger
+# than 1400-1600 native: previously the upper MultiPV range used deep search
+# at rank 1, which gave full-strength play. Now depth caps strength even at
+# rank 1, so the curve is monotonic across the MultiPV→native boundary.
+MULTIPV_DEPTH_LOW_ELO = 4   # at MULTIPV_FLOOR
+MULTIPV_DEPTH_HIGH_ELO = 2  # at STOCKFISH_NATIVE_ELO_MIN - 1
 
 # What we accept from users via !chess @Bot <elo>.
 ELO_MIN = 100
@@ -96,17 +103,21 @@ def multipv_rank_for_elo(elo: int) -> int:
 
 
 def multipv_depth_for_elo(elo: int) -> int:
-    """Analysis depth for the MultiPV tier. Linear from MULTIPV_DEPTH_MIN at
-    the MultiPV floor to MULTIPV_DEPTH_MAX just below the native floor."""
+    """Analysis depth for the MultiPV tier. INVERTED — high depth at low Elo
+    (so the bot sees threats and doesn't blunder captures) ramping down to
+    low depth at high Elo (so even rank-1 is a shallow-search best move,
+    keeping the upper MultiPV range comparable to native UCI_Elo 1320)."""
     if elo <= MULTIPV_FLOOR:
-        return MULTIPV_DEPTH_MIN
+        return MULTIPV_DEPTH_LOW_ELO
     if elo >= STOCKFISH_NATIVE_ELO_MIN:
-        return MULTIPV_DEPTH_MAX
+        return MULTIPV_DEPTH_HIGH_ELO
     span_elo = STOCKFISH_NATIVE_ELO_MIN - 1 - MULTIPV_FLOOR
-    span_depth = MULTIPV_DEPTH_MAX - MULTIPV_DEPTH_MIN
-    progress = (elo - MULTIPV_FLOOR) / span_elo
-    depth = round(MULTIPV_DEPTH_MIN + progress * span_depth)
-    return max(MULTIPV_DEPTH_MIN, min(MULTIPV_DEPTH_MAX, depth))
+    span_depth = MULTIPV_DEPTH_LOW_ELO - MULTIPV_DEPTH_HIGH_ELO
+    progress = (elo - MULTIPV_FLOOR) / span_elo  # 0 at low, 1 at high
+    # progress 0 → MULTIPV_DEPTH_LOW_ELO; progress 1 → MULTIPV_DEPTH_HIGH_ELO
+    depth = round(MULTIPV_DEPTH_LOW_ELO - progress * span_depth)
+    lo, hi = sorted((MULTIPV_DEPTH_LOW_ELO, MULTIPV_DEPTH_HIGH_ELO))
+    return max(lo, min(hi, depth))
 
 
 def _pick_random_legal(board: chess.Board) -> chess.Move | None:

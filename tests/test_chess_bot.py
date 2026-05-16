@@ -136,31 +136,47 @@ class TestMultipvRankForElo:
 
 
 class TestMultipvDepthForElo:
-    def test_floor_is_min_depth(self):
-        assert chess_bot.multipv_depth_for_elo(chess_bot.MULTIPV_FLOOR) == chess_bot.MULTIPV_DEPTH_MIN
+    def test_floor_is_high_depth(self):
+        """Low Elo gets HIGH depth so the bot actually sees tactical threats
+        (won't blunder captures). Weakness comes from picking a worse-ranked
+        move from the same position-aware analysis."""
+        assert chess_bot.multipv_depth_for_elo(chess_bot.MULTIPV_FLOOR) == chess_bot.MULTIPV_DEPTH_LOW_ELO
 
-    def test_just_below_native_is_max_depth(self):
-        assert chess_bot.multipv_depth_for_elo(chess_bot.STOCKFISH_NATIVE_ELO_MIN - 1) == chess_bot.MULTIPV_DEPTH_MAX
+    def test_just_below_native_is_low_depth(self):
+        """High Elo (just below native) gets LOW depth — even rank-1 from a
+        shallow search isn't a tactical-best move, keeping the upper MultiPV
+        range comparable to native UCI_Elo at the boundary."""
+        assert chess_bot.multipv_depth_for_elo(chess_bot.STOCKFISH_NATIVE_ELO_MIN - 1) == chess_bot.MULTIPV_DEPTH_HIGH_ELO
 
-    def test_below_floor_clamps_to_min(self):
-        assert chess_bot.multipv_depth_for_elo(100) == chess_bot.MULTIPV_DEPTH_MIN
+    def test_below_floor_clamps_to_low_elo_depth(self):
+        assert chess_bot.multipv_depth_for_elo(100) == chess_bot.MULTIPV_DEPTH_LOW_ELO
 
-    def test_above_native_clamps_to_max(self):
+    def test_above_native_clamps_to_high_elo_depth(self):
         # Defensive: native path takes over here, but the helper should still
         # return a sensible value if called.
-        assert chess_bot.multipv_depth_for_elo(2000) == chess_bot.MULTIPV_DEPTH_MAX
+        assert chess_bot.multipv_depth_for_elo(2000) == chess_bot.MULTIPV_DEPTH_HIGH_ELO
 
     def test_within_bounds(self):
+        lo, hi = sorted((chess_bot.MULTIPV_DEPTH_LOW_ELO, chess_bot.MULTIPV_DEPTH_HIGH_ELO))
         for elo in range(chess_bot.MULTIPV_FLOOR, chess_bot.STOCKFISH_NATIVE_ELO_MIN, 50):
             d = chess_bot.multipv_depth_for_elo(elo)
-            assert chess_bot.MULTIPV_DEPTH_MIN <= d <= chess_bot.MULTIPV_DEPTH_MAX
+            assert lo <= d <= hi
 
-    def test_monotonic_non_decreasing_in_range(self):
-        prev = chess_bot.MULTIPV_DEPTH_MIN - 1
+    def test_monotonic_non_increasing_in_range(self):
+        """Depth decreases (or stays equal) as Elo rises — the opposite of the
+        earlier curve. Combined with rank monotonically decreasing, this gives:
+        low Elo = aware-but-bad-pick, high Elo = shallow-but-best-pick."""
+        prev = chess_bot.MULTIPV_DEPTH_LOW_ELO + 1
         for elo in range(chess_bot.MULTIPV_FLOOR, chess_bot.STOCKFISH_NATIVE_ELO_MIN, 50):
             d = chess_bot.multipv_depth_for_elo(elo)
-            assert d >= prev, f"depth not monotonic at elo={elo}: {d} < {prev}"
+            assert d <= prev, f"depth not monotonically non-increasing at elo={elo}: {d} > {prev}"
             prev = d
+
+    def test_specific_curve_points(self):
+        """Pin the curve at named Elos so accidental tuning shifts are caught."""
+        assert chess_bot.multipv_depth_for_elo(300) == 4
+        assert chess_bot.multipv_depth_for_elo(500) == 4  # still seeing threats
+        assert chess_bot.multipv_depth_for_elo(1319) == 2  # shallow at the top
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -267,19 +283,18 @@ async def test_pick_move_multipv_tier_skips_configure(monkeypatch):
 
 
 @_aio
-async def test_pick_move_multipv_depth_scales_with_elo(monkeypatch):
-    """Low Elo gets shallow analysis depth; high Elo gets deeper. Pin the
-    boundaries: Elo MULTIPV_FLOOR uses depth MIN, Elo just-below-native uses
-    depth MAX."""
+async def test_pick_move_multipv_depth_inverts_with_elo(monkeypatch):
+    """Low Elo gets HIGH analysis depth (sees threats), high Elo gets LOW
+    depth (limits ceiling strength). Pin both boundaries."""
     calls_low = _install_fake_engine(monkeypatch)
     await chess_bot.pick_move(chess_engine.STARTING_FEN, chess_bot.MULTIPV_FLOOR)
     limit_low, _ = calls_low["analyse_limit"][0]
-    assert limit_low.depth == chess_bot.MULTIPV_DEPTH_MIN
+    assert limit_low.depth == chess_bot.MULTIPV_DEPTH_LOW_ELO
 
     calls_high = _install_fake_engine(monkeypatch)
     await chess_bot.pick_move(chess_engine.STARTING_FEN, chess_bot.STOCKFISH_NATIVE_ELO_MIN - 1)
     limit_high, _ = calls_high["analyse_limit"][0]
-    assert limit_high.depth == chess_bot.MULTIPV_DEPTH_MAX
+    assert limit_high.depth == chess_bot.MULTIPV_DEPTH_HIGH_ELO
 
 
 @_aio
