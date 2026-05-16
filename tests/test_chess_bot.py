@@ -74,25 +74,36 @@ class TestResolveStockfishPath:
         assert chess_bot._resolve_stockfish_path() == "/usr/bin/stockfish"
 
 
-class TestSkillLevelForElo:
-    def test_floor_maps_to_zero(self):
-        assert chess_bot.skill_level_for_elo(100) == 0
+class TestRandomMoveProbability:
+    def test_floor_is_all_random(self):
+        assert chess_bot.random_move_probability(chess_bot.ELO_MIN) == 1.0
 
-    def test_ceiling_maps_to_twenty(self):
-        # The ceiling for the sub-native map is one Elo below native floor.
-        assert chess_bot.skill_level_for_elo(chess_bot.STOCKFISH_NATIVE_ELO_MIN - 1) == 20
+    def test_native_floor_is_pure_engine(self):
+        assert chess_bot.random_move_probability(chess_bot.STOCKFISH_NATIVE_ELO_MIN) == 0.0
 
-    def test_monotonic_in_range(self):
-        prev = -1
+    def test_above_native_is_pure_engine(self):
+        for elo in (1500, 2000, 3190, 9999):
+            assert chess_bot.random_move_probability(elo) == 0.0
+
+    def test_below_floor_clamps_to_one(self):
+        assert chess_bot.random_move_probability(50) == 1.0
+        assert chess_bot.random_move_probability(-100) == 1.0
+
+    def test_midpoint_is_half(self):
+        # (1320+100)/2 = 710
+        assert abs(chess_bot.random_move_probability(710) - 0.5) < 0.001
+
+    def test_monotonic_decreasing_in_sub_native_range(self):
+        prev = 2.0
         for elo in range(chess_bot.ELO_MIN, chess_bot.STOCKFISH_NATIVE_ELO_MIN, 60):
-            cur = chess_bot.skill_level_for_elo(elo)
-            assert cur >= prev, f"skill level not monotonic at elo={elo}"
+            cur = chess_bot.random_move_probability(elo)
+            assert cur <= prev, f"random prob not monotonically decreasing at elo={elo}"
             prev = cur
 
     def test_within_bounds(self):
-        for elo in range(chess_bot.ELO_MIN, chess_bot.STOCKFISH_NATIVE_ELO_MIN, 60):
-            sl = chess_bot.skill_level_for_elo(elo)
-            assert 0 <= sl <= 20
+        for elo in range(chess_bot.ELO_MIN, chess_bot.STOCKFISH_NATIVE_ELO_MIN + 1, 60):
+            p = chess_bot.random_move_probability(elo)
+            assert 0.0 <= p <= 1.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -164,17 +175,18 @@ async def test_pick_move_native_elo_uses_uci_limit_strength(monkeypatch):
 
 
 @_aio
-async def test_pick_move_sub_native_elo_uses_skill_level(monkeypatch):
-    """For Elo < STOCKFISH_NATIVE_ELO_MIN, pick_move configures Skill Level,
-    not UCI_LimitStrength."""
+async def test_pick_move_sub_native_elo_uses_skill_level_zero(monkeypatch):
+    """Below native floor, configure Skill Level 0 regardless of Elo. The
+    actual weakening for sub-1320 comes from the random-move blend after
+    the engine returns, not from Skill Level."""
     calls = _install_fake_engine(monkeypatch)
+    # Force pure-engine path so the blend doesn't trip the test.
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 1.0)
     await chess_bot.pick_move(chess_engine.STARTING_FEN, 500)
 
     assert len(calls["configure"]) == 1
     opts = calls["configure"][0]
-    assert "Skill Level" in opts
-    expected_skill = chess_bot.skill_level_for_elo(500)
-    assert opts["Skill Level"] == expected_skill
+    assert opts.get("Skill Level") == 0
     assert "UCI_LimitStrength" not in opts
     assert "UCI_Elo" not in opts
 
@@ -184,10 +196,59 @@ async def test_pick_move_clamps_then_branches(monkeypatch):
     """Out-of-range Elos are clamped before the branching check. Elo=50 clamps
     to 100 (sub-native), so Skill Level configured."""
     calls = _install_fake_engine(monkeypatch)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 1.0)
     await chess_bot.pick_move(chess_engine.STARTING_FEN, 50)
 
     opts = calls["configure"][0]
     assert opts.get("Skill Level") == 0  # clamped 50 -> 100 -> skill 0
+
+
+@_aio
+async def test_pick_move_random_blend_replaces_engine_move(monkeypatch):
+    """When the dice roll lands inside p_random, pick_move replaces Stockfish's
+    move with a random legal move. Fake engine returns e2e4; force the dice to
+    roll random (random.random returns 0.0, less than any p_random > 0)."""
+    _install_fake_engine(monkeypatch)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    # Pin the random.choice so the test is deterministic.
+    monkeypatch.setattr(chess_bot.random, "choice", lambda moves: moves[-1])
+
+    # Elo 100 → p_random = 1.0, blend always fires.
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 100)
+
+    board = chess.Board()
+    legal = list(board.legal_moves)
+    # The blend should have picked legal[-1], not the engine's e2e4.
+    assert move == legal[-1]
+    assert move != chess.Move.from_uci("e2e4") or move == legal[-1]
+
+
+@_aio
+async def test_pick_move_random_blend_skips_when_dice_too_high(monkeypatch):
+    """When the dice roll exceeds p_random, the engine move is returned
+    unchanged."""
+    _install_fake_engine(monkeypatch)
+    # Force a roll above 1.0 so it always exceeds p_random.
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999999)
+
+    # Elo 700 → p_random ≈ 0.508, our dice (0.999999) always exceeds it.
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 700)
+
+    # Engine move (e2e4 per the fake) is returned unchanged.
+    assert move == chess.Move.from_uci("e2e4")
+
+
+@_aio
+async def test_pick_move_native_elo_never_blends(monkeypatch):
+    """Above the native floor, p_random is 0, so the dice are irrelevant.
+    Force the dice to always roll random — the engine move still wins."""
+    _install_fake_engine(monkeypatch)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 2000)
+
+    # No blend at native Elo, regardless of dice.
+    assert move == chess.Move.from_uci("e2e4")
 
 
 @_aio

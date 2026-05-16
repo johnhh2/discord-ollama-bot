@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import os
+import random
 import shutil
 
 import chess
 import chess.engine
 
 
-# Stockfish's UCI_Elo option is clamped to this range internally; below 1320 we
-# fall through to its Skill Level option (0-20) which weakens differently.
+# Stockfish's UCI_Elo option is clamped to this range internally. Below 1320
+# Stockfish has no real "weak" setting — even Skill Level 0 plays at roughly
+# native floor (~1350 Elo) because it's still a full alpha-beta search. To
+# actually play weaker than 1320 we run Stockfish at Skill Level 0 and then,
+# with linearly-interpolated probability, replace its move with a random
+# legal move. At Elo 100 the move is almost always random; at Elo 1320 the
+# move is always Stockfish.
 STOCKFISH_NATIVE_ELO_MIN = 1320
 STOCKFISH_NATIVE_ELO_MAX = 3190
 
@@ -49,12 +55,15 @@ def clamp_elo(elo: int) -> int:
     return elo
 
 
-def skill_level_for_elo(elo: int) -> int:
-    """Linear-ish map from sub-native Elo (100..1319) to Skill Level (0..20).
-    Used when target Elo is below Stockfish's UCI_Elo floor."""
-    elo = max(ELO_MIN, min(STOCKFISH_NATIVE_ELO_MIN - 1, elo))
-    span = STOCKFISH_NATIVE_ELO_MIN - 1 - ELO_MIN  # 1219
-    return round((elo - ELO_MIN) * 20 / span)
+def random_move_probability(elo: int) -> float:
+    """Probability of replacing Stockfish's move with a random legal move.
+    Linear: 1.0 at ELO_MIN, 0.0 at STOCKFISH_NATIVE_ELO_MIN, clamped outside."""
+    if elo >= STOCKFISH_NATIVE_ELO_MIN:
+        return 0.0
+    if elo <= ELO_MIN:
+        return 1.0
+    span = STOCKFISH_NATIVE_ELO_MIN - ELO_MIN  # 1220
+    return (STOCKFISH_NATIVE_ELO_MIN - elo) / span
 
 
 async def pick_move(fen: str, elo: int) -> chess.Move:
@@ -68,13 +77,22 @@ async def pick_move(fen: str, elo: int) -> chess.Move:
         if elo >= STOCKFISH_NATIVE_ELO_MIN:
             await engine.configure({"UCI_LimitStrength": True, "UCI_Elo": elo})
         else:
-            await engine.configure({"Skill Level": skill_level_for_elo(elo)})
+            # Stockfish at its weakest. The actual weakening below 1320 comes
+            # from the random-move blend after the engine returns.
+            await engine.configure({"Skill Level": 0})
         result = await engine.play(board, chess.engine.Limit(time=MOVE_TIME_SECONDS))
         if result.move is None:
             raise chess.engine.EngineError("Stockfish returned no move")
-        return result.move
+        engine_move = result.move
     finally:
         try:
             await engine.quit()
         except Exception:
             transport.close()
+
+    p_random = random_move_probability(elo)
+    if p_random > 0 and random.random() < p_random:
+        legal_moves = list(board.legal_moves)
+        if legal_moves:
+            return random.choice(legal_moves)
+    return engine_move
