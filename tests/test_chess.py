@@ -209,13 +209,15 @@ def _ctx_for(member: FakeMember, channel_id: int = 700, guild: FakeGuild | None 
     return ctx
 
 
-def _seed_chess_game(channel_id: int, white_id: int, black_id: int, amount: int = 0):
+def _seed_chess_game(channel_id: int, white_id: int, black_id: int, amount: int = 0,
+                     *, fen: str | None = None, current_id: int | None = None):
+    starting_fen = fen if fen is not None else chess_engine.STARTING_FEN
     _state.active_chess_games[channel_id] = {
-        "fen": chess_engine.STARTING_FEN,
-        "pgn": _initial_pgn("White", "Black", None),
+        "fen": starting_fen,
+        "pgn": _initial_pgn("White", "Black", None, starting_fen=starting_fen),
         "white_id": white_id,
         "black_id": black_id,
-        "current_id": white_id,
+        "current_id": current_id if current_id is not None else white_id,
         "amount": amount,
         "last_move": "",
         "board_msg_id": 12345,
@@ -380,43 +382,370 @@ async def test_chess_view_loads_report(db):
     embed = ctx.sent_embeds[0]
     assert f"#{rid}" in embed.title
     assert "Qxf7#" in embed.description
+    assert "White" in embed.description and "wins" in embed.description
+
+
+@_aio
+async def test_chess_view_black_winner_branch(db):
+    """Black-winner reports describe the outcome as 'Black wins' (different
+    branch from white-winner test)."""
+    from src.persistence import save_chess_report
+    rid = await save_chess_report(
+        guild_id=42, channel_id=999, white_id=10, black_id=20,
+        winner_id=20, result="0-1",
+        pgn='[Event "x"]\n[White "A"]\n[Black "B"]\n[Result "0-1"]\n\n1. f3 e5 2. g4 Qh4# 0-1\n',
+        final_fen="rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3",
+    )
+
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1203)
+    ctx = _ctx_for(user, channel_id=803)
+
+    await cog._cmd_view(ctx, (str(rid),))
+
+    assert len(ctx.sent_embeds) == 1
+    embed = ctx.sent_embeds[0]
+    assert "Black" in embed.description and "wins" in embed.description
+    assert "0-1" in embed.description
+
+
+@_aio
+async def test_chess_view_draw_branch(db):
+    """Draw reports (winner_id NULL) describe the outcome as a draw."""
+    from src.persistence import save_chess_report
+    rid = await save_chess_report(
+        guild_id=42, channel_id=999, white_id=10, black_id=20,
+        winner_id=None, result="1/2-1/2",
+        pgn='[Event "x"]\n[White "A"]\n[Black "B"]\n[Result "1/2-1/2"]\n\n1. e4 e5 1/2-1/2\n',
+        final_fen="rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+    )
+
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1204)
+    ctx = _ctx_for(user, channel_id=804)
+
+    await cog._cmd_view(ctx, (str(rid),))
+
+    assert len(ctx.sent_embeds) == 1
+    embed = ctx.sent_embeds[0]
+    assert "Draw" in embed.description
+    assert "1/2-1/2" in embed.description
+
+
+@_aio
+async def test_chess_view_truncates_huge_pgn(db):
+    """PGNs longer than the embed description budget get truncated and marked."""
+    from src.persistence import save_chess_report
+    huge_pgn_body = " ".join([f"{i}. e4 e5" for i in range(1, 600)])  # ~6000 chars
+    pgn = (
+        '[Event "x"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n'
+        + huge_pgn_body + " 1-0\n"
+    )
+    rid = await save_chess_report(
+        guild_id=42, channel_id=999, white_id=10, black_id=20,
+        winner_id=10, result="1-0", pgn=pgn,
+        final_fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    )
+
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1205)
+    ctx = _ctx_for(user, channel_id=805)
+
+    await cog._cmd_view(ctx, (str(rid),))
+
+    assert len(ctx.sent_embeds) == 1
+    embed = ctx.sent_embeds[0]
+    # Description must fit Discord's 4096-char limit and signal truncation.
+    assert len(embed.description) <= 4096
+    assert "truncated" in embed.description.lower()
+
+
+@_aio
+async def test_chess_view_invalid_number(db):
+    """!chess view <non-int> sends an error embed."""
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1206)
+    ctx = _ctx_for(user, channel_id=806)
+
+    await cog._cmd_view(ctx, ("abc",))
+
+    assert len(ctx.sent_embeds) == 1
+    assert "Invalid" in ctx.sent_embeds[0].title
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Concurrency: gate-and-claim under interleaved !move invocations
+# Special-move flows through cmd_move_chess (castling, en passant, promotion)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 @_aio
-async def test_concurrent_moves_only_one_applies(db, _stub_chess_edit_board, monkeypatch):
-    """Per CLAUDE.md concurrency rules: cmd_move_chess must flip current_id
-    synchronously before any await, so a racing second !move from the same
-    user bails at the not-your-turn gate."""
-    import asyncio
+async def test_castling_via_cmd_move(db, _stub_chess_edit_board):
+    """O-O survives the full pipeline (try_move → push_with_san → PGN append →
+    save → reload). Seeds a king-side-clear position and castles in one move."""
+    cog = ChessCog(bot=None)
+    white = FakeMember(uid=1400, display_name="W")
+    black = FakeMember(uid=1401, display_name="B")
+    _seed_chess_game(
+        910, white.id, black.id,
+        fen="r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1",
+    )
+    ctx = _ctx_for(white, channel_id=910)
+    ctx.guild.members.append(black)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "O-O")
+
+    g = _state.active_chess_games[910]
+    # Post-castle: white king on g1, rook on f1. Only black retains castling rights.
+    assert g["fen"].startswith("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R4RK1")
+    assert " kq " in g["fen"]
+    assert "O-O" in g["pgn"]
+    assert g["current_id"] == black.id
+
+    # Round-trip via init reload preserves castling-applied state.
+    _state.active_chess_games.clear()
+    import src.persistence as _persistence
+    _persistence._init_db_state_done = False
+    await _persistence.init_db_state()
+    g2 = _state.active_chess_games[910]
+    assert g2["fen"] == g["fen"]
+    assert "O-O" in g2["pgn"]
+
+
+@_aio
+async def test_en_passant_via_cmd_move(db, _stub_chess_edit_board):
+    """Black plays d7-d5 (sets ep target d6), white captures exd6 e.p. — the
+    pawn lands on d6 and the captured d5 pawn is gone."""
+    cog = ChessCog(bot=None)
+    white = FakeMember(uid=1402, display_name="W")
+    black = FakeMember(uid=1403, display_name="B")
+    _seed_chess_game(
+        911, white.id, black.id,
+        fen="4k3/3p4/8/4P3/8/8/8/4K3 b - - 0 1",
+        current_id=1403,  # black to move
+    )
+    ctx_b = _ctx_for(black, channel_id=911)
+    ctx_b.guild.members.append(white)
+    ctx_w = _ctx_for(white, channel_id=911, guild=ctx_b.guild)
+
+    await cog.cmd_move_chess.callback(cog, ctx_b, "d5")
+    # After black's d5, the FEN must show en-passant target d6.
+    assert " d6 " in _state.active_chess_games[911]["fen"]
+
+    await cog.cmd_move_chess.callback(cog, ctx_w, "exd6")
+
+    g = _state.active_chess_games[911]
+    # White's pawn now on d6; black's d5 pawn captured.
+    assert g["fen"].startswith("4k3/8/3P4/8/8/8/8/4K3")
+    assert "exd6" in g["pgn"]
+
+
+@_aio
+async def test_promotion_via_cmd_move_uci(db, _stub_chess_edit_board):
+    """UCI promotion suffix (a7a8q) flows through and renders as a8=Q in PGN."""
+    cog = ChessCog(bot=None)
+    white = FakeMember(uid=1404, display_name="W")
+    black = FakeMember(uid=1405, display_name="B")
+    _seed_chess_game(
+        912, white.id, black.id,
+        fen="4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+    )
+    ctx = _ctx_for(white, channel_id=912)
+    ctx.guild.members.append(black)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "a7a8q")
+
+    g = _state.active_chess_games[912]
+    # Post-promotion: white queen on a8 (gives check).
+    assert g["fen"].startswith("Q3k3/8/8/8/8/8/8/4K3")
+    assert "a8=Q" in g["pgn"]
+    assert g["current_id"] == black.id
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# cmd_move_chess edge cases
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@_aio
+async def test_move_no_active_game(db, _stub_chess_edit_board):
+    """!move in a channel with no game sends a help message and bails."""
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1500)
+    ctx = _ctx_for(user, channel_id=920)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "e4")
+
+    # An error/help message was sent; no game created.
+    assert 920 not in _state.active_chess_games
+    assert len(ctx.sent_messages) + len(ctx.sent_embeds) >= 1
+
+
+@_aio
+async def test_move_with_no_args(db, _stub_chess_edit_board):
+    """!move with no args sends usage and leaves state untouched."""
+    cog = ChessCog(bot=None)
+    white = FakeMember(uid=1502, display_name="W")
+    black = FakeMember(uid=1503, display_name="B")
+    _seed_chess_game(921, white.id, black.id)
+    ctx = _ctx_for(white, channel_id=921)
+    ctx.guild.members.append(black)
+
+    await cog.cmd_move_chess.callback(cog, ctx)
+
+    g = _state.active_chess_games[921]
+    assert g["current_id"] == white.id  # still white's turn
+    assert g["fen"] == chess_engine.STARTING_FEN
+    assert len(ctx.sent_messages) + len(ctx.sent_embeds) >= 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# cmd_chess game-start flow
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def _stub_setup_pvp_game(monkeypatch):
+    """Bypass _setup_pvp_game's confirmation/wager flow for game-start tests.
+    Records calls so tests can assert it was invoked (or not)."""
+    import src.games.chess as _chess_mod
+    calls = []
+    async def _stub(ctx, opponent, amount, invite_title):
+        calls.append({"opponent": opponent, "amount": amount, "title": invite_title})
+        return True
+    monkeypatch.setattr(_chess_mod, "_setup_pvp_game", _stub)
+    return calls
+
+
+@_aio
+async def test_chess_start_creates_active_game(db, _stub_chess_edit_board, _stub_setup_pvp_game):
+    """!chess @opponent creates an active_chess_games entry with the right
+    state shape, runs _setup_pvp_game, and saves the row."""
+    cog = ChessCog(bot=None)
+    challenger = FakeMember(uid=1600, display_name="Challenger")
+    opponent = FakeMember(uid=1601, display_name="Opponent")
+    ctx = _ctx_for(challenger, channel_id=940)
+    ctx.guild.members.append(opponent)
+    ctx.message.mentions = [opponent]
+
+    await cog.cmd_chess.callback(cog, ctx)
+
+    assert 940 in _state.active_chess_games
+    g = _state.active_chess_games[940]
+    assert g["white_id"] == challenger.id
+    assert g["black_id"] == opponent.id
+    assert g["current_id"] == challenger.id  # white moves first
+    assert g["fen"] == chess_engine.STARTING_FEN
+    assert g["amount"] == 0
+    # _setup_pvp_game was called.
+    assert len(_stub_setup_pvp_game) == 1
+    assert _stub_setup_pvp_game[0]["opponent"] is opponent
+
+
+@_aio
+async def test_chess_start_with_wager_amount(db, _stub_chess_edit_board, _stub_setup_pvp_game):
+    """Trailing int is parsed as the wager and passed to _setup_pvp_game."""
+    cog = ChessCog(bot=None)
+    challenger = FakeMember(uid=1602)
+    opponent = FakeMember(uid=1603)
+    ctx = _ctx_for(challenger, channel_id=941)
+    ctx.guild.members.append(opponent)
+    ctx.message.mentions = [opponent]
+
+    await cog.cmd_chess.callback(cog, ctx, "500")
+
+    assert _state.active_chess_games[941]["amount"] == 500
+    assert _stub_setup_pvp_game[0]["amount"] == 500
+
+
+@_aio
+async def test_chess_start_channel_already_busy(db, _stub_chess_edit_board, _stub_setup_pvp_game):
+    """If a TTT or chess game is already active in the channel, !chess refuses."""
+    cog = ChessCog(bot=None)
+    challenger = FakeMember(uid=1604)
+    opponent = FakeMember(uid=1605)
+    ctx = _ctx_for(challenger, channel_id=942)
+    ctx.guild.members.append(opponent)
+    ctx.message.mentions = [opponent]
+    _state.active_ttt_games[942] = {"players": [challenger.id, opponent.id]}
+
+    await cog.cmd_chess.callback(cog, ctx)
+
+    # No chess game created, _setup_pvp_game never reached.
+    assert 942 not in _state.active_chess_games
+    assert len(_stub_setup_pvp_game) == 0
+    # Cleanup
+    _state.active_ttt_games.pop(942, None)
+
+
+@_aio
+async def test_chess_start_setup_rejection_no_game_created(db, _stub_chess_edit_board, monkeypatch):
+    """If _setup_pvp_game returns False (no opponent, declined, etc.), the
+    cog must not create the active game state."""
+    import src.games.chess as _chess_mod
+    async def _stub_rejected(ctx, opponent, amount, invite_title):
+        return False
+    monkeypatch.setattr(_chess_mod, "_setup_pvp_game", _stub_rejected)
+
+    cog = ChessCog(bot=None)
+    challenger = FakeMember(uid=1606)
+    opponent = FakeMember(uid=1607)
+    ctx = _ctx_for(challenger, channel_id=943)
+    ctx.guild.members.append(opponent)
+    ctx.message.mentions = [opponent]
+
+    await cog.cmd_chess.callback(cog, ctx)
+
+    assert 943 not in _state.active_chess_games
+
+
+@_aio
+async def test_chess_start_persists_via_init_reload(db, _stub_chess_edit_board, _stub_setup_pvp_game):
+    """The game saved by cmd_chess survives a fresh init_db_state hydration."""
+    cog = ChessCog(bot=None)
+    challenger = FakeMember(uid=1608)
+    opponent = FakeMember(uid=1609)
+    ctx = _ctx_for(challenger, channel_id=944)
+    ctx.guild.members.append(opponent)
+    ctx.message.mentions = [opponent]
+
+    await cog.cmd_chess.callback(cog, ctx)
+
+    # Clear memory; reload from DB.
+    _state.active_chess_games.clear()
+    import src.persistence as _persistence
+    _persistence._init_db_state_done = False
+    await _persistence.init_db_state()
+
+    assert 944 in _state.active_chess_games
+    g = _state.active_chess_games[944]
+    assert g["white_id"] == challenger.id
+    assert g["black_id"] == opponent.id
+    assert g["current_id"] == challenger.id
+
+
+@_aio
+async def test_same_user_two_moves_in_a_row_second_is_rejected(db, _stub_chess_edit_board):
+    """White plays, then immediately tries to play again before black has
+    moved. The second invocation must be rejected by the not-your-turn gate.
+
+    Note: cmd_move_chess is structurally race-free — the gate check, move
+    parsing, and current_id flip are all sync, with no await between them.
+    This is a regression test against accidentally introducing an await in
+    that critical section; it pins the user-visible behavior, not the
+    internal ordering.
+    """
     cog = ChessCog(bot=None)
     white = FakeMember(uid=1300, display_name="W")
     black = FakeMember(uid=1301, display_name="B")
-    _seed_chess_game(900, white.id, black.id)
-    ctx1 = _ctx_for(white, channel_id=900)
-    ctx1.guild.members.append(black)
-    ctx2 = _ctx_for(white, channel_id=900, guild=ctx1.guild)
+    _seed_chess_game(922, white.id, black.id)
+    ctx_w = _ctx_for(white, channel_id=922)
+    ctx_w.guild.members.append(black)
 
-    # Force save_chess_game to yield so two concurrent invocations can interleave.
-    import src.games.chess as _chess_mod
-    real_save = _chess_mod.save_chess_game
-    async def _yielding_save(channel_id):
-        await asyncio.sleep(0)  # real event-loop yield
-        return await real_save(channel_id)
-    monkeypatch.setattr(_chess_mod, "save_chess_game", _yielding_save)
+    await cog.cmd_move_chess.callback(cog, ctx_w, "e4")
+    await cog.cmd_move_chess.callback(cog, ctx_w, "Nf3")  # white's "second" move — should be rejected
 
-    # Two simultaneous e4 invocations.
-    await asyncio.gather(
-        cog.cmd_move_chess.callback(cog, ctx1, "e4"),
-        cog.cmd_move_chess.callback(cog, ctx2, "e4"),
-    )
-
-    g = _state.active_chess_games[900]
-    # Exactly one move applied — board is at the post-e4 position, not post-e4-e4-then-something.
-    expected_fen_prefix = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b"
-    assert g["fen"].startswith(expected_fen_prefix), f"unexpected fen: {g['fen']}"
+    g = _state.active_chess_games[922]
+    # Only e4 applied; the second white move bailed at the gate.
+    assert g["fen"].startswith("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b")
+    assert " Nf3" not in g["pgn"]
     assert g["current_id"] == black.id

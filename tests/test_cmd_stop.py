@@ -193,6 +193,48 @@ async def test_stop_chess_as_white_with_wager_pays_black(db, _stub_edit_board):
     assert report["result"] == "0-1"
 
 
+async def test_stop_chess_no_wager_still_archives_report(db, _stub_edit_board):
+    """A no-wager forfeit still ends the game and stores a chess_reports row.
+    Opponent balance unchanged (no pot to win)."""
+    cog = AICog(bot=None)
+    white = FakeMember(uid=1013)
+    black = FakeMember(uid=1014)
+    ctx = _ctx(black, channel_id=506)
+
+    _state.active_chess_games[506] = _starter_chess_game(white.id, black.id, amount=0)
+
+    await cog.cmd_stop.callback(cog, ctx)
+
+    assert 506 not in _state.active_chess_games
+    assert await _economy.get_balance(white.id) == 0  # no payout
+    from src.persistence import load_chess_report
+    report = await load_chess_report(1)
+    assert report is not None
+    assert report["winner_id"] == white.id
+    assert report["result"] == "1-0"
+
+
+async def test_stop_chess_non_player_does_nothing(db, _stub_edit_board):
+    """A user who isn't in the chess game runs !stop in the same channel:
+    the chess game is untouched (no payout, no report, no state change)."""
+    cog = AICog(bot=None)
+    white = FakeMember(uid=1015)
+    black = FakeMember(uid=1016)
+    interloper = FakeMember(uid=1017)
+    ctx = _ctx(interloper, channel_id=507)
+
+    _state.active_chess_games[507] = _starter_chess_game(white.id, black.id, amount=100)
+
+    await cog.cmd_stop.callback(cog, ctx)
+
+    # Game still active (interloper isn't a player), no payout, no report.
+    assert 507 in _state.active_chess_games
+    assert await _economy.get_balance(white.id) == 0
+    assert await _economy.get_balance(black.id) == 0
+    from src.persistence import load_chess_report
+    assert await load_chess_report(1) is None
+
+
 async def test_stop_pvp_game_in_other_channel_returns_none(db, _stub_edit_board):
     """Helper short-circuits when no game in this cid → no payout, no edit."""
     cog = AICog(bot=None)

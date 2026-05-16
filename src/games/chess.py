@@ -56,8 +56,15 @@ def _board_embed(title: str, description: str, color: int) -> discord.Embed:
     return e
 
 
-def _initial_pgn(white_name: str, black_name: str, guild_name: str | None) -> str:
+def _initial_pgn(white_name: str, black_name: str, guild_name: str | None,
+                 *, starting_fen: str | None = None) -> str:
     game = chess.pgn.Game()
+    if starting_fen is not None and starting_fen != chess_engine.STARTING_FEN:
+        # SetUp + FEN headers let chess.pgn.read_game restore the position when
+        # appending subsequent moves (otherwise _append_san_to_pgn parses moves
+        # against the default starting board and silently rejects anything
+        # illegal from that position).
+        game.setup(chess.Board(fen=starting_fen))
     game.headers["Event"] = f"Discord chess ({guild_name})" if guild_name else "Discord chess"
     game.headers["Site"] = "Discord"
     game.headers["Date"] = datetime.date.today().strftime("%Y.%m.%d")
