@@ -41,6 +41,12 @@ from src.persistence.rigged import (  # noqa: F401
 )
 from src.persistence.streaks import save_gambler_streak  # noqa: F401
 from src.persistence.recap_usage import save_recap_usage  # noqa: F401
+from src.persistence.voice_pings import (  # noqa: F401
+    save_voice_ping,
+    delete_voice_ping,
+    update_voice_ping_last_pinged,
+    load_voice_pings,
+)
 from src.persistence.notable_events import (  # noqa: F401
     log_notable_event,
     load_notable_events_today,

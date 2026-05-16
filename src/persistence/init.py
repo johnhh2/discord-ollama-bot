@@ -261,6 +261,21 @@ async def _init_db_state_inner(state, run_migrations):
         except Exception as e:
             logging.error(f"[init_db_state] recap_usage failed: {e}", exc_info=True)
 
+        # ── voice_pings ───────────────────────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT guild_id, channel_id, user_id, last_pinged_at FROM voice_pings"
+            )
+            state.voice_pings = {
+                (int(r[1]), int(r[2])): {
+                    "guild_id": int(r[0]),
+                    "last_pinged_at": int(r[3]) if r[3] is not None else None,
+                }
+                for r in await cur.fetchall()
+            }
+        except Exception as e:
+            logging.error(f"[init_db_state] voice_pings failed: {e}", exc_info=True)
+
         # ── chess_games ───────────────────────────────────────────────────
         try:
             await cur.execute("SELECT channel_id, game_json FROM chess_games")

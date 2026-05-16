@@ -28,6 +28,12 @@ rigged_scratch: dict = {}
 rigged_steal: dict = {}
 gambler_streak: dict = {}
 recap_usage: dict = {}   # {(guild_id, user_id): last_recap_date_str} — !recap daily cap
+
+# !ping voice-channel subscriptions:
+# {(channel_id, user_id): {"guild_id": int, "last_pinged_at": int|None}}
+# DM sent on 0→1 human transitions; per-(channel,user) 30-min cooldown via
+# last_pinged_at (unix seconds). Source of truth is voice_pings table.
+voice_pings: dict = {}
 quote_log: list = []
 leveling: dict = {}
 command_perms: dict = {}
