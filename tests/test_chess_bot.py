@@ -658,6 +658,52 @@ async def test_stockfish_mate_creates_report_with_bot_as_winner(db, _stub_chess_
 
 
 @_aio
+async def test_stockfish_mate_headline_uses_stockfish_label_not_raw_uid(
+    db, _stub_chess_helpers, monkeypatch,
+):
+    """When Stockfish mates the human, the game-over embed must show
+    'Stockfish (1320 Elo)' not the raw 18-digit bot user id."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2401, display_name="Alice")
+    _state.active_chess_games[1401] = {
+        "fen": "rnbqkbnr/pppp1ppp/8/4p3/8/5P2/PPPPP1PP/RNBQKBNR w KQkq - 0 2",
+        "pgn": _initial_pgn(
+            "Alice", "Stockfish (1320 Elo)", None,
+            starting_fen="rnbqkbnr/pppp1ppp/8/4p3/8/5P2/PPPPP1PP/RNBQKBNR w KQkq - 0 2",
+        ),
+        "white_id": human.id,
+        "black_id": cog.bot.user.id,
+        "current_id": human.id,
+        "amount": 0,
+        "elo": 1320,
+        "last_move": "",
+        "board_msg_id": 1,
+    }
+    ctx = _ctx_for(human, channel_id=1401)
+    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
+
+    async def _stub_pick(fen, elo):
+        return chess.Move.from_uci("d8h4")
+    monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "g4")
+    for _ in range(8):
+        await asyncio.sleep(0)
+
+    # Inspect the bump_calls accumulator from the autouse stub.
+    bot_uid_str = str(cog.bot.user.id)
+    game_over_embeds = [
+        embed for _ch, _g, embed, _f in _stub_chess_helpers
+        if embed.title and "Game Over" in embed.title
+    ]
+    assert len(game_over_embeds) >= 1, "expected a game-over embed"
+    last = game_over_embeds[-1]
+    assert bot_uid_str not in (last.description or ""), \
+        f"raw bot uid leaked into game-over description: {last.description!r}"
+    assert "Stockfish" in (last.description or "")
+
+
+@_aio
 async def test_bot_reply_does_not_fire_for_pvp_game(db, _stub_chess_helpers, monkeypatch):
     """Regression: a PvP move between two humans must NOT trigger _play_bot_reply."""
     cog = _make_bot_cog()

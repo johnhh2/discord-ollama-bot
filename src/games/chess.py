@@ -18,6 +18,7 @@ from src.economy import (
     add_balance, record_gambling_event,
 )
 from src.permissions import check_chess_channel
+from src.guild_config import get_guild_cfg
 from src.persistence import (
     save_chess_game, delete_chess_game, save_chess_report, load_chess_report,
 )
@@ -266,12 +267,16 @@ class ChessCog(commands.Cog):
             return
 
         winner_id = report["winner_id"]
+        bot_user = self.bot.user if self.bot is not None else None
         if winner_id is None:
             outcome_line = f"Draw ({report['result']})"
-        elif winner_id == report["white_id"]:
-            outcome_line = f"White ({_player_display_name(ctx.guild, winner_id, str(winner_id))}) wins ({report['result']})"
         else:
-            outcome_line = f"Black ({_player_display_name(ctx.guild, winner_id, str(winner_id))}) wins ({report['result']})"
+            if bot_user is not None and winner_id == bot_user.id:
+                winner_name = "Stockfish"
+            else:
+                winner_name = _player_display_name(ctx.guild, winner_id, str(winner_id))
+            color_label = "White" if winner_id == report["white_id"] else "Black"
+            outcome_line = f"{color_label} ({winner_name}) wins ({report['result']})"
 
         try:
             board = chess.Board(fen=report["final_fen"])
@@ -323,17 +328,39 @@ class ChessCog(commands.Cog):
             return
 
         move_str = " ".join(args).strip()
+        applied, err_msg = await self._apply_human_move(
+            ctx.channel, ctx.guild, ctx.author, move_str,
+        )
+        if not applied and err_msg is not None:
+            err = await ctx.send(embed=emb("❌ Invalid Move", err_msg, C_RED))
+            asyncio.create_task(_delete_after(err))
 
-        # Parse + validate against the live board built from FEN.
+    async def _apply_human_move(
+        self, channel: discord.abc.Messageable, guild: discord.Guild | None,
+        author, move_str: str,
+    ) -> tuple[bool, str | None]:
+        """Validate + apply a human move. Returns (applied, error_message).
+
+        applied=False, err=str: parse/illegal — caller decides whether to surface.
+        applied=False, err=None: state-precondition failure (no game, wrong turn).
+        applied=True, err=None: move applied; board re-rendered; bot reply
+            scheduled if applicable.
+        """
+        cid = channel.id
+        uid = author.id
+
+        if cid not in state.active_chess_games:
+            return False, None
+        game = state.active_chess_games[cid]
+        if uid != game["current_id"]:
+            return False, None
+
         board = chess_engine.board_from_fen(game["fen"])
         move, err_msg = chess_engine.try_move(board, move_str)
         if move is None:
-            err = await ctx.send(embed=emb("❌ Invalid Move", err_msg or "Invalid move.", C_RED))
-            asyncio.create_task(_delete_after(err))
-            return
+            return False, err_msg or "Invalid move."
 
-        # Gate-and-claim: flip current_id synchronously BEFORE any await so racing !move
-        # invocations bail at the gate above. Roll back only if the save fails.
+        # Gate-and-claim: flip current_id synchronously BEFORE any await.
         prior_current = game["current_id"]
         prior_fen = game["fen"]
         prior_pgn = game["pgn"]
@@ -342,7 +369,7 @@ class ChessCog(commands.Cog):
         san = chess_engine.push_with_san(board, move)
         new_fen = board.fen()
         new_pgn = _append_san_to_pgn(game["pgn"], san)
-        mover_name = ctx.author.display_name
+        mover_name = author.display_name
 
         opponent_id = game["black_id"] if uid == game["white_id"] else game["white_id"]
 
@@ -355,8 +382,8 @@ class ChessCog(commands.Cog):
         # delete the row and insert a report instead of upserting.
         result, reason = chess_engine.game_over_info(board)
         if result is not None:
-            await self._finalize_game(ctx.channel, cid, game, board, result, reason, mover_name=mover_name, san=san)
-            return
+            await self._finalize_game(channel, cid, game, board, result, reason, mover_name=mover_name, san=san)
+            return True, None
 
         try:
             await save_chess_game(cid)
@@ -367,17 +394,56 @@ class ChessCog(commands.Cog):
             game["current_id"] = prior_current
             game["last_move"] = prior_last_move
             logging.error(f"chess save_chess_game failed: {e}", exc_info=True)
-            err = await ctx.send(embed=emb("❌ Save Failed", "Couldn't save the move. Try again.", C_RED))
+            err = await channel.send(embed=emb("❌ Save Failed", "Couldn't save the move. Try again.", C_RED))
             asyncio.create_task(_delete_after(err))
-            return
+            return False, None
 
-        await self._render_and_bump_after_move(ctx.channel, cid, game, board, opponent_id)
+        await self._render_and_bump_after_move(channel, cid, game, board, opponent_id)
 
         # If the next player is the bot, fire Stockfish's reply as a background
         # task so this !move handler returns promptly.
         bot_user = self.bot.user if self.bot is not None else None
         if bot_user is not None and opponent_id == bot_user.id:
-            asyncio.create_task(self._play_bot_reply(ctx.channel, cid))
+            asyncio.create_task(self._play_bot_reply(channel, cid))
+        return True, None
+
+    # ── bare-move listener: accept `e4` as shorthand for `!move e4` ──────────
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        # Fast-path bail conditions — order is critical for perf since every
+        # channel message hits this listener.
+        if message.author.bot:
+            return
+        if not message.guild:
+            return
+        content = (message.content or "").strip()
+        if not content or content.startswith("!") or len(content) > 10:
+            return
+        game = state.active_chess_games.get(message.channel.id)
+        if game is None or message.author.id != game.get("current_id"):
+            return
+        # Restrict to configured chess channels only — without this, plain text
+        # like "e4" in any channel with an active game would consume chat.
+        cfg = get_guild_cfg(message.guild.id) or {}
+        chess_channels = cfg.get("chess_channels", []) or cfg.get("game_channels", [])
+        if chess_channels and message.channel.id not in chess_channels:
+            return
+
+        board = chess_engine.board_from_fen(game["fen"])
+        move, _err = chess_engine.try_move(board, content)
+        if move is None:
+            return  # silently ignore non-move text
+
+        # Delete the trigger message before applying so the channel stays clean
+        # even if the apply takes a moment (board render + DB save).
+        try:
+            await message.delete()
+        except (discord.NotFound, discord.Forbidden):
+            pass
+
+        await self._apply_human_move(
+            message.channel, message.guild, message.author, content,
+        )
 
     async def _render_and_bump_after_move(
         self, channel: discord.abc.Messageable, cid: int, game: dict,
@@ -523,7 +589,14 @@ class ChessCog(commands.Cog):
             headline = f"Draw by {reason}." if reason else "Draw."
             color = C_GOLD
         else:
-            winner_name = _player_display_name(guild, winner_id, str(winner_id))
+            bot_user = self.bot.user if self.bot is not None else None
+            if bot_user is not None and winner_id == bot_user.id:
+                # Bot winner — guild.get_member often returns None for the bot
+                # itself, so use the stored stockfish label instead of the raw uid.
+                elo = game.get("elo", chess_bot.ELO_DEFAULT)
+                winner_name = f"Stockfish ({elo} Elo)"
+            else:
+                winner_name = _player_display_name(guild, winner_id, str(winner_id))
             headline = f"{winner_name} wins by {reason}." if reason else f"{winner_name} wins."
             color = C_GREEN
 
