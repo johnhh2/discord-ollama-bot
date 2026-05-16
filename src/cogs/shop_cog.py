@@ -126,7 +126,17 @@ class ShopCog(commands.Cog):
         if bot is not None:
             for top_name, sub_attr in _SHOP_TOP_ALIASES:
                 sub_cmd = getattr(self, sub_attr)
-                bot.add_command(commands.Command(sub_cmd.callback, name=top_name))
+                # cog=self is load-bearing: the callback's __qualname__ is
+                # ShopCog.shop_X (preserved by functools.wraps in
+                # _shop_subcommand), so discord.py's _parse_arguments builds
+                # ctx.args as [cog, ctx, ...]. Without cog set, it builds
+                # [ctx, ...] and the wrapper's `self` slot binds to the real
+                # Context, shifting every other arg by one — `ctx` then ends
+                # up bound to the first user arg (a string), and the first
+                # `.guild` access dies with 'str' has no attribute 'guild'.
+                alias_cmd = commands.Command(sub_cmd.callback, name=top_name)
+                alias_cmd.cog = self
+                bot.add_command(alias_cmd)
 
     def cog_unload(self):
         if self.bot is None:
