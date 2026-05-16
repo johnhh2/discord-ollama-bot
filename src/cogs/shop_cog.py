@@ -91,7 +91,7 @@ _SHOP_TOP_ALIASES: list[tuple[str, str]] = [
     ("removenickname", "shop_removenickname"),
     ("createrole",     "shop_createrole"),
     ("assignrole",     "shop_assignrole"),
-    ("removerole",     "shop_removerole"),
+    ("unassignrole",     "shop_unassignrole"),
     ("deleterole",     "shop_deleterole"),
     ("createchannel",  "shop_createchannel"),
     ("deletechannel",  "shop_deletechannel"),
@@ -222,8 +222,8 @@ class ShopCog(commands.Cog):
 
         # Roles (sorted by cost)
         role_items = []
-        if _si.get("removerole", True):
-            role_items.append((SHOP_ROLE_REMOVE_COST, L("removerole", f"`!shop removerole [@user] <name>` — Remove a bot-created role from yourself or another user — **{SHOP_ROLE_REMOVE_COST:,} 🪙**")))
+        if _si.get("unassignrole", True):
+            role_items.append((SHOP_ROLE_REMOVE_COST, L("unassignrole", f"`!shop unassignrole [@user] <name>` — Remove a bot-created role from yourself or another user — **{SHOP_ROLE_REMOVE_COST:,} 🪙**")))
         if _si.get("deleterole", True):
             role_items.append((SHOP_ROLE_DELETE_COST, L("deleterole", f"`!shop deleterole <name>` — Permanently delete a bot-created role — **{SHOP_ROLE_DELETE_COST:,} 🪙**")))
         if _si.get("createrole", True):
@@ -460,10 +460,10 @@ class ShopCog(commands.Cog):
                 await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
-    # ── !shop removerole ──────────────────────────────────────────────────────
-    @cmd_shop.command(name="removerole")
-    @_shop_subcommand("removerole")
-    async def shop_removerole(self, ctx: commands.Context, *args):
+    # ── !shop unassignrole ──────────────────────────────────────────────────────
+    @cmd_shop.command(name="unassignrole")
+    @_shop_subcommand("unassignrole")
+    async def shop_unassignrole(self, ctx: commands.Context, *args):
         uid = ctx.author.id
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
@@ -486,7 +486,7 @@ class ShopCog(commands.Cog):
                 await ctx.send(embed=emb("🛒 Bot Roles", f"{who} have any bot-created roles to remove.", C_PURPLE))
             else:
                 lines = "\n".join(f"• **{r.name}** (`{r.id}`)" for r in existing)
-                await ctx.send(embed=emb("🛒 Bot Roles", f"{whose} removable roles:\n{lines}\n\nUse `!shop removerole [@user] @role` to remove one.", C_PURPLE))
+                await ctx.send(embed=emb("🛒 Bot Roles", f"{whose} removable roles:\n{lines}\n\nUse `!shop unassignrole [@user] @role` to remove one.", C_PURPLE))
             return
         role = self._resolve_role_strict(ctx.guild, role_args[0])
         if role is None or role.id not in state.bot_roles or role not in member.roles:

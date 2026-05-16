@@ -161,7 +161,7 @@ async def test_shop_subcommand_decorator_preserves_varargs_signature():
 
 # ── Top-alias dispatch must bind self ─────────────────────────────────────────
 #
-# Regression for production crash: !removerole @user Rat King → AttributeError:
+# Regression for production crash: !unassignrole @user Rat King → AttributeError:
 # 'str' object has no attribute 'guild'. Root cause was that
 # `bot.add_command(commands.Command(sub_cmd.callback, name=top))` created a
 # Command with cog=None. discord.py's _parse_arguments then sets
@@ -234,7 +234,7 @@ class _StubCtx:
         # _parse_arguments calls view.skip_string(command_name) implicitly
         # via the caller — for our direct invocation, pre-advance past the
         # command word so subsequent get_quoted_word() pulls user args.
-        # Simulate: "!removerole <@1> Rat King" → skip "!removerole " then
+        # Simulate: "!unassignrole <@1> Rat King" → skip "!unassignrole " then
         # the view points at "<@1> Rat King".
         first_space = content.find(" ")
         if first_space >= 0:
@@ -258,9 +258,9 @@ async def test_top_alias_dispatch_passes_cog_as_self_not_context():
     string — which is exactly the production bug."""
     bot = _FakeBot()
     cog = ShopCog(bot=bot)
-    alias_cmd = bot.commands_registered["removerole"]
+    alias_cmd = bot.commands_registered["unassignrole"]
 
-    ctx = _StubCtx("!removerole <@1> Rat King")
+    ctx = _StubCtx("!unassignrole <@1> Rat King")
     await alias_cmd._parse_arguments(ctx)
 
     assert ctx.args[0] is cog, (
@@ -280,7 +280,7 @@ async def test_top_alias_dispatch_wrapper_sees_correct_self_and_ctx():
     cog binding were missing."""
     bot = _FakeBot()
     cog = ShopCog(bot=bot)
-    alias_cmd = bot.commands_registered["removerole"]
+    alias_cmd = bot.commands_registered["unassignrole"]
 
     captured: dict = {}
 
@@ -294,9 +294,9 @@ async def test_top_alias_dispatch_wrapper_sees_correct_self_and_ctx():
     # Swap in our spy as the callback; preserves the same dispatch shape.
     alias_cmd._callback = spy
     # __qualname__ matters for is_inside_class — keep it cog-shaped.
-    spy.__qualname__ = "ShopCog.shop_removerole"
+    spy.__qualname__ = "ShopCog.shop_unassignrole"
 
-    ctx = _StubCtx("!removerole <@1> Rat King")
+    ctx = _StubCtx("!unassignrole <@1> Rat King")
     await alias_cmd._parse_arguments(ctx)
     await alias_cmd.callback(*ctx.args, **ctx.kwargs)
 
@@ -314,15 +314,15 @@ async def test_top_alias_dispatch_wrapper_sees_correct_self_and_ctx():
 
 
 async def test_top_alias_dispatch_does_not_crash_on_str_guild_access():
-    """Tightest possible reproduction: bare !removerole @user <name>
+    """Tightest possible reproduction: bare !unassignrole @user <name>
     through the dispatch pipeline. If anyone ever drops alias_cmd.cog=self,
     this test fails with AttributeError: 'str' object has no attribute 'guild',
     matching the original production stack trace verbatim."""
     bot = _FakeBot()
     cog = ShopCog(bot=bot)
-    alias_cmd = bot.commands_registered["removerole"]
+    alias_cmd = bot.commands_registered["unassignrole"]
 
-    ctx = _StubCtx("!removerole <@393568333644955648> Rat King")
+    ctx = _StubCtx("!unassignrole <@393568333644955648> Rat King")
     await alias_cmd._parse_arguments(ctx)
 
     # If the bug regresses, args[0] is the Context, args[1] is the string
@@ -330,8 +330,8 @@ async def test_top_alias_dispatch_does_not_crash_on_str_guild_access():
     # to fully execute the wrapper — proving args[0] is the cog is enough,
     # because that is exactly what dispatch will pass to callback(*ctx.args).
     first = ctx.args[0]
-    assert hasattr(first, "shop_removerole"), (
-        f"First positional must be the cog (which has shop_removerole on it). "
+    assert hasattr(first, "shop_unassignrole"), (
+        f"First positional must be the cog (which has shop_unassignrole on it). "
         f"Got {type(first).__name__}. Bug: alias_cmd.cog is not set, dispatch "
         f"will call wrapper(self=Context, ctx='<@...>') and crash on .guild."
     )

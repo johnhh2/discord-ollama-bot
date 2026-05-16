@@ -51,7 +51,7 @@ class SettingsCog(commands.Cog):
         blacklist_val = " ".join(f"<#{c}>" for c in cmd_blacklist) if cmd_blacklist else "none"
         game_val = " ".join(f"<#{c}>" for c in game_channels) if game_channels else "all channels"
         chess_val = " ".join(f"<#{c}>" for c in chess_channels) if chess_channels else "game channels (or all)"
-        item_names = ["nickname", "role", "removerole", "roleup", "roledown", "ragebait"]
+        item_names = ["nickname", "role", "unassignrole", "roleup", "roledown", "ragebait"]
         shop_val = "  ".join(
             f"{n} {'✅' if shop_items.get(n, True) else '❌'}" for n in item_names
         )
@@ -244,7 +244,7 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
             return
         cfg = get_guild_cfg(ctx.guild.id)
-        valid_items = {"nickname", "role", "removerole", "roleup", "roledown", "ragebait"}
+        valid_items = {"nickname", "role", "unassignrole", "roleup", "roledown", "ragebait"}
         if len(args) < 2 or args[0].lower() not in valid_items or args[1].lower() not in ("on", "off"):
             await ctx.send(embed=emb("⚙️ Shop", f"Usage: `!settings shop <item> on|off`\nItems: {', '.join(valid_items)}", C_GREY))
             return

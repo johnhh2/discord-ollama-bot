@@ -60,7 +60,7 @@ UNLOCKS: dict[str, dict] = {
     # !roles is the role leaderboard — never gated.
     "createrole":  {"level": 5, "enabled": _shop_item_enabled("createrole"), "usage": "`!createrole @user <name> <hex>` — create a custom role", "reward": True},
     "assignrole":  {"level": 5, "enabled": _shop_item_enabled("assignrole"), "usage": "`!assignrole @user <name>` — assign an existing role"},
-    "removerole":  {"level": 5, "enabled": _shop_item_enabled("removerole"), "usage": "`!removerole [@user] <name>` — remove a role"},
+    "unassignrole":  {"level": 5, "enabled": _shop_item_enabled("unassignrole"), "usage": "`!unassignrole [@user] <name>` — remove a role"},
     "deleterole":  {"level": 5, "enabled": _shop_item_enabled("deleterole"), "usage": "`!deleterole <name>` — permanently delete a role"},
     "renamerole":  {"level": 5, "enabled": _always,                       "usage": "`!renamerole <old> <new>` — rename a role"},
     "rolecolor":   {"level": 5, "enabled": _shop_item_enabled("rolecolor"),  "usage": "`!rolecolor @role <hex>` — change a role's color"},
@@ -96,7 +96,7 @@ UNLOCKS: dict[str, dict] = {
 
 # Also gate the !shop <subcommand> form. Maps "shop X" → same entry as "X".
 _SHOP_SUBCOMMANDS = {
-    "createrole", "assignrole", "removerole", "deleterole", "renamerole",
+    "createrole", "assignrole", "unassignrole", "deleterole", "renamerole",
     "rolecolor", "lockrole", "unlockrole", "roleup", "roledown",
     "nickname", "removenickname",
     "createchannel", "deletechannel", "renamechannel", "lockchannel",
