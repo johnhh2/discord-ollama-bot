@@ -22,7 +22,7 @@ from src.persistence import (
     save_chess_game, delete_chess_game, save_chess_report, load_chess_report,
 )
 from src.games.ttt_c4 import _setup_pvp_game
-from src.games import chess_engine, chess_render
+from src.games import chess_engine, chess_render, chess_bot
 from src import state
 
 
@@ -128,10 +128,10 @@ class ChessCog(commands.Cog):
             return
 
         opponent = ctx.message.mentions[0] if ctx.message.mentions else None
-        amount = 0
+        trailing_int: int | None = None
         if args:
             try:
-                amount = int(args[-1])
+                trailing_int = int(args[-1])
             except (ValueError, IndexError):
                 pass
 
@@ -139,7 +139,6 @@ class ChessCog(commands.Cog):
             return
 
         cid = ctx.channel.id
-        uid = ctx.author.id
 
         if (
             cid in state.active_ttt_games
@@ -148,6 +147,32 @@ class ChessCog(commands.Cog):
         ):
             await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
             return
+
+        bot_user = self.bot.user if self.bot is not None else None
+        is_bot_game = (
+            opponent is not None
+            and bot_user is not None
+            and opponent.id == bot_user.id
+        )
+
+        if is_bot_game:
+            elo = trailing_int if trailing_int is not None else chess_bot.ELO_DEFAULT
+            if not (chess_bot.ELO_MIN <= elo <= chess_bot.ELO_MAX):
+                await ctx.send(embed=emb(
+                    "❌ Invalid Elo",
+                    f"Elo must be between {chess_bot.ELO_MIN} and {chess_bot.ELO_MAX}.",
+                    C_RED,
+                ))
+                return
+            await self._start_bot_chess(ctx, elo)
+            return
+
+        amount = trailing_int if trailing_int is not None else 0
+        await self._start_pvp_chess(ctx, opponent, amount)
+
+    async def _start_pvp_chess(self, ctx: commands.Context, opponent, amount: int):
+        cid = ctx.channel.id
+        uid = ctx.author.id
 
         if not await _setup_pvp_game(ctx, opponent, amount, "♟️ Chess Invite"):
             return
@@ -180,7 +205,46 @@ class ChessCog(commands.Cog):
         if file is not None:
             send_kwargs["file"] = file
         else:
-            # Fallback: render failed (Cairo missing). Strip the image-ref so the embed isn't broken.
+            send_kwargs["embed"] = emb("♟️ Chess", desc, C_BLUE)
+        msg = await ctx.send(**send_kwargs)
+        game["board_msg_id"] = msg.id
+        await save_chess_game(cid)
+
+    async def _start_bot_chess(self, ctx: commands.Context, elo: int):
+        """Bot-vs-human game: skip _setup_pvp_game entirely. No wagers, no
+        confirmation, no opponent balance. Human always plays White (v1)."""
+        cid = ctx.channel.id
+        uid = ctx.author.id
+        bot_user = self.bot.user
+
+        white_id, black_id = uid, bot_user.id
+        white_name = ctx.author.display_name
+        black_name = f"Stockfish ({elo} Elo)"
+        guild_name = ctx.guild.name if ctx.guild else None
+
+        game = {
+            "fen": chess_engine.STARTING_FEN,
+            "pgn": _initial_pgn(white_name, black_name, guild_name),
+            "white_id": white_id,
+            "black_id": black_id,
+            "current_id": white_id,
+            "amount": 0,
+            "elo": elo,
+            "last_move": f"{white_name}'s turn (White)",
+            "board_msg_id": None,
+        }
+        state.active_chess_games[cid] = game
+
+        desc = (
+            f"{ctx.author.mention} (White ♙) vs 🤖 **{black_name}** (Black ♟)\n"
+            f"{ctx.author.mention}'s turn. Use `!move <e2e4>` or SAN (`Nf3`)\n\n"
+            f"**Last move:** {game['last_move']}"
+        )
+        file = _render_file_for_game(game, orientation_for_uid=white_id)
+        send_kwargs: dict = {"embed": _board_embed("♟️ Chess", desc, C_BLUE)}
+        if file is not None:
+            send_kwargs["file"] = file
+        else:
             send_kwargs["embed"] = emb("♟️ Chess", desc, C_BLUE)
         msg = await ctx.send(**send_kwargs)
         game["board_msg_id"] = msg.id
@@ -307,24 +371,98 @@ class ChessCog(commands.Cog):
             asyncio.create_task(_delete_after(err))
             return
 
-        # Re-render from the next player's perspective.
+        await self._render_and_bump_after_move(ctx.channel, cid, game, board, opponent_id)
+
+        # If the next player is the bot, fire Stockfish's reply as a background
+        # task so this !move handler returns promptly.
+        bot_user = self.bot.user if self.bot is not None else None
+        if bot_user is not None and opponent_id == bot_user.id:
+            asyncio.create_task(self._play_bot_reply(ctx.channel, cid))
+
+    async def _render_and_bump_after_move(
+        self, channel: discord.abc.Messageable, cid: int, game: dict,
+        board: chess.Board, opponent_id: int,
+    ):
+        """Render the new board, bump it to the bottom, persist the new msg id."""
         file = _render_file_for_game(game, orientation_for_uid=opponent_id)
-        next_player = ctx.guild.get_member(opponent_id) if ctx.guild else None
-        next_mention = next_player.mention if next_player else "Next player"
+        guild = channel.guild if hasattr(channel, "guild") else None
+        next_player = guild.get_member(opponent_id) if guild is not None else None
+        bot_user = self.bot.user if self.bot is not None else None
+        if bot_user is not None and opponent_id == bot_user.id:
+            elo = game.get("elo", chess_bot.ELO_DEFAULT)
+            next_mention = f"🤖 Stockfish ({elo} Elo)"
+        else:
+            next_mention = next_player.mention if next_player else "Next player"
         check_note = " — **check!**" if board.is_check() else ""
         desc = (
             f"{next_mention}'s turn{check_note}. Use `!move <e2e4>` or SAN (`Nf3`)\n\n"
             f"**Last move:** {game['last_move']}"
         )
         if file is not None:
-            await _bump_board(ctx.channel, game, _board_embed("♟️ Chess", desc, C_BLUE), file=file)
+            await _bump_board(channel, game, _board_embed("♟️ Chess", desc, C_BLUE), file=file)
         else:
-            await _bump_board(ctx.channel, game, emb("♟️ Chess", desc, C_BLUE))
+            await _bump_board(channel, game, emb("♟️ Chess", desc, C_BLUE))
         # Bumping reassigned board_msg_id; persist so a restart hits the right message.
         try:
             await save_chess_game(cid)
         except Exception as e:
             logging.error(f"chess save_chess_game (bump persist) failed: {e}", exc_info=True)
+
+    async def _play_bot_reply(self, channel: discord.abc.Messageable, cid: int):
+        """Stockfish plays the next move. Runs as a background task so the
+        user's !move handler returns immediately."""
+        game = state.active_chess_games.get(cid)
+        if game is None:
+            # User resigned via !stop between their move and ours.
+            return
+        bot_user = self.bot.user if self.bot is not None else None
+        if bot_user is None or game.get("current_id") != bot_user.id:
+            return
+
+        elo = game.get("elo", chess_bot.ELO_DEFAULT)
+        bot_name = f"Stockfish ({elo} Elo)"
+
+        try:
+            move = await chess_bot.pick_move(game["fen"], elo)
+        except Exception as e:
+            logging.error(f"stockfish pick_move failed: {e}", exc_info=True)
+            await channel.send(embed=emb(
+                "❌ Stockfish Error",
+                "The chess engine failed to respond. Use `!stop` to end the game.",
+                C_RED,
+            ))
+            return
+
+        # Re-fetch in case state changed during pick_move (~500ms+).
+        game = state.active_chess_games.get(cid)
+        if game is None or game.get("current_id") != bot_user.id:
+            return
+
+        board = chess_engine.board_from_fen(game["fen"])
+        if move not in board.legal_moves:
+            # Stockfish returned a move that doesn't apply to current FEN. State drifted.
+            logging.error(f"stockfish move {move} illegal for fen {game['fen']}")
+            return
+
+        san = chess_engine.push_with_san(board, move)
+        game["fen"] = board.fen()
+        game["pgn"] = _append_san_to_pgn(game["pgn"], san)
+        game["current_id"] = game["white_id"]  # bot is always black in v1
+        game["last_move"] = f"{bot_name} played {san}"
+
+        result, reason = chess_engine.game_over_info(board)
+        if result is not None:
+            await self._finalize_game(channel, cid, game, board, result, reason, mover_name=bot_name, san=san)
+            return
+
+        try:
+            await save_chess_game(cid)
+        except Exception as e:
+            logging.error(f"chess save_chess_game (bot reply) failed: {e}", exc_info=True)
+            # Don't roll back — the move is legal and applied; we just lost the save.
+            # Next user move will save the combined state.
+
+        await self._render_and_bump_after_move(channel, cid, game, board, game["white_id"])
 
     async def _finalize_game(
         self, channel: discord.abc.Messageable, cid: int, game: dict,
