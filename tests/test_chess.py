@@ -159,6 +159,37 @@ class TestPgnHelpers:
         assert "2. Nf3 Nc6" in pgn
 
 
+class TestMovetextOnly:
+    def test_strips_headers(self):
+        from src.games.chess import _movetext_only
+        pgn = _initial_pgn("Alice", "Bob", "Test Guild")
+        pgn = _append_san_to_pgn(pgn, "e4")
+        out = _movetext_only(pgn)
+        assert "1. e4" in out
+        assert "[Event" not in out
+        assert "[White" not in out
+        assert "Alice" not in out
+        assert "Test Guild" not in out
+
+    def test_preserves_result_token(self):
+        from src.games.chess import _movetext_only
+        pgn = (
+            '[Event "x"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n'
+            '1. e4 e5 1-0\n'
+        )
+        out = _movetext_only(pgn)
+        assert out.endswith("1-0")
+
+    def test_garbage_input_does_not_crash(self):
+        """python-chess parses unrecognized text as an empty game (returns '*').
+        The helper must not raise on weird inputs."""
+        from src.games.chess import _movetext_only
+        out = _movetext_only("not a pgn at all")
+        # Garbage parses to an empty game terminator; just confirm no crash + a string out.
+        assert isinstance(out, str)
+        assert len(out) <= 50  # no header leakage
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ChessCog: !move flow + game-over -> chess_reports
 # ─────────────────────────────────────────────────────────────────────────────
@@ -476,19 +507,22 @@ async def test_chess_view_draw_branch(db):
 
 
 @_aio
-async def test_chess_view_truncates_huge_pgn(db):
-    """PGNs longer than the embed description budget get truncated and marked."""
+async def test_chess_view_truncates_huge_movetext(db, monkeypatch):
+    """Movetext longer than the embed description budget gets truncated and
+    marked. The truncation runs on the OUTPUT of _movetext_only, so we patch
+    that helper to return a known-huge string rather than constructing a
+    legitimately-long valid game."""
     from src.persistence import save_chess_report
-    huge_pgn_body = " ".join([f"{i}. e4 e5" for i in range(1, 600)])  # ~6000 chars
-    pgn = (
-        '[Event "x"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n'
-        + huge_pgn_body + " 1-0\n"
-    )
     rid = await save_chess_report(
         guild_id=42, channel_id=999, white_id=10, black_id=20,
-        winner_id=10, result="1-0", pgn=pgn,
+        winner_id=10, result="1-0",
+        pgn='[Event "x"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 1-0\n',
         final_fen="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     )
+
+    import src.games.chess as _chess_mod
+    huge = " ".join(f"{i}. Nf3 Nf6" for i in range(1, 600))  # ~6000 chars
+    monkeypatch.setattr(_chess_mod, "_movetext_only", lambda _pgn: huge)
 
     cog = ChessCog(bot=None)
     user = FakeMember(uid=1205)
@@ -501,6 +535,128 @@ async def test_chess_view_truncates_huge_pgn(db):
     # Description must fit Discord's 4096-char limit and signal truncation.
     assert len(embed.description) <= 4096
     assert "truncated" in embed.description.lower()
+
+
+@_aio
+async def test_chess_view_strips_pgn_headers_in_embed(db):
+    """The default !chess view shows movetext only, not the [Event]/[Site]/etc.
+    header block (that's what !chess pgn is for)."""
+    from src.persistence import save_chess_report
+    rid = await save_chess_report(
+        guild_id=42, channel_id=999, white_id=10, black_id=20,
+        winner_id=10, result="1-0",
+        pgn=(
+            '[Event "Test Event Headerline"]\n'
+            '[Site "TestSite"]\n'
+            '[Date "2026.05.17"]\n'
+            '[Round "?"]\n'
+            '[White "Alice"]\n'
+            '[Black "Bob"]\n'
+            '[Result "1-0"]\n\n'
+            '1. e4 e5 2. Nf3 Nc6 3. Bb5 1-0\n'
+        ),
+        final_fen="r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
+    )
+
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1206)
+    ctx = _ctx_for(user, channel_id=806)
+
+    await cog._cmd_view(ctx, (str(rid),))
+
+    desc = ctx.sent_embeds[0].description
+    # Movetext present.
+    assert "1. e4 e5 2. Nf3 Nc6 3. Bb5 1-0" in desc
+    # Headers absent.
+    assert "[Event" not in desc
+    assert "Test Event Headerline" not in desc
+    assert "[Site" not in desc
+    # PGN hint points at the full-PGN subcommand.
+    assert f"!chess pgn {rid}" in desc
+
+
+@_aio
+async def test_chess_pgn_returns_full_headered_pgn(db):
+    """!chess pgn <id> shows the entire PGN with headers (for lichess import)."""
+    from src.persistence import save_chess_report
+    full_pgn = (
+        '[Event "Discord chess"]\n'
+        '[Site "Discord"]\n'
+        '[Date "2026.05.17"]\n'
+        '[Round "?"]\n'
+        '[White "Alice"]\n'
+        '[Black "Bob"]\n'
+        '[Result "1-0"]\n\n'
+        '1. e4 e5 2. Nf3 Nc6 3. Bb5 1-0\n'
+    )
+    rid = await save_chess_report(
+        guild_id=42, channel_id=999, white_id=10, black_id=20,
+        winner_id=10, result="1-0", pgn=full_pgn,
+        final_fen="r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
+    )
+
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1207)
+    ctx = _ctx_for(user, channel_id=807)
+
+    await cog._cmd_pgn(ctx, (str(rid),))
+
+    assert len(ctx.sent_embeds) == 1
+    desc = ctx.sent_embeds[0].description
+    # Headers present (this is the point of the pgn subcommand).
+    assert "[Event" in desc
+    assert '[White "Alice"]' in desc
+    # Movetext also there.
+    assert "1. e4 e5" in desc
+
+
+@_aio
+async def test_chess_pgn_missing_id_sends_usage(db):
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1208)
+    ctx = _ctx_for(user, channel_id=808)
+
+    await cog._cmd_pgn(ctx, ())
+
+    assert len(ctx.sent_embeds) == 1
+    assert "Usage" in ctx.sent_embeds[0].title
+
+
+@_aio
+async def test_chess_pgn_nonexistent_report(db):
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1209)
+    ctx = _ctx_for(user, channel_id=809)
+
+    await cog._cmd_pgn(ctx, ("999999",))
+
+    assert len(ctx.sent_embeds) == 1
+    assert "Not Found" in ctx.sent_embeds[0].title
+
+
+@_aio
+async def test_cmd_chess_dispatches_pgn_subcommand(db):
+    """`!chess pgn <id>` routes through cmd_chess to _cmd_pgn (not the
+    new-game flow)."""
+    from src.persistence import save_chess_report
+    rid = await save_chess_report(
+        guild_id=42, channel_id=999, white_id=10, black_id=20,
+        winner_id=10, result="1-0",
+        pgn='[Event "x"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 1-0\n',
+        final_fen="rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+    )
+
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1210)
+    ctx = _ctx_for(user, channel_id=810)
+
+    await cog.cmd_chess.callback(cog, ctx, "pgn", str(rid))
+
+    # Got the pgn embed (with headers), not a new game state.
+    assert 810 not in _state.active_chess_games
+    assert len(ctx.sent_embeds) == 1
+    assert "PGN" in ctx.sent_embeds[0].title
+    assert "[Event" in ctx.sent_embeds[0].description
 
 
 @_aio

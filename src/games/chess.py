@@ -98,6 +98,19 @@ def _initial_pgn(white_name: str, black_name: str, guild_name: str | None,
     return str(game)
 
 
+def _movetext_only(pgn_str: str) -> str:
+    """Strip PGN headers, return just the movetext (e.g. '1. e4 e5 2. Nf3 1-0').
+    Falls back to the raw input if parsing fails."""
+    try:
+        g = chess.pgn.read_game(io.StringIO(pgn_str))
+        if g is None:
+            return pgn_str
+        exporter = chess.pgn.StringExporter(headers=False, variations=False, comments=False)
+        return g.accept(exporter)
+    except Exception:
+        return pgn_str
+
+
 def _append_san_to_pgn(pgn_str: str, san: str) -> str:
     g = chess.pgn.read_game(io.StringIO(pgn_str))
     if g is None:
@@ -128,6 +141,9 @@ class ChessCog(commands.Cog):
     async def cmd_chess(self, ctx: commands.Context, *args):
         if args and args[0].lower() == "view":
             await self._cmd_view(ctx, args[1:])
+            return
+        if args and args[0].lower() == "pgn":
+            await self._cmd_pgn(ctx, args[1:])
             return
 
         opponent = ctx.message.mentions[0] if ctx.message.mentions else None
@@ -332,17 +348,46 @@ class ChessCog(commands.Cog):
         except RuntimeError as e:
             logging.warning(f"chess render unavailable in view: {e}")
 
-        pgn_block = f"```pgn\n{report['pgn']}\n```"
-        # Embeds cap description at 4096 chars; trim PGN if needed.
+        movetext = _movetext_only(report["pgn"])
+        pgn_block = f"```pgn\n{movetext}\n```"
+        # Embeds cap description at 4096 chars; trim if needed.
         if len(pgn_block) > 3800:
-            pgn_block = f"```pgn\n{report['pgn'][:3600]}\n... (truncated)```"
-        desc = f"{outcome_line}\n\n{pgn_block}"
+            pgn_block = f"```pgn\n{movetext[:3600]}\n... (truncated)```"
+        pgn_hint = f"\n*Full PGN: `!chess pgn {report_id}`*"
+        desc = f"{outcome_line}\n\n{pgn_block}{pgn_hint}"
         e = emb(f"♟️ Chess Game #{report_id}", desc, C_GREY)
         if file is not None:
             e.set_image(url=f"attachment://{BOARD_IMG_FILENAME}")
             await send_ephemeral(ctx, embed=e, file=file)
         else:
             await send_ephemeral(ctx, embed=e)
+
+    # ── !chess pgn <report_id>: full headered PGN for lichess import ─────────
+    async def _cmd_pgn(self, ctx: commands.Context, args: tuple[str, ...]):
+        if not args:
+            await send_ephemeral(ctx, embed=emb("❌ Usage", "Use `!chess pgn <report_id>` to get the full headered PGN.", C_RED))
+            return
+        try:
+            report_id = int(args[0])
+        except ValueError:
+            await send_ephemeral(ctx, embed=emb("❌ Invalid", "Report id must be a number.", C_RED))
+            return
+        report = await load_chess_report(report_id)
+        if report is None:
+            await send_ephemeral(ctx, embed=emb("❌ Not Found", f"No chess game with report id `{report_id}`.", C_RED))
+            return
+
+        pgn_block = f"```pgn\n{report['pgn']}\n```"
+        if len(pgn_block) > 3900:
+            # PGN too long for an embed code block; fall back to a file attachment.
+            file = discord.File(io.BytesIO(report["pgn"].encode("utf-8")), filename=f"chess_{report_id}.pgn")
+            await send_ephemeral(
+                ctx,
+                embed=emb(f"♟️ Chess Game #{report_id} — PGN", "Full PGN attached (too long for embed).", C_GREY),
+                file=file,
+            )
+        else:
+            await send_ephemeral(ctx, embed=emb(f"♟️ Chess Game #{report_id} — PGN", pgn_block, C_GREY))
 
     # ── !move ───────────────────────────────────────────────────────────────
     @commands.command(name="move")

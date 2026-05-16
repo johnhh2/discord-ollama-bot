@@ -391,7 +391,7 @@ class UtilityCog(commands.Cog):
                 "`!c4 @user [amount]` — Connect 4 (use `!m <1-7>`)\n"
                 "`!chess @user [amount]` — Chess vs another player (use `!move <e2e4>` or just type the move)\n"
                 "`!chessbot [elo]` (alias for `!chess @TheBot [elo]`) — Chess vs Stockfish (elo 100-3190, default 1320). Win = 20 🪙 per NEW Elo defeated today\n"
-                "`!chess view <id>` — Replay a finished game from its report id\n"
+                "`!chess view <id>` — Replay a finished game from its report id (`!chess pgn <id>` for the full PGN)\n"
             ),
             inline=False
         )
