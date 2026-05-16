@@ -53,23 +53,23 @@ class ModerationCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Input", "Please provide a valid number.", C_RED))
             return
 
+        # purge() bulk-deletes messages <14 days old and falls back to
+        # single deletes for older ones — bulk_delete (which is what
+        # ctx.channel.delete_messages calls) 400s with error 50034 on
+        # anything older than 14 days.
         try:
-            messages = []
-            async for message in ctx.channel.history(limit=n):
-                messages.append(message)
-
-            if not messages:
-                await ctx.send(embed=emb("❌ No Messages", "No messages found to delete.", C_RED))
-                return
-
-            await ctx.channel.delete_messages(messages)
+            deleted = await ctx.channel.purge(limit=n)
         except discord.Forbidden:
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete messages.", C_RED))
             return
 
+        if not deleted:
+            await ctx.send(embed=emb("❌ No Messages", "No messages found to delete.", C_RED))
+            return
+
         confirm = await ctx.send(embed=emb(
             "🗑️ Cleared",
-            f"Deleted {len(messages)-1} message{'s' if len(messages) != 1 else ''}.",
+            f"Deleted {len(deleted)-1} message{'s' if len(deleted) != 1 else ''}.",
             C_GREY,
         ))
         await asyncio.sleep(5)
