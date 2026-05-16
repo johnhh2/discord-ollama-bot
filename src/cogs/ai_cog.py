@@ -45,7 +45,7 @@ from src.invites import _wait_for_confirmations, _send_invite
 from src.games.ttt_c4 import build_ttt_display, build_c4_display
 from src.games.hangman import build_hangman_display
 from src.games import chess_engine, chess_render
-from src.games.chess import BOARD_IMG_FILENAME
+from src.games.chess import BOARD_IMG_FILENAME, _bump_board as _bump_chess_board
 
 
 log = logging.getLogger(__name__)
@@ -686,9 +686,9 @@ class AICog(commands.Cog):
         forfeit_embed = emb("🏳️ Chess Forfeited", desc, C_RED)
         if file is not None:
             forfeit_embed.set_image(url=f"attachment://{BOARD_IMG_FILENAME}")
-            asyncio.create_task(_edit_board(ctx.channel, game, forfeit_embed, file=file))
+            asyncio.create_task(_bump_chess_board(ctx.channel, game, forfeit_embed, file=file))
         else:
-            asyncio.create_task(_edit_board(ctx.channel, game, forfeit_embed))
+            asyncio.create_task(_bump_chess_board(ctx.channel, game, forfeit_embed))
 
         return line
 

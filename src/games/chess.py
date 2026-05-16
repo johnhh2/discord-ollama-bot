@@ -12,7 +12,7 @@ from discord.ext import commands
 
 from src.helpers import (
     emb, C_RED, C_GOLD, C_BLUE, C_GREEN, C_GREY,
-    _delete_after, _edit_board,
+    _delete_after,
 )
 from src.economy import (
     add_balance, record_gambling_event,
@@ -54,6 +54,27 @@ def _board_embed(title: str, description: str, color: int) -> discord.Embed:
     e = emb(title, description, color)
     e.set_image(url=f"attachment://{BOARD_IMG_FILENAME}")
     return e
+
+
+async def _bump_board(
+    channel: discord.abc.Messageable, game: dict, embed: discord.Embed,
+    *, file: discord.File | None = None,
+):
+    """Delete the previous board message and send a fresh one so the board
+    is always the most recent message in the channel. Updates game['board_msg_id']
+    to the new message id."""
+    prior_id = game.get("board_msg_id")
+    if prior_id is not None:
+        try:
+            old = await channel.fetch_message(prior_id)
+            await old.delete()
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+    send_kwargs: dict = {"embed": embed}
+    if file is not None:
+        send_kwargs["file"] = file
+    msg = await channel.send(**send_kwargs)
+    game["board_msg_id"] = msg.id
 
 
 def _initial_pgn(white_name: str, black_name: str, guild_name: str | None,
@@ -296,9 +317,14 @@ class ChessCog(commands.Cog):
             f"**Last move:** {game['last_move']}"
         )
         if file is not None:
-            await _edit_board(ctx.channel, game, _board_embed("♟️ Chess", desc, C_BLUE), file=file)
+            await _bump_board(ctx.channel, game, _board_embed("♟️ Chess", desc, C_BLUE), file=file)
         else:
-            await _edit_board(ctx.channel, game, emb("♟️ Chess", desc, C_BLUE))
+            await _bump_board(ctx.channel, game, emb("♟️ Chess", desc, C_BLUE))
+        # Bumping reassigned board_msg_id; persist so a restart hits the right message.
+        try:
+            await save_chess_game(cid)
+        except Exception as e:
+            logging.error(f"chess save_chess_game (bump persist) failed: {e}", exc_info=True)
 
     async def _finalize_game(
         self, channel: discord.abc.Messageable, cid: int, game: dict,
@@ -372,9 +398,9 @@ class ChessCog(commands.Cog):
 
         file = _render_file_for_game(game, orientation_for_uid=None)
         if file is not None:
-            await _edit_board(channel, game, _board_embed("♟️ Chess — Game Over", desc, color), file=file)
+            await _bump_board(channel, game, _board_embed("♟️ Chess — Game Over", desc, color), file=file)
         else:
-            await _edit_board(channel, game, emb("♟️ Chess — Game Over", desc, color))
+            await _bump_board(channel, game, emb("♟️ Chess — Game Over", desc, color))
 
 
 async def setup(bot):

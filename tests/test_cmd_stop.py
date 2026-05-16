@@ -30,13 +30,13 @@ pytestmark = pytest.mark.asyncio
 
 @pytest.fixture(autouse=True)
 def _stub_edit_board(monkeypatch):
-    """cmd_stop edits the persistent board message asynchronously. The
-    embed-render itself isn't the test concern — only the state mutation
-    + payout. Stub it so no fetch_message is required."""
+    """cmd_stop edits ttt/c4/hangman boards via _edit_board and the chess
+    forfeit board via _bump_chess_board. Stub both so no real channel I/O fires."""
     edit_calls = []
     async def _stub(channel, game, embed, *, file=None):
         edit_calls.append((channel, game, embed, file))
     monkeypatch.setattr(_ai_cog, "_edit_board", _stub)
+    monkeypatch.setattr(_ai_cog, "_bump_chess_board", _stub)
     return edit_calls
 
 

@@ -172,15 +172,23 @@ def _reset_chess_state():
 
 @pytest.fixture(autouse=True)
 def _stub_chess_edit_board(monkeypatch):
-    """Both the chess cog and ai_cog import _edit_board from src.helpers. Stub
-    both bound names so cog.cmd_move_chess doesn't try to fetch_message."""
+    """chess.py uses _bump_board (delete-and-resend) and ai_cog still uses
+    _edit_board for ttt/c4/hangman + _bump_chess_board for chess forfeit.
+    Stub all three so cog calls don't try real channel I/O."""
     import src.games.chess as _chess_mod
+    bump_calls = []
+    async def _stub_bump(channel, game, embed, *, file=None):
+        # Mimic the real _bump_board side-effect: assign a fresh message id.
+        game["board_msg_id"] = (game.get("board_msg_id") or 0) + 1
+        bump_calls.append((channel, game, embed, file))
+    monkeypatch.setattr(_chess_mod, "_bump_board", _stub_bump)
+
     edit_calls = []
-    async def _stub(channel, game, embed, *, file=None):
+    async def _stub_edit(channel, game, embed, *, file=None):
         edit_calls.append((channel, game, embed, file))
-    monkeypatch.setattr(_chess_mod, "_edit_board", _stub)
-    monkeypatch.setattr(_ai_cog, "_edit_board", _stub)
-    return edit_calls
+    monkeypatch.setattr(_ai_cog, "_edit_board", _stub_edit)
+    monkeypatch.setattr(_ai_cog, "_bump_chess_board", _stub_bump)
+    return bump_calls
 
 
 @pytest.fixture(autouse=True)
@@ -749,3 +757,21 @@ async def test_same_user_two_moves_in_a_row_second_is_rejected(db, _stub_chess_e
     assert g["fen"].startswith("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b")
     assert " Nf3" not in g["pgn"]
     assert g["current_id"] == black.id
+
+
+@_aio
+async def test_move_updates_board_msg_id_after_bump(db, _stub_chess_edit_board):
+    """End-to-end: cmd_move_chess flips current_id and updates board_msg_id
+    (the bump stub mimics _bump_board's id-reassignment side-effect)."""
+    cog = ChessCog(bot=None)
+    white = FakeMember(uid=1700)
+    black = FakeMember(uid=1701)
+    _seed_chess_game(950, white.id, black.id)
+    initial_id = _state.active_chess_games[950]["board_msg_id"]
+    ctx = _ctx_for(white, channel_id=950)
+    ctx.guild.members.append(black)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "e4")
+
+    g = _state.active_chess_games[950]
+    assert g["board_msg_id"] != initial_id  # bump assigned a new id
