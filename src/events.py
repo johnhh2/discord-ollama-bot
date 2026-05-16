@@ -592,6 +592,8 @@ class EventsCog(commands.Cog):
                 and not message.content.startswith("!")
                 and (rage_channel is None or message.channel.id == rage_channel)):
             return
+        if await is_insured(uid, "ragebait"):
+            return
         if not await check_ollama_connected():
             return
         rage = state.active_ragebaits[uid]
@@ -609,6 +611,8 @@ class EventsCog(commands.Cog):
         if not (uid in state.active_mocks
                 and not message.content.startswith("!")
                 and (mock_channel is None or message.channel.id == mock_channel)):
+            return
+        if await is_insured(uid, "mock"):
             return
         mock = state.active_mocks[uid]
         await message.channel.send(mocking_font(message.content))

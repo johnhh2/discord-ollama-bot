@@ -372,3 +372,49 @@ async def test_ragebait_deletes_at_zero(db, cog):
             )
             row = await cur.fetchone()
     assert row is None
+
+
+# ── Insurance protects runtime handlers ───────────────────────────────────────
+#
+# Insurance is supposed to no-op mock and ragebait at runtime (matching
+# the tax handler's behavior). Before this was added, mock/ragebait would
+# fire even on insured users — the effect remained in state.active_*
+# until its counter ticked down, oblivious to insurance.
+
+async def test_mock_skips_when_target_is_insured(db, cog):
+    target = FakeMember(uid=3010)
+    guild = FakeGuild(gid=42)
+    channel = _Channel(ch_id=710)
+
+    _state.insurance[str(target.id)] = {
+        "expires_at": time.time() + 3600,
+        "protected_from": ["mock"],
+    }
+    _state.active_mocks[target.id] = {
+        "remaining": 3, "started_by": 9, "channel_id": 710,
+    }
+    await cog.on_message(_Msg(target, "hello", guild, channel))
+
+    # Counter must not decrement and no mocking reply sent.
+    assert _state.active_mocks[target.id]["remaining"] == 3
+    channel.send.assert_not_awaited()
+
+
+async def test_ragebait_skips_when_target_is_insured(db, cog):
+    target = FakeMember(uid=4010, display_name="target")
+    guild = FakeGuild(gid=42)
+    channel = _Channel()
+
+    _state.insurance[str(target.id)] = {
+        "expires_at": time.time() + 3600,
+        "protected_from": ["ragebait"],
+    }
+    _state.active_ragebaits[target.id] = {
+        "remaining": 3, "started_by": 9, "history": [], "channel_id": None,
+    }
+    await cog.on_message(_Msg(target, "spicy take", guild, channel))
+
+    rage = _state.active_ragebaits[target.id]
+    # Counter and history must be untouched.
+    assert rage["remaining"] == 3
+    assert rage["history"] == []

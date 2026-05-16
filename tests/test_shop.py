@@ -292,3 +292,175 @@ async def test_concurrent_shop_unoreverse_charges_once(monkeypatch):
     # The effect should be on the target, not the original uid.
     assert target_uid in _state.active_mocks
     assert uid not in _state.active_mocks
+
+
+# ── Insurance is honored at purchase time ────────────────────────────────────
+#
+# Insurance's purchase message claims protection from ragebait, mock, nickname,
+# role assignments, steal, and tax. Pre-audit, three shop commands ignored it:
+# shop_tax (charged the buyer; tax silently no-op'd at runtime), shop_mock
+# (mock effect applied to insured user and runtime handler didn't check),
+# and shop_unassignrole (roles could be stripped despite "role" protection).
+# These tests pin the fix: a buyer hitting an insured target must NOT be
+# charged and the effect must NOT be applied.
+
+import time as _time
+
+
+def _insure(uid: int, against: list[str]):
+    """Helper: stamp insurance on uid for the given categories."""
+    _state.insurance[str(uid)] = {
+        "expires_at": _time.time() + 3600,
+        "protected_from": against,
+    }
+
+
+async def test_shop_tax_refuses_against_insured_target(db, monkeypatch):
+    """!shop tax @insured must NOT charge the buyer and must NOT activate
+    a tax entry. Pre-fix the buyer paid SHOP_TAX_COST for a tax that the
+    runtime handler silently swallowed every message."""
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_TAX_COST
+
+    cog = ShopCog(bot=None)
+    buyer_uid = 8001
+    target_uid = 8002
+    await add_balance(buyer_uid, SHOP_TAX_COST + 1000)
+    target = FakeMember(uid=target_uid, display_name="insured")
+    _insure(target_uid, ["tax"])
+
+    class _StubConverter:
+        async def convert(self, ctx, arg):
+            return target
+
+    monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+
+    ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=FakeGuild(gid=42))
+    ctx.invoked_with = "tax"
+    await cog.shop_tax.callback(cog, ctx, f"<@{target_uid}>")
+
+    # Buyer's balance untouched.
+    assert await get_balance(buyer_uid) == SHOP_TAX_COST + 1000
+    # No tax activated against the insured target.
+    assert target_uid not in _state.active_taxes
+    # User saw the "Protected" embed.
+    assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
+
+
+async def test_shop_mock_refuses_against_insured_target(db, monkeypatch):
+    """!shop mock @insured must NOT charge the buyer and must NOT add to
+    state.active_mocks. Pre-fix the mock effect was applied and runtime
+    _handle_mock had no insurance check, so it fired every message until
+    the counter ticked down."""
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_MOCK_COST
+
+    cog = ShopCog(bot=None)
+    buyer_uid = 8003
+    target_uid = 8004
+    await add_balance(buyer_uid, SHOP_MOCK_COST + 1000)
+    target = FakeMember(uid=target_uid, display_name="insured")
+    _insure(target_uid, ["mock"])
+
+    class _StubConverter:
+        async def convert(self, ctx, arg):
+            return target
+
+    monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+
+    ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=FakeGuild(gid=42))
+    await cog.shop_mock.callback(cog, ctx, f"<@{target_uid}>")
+
+    assert await get_balance(buyer_uid) == SHOP_MOCK_COST + 1000
+    assert target_uid not in _state.active_mocks
+    assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
+
+
+async def test_shop_mock_still_works_on_self(db, monkeypatch):
+    """Self-mocking is allowed even when insured — insurance protects from
+    others, not from voluntary self-effects. (Mirrors shop_nickname's
+    target.id != uid guard.)"""
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_MOCK_COST
+
+    cog = ShopCog(bot=None)
+    uid = 8005
+    await add_balance(uid, SHOP_MOCK_COST + 1000)
+    self_member = FakeMember(uid=uid, display_name="me")
+    _insure(uid, ["mock"])
+
+    class _StubConverter:
+        async def convert(self, ctx, arg):
+            return self_member
+
+    monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+
+    ctx = FakeCtx(author=self_member, guild=FakeGuild(gid=42))
+    await cog.shop_mock.callback(cog, ctx, f"<@{uid}>")
+
+    # Charged and mock activated despite own insurance.
+    assert await get_balance(uid) == 1000
+    assert uid in _state.active_mocks
+
+
+async def test_shop_unassignrole_refuses_against_insured_target(db, monkeypatch):
+    """!shop unassignrole @insured @role must NOT charge or strip the role.
+    Insurance claims "role assignments" coverage; pre-fix createrole/
+    assignrole/deleterole all honored it but unassignrole did not."""
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_ROLE_REMOVE_COST
+
+    cog = ShopCog(bot=None)
+    buyer_uid = 8006
+    target_uid = 8007
+    await add_balance(buyer_uid, SHOP_ROLE_REMOVE_COST + 1000)
+
+    from tests.fakes.discord import FakeRole
+    role = FakeRole(role_id=999, name="Protected Role")
+    _state.bot_roles.add(role.id)
+
+    target = FakeMember(uid=target_uid, display_name="insured")
+    target.roles = [role]
+    target.remove_roles = AsyncMock()
+    _insure(target_uid, ["role"])
+
+    guild = FakeGuild(gid=42)
+    guild.roles = [role]
+
+    class _StubConverter:
+        async def convert(self, ctx, arg):
+            return target
+
+    monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+
+    ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=guild)
+    await cog.shop_unassignrole.callback(cog, ctx, f"<@{target_uid}>", f"<@&{role.id}>")
+
+    assert await get_balance(buyer_uid) == SHOP_ROLE_REMOVE_COST + 1000
+    target.remove_roles.assert_not_awaited()
+    assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
+
+    _state.bot_roles.discard(role.id)
+
+
+async def test_shop_removenickname_works_while_self_insured(db):
+    """The owner of an insured nickname must still be able to clear their
+    own nickname — insurance protects from others, never from self.
+    Pre-fix shop_removenickname blocked the OWNER, calling itself out as
+    'they can't change their own nickname'."""
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_NICKNAME_REMOVE_COST
+
+    cog = ShopCog(bot=None)
+    uid = 8008
+    starting = SHOP_NICKNAME_REMOVE_COST + 500
+    await add_balance(uid, starting)
+    _insure(uid, ["nickname"])
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_removenickname.callback(cog, ctx)
+
+    # Charged, edit attempted, success embed sent.
+    assert await get_balance(uid) == starting - SHOP_NICKNAME_REMOVE_COST
+    ctx.author.edit.assert_awaited_once()
+    assert not any("Protected" in (e.title or "") for e in ctx.sent_embeds)

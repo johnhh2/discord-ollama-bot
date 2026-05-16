@@ -339,10 +339,6 @@ class ShopCog(commands.Cog):
     async def shop_removenickname(self, ctx: commands.Context):
         uid = ctx.author.id
         cost = 0 if uid in state.godmode_users else SHOP_NICKNAME_REMOVE_COST
-        if await is_insured(uid, "nickname"):
-            _exp = get_insurance_expiry(uid)
-            await ctx.send(embed=emb("🛡️ Protected", f"**{ctx.author.display_name}** has insurance and can't have their nickname changed (expires <t:{_exp}:R>).", C_GOLD))
-            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_NICKNAME_REMOVE_COST:,}"):
             return
         try:
@@ -495,6 +491,10 @@ class ShopCog(commands.Cog):
             return
         if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
             await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can manage membership.", C_RED))
+            return
+        if member.id != uid and await is_insured(member.id, "role"):
+            _exp = get_insurance_expiry(member.id)
+            await ctx.send(embed=emb("🛡️ Protected", f"**{member.display_name}** has insurance and their roles can't be changed (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_REMOVE_COST
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_REMOVE_COST:,}"):
@@ -955,6 +955,10 @@ class ShopCog(commands.Cog):
         except commands.BadArgument:
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mock @user`", C_PURPLE))
             return
+        if target.id != uid and await is_insured(target.id, "mock"):
+            _exp = get_insurance_expiry(target.id)
+            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against mock (expires <t:{_exp}:R>).", C_GOLD))
+            return
         cost = 0 if uid in state.godmode_users else SHOP_MOCK_COST
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MOCK_COST:,}"):
             return
@@ -1005,7 +1009,7 @@ class ShopCog(commands.Cog):
         await save_insurance()
         await ctx.send(embed=emb(
             "🛡️ Insurance Purchased",
-            f"Protected against ragebait, mock, nickname, role changes, steal, and tax! (expires <t:{expires_at}:R>)",
+            f"Protected against ragebait, mock, nickname, role assignments, steal, and tax! (expires <t:{expires_at}:R>)",
             C_GREEN,
         ))
 
@@ -1114,6 +1118,10 @@ class ShopCog(commands.Cog):
             return
         if target.id == uid:
             await ctx.send(embed=emb("❌ Error", "You can't tax yourself!", C_RED))
+            return
+        if await is_insured(target.id, "tax"):
+            _exp = get_insurance_expiry(target.id)
+            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against tax (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_TAX_COST
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_TAX_COST:,}"):
