@@ -198,7 +198,7 @@ class ChessCog(commands.Cog):
         wager_info = f"\nWager: {amount:,} 🪙 each" if amount > 0 else ""
         desc = (
             f"{ctx.author.mention} (White ♙) vs {opponent.mention} (Black ♟){wager_info}\n"
-            f"{ctx.author.mention}'s turn. Use `!move <e2e4>` or SAN (`Nf3`)\n\n"
+            f"{ctx.author.mention}'s turn. Type your move (e.g. `e4`, `Nf3`, `O-O`, `e2e4`) or `!move <move>`\n\n"
             f"**Last move:** {game['last_move']}"
         )
         file = _render_file_for_game(game, orientation_for_uid=white_id)
@@ -238,7 +238,7 @@ class ChessCog(commands.Cog):
 
         desc = (
             f"{ctx.author.mention} (White ♙) vs 🤖 **{black_name}** (Black ♟)\n"
-            f"{ctx.author.mention}'s turn. Use `!move <e2e4>` or SAN (`Nf3`)\n\n"
+            f"{ctx.author.mention}'s turn. Type your move (e.g. `e4`, `Nf3`, `O-O`, `e2e4`) or `!move <move>`\n\n"
             f"**Last move:** {game['last_move']}"
         )
         file = _render_file_for_game(game, orientation_for_uid=white_id)
@@ -254,7 +254,7 @@ class ChessCog(commands.Cog):
     # ── !chess view <report_id> ─────────────────────────────────────────────
     async def _cmd_view(self, ctx: commands.Context, args: tuple[str, ...]):
         if not args:
-            await send_ephemeral(ctx, embed=emb("❌ Usage", "Use `!chess view <report_id>`", C_RED))
+            await send_ephemeral(ctx, embed=emb("❌ Usage", "Use `!chess view <report_id>` to replay a finished game.", C_RED))
             return
         try:
             report_id = int(args[0])
@@ -310,7 +310,7 @@ class ChessCog(commands.Cog):
         asyncio.create_task(_delete_after(ctx.message))
 
         if cid not in state.active_chess_games:
-            err = await ctx.send("No active chess game in this channel. Start one with `!chess @user [amount]`")
+            err = await ctx.send("No active chess game in this channel. Start one with `!chess @user [amount]` (PvP) or `!chess @TheBot [elo]` (vs Stockfish).")
             asyncio.create_task(_delete_after(err))
             return
 
@@ -323,7 +323,7 @@ class ChessCog(commands.Cog):
             return
 
         if not args:
-            err = await ctx.send("Usage: `!move <e2e4>` or `!move Nf3`")
+            err = await ctx.send("Usage: `!move <move>` (e.g. `!move e4`, `!move Nf3`, `!move e2e4`). Or just type the move directly in a chess channel.")
             asyncio.create_task(_delete_after(err))
             return
 
@@ -461,7 +461,7 @@ class ChessCog(commands.Cog):
             next_mention = next_player.mention if next_player else "Next player"
         check_note = " — **check!**" if board.is_check() else ""
         desc = (
-            f"{next_mention}'s turn{check_note}. Use `!move <e2e4>` or SAN (`Nf3`)\n\n"
+            f"{next_mention}'s turn{check_note}. Type your move (e.g. `e4`, `Nf3`, `O-O`, `e2e4`) or `!move <move>`\n\n"
             f"**Last move:** {game['last_move']}"
         )
         if file is not None:

@@ -27,7 +27,8 @@ Async Python on top of `discord.py` and `aiomysql`, with streaming LLM output, a
 
 **Games**
 - `!hangman` (with a ~7.5k-word list and rarity-weighted payouts)
-- `!ttt` (tic-tac-toe), `!c4` (connect 4), `!chess` (persistent games), `!race`
+- `!ttt` (tic-tac-toe), `!c4` (connect 4), `!race`
+- `!chess` — PvP or vs Stockfish (`@TheBot [elo]`, elo 100-3190); SAN/UCI moves, finished games archived for `!chess view <id>`
 - Multi-player support with channel-scoped sessions
 
 **Shop**
