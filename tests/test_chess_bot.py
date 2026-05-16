@@ -48,6 +48,32 @@ class TestClampElo:
         assert chess_bot.clamp_elo(chess_bot.ELO_MAX) == chess_bot.ELO_MAX
 
 
+class TestResolveStockfishPath:
+    def test_env_var_wins(self, monkeypatch):
+        monkeypatch.setenv("STOCKFISH_PATH", "/custom/path/sf")
+        # Even if shutil.which finds something, env wins.
+        monkeypatch.setattr(chess_bot.shutil, "which", lambda _: "/usr/bin/stockfish")
+        assert chess_bot._resolve_stockfish_path() == "/custom/path/sf"
+
+    def test_path_lookup_when_no_env(self, monkeypatch):
+        monkeypatch.delenv("STOCKFISH_PATH", raising=False)
+        monkeypatch.setattr(chess_bot.shutil, "which", lambda _: "/usr/local/bin/stockfish")
+        assert chess_bot._resolve_stockfish_path() == "/usr/local/bin/stockfish"
+
+    def test_debian_fallback_when_neither_set(self, monkeypatch):
+        """Bug we shipped on the first try: relying on PATH alone fails in
+        Docker because /usr/games is not on the default non-login PATH."""
+        monkeypatch.delenv("STOCKFISH_PATH", raising=False)
+        monkeypatch.setattr(chess_bot.shutil, "which", lambda _: None)
+        assert chess_bot._resolve_stockfish_path() == "/usr/games/stockfish"
+
+    def test_empty_env_treated_as_unset(self, monkeypatch):
+        """STOCKFISH_PATH='' should not be treated as an explicit override."""
+        monkeypatch.setenv("STOCKFISH_PATH", "")
+        monkeypatch.setattr(chess_bot.shutil, "which", lambda _: "/usr/bin/stockfish")
+        assert chess_bot._resolve_stockfish_path() == "/usr/bin/stockfish"
+
+
 class TestSkillLevelForElo:
     def test_floor_maps_to_zero(self):
         assert chess_bot.skill_level_for_elo(100) == 0

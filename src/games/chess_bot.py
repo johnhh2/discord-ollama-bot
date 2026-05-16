@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 
 import chess
 import chess.engine
@@ -20,10 +21,24 @@ ELO_DEFAULT = 1320
 # above the floor while keeping bot responses snappy on Discord.
 MOVE_TIME_SECONDS = 0.5
 
-# Path lookup: STOCKFISH_PATH env var overrides; otherwise PATH lookup finds
-# the apt-installed binary in the Docker image (Debian installs at
-# /usr/games/stockfish but it's on the default PATH).
-_STOCKFISH_BINARY = os.environ.get("STOCKFISH_PATH", "stockfish")
+# Debian's `stockfish` apt package installs at /usr/games/stockfish, which is
+# NOT on the default PATH for non-login shells (which is what asyncio's
+# subprocess sees). We can't rely on PATH lookup alone — must fall back to
+# the known install location.
+_DEBIAN_STOCKFISH_PATH = "/usr/games/stockfish"
+
+
+def _resolve_stockfish_path() -> str:
+    """Resolve the stockfish binary path. STOCKFISH_PATH env var wins, then
+    PATH lookup (for dev machines), then Debian's apt install location.
+    Resolved per-call so test monkeypatches of the env var take effect."""
+    explicit = os.environ.get("STOCKFISH_PATH")
+    if explicit:
+        return explicit
+    found = shutil.which("stockfish")
+    if found:
+        return found
+    return _DEBIAN_STOCKFISH_PATH
 
 
 def clamp_elo(elo: int) -> int:
@@ -48,7 +63,7 @@ async def pick_move(fen: str, elo: int) -> chess.Move:
     board = chess.Board(fen=fen)
     elo = clamp_elo(elo)
 
-    transport, engine = await chess.engine.popen_uci(_STOCKFISH_BINARY)
+    transport, engine = await chess.engine.popen_uci(_resolve_stockfish_path())
     try:
         if elo >= STOCKFISH_NATIVE_ELO_MIN:
             await engine.configure({"UCI_LimitStrength": True, "UCI_Elo": elo})
