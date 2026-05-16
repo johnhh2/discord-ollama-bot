@@ -119,6 +119,107 @@ async def test_pick_move_sub_native_elo_returns_legal_move():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# pick_move config branching (no real engine — mocked subprocess)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _install_fake_engine(monkeypatch):
+    """Replace chess.engine.popen_uci with a fake that records configure() calls
+    and returns a fixed move. Returns the calls-recording dict for assertions."""
+    calls: dict = {"configure": [], "quit": 0}
+
+    class _FakeEngine:
+        async def configure(self, options):
+            calls["configure"].append(dict(options))
+
+        async def play(self, board, limit):
+            return SimpleNamespace(move=chess.Move.from_uci("e2e4"))
+
+        async def quit(self):
+            calls["quit"] += 1
+
+    class _FakeTransport:
+        def close(self):
+            pass
+
+    async def _fake_popen(_path):
+        return _FakeTransport(), _FakeEngine()
+
+    monkeypatch.setattr(chess_bot.chess.engine, "popen_uci", _fake_popen)
+    return calls
+
+
+@_aio
+async def test_pick_move_native_elo_uses_uci_limit_strength(monkeypatch):
+    """For Elo >= STOCKFISH_NATIVE_ELO_MIN, pick_move configures
+    UCI_LimitStrength + UCI_Elo, not Skill Level."""
+    calls = _install_fake_engine(monkeypatch)
+    await chess_bot.pick_move(chess_engine.STARTING_FEN, 2000)
+
+    assert len(calls["configure"]) == 1
+    opts = calls["configure"][0]
+    assert opts.get("UCI_LimitStrength") is True
+    assert opts.get("UCI_Elo") == 2000
+    assert "Skill Level" not in opts
+
+
+@_aio
+async def test_pick_move_sub_native_elo_uses_skill_level(monkeypatch):
+    """For Elo < STOCKFISH_NATIVE_ELO_MIN, pick_move configures Skill Level,
+    not UCI_LimitStrength."""
+    calls = _install_fake_engine(monkeypatch)
+    await chess_bot.pick_move(chess_engine.STARTING_FEN, 500)
+
+    assert len(calls["configure"]) == 1
+    opts = calls["configure"][0]
+    assert "Skill Level" in opts
+    expected_skill = chess_bot.skill_level_for_elo(500)
+    assert opts["Skill Level"] == expected_skill
+    assert "UCI_LimitStrength" not in opts
+    assert "UCI_Elo" not in opts
+
+
+@_aio
+async def test_pick_move_clamps_then_branches(monkeypatch):
+    """Out-of-range Elos are clamped before the branching check. Elo=50 clamps
+    to 100 (sub-native), so Skill Level configured."""
+    calls = _install_fake_engine(monkeypatch)
+    await chess_bot.pick_move(chess_engine.STARTING_FEN, 50)
+
+    opts = calls["configure"][0]
+    assert opts.get("Skill Level") == 0  # clamped 50 -> 100 -> skill 0
+
+
+@_aio
+async def test_pick_move_quits_engine_even_when_configure_raises(monkeypatch):
+    """If configure() raises, the finally clause must still close the engine."""
+    quit_count = {"n": 0}
+
+    class _FakeEngine:
+        async def configure(self, options):
+            raise RuntimeError("config error")
+
+        async def play(self, board, limit):
+            return SimpleNamespace(move=chess.Move.from_uci("e2e4"))
+
+        async def quit(self):
+            quit_count["n"] += 1
+
+    class _FakeTransport:
+        def close(self):
+            pass
+
+    async def _fake_popen(_path):
+        return _FakeTransport(), _FakeEngine()
+
+    monkeypatch.setattr(chess_bot.chess.engine, "popen_uci", _fake_popen)
+
+    with pytest.raises(RuntimeError, match="config error"):
+        await chess_bot.pick_move(chess_engine.STARTING_FEN, 2000)
+    assert quit_count["n"] == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Cog integration — bot-mention branch in cmd_chess
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -386,6 +487,113 @@ async def test_bot_reply_no_op_when_game_ended(db, _stub_chess_helpers, monkeypa
 
     # Should not raise.
     await cog._play_bot_reply(channel, 1102)
+
+
+@_aio
+async def test_bot_reply_uses_game_elo_not_default(db, _stub_chess_helpers, monkeypatch):
+    """The game's elo (not ELO_DEFAULT) is what reaches Stockfish. Pins the
+    end-to-end wiring: cmd_chess stores elo → _play_bot_reply reads it →
+    pick_move receives it."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2300, display_name="Alice")
+    # Seed a game at a deliberately non-default Elo.
+    _seed_bot_chess_game(1300, human.id, cog.bot.user.id, elo=2100)
+    ctx = _ctx_for(human, channel_id=1300)
+    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
+
+    received: list[int] = []
+    async def _stub_pick(fen, elo):
+        received.append(elo)
+        return chess.Move.from_uci("e7e5")
+    monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "e4")
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    assert received == [2100], f"expected Stockfish called with 2100, got {received}"
+
+
+@_aio
+async def test_persisted_elo_used_after_reload(db, _stub_chess_helpers, monkeypatch):
+    """End-to-end fix verification for the persistence change: save → clear
+    state → reload via init_db_state → human moves → Stockfish is called
+    with the originally-persisted Elo, not ELO_DEFAULT."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2301, display_name="Alice")
+    _seed_bot_chess_game(1301, human.id, cog.bot.user.id, elo=1850)
+
+    # Round-trip through persistence: save, clear in-memory, reload.
+    from src.persistence import save_chess_game
+    import src.persistence as _persistence
+    await save_chess_game(1301)
+    _state.active_chess_games.clear()
+    _persistence._init_db_state_done = False
+    await _persistence.init_db_state()
+    assert _state.active_chess_games[1301].get("elo") == 1850
+
+    ctx = _ctx_for(human, channel_id=1301)
+    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
+
+    received: list[int] = []
+    async def _stub_pick(fen, elo):
+        received.append(elo)
+        return chess.Move.from_uci("e7e5")
+    monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "e4")
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    assert received == [1850], f"expected reloaded Elo 1850, got {received}"
+
+
+@_aio
+async def test_stockfish_mate_creates_report_with_bot_as_winner(db, _stub_chess_helpers, monkeypatch):
+    """When Stockfish delivers mate, the game-over path runs and a chess_reports
+    row is written with winner_id = bot.user.id. Seeds a fool's-mate-ready
+    position so a single human move sets up the bot's mating reply."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2400, display_name="Alice")
+    # FEN: standard start. Plays 1. f3 (white), 2. ... Qh4# is bot's mate move.
+    # But fool's mate is: 1. f3 e5 2. g4 Qh4#. The bot needs TWO moves to mate,
+    # not one. So we seed directly to "white to move 2. g4" state, then have
+    # the human play g4, and force Stockfish's stubbed reply to be Qh4#.
+    _state.active_chess_games[1400] = {
+        "fen": "rnbqkbnr/pppp1ppp/8/4p3/8/5P2/PPPPP1PP/RNBQKBNR w KQkq - 0 2",
+        "pgn": _initial_pgn(
+            "Alice", "Stockfish (1320 Elo)", None,
+            starting_fen="rnbqkbnr/pppp1ppp/8/4p3/8/5P2/PPPPP1PP/RNBQKBNR w KQkq - 0 2",
+        ),
+        "white_id": human.id,
+        "black_id": cog.bot.user.id,
+        "current_id": human.id,
+        "amount": 0,
+        "elo": 1320,
+        "last_move": "",
+        "board_msg_id": 1,
+    }
+
+    ctx = _ctx_for(human, channel_id=1400)
+    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
+
+    # Stockfish plays Qh4# after white's g4.
+    async def _stub_pick(fen, elo):
+        return chess.Move.from_uci("d8h4")
+    monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "g4")
+    for _ in range(8):
+        await asyncio.sleep(0)
+
+    # Game ended; chess_games row gone, chess_reports row created.
+    assert 1400 not in _state.active_chess_games
+
+    from src.persistence import load_chess_report
+    report = await load_chess_report(1)
+    assert report is not None
+    assert report["winner_id"] == cog.bot.user.id
+    assert report["result"] == "0-1"
 
 
 @_aio
