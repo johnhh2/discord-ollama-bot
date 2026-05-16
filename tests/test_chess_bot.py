@@ -940,6 +940,172 @@ async def test_stockfish_mate_headline_uses_stockfish_label_not_raw_uid(
 
 
 @_aio
+async def test_human_defeats_bot_triggers_bounty_payout(db, _stub_chess_helpers):
+    """End-to-end: human plays the mating move against the bot, _finalize_game
+    runs the bot-defeat bounty, user balance reflects 20*elo, and the game-over
+    embed includes the bounty line."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2500, display_name="MateMachine")
+    # Scholar's-mate-ready: white to move, Qxf7# delivers mate.
+    _state.active_chess_games[1500] = {
+        "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        "pgn": _initial_pgn(
+            "MateMachine", "Stockfish (800 Elo)", None,
+            starting_fen="r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        ),
+        "white_id": human.id,
+        "black_id": cog.bot.user.id,
+        "current_id": human.id,
+        "amount": 0,
+        "elo": 800,
+        "last_move": "",
+        "board_msg_id": 1,
+    }
+    ctx = _ctx_for(human, channel_id=1500)
+    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
+
+    await cog.cmd_move_chess.callback(cog, ctx, "Qxf7#")
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    # Game ended; bounty paid (no prior win today → full 800 * 20 = 16000).
+    assert 1500 not in _state.active_chess_games
+    from src.economy import get_balance
+    assert await get_balance(human.id) == 800 * 20
+
+    # Highwater set to 800 today.
+    from src.economy import _ct_today
+    u = _state.economy["users"][str(human.id)]
+    assert u["bot_chess_elo_max_today"] == 800
+    assert u["bot_chess_elo_max_date"] == _ct_today()
+
+    # Embed mentions the bounty.
+    game_over = [
+        embed for _ch, _g, embed, _f in _stub_chess_helpers
+        if embed.title and "Game Over" in embed.title
+    ]
+    assert any(
+        "800-Elo bot" in (e.description or "") for e in game_over
+    ), "expected bounty line in game-over description"
+
+
+@_aio
+async def test_human_defeats_lower_elo_bot_after_higher_pays_nothing(db, _stub_chess_helpers):
+    """Same-day flow: first beat 800, then beat 500 — second pays 0."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2501, display_name="Repeat")
+
+    # Pre-seed the user's daily highwater at 800 so the next 500-Elo win is a no-op.
+    from src.economy import _ensure_user, _ct_today, get_balance
+    await _ensure_user(human.id)
+    _state.economy["users"][str(human.id)]["bot_chess_elo_max_today"] = 800
+    _state.economy["users"][str(human.id)]["bot_chess_elo_max_date"] = _ct_today()
+    bal_before = await get_balance(human.id)
+
+    # Now mate a 500-Elo bot.
+    _state.active_chess_games[1501] = {
+        "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        "pgn": _initial_pgn(
+            "Repeat", "Stockfish (500 Elo)", None,
+            starting_fen="r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        ),
+        "white_id": human.id,
+        "black_id": cog.bot.user.id,
+        "current_id": human.id,
+        "amount": 0,
+        "elo": 500,
+        "last_move": "",
+        "board_msg_id": 1,
+    }
+    ctx = _ctx_for(human, channel_id=1501)
+    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
+
+    await cog.cmd_move_chess.callback(cog, ctx, "Qxf7#")
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    # No bounty added.
+    assert await get_balance(human.id) == bal_before
+    # Highwater unchanged at 800.
+    assert _state.economy["users"][str(human.id)]["bot_chess_elo_max_today"] == 800
+
+
+@_aio
+async def test_bot_defeats_human_no_bounty(db, _stub_chess_helpers, monkeypatch):
+    """When the bot wins (Stockfish mates the human), no bounty is paid to
+    either side — the bounty path is gated on winner != bot."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2502, display_name="Loser")
+    # Seed a position where it's BLACK (the bot) to move and Black's
+    # next move is mate. Fool's-mate-ready, white to play g4 first.
+    _state.active_chess_games[1502] = {
+        "fen": "rnbqkbnr/pppp1ppp/8/4p3/8/5P2/PPPPP1PP/RNBQKBNR w KQkq - 0 2",
+        "pgn": _initial_pgn(
+            "Loser", "Stockfish (1320 Elo)", None,
+            starting_fen="rnbqkbnr/pppp1ppp/8/4p3/8/5P2/PPPPP1PP/RNBQKBNR w KQkq - 0 2",
+        ),
+        "white_id": human.id,
+        "black_id": cog.bot.user.id,
+        "current_id": human.id,
+        "amount": 0,
+        "elo": 1320,
+        "last_move": "",
+        "board_msg_id": 1,
+    }
+    ctx = _ctx_for(human, channel_id=1502)
+    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
+
+    async def _stub_pick(fen, elo):
+        return chess.Move.from_uci("d8h4")  # Qh4# after g4
+    monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "g4")
+    for _ in range(8):
+        await asyncio.sleep(0)
+
+    # Game ended. Human is the loser; no bounty.
+    from src.economy import get_balance
+    assert await get_balance(human.id) == 0
+    u = _state.economy["users"].get(str(human.id), {})
+    assert u.get("bot_chess_elo_max_today", 0) == 0
+
+
+@_aio
+async def test_pvp_win_does_not_trigger_bot_bounty(db, _stub_chess_helpers):
+    """Regression: human-vs-human chess (no 'elo' key in the game dict)
+    must NOT pay out the bot bounty."""
+    cog = _make_bot_cog()
+    white = FakeMember(uid=2600, display_name="Alice")
+    black = FakeMember(uid=2601, display_name="Bob")
+    _state.active_chess_games[1600] = {
+        "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        "pgn": _initial_pgn(
+            "Alice", "Bob", None,
+            starting_fen="r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        ),
+        "white_id": white.id,
+        "black_id": black.id,
+        "current_id": white.id,
+        "amount": 0,
+        # NB: no "elo" key — this is a PvP game.
+        "last_move": "",
+        "board_msg_id": 1,
+    }
+    ctx = _ctx_for(white, channel_id=1600)
+    ctx.guild.members.append(black)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "Qxf7#")
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    # No bounty, no highwater change.
+    from src.economy import get_balance
+    assert await get_balance(white.id) == 0
+    u = _state.economy["users"].get(str(white.id), {})
+    assert u.get("bot_chess_elo_max_today", 0) == 0
+
+
+@_aio
 async def test_bot_reply_does_not_fire_for_pvp_game(db, _stub_chess_helpers, monkeypatch):
     """Regression: a PvP move between two humans must NOT trigger _play_bot_reply."""
     cog = _make_bot_cog()

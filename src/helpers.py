@@ -33,6 +33,7 @@ RECORD_LABELS = {
     "lottery": "biggest lottery prize",
     "blackjack": "biggest blackjack win",
     "hangman_payout": "biggest hangman payout",
+    "highest_bot_chess_elo_defeated": "highest Stockfish Elo defeated",
 }
 
 
@@ -54,6 +55,8 @@ async def announce_record(channel, category: str, holder_name: str, value: int) 
     label = _record_label(category)
     if category.startswith("hangman_wins_"):
         suffix = f"**{value:,}** wins"
+    elif category == "highest_bot_chess_elo_defeated":
+        suffix = f"**{value:,} Elo**"
     else:
         suffix = f"**{value:,} 🪙**"
     desc = f"**{holder_name}** just set a new {label} record: {suffix}"

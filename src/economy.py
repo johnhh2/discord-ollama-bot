@@ -504,6 +504,8 @@ async def do_daily_reset():
         user["scratch_used"] = 0
         user["scratch_date"] = today
         user["jailbreak_used"] = False
+        user["bot_chess_elo_max_today"] = 0
+        user["bot_chess_elo_max_date"] = today
     state.economy["last_daily_reset"] = today
     await save_economy()
 

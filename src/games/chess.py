@@ -12,7 +12,7 @@ from discord.ext import commands
 
 from src.helpers import (
     emb, C_RED, C_GOLD, C_BLUE, C_GREEN, C_GREY,
-    _delete_after, send_ephemeral,
+    _delete_after, send_ephemeral, announce_record,
 )
 from src.economy import (
     add_balance, record_gambling_event,
@@ -24,6 +24,7 @@ from src.persistence import (
 )
 from src.games.ttt_c4 import _setup_pvp_game
 from src.games import chess_engine, chess_render, chess_bot
+from src.games.bot_chess_rewards import award_bot_defeat, RECORD_CATEGORY as _BOT_CHESS_RECORD
 from src import state
 
 
@@ -640,6 +641,30 @@ class ChessCog(commands.Cog):
                 winner_name = _player_display_name(guild, winner_id, str(winner_id))
             headline = f"{winner_name} wins by {reason}." if reason else f"{winner_name} wins."
             color = C_GREEN
+
+            # Bot-defeat bounty: when a human beats Stockfish, pay out 20 coins
+            # per new Elo point gained today over the user's daily highwater.
+            # No-ops when winner is the bot, when it's PvP (no "elo" key), or
+            # when this elo doesn't exceed today's highwater.
+            if (
+                bot_user is not None
+                and winner_id != bot_user.id
+                and "elo" in game
+            ):
+                bot_elo = int(game.get("elo", 0) or 0)
+                try:
+                    bounty, record_broken = await award_bot_defeat(
+                        user_id=winner_id, guild_id=gid,
+                        holder_name=winner_name, bot_elo=bot_elo,
+                    )
+                    if bounty > 0:
+                        payout_line += f" **+{bounty:,} 🪙** for defeating a {bot_elo}-Elo bot today."
+                    if record_broken:
+                        asyncio.create_task(
+                            announce_record(channel, _BOT_CHESS_RECORD, winner_name, bot_elo)
+                        )
+                except Exception as e:
+                    logging.error(f"bot_chess_rewards.award_bot_defeat failed: {e}", exc_info=True)
 
         view_line = f"\n\nView this game: `!chess view {report_id}`" if report_id is not None else ""
         desc = (

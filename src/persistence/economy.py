@@ -18,14 +18,16 @@ def _economy_user_row(uid_str: str, u: dict) -> tuple:
         u.get("jail_reason"),
         bool(u.get("crime_eligible", False)),
         int(u.get("bail_amount", 0) or 0),
+        int(u.get("bot_chess_elo_max_today", 0) or 0),
+        u.get("bot_chess_elo_max_date"),
     )
 
 
 _ECONOMY_UPSERT_SQL = """INSERT INTO economy_users
     (user_id, balance, last_daily, daily_date, scratch_used,
      scratch_date, jailbreak_used, jail_until, savings, jail_reason,
-     crime_eligible, bail_amount)
-   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+     crime_eligible, bail_amount, bot_chess_elo_max_today, bot_chess_elo_max_date)
+   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
    ON DUPLICATE KEY UPDATE
      balance=VALUES(balance),
      last_daily=VALUES(last_daily),
@@ -37,7 +39,9 @@ _ECONOMY_UPSERT_SQL = """INSERT INTO economy_users
      savings=VALUES(savings),
      jail_reason=VALUES(jail_reason),
      crime_eligible=VALUES(crime_eligible),
-     bail_amount=VALUES(bail_amount)"""
+     bail_amount=VALUES(bail_amount),
+     bot_chess_elo_max_today=VALUES(bot_chess_elo_max_today),
+     bot_chess_elo_max_date=VALUES(bot_chess_elo_max_date)"""
 
 
 async def save_economy(uid: int = None):
