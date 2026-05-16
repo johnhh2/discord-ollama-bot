@@ -145,8 +145,16 @@ class ChessCog(commands.Cog):
         if args and args[0].lower() == "pgn":
             await self._cmd_pgn(ctx, args[1:])
             return
+        if args and args[0].lower() in ("help", "?"):
+            await self._cmd_help(ctx)
+            return
 
         opponent = ctx.message.mentions[0] if ctx.message.mentions else None
+        # Bare `!chess` with no mention and no parseable args → show the help
+        # menu instead of trying to start a malformed game.
+        if opponent is None and not args:
+            await self._cmd_help(ctx)
+            return
         trailing_int: int | None = None
         if args:
             try:
@@ -388,6 +396,32 @@ class ChessCog(commands.Cog):
             )
         else:
             await send_ephemeral(ctx, embed=emb(f"♟️ Chess Game #{report_id} — PGN", pgn_block, C_GREY))
+
+    # ── !chess (no args) / !chess help: show the chess command menu ─────────
+    async def _cmd_help(self, ctx: commands.Context):
+        elo_lo, elo_hi, elo_default = chess_bot.ELO_MIN, chess_bot.ELO_MAX, chess_bot.ELO_DEFAULT
+        coins_per_elo = 20  # mirrors bot_chess_rewards.COINS_PER_NEW_ELO
+        desc = (
+            "**Start a game**\n"
+            "`!chess @user [wager]` — Play another player. Optional wager in 🪙; winner takes the pot.\n"
+            f"`!chessbot [elo]` (alias `!chess @TheBot [elo]`) — Play Stockfish. Elo `{elo_lo}`–`{elo_hi}`, default `{elo_default}`.\n"
+            f"  • Beat the bot to earn **{coins_per_elo} 🪙 per new Elo point** above your daily highwater (resets 5am CT).\n"
+            "\n"
+            "**Make a move**\n"
+            "`!move <move>` — e.g. `!move e4`, `!move Nf3`, `!move e2e4`, `!move O-O`, `!move e7e8q` (promote).\n"
+            "  • In a chess channel during your turn you can also just type the move directly — the bot will pick it up and delete your message.\n"
+            "\n"
+            "**End / forfeit**\n"
+            "`!stop` — Forfeit the active game in this channel. Wager goes to the opponent.\n"
+            "\n"
+            "**Replay finished games**\n"
+            "`!chess view <id>` — Show the game outcome, final position image, and movetext.\n"
+            "`!chess pgn <id>` — Full headered PGN (paste into [lichess.org/paste](https://lichess.org/paste) for analysis).\n"
+            "\n"
+            "**Notation**\n"
+            "SAN (`Nf3`, `O-O`, `Qxh4#`) or UCI (`g1f3`, `e1g1`, `d8h4`). Both work everywhere."
+        )
+        await send_ephemeral(ctx, embed=emb("♟️ Chess — Commands", desc, C_BLUE))
 
     # ── !move ───────────────────────────────────────────────────────────────
     @commands.command(name="move")

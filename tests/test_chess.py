@@ -660,6 +660,58 @@ async def test_cmd_chess_dispatches_pgn_subcommand(db):
 
 
 @_aio
+async def test_chess_bare_shows_help_menu(db):
+    """`!chess` with no args and no mention shows the help menu instead of
+    trying to start a malformed game."""
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1300)
+    ctx = _ctx_for(user, channel_id=900)
+
+    await cog.cmd_chess.callback(cog, ctx)
+
+    # No game created — went to help.
+    assert 900 not in _state.active_chess_games
+    assert len(ctx.sent_embeds) == 1
+    e = ctx.sent_embeds[0]
+    assert "Chess" in e.title and "Commands" in e.title
+    desc = e.description or ""
+    # All command groups present.
+    assert "!chess @user" in desc
+    assert "!chessbot" in desc
+    assert "!move" in desc
+    assert "!stop" in desc
+    assert "!chess view" in desc
+    assert "!chess pgn" in desc
+
+
+@_aio
+async def test_chess_help_subcommand_shows_help_menu(db):
+    """`!chess help` and `!chess ?` both route to the help menu."""
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1301)
+    ctx = _ctx_for(user, channel_id=901)
+
+    await cog.cmd_chess.callback(cog, ctx, "help")
+    assert "Commands" in ctx.sent_embeds[-1].title
+
+    ctx2 = _ctx_for(user, channel_id=902)
+    await cog.cmd_chess.callback(cog, ctx2, "?")
+    assert "Commands" in ctx2.sent_embeds[-1].title
+
+
+@_aio
+async def test_chess_help_does_not_start_game(db):
+    """The help menu must never create active game state."""
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1302)
+    ctx = _ctx_for(user, channel_id=903)
+
+    await cog.cmd_chess.callback(cog, ctx)
+
+    assert 903 not in _state.active_chess_games
+
+
+@_aio
 async def test_chess_view_invalid_number(db):
     """!chess view <non-int> sends an error embed."""
     cog = ChessCog(bot=None)
