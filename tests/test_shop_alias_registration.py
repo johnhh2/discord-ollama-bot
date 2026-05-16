@@ -126,3 +126,34 @@ async def test_every_shop_subcommand_in_the_table_actually_exists():
         assert attr is not None, f"_SHOP_TOP_ALIASES references missing attr {sub_attr!r}"
         # Must be a discord.py Command (has a .callback attribute).
         assert hasattr(attr, "callback"), f"{sub_attr} is not a Command"
+
+
+# ── _shop_subcommand decorator must preserve method signature ─────────────────
+#
+# Regression for the bug where _shop_subcommand copied __name__ and __wrapped__
+# but not __qualname__. discord.py's get_signature_parameters calls
+# is_inside_class(callback), which checks __qualname__ for a class component.
+# Without it, discord.py only skips one leading param instead of two (self+ctx),
+# so `ctx` is treated as a user-supplied arg — and every wrapped subcommand
+# 400s with MissingRequiredArgument or BadArgument("Converting to Context failed").
+# Tests that call `cog.shop_X.callback(cog, ctx)` directly bypass this entire
+# code path and won't catch it; the surface we need to assert against is
+# discord.py's view of the Command's .params dict.
+
+async def test_shop_subcommand_decorator_does_not_inject_phantom_ctx_param():
+    """No-arg !shop subcommands must have zero user params. If
+    _shop_subcommand breaks signature inspection, `ctx` shows up here and
+    the command dies at dispatch with MissingRequiredArgument."""
+    cog = ShopCog(bot=None)
+    assert list(cog.shop_insurance.params) == []
+    assert list(cog.shop_removenickname.params) == []
+
+
+async def test_shop_subcommand_decorator_preserves_varargs_signature():
+    """!shop subcommands declared `*args` must expose exactly one user
+    param (`args`), not `[ctx, args]`. The phantom `ctx` slot would
+    consume the real Context and trip BadArgument on first positional."""
+    cog = ShopCog(bot=None)
+    assert list(cog.shop_roleup.params) == ["args"]
+    assert list(cog.shop_nickname.params) == ["args"]
+    assert list(cog.shop_mock.params) == ["args"]

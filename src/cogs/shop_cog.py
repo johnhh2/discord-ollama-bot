@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import time
 import datetime
 import re
@@ -55,6 +56,15 @@ from src import state
 
 def _shop_subcommand(enabled_key: "str | None"):
     def deco(func):
+        # functools.wraps copies __qualname__ from `func` (e.g. "ShopCog.shop_insurance"),
+        # which is load-bearing: discord.py's get_signature_parameters calls
+        # is_inside_class(callback) to decide how many leading params to skip
+        # (self + ctx for methods, ctx only for plain functions). If wrapper keeps its
+        # local qualname ("_shop_subcommand.<locals>.deco.<locals>.wrapper"),
+        # is_inside_class returns False, only one param is skipped, and discord.py
+        # treats `ctx` as a user-supplied arg — causing MissingRequiredArgument /
+        # BadArgument("Converting to Context failed") on every wrapped subcommand.
+        @functools.wraps(func)
         async def wrapper(self, ctx: commands.Context, *args, **kwargs):
             if ctx.guild:
                 cfg = get_guild_cfg(ctx.guild.id)
@@ -69,8 +79,6 @@ def _shop_subcommand(enabled_key: "str | None"):
                     await ctx.send(embed=emb("🛒 Disabled", f"The {key} shop item is disabled in this server.", C_GREY))
                     return
             return await func(self, ctx, *args, **kwargs)
-        wrapper.__wrapped__ = func
-        wrapper.__name__ = func.__name__
         return wrapper
     return deco
 
