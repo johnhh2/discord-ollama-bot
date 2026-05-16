@@ -444,6 +444,66 @@ async def test_chess_report_draw_has_null_winner(db):
     assert report["result"] == "1/2-1/2"
 
 
+async def test_head_to_head_counts_both_orders_and_draws(db):
+    """load_head_to_head treats white-vs-black and black-vs-white as one
+    matchup, and counts NULL winner_id as a draw. Cross-guild totals."""
+    base = dict(channel_id=1, pgn="", final_fen="-")
+    # A=10 vs B=20: A wins twice, B wins once, one draw
+    await _persistence.save_chess_report(guild_id=1, white_id=10, black_id=20,
+                                          winner_id=10, result="1-0", **base)
+    await _persistence.save_chess_report(guild_id=2, white_id=20, black_id=10,
+                                          winner_id=10, result="0-1", **base)
+    await _persistence.save_chess_report(guild_id=1, white_id=20, black_id=10,
+                                          winner_id=20, result="1-0", **base)
+    await _persistence.save_chess_report(guild_id=1, white_id=10, black_id=20,
+                                          winner_id=None, result="1/2-1/2", **base)
+    # Noise: a different pair shouldn't count.
+    await _persistence.save_chess_report(guild_id=1, white_id=10, black_id=99,
+                                          winner_id=10, result="1-0", **base)
+
+    h2h = await _persistence.load_head_to_head(10, 20)
+    assert h2h == {"wins_a": 2, "wins_b": 1, "draws": 1}
+
+    # Swapped order swaps a/b counts.
+    h2h_rev = await _persistence.load_head_to_head(20, 10)
+    assert h2h_rev == {"wins_a": 1, "wins_b": 2, "draws": 1}
+
+
+async def test_head_to_head_returns_zeros_when_no_games(db):
+    h2h = await _persistence.load_head_to_head(777, 888)
+    assert h2h == {"wins_a": 0, "wins_b": 0, "draws": 0}
+
+
+async def test_count_pvp_wins_excludes_bot_games(db):
+    """count_pvp_wins_in_guild filters out reports where either side is the
+    bot user. Bot games shouldn't pad the PvP wins record."""
+    BOT_UID = 999_000
+    base = dict(channel_id=1, pgn="", final_fen="-")
+    # Two PvP wins in guild 42
+    await _persistence.save_chess_report(guild_id=42, white_id=10, black_id=20,
+                                          winner_id=10, result="1-0", **base)
+    await _persistence.save_chess_report(guild_id=42, white_id=10, black_id=30,
+                                          winner_id=10, result="1-0", **base)
+    # One bot win in guild 42 — must not be counted.
+    await _persistence.save_chess_report(guild_id=42, white_id=10, black_id=BOT_UID,
+                                          winner_id=10, result="1-0", **base)
+    # A win in a different guild — also not counted.
+    await _persistence.save_chess_report(guild_id=43, white_id=10, black_id=20,
+                                          winner_id=10, result="1-0", **base)
+    # A loss — not counted.
+    await _persistence.save_chess_report(guild_id=42, white_id=10, black_id=20,
+                                          winner_id=20, result="0-1", **base)
+
+    wins = await _persistence.count_pvp_wins_in_guild(10, 42, BOT_UID)
+    assert wins == 2
+
+
+async def test_count_pvp_wins_zero_when_no_wins(db):
+    BOT_UID = 999_000
+    wins = await _persistence.count_pvp_wins_in_guild(5555, 42, BOT_UID)
+    assert wins == 0
+
+
 # ── ai_threads (ask, story, roleplay, rpg) ───────────────────────────────────
 
 async def test_ai_threads_roundtrip_preserves_set_invited_ids(db):

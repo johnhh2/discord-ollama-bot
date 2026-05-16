@@ -482,6 +482,7 @@ def _ctx_for(member: FakeMember, channel_id: int, *, mentions=()) -> FakeCtx:
         g.members.append(m)
     ctx = FakeCtx(author=member, guild=g)
     ctx.channel.id = channel_id
+    ctx.channel.guild = g  # _finalize_game reads channel.guild for the record's gid
     ctx.message = FakeMessage(author=member)
     ctx.message.mentions = list(mentions)
     return ctx
@@ -1103,6 +1104,160 @@ async def test_pvp_win_does_not_trigger_bot_bounty(db, _stub_chess_helpers):
     assert await get_balance(white.id) == 0
     u = _state.economy["users"].get(str(white.id), {})
     assert u.get("bot_chess_elo_max_today", 0) == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Head-to-head + chess_pvp_wins record (PvP-only, skips bot games)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@_aio
+async def test_pvp_game_end_shows_head_to_head_in_embed(db, _stub_chess_helpers):
+    """When a PvP game ends in checkmate, the game-over embed includes a
+    'Head-to-head:' line summarizing all-time wins between these two players."""
+    cog = _make_bot_cog()
+    white = FakeMember(uid=2700, display_name="Alice")
+    black = FakeMember(uid=2701, display_name="Bob")
+
+    # Pre-seed two prior reports: Alice won once, Bob won once.
+    from src.persistence import save_chess_report
+    await save_chess_report(guild_id=42, channel_id=1, white_id=white.id, black_id=black.id,
+                            winner_id=white.id, result="1-0", pgn="", final_fen="-")
+    await save_chess_report(guild_id=42, channel_id=1, white_id=black.id, black_id=white.id,
+                            winner_id=black.id, result="1-0", pgn="", final_fen="-")
+
+    # Now play a PvP game where white mates black via Qxf7#.
+    _state.active_chess_games[1700] = {
+        "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        "pgn": _initial_pgn(
+            "Alice", "Bob", None,
+            starting_fen="r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        ),
+        "white_id": white.id,
+        "black_id": black.id,
+        "current_id": white.id,
+        "amount": 0,
+        "last_move": "",
+        "board_msg_id": 1,
+    }
+    ctx = _ctx_for(white, channel_id=1700)
+    ctx.guild.members.append(black)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "Qxf7#")
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    # After Alice's mate, totals: Alice 2 wins, Bob 1 win, 0 draws.
+    game_over = [
+        embed for _ch, _g, embed, _f in _stub_chess_helpers
+        if embed.title and "Game Over" in embed.title
+    ]
+    assert game_over, "expected a game-over embed"
+    last = game_over[-1]
+    desc = last.description or ""
+    assert "Head-to-head:" in desc, f"missing H2H line in: {desc}"
+    assert "Alice 2 – 1 Bob" in desc or "Alice 2 – 1 Bob" in desc, \
+        f"unexpected H2H line: {desc}"
+
+
+@_aio
+async def test_bot_game_end_does_not_show_head_to_head(db, _stub_chess_helpers):
+    """Bot games (carry 'elo' key) skip the H2H block entirely."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2710, display_name="Solo")
+
+    _state.active_chess_games[1710] = {
+        "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        "pgn": _initial_pgn(
+            "Solo", "Stockfish (800 Elo)", None,
+            starting_fen="r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        ),
+        "white_id": human.id,
+        "black_id": cog.bot.user.id,
+        "current_id": human.id,
+        "amount": 0,
+        "elo": 800,
+        "last_move": "",
+        "board_msg_id": 1,
+    }
+    ctx = _ctx_for(human, channel_id=1710)
+    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
+
+    await cog.cmd_move_chess.callback(cog, ctx, "Qxf7#")
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    game_over = [
+        embed for _ch, _g, embed, _f in _stub_chess_helpers
+        if embed.title and "Game Over" in embed.title
+    ]
+    assert game_over
+    desc = game_over[-1].description or ""
+    assert "Head-to-head:" not in desc, f"H2H should not appear in bot games: {desc}"
+
+
+@_aio
+async def test_pvp_win_sets_chess_pvp_wins_record(db, _stub_chess_helpers):
+    """A PvP checkmate-win updates the chess_pvp_wins record for the guild."""
+    cog = _make_bot_cog()
+    white = FakeMember(uid=2720, display_name="Champ")
+    black = FakeMember(uid=2721, display_name="Loser")
+
+    _state.active_chess_games[1720] = {
+        "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        "pgn": _initial_pgn(
+            "Champ", "Loser", None,
+            starting_fen="r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        ),
+        "white_id": white.id, "black_id": black.id, "current_id": white.id,
+        "amount": 0, "last_move": "", "board_msg_id": 1,
+    }
+    ctx = _ctx_for(white, channel_id=1720)
+    ctx.guild.members.append(black)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "Qxf7#")
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    from src.persistence import load_records
+    records = await load_records(ctx.guild.id)
+    assert "chess_pvp_wins" in records
+    assert records["chess_pvp_wins"]["holder_id"] == white.id
+    assert records["chess_pvp_wins"]["value"] == 1
+
+
+@_aio
+async def test_bot_win_does_not_set_chess_pvp_wins_record(db, _stub_chess_helpers):
+    """Beating the bot doesn't count toward chess_pvp_wins (would let users
+    grind low-Elo bots to top the PvP leaderboard)."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2730, display_name="Farmer")
+
+    _state.active_chess_games[1730] = {
+        "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        "pgn": _initial_pgn(
+            "Farmer", "Stockfish (100 Elo)", None,
+            starting_fen="r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+        ),
+        "white_id": human.id,
+        "black_id": cog.bot.user.id,
+        "current_id": human.id,
+        "amount": 0,
+        "elo": 100,
+        "last_move": "",
+        "board_msg_id": 1,
+    }
+    ctx = _ctx_for(human, channel_id=1730)
+    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
+
+    await cog.cmd_move_chess.callback(cog, ctx, "Qxf7#")
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    from src.persistence import load_records
+    records = await load_records(ctx.guild.id)
+    assert "chess_pvp_wins" not in records, \
+        f"bot game must not create chess_pvp_wins record; got: {records}"
 
 
 @_aio

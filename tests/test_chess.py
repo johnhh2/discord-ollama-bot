@@ -213,6 +213,7 @@ def _ctx_for(member: FakeMember, channel_id: int = 700, guild: FakeGuild | None 
     g.members.append(member)
     ctx = FakeCtx(author=member, guild=g)
     ctx.channel.id = channel_id
+    ctx.channel.guild = g  # _finalize_game reads channel.guild for per-guild lookups
     ctx.message = FakeMessage(author=member)
     return ctx
 

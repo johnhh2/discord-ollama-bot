@@ -58,6 +58,8 @@ from src.persistence.chess import (  # noqa: F401
     delete_chess_game,
     save_chess_report,
     load_chess_report,
+    load_head_to_head,
+    count_pvp_wins_in_guild,
 )
 from src.persistence.ai import save_ai_threads, save_channel_prompts  # noqa: F401
 from src.persistence.quotes import (  # noqa: F401

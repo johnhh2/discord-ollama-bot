@@ -21,6 +21,7 @@ from src.permissions import check_chess_channel
 from src.guild_config import get_guild_cfg
 from src.persistence import (
     save_chess_game, delete_chess_game, save_chess_report, load_chess_report,
+    load_head_to_head, count_pvp_wins_in_guild, try_set_record,
 )
 from src.games.ttt_c4 import _setup_pvp_game
 from src.games import chess_engine, chess_render, chess_bot
@@ -590,6 +591,7 @@ class ChessCog(commands.Cog):
         amount = int(game.get("amount", 0))
         guild = channel.guild if hasattr(channel, "guild") else None
         gid = guild.id if guild is not None else None
+        bot_user = self.bot.user if self.bot is not None else None
 
         payout_line = ""
         if amount > 0:
@@ -630,8 +632,8 @@ class ChessCog(commands.Cog):
         if winner_id is None:
             headline = f"Draw by {reason}." if reason else "Draw."
             color = C_GOLD
+            winner_name = None
         else:
-            bot_user = self.bot.user if self.bot is not None else None
             if bot_user is not None and winner_id == bot_user.id:
                 # Bot winner — guild.get_member often returns None for the bot
                 # itself, so use the stored stockfish label instead of the raw uid.
@@ -666,10 +668,48 @@ class ChessCog(commands.Cog):
                 except Exception as e:
                     logging.error(f"bot_chess_rewards.award_bot_defeat failed: {e}", exc_info=True)
 
+        # PvP-only: head-to-head line + chess_pvp_wins record on a non-draw win.
+        # Bot games (those with an "elo" key) skip this block — bot bounty handled above.
+        h2h_line = ""
+        is_pvp = "elo" not in game and (
+            bot_user is None
+            or (game["white_id"] != bot_user.id and game["black_id"] != bot_user.id)
+        )
+        if is_pvp:
+            try:
+                white_id = game["white_id"]
+                black_id = game["black_id"]
+                h2h = await load_head_to_head(white_id, black_id)
+                white_name = _player_display_name(guild, white_id, str(white_id))
+                black_name = _player_display_name(guild, black_id, str(black_id))
+                h2h_line = (
+                    f"\n\n**Head-to-head:** {white_name} {h2h['wins_a']} – "
+                    f"{h2h['wins_b']} {black_name}"
+                    + (f" ({h2h['draws']} draws)" if h2h['draws'] else "")
+                )
+            except Exception as e:
+                logging.error(f"chess head-to-head load failed: {e}", exc_info=True)
+
+            # chess_pvp_wins record: count this user's all-time PvP wins in
+            # this guild and try to set the record. Excludes bot games.
+            if winner_id is not None and gid is not None and bot_user is not None:
+                try:
+                    wins = await count_pvp_wins_in_guild(winner_id, gid, bot_user.id)
+                    set_new = await try_set_record(
+                        gid, "chess_pvp_wins", wins, winner_id, winner_name,
+                    )
+                    if set_new:
+                        asyncio.create_task(
+                            announce_record(channel, "chess_pvp_wins", winner_name, wins)
+                        )
+                except Exception as e:
+                    logging.error(f"chess_pvp_wins record update failed: {e}", exc_info=True)
+
         view_line = f"\n\nView this game: `!chess view {report_id}`" if report_id is not None else ""
         desc = (
             f"{mover_name} played **{san}**.\n\n"
             f"**{headline}**{payout_line}"
+            f"{h2h_line}"
             f"{view_line}"
         )
 

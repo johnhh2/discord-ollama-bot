@@ -78,6 +78,46 @@ async def save_chess_report(
         return cur.lastrowid
 
 
+async def load_head_to_head(uid_a: int, uid_b: int) -> dict:
+    """All-time head-to-head between two users from chess_reports.
+
+    Returns {"wins_a": N, "wins_b": N, "draws": N} with totals across every
+    guild. NULL winner_id counts as a draw.
+    """
+    a, b = int(uid_a), int(uid_b)
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT winner_id, COUNT(*) FROM chess_reports "
+            "WHERE (white_id=%s AND black_id=%s) OR (white_id=%s AND black_id=%s) "
+            "GROUP BY winner_id",
+            (a, b, b, a),
+        )
+        rows = await cur.fetchall()
+    wins_a = wins_b = draws = 0
+    for winner_id, count in rows:
+        if winner_id is None:
+            draws += int(count)
+        elif int(winner_id) == a:
+            wins_a += int(count)
+        elif int(winner_id) == b:
+            wins_b += int(count)
+    return {"wins_a": wins_a, "wins_b": wins_b, "draws": draws}
+
+
+async def count_pvp_wins_in_guild(uid: int, guild_id: int, bot_user_id: int) -> int:
+    """How many PvP chess wins this user has in this guild. Bot games are
+    excluded by filtering out reports where either side is bot_user_id."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT COUNT(*) FROM chess_reports "
+            "WHERE guild_id=%s AND winner_id=%s "
+            "AND white_id<>%s AND black_id<>%s",
+            (int(guild_id), int(uid), int(bot_user_id), int(bot_user_id)),
+        )
+        row = await cur.fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
 async def load_chess_report(report_id: int) -> dict | None:
     async with with_cursor() as cur:
         await cur.execute(

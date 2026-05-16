@@ -60,6 +60,7 @@ def _ctx(author: FakeMember, channel_id: int = 100) -> FakeCtx:
     guild.members = [author]
     ctx = FakeCtx(author=author, guild=guild)
     ctx.channel.id = channel_id
+    ctx.channel.guild = guild
     return ctx
 
 
@@ -191,6 +192,28 @@ async def test_stop_chess_as_white_with_wager_pays_black(db, _stub_edit_board):
     assert report is not None
     assert report["winner_id"] == black.id
     assert report["result"] == "0-1"
+
+
+async def test_stop_chess_forfeit_counts_in_head_to_head(db, _stub_edit_board):
+    """Forfeit writes a chess_reports row with the forfeiter as loser, so the
+    head-to-head loader picks it up just like a checkmate would."""
+    cog = AICog(bot=None)
+    white = FakeMember(uid=1020)
+    black = FakeMember(uid=1021)
+
+    # No prior games — start clean.
+    from src.persistence import load_head_to_head
+    h2h_before = await load_head_to_head(white.id, black.id)
+    assert h2h_before == {"wins_a": 0, "wins_b": 0, "draws": 0}
+
+    # White forfeits.
+    ctx = _ctx(white, channel_id=510)
+    _state.active_chess_games[510] = _starter_chess_game(white.id, black.id, amount=0)
+    await cog.cmd_stop.callback(cog, ctx)
+
+    # H2H: Black has 1 win, White has 0.
+    h2h_after = await load_head_to_head(white.id, black.id)
+    assert h2h_after == {"wins_a": 0, "wins_b": 1, "draws": 0}
 
 
 async def test_stop_chess_no_wager_still_archives_report(db, _stub_edit_board):

@@ -82,8 +82,9 @@ class FakeGuild:
 
 class FakeChannel:
     """Generic non-text channel stand-in (won't satisfy isinstance discord.TextChannel)."""
-    def __init__(self, ch_id: int = 100):
+    def __init__(self, ch_id: int = 100, guild: "FakeGuild | None" = None):
         self.id = ch_id
+        self.guild = guild
         self.send = AsyncMock()
 
 
