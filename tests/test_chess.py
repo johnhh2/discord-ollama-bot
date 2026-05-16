@@ -394,6 +394,40 @@ async def test_chess_view_loads_report(db):
 
 
 @_aio
+async def test_chess_view_message_is_ephemeral(db, monkeypatch):
+    """!chess view sends through send_ephemeral so the message auto-expires
+    after EPHEMERAL_DELETE_AFTER (60s). Spy on send_ephemeral to confirm
+    the chess cog routes view replies through it, not raw ctx.send."""
+    from src.persistence import save_chess_report
+    rid = await save_chess_report(
+        guild_id=42, channel_id=999, white_id=10, black_id=20,
+        winner_id=10, result="1-0",
+        pgn='[Event "x"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 1-0\n',
+        final_fen="rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+    )
+
+    import src.games.chess as _chess_mod
+    calls = []
+    async def _spy_send_ephemeral(ctx, *args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return await ctx.send(*args, **kwargs)
+    monkeypatch.setattr(_chess_mod, "send_ephemeral", _spy_send_ephemeral)
+
+    cog = ChessCog(bot=None)
+    user = FakeMember(uid=1207)
+    ctx = _ctx_for(user, channel_id=807)
+
+    await cog._cmd_view(ctx, (str(rid),))
+
+    assert len(calls) == 1, f"expected one send_ephemeral call, got {len(calls)}"
+    # Also confirm the existing error branches go through send_ephemeral.
+    await cog._cmd_view(ctx, ())
+    await cog._cmd_view(ctx, ("not-a-number",))
+    await cog._cmd_view(ctx, ("9999999",))
+    assert len(calls) == 4
+
+
+@_aio
 async def test_chess_view_black_winner_branch(db):
     """Black-winner reports describe the outcome as 'Black wins' (different
     branch from white-winner test)."""

@@ -150,10 +150,11 @@ class FakeMessage:
     they want to inspect the thread before the cog mutates it.
     """
     def __init__(self, content: str = "", author: "FakeMember | None" = None,
-                 message_id: int = 1):
+                 message_id: int = 1, channel: "FakeChannel | None" = None):
         self.id = message_id
         self.content = content
         self.author = author or FakeMember(uid=1)
+        self.channel = channel or FakeChannel()
         self.mentions: list = []
         self.channel_mentions: list = []
         self.reference = None

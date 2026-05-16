@@ -12,7 +12,7 @@ from discord.ext import commands
 
 from src.helpers import (
     emb, C_RED, C_GOLD, C_BLUE, C_GREEN, C_GREY,
-    _delete_after,
+    _delete_after, send_ephemeral,
 )
 from src.economy import (
     add_balance, record_gambling_event,
@@ -253,16 +253,16 @@ class ChessCog(commands.Cog):
     # ── !chess view <report_id> ─────────────────────────────────────────────
     async def _cmd_view(self, ctx: commands.Context, args: tuple[str, ...]):
         if not args:
-            await ctx.send(embed=emb("❌ Usage", "Use `!chess view <report_id>`", C_RED))
+            await send_ephemeral(ctx, embed=emb("❌ Usage", "Use `!chess view <report_id>`", C_RED))
             return
         try:
             report_id = int(args[0])
         except ValueError:
-            await ctx.send(embed=emb("❌ Invalid", "Report id must be a number.", C_RED))
+            await send_ephemeral(ctx, embed=emb("❌ Invalid", "Report id must be a number.", C_RED))
             return
         report = await load_chess_report(report_id)
         if report is None:
-            await ctx.send(embed=emb("❌ Not Found", f"No chess game with report id `{report_id}`.", C_RED))
+            await send_ephemeral(ctx, embed=emb("❌ Not Found", f"No chess game with report id `{report_id}`.", C_RED))
             return
 
         winner_id = report["winner_id"]
@@ -292,9 +292,9 @@ class ChessCog(commands.Cog):
         e = emb(f"♟️ Chess Game #{report_id}", desc, C_GREY)
         if file is not None:
             e.set_image(url=f"attachment://{BOARD_IMG_FILENAME}")
-            await ctx.send(embed=e, file=file)
+            await send_ephemeral(ctx, embed=e, file=file)
         else:
-            await ctx.send(embed=e)
+            await send_ephemeral(ctx, embed=e)
 
     # ── !move ───────────────────────────────────────────────────────────────
     @commands.command(name="move")
