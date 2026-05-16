@@ -344,6 +344,70 @@ async def test_checkmate_creates_report_and_deletes_active_game(db, _stub_chess_
 
 
 @_aio
+async def test_checkmate_headline_uses_pgn_name_when_guild_cache_misses(
+    db, _stub_chess_edit_board,
+):
+    """Regression: when a human wins a PvP game, the game-over headline must
+    show the player's display name, not the raw 18-digit Discord user id.
+
+    Previously, the headline did `guild.get_member(winner_id).display_name`
+    which silently returned None for members missing from the cache (common
+    without the privileged members intent), falling through to str(uid).
+    Fix: prefer the [White]/[Black] PGN-header names captured at game start.
+    """
+    cog = ChessCog(bot=None)
+    white = FakeMember(uid=999_888_001, display_name="WhitePlayer")
+    black = FakeMember(uid=999_888_002, display_name="BlackPlayer")
+    _seed_chess_game(704, white.id, black.id)
+    ctx_w = _ctx_for(white, channel_id=704)
+    ctx_b = _ctx_for(black, channel_id=704, guild=ctx_w.guild)
+    # Deliberately don't add `black` to ctx_w.guild.members so guild.get_member(black.id)
+    # returns None — simulating the privileged-members-intent cache miss.
+
+    # Fool's mate: black wins.
+    await cog.cmd_move_chess.callback(cog, ctx_w, "f3")
+    await cog.cmd_move_chess.callback(cog, ctx_b, "e5")
+    await cog.cmd_move_chess.callback(cog, ctx_w, "g4")
+    await cog.cmd_move_chess.callback(cog, ctx_b, "Qh4#")
+
+    game_over_embeds = [
+        embed for _ch, _g, embed, _f in _stub_chess_edit_board
+        if embed.title and "Game Over" in embed.title
+    ]
+    assert game_over_embeds, "expected a game-over embed"
+    desc = game_over_embeds[-1].description or ""
+    # Raw uid must NOT appear in the headline.
+    assert str(black.id) not in desc, f"raw uid leaked: {desc!r}"
+    # Display name (from PGN header) DOES appear.
+    assert "BlackPlayer" in desc
+
+
+def test_names_from_pgn_extracts_white_and_black():
+    """Unit test of the PGN-name extractor used by the winner-name resolver."""
+    from src.games.chess import _names_from_pgn
+    pgn = (
+        '[Event "Discord chess"]\n'
+        '[Site "Discord"]\n'
+        '[Date "2026.05.18"]\n'
+        '[Round "?"]\n'
+        '[White "Alice Display"]\n'
+        '[Black "Bob Display"]\n'
+        '[Result "*"]\n\n'
+        '1. e4 *\n'
+    )
+    white, black = _names_from_pgn(pgn)
+    assert white == "Alice Display"
+    assert black == "Bob Display"
+
+
+def test_names_from_pgn_handles_missing_headers():
+    """Returns (None, None) when headers are absent — caller falls back."""
+    from src.games.chess import _names_from_pgn
+    assert _names_from_pgn("") == (None, None)
+    assert _names_from_pgn("not a pgn") == (None, None)
+
+
+@_aio
 async def test_stalemate_creates_draw_report(db, _stub_chess_edit_board):
     """A stalemate-in-one position. White plays Qb6 — black king on a8 has
     no legal moves and isn't in check. Report stores winner_id NULL, 1/2-1/2."""

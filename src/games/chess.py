@@ -132,6 +132,25 @@ def _player_display_name(guild: discord.Guild | None, uid: int, fallback: str) -
     return fallback
 
 
+def _names_from_pgn(pgn_str: str) -> tuple[str | None, str | None]:
+    """Extract the [White "..."] and [Black "..."] header values from a PGN.
+
+    Returns (white_name, black_name); either may be None if the header is
+    missing or unparseable. Used as the primary source of truth for player
+    names at game-end since guild.get_member can miss on the privileged
+    members intent.
+    """
+    white = black = None
+    for line in pgn_str.splitlines():
+        if line.startswith('[White "') and line.endswith('"]'):
+            white = line[len('[White "'):-len('"]')]
+        elif line.startswith('[Black "') and line.endswith('"]'):
+            black = line[len('[Black "'):-len('"]')]
+        if white is not None and black is not None:
+            break
+    return white, black
+
+
 class ChessCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -341,7 +360,15 @@ class ChessCog(commands.Cog):
             if bot_user is not None and winner_id == bot_user.id:
                 winner_name = "Stockfish"
             else:
-                winner_name = _player_display_name(ctx.guild, winner_id, str(winner_id))
+                # Prefer PGN-header names (always accurate) over guild.get_member
+                # (often misses without the privileged members intent).
+                pgn_white, pgn_black = _names_from_pgn(report.get("pgn", ""))
+                if winner_id == report["white_id"] and pgn_white:
+                    winner_name = pgn_white
+                elif winner_id == report["black_id"] and pgn_black:
+                    winner_name = pgn_black
+                else:
+                    winner_name = _player_display_name(ctx.guild, winner_id, str(winner_id))
             color_label = "White" if winner_id == report["white_id"] else "Black"
             outcome_line = f"{color_label} ({winner_name}) wins ({report['result']})"
 
@@ -719,7 +746,16 @@ class ChessCog(commands.Cog):
                 elo = game.get("elo", chess_bot.ELO_DEFAULT)
                 winner_name = f"Stockfish ({elo} Elo)"
             else:
-                winner_name = _player_display_name(guild, winner_id, str(winner_id))
+                # Prefer the name embedded in the PGN headers at game-start
+                # (always accurate) over guild.get_member (often misses without
+                # the privileged members intent).
+                pgn_white, pgn_black = _names_from_pgn(game.get("pgn", ""))
+                if winner_id == game["white_id"] and pgn_white:
+                    winner_name = pgn_white
+                elif winner_id == game["black_id"] and pgn_black:
+                    winner_name = pgn_black
+                else:
+                    winner_name = _player_display_name(guild, winner_id, str(winner_id))
             headline = f"{winner_name} wins by {reason}." if reason else f"{winner_name} wins."
             color = C_GREEN
 
@@ -759,8 +795,9 @@ class ChessCog(commands.Cog):
                 white_id = game["white_id"]
                 black_id = game["black_id"]
                 h2h = await load_head_to_head(white_id, black_id)
-                white_name = _player_display_name(guild, white_id, str(white_id))
-                black_name = _player_display_name(guild, black_id, str(black_id))
+                pgn_white, pgn_black = _names_from_pgn(game.get("pgn", ""))
+                white_name = pgn_white or _player_display_name(guild, white_id, str(white_id))
+                black_name = pgn_black or _player_display_name(guild, black_id, str(black_id))
                 h2h_line = (
                     f"\n\n**Head-to-head:** {white_name} {h2h['wins_a']} – "
                     f"{h2h['wins_b']} {black_name}"
