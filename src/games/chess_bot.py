@@ -21,6 +21,15 @@ STOCKFISH_NATIVE_ELO_MAX = 3190
 MULTIPV_FLOOR = 300
 MULTIPV_COUNT = 10
 
+# Analysis depth scale for the MultiPV tier. Picking "rank N of top-10" from a
+# full-strength search produces moves that are too strong (full Stockfish's
+# 2nd-best move is still a strong move). Limiting analysis depth weakens the
+# top-10 itself, so even rank 1 isn't a deep-tactical-best. Span 1..4 keeps
+# the upper MultiPV range close to native-1320 strength without making the
+# boundary jarring.
+MULTIPV_DEPTH_MIN = 1
+MULTIPV_DEPTH_MAX = 4
+
 # What we accept from users via !chess @Bot <elo>.
 ELO_MIN = 100
 ELO_MAX = STOCKFISH_NATIVE_ELO_MAX
@@ -86,6 +95,20 @@ def multipv_rank_for_elo(elo: int) -> int:
     return max(1, min(MULTIPV_COUNT, rank))
 
 
+def multipv_depth_for_elo(elo: int) -> int:
+    """Analysis depth for the MultiPV tier. Linear from MULTIPV_DEPTH_MIN at
+    the MultiPV floor to MULTIPV_DEPTH_MAX just below the native floor."""
+    if elo <= MULTIPV_FLOOR:
+        return MULTIPV_DEPTH_MIN
+    if elo >= STOCKFISH_NATIVE_ELO_MIN:
+        return MULTIPV_DEPTH_MAX
+    span_elo = STOCKFISH_NATIVE_ELO_MIN - 1 - MULTIPV_FLOOR
+    span_depth = MULTIPV_DEPTH_MAX - MULTIPV_DEPTH_MIN
+    progress = (elo - MULTIPV_FLOOR) / span_elo
+    depth = round(MULTIPV_DEPTH_MIN + progress * span_depth)
+    return max(MULTIPV_DEPTH_MIN, min(MULTIPV_DEPTH_MAX, depth))
+
+
 def _pick_random_legal(board: chess.Board) -> chess.Move | None:
     legal = list(board.legal_moves)
     return random.choice(legal) if legal else None
@@ -103,12 +126,13 @@ async def _native_elo_move(engine: chess.engine.UciProtocol, board: chess.Board,
 
 async def _multipv_worse_move(engine: chess.engine.UciProtocol, board: chess.Board,
                               elo: int) -> chess.Move:
-    """Ask for top-MULTIPV_COUNT moves, pick the Nth where N depends on Elo.
-    The lower the Elo, the worse the rank picked — but still from Stockfish's
-    legitimate analysis, so blunders like hanging queens are mostly avoided."""
+    """Ask for top-MULTIPV_COUNT moves at depth-limited analysis, pick the Nth
+    where N depends on Elo. Both the depth and the rank scale with Elo: low
+    Elo gets shallow analysis (weak top-10) AND worse rank within that top-10."""
+    depth = multipv_depth_for_elo(elo)
     infos = await engine.analyse(
         board,
-        chess.engine.Limit(time=ANALYSE_TIME_SECONDS),
+        chess.engine.Limit(depth=depth),
         multipv=MULTIPV_COUNT,
     )
     # Filter to entries with a usable principal-variation. Stockfish always
