@@ -8,24 +8,28 @@ import chess
 import chess.engine
 
 
-# Stockfish's UCI_Elo option is clamped to this range internally. Below 1320
-# Stockfish has no real "weak" setting — even Skill Level 0 plays at roughly
-# native floor (~1350 Elo) because it's still a full alpha-beta search. To
-# actually play weaker than 1320 we run Stockfish at Skill Level 0 and then,
-# with linearly-interpolated probability, replace its move with a random
-# legal move. At Elo 100 the move is almost always random; at Elo 1320 the
-# move is always Stockfish.
+# Three-tier strength model:
+#   - Native UCI_Elo (1320-3190): Stockfish's built-in strength limiter.
+#   - MultiPV pick-worse (300-1319): ask Stockfish for top-10 moves and pick
+#     the Nth-best where N scales with Elo. Plays bad chess but reacts to
+#     direct threats (won't hang the queen or walk into mate-in-1 if at least
+#     one of the top-10 doesn't).
+#   - Random blend (100-299): true beginner — at Elo 100 nearly all moves are
+#     random; ramps to 0% random at the MultiPV floor.
 STOCKFISH_NATIVE_ELO_MIN = 1320
 STOCKFISH_NATIVE_ELO_MAX = 3190
+MULTIPV_FLOOR = 300
+MULTIPV_COUNT = 10
 
 # What we accept from users via !chess @Bot <elo>.
 ELO_MIN = 100
 ELO_MAX = STOCKFISH_NATIVE_ELO_MAX
 ELO_DEFAULT = 1320
 
-# Per-move think time. 500ms at any Elo gives Stockfish plenty of strength
-# above the floor while keeping bot responses snappy on Discord.
+# Per-move think time at native Elo. Sub-native paths use a short analyse
+# time instead since they only need the move list, not deep search.
 MOVE_TIME_SECONDS = 0.5
+ANALYSE_TIME_SECONDS = 0.3
 
 # Debian's `stockfish` apt package installs at /usr/games/stockfish, which is
 # NOT on the default PATH for non-login shells (which is what asyncio's
@@ -56,14 +60,84 @@ def clamp_elo(elo: int) -> int:
 
 
 def random_move_probability(elo: int) -> float:
-    """Probability of replacing Stockfish's move with a random legal move.
-    Linear: 1.0 at ELO_MIN, 0.0 at STOCKFISH_NATIVE_ELO_MIN, clamped outside."""
-    if elo >= STOCKFISH_NATIVE_ELO_MIN:
+    """For the random-blend tier (100..MULTIPV_FLOOR-1): linear, 1.0 at
+    ELO_MIN, 0.0 at MULTIPV_FLOOR. Returns 0.0 outside this range."""
+    if elo >= MULTIPV_FLOOR:
         return 0.0
     if elo <= ELO_MIN:
         return 1.0
-    span = STOCKFISH_NATIVE_ELO_MIN - ELO_MIN  # 1220
-    return (STOCKFISH_NATIVE_ELO_MIN - elo) / span
+    span = MULTIPV_FLOOR - ELO_MIN  # 200
+    return (MULTIPV_FLOOR - elo) / span
+
+
+def multipv_rank_for_elo(elo: int) -> int:
+    """For the MultiPV tier (MULTIPV_FLOOR..STOCKFISH_NATIVE_ELO_MIN-1):
+    which 1-indexed rank to pick from the top-N analysis. Elo MULTIPV_FLOOR
+    picks rank MULTIPV_COUNT (worst), Elo STOCKFISH_NATIVE_ELO_MIN-1 picks
+    rank 1 (best). Linear interpolation between."""
+    if elo <= MULTIPV_FLOOR:
+        return MULTIPV_COUNT
+    if elo >= STOCKFISH_NATIVE_ELO_MIN:
+        return 1
+    span = STOCKFISH_NATIVE_ELO_MIN - 1 - MULTIPV_FLOOR  # 1019
+    progress = (elo - MULTIPV_FLOOR) / span  # 0..1 mapping low→high Elo
+    # Want progress 0 → rank MULTIPV_COUNT, progress 1 → rank 1.
+    rank = round(MULTIPV_COUNT - progress * (MULTIPV_COUNT - 1))
+    return max(1, min(MULTIPV_COUNT, rank))
+
+
+def _pick_random_legal(board: chess.Board) -> chess.Move | None:
+    legal = list(board.legal_moves)
+    return random.choice(legal) if legal else None
+
+
+async def _native_elo_move(engine: chess.engine.UciProtocol, board: chess.Board,
+                           elo: int) -> chess.Move:
+    """Stockfish's built-in strength limiter — only works for 1320-3190."""
+    await engine.configure({"UCI_LimitStrength": True, "UCI_Elo": elo})
+    result = await engine.play(board, chess.engine.Limit(time=MOVE_TIME_SECONDS))
+    if result.move is None:
+        raise chess.engine.EngineError("Stockfish returned no move")
+    return result.move
+
+
+async def _multipv_worse_move(engine: chess.engine.UciProtocol, board: chess.Board,
+                              elo: int) -> chess.Move:
+    """Ask for top-MULTIPV_COUNT moves, pick the Nth where N depends on Elo.
+    The lower the Elo, the worse the rank picked — but still from Stockfish's
+    legitimate analysis, so blunders like hanging queens are mostly avoided."""
+    infos = await engine.analyse(
+        board,
+        chess.engine.Limit(time=ANALYSE_TIME_SECONDS),
+        multipv=MULTIPV_COUNT,
+    )
+    # Filter to entries with a usable principal-variation. Stockfish always
+    # returns at least one but may return fewer than MULTIPV_COUNT in positions
+    # with few legal moves.
+    pvs = [info for info in infos if info.get("pv")]
+    if not pvs:
+        # Fall back to a single-move play to avoid stalling the game.
+        result = await engine.play(board, chess.engine.Limit(time=ANALYSE_TIME_SECONDS))
+        if result.move is None:
+            raise chess.engine.EngineError("Stockfish returned no move")
+        return result.move
+    target_rank = multipv_rank_for_elo(elo)  # 1-indexed
+    # Clamp the rank to what's actually available in this position.
+    idx = min(target_rank, len(pvs)) - 1
+    return pvs[idx]["pv"][0]
+
+
+async def _blended_move(engine: chess.engine.UciProtocol, board: chess.Board,
+                        elo: int) -> chess.Move:
+    """True-beginner tier: get the MultiPV-worst move then with high
+    probability replace it with a fully random legal move."""
+    engine_move = await _multipv_worse_move(engine, board, elo)
+    p_random = random_move_probability(elo)
+    if p_random > 0 and random.random() < p_random:
+        random_move = _pick_random_legal(board)
+        if random_move is not None:
+            return random_move
+    return engine_move
 
 
 async def pick_move(fen: str, elo: int) -> chess.Move:
@@ -75,24 +149,12 @@ async def pick_move(fen: str, elo: int) -> chess.Move:
     transport, engine = await chess.engine.popen_uci(_resolve_stockfish_path())
     try:
         if elo >= STOCKFISH_NATIVE_ELO_MIN:
-            await engine.configure({"UCI_LimitStrength": True, "UCI_Elo": elo})
-        else:
-            # Stockfish at its weakest. The actual weakening below 1320 comes
-            # from the random-move blend after the engine returns.
-            await engine.configure({"Skill Level": 0})
-        result = await engine.play(board, chess.engine.Limit(time=MOVE_TIME_SECONDS))
-        if result.move is None:
-            raise chess.engine.EngineError("Stockfish returned no move")
-        engine_move = result.move
+            return await _native_elo_move(engine, board, elo)
+        if elo >= MULTIPV_FLOOR:
+            return await _multipv_worse_move(engine, board, elo)
+        return await _blended_move(engine, board, elo)
     finally:
         try:
             await engine.quit()
         except Exception:
             transport.close()
-
-    p_random = random_move_probability(elo)
-    if p_random > 0 and random.random() < p_random:
-        legal_moves = list(board.legal_moves)
-        if legal_moves:
-            return random.choice(legal_moves)
-    return engine_move

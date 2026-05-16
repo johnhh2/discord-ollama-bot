@@ -78,11 +78,12 @@ class TestRandomMoveProbability:
     def test_floor_is_all_random(self):
         assert chess_bot.random_move_probability(chess_bot.ELO_MIN) == 1.0
 
-    def test_native_floor_is_pure_engine(self):
-        assert chess_bot.random_move_probability(chess_bot.STOCKFISH_NATIVE_ELO_MIN) == 0.0
+    def test_multipv_floor_is_zero(self):
+        # Random-blend only fires below MULTIPV_FLOOR.
+        assert chess_bot.random_move_probability(chess_bot.MULTIPV_FLOOR) == 0.0
 
-    def test_above_native_is_pure_engine(self):
-        for elo in (1500, 2000, 3190, 9999):
+    def test_above_multipv_floor_is_zero(self):
+        for elo in (400, 700, 1320, 2000, 3190, 9999):
             assert chess_bot.random_move_probability(elo) == 0.0
 
     def test_below_floor_clamps_to_one(self):
@@ -90,12 +91,12 @@ class TestRandomMoveProbability:
         assert chess_bot.random_move_probability(-100) == 1.0
 
     def test_midpoint_is_half(self):
-        # (1320+100)/2 = 710
-        assert abs(chess_bot.random_move_probability(710) - 0.5) < 0.001
+        # (300 + 100) / 2 = 200
+        assert abs(chess_bot.random_move_probability(200) - 0.5) < 0.001
 
-    def test_monotonic_decreasing_in_sub_native_range(self):
+    def test_monotonic_decreasing_in_blend_range(self):
         prev = 2.0
-        for elo in range(chess_bot.ELO_MIN, chess_bot.STOCKFISH_NATIVE_ELO_MIN, 60):
+        for elo in range(chess_bot.ELO_MIN, chess_bot.MULTIPV_FLOOR + 1, 10):
             cur = chess_bot.random_move_probability(elo)
             assert cur <= prev, f"random prob not monotonically decreasing at elo={elo}"
             prev = cur
@@ -104,6 +105,34 @@ class TestRandomMoveProbability:
         for elo in range(chess_bot.ELO_MIN, chess_bot.STOCKFISH_NATIVE_ELO_MIN + 1, 60):
             p = chess_bot.random_move_probability(elo)
             assert 0.0 <= p <= 1.0
+
+
+class TestMultipvRankForElo:
+    def test_floor_picks_worst(self):
+        assert chess_bot.multipv_rank_for_elo(chess_bot.MULTIPV_FLOOR) == chess_bot.MULTIPV_COUNT
+
+    def test_just_below_native_picks_best(self):
+        assert chess_bot.multipv_rank_for_elo(chess_bot.STOCKFISH_NATIVE_ELO_MIN - 1) == 1
+
+    def test_at_native_picks_best(self):
+        # Defensive: native path normally takes over here.
+        assert chess_bot.multipv_rank_for_elo(chess_bot.STOCKFISH_NATIVE_ELO_MIN) == 1
+
+    def test_below_floor_clamps_to_worst(self):
+        assert chess_bot.multipv_rank_for_elo(100) == chess_bot.MULTIPV_COUNT
+        assert chess_bot.multipv_rank_for_elo(0) == chess_bot.MULTIPV_COUNT
+
+    def test_within_bounds(self):
+        for elo in range(chess_bot.MULTIPV_FLOOR, chess_bot.STOCKFISH_NATIVE_ELO_MIN, 50):
+            r = chess_bot.multipv_rank_for_elo(elo)
+            assert 1 <= r <= chess_bot.MULTIPV_COUNT
+
+    def test_monotonic_non_increasing_in_range(self):
+        prev = chess_bot.MULTIPV_COUNT + 1
+        for elo in range(chess_bot.MULTIPV_FLOOR, chess_bot.STOCKFISH_NATIVE_ELO_MIN, 50):
+            r = chess_bot.multipv_rank_for_elo(elo)
+            assert r <= prev, f"rank not monotonic at elo={elo}: {r} > {prev}"
+            prev = r
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,17 +163,32 @@ async def test_pick_move_sub_native_elo_returns_legal_move():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _install_fake_engine(monkeypatch):
-    """Replace chess.engine.popen_uci with a fake that records configure() calls
-    and returns a fixed move. Returns the calls-recording dict for assertions."""
-    calls: dict = {"configure": [], "quit": 0}
+def _install_fake_engine(monkeypatch, *, analyse_pvs: list[str] | None = None,
+                         play_move: str = "e2e4"):
+    """Replace chess.engine.popen_uci with a fake that records configure() calls,
+    serves analyse() with the given list of UCI move strings (ranked best→worst),
+    and serves play() with a single fixed move. Returns the calls-recording dict.
+
+    Default analyse_pvs makes a 10-move list of distinct legal opening moves so
+    the MultiPV picker has something to choose from."""
+    if analyse_pvs is None:
+        # 10 legal first moves for white, in some order. The MultiPV picker
+        # treats the first as best, last as worst.
+        analyse_pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3",
+                       "d2d3", "b1c3", "a2a3", "h2h3", "g2g3"]
+    calls: dict = {"configure": [], "quit": 0, "analyse_limit": [], "play_limit": []}
 
     class _FakeEngine:
         async def configure(self, options):
             calls["configure"].append(dict(options))
 
         async def play(self, board, limit):
-            return SimpleNamespace(move=chess.Move.from_uci("e2e4"))
+            calls["play_limit"].append(limit)
+            return SimpleNamespace(move=chess.Move.from_uci(play_move))
+
+        async def analyse(self, board, limit, multipv=None, **kwargs):
+            calls["analyse_limit"].append((limit, multipv))
+            return [{"pv": [chess.Move.from_uci(uci)]} for uci in analyse_pvs[:multipv or len(analyse_pvs)]]
 
         async def quit(self):
             calls["quit"] += 1
@@ -162,98 +206,153 @@ def _install_fake_engine(monkeypatch):
 
 @_aio
 async def test_pick_move_native_elo_uses_uci_limit_strength(monkeypatch):
-    """For Elo >= STOCKFISH_NATIVE_ELO_MIN, pick_move configures
-    UCI_LimitStrength + UCI_Elo, not Skill Level."""
+    """Elo >= STOCKFISH_NATIVE_ELO_MIN: native path configures
+    UCI_LimitStrength + UCI_Elo and calls engine.play (not analyse)."""
     calls = _install_fake_engine(monkeypatch)
-    await chess_bot.pick_move(chess_engine.STARTING_FEN, 2000)
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 2000)
 
     assert len(calls["configure"]) == 1
     opts = calls["configure"][0]
     assert opts.get("UCI_LimitStrength") is True
     assert opts.get("UCI_Elo") == 2000
-    assert "Skill Level" not in opts
+    # Native path uses play(), not analyse().
+    assert len(calls["play_limit"]) == 1
+    assert calls["analyse_limit"] == []
+    assert move == chess.Move.from_uci("e2e4")
 
 
 @_aio
-async def test_pick_move_sub_native_elo_uses_skill_level_zero(monkeypatch):
-    """Below native floor, configure Skill Level 0 regardless of Elo. The
-    actual weakening for sub-1320 comes from the random-move blend after
-    the engine returns, not from Skill Level."""
+async def test_pick_move_multipv_tier_skips_configure(monkeypatch):
+    """MultiPV tier (300..1319): no Skill Level / UCI_Elo configure; just
+    analyse() with multipv=MULTIPV_COUNT."""
     calls = _install_fake_engine(monkeypatch)
-    # Force pure-engine path so the blend doesn't trip the test.
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 1.0)
-    await chess_bot.pick_move(chess_engine.STARTING_FEN, 500)
+    await chess_bot.pick_move(chess_engine.STARTING_FEN, 700)
 
-    assert len(calls["configure"]) == 1
-    opts = calls["configure"][0]
-    assert opts.get("Skill Level") == 0
-    assert "UCI_LimitStrength" not in opts
-    assert "UCI_Elo" not in opts
+    # No configure call at all on the multipv path.
+    assert calls["configure"] == []
+    assert len(calls["analyse_limit"]) == 1
+    _, multipv = calls["analyse_limit"][0]
+    assert multipv == chess_bot.MULTIPV_COUNT
 
 
 @_aio
-async def test_pick_move_clamps_then_branches(monkeypatch):
-    """Out-of-range Elos are clamped before the branching check. Elo=50 clamps
-    to 100 (sub-native), so Skill Level configured."""
-    calls = _install_fake_engine(monkeypatch)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 1.0)
-    await chess_bot.pick_move(chess_engine.STARTING_FEN, 50)
-
-    opts = calls["configure"][0]
-    assert opts.get("Skill Level") == 0  # clamped 50 -> 100 -> skill 0
+async def test_pick_move_multipv_picks_correct_rank(monkeypatch):
+    """At Elo 700, multipv_rank_for_elo == 6, so pick_move returns the
+    6th-ranked move from the analyse() list."""
+    pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3",
+           "d2d3", "b1c3", "a2a3", "h2h3", "g2g3"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 700)
+    expected_rank = chess_bot.multipv_rank_for_elo(700)  # = 6
+    assert move == chess.Move.from_uci(pvs[expected_rank - 1])
 
 
 @_aio
-async def test_pick_move_random_blend_replaces_engine_move(monkeypatch):
-    """When the dice roll lands inside p_random, pick_move replaces Stockfish's
-    move with a random legal move. Fake engine returns e2e4; force the dice to
-    roll random (random.random returns 0.0, less than any p_random > 0)."""
+async def test_pick_move_multipv_floor_picks_worst(monkeypatch):
+    """Elo 300 (the MultiPV floor) picks the 10th-ranked move."""
+    pvs = ["a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9", "a10"]
+    # Need valid UCI; use a spread of legal-shaped moves.
+    pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3",
+           "d2d3", "b1c3", "a2a3", "h2h3", "g2g3"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    # Pin random.random so the blend path (if it ran) wouldn't pick random.
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 300)
+    # 10th best = worst.
+    assert move == chess.Move.from_uci(pvs[-1])
+
+
+@_aio
+async def test_pick_move_multipv_just_below_native_picks_best(monkeypatch):
+    """Elo 1319 picks rank 1 (the best move)."""
+    pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3",
+           "d2d3", "b1c3", "a2a3", "h2h3", "g2g3"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 1319)
+    assert move == chess.Move.from_uci(pvs[0])
+
+
+@_aio
+async def test_pick_move_multipv_handles_short_pv_list(monkeypatch):
+    """When the position has fewer than MULTIPV_COUNT legal moves, analyse()
+    returns fewer variations. pick_move must clamp the rank to what's available
+    rather than indexing past the end."""
+    pvs = ["e2e4", "d2d4"]  # only 2 variations
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 300)
+    # rank 10 clamps to len(pvs)=2 → returns pvs[1].
+    assert move == chess.Move.from_uci(pvs[-1])
+
+
+@_aio
+async def test_pick_move_blend_tier_random_replacement(monkeypatch):
+    """Elo 100 (full random): pick_move replaces the multipv result with a
+    random legal move when the dice roll inside p_random."""
     _install_fake_engine(monkeypatch)
+    # Force random choice path: random.random low (< p_random) and pin choice.
     monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
-    # Pin the random.choice so the test is deterministic.
     monkeypatch.setattr(chess_bot.random, "choice", lambda moves: moves[-1])
 
-    # Elo 100 → p_random = 1.0, blend always fires.
     move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 100)
-
     board = chess.Board()
     legal = list(board.legal_moves)
-    # The blend should have picked legal[-1], not the engine's e2e4.
     assert move == legal[-1]
-    assert move != chess.Move.from_uci("e2e4") or move == legal[-1]
 
 
 @_aio
-async def test_pick_move_random_blend_skips_when_dice_too_high(monkeypatch):
-    """When the dice roll exceeds p_random, the engine move is returned
-    unchanged."""
-    _install_fake_engine(monkeypatch)
-    # Force a roll above 1.0 so it always exceeds p_random.
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999999)
+async def test_pick_move_blend_tier_skips_random_when_dice_high(monkeypatch):
+    """At Elo 200 (p_random=0.5): when dice roll above p_random, no random
+    replacement — return the multipv (worst-rank) move."""
+    pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3",
+           "d2d3", "b1c3", "a2a3", "h2h3", "g2g3"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)
+    # Sentinel: if random.choice fires, we'd return something else; we want
+    # to ensure the multipv move is returned unchanged.
+    monkeypatch.setattr(chess_bot.random, "choice",
+                        lambda _moves: pytest.fail("random.choice should not be called"))
 
-    # Elo 700 → p_random ≈ 0.508, our dice (0.999999) always exceeds it.
-    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 700)
-
-    # Engine move (e2e4 per the fake) is returned unchanged.
-    assert move == chess.Move.from_uci("e2e4")
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 200)
+    # Elo 200 → multipv rank 10 (worst).
+    assert move == chess.Move.from_uci(pvs[-1])
 
 
 @_aio
 async def test_pick_move_native_elo_never_blends(monkeypatch):
-    """Above the native floor, p_random is 0, so the dice are irrelevant.
-    Force the dice to always roll random — the engine move still wins."""
+    """Native tier never invokes random.random. Force dice to 0 — engine move
+    still wins because the random-blend code path doesn't run at native Elo."""
     _install_fake_engine(monkeypatch)
     monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    monkeypatch.setattr(chess_bot.random, "choice",
+                        lambda _moves: pytest.fail("random.choice should not be called at native Elo"))
 
     move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 2000)
-
-    # No blend at native Elo, regardless of dice.
     assert move == chess.Move.from_uci("e2e4")
 
 
 @_aio
+async def test_pick_move_clamps_above_max(monkeypatch):
+    """Elo 9999 clamps to ELO_MAX (3190), takes the native path."""
+    calls = _install_fake_engine(monkeypatch)
+    await chess_bot.pick_move(chess_engine.STARTING_FEN, 9999)
+    opts = calls["configure"][0]
+    assert opts.get("UCI_Elo") == chess_bot.ELO_MAX
+
+
+@_aio
+async def test_pick_move_clamps_below_min(monkeypatch):
+    """Elo 50 clamps to 100 → blend tier (no configure call)."""
+    calls = _install_fake_engine(monkeypatch)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)  # skip blend
+    await chess_bot.pick_move(chess_engine.STARTING_FEN, 50)
+    # Blend tier under MULTIPV_FLOOR routes through _multipv_worse_move (no configure).
+    assert calls["configure"] == []
+
+
+@_aio
 async def test_pick_move_quits_engine_even_when_configure_raises(monkeypatch):
-    """If configure() raises, the finally clause must still close the engine."""
+    """If configure() raises (native tier), the finally clause must still
+    close the engine."""
     quit_count = {"n": 0}
 
     class _FakeEngine:
@@ -262,6 +361,9 @@ async def test_pick_move_quits_engine_even_when_configure_raises(monkeypatch):
 
         async def play(self, board, limit):
             return SimpleNamespace(move=chess.Move.from_uci("e2e4"))
+
+        async def analyse(self, board, limit, multipv=None, **kwargs):
+            return [{"pv": [chess.Move.from_uci("e2e4")]}]
 
         async def quit(self):
             quit_count["n"] += 1
