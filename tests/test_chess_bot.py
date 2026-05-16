@@ -593,6 +593,93 @@ async def test_cmd_chess_human_opponent_still_goes_through_setup(db, _stub_chess
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Cog integration — !chessbot alias for !chess @TheBot
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def _allow_chess_channel(monkeypatch):
+    """Bypass check_chess_channel so cog tests don't need guild config."""
+    import src.games.chess as _chess_mod
+    async def _allow(_ctx):
+        return False
+    monkeypatch.setattr(_chess_mod, "check_chess_channel", _allow)
+
+
+@_aio
+async def test_cmd_chessbot_default_elo(db, _stub_chess_helpers, _allow_chess_channel):
+    """!chessbot with no args starts a bot game at ELO_DEFAULT."""
+    cog = _make_bot_cog()
+    challenger = FakeMember(uid=2050, display_name="Alice")
+    ctx = _ctx_for(challenger, channel_id=1050)
+
+    await cog.cmd_chessbot.callback(cog, ctx)
+
+    assert 1050 in _state.active_chess_games
+    g = _state.active_chess_games[1050]
+    assert g["white_id"] == challenger.id
+    assert g["black_id"] == cog.bot.user.id
+    assert g["elo"] == chess_bot.ELO_DEFAULT
+
+
+@_aio
+async def test_cmd_chessbot_custom_elo(db, _stub_chess_helpers, _allow_chess_channel):
+    """!chessbot 1500 starts at 1500 Elo."""
+    cog = _make_bot_cog()
+    challenger = FakeMember(uid=2051)
+    ctx = _ctx_for(challenger, channel_id=1051)
+
+    await cog.cmd_chessbot.callback(cog, ctx, "1500")
+
+    assert _state.active_chess_games[1051]["elo"] == 1500
+
+
+@_aio
+async def test_cmd_chessbot_non_integer_arg_rejected(db, _stub_chess_helpers, _allow_chess_channel):
+    """!chessbot abc sends the usage error and creates no game."""
+    cog = _make_bot_cog()
+    challenger = FakeMember(uid=2052)
+    ctx = _ctx_for(challenger, channel_id=1052)
+
+    await cog.cmd_chessbot.callback(cog, ctx, "abc")
+
+    assert 1052 not in _state.active_chess_games
+    assert "Invalid Elo" in ctx.sent_embeds[-1].title
+
+
+@_aio
+async def test_cmd_chessbot_elo_out_of_range_rejected(db, _stub_chess_helpers, _allow_chess_channel):
+    """!chessbot 50 and !chessbot 9999 both rejected; no game created."""
+    cog = _make_bot_cog()
+    challenger = FakeMember(uid=2053)
+
+    ctx_low = _ctx_for(challenger, channel_id=1053)
+    await cog.cmd_chessbot.callback(cog, ctx_low, "50")
+    assert 1053 not in _state.active_chess_games
+    assert "Invalid Elo" in ctx_low.sent_embeds[-1].title
+
+    ctx_high = _ctx_for(challenger, channel_id=1054)
+    await cog.cmd_chessbot.callback(cog, ctx_high, "9999")
+    assert 1054 not in _state.active_chess_games
+    assert "Invalid Elo" in ctx_high.sent_embeds[-1].title
+
+
+@_aio
+async def test_cmd_chessbot_blocked_when_channel_busy(db, _stub_chess_helpers, _allow_chess_channel):
+    """If the channel has any active game (TTT, C4, chess), !chessbot refuses."""
+    cog = _make_bot_cog()
+    challenger = FakeMember(uid=2054)
+    ctx = _ctx_for(challenger, channel_id=1055)
+    _state.active_ttt_games[1055] = {"players": [challenger.id, 0]}
+    try:
+        await cog.cmd_chessbot.callback(cog, ctx)
+        assert 1055 not in _state.active_chess_games
+        assert "Game Active" in ctx.sent_embeds[-1].title
+    finally:
+        _state.active_ttt_games.pop(1055, None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Cog integration — _play_bot_reply fires after a human move against the bot
 # ─────────────────────────────────────────────────────────────────────────────
 

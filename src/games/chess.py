@@ -251,6 +251,47 @@ class ChessCog(commands.Cog):
         game["board_msg_id"] = msg.id
         await save_chess_game(cid)
 
+    # ── !chessbot [elo]: alias for !chess @TheBot [elo] ─────────────────────
+    @commands.command(name="chessbot")
+    async def cmd_chessbot(self, ctx: commands.Context, *args):
+        if await check_chess_channel(ctx):
+            return
+
+        cid = ctx.channel.id
+        if (
+            cid in state.active_ttt_games
+            or cid in state.active_c4_games
+            or cid in state.active_chess_games
+        ):
+            await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
+            return
+
+        bot_user = self.bot.user if self.bot is not None else None
+        if bot_user is None:
+            await ctx.send(embed=emb("❌ Bot Not Ready", "Bot user not initialized; try again in a moment.", C_RED))
+            return
+
+        elo = chess_bot.ELO_DEFAULT
+        if args:
+            try:
+                elo = int(args[0])
+            except ValueError:
+                await ctx.send(embed=emb(
+                    "❌ Invalid Elo",
+                    f"Usage: `!chessbot [elo]` where elo is {chess_bot.ELO_MIN}-{chess_bot.ELO_MAX}.",
+                    C_RED,
+                ))
+                return
+        if not (chess_bot.ELO_MIN <= elo <= chess_bot.ELO_MAX):
+            await ctx.send(embed=emb(
+                "❌ Invalid Elo",
+                f"Elo must be between {chess_bot.ELO_MIN} and {chess_bot.ELO_MAX}.",
+                C_RED,
+            ))
+            return
+
+        await self._start_bot_chess(ctx, elo)
+
     # ── !chess view <report_id> ─────────────────────────────────────────────
     async def _cmd_view(self, ctx: commands.Context, args: tuple[str, ...]):
         if not args:
@@ -310,7 +351,7 @@ class ChessCog(commands.Cog):
         asyncio.create_task(_delete_after(ctx.message))
 
         if cid not in state.active_chess_games:
-            err = await ctx.send("No active chess game in this channel. Start one with `!chess @user [amount]` (PvP) or `!chess @TheBot [elo]` (vs Stockfish).")
+            err = await ctx.send("No active chess game in this channel. Start one with `!chess @user [amount]` (PvP) or `!chessbot [elo]` (vs Stockfish).")
             asyncio.create_task(_delete_after(err))
             return
 
