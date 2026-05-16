@@ -44,8 +44,25 @@ EXTENSIONS = [
 ]
 
 
+class SilentContext(commands.Context):
+    """ctx.send defaults to silent=True so command replies don't push-notify
+    the invoker. The user just typed the command — they're already watching
+    the channel. Callers that genuinely need to ping (game-turn boards,
+    error embeds the user shouldn't miss) pass silent=False explicitly.
+
+    channel.send / member.send / user.send are unaffected (different code
+    paths), so proactive announcements and DMs naturally stay loud.
+    """
+    async def send(self, content=None, **kwargs):
+        kwargs.setdefault("silent", True)
+        return await super().send(content, **kwargs)
+
+
 class Bot(commands.Bot):
     _shutdown_done: bool = False
+
+    async def get_context(self, message, *, cls=SilentContext):
+        return await super().get_context(message, cls=cls)
 
     async def process_commands(self, message: discord.Message) -> None:
         """Allow other bots to invoke commands (default implementation skips bots)."""
