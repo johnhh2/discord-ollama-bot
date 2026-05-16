@@ -184,6 +184,7 @@ class UtilityCog(commands.Cog):
         utility_val = (
             "`!stats` — Show bot statistics\n"
             "`!stop` — Stop roleplay / forfeit active game\n"
+            "`!subscribe [voice-channel]` — DM you when a voice channel fills up\n"
             "`!bugreport <message>` — Send a bug report to the maintainer"
         )
         help_embed.add_field(name="🔧 Utility", inline=False, value=utility_val)
@@ -388,7 +389,9 @@ class UtilityCog(commands.Cog):
                 "`!race @user1 [@user2 ...] [amount]` — Race against others (optional bet)\n"
                 "`!ttt @user [amount]` — Tic-Tac-Toe (use `!m <1-9>`)\n"
                 "`!c4 @user [amount]` — Connect 4 (use `!m <1-7>`)\n"
-                "`!chess @user [amount]` — Correspondence chess (use `!move <e2e4>`)\n"
+                "`!chess @user [amount]` — Chess vs another player (use `!move <e2e4>` or just type the move)\n"
+                "`!chess @TheBot [elo]` — Chess vs Stockfish (elo 100-3190, default 1320)\n"
+                "`!chess view <id>` — Replay a finished game from its report id\n"
             ),
             inline=False
         )
