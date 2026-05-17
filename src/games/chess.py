@@ -42,9 +42,16 @@ def _render_file_for_game(game: dict, *, orientation_for_uid: int | None = None)
     orientation = chess.WHITE
     if orientation_for_uid is not None and orientation_for_uid == game.get("black_id"):
         orientation = chess.BLACK
+    # FEN-derived boards have an empty move_stack, so board.peek() won't
+    # work. Recover the last move from the PGN history instead so the
+    # renderer can highlight it.
     last_move = None
-    if board.move_stack:
-        last_move = board.peek()
+    history = _uci_history_from_pgn(game.get("pgn", ""))
+    if history:
+        try:
+            last_move = chess.Move.from_uci(history[-1])
+        except (ValueError, chess.InvalidMoveError):
+            last_move = None
     try:
         png = chess_render.render_board_png(
             board, orientation=orientation, last_move=last_move,
@@ -66,21 +73,36 @@ async def _bump_board(
     channel: discord.abc.Messageable, game: dict, embed: discord.Embed,
     *, file: discord.File | None = None,
 ):
-    """Delete the previous board message and send a fresh one so the board
-    is always the most recent message in the channel. Updates game['board_msg_id']
-    to the new message id."""
-    prior_id = game.get("board_msg_id")
-    if prior_id is not None:
-        try:
-            old = await channel.fetch_message(prior_id)
-            await old.delete()
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            pass
-    send_kwargs: dict = {"embed": embed}
+    """Delete the previous board+embed messages and send a fresh pair so the
+    board is always the most recent message in the channel. The embed and
+    image are sent as TWO separate messages (embed first, then board image)
+    so the board renders BELOW the embed in Discord's UI — same-message
+    attachments always render above their embed regardless of order.
+
+    Tracks both message IDs:
+      - game['embed_msg_id']: the text/embed message (sent first)
+      - game['board_msg_id']: the image attachment message (sent second)
+    """
+    # Delete previous messages in reverse-send order (image, then embed) to
+    # minimize the "ghost embed" window.
+    for key in ("board_msg_id", "embed_msg_id"):
+        prior_id = game.get(key)
+        if prior_id is not None:
+            try:
+                old = await channel.fetch_message(prior_id)
+                await old.delete()
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
+
+    embed_msg = await channel.send(embed=embed)
+    game["embed_msg_id"] = embed_msg.id
     if file is not None:
-        send_kwargs["file"] = file
-    msg = await channel.send(**send_kwargs)
-    game["board_msg_id"] = msg.id
+        image_msg = await channel.send(file=file)
+        game["board_msg_id"] = image_msg.id
+    else:
+        # Render failed — no image; clear any stale board_msg_id so a future
+        # bump doesn't try to delete a nonexistent message.
+        game["board_msg_id"] = None
 
 
 def _initial_pgn(white_name: str, black_name: str, guild_name: str | None,
@@ -328,13 +350,15 @@ class ChessCog(commands.Cog):
             f"{_captures_block(game)}"
         )
         file = _render_file_for_game(game, orientation_for_uid=white_id)
-        send_kwargs: dict = {"embed": _board_embed("♟️ Chess", desc, C_BLUE)}
+        # Two messages so the board image renders BELOW the embed in Discord
+        # (same-message attachments always render above their embed).
+        embed_msg = await ctx.send(embed=_board_embed("♟️ Chess", desc, C_BLUE))
+        game["embed_msg_id"] = embed_msg.id
         if file is not None:
-            send_kwargs["file"] = file
+            image_msg = await ctx.send(file=file)
+            game["board_msg_id"] = image_msg.id
         else:
-            send_kwargs["embed"] = emb("♟️ Chess", desc, C_BLUE)
-        msg = await ctx.send(**send_kwargs)
-        game["board_msg_id"] = msg.id
+            game["board_msg_id"] = None
         await save_chess_game(cid)
 
     async def _start_bot_chess(self, ctx: commands.Context, elo: int):
@@ -375,13 +399,15 @@ class ChessCog(commands.Cog):
             f"{_captures_block(game)}"
         )
         file = _render_file_for_game(game, orientation_for_uid=white_id)
-        send_kwargs: dict = {"embed": _board_embed("♟️ Chess", desc, C_BLUE)}
+        # Two messages so the board image renders BELOW the embed in Discord
+        # (same-message attachments always render above their embed).
+        embed_msg = await ctx.send(embed=_board_embed("♟️ Chess", desc, C_BLUE))
+        game["embed_msg_id"] = embed_msg.id
         if file is not None:
-            send_kwargs["file"] = file
+            image_msg = await ctx.send(file=file)
+            game["board_msg_id"] = image_msg.id
         else:
-            send_kwargs["embed"] = emb("♟️ Chess", desc, C_BLUE)
-        msg = await ctx.send(**send_kwargs)
-        game["board_msg_id"] = msg.id
+            game["board_msg_id"] = None
         await save_chess_game(cid)
 
     # ── !chessbot [elo]: alias for !chess @TheBot [elo] ─────────────────────
