@@ -210,6 +210,124 @@ class TestMovetextOnly:
         assert "Alice" not in out
         assert "Test Guild" not in out
 
+
+class TestCapturesSummary:
+    """_captures_summary formats per-side captures as 'glyph,glyph+N'."""
+
+    def test_no_captures_returns_empty(self):
+        from src.games.chess import _captures_summary
+        b = chess.Board()
+        assert _captures_summary(b, chess.WHITE) == ""
+        assert _captures_summary(b, chess.BLACK) == ""
+
+    def test_single_pawn_capture(self):
+        from src.games.chess import _captures_summary
+        # 1.e4 d5 2.exd5 — white captured one black pawn. Black queen
+        # didn't recapture (it's white's turn now).
+        b = chess.Board()
+        for san in ("e4", "d5", "exd5"):
+            b.push_san(san)
+        # White has captured one black pawn → glyph ♟, no '+N'.
+        assert _captures_summary(b, chess.WHITE) == "♟"
+        assert _captures_summary(b, chess.BLACK) == ""
+
+    def test_two_captures_no_extra(self):
+        from src.games.chess import _captures_summary
+        # 1.e4 d5 2.exd5 Qxd5 — black queen recaptured. Now black has
+        # captured one white pawn and white has captured one black pawn.
+        b = chess.Board()
+        for san in ("e4", "d5", "exd5", "Qxd5"):
+            b.push_san(san)
+        # Each side has one pawn capture.
+        assert _captures_summary(b, chess.WHITE) == "♟"
+        assert _captures_summary(b, chess.BLACK) == "♙"
+
+    def test_higher_value_pieces_sort_first(self):
+        from src.games.chess import _captures_summary
+        # Construct a board by removing black queen, rook, and pawn from
+        # the starting position — equivalent to white having captured
+        # all three.
+        b = chess.Board()
+        b.remove_piece_at(chess.D8)  # black queen
+        b.remove_piece_at(chess.A8)  # black rook
+        b.remove_piece_at(chess.E7)  # black pawn
+        # Top two by value: Q, R. Extra: 1 (the pawn).
+        assert _captures_summary(b, chess.WHITE) == "♛,♜+1"
+
+    def test_uses_opponent_color_glyphs(self):
+        from src.games.chess import _captures_summary
+        # White captured a black pawn → uses BLACK pawn glyph (♟).
+        b = chess.Board()
+        b.remove_piece_at(chess.E7)
+        assert _captures_summary(b, chess.WHITE) == "♟"
+        # Black captured a white pawn → uses WHITE pawn glyph (♙).
+        b2 = chess.Board()
+        b2.remove_piece_at(chess.E2)
+        assert _captures_summary(b2, chess.BLACK) == "♙"
+
+    def test_promotion_does_not_inflate_captures(self):
+        """When the captor's pawn promotes, their own queen count goes up.
+        That should NOT change the opponent's captured-from count, because
+        the helper measures based on the OPPONENT'S remaining pieces."""
+        from src.games.chess import _captures_summary
+        # Realistic line: white plays a pawn from the starting position
+        # through to a8 promotion without any captures by either side.
+        # 1.a4 a5 2.h4 h5 ... we need black to not block the a-file. The
+        # standard "rook-pawn race" doesn't promote without captures, so
+        # we cheat slightly: hand-edit the board to remove black's a-pawn
+        # and a-rook so the white pawn has a clear runway. That counts as
+        # 2 captured black pieces for the test setup.
+        b = chess.Board()
+        b.remove_piece_at(chess.A7)  # treat as if white had captured this pawn
+        b.remove_piece_at(chess.A8)  # treat as if white had captured this rook
+        baseline = _captures_summary(b, chess.WHITE)
+        assert baseline == "♜,♟"  # 1 rook + 1 pawn captured so far
+        # Now walk a pawn from a2 → a8 with promotion. No further captures.
+        for san in ("a4", "h6", "a5", "h5", "a6", "h4", "a7", "Rh6", "a8=Q"):
+            b.push_san(san)
+        # Captures unchanged: still 1 rook + 1 pawn taken from black.
+        # White's promotion turned a white pawn into a white queen — no
+        # impact on what black has lost.
+        assert _captures_summary(b, chess.WHITE) == "♜,♟"
+
+    def test_many_captures_top_two_plus_count(self):
+        from src.games.chess import _captures_summary
+        # Black has lost queen + 2 rooks + 3 pawns = 6 pieces captured by white.
+        b = chess.Board()
+        b.remove_piece_at(chess.D8)  # queen
+        b.remove_piece_at(chess.A8)  # rook
+        b.remove_piece_at(chess.H8)  # rook
+        b.remove_piece_at(chess.A7)  # pawn
+        b.remove_piece_at(chess.B7)  # pawn
+        b.remove_piece_at(chess.C7)  # pawn
+        # Top two: Q, R. Extra: 4 (1 rook + 3 pawns).
+        assert _captures_summary(b, chess.WHITE) == "♛,♜+4"
+
+
+class TestCapturesBlock:
+    """_captures_block builds the two-line embed snippet."""
+
+    def test_empty_at_start_of_game(self):
+        from src.games.chess import _captures_block
+        game = {"fen": chess.STARTING_FEN}
+        assert _captures_block(game) == ""
+
+    def test_shows_both_sides_when_anyone_has_captures(self):
+        from src.games.chess import _captures_block
+        # Position where white captured a black pawn but black has nothing.
+        b = chess.Board()
+        b.remove_piece_at(chess.E7)
+        game = {"fen": b.fen()}
+        block = _captures_block(game)
+        assert "White captured: ♟" in block
+        assert "Black captured: —" in block
+        assert block.startswith("\n")  # caller appends directly
+
+    def test_handles_unparseable_fen(self):
+        from src.games.chess import _captures_block
+        game = {"fen": "not-a-real-fen"}
+        assert _captures_block(game) == ""
+
     def test_preserves_result_token(self):
         from src.games.chess import _movetext_only
         pgn = (

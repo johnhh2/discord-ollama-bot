@@ -138,6 +138,71 @@ def _uci_history_from_pgn(pgn_str: str) -> list[str]:
     return [move.uci() for move in g.mainline_moves()]
 
 
+# Per-side starting counts in standard chess. Used to compute captured
+# pieces as (initial - current) for the opponent's side.
+_STARTING_PIECE_COUNTS = {
+    chess.QUEEN: 1, chess.ROOK: 2, chess.BISHOP: 2,
+    chess.KNIGHT: 2, chess.PAWN: 8,
+}
+
+# Render captured pieces using the OPPONENT'S color (i.e. their original
+# color) since the line reads "pieces I took from you." Pawn glyphs included.
+_PIECE_GLYPHS = {
+    chess.WHITE: {
+        chess.QUEEN: "♕", chess.ROOK: "♖", chess.BISHOP: "♗",
+        chess.KNIGHT: "♘", chess.PAWN: "♙",
+    },
+    chess.BLACK: {
+        chess.QUEEN: "♛", chess.ROOK: "♜", chess.BISHOP: "♝",
+        chess.KNIGHT: "♞", chess.PAWN: "♟",
+    },
+}
+
+# Display order for ties: queen > rook > bishop ≈ knight > pawn. Bishop
+# and knight are both worth 3 but bishop sorts first by convention.
+_PIECE_DISPLAY_ORDER = (chess.QUEEN, chess.ROOK, chess.BISHOP,
+                        chess.KNIGHT, chess.PAWN)
+
+
+def _captures_block(game: dict) -> str:
+    """Two-line summary of each side's captures, formatted for the chess
+    embed description. Empty string if neither side has captured anything.
+    Leading newline included so callers can append directly."""
+    try:
+        board = chess_engine.board_from_fen(game["fen"])
+    except Exception:
+        return ""
+    white_caps = _captures_summary(board, chess.WHITE)
+    black_caps = _captures_summary(board, chess.BLACK)
+    if not white_caps and not black_caps:
+        return ""
+    return f"\nWhite captured: {white_caps or '—'}\nBlack captured: {black_caps or '—'}"
+
+
+def _captures_summary(board: chess.Board, captor_color: chess.Color) -> str:
+    """Return a compact summary of pieces `captor_color` has taken from the
+    opponent. Format: '<glyph1>,<glyph2>+N' where the two glyphs are the
+    captor's two highest-value captures by piece type and N is the count
+    of remaining captures. Empty string if no captures yet.
+
+    Promotions inflate the captor's own piece counts but don't affect the
+    opponent's, so they're correctly excluded from this calculation."""
+    opp = not captor_color
+    captured: list[chess.PieceType] = []
+    for piece_type in _PIECE_DISPLAY_ORDER:
+        remaining = len(board.pieces(piece_type, opp))
+        taken = _STARTING_PIECE_COUNTS[piece_type] - remaining
+        if taken > 0:
+            captured.extend([piece_type] * taken)
+    if not captured:
+        return ""
+    glyphs = _PIECE_GLYPHS[opp]
+    top_two = captured[:2]
+    head = ",".join(glyphs[pt] for pt in top_two)
+    extra = len(captured) - len(top_two)
+    return f"{head}+{extra}" if extra > 0 else head
+
+
 def _player_display_name(guild: discord.Guild | None, uid: int, fallback: str) -> str:
     if guild is not None:
         m = guild.get_member(uid)
@@ -259,6 +324,7 @@ class ChessCog(commands.Cog):
             f"{ctx.author.mention} (White ♙) vs {opponent.mention} (Black ♟){wager_info}\n"
             f"{ctx.author.mention}'s turn. Type your move (e.g. `e4`, `Nf3`, `O-O`, `e2e4`) or `!move <move>`\n\n"
             f"**Last move:** {game['last_move']}"
+            f"{_captures_block(game)}"
         )
         file = _render_file_for_game(game, orientation_for_uid=white_id)
         send_kwargs: dict = {"embed": _board_embed("♟️ Chess", desc, C_BLUE)}
@@ -305,6 +371,7 @@ class ChessCog(commands.Cog):
             f"{ctx.author.mention} (White ♙) vs 🤖 **{black_name}** (Black ♟)\n"
             f"{ctx.author.mention}'s turn. Type your move (e.g. `e4`, `Nf3`, `O-O`, `e2e4`) or `!move <move>`\n\n"
             f"**Last move:** {game['last_move']}"
+            f"{_captures_block(game)}"
         )
         file = _render_file_for_game(game, orientation_for_uid=white_id)
         send_kwargs: dict = {"embed": _board_embed("♟️ Chess", desc, C_BLUE)}
@@ -642,6 +709,7 @@ class ChessCog(commands.Cog):
         desc = (
             f"{next_mention}'s turn{check_note}. Type your move (e.g. `e4`, `Nf3`, `O-O`, `e2e4`) or `!move <move>`\n\n"
             f"**Last move:** {game['last_move']}"
+            f"{_captures_block(game)}"
         )
         if file is not None:
             await _bump_board(channel, game, _board_embed("♟️ Chess", desc, C_BLUE), file=file)
