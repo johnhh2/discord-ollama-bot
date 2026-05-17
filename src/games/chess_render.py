@@ -15,7 +15,7 @@ except Exception as _e:  # pragma: no cover
     _CAIROSVG_IMPORT_ERROR = _e
 
 
-DEFAULT_SIZE = 480
+DEFAULT_SIZE = 960
 
 
 def render_board_png(
