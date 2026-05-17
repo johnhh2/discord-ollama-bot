@@ -17,13 +17,17 @@ except Exception as _e:  # pragma: no cover
 
 DEFAULT_SIZE = 720
 
-# Override python-chess's default subtle yellow lastmove tint with a vivid
-# blue. python-chess uses separate keys for light- vs dark-square tints
-# so both colors must be set to ensure visibility regardless of which
-# squares the move from/to land on.
-_LASTMOVE_COLORS = {
+# Override python-chess's default subtle yellow lastmove tint. Two palettes:
+# blue for ordinary moves, red for moves that captured a piece (signals
+# 'something died here'). python-chess uses separate keys for light- vs
+# dark-square tints so both colors are set in each palette.
+_LASTMOVE_BLUE = {
     "square light lastmove": "#5db0ff",  # vivid blue on light squares
     "square dark lastmove": "#1e72d4",   # darker blue on dark squares
+}
+_LASTMOVE_RED = {
+    "square light lastmove": "#ff7a7a",  # vivid red on light squares
+    "square dark lastmove": "#c63838",   # darker red on dark squares
 }
 
 
@@ -32,6 +36,7 @@ def render_board_png(
     *,
     orientation: bool = chess.WHITE,
     last_move: chess.Move | None = None,
+    last_move_was_capture: bool = False,
     size: int = DEFAULT_SIZE,
 ) -> bytes:
     if cairosvg is None:
@@ -39,12 +44,13 @@ def render_board_png(
             f"cairosvg unavailable ({_CAIROSVG_IMPORT_ERROR!r}); install libcairo2 in the runtime image."
         )
     check_square = board.king(board.turn) if board.is_check() else None
+    colors = _LASTMOVE_RED if last_move_was_capture else _LASTMOVE_BLUE
     svg = chess.svg.board(
         board,
         orientation=orientation,
         lastmove=last_move,
         check=check_square,
         size=size,
-        colors=_LASTMOVE_COLORS,
+        colors=colors,
     )
     return cairosvg.svg2png(bytestring=svg.encode("utf-8"), output_width=size)

@@ -34,6 +34,30 @@ from src import state
 BOARD_IMG_FILENAME = "board.png"
 
 
+def _last_move_info_from_pgn(pgn_str: str) -> tuple[chess.Move | None, bool]:
+    """Parse a PGN and return (last_move, was_capture). last_move is None
+    if the game has no moves; was_capture is True iff the final move was
+    a capture (including en passant) against the position immediately
+    preceding it."""
+    try:
+        g = chess.pgn.read_game(io.StringIO(pgn_str))
+    except Exception:
+        return None, False
+    if g is None:
+        return None, False
+    moves = list(g.mainline_moves())
+    if not moves:
+        return None, False
+    # Replay all but the last move, then check capture status on the
+    # pre-move board.
+    board = g.board()
+    for move in moves[:-1]:
+        board.push(move)
+    last_move = moves[-1]
+    was_capture = board.is_capture(last_move)
+    return last_move, was_capture
+
+
 def _render_file_for_game(game: dict, *, orientation_for_uid: int | None = None) -> discord.File | None:
     try:
         board = chess_engine.board_from_fen(game["fen"])
@@ -43,18 +67,12 @@ def _render_file_for_game(game: dict, *, orientation_for_uid: int | None = None)
     if orientation_for_uid is not None and orientation_for_uid == game.get("black_id"):
         orientation = chess.BLACK
     # FEN-derived boards have an empty move_stack, so board.peek() won't
-    # work. Recover the last move from the PGN history instead so the
-    # renderer can highlight it.
-    last_move = None
-    history = _uci_history_from_pgn(game.get("pgn", ""))
-    if history:
-        try:
-            last_move = chess.Move.from_uci(history[-1])
-        except (ValueError, chess.InvalidMoveError):
-            last_move = None
+    # work. Recover the last move + capture flag from the PGN.
+    last_move, was_capture = _last_move_info_from_pgn(game.get("pgn", ""))
     try:
         png = chess_render.render_board_png(
             board, orientation=orientation, last_move=last_move,
+            last_move_was_capture=was_capture,
         )
     except RuntimeError as e:
         logging.warning(f"chess render unavailable: {e}")

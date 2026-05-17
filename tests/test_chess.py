@@ -211,6 +211,49 @@ class TestMovetextOnly:
         assert "Test Guild" not in out
 
 
+class TestLastMoveInfoFromPgn:
+    """_last_move_info_from_pgn returns (last_move, was_capture) by replaying
+    the PGN and checking is_capture on the pre-move board."""
+
+    def test_empty_game_returns_none_false(self):
+        from src.games.chess import _last_move_info_from_pgn
+        m, cap = _last_move_info_from_pgn(_initial_pgn("A", "B", None))
+        assert m is None and cap is False
+
+    def test_non_capture_last_move(self):
+        from src.games.chess import _last_move_info_from_pgn
+        pgn = _initial_pgn("A", "B", None)
+        pgn = _append_san_to_pgn(pgn, "e4")
+        m, cap = _last_move_info_from_pgn(pgn)
+        assert m == chess.Move.from_uci("e2e4")
+        assert cap is False
+
+    def test_capture_last_move(self):
+        from src.games.chess import _last_move_info_from_pgn
+        # 1.e4 d5 2.exd5 — the last move is a pawn capture.
+        pgn = _initial_pgn("A", "B", None)
+        for san in ("e4", "d5", "exd5"):
+            pgn = _append_san_to_pgn(pgn, san)
+        m, cap = _last_move_info_from_pgn(pgn)
+        assert m == chess.Move.from_uci("e4d5")
+        assert cap is True
+
+    def test_en_passant_counts_as_capture(self):
+        from src.games.chess import _last_move_info_from_pgn
+        # 1.e4 a6 2.e5 d5 3.exd6 (en passant).
+        pgn = _initial_pgn("A", "B", None)
+        for san in ("e4", "a6", "e5", "d5", "exd6"):
+            pgn = _append_san_to_pgn(pgn, san)
+        m, cap = _last_move_info_from_pgn(pgn)
+        assert cap is True
+
+    def test_garbage_pgn_returns_none_false(self):
+        from src.games.chess import _last_move_info_from_pgn
+        m, cap = _last_move_info_from_pgn("not a real pgn")
+        # python-chess parses garbage as an empty game; should not crash.
+        assert m is None and cap is False
+
+
 class TestCapturesSummary:
     """_captures_summary formats per-side captures as 'glyph,glyph+N'."""
 
