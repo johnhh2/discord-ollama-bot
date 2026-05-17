@@ -17,7 +17,7 @@ import chess.engine
 #     for how depth, pool size, and filter probability scale together.
 STOCKFISH_NATIVE_ELO_MIN = 1320
 STOCKFISH_NATIVE_ELO_MAX = 3190
-MULTIPV_COUNT = 10
+MULTIPV_COUNT = 12
 
 # What we accept from users via !chess @Bot <elo>.
 ELO_MIN = 100
@@ -38,27 +38,39 @@ _DEBIAN_STOCKFISH_PATH = "/usr/games/stockfish"
 # Piecewise-linear curve anchors. Each list is [(elo, value), ...] sorted by
 # elo. _interp() handles linear interpolation between adjacent anchors and
 # clamps to the endpoints outside the range.
+#
+# Depth is intentionally flat at 2 across Elo 400-500 (a narrow plateau at
+# the bottom of the curve) — the strength gradient in that band comes from
+# the random-blend taper and the tightening safety filter, NOT from deeper
+# search. From Elo 600 upward depth ramps toward native (depth 14) by
+# Elo 1300 so the handoff to UCI_Elo 1320 is monotonic.
+#
+# Pool is similarly flat at 10 across Elo 400-700, then ramps down to 3 by
+# Elo 1200+. MULTIPV_COUNT must stay ≥ the largest pool anchor (currently 12).
 _DEPTH_ANCHORS: list[tuple[int, int]] = [
     (100, 1),     # Immediate captures only (depth-1 + quiescence)
     (300, 2),     # Hanging pieces, mate-in-1
-    (500, 3),     # Simple 1-move tactics
-    (700, 5),     # 2-move combinations, basic forks
+    (400, 2),     # Frozen plateau start
+    (500, 2),     # Frozen plateau end
+    (600, 4),     # Simple 1-move tactics
+    (700, 4),
     (900, 7),     # Most 2-3 move tactics
     (1000, 8),    # 3-move tactics, simple mating attacks
     (1100, 10),   # 4-move tactics
     (1200, 12),   # 5-move forced sequences
-    (1319, 14),   # Strong club-player tactics — boundary with native tier
+    (1300, 14),   # Strong club-player tactics — boundary with native tier
 ]
 
 _POOL_SIZE_ANCHORS: list[tuple[int, int]] = [
-    (100, 10),
-    (400, 8),
-    (600, 6),
-    (800, 4),
-    (1000, 3),
-    (1100, 2),
-    (1200, 1),
-    (1319, 1),
+    (100, 12),
+    (400, 10),    # Frozen plateau start
+    (700, 10),    # Frozen plateau end — same as Elo 400
+    (800, 8),
+    (900, 7),
+    (1000, 5),
+    (1100, 4),
+    (1200, 3),
+    (1300, 3),
 ]
 
 # Filter probability calibrated so the upper-mid range plays competently —
@@ -71,18 +83,21 @@ _FILTER_PROB_ANCHORS: list[tuple[int, float]] = [
     (400, 0.50),
     (700, 0.80),
     (1000, 0.975),
-    (1319, 0.975),
+    (1300, 0.975),
 ]
 
 # Probability of replacing Stockfish's suggestion with a fully random legal
 # move. Real beginners play moves that aren't even in Stockfish's top-10 —
-# odd rook lifts, edge-pawn shuffles, etc. Decays to 0 by Elo 400 so the
-# mid-range relies purely on the MultiPV+filter system.
+# odd rook lifts, edge-pawn shuffles, etc. Strong at the bottom, tapering
+# to a small-but-nonzero rate through 400-600, fully off by Elo 700.
 _RANDOM_BLEND_ANCHORS: list[tuple[int, float]] = [
     (100, 0.80),
     (200, 0.50),
-    (300, 0.20),
-    (400, 0.0),
+    (300, 0.30),
+    (400, 0.15),
+    (500, 0.08),
+    (600, 0.03),
+    (700, 0.0),
     (1319, 0.0),
 ]
 

@@ -75,17 +75,27 @@ class TestResolveStockfishPath:
 
 
 class TestMultipvDepthForElo:
-    """Depth now RAMPS UP with Elo (was inverted). See _DEPTH_ANCHORS in
-    chess_bot.py for the full ladder."""
+    """Depth RAMPS UP with Elo but is intentionally FROZEN at depth=2
+    across Elo 400-500 (strength gradient in that band comes from random
+    blend taper + filter, not from deeper search). See _DEPTH_ANCHORS."""
 
     def test_anchor_points(self):
         # Each tuple matches an anchor in _DEPTH_ANCHORS exactly.
-        anchors = [(100, 1), (300, 2), (500, 3), (700, 5), (900, 7),
-                   (1000, 8), (1100, 10), (1200, 12), (1319, 14)]
+        anchors = [(100, 1), (300, 2), (400, 2), (500, 2), (600, 4), (700, 4),
+                   (900, 7), (1000, 8), (1100, 10), (1200, 12), (1300, 14)]
         for elo, expected in anchors:
             assert chess_bot.multipv_depth_for_elo(elo) == expected, (
                 f"depth at Elo {elo}: expected {expected}, got "
                 f"{chess_bot.multipv_depth_for_elo(elo)}"
+            )
+
+    def test_frozen_plateau_400_to_500(self):
+        """All Elo in [400, 500] use the same depth as Elo 400."""
+        baseline = chess_bot.multipv_depth_for_elo(400)
+        for elo in (400, 425, 450, 475, 500):
+            assert chess_bot.multipv_depth_for_elo(elo) == baseline, (
+                f"depth at Elo {elo} = {chess_bot.multipv_depth_for_elo(elo)}; "
+                f"expected to match Elo 400 baseline of {baseline}"
             )
 
     def test_below_floor_clamps(self):
@@ -93,10 +103,13 @@ class TestMultipvDepthForElo:
         assert chess_bot.multipv_depth_for_elo(0) == 1
 
     def test_above_top_clamps(self):
-        # Native path takes over above 1319, but the helper should still
+        # Native path takes over above 1320, but the helper should still
         # return a sensible value.
         assert chess_bot.multipv_depth_for_elo(2000) == 14
         assert chess_bot.multipv_depth_for_elo(9999) == 14
+        # Anchor is at Elo 1300, so 1319 (just below the native boundary)
+        # also clamps to the top depth.
+        assert chess_bot.multipv_depth_for_elo(1319) == 14
 
     def test_monotonic_non_decreasing(self):
         prev = 0
@@ -107,25 +120,43 @@ class TestMultipvDepthForElo:
 
 
 class TestMultipvPoolSizeForElo:
-    """Pool size shrinks with Elo from 10 (top-10, noisy) down to 1
-    (rank-1 only) by Elo 1200."""
+    """Pool size shrinks with Elo from 12 (top-12, noisy) down to 3 by Elo
+    1319. Frozen at 10 across Elo 400-700 (same reason as the depth plateau).
+    MULTIPV_COUNT must stay ≥ the largest pool anchor."""
 
     def test_anchor_points(self):
-        anchors = [(100, 10), (400, 8), (600, 6), (800, 4),
-                   (1000, 3), (1100, 2), (1200, 1), (1319, 1)]
+        anchors = [(100, 12), (400, 10), (700, 10), (800, 8), (900, 7),
+                   (1000, 5), (1100, 4), (1200, 3), (1300, 3)]
         for elo, expected in anchors:
             assert chess_bot.multipv_pool_size_for_elo(elo) == expected, (
                 f"pool size at Elo {elo}: expected {expected}, got "
                 f"{chess_bot.multipv_pool_size_for_elo(elo)}"
             )
 
-    def test_below_floor_clamps_to_ten(self):
-        assert chess_bot.multipv_pool_size_for_elo(50) == 10
-        assert chess_bot.multipv_pool_size_for_elo(-100) == 10
+    def test_frozen_plateau_400_to_700(self):
+        """All Elo in [400, 700] use the same pool size as Elo 400."""
+        baseline = chess_bot.multipv_pool_size_for_elo(400)
+        for elo in (400, 450, 500, 600, 650, 700):
+            assert chess_bot.multipv_pool_size_for_elo(elo) == baseline, (
+                f"pool at Elo {elo} = {chess_bot.multipv_pool_size_for_elo(elo)}; "
+                f"expected to match Elo 400 baseline of {baseline}"
+            )
 
-    def test_above_top_clamps_to_one(self):
-        assert chess_bot.multipv_pool_size_for_elo(2000) == 1
-        assert chess_bot.multipv_pool_size_for_elo(9999) == 1
+    def test_below_floor_clamps_to_twelve(self):
+        assert chess_bot.multipv_pool_size_for_elo(50) == 12
+        assert chess_bot.multipv_pool_size_for_elo(-100) == 12
+
+    def test_above_top_clamps_to_three(self):
+        assert chess_bot.multipv_pool_size_for_elo(2000) == 3
+        assert chess_bot.multipv_pool_size_for_elo(9999) == 3
+
+    def test_multipv_count_can_satisfy_largest_pool(self):
+        """The engine query uses MULTIPV_COUNT; if any pool anchor exceeds
+        that, we'd silently truncate. Guard against accidental misconfig."""
+        largest = max(p for _, p in chess_bot._POOL_SIZE_ANCHORS)
+        assert chess_bot.MULTIPV_COUNT >= largest, (
+            f"MULTIPV_COUNT={chess_bot.MULTIPV_COUNT} < largest pool anchor {largest}"
+        )
 
     def test_monotonic_non_increasing(self):
         prev = chess_bot.MULTIPV_COUNT + 1
@@ -146,7 +177,7 @@ class TestSafetyFilterProbabilityForElo:
 
     def test_anchor_points(self):
         anchors = [(100, 0.20), (400, 0.50), (700, 0.80),
-                   (1000, 0.975), (1100, 0.975), (1200, 0.975), (1319, 0.975)]
+                   (1000, 0.975), (1100, 0.975), (1200, 0.975), (1300, 0.975)]
         for elo, expected in anchors:
             actual = chess_bot.safety_filter_probability_for_elo(elo)
             assert abs(actual - expected) < 0.001, (
@@ -177,20 +208,28 @@ class TestSafetyFilterProbabilityForElo:
 
 
 class TestRandomBlendProbabilityForElo:
-    """Random-move replacement probability — high at the very bottom, decays
-    to 0 by Elo 400 and stays 0 above that."""
+    """Random-move replacement probability — high at the very bottom, tapers
+    through 400-600 with diminishing rates, fully off by Elo 700."""
 
     def test_anchor_points(self):
-        anchors = [(100, 0.80), (200, 0.50), (300, 0.20), (400, 0.0)]
+        anchors = [(100, 0.80), (200, 0.50), (300, 0.30),
+                   (400, 0.15), (500, 0.08), (600, 0.03), (700, 0.0)]
         for elo, expected in anchors:
             actual = chess_bot.random_blend_probability_for_elo(elo)
             assert abs(actual - expected) < 0.001, (
                 f"P(random) at Elo {elo}: expected ~{expected}, got {actual}"
             )
 
-    def test_zero_above_400(self):
-        for elo in (400, 500, 700, 1000, 1319):
+    def test_zero_at_and_above_700(self):
+        for elo in (700, 800, 1000, 1319):
             assert chess_bot.random_blend_probability_for_elo(elo) == 0.0
+
+    def test_nonzero_through_600(self):
+        # Critical: 400, 500, 600 must keep some randomness so the mid-low
+        # range still feels human (occasional weird moves).
+        for elo in (400, 500, 600):
+            p = chess_bot.random_blend_probability_for_elo(elo)
+            assert 0.0 < p < 0.2, f"P(random) at Elo {elo} = {p}; expected small but nonzero"
 
     def test_below_floor_clamps(self):
         assert chess_bot.random_blend_probability_for_elo(50) == 0.80
@@ -198,7 +237,7 @@ class TestRandomBlendProbabilityForElo:
 
     def test_monotonic_non_increasing(self):
         prev = 2.0
-        for elo in range(100, 500, 10):
+        for elo in range(100, 800, 10):
             p = chess_bot.random_blend_probability_for_elo(elo)
             assert p <= prev, f"P(random) not monotonic at elo={elo}: {p} > {prev}"
             prev = p
@@ -433,10 +472,10 @@ async def test_pick_move_depth_ramps_up_with_elo(monkeypatch):
 
 @_aio
 async def test_pick_move_samples_from_top_n_pool(monkeypatch):
-    """At Elo 1000 (pool=3), pick_move samples from the top-3 of the analysed
+    """At Elo 1000 (pool=5), pick_move samples from the top-5 of the analysed
     PVs. Force the safety filter OFF (random() > P(filter)) so we observe pure
-    pool sampling. Pin random.choice to a sentinel that returns the 3rd item
-    to prove sampling sees the top-3, not just rank-1."""
+    pool sampling. Pin random.choice to a sentinel that returns the last item
+    to prove sampling sees the top-5, not just rank-1."""
     pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3",
            "d2d3", "b1c3", "a2a3", "h2h3", "g2g3"]
     _install_fake_engine(monkeypatch, analyse_pvs=pvs)
@@ -444,29 +483,34 @@ async def test_pick_move_samples_from_top_n_pool(monkeypatch):
     monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)
     monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[-1])
 
+    expected_pool = chess_bot.multipv_pool_size_for_elo(1000)
     move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 1000)
-    # Pool size at 1000 is 3, so the "last" candidate is pvs[2] = g1f3.
-    assert move == chess.Move.from_uci(pvs[2])
+    # "Last" candidate is pvs[expected_pool - 1].
+    assert move == chess.Move.from_uci(pvs[expected_pool - 1])
 
 
 @_aio
-async def test_pick_move_pool_at_1200_is_deterministic_rank_1(monkeypatch):
-    """Elo 1200 has pool=1, so sampling is deterministic on rank-1
-    regardless of random.choice behavior."""
-    pvs = ["e2e4", "d2d4", "g1f3"]
+async def test_pick_move_pool_at_high_elo_samples_small_top_n(monkeypatch):
+    """At the upper end of the sub-native tier the pool is small (3 by
+    Elo 1200) — sampling stays within the top-3 PVs."""
+    pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3"]
     _install_fake_engine(monkeypatch, analyse_pvs=pvs)
     monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)  # skip filter
+    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[-1])
+    expected_pool = chess_bot.multipv_pool_size_for_elo(1200)
     move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 1200)
-    assert move == chess.Move.from_uci(pvs[0])
+    assert move == chess.Move.from_uci(pvs[expected_pool - 1])
 
 
 @_aio
-async def test_pick_move_just_below_native_picks_best(monkeypatch):
-    """Elo 1319 pool=1 → deterministic rank-1, regardless of filter."""
-    pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3",
-           "d2d3", "b1c3", "a2a3", "h2h3", "g2g3"]
+async def test_pick_move_just_below_native_samples_small_pool(monkeypatch):
+    """At Elo 1319 the pool is small (3); sampling stays within rank-1..3."""
+    pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3"]
     _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)  # skip filter
+    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
     move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 1319)
+    # First of the top-pool candidates is pvs[0].
     assert move == chess.Move.from_uci(pvs[0])
 
 
@@ -478,7 +522,7 @@ async def test_pick_move_handles_short_pv_list(monkeypatch):
     monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)  # skip filter
     monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[-1])
     move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 100)
-    # Elo 100 pool would be 10, clamped to len(pvs)=2; choice picks last.
+    # Elo 100 pool would be 12, clamped to len(pvs)=2; choice picks last.
     assert move == chess.Move.from_uci(pvs[-1])
 
 
@@ -579,19 +623,17 @@ async def test_pick_move_random_blend_skipped_when_dice_high(monkeypatch):
 
 
 @_aio
-async def test_pick_move_random_blend_zero_above_400(monkeypatch):
-    """Above Elo 400 the random blend probability is 0 — random.random()=0
+async def test_pick_move_random_blend_zero_at_700_and_above(monkeypatch):
+    """At Elo 700+ the random blend probability is 0 — random.random()=0
     fires the filter but NOT the blend; the pool pick wins through."""
     pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3",
            "d2d3", "b1c3", "a2a3", "h2h3", "g2g3"]
     _install_fake_engine(monkeypatch, analyse_pvs=pvs)
     monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
     monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 500)
-    # At Elo 500: filter fires (0 < 0.633), pool sampled (returns first safe),
-    # blend skipped (blend_prob=0 at Elo 500). Result: filtered pool pick.
-    # First safe candidate from the starting position pool is e2e4 (legal,
-    # nothing hangs after).
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 700)
+    # At Elo 700: filter fires (0 < 0.80), pool sampled (returns first safe),
+    # blend skipped (blend_prob=0 at Elo 700). Result: filtered pool pick.
     assert move == chess.Move.from_uci(pvs[0])
 
 
@@ -624,10 +666,10 @@ async def test_pick_move_book_move_rejected_when_not_in_top_10(monkeypatch):
     monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
 
     move = await chess_bot.pick_move(
-        chess_engine.STARTING_FEN, 1200,  # pool=1 → deterministic rank-1
+        chess_engine.STARTING_FEN, 1200,
         book_move=chess.Move.from_uci("h2h4"),
     )
-    # Book rejected, normal sampling at pool=1 returns pvs[0].
+    # Book rejected; random.choice pinned to candidates[0] so returns pvs[0].
     assert move == chess.Move.from_uci(pvs[0])
 
 
