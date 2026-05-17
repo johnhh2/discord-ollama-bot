@@ -56,9 +56,10 @@ def _render_file_for_game(game: dict, *, orientation_for_uid: int | None = None)
 
 
 def _board_embed(title: str, description: str, color: int) -> discord.Embed:
-    e = emb(title, description, color)
-    e.set_image(url=f"attachment://{BOARD_IMG_FILENAME}")
-    return e
+    # Note: intentionally does NOT set_image on the attachment. The board PNG
+    # is sent as a top-level attachment alongside this embed so it renders
+    # outside the embed frame (larger inline display in Discord).
+    return emb(title, description, color)
 
 
 async def _bump_board(
@@ -479,7 +480,8 @@ class ChessCog(commands.Cog):
         desc = f"{outcome_line}\n\n{pgn_block}{pgn_hint}"
         e = emb(f"♟️ Chess Game #{report_id}", desc, C_GREY)
         if file is not None:
-            e.set_image(url=f"attachment://{BOARD_IMG_FILENAME}")
+            # Attach as top-level file so the board renders outside the embed
+            # frame (larger inline display).
             await send_ephemeral(ctx, embed=e, file=file)
         else:
             await send_ephemeral(ctx, embed=e)
