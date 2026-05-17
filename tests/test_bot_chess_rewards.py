@@ -20,13 +20,14 @@ async def _user_dict(uid: int) -> dict:
 
 
 @_aio
-async def test_first_win_pays_full_elo_times_20(db):
+async def test_first_win_pays_full_elo_times_low_rate(db):
     payout, record_broken = await br.award_bot_defeat(
         user_id=5001, guild_id=42, holder_name="Alice", bot_elo=400,
     )
-    assert payout == 400 * br.COINS_PER_NEW_ELO  # 8000
+    # 400 Elo all below the 1000 threshold → 400 * 10.
+    assert payout == 400 * br.COINS_PER_NEW_ELO_LOW  # 4000
     assert record_broken is True
-    assert await get_balance(5001) == 8000
+    assert await get_balance(5001) == 4000
 
     u = await _user_dict(5001)
     assert u["bot_chess_elo_max_today"] == 400
@@ -35,15 +36,15 @@ async def test_first_win_pays_full_elo_times_20(db):
 
 @_aio
 async def test_second_win_higher_elo_pays_only_delta(db):
-    """After beating 400, beating 500 the same day pays just (500-400)*20."""
+    """After beating 400, beating 500 the same day pays just (500-400)*10."""
     await br.award_bot_defeat(user_id=5002, guild_id=42, holder_name="Alice", bot_elo=400)
     bal_after_first = await get_balance(5002)
 
     payout, _ = await br.award_bot_defeat(
         user_id=5002, guild_id=42, holder_name="Alice", bot_elo=500,
     )
-    assert payout == (500 - 400) * br.COINS_PER_NEW_ELO  # 2000
-    assert await get_balance(5002) == bal_after_first + 2000
+    assert payout == (500 - 400) * br.COINS_PER_NEW_ELO_LOW  # 1000
+    assert await get_balance(5002) == bal_after_first + 1000
 
     u = await _user_dict(5002)
     assert u["bot_chess_elo_max_today"] == 500
@@ -74,7 +75,7 @@ async def test_idempotent_same_elo_same_day(db):
     p2, _ = await br.award_bot_defeat(
         user_id=5004, guild_id=42, holder_name="Alice", bot_elo=600,
     )
-    assert p1 == 600 * br.COINS_PER_NEW_ELO
+    assert p1 == 600 * br.COINS_PER_NEW_ELO_LOW
     assert p2 == 0
 
 
@@ -93,8 +94,8 @@ async def test_stale_date_self_heals_to_zero(db):
     payout, _ = await br.award_bot_defeat(
         user_id=5005, guild_id=42, holder_name="Alice", bot_elo=600,
     )
-    # 600 from a treated-as-0 baseline pays 600*20.
-    assert payout == 600 * br.COINS_PER_NEW_ELO
+    # 600 from a treated-as-0 baseline pays 600*10 (all below 1000).
+    assert payout == 600 * br.COINS_PER_NEW_ELO_LOW
     u = await _user_dict(5005)
     assert u["bot_chess_elo_max_today"] == 600
     assert u["bot_chess_elo_max_date"] == _ct_today()
@@ -133,12 +134,47 @@ async def test_record_broken_signaled_on_new_high(db):
 
 
 @_aio
+async def test_payout_splits_across_low_and_high_threshold(db):
+    """First win at 1200 from a zero baseline pays 1000*10 + 200*20."""
+    payout, _ = await br.award_bot_defeat(
+        user_id=5020, guild_id=42, holder_name="A", bot_elo=1200,
+    )
+    expected = br.LOW_ELO_THRESHOLD * br.COINS_PER_NEW_ELO_LOW + 200 * br.COINS_PER_NEW_ELO
+    assert payout == expected  # 10000 + 4000 = 14000
+
+
+@_aio
+async def test_payout_above_threshold_only_uses_high_rate(db):
+    """After beating 1200, beating 1500 same day pays 300*20 (all above 1000)."""
+    await br.award_bot_defeat(user_id=5021, guild_id=42, holder_name="A", bot_elo=1200)
+    bal = await get_balance(5021)
+    payout, _ = await br.award_bot_defeat(
+        user_id=5021, guild_id=42, holder_name="A", bot_elo=1500,
+    )
+    assert payout == 300 * br.COINS_PER_NEW_ELO
+    assert await get_balance(5021) == bal + payout
+
+
+@_aio
+async def test_payout_delta_straddles_threshold(db):
+    """After beating 800, beating 1300 pays (1000-800)*10 + (1300-1000)*20."""
+    await br.award_bot_defeat(user_id=5022, guild_id=42, holder_name="A", bot_elo=800)
+    bal = await get_balance(5022)
+    payout, _ = await br.award_bot_defeat(
+        user_id=5022, guild_id=42, holder_name="A", bot_elo=1300,
+    )
+    expected = 200 * br.COINS_PER_NEW_ELO_LOW + 300 * br.COINS_PER_NEW_ELO
+    assert payout == expected  # 2000 + 6000 = 8000
+    assert await get_balance(5022) == bal + expected
+
+
+@_aio
 async def test_no_guild_skips_record_no_crash(db):
     """guild_id=None (e.g., DM context) doesn't crash; payout still works."""
     payout, broken = await br.award_bot_defeat(
         user_id=5010, guild_id=None, holder_name="Solo", bot_elo=300,
     )
-    assert payout == 300 * br.COINS_PER_NEW_ELO
+    assert payout == 300 * br.COINS_PER_NEW_ELO_LOW
     assert broken is False  # no guild → no record
 
 

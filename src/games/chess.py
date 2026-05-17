@@ -427,12 +427,18 @@ class ChessCog(commands.Cog):
     # ── !chess (no args) / !chess help: show the chess command menu ─────────
     async def _cmd_help(self, ctx: commands.Context):
         elo_lo, elo_hi, elo_default = chess_bot.ELO_MIN, chess_bot.ELO_MAX, chess_bot.ELO_DEFAULT
-        coins_per_elo = 20  # mirrors bot_chess_rewards.COINS_PER_NEW_ELO
+        from src.games.bot_chess_rewards import (
+            COINS_PER_NEW_ELO,
+            COINS_PER_NEW_ELO_LOW,
+            LOW_ELO_THRESHOLD,
+        )
         desc = (
             "**Start a game**\n"
             "`!chess @user [wager]` — Play another player. Optional wager in 🪙; winner takes the pot.\n"
             f"`!chessbot [elo]` (alias `!chess @TheBot [elo]`) — Play Stockfish. Elo `{elo_lo}`–`{elo_hi}`, default `{elo_default}`.\n"
-            f"  • Beat the bot to earn **{coins_per_elo} 🪙 per new Elo point** above your daily highwater (resets 5am CT).\n"
+            f"  • Beat the bot to earn **{COINS_PER_NEW_ELO_LOW} 🪙 per new Elo point under {LOW_ELO_THRESHOLD}**, "
+            f"**{COINS_PER_NEW_ELO} 🪙 per new Elo point at/above {LOW_ELO_THRESHOLD}** "
+            "(above your daily highwater; resets 5am CT).\n"
             "\n"
             "**Make a move**\n"
             "`!move <move>` — e.g. `!move e4`, `!move Nf3`, `!move e2e4`, `!move O-O`, `!move e7e8q` (promote).\n"
@@ -759,8 +765,9 @@ class ChessCog(commands.Cog):
             headline = f"{winner_name} wins by {reason}." if reason else f"{winner_name} wins."
             color = C_GREEN
 
-            # Bot-defeat bounty: when a human beats Stockfish, pay out 20 coins
-            # per new Elo point gained today over the user's daily highwater.
+            # Bot-defeat bounty: when a human beats Stockfish, pay out per new
+            # Elo point gained today over the user's daily highwater (split rate
+            # — see bot_chess_rewards._payout_for_range).
             # No-ops when winner is the bot, when it's PvP (no "elo" key), or
             # when this elo doesn't exceed today's highwater.
             if (

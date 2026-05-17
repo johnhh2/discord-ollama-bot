@@ -958,8 +958,9 @@ async def test_stockfish_mate_headline_uses_stockfish_label_not_raw_uid(
 @_aio
 async def test_human_defeats_bot_triggers_bounty_payout(db, _stub_chess_helpers):
     """End-to-end: human plays the mating move against the bot, _finalize_game
-    runs the bot-defeat bounty, user balance reflects 20*elo, and the game-over
-    embed includes the bounty line."""
+    runs the bot-defeat bounty, user balance reflects the split-rate payout
+    (10 coins per Elo below 1000), and the game-over embed includes the bounty
+    line."""
     cog = _make_bot_cog()
     human = FakeMember(uid=2500, display_name="MateMachine")
     # Scholar's-mate-ready: white to move, Qxf7# delivers mate.
@@ -984,10 +985,12 @@ async def test_human_defeats_bot_triggers_bounty_payout(db, _stub_chess_helpers)
     for _ in range(5):
         await asyncio.sleep(0)
 
-    # Game ended; bounty paid (no prior win today → full 800 * 20 = 16000).
+    # Game ended; bounty paid (no prior win today; 800 Elo all below the 1000
+    # threshold → 800 * 10 = 8000).
     assert 1500 not in _state.active_chess_games
     from src.economy import get_balance
-    assert await get_balance(human.id) == 800 * 20
+    from src.games.bot_chess_rewards import COINS_PER_NEW_ELO_LOW
+    assert await get_balance(human.id) == 800 * COINS_PER_NEW_ELO_LOW
 
     # Highwater set to 800 today.
     from src.economy import _ct_today
