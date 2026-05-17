@@ -141,11 +141,11 @@ class TestMultipvPoolSizeForElo:
 
 
 class TestSafetyFilterProbabilityForElo:
-    """P(filter) is linear from 0.875 at Elo 100 to 0.975 at Elo 1000, then
-    capped at 0.975 through Elo 1319."""
+    """P(filter) is permissive at the bottom (0.20 at Elo 100) and tightens
+    to 0.975 by Elo 1000, capped there through 1319."""
 
     def test_anchor_points(self):
-        anchors = [(100, 0.875), (400, 0.9083), (700, 0.9417),
+        anchors = [(100, 0.20), (400, 0.50), (700, 0.80),
                    (1000, 0.975), (1100, 0.975), (1200, 0.975), (1319, 0.975)]
         for elo, expected in anchors:
             actual = chess_bot.safety_filter_probability_for_elo(elo)
@@ -160,8 +160,8 @@ class TestSafetyFilterProbabilityForElo:
             assert p == 0.975, f"P(filter) at Elo {elo} = {p}, expected exactly 0.975"
 
     def test_below_floor_clamps(self):
-        assert chess_bot.safety_filter_probability_for_elo(50) == 0.875
-        assert chess_bot.safety_filter_probability_for_elo(0) == 0.875
+        assert chess_bot.safety_filter_probability_for_elo(50) == 0.20
+        assert chess_bot.safety_filter_probability_for_elo(0) == 0.20
 
     def test_monotonic_non_decreasing(self):
         prev = 0.0
@@ -174,6 +174,34 @@ class TestSafetyFilterProbabilityForElo:
         for elo in range(100, 1320, 25):
             p = chess_bot.safety_filter_probability_for_elo(elo)
             assert 0.0 <= p <= 1.0
+
+
+class TestRandomBlendProbabilityForElo:
+    """Random-move replacement probability — high at the very bottom, decays
+    to 0 by Elo 400 and stays 0 above that."""
+
+    def test_anchor_points(self):
+        anchors = [(100, 0.80), (200, 0.50), (300, 0.20), (400, 0.0)]
+        for elo, expected in anchors:
+            actual = chess_bot.random_blend_probability_for_elo(elo)
+            assert abs(actual - expected) < 0.001, (
+                f"P(random) at Elo {elo}: expected ~{expected}, got {actual}"
+            )
+
+    def test_zero_above_400(self):
+        for elo in (400, 500, 700, 1000, 1319):
+            assert chess_bot.random_blend_probability_for_elo(elo) == 0.0
+
+    def test_below_floor_clamps(self):
+        assert chess_bot.random_blend_probability_for_elo(50) == 0.80
+        assert chess_bot.random_blend_probability_for_elo(0) == 0.80
+
+    def test_monotonic_non_increasing(self):
+        prev = 2.0
+        for elo in range(100, 500, 10):
+            p = chess_bot.random_blend_probability_for_elo(elo)
+            assert p <= prev, f"P(random) not monotonic at elo={elo}: {p} > {prev}"
+            prev = p
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -508,6 +536,63 @@ async def test_pick_move_filter_skipped_when_dice_high(monkeypatch):
     monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
     move = await chess_bot.pick_move(fen, 100)
     assert move == chess.Move.from_uci("d1b1")  # the hanging move
+
+
+@_aio
+async def test_pick_move_random_blend_replaces_stockfish_pick(monkeypatch):
+    """At Elo 100 (blend=0.80) with both dice rolling 0, the random-blend
+    branch returns a random legal move, NOT one of Stockfish's PVs."""
+    _install_fake_engine(monkeypatch)  # default top-10 e2e4 etc.
+    # random() returns 0 for both filter-dice and blend-dice rolls.
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    # random.choice gets called twice: once for the pool pick, once for the
+    # random legal-moves pool. We want the blend pick to win; return distinct
+    # sentinels per call so we can distinguish.
+    call_log = []
+    def _fake_choice(seq):
+        call_log.append(list(seq))
+        return seq[-1]
+    monkeypatch.setattr(chess_bot.random, "choice", _fake_choice)
+
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 100)
+    board = chess.Board()
+    legal = list(board.legal_moves)
+    # The LAST random.choice call should be the legal-moves list (the blend
+    # branch). With filter on at Elo 100, that list is filtered to safe moves.
+    # In the starting position no move hangs anything, so safe == legal.
+    assert call_log[-1] == legal or set(call_log[-1]).issubset(set(legal))
+    assert move == legal[-1]
+
+
+@_aio
+async def test_pick_move_random_blend_skipped_when_dice_high(monkeypatch):
+    """At Elo 100 with random()=0.99, blend doesn't fire (0.99 > 0.80).
+    Stockfish's pool pick wins through."""
+    pvs = ["e2e4", "d2d4"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.99)
+    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 100)
+    # 0.99 > 0.20 (filter) → skip filter. 0.99 > 0.80 (blend) → skip blend.
+    # Pool sampling returns first PV.
+    assert move == chess.Move.from_uci(pvs[0])
+
+
+@_aio
+async def test_pick_move_random_blend_zero_above_400(monkeypatch):
+    """Above Elo 400 the random blend probability is 0 — random.random()=0
+    fires the filter but NOT the blend; the pool pick wins through."""
+    pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3",
+           "d2d3", "b1c3", "a2a3", "h2h3", "g2g3"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 500)
+    # At Elo 500: filter fires (0 < 0.633), pool sampled (returns first safe),
+    # blend skipped (blend_prob=0 at Elo 500). Result: filtered pool pick.
+    # First safe candidate from the starting position pool is e2e4 (legal,
+    # nothing hangs after).
+    assert move == chess.Move.from_uci(pvs[0])
 
 
 @_aio

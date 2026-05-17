@@ -61,13 +61,29 @@ _POOL_SIZE_ANCHORS: list[tuple[int, int]] = [
     (1319, 1),
 ]
 
-# Filter probability calibrated so worst-case expected hangs per 40-move game
-# ≈ 5 at Elo 100 and ≈ 1 at Elo 1000+. Above 1000 the strength gradient comes
-# from deeper search + shrinking pool, so we cap P(filter) at 0.975.
+# Filter probability calibrated so the upper-mid range plays competently —
+# ≈ 1 hang per 40-move game at Elo 1000+. At the bottom the filter is
+# permissive (0.20 at Elo 100) so beginner-feeling blunders come through.
+# Above 1000 the strength gradient comes from deeper search + shrinking pool,
+# so we cap P(filter) at 0.975.
 _FILTER_PROB_ANCHORS: list[tuple[int, float]] = [
-    (100, 0.875),
+    (100, 0.20),
+    (400, 0.50),
+    (700, 0.80),
     (1000, 0.975),
     (1319, 0.975),
+]
+
+# Probability of replacing Stockfish's suggestion with a fully random legal
+# move. Real beginners play moves that aren't even in Stockfish's top-10 —
+# odd rook lifts, edge-pawn shuffles, etc. Decays to 0 by Elo 400 so the
+# mid-range relies purely on the MultiPV+filter system.
+_RANDOM_BLEND_ANCHORS: list[tuple[int, float]] = [
+    (100, 0.80),
+    (200, 0.50),
+    (300, 0.20),
+    (400, 0.0),
+    (1319, 0.0),
 ]
 
 # Standard chess piece values used for the SEE swap loop. King is "infinite"
@@ -150,10 +166,17 @@ def multipv_pool_size_for_elo(elo: int) -> int:
 
 def safety_filter_probability_for_elo(elo: int) -> float:
     """Probability that the SEE-based 'don't hang a piece' filter fires for a
-    given move. Linear from 0.875 at Elo 100 to 0.975 at Elo 1000+, capped
-    there — above 1000 the strength curve is driven by depth/pool, not by
-    further filter tightening."""
+    given move. Permissive at the bottom (0.20 at Elo 100) so beginner play
+    can blunder; tight by Elo 1000+ (0.975, capped) so competent play rarely
+    hangs material. Above 1000 the strength curve is driven by depth/pool."""
     return _interp_float(_FILTER_PROB_ANCHORS, elo)
+
+
+def random_blend_probability_for_elo(elo: int) -> float:
+    """Probability of swapping Stockfish's pick for a fully random legal move
+    — models true-beginner play where moves aren't even in Stockfish's top-10.
+    0.80 at Elo 100, decays to 0 by Elo 400 and stays 0 above that."""
+    return _interp_float(_RANDOM_BLEND_ANCHORS, elo)
 
 
 def _piece_value(piece: chess.Piece | None) -> int:
@@ -272,7 +295,8 @@ def _move_is_safe(board: chess.Board, move: chess.Move, mover: chess.Color) -> b
 
 async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.Board,
                                 elo: int) -> chess.Move:
-    """Sub-native tier: top-N pool sampling with SEE safety filter.
+    """Sub-native tier: top-N pool sampling with SEE safety filter, plus a
+    random-move blend at the very bottom (Elo <400) for true-beginner play.
 
     1. Analyse top-MULTIPV_COUNT moves at Elo-scaled depth.
     2. Truncate to top-pool_size candidates.
@@ -281,6 +305,9 @@ async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.B
        If none pass, fall back to the rank-1 (best) move.
     4. Otherwise: sample uniformly from the unfiltered candidate pool — the
        'this Elo would have blundered' branch.
+    5. Finally, with random_blend_probability_for_elo: replace the chosen
+       move with a fully random legal move (also subject to the safety
+       filter if it fires). Models beginner moves Stockfish wouldn't pick.
     """
     depth = multipv_depth_for_elo(elo)
     infos = await engine.analyse(
@@ -300,15 +327,28 @@ async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.B
     pool_size = min(multipv_pool_size_for_elo(elo), len(pvs))
     candidates = [info["pv"][0] for info in pvs[:pool_size]]
     mover = board.turn
+    filter_fires = random.random() < safety_filter_probability_for_elo(elo)
 
-    if random.random() < safety_filter_probability_for_elo(elo):
+    if filter_fires:
         safe = [mv for mv in candidates if _move_is_safe(board, mv, mover)]
-        if safe:
-            return random.choice(safe)
-        # No safe move in the pool: take Stockfish's best and accept the hang.
-        return pvs[0]["pv"][0]
+        chosen = random.choice(safe) if safe else pvs[0]["pv"][0]
+    else:
+        chosen = random.choice(candidates)
 
-    return random.choice(candidates)
+    # True-beginner random blend: at low Elo, sometimes replace the
+    # Stockfish-derived pick with a fully random legal move. If the safety
+    # filter fired, also apply it to the random candidates so the bot still
+    # avoids the most obvious hangs even in random mode.
+    if random.random() < random_blend_probability_for_elo(elo):
+        legal = list(board.legal_moves)
+        if legal:
+            if filter_fires:
+                safe_legal = [mv for mv in legal if _move_is_safe(board, mv, mover)]
+                if safe_legal:
+                    return random.choice(safe_legal)
+            return random.choice(legal)
+
+    return chosen
 
 
 async def pick_move(fen: str, elo: int) -> chess.Move:
