@@ -667,6 +667,11 @@ class ChessCog(commands.Cog):
         elo = game.get("elo", chess_bot.ELO_DEFAULT)
         bot_name = f"Stockfish ({elo} Elo)"
 
+        # PGN-derived move history — used both for the opening book lookup
+        # and for the take-hanging check (it needs the human's last move).
+        history = _uci_history_from_pgn(game["pgn"])
+        last_move_uci = history[-1] if history else None
+
         # Opening-book candidate (if the bot is following one). We look up the
         # opening object by stored name and ask for the next scripted move
         # given the actual move history. If the human deviated or we're past
@@ -680,7 +685,6 @@ class ChessCog(commands.Cog):
                 None,
             )
             if opening_obj is not None:
-                history = _uci_history_from_pgn(game["pgn"])
                 book_move = chess_openings.book_move_for_position(opening_obj, history)
                 if book_move is None:
                     # Human deviated or we ran out of book — abandon for the
@@ -692,7 +696,10 @@ class ChessCog(commands.Cog):
                 game.pop("opening", None)
 
         try:
-            move = await chess_bot.pick_move(game["fen"], elo, book_move=book_move)
+            move = await chess_bot.pick_move(
+                game["fen"], elo,
+                book_move=book_move, last_move_uci=last_move_uci,
+            )
         except Exception as e:
             logging.error(f"stockfish pick_move failed: {e}", exc_info=True)
             await channel.send(embed=emb(

@@ -675,81 +675,92 @@ async def test_pick_move_random_blend_zero_at_700_and_above(monkeypatch):
 
 @_aio
 async def test_pick_move_takes_hanging_piece_when_dice_succeed(monkeypatch):
-    """When opponent has a hanging piece AND a top-N candidate captures it
-    AND the take-hanging dice roll succeeds, pick_move returns the capture
-    regardless of what filter/blend/sampling would have produced."""
-    # White knight on f4, black queen on h5 (undefended). White Nxh5 wins
-    # the queen outright. PVs include the capture as a candidate.
+    """When the opponent's LAST-MOVED piece is hanging AND a top-N candidate
+    captures it AND the take-hanging dice roll succeeds, pick_move returns
+    the capture regardless of what filter/blend/sampling would have produced."""
+    # White knight on f4, black queen JUST MOVED to h5 (e.g. from h7). h5
+    # is undefended → hanging. Bot can play Nxh5.
     fen = "4k3/8/8/7q/5N2/8/8/4K3 w - - 0 1"
     pvs = ["f4h5", "f4d5", "f4e6"]  # rank-1 IS the capture; pool includes it
     _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    # random()=0.0 → take-hanging dice (0 < 0.85 at Elo 400) fires.
     monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
-    # Sentinels: take-hanging branch should return BEFORE sampling/blending.
     monkeypatch.setattr(chess_bot.random, "choice",
                         lambda _c: pytest.fail("take-hanging path should bypass random.choice"))
 
-    move = await chess_bot.pick_move(fen, 400)
+    move = await chess_bot.pick_move(fen, 400, last_move_uci="h7h5")
     assert move == chess.Move.from_uci("f4h5")
 
 
 @_aio
-async def test_pick_move_take_hanging_picks_most_valuable(monkeypatch):
-    """When multiple top-N candidates each take a different hanging piece,
-    the highest-value capture wins."""
-    # White rook on a1 (attacks down a-file), white queen on b1 (attacks
-    # diagonals). Black undefended queen on a8 and undefended bishop on b8.
-    # Two candidate captures: Rxa8 (gains queen) and Qxb8 (gains bishop).
-    # Take-hanging should pick the queen capture.
-    fen = "q1b1k3/8/8/8/8/8/8/RQ2K3 w - - 0 1"
-    pvs = ["b1b8", "a1a8"]  # Qxb8 ranked first by Stockfish, but Rxa8 wins more
+async def test_pick_move_take_hanging_ignores_pre_existing_hangs(monkeypatch):
+    """The take-hanging check ONLY punishes the opponent's most recent move.
+    Pre-existing hanging pieces (where the opponent moved some OTHER piece)
+    are not caught — modelling the human pattern of 'I noticed your last
+    blunder, not the one you made three moves ago.'"""
+    # Black rook on h8 is hanging (white queen on a1 attacks down the long
+    # diagonal). Opponent's last move was a king shuffle (e8→e7), NOT the
+    # rook. So take-hanging should NOT fire even though Qxh8 is available.
+    # All queen alternatives (Qa2, Qa3) sit on the a-file where black's rook
+    # can't reach, so the safety filter accepts them.
+    fen = "4k2r/8/8/8/8/8/8/Q3K3 w - - 0 1"
+    pvs = ["a1a2", "a1a3", "a1h8"]  # Qxh8 (capture) exists in pool
     _install_fake_engine(monkeypatch, analyse_pvs=pvs)
     monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
-    monkeypatch.setattr(chess_bot.random, "choice",
-                        lambda _c: pytest.fail("take-hanging path should bypass random.choice"))
+    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
 
-    move = await chess_bot.pick_move(fen, 800)
-    # Bishop on b8 = 3, queen on a8 = 9. Rxa8 wins more material.
-    assert move == chess.Move.from_uci("a1a8")
+    move = await chess_bot.pick_move(fen, 800, last_move_uci="e8e7")
+    # last_move was the king, not the rook → no take-hanging. Filter fires
+    # and sampling returns first safe candidate.
+    assert move == chess.Move.from_uci("a1a2")
+
+
+@_aio
+async def test_pick_move_take_hanging_no_op_when_no_last_move(monkeypatch):
+    """When `last_move_uci` is None (bot moves first), take-hanging is a
+    no-op regardless of what's hanging."""
+    fen = "4k2r/8/8/8/8/8/8/Q3K3 w - - 0 1"
+    pvs = ["a1a2", "a1a3", "a1h8"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
+    move = await chess_bot.pick_move(fen, 800)  # no last_move_uci
+    # No last move → no take-hanging fire. Sampling returns rank-1 safe move.
+    assert move == chess.Move.from_uci("a1a2")
 
 
 @_aio
 async def test_pick_move_take_hanging_skipped_when_dice_high(monkeypatch):
     """At Elo 100 (P(take-hanging)=0.75), random()=0.99 misses the take-
-    hanging dice and the bot falls through to normal sampling. May or may
-    not still take the piece via the sampling branch."""
+    hanging dice and the bot falls through to normal sampling."""
     fen = "4k3/8/8/7q/5N2/8/8/4K3 w - - 0 1"
     pvs = ["f4d5", "f4e6", "f4h5"]  # capture is rank-3, NOT rank-1
     _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    # 0.99 > 0.75 (take-hanging at Elo 100) AND > 0.20 (filter at Elo 100)
-    # AND > 0.80 (blend at Elo 100) — all three branches skipped, falls to
-    # pure pool sampling.
     monkeypatch.setattr(chess_bot.random, "random", lambda: 0.99)
-    # Sampling picks first candidate (not the capture).
     monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
 
-    move = await chess_bot.pick_move(fen, 100)
+    move = await chess_bot.pick_move(fen, 100, last_move_uci="h7h5")
     assert move == chess.Move.from_uci("f4d5")  # NOT the capture
 
 
 @_aio
-async def test_pick_move_take_hanging_no_op_when_no_hanging_piece(monkeypatch):
-    """When no opponent piece is hanging, the take-hanging dice roll is
-    moot — pick_move proceeds to normal sampling."""
-    # Starting position: no hanging pieces. random()=0.0 fires every dice;
-    # take-hanging finds no candidate (no hanging opponent piece), filter
-    # fires, pool sampled with pin to candidates[0].
-    pvs = ["e2e4", "d2d4", "g1f3"]
+async def test_pick_move_take_hanging_no_op_when_last_move_not_hanging(monkeypatch):
+    """When the opponent's last-moved piece is NOT hanging, take-hanging
+    is a no-op even with the dice forced on."""
+    # Starting position: human plays e2e4. e4 is defended (by d1 queen,
+    # f1 bishop, etc.) and not under attack → not hanging.
+    fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+    pvs = ["e7e5", "e7e6", "g8f6"]
     _install_fake_engine(monkeypatch, analyse_pvs=pvs)
     monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
     monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 800)
-    assert move == chess.Move.from_uci(pvs[0])
+    move = await chess_bot.pick_move(fen, 800, last_move_uci="e2e4")
+    # e4 not hanging → take-hanging finds nothing → filter+sampling proceeds.
+    assert move == chess.Move.from_uci("e7e5")
 
 
 @_aio
 async def test_pick_move_take_hanging_only_considers_top_n_pool(monkeypatch):
-    """If the capture-of-hanging-piece move is OUTSIDE the top-N pool, the
+    """If the capture-of-last-moved-piece is OUTSIDE the top-N pool, the
     bot doesn't see it and proceeds to normal sampling."""
     # Elo 1200 → pool=3. Capture is at rank-4, outside the pool.
     fen = "4k3/8/8/7q/5N2/8/8/4K3 w - - 0 1"
@@ -757,9 +768,7 @@ async def test_pick_move_take_hanging_only_considers_top_n_pool(monkeypatch):
     _install_fake_engine(monkeypatch, analyse_pvs=pvs)
     monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
     monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-    move = await chess_bot.pick_move(fen, 1200)
-    # Pool is top-3 (no capture in it); take-hanging finds nothing → falls
-    # through to filter+sampling → first safe candidate.
+    move = await chess_bot.pick_move(fen, 1200, last_move_uci="h7h5")
     assert move != chess.Move.from_uci("f4h5")
 
 
@@ -1150,7 +1159,7 @@ async def test_human_move_triggers_bot_reply(db, _stub_chess_helpers, monkeypatc
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     # Stub Stockfish to always play e7e5.
-    async def _stub_pick(fen, elo, *, book_move=None):
+    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
         return chess.Move.from_uci("e7e5")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
 
@@ -1179,7 +1188,7 @@ async def test_bot_reply_handles_engine_error(db, _stub_chess_helpers, monkeypat
     ctx = _ctx_for(human, channel_id=1101)
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
-    async def _broken_pick(fen, elo, *, book_move=None):
+    async def _broken_pick(fen, elo, *, book_move=None, last_move_uci=None):
         raise RuntimeError("simulated stockfish crash")
     monkeypatch.setattr(chess_bot, "pick_move", _broken_pick)
 
@@ -1236,7 +1245,7 @@ async def test_bot_reply_uses_game_elo_not_default(db, _stub_chess_helpers, monk
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     received: list[int] = []
-    async def _stub_pick(fen, elo, *, book_move=None):
+    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
         received.append(elo)
         return chess.Move.from_uci("e7e5")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
@@ -1270,7 +1279,7 @@ async def test_persisted_elo_used_after_reload(db, _stub_chess_helpers, monkeypa
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     received: list[int] = []
-    async def _stub_pick(fen, elo, *, book_move=None):
+    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
         received.append(elo)
         return chess.Move.from_uci("e7e5")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
@@ -1297,7 +1306,7 @@ async def test_bot_reply_passes_book_move_when_following_opening(
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     received_book: list = []
-    async def _stub_pick(fen, elo, *, book_move=None):
+    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
         received_book.append(book_move)
         # Honor the book move so the opening continues.
         return book_move if book_move is not None else chess.Move.from_uci("e7e5")
@@ -1331,7 +1340,7 @@ async def test_bot_reply_clears_opening_when_human_deviates(
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     received_book: list = []
-    async def _stub_pick(fen, elo, *, book_move=None):
+    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
         received_book.append(book_move)
         return chess.Move.from_uci("g8f6")  # generic black reply
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
@@ -1360,7 +1369,7 @@ async def test_bot_reply_clears_opening_when_pick_move_rejects_book(
     ctx = _ctx_for(human, channel_id=1502)
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
-    async def _stub_pick(fen, elo, *, book_move=None):
+    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
         # Simulate Stockfish rejecting the book and returning a different move.
         assert book_move == chess.Move.from_uci("e7e5")
         return chess.Move.from_uci("c7c5")
@@ -1404,7 +1413,7 @@ async def test_stockfish_mate_creates_report_with_bot_as_winner(db, _stub_chess_
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     # Stockfish plays Qh4# after white's g4.
-    async def _stub_pick(fen, elo, *, book_move=None):
+    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
         return chess.Move.from_uci("d8h4")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
 
@@ -1447,7 +1456,7 @@ async def test_stockfish_mate_headline_uses_stockfish_label_not_raw_uid(
     ctx = _ctx_for(human, channel_id=1401)
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
-    async def _stub_pick(fen, elo, *, book_move=None):
+    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
         return chess.Move.from_uci("d8h4")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
 
@@ -1587,7 +1596,7 @@ async def test_bot_defeats_human_no_bounty(db, _stub_chess_helpers, monkeypatch)
     ctx = _ctx_for(human, channel_id=1502)
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
-    async def _stub_pick(fen, elo, *, book_move=None):
+    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
         return chess.Move.from_uci("d8h4")  # Qh4# after g4
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
 
@@ -1812,7 +1821,7 @@ async def test_bot_reply_does_not_fire_for_pvp_game(db, _stub_chess_helpers, mon
     ctx.guild.members.append(black)
 
     pick_called = []
-    async def _stub_pick(fen, elo, *, book_move=None):
+    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
         pick_called.append((fen, elo))
         return chess.Move.from_uci("e7e5")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)

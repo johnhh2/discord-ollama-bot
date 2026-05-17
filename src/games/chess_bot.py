@@ -319,45 +319,60 @@ async def _native_elo_move(engine: chess.engine.UciProtocol, board: chess.Board,
 
 
 def _move_is_safe(board: chess.Board, move: chess.Move, mover: chess.Color) -> bool:
-    """True if applying `move` to `board` leaves no piece of `mover` hanging
-    in the resulting position. This is the SEE filter's accept predicate.
+    """True if applying `move` to `board` leaves the JUST-MOVED piece not
+    hanging in the resulting position. This is the SEE filter's accept
+    predicate.
 
-    Subsumes both 'don't create a new hang' and 'address an existing threat'
-    in one check: any pre-existing hanging piece that the move doesn't
-    resolve (by moving it, blocking, capturing the attacker, or adding a
-    defender) will still be hanging post-move and fail the check."""
+    Restricted to the moving piece's destination square (rather than every
+    piece on the board) so the bot models 'don't walk into an attack' but
+    NOT 'spot every uncovered defender or discovered attack' — those are
+    higher-skill mistakes the lower-Elo bot is expected to miss. Pre-
+    existing hangs the move doesn't resolve also aren't a reason to reject
+    a move here; the take-hanging branch (which also restricts to the
+    opponent's last-moved piece) is the symmetric structure for offense."""
     after = board.copy(stack=False)
     after.push(move)
-    return not hanging_squares(after, mover)
+    # Castling moves the king two squares — the king is the "moving piece"
+    # whose safety we care about; its destination is move.to_square.
+    return move.to_square not in hanging_squares(after, mover)
 
 
 def _capture_of_hanging_piece(
     board: chess.Board, candidates: list[chess.Move], mover: chess.Color,
+    last_to_square: chess.Square | None,
 ) -> chess.Move | None:
-    """If any candidate move captures an opponent piece sitting on a hanging
-    square (per SEE), return that move. When multiple candidates would each
-    take a different hanging piece, prefer the highest-value capture.
-    Returns None if no candidate captures a hanging piece."""
-    opp_hangs = hanging_squares(board, not mover)
-    if not opp_hangs:
+    """If any candidate move captures the OPPONENT'S LAST-MOVED PIECE on a
+    hanging square (per SEE), return that move. Restricting to the last-
+    moved piece models the most common human mistake pattern: the opponent
+    blunders by moving a piece into attack, and the bot punishes it. Pre-
+    existing hangs (pieces the opponent failed to defend on earlier moves)
+    are NOT caught here — a real player at this Elo wouldn't have spotted
+    them either.
+
+    `last_to_square` is the destination square of the opponent's most recent
+    move (caller passes None when there's no prior move). Returns None if:
+    - no last move (bot moves first),
+    - that square isn't hanging,
+    - or no candidate in the top-N pool captures it.
+    """
+    if last_to_square is None:
         return None
-    best_move = None
-    best_value = -1
+    opp_hangs = hanging_squares(board, not mover)
+    if last_to_square not in opp_hangs:
+        return None
+    target = board.piece_at(last_to_square)
+    if target is None:
+        return None
     for mv in candidates:
-        if mv.to_square not in opp_hangs:
-            continue
-        target = board.piece_at(mv.to_square)
-        if target is None:
-            continue
-        val = _piece_value(target)
-        if val > best_value:
-            best_value = val
-            best_move = mv
-    return best_move
+        if mv.to_square == last_to_square:
+            return mv
+    return None
 
 
 async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.Board,
-                                elo: int, *, book_move: chess.Move | None = None) -> chess.Move:
+                                elo: int, *,
+                                book_move: chess.Move | None = None,
+                                last_to_square: chess.Square | None = None) -> chess.Move:
     """Sub-native tier: top-N pool sampling with SEE safety filter, plus a
     random-move blend at the very bottom (Elo <400) for true-beginner play.
 
@@ -406,10 +421,12 @@ async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.B
     candidates = [info["pv"][0] for info in pvs[:pool_size]]
     mover = board.turn
 
-    # Take-hanging check: free material gets taken with high probability
-    # regardless of which other branch would otherwise fire. Runs first so
-    # it can pre-empt sampling and the random-blend branch.
-    take_hanging = _capture_of_hanging_piece(board, candidates, mover)
+    # Take-hanging check: if the opponent's just-moved piece is hanging AND
+    # one of our top-N candidates captures it, take it with high probability.
+    # Restricting to the LAST-MOVED enemy piece models the common pattern of
+    # "I noticed your blunder" — pre-existing hangs the opponent failed to
+    # fix earlier are not caught here.
+    take_hanging = _capture_of_hanging_piece(board, candidates, mover, last_to_square)
     if take_hanging is not None and random.random() < take_hanging_probability_for_elo(elo):
         return take_hanging
 
@@ -437,7 +454,11 @@ async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.B
     return chosen
 
 
-async def pick_move(fen: str, elo: int, *, book_move: chess.Move | None = None) -> chess.Move:
+async def pick_move(
+    fen: str, elo: int, *,
+    book_move: chess.Move | None = None,
+    last_move_uci: str | None = None,
+) -> chess.Move:
     """Spawn Stockfish, get one move at the target Elo, close. Per-move spawn
     keeps zero processes alive when nobody's playing chess.
 
@@ -445,15 +466,29 @@ async def pick_move(fen: str, elo: int, *, book_move: chess.Move | None = None) 
     plays it iff Stockfish considers it top-MULTIPV_COUNT in this position.
     Native tier ignores book moves (the Elo limiter already plays strong
     book moves on its own).
+
+    If `last_move_uci` is provided, it tells the take-hanging check which
+    square the opponent's last-moved piece landed on (so the bot only
+    punishes fresh blunders, not pre-existing hangs). Skipped silently if
+    the UCI doesn't parse.
     """
     board = chess.Board(fen=fen)
+    last_to_square: chess.Square | None = None
+    if last_move_uci:
+        try:
+            last_to_square = chess.Move.from_uci(last_move_uci).to_square
+        except (ValueError, chess.InvalidMoveError):
+            last_to_square = None
     elo = clamp_elo(elo)
 
     transport, engine = await chess.engine.popen_uci(_resolve_stockfish_path())
     try:
         if elo >= STOCKFISH_NATIVE_ELO_MIN:
             return await _native_elo_move(engine, board, elo)
-        return await _multipv_sampled_move(engine, board, elo, book_move=book_move)
+        return await _multipv_sampled_move(
+            engine, board, elo,
+            book_move=book_move, last_to_square=last_to_square,
+        )
     finally:
         try:
             await engine.quit()
