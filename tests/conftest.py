@@ -92,6 +92,8 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "levelups_today", {})
     monkeypatch.setattr(_state, "locked_channels", {})
     monkeypatch.setattr(_state, "locked_roles", {})
+    monkeypatch.setattr(_state, "bot_roles", set())
+    monkeypatch.setattr(_state, "bot_role_ranks", {})
 
     # init_db_state is one-shot in production (guarded against on_ready
     # reconnects), but tests call it repeatedly to re-seed state from the

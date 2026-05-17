@@ -15,10 +15,29 @@ async def save_guild_settings():
 
 
 async def save_bot_roles():
+    """Replace the bot_roles table with the current in-memory contents.
+
+    Source of truth for *rank* is state.bot_role_ranks ({(guild_id, role_id):
+    rank}). state.bot_roles is the set of role IDs and is kept in sync as a
+    derived view. Any role in bot_roles that has no entry in bot_role_ranks
+    defaults to guild_id=0 and rank_pos=0 — that branch shouldn't normally
+    fire (createrole / deleterole maintain both), but it preserves legacy
+    behavior for any caller that mutates bot_roles directly.
+    """
     async with with_cursor() as cur:
         await cur.execute("DELETE FROM bot_roles")
-        for role_id in state.bot_roles:
-            await cur.execute("INSERT IGNORE INTO bot_roles (role_id) VALUES (%s)", (role_id,))
+        seen: set = set()
+        for (guild_id, role_id), rank_pos in state.bot_role_ranks.items():
+            await cur.execute(
+                "INSERT IGNORE INTO bot_roles (role_id, guild_id, rank_pos) VALUES (%s,%s,%s)",
+                (role_id, guild_id, rank_pos),
+            )
+            seen.add(role_id)
+        for role_id in state.bot_roles - seen:
+            await cur.execute(
+                "INSERT IGNORE INTO bot_roles (role_id, guild_id, rank_pos) VALUES (%s,%s,%s)",
+                (role_id, 0, 0),
+            )
 
 
 async def save_godmode_users():

@@ -25,7 +25,7 @@ _TABLE_PKS = {
     "economy_meta": ("key_name",),
     "guild_house_balance": ("guild_id",),
     "guild_settings": ("guild_id",),
-    "bot_roles": ("role_id",),
+    "bot_roles": ("guild_id", "role_id"),
     "godmode_users": ("user_id",),
     "bot_settings": ("key_name",),
     "shop_insurance": ("user_id",),

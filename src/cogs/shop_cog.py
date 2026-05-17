@@ -398,8 +398,14 @@ class ShopCog(commands.Cog):
             new_role = await ctx.guild.create_role(name=name, color=discord.Color(color_int), hoist=True)
             await target.add_roles(new_role)
             state.bot_roles.add(new_role.id)
+            # New roles go to the bottom of the rank ladder for this guild
+            # (max rank + 1 — lowest priority). Operators promote them via
+            # !shop roleup.
+            existing_ranks = [r for (g, _r), r in state.bot_role_ranks.items() if g == ctx.guild.id]
+            new_rank = (max(existing_ranks) + 1) if existing_ranks else 1
+            state.bot_role_ranks[(ctx.guild.id, new_role.id)] = new_rank
             await save_bot_roles()
-            await ctx.send(embed=emb("✅ Role Created", f"Role **{name}** created and assigned to **{target.display_name}**!", C_GREEN))
+            await ctx.send(embed=emb("✅ Role Created", f"Role **{name}** created and assigned to **{target.display_name}** — rank **#{new_rank}**.", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
                 await add_balance(uid, cost)
@@ -552,6 +558,10 @@ class ShopCog(commands.Cog):
             name = role.name
             await role.delete()
             state.bot_roles.discard(role.id)
+            # Drop the rank entry too. Gaps are fine — the rank ladder
+            # doesn't get compacted, so adjacent ranks may have non-adjacent
+            # numbers after deletes.
+            state.bot_role_ranks.pop((ctx.guild.id, role.id), None)
             await save_bot_roles()
             await ctx.send(embed=emb("✅ Role Deleted", f"Role **{name}** has been permanently deleted.", C_GREEN))
         except discord.Forbidden:
@@ -1237,6 +1247,17 @@ class ShopCog(commands.Cog):
         ))
 
     # ── !shop roleup / roledown ───────────────────────────────────────────────
+    #
+    # Source of truth for rank is state.bot_role_ranks[(guild_id, role_id)].
+    # 1 = highest, larger = lower. The swap finds the bot role with the
+    # next-higher (roleup) or next-lower (roledown) rank *within the same
+    # guild* and swaps the two ranks atomically in memory, then mirrors to
+    # Discord's role.position best-effort.
+    #
+    # Previously the code sorted Discord's role.position (which includes
+    # every server role, not just bot roles), so a bot role at Discord
+    # position 3 with no other bot roles above it would jump straight to
+    # the top of the bot pile in one move — visible as "#3 → #1".
     @cmd_shop.command(name="roleup", aliases=["roledown"])
     @_shop_subcommand("dynamic")
     async def shop_roleup(self, ctx: commands.Context, *args):
@@ -1256,72 +1277,98 @@ class ShopCog(commands.Cog):
         if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
             await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can move it.", C_RED))
             return
-        other_bot_roles = sorted(
-            (r for r in ctx.guild.roles if r.id in state.bot_roles and r.id != role.id),
-            key=lambda r: r.position
-        )
-        if direction == "roleup" and not any(r.position >= role.position for r in other_bot_roles):
-            await ctx.send(embed=emb("❌ Already Highest", f"**{role.name}** is already the highest bot-created role.", C_RED))
+
+        my_rank = state.bot_role_ranks.get((ctx.guild.id, role.id))
+        if my_rank is None:
+            await ctx.send(embed=emb("❌ Unranked", f"**{role.name}** has no rank yet. Ask an admin to seed it.", C_RED))
             return
-        if direction == "roledown" and not any(r.position <= role.position for r in other_bot_roles):
-            await ctx.send(embed=emb("❌ Already Lowest", f"**{role.name}** is already the lowest bot-created role.", C_RED))
-            return
+
+        # All other (rank, role_id) pairs in this guild.
+        guild_ranks = [
+            (rank, rid) for (g, rid), rank in state.bot_role_ranks.items()
+            if g == ctx.guild.id and rid != role.id
+        ]
+        if direction == "roleup":
+            # The role *above* this one has the next-lower rank number.
+            candidates = [(r, rid) for r, rid in guild_ranks if r < my_rank]
+            if not candidates:
+                await ctx.send(embed=emb("❌ Already Highest", f"**{role.name}** is already the highest bot-created role.", C_RED))
+                return
+            neighbor_rank, neighbor_id = max(candidates, key=lambda x: x[0])
+        else:
+            candidates = [(r, rid) for r, rid in guild_ranks if r > my_rank]
+            if not candidates:
+                await ctx.send(embed=emb("❌ Already Lowest", f"**{role.name}** is already the lowest bot-created role.", C_RED))
+                return
+            neighbor_rank, neighbor_id = min(candidates, key=lambda x: x[0])
+
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_MOVE_COST
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_MOVE_COST:,}"):
             return
-        if direction == "roleup":
-            higher = [r for r in other_bot_roles if r.position > role.position]
-            if higher:
-                next_role = min(higher, key=lambda r: r.position)
-                new_pos = next_role.position + 1
-            else:
-                # New roles default to position 1, so multiple bot roles can share a position until moved.
-                tied = [r for r in other_bot_roles if r.position == role.position]
-                new_pos = max(r.position for r in tied) + 1
-        else:
-            lower = [r for r in other_bot_roles if r.position < role.position]
-            if lower:
-                next_role = max(lower, key=lambda r: r.position)
-                new_pos = next_role.position - 1
-            else:
-                tied = [r for r in other_bot_roles if r.position == role.position]
-                new_pos = min(r.position for r in tied) - 1
-        new_pos = max(1, min(new_pos, ctx.guild.me.top_role.position - 1))
+
+        # Swap the two ranks synchronously before any await — sibling
+        # invocations either see the new state and act on it or were
+        # already past their own gate (matches the codebase's standard
+        # race-avoidance pattern for in-memory mutations).
+        state.bot_role_ranks[(ctx.guild.id, role.id)] = neighbor_rank
+        state.bot_role_ranks[(ctx.guild.id, neighbor_id)] = my_rank
+
         try:
-            await role.edit(position=new_pos)
-            label = "up" if direction == "roleup" else "down"
-            updated_bot_roles = sorted(
-                (r for r in ctx.guild.roles if r.id in state.bot_roles),
-                key=lambda r: r.position, reverse=True
-            )
-            total_bot_roles = len(updated_bot_roles)
-            rank = next((i + 1 for i, r in enumerate(updated_bot_roles) if r.id == role.id), total_bot_roles)
-            await ctx.send(embed=emb("✅ Role Moved", f"Role **{role.name}** moved {label} — now **#{rank}** of {total_bot_roles}.", C_GREEN))
-        except discord.Forbidden:
-            if cost > 0:
-                await add_balance(uid, cost)
-            log_bot_permission_error(ctx, "manage roles")
-            await ctx.send(embed=emb("❌ No Permission", "I don't have permission to manage roles.", C_RED))
+            await save_bot_roles()
         except Exception as e:
+            # Roll back in-memory swap and refund.
+            state.bot_role_ranks[(ctx.guild.id, role.id)] = my_rank
+            state.bot_role_ranks[(ctx.guild.id, neighbor_id)] = neighbor_rank
             if cost > 0:
                 await add_balance(uid, cost)
-            await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
+            await ctx.send(embed=emb("❌ Failed", f"Could not persist rank swap: {e}", C_RED))
+            return
+
+        # Best-effort mirror to Discord's role.position so the server's
+        # role sidebar matches the ranking. Failure here doesn't roll back
+        # the DB swap — the bot-side rank is authoritative.
+        neighbor_role = ctx.guild.get_role(neighbor_id)
+        if neighbor_role is not None:
+            try:
+                role_pos = role.position
+                neighbor_pos = neighbor_role.position
+                await role.edit(position=neighbor_pos)
+                await neighbor_role.edit(position=role_pos)
+            except (discord.Forbidden, discord.HTTPException):
+                pass  # rank in DB is still correct; sidebar may look stale
+
+        # Compute display rank by counting how many ranks are <= ours.
+        guild_all_ranks = sorted(
+            r for (g, _rid), r in state.bot_role_ranks.items() if g == ctx.guild.id
+        )
+        display_rank = guild_all_ranks.index(neighbor_rank) + 1
+        total = len(guild_all_ranks)
+        label = "up" if direction == "roleup" else "down"
+        await ctx.send(embed=emb("✅ Role Moved", f"Role **{role.name}** moved {label} — now **#{display_rank}** of {total}.", C_GREEN))
 
     @commands.command(name="roles", aliases=["rolelb", "lbroles", "lbr"])
     async def cmd_roles(self, ctx: commands.Context):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
             return
-        bot_roles = sorted(
-            (r for r in ctx.guild.roles if r.id in state.bot_roles),
-            key=lambda r: r.position, reverse=True
-        )
-        if not bot_roles:
+        # Sort by stored bot_role_ranks (1 = highest), tie-break and
+        # fall-back to Discord position for any unranked role.
+        candidates: list = []
+        for r in ctx.guild.roles:
+            if r.id not in state.bot_roles:
+                continue
+            rank = state.bot_role_ranks.get((ctx.guild.id, r.id))
+            # Unranked roles sort after ranked ones; among unranked,
+            # higher Discord position wins.
+            sort_key = (0, rank) if rank is not None else (1, -r.position)
+            candidates.append((sort_key, r))
+        if not candidates:
             await ctx.send(embed=emb("👑 Role Leaderboard", "No bot-created roles in this server yet.", C_PURPLE))
             return
+        candidates.sort(key=lambda x: x[0])
         lines = []
         medals = ["🥇", "🥈", "🥉"]
-        for i, role in enumerate(bot_roles):
+        for i, (_k, role) in enumerate(candidates):
             prefix = medals[i] if i < 3 else f"{i + 1}."
             color_hex = f"#{role.color.value:06x}" if role.color.value else "default"
             lines.append(f"{prefix} **{role.name}** ({color_hex})")

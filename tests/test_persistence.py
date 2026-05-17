@@ -627,27 +627,68 @@ async def test_channel_prompts_empty_dict_clears_table(db):
 # ── bot_roles / godmode_users ─────────────────────────────────────────────────
 
 async def test_bot_roles_roundtrip(db):
+    """Save + reload preserves both the set of role IDs and the per-guild
+    rank map. Rank is stored as (guild_id, role_id) → rank_pos."""
     _state.bot_roles.clear()
+    _state.bot_role_ranks.clear()
     _state.bot_roles.update({101, 202, 303})
+    _state.bot_role_ranks.update({
+        (42, 101): 1,
+        (42, 202): 2,
+        (42, 303): 3,
+    })
     await _persistence.save_bot_roles()
 
     _state.bot_roles.clear()
+    _state.bot_role_ranks.clear()
     await _persistence.init_db_state()
     assert _state.bot_roles == {101, 202, 303}
+    assert _state.bot_role_ranks == {(42, 101): 1, (42, 202): 2, (42, 303): 3}
 
 
 async def test_bot_roles_save_replaces_full_table(db):
     """save_bot_roles is DELETE-then-INSERT: removed roles vanish on next save."""
     _state.bot_roles.clear()
+    _state.bot_role_ranks.clear()
     _state.bot_roles.update({1, 2, 3})
+    _state.bot_role_ranks.update({(42, 1): 1, (42, 2): 2, (42, 3): 3})
     await _persistence.save_bot_roles()
 
     _state.bot_roles.discard(2)
+    _state.bot_role_ranks.pop((42, 2), None)
     await _persistence.save_bot_roles()
 
     _state.bot_roles.clear()
+    _state.bot_role_ranks.clear()
     await _persistence.init_db_state()
     assert _state.bot_roles == {1, 3}
+    assert _state.bot_role_ranks == {(42, 1): 1, (42, 3): 3}
+
+
+async def test_bot_roles_ranks_are_per_guild(db):
+    """Two guilds can have independent rank ladders for their own bot
+    roles. Role IDs are globally unique, so the same ID never appears in
+    both guilds — but each guild's set of bot roles is ranked separately."""
+    _state.bot_roles.clear()
+    _state.bot_role_ranks.clear()
+    _state.bot_roles.update({501, 502, 601, 602})
+    _state.bot_role_ranks.update({
+        (10, 501): 1,
+        (10, 502): 2,
+        (20, 601): 1,
+        (20, 602): 2,
+    })
+    await _persistence.save_bot_roles()
+
+    _state.bot_roles.clear()
+    _state.bot_role_ranks.clear()
+    await _persistence.init_db_state()
+
+    # Each guild's rank=1 is its own role, not a global tie.
+    g10_top = [rid for (g, rid), r in _state.bot_role_ranks.items() if g == 10 and r == 1]
+    g20_top = [rid for (g, rid), r in _state.bot_role_ranks.items() if g == 20 and r == 1]
+    assert g10_top == [501]
+    assert g20_top == [601]
 
 
 async def test_godmode_users_roundtrip(db):

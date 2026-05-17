@@ -123,8 +123,10 @@ async def _init_db_state_inner(state, run_migrations):
 
         # ── bot_roles ─────────────────────────────────────────────────────
         try:
-            await cur.execute("SELECT role_id FROM bot_roles")
-            state.bot_roles = {r[0] for r in await cur.fetchall()}
+            await cur.execute("SELECT role_id, guild_id, rank_pos FROM bot_roles")
+            rows = await cur.fetchall()
+            state.bot_roles = {r[0] for r in rows}
+            state.bot_role_ranks = {(r[1], r[0]): r[2] for r in rows}
         except Exception as e:
             logging.error(f"[init_db_state] bot_roles failed: {e}", exc_info=True)
 

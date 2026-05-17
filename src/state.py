@@ -10,6 +10,12 @@ channel_prompts: dict = {}
 economy: dict = {"users": {}, "last_daily_reset": None, "guild_house": {}}
 slot_jackpot: int = SLOT_JACKPOT_SEED
 bot_roles: set = set()
+# Per-guild rank for each bot-created role: {(guild_id, role_id): rank}.
+# 1 = highest, gaps are fine. Source of truth is the bot_roles table
+# (rank_pos column). The leaderboard and !shop roleup / !shop roledown
+# read/write through this dict; Discord's role.position is updated
+# best-effort but is no longer authoritative.
+bot_role_ranks: dict = {}
 bot_admins: set = set()
 godmode_users: set = set()
 bot_settings: dict = {"vram_text": "16GB"}
