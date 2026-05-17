@@ -1370,8 +1370,8 @@ class ShopCog(commands.Cog):
         medals = ["🥇", "🥈", "🥉"]
         for i, (_k, role) in enumerate(candidates):
             prefix = medals[i] if i < 3 else f"{i + 1}."
-            lock = "🔒 " if role.id in state.locked_roles else ""
-            lines.append(f"{prefix} {lock}**{role.name}**")
+            lock = " 🔒" if role.id in state.locked_roles else ""
+            lines.append(f"{prefix} **{role.name}**{lock}")
         lines.append("\n*Also: `!lb` currency · `!levels` XP*")
         await ctx.send(embed=emb("👑 Role Leaderboard", "\n".join(lines), C_PURPLE))
 
