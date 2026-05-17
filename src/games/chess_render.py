@@ -17,6 +17,15 @@ except Exception as _e:  # pragma: no cover
 
 DEFAULT_SIZE = 720
 
+# Brighten the default yellow lastmove tint to a vivid blue so the from/to
+# squares are easy to spot at a glance. python-chess uses separate keys for
+# the tint on light vs dark squares; both get the same hue at different
+# alphas to maintain board contrast.
+_LASTMOVE_COLORS = {
+    "square light lastmove": "#5db0ff",  # vivid blue on light squares
+    "square dark lastmove": "#1e72d4",   # darker blue on dark squares
+}
+
 
 def render_board_png(
     board: chess.Board,
@@ -36,5 +45,6 @@ def render_board_png(
         lastmove=last_move,
         check=check_square,
         size=size,
+        colors=_LASTMOVE_COLORS,
     )
     return cairosvg.svg2png(bytestring=svg.encode("utf-8"), output_width=size)
