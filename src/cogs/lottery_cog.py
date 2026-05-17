@@ -79,7 +79,7 @@ class LotteryCog(commands.Cog):
                         f"**Players:** {len(players)}\n"
                         f"**Tickets Sold:** {sum(players.values())}"
                     )
-                    await channel.send(embed=embed)
+                    await channel.send(embed=embed, silent=False)
 
                     # Ping Gamblers role if enabled
                     if cfg.get("gambler_role_enabled", False):
