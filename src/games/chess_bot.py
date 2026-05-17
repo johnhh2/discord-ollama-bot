@@ -86,6 +86,20 @@ _FILTER_PROB_ANCHORS: list[tuple[int, float]] = [
     (1300, 0.975),
 ]
 
+# Probability of taking a hanging opponent piece when it's available in the
+# top-N candidate pool. Models "spotting free material" as a fundamental
+# skill that improves with Elo — even beginners notice an undefended queen
+# most of the time. High floor (0.75 at Elo 100) since taking free pieces
+# is the easiest tactical pattern to spot.
+_TAKE_HANGING_ANCHORS: list[tuple[int, float]] = [
+    (100, 0.75),
+    (400, 0.85),
+    (600, 0.90),
+    (800, 0.95),
+    (1000, 0.99),
+    (1300, 0.99),
+]
+
 # Probability of replacing Stockfish's suggestion with a fully random legal
 # move. Real beginners play moves that aren't even in Stockfish's top-10 —
 # odd rook lifts, edge-pawn shuffles, etc. Strong at the bottom, tapering
@@ -190,8 +204,17 @@ def safety_filter_probability_for_elo(elo: int) -> float:
 def random_blend_probability_for_elo(elo: int) -> float:
     """Probability of swapping Stockfish's pick for a fully random legal move
     — models true-beginner play where moves aren't even in Stockfish's top-10.
-    0.80 at Elo 100, decays to 0 by Elo 400 and stays 0 above that."""
+    0.80 at Elo 100, decays to 0 by Elo 700 and stays 0 above that."""
     return _interp_float(_RANDOM_BLEND_ANCHORS, elo)
+
+
+def take_hanging_probability_for_elo(elo: int) -> float:
+    """Probability that the bot will actually take an opponent's hanging
+    piece when one is present in the top-N candidate pool. High at all
+    Elos (0.75 floor) since spotting a free piece is easy; ramps to 0.99
+    by Elo 1000+. Independent of the safety filter — even beginners take
+    free material most of the time."""
+    return _interp_float(_TAKE_HANGING_ANCHORS, elo)
 
 
 def _piece_value(piece: chess.Piece | None) -> int:
@@ -308,6 +331,31 @@ def _move_is_safe(board: chess.Board, move: chess.Move, mover: chess.Color) -> b
     return not hanging_squares(after, mover)
 
 
+def _capture_of_hanging_piece(
+    board: chess.Board, candidates: list[chess.Move], mover: chess.Color,
+) -> chess.Move | None:
+    """If any candidate move captures an opponent piece sitting on a hanging
+    square (per SEE), return that move. When multiple candidates would each
+    take a different hanging piece, prefer the highest-value capture.
+    Returns None if no candidate captures a hanging piece."""
+    opp_hangs = hanging_squares(board, not mover)
+    if not opp_hangs:
+        return None
+    best_move = None
+    best_value = -1
+    for mv in candidates:
+        if mv.to_square not in opp_hangs:
+            continue
+        target = board.piece_at(mv.to_square)
+        if target is None:
+            continue
+        val = _piece_value(target)
+        if val > best_value:
+            best_value = val
+            best_move = mv
+    return best_move
+
+
 async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.Board,
                                 elo: int, *, book_move: chess.Move | None = None) -> chess.Move:
     """Sub-native tier: top-N pool sampling with SEE safety filter, plus a
@@ -317,16 +365,20 @@ async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.B
     2. If `book_move` is provided AND it's in the top-MULTIPV_COUNT, play it
        directly (opening book overrides sampling for a quality-validated
        scripted move).
-    3. Otherwise truncate to top-pool_size candidates.
-    4. With safety_filter_probability_for_elo: filter to candidates that don't
+    3. Truncate to top-pool_size candidates.
+    4. Take-hanging check: if the opponent has a hanging piece AND a top-N
+       candidate captures it, play that capture with take_hanging_probability.
+       Models the basic skill of "spotting free material" — runs before
+       sampling/blending because it represents the most fundamental
+       tactical pattern.
+    5. With safety_filter_probability_for_elo: filter to candidates that don't
        leave any of the mover's pieces hanging post-move; sample uniformly.
        If none pass, fall back to the rank-1 (best) move.
-    5. Otherwise: sample uniformly from the unfiltered candidate pool — the
+    6. Otherwise: sample uniformly from the unfiltered candidate pool — the
        'this Elo would have blundered' branch.
-    6. Finally, with random_blend_probability_for_elo: replace the chosen
+    7. Finally, with random_blend_probability_for_elo: replace the chosen
        move with a fully random legal move (also subject to the safety
        filter if it fires). Models beginner moves Stockfish wouldn't pick.
-       (Skipped when book_move is accepted — the book wins out.)
     """
     depth = multipv_depth_for_elo(elo)
     infos = await engine.analyse(
@@ -353,6 +405,14 @@ async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.B
     pool_size = min(multipv_pool_size_for_elo(elo), len(pvs))
     candidates = [info["pv"][0] for info in pvs[:pool_size]]
     mover = board.turn
+
+    # Take-hanging check: free material gets taken with high probability
+    # regardless of which other branch would otherwise fire. Runs first so
+    # it can pre-empt sampling and the random-blend branch.
+    take_hanging = _capture_of_hanging_piece(board, candidates, mover)
+    if take_hanging is not None and random.random() < take_hanging_probability_for_elo(elo):
+        return take_hanging
+
     filter_fires = random.random() < safety_filter_probability_for_elo(elo)
 
     if filter_fires:

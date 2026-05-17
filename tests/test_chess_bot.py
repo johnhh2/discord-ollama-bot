@@ -207,6 +207,42 @@ class TestSafetyFilterProbabilityForElo:
             assert 0.0 <= p <= 1.0
 
 
+class TestTakeHangingProbabilityForElo:
+    """P(take-hanging) — probability the bot takes a hanging opponent piece
+    when one is present in the top-N candidate pool. High floor (0.75 at
+    Elo 100) since spotting free material is easy; reaches 0.99 by 1000."""
+
+    def test_anchor_points(self):
+        anchors = [(100, 0.75), (400, 0.85), (600, 0.90),
+                   (800, 0.95), (1000, 0.99), (1300, 0.99)]
+        for elo, expected in anchors:
+            actual = chess_bot.take_hanging_probability_for_elo(elo)
+            assert abs(actual - expected) < 0.001, (
+                f"P(take-hanging) at Elo {elo}: expected ~{expected}, got {actual}"
+            )
+
+    def test_below_floor_clamps(self):
+        assert chess_bot.take_hanging_probability_for_elo(50) == 0.75
+        assert chess_bot.take_hanging_probability_for_elo(0) == 0.75
+
+    def test_above_top_clamps(self):
+        # Above 1300 the helper clamps at the cap; native tier takes over.
+        assert chess_bot.take_hanging_probability_for_elo(2000) == 0.99
+        assert chess_bot.take_hanging_probability_for_elo(9999) == 0.99
+
+    def test_monotonic_non_decreasing(self):
+        prev = 0.0
+        for elo in range(100, 1320, 25):
+            p = chess_bot.take_hanging_probability_for_elo(elo)
+            assert p >= prev, f"P(take-hanging) not monotonic at elo={elo}: {p} < {prev}"
+            prev = p
+
+    def test_within_bounds(self):
+        for elo in range(100, 1320, 25):
+            p = chess_bot.take_hanging_probability_for_elo(elo)
+            assert 0.0 <= p <= 1.0
+
+
 class TestRandomBlendProbabilityForElo:
     """Random-move replacement probability — high at the very bottom, tapers
     through 400-600 with diminishing rates, fully off by Elo 700."""
@@ -635,6 +671,96 @@ async def test_pick_move_random_blend_zero_at_700_and_above(monkeypatch):
     # At Elo 700: filter fires (0 < 0.80), pool sampled (returns first safe),
     # blend skipped (blend_prob=0 at Elo 700). Result: filtered pool pick.
     assert move == chess.Move.from_uci(pvs[0])
+
+
+@_aio
+async def test_pick_move_takes_hanging_piece_when_dice_succeed(monkeypatch):
+    """When opponent has a hanging piece AND a top-N candidate captures it
+    AND the take-hanging dice roll succeeds, pick_move returns the capture
+    regardless of what filter/blend/sampling would have produced."""
+    # White knight on f4, black queen on h5 (undefended). White Nxh5 wins
+    # the queen outright. PVs include the capture as a candidate.
+    fen = "4k3/8/8/7q/5N2/8/8/4K3 w - - 0 1"
+    pvs = ["f4h5", "f4d5", "f4e6"]  # rank-1 IS the capture; pool includes it
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    # random()=0.0 → take-hanging dice (0 < 0.85 at Elo 400) fires.
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    # Sentinels: take-hanging branch should return BEFORE sampling/blending.
+    monkeypatch.setattr(chess_bot.random, "choice",
+                        lambda _c: pytest.fail("take-hanging path should bypass random.choice"))
+
+    move = await chess_bot.pick_move(fen, 400)
+    assert move == chess.Move.from_uci("f4h5")
+
+
+@_aio
+async def test_pick_move_take_hanging_picks_most_valuable(monkeypatch):
+    """When multiple top-N candidates each take a different hanging piece,
+    the highest-value capture wins."""
+    # White rook on a1 (attacks down a-file), white queen on b1 (attacks
+    # diagonals). Black undefended queen on a8 and undefended bishop on b8.
+    # Two candidate captures: Rxa8 (gains queen) and Qxb8 (gains bishop).
+    # Take-hanging should pick the queen capture.
+    fen = "q1b1k3/8/8/8/8/8/8/RQ2K3 w - - 0 1"
+    pvs = ["b1b8", "a1a8"]  # Qxb8 ranked first by Stockfish, but Rxa8 wins more
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    monkeypatch.setattr(chess_bot.random, "choice",
+                        lambda _c: pytest.fail("take-hanging path should bypass random.choice"))
+
+    move = await chess_bot.pick_move(fen, 800)
+    # Bishop on b8 = 3, queen on a8 = 9. Rxa8 wins more material.
+    assert move == chess.Move.from_uci("a1a8")
+
+
+@_aio
+async def test_pick_move_take_hanging_skipped_when_dice_high(monkeypatch):
+    """At Elo 100 (P(take-hanging)=0.75), random()=0.99 misses the take-
+    hanging dice and the bot falls through to normal sampling. May or may
+    not still take the piece via the sampling branch."""
+    fen = "4k3/8/8/7q/5N2/8/8/4K3 w - - 0 1"
+    pvs = ["f4d5", "f4e6", "f4h5"]  # capture is rank-3, NOT rank-1
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    # 0.99 > 0.75 (take-hanging at Elo 100) AND > 0.20 (filter at Elo 100)
+    # AND > 0.80 (blend at Elo 100) — all three branches skipped, falls to
+    # pure pool sampling.
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.99)
+    # Sampling picks first candidate (not the capture).
+    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
+
+    move = await chess_bot.pick_move(fen, 100)
+    assert move == chess.Move.from_uci("f4d5")  # NOT the capture
+
+
+@_aio
+async def test_pick_move_take_hanging_no_op_when_no_hanging_piece(monkeypatch):
+    """When no opponent piece is hanging, the take-hanging dice roll is
+    moot — pick_move proceeds to normal sampling."""
+    # Starting position: no hanging pieces. random()=0.0 fires every dice;
+    # take-hanging finds no candidate (no hanging opponent piece), filter
+    # fires, pool sampled with pin to candidates[0].
+    pvs = ["e2e4", "d2d4", "g1f3"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 800)
+    assert move == chess.Move.from_uci(pvs[0])
+
+
+@_aio
+async def test_pick_move_take_hanging_only_considers_top_n_pool(monkeypatch):
+    """If the capture-of-hanging-piece move is OUTSIDE the top-N pool, the
+    bot doesn't see it and proceeds to normal sampling."""
+    # Elo 1200 → pool=3. Capture is at rank-4, outside the pool.
+    fen = "4k3/8/8/7q/5N2/8/8/4K3 w - - 0 1"
+    pvs = ["f4d5", "f4e6", "f4g6", "f4h5"]  # capture is rank-4
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
+    move = await chess_bot.pick_move(fen, 1200)
+    # Pool is top-3 (no capture in it); take-hanging finds nothing → falls
+    # through to filter+sampling → first safe candidate.
+    assert move != chess.Move.from_uci("f4h5")
 
 
 @_aio
