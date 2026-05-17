@@ -596,6 +596,42 @@ async def test_pick_move_random_blend_zero_above_400(monkeypatch):
 
 
 @_aio
+async def test_pick_move_book_move_accepted_when_in_top_10(monkeypatch):
+    """If a book_move is provided AND it's in Stockfish's top-10 PV list,
+    pick_move plays it directly without sampling."""
+    pvs = ["e2e4", "d2d4", "g1f3"]  # book move d2d4 is rank 2 — in top-10
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    # Sentinels: if sampling runs, these will fail the test.
+    monkeypatch.setattr(chess_bot.random, "random",
+                        lambda: pytest.fail("book-move path should bypass sampling dice"))
+    monkeypatch.setattr(chess_bot.random, "choice",
+                        lambda _c: pytest.fail("book-move path should bypass random.choice"))
+
+    move = await chess_bot.pick_move(
+        chess_engine.STARTING_FEN, 700,
+        book_move=chess.Move.from_uci("d2d4"),
+    )
+    assert move == chess.Move.from_uci("d2d4")
+
+
+@_aio
+async def test_pick_move_book_move_rejected_when_not_in_top_10(monkeypatch):
+    """If a book_move is provided but Stockfish doesn't list it in the top-10,
+    pick_move abandons the book and falls through to normal sampling."""
+    pvs = ["e2e4", "d2d4", "g1f3"]  # book move h2h4 is NOT in this list
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)  # skip filter+blend
+    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
+
+    move = await chess_bot.pick_move(
+        chess_engine.STARTING_FEN, 1200,  # pool=1 → deterministic rank-1
+        book_move=chess.Move.from_uci("h2h4"),
+    )
+    # Book rejected, normal sampling at pool=1 returns pvs[0].
+    assert move == chess.Move.from_uci(pvs[0])
+
+
+@_aio
 async def test_pick_move_native_elo_never_samples(monkeypatch):
     """Native tier never invokes random.random or random.choice. Force both
     paths to sentinels to confirm the native branch doesn't touch them."""
@@ -946,7 +982,7 @@ async def test_human_move_triggers_bot_reply(db, _stub_chess_helpers, monkeypatc
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     # Stub Stockfish to always play e7e5.
-    async def _stub_pick(fen, elo):
+    async def _stub_pick(fen, elo, *, book_move=None):
         return chess.Move.from_uci("e7e5")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
 
@@ -975,7 +1011,7 @@ async def test_bot_reply_handles_engine_error(db, _stub_chess_helpers, monkeypat
     ctx = _ctx_for(human, channel_id=1101)
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
-    async def _broken_pick(fen, elo):
+    async def _broken_pick(fen, elo, *, book_move=None):
         raise RuntimeError("simulated stockfish crash")
     monkeypatch.setattr(chess_bot, "pick_move", _broken_pick)
 
@@ -1032,7 +1068,7 @@ async def test_bot_reply_uses_game_elo_not_default(db, _stub_chess_helpers, monk
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     received: list[int] = []
-    async def _stub_pick(fen, elo):
+    async def _stub_pick(fen, elo, *, book_move=None):
         received.append(elo)
         return chess.Move.from_uci("e7e5")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
@@ -1066,7 +1102,7 @@ async def test_persisted_elo_used_after_reload(db, _stub_chess_helpers, monkeypa
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     received: list[int] = []
-    async def _stub_pick(fen, elo):
+    async def _stub_pick(fen, elo, *, book_move=None):
         received.append(elo)
         return chess.Move.from_uci("e7e5")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
@@ -1076,6 +1112,98 @@ async def test_persisted_elo_used_after_reload(db, _stub_chess_helpers, monkeypa
         await asyncio.sleep(0)
 
     assert received == [1850], f"expected reloaded Elo 1850, got {received}"
+
+
+@_aio
+async def test_bot_reply_passes_book_move_when_following_opening(
+    db, _stub_chess_helpers, monkeypatch,
+):
+    """When the game dict has an opening name and the human plays the expected
+    move, _play_bot_reply hands the book move to pick_move."""
+    from src.games import chess_openings
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2500, display_name="Alice")
+    _seed_bot_chess_game(1500, human.id, cog.bot.user.id, elo=600)
+    _state.active_chess_games[1500]["opening"] = "Italian Game (Black)"
+    ctx = _ctx_for(human, channel_id=1500)
+    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
+
+    received_book: list = []
+    async def _stub_pick(fen, elo, *, book_move=None):
+        received_book.append(book_move)
+        # Honor the book move so the opening continues.
+        return book_move if book_move is not None else chess.Move.from_uci("e7e5")
+    monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
+
+    # Human plays e4 — Italian Game's expected first white move.
+    await cog.cmd_move_chess.callback(cog, ctx, "e4")
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    # pick_move was called with the book move e7e5.
+    assert received_book == [chess.Move.from_uci("e7e5")]
+    # Opening still active (book wasn't rejected).
+    assert _state.active_chess_games[1500].get("opening") == "Italian Game (Black)"
+    # Verify the opening object lookup uses the stored name.
+    op = next(o for o in chess_openings.OPENINGS if o.name == "Italian Game (Black)")
+    assert op.moves[0] == "e2e4"
+
+
+@_aio
+async def test_bot_reply_clears_opening_when_human_deviates(
+    db, _stub_chess_helpers, monkeypatch,
+):
+    """When the human plays an off-book move, the bot abandons the opening
+    by removing it from the game dict."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2501, display_name="Alice")
+    _seed_bot_chess_game(1501, human.id, cog.bot.user.id, elo=600)
+    _state.active_chess_games[1501]["opening"] = "Italian Game (Black)"
+    ctx = _ctx_for(human, channel_id=1501)
+    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
+
+    received_book: list = []
+    async def _stub_pick(fen, elo, *, book_move=None):
+        received_book.append(book_move)
+        return chess.Move.from_uci("g8f6")  # generic black reply
+    monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
+
+    # Italian wants e4; human plays d4 — deviation.
+    await cog.cmd_move_chess.callback(cog, ctx, "d4")
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    # pick_move was called with book_move=None (opening abandoned before call).
+    assert received_book == [None]
+    # Opening cleared from game dict.
+    assert "opening" not in _state.active_chess_games[1501]
+
+
+@_aio
+async def test_bot_reply_clears_opening_when_pick_move_rejects_book(
+    db, _stub_chess_helpers, monkeypatch,
+):
+    """If pick_move returns a different move than book_move (top-10 rejected
+    it), _play_bot_reply also clears the opening to avoid proposing it again."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2502, display_name="Alice")
+    _seed_bot_chess_game(1502, human.id, cog.bot.user.id, elo=600)
+    _state.active_chess_games[1502]["opening"] = "Italian Game (Black)"
+    ctx = _ctx_for(human, channel_id=1502)
+    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
+
+    async def _stub_pick(fen, elo, *, book_move=None):
+        # Simulate Stockfish rejecting the book and returning a different move.
+        assert book_move == chess.Move.from_uci("e7e5")
+        return chess.Move.from_uci("c7c5")
+    monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "e4")
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    # Opening cleared (book was rejected).
+    assert "opening" not in _state.active_chess_games[1502]
 
 
 @_aio
@@ -1108,7 +1236,7 @@ async def test_stockfish_mate_creates_report_with_bot_as_winner(db, _stub_chess_
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     # Stockfish plays Qh4# after white's g4.
-    async def _stub_pick(fen, elo):
+    async def _stub_pick(fen, elo, *, book_move=None):
         return chess.Move.from_uci("d8h4")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
 
@@ -1151,7 +1279,7 @@ async def test_stockfish_mate_headline_uses_stockfish_label_not_raw_uid(
     ctx = _ctx_for(human, channel_id=1401)
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
-    async def _stub_pick(fen, elo):
+    async def _stub_pick(fen, elo, *, book_move=None):
         return chess.Move.from_uci("d8h4")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
 
@@ -1291,7 +1419,7 @@ async def test_bot_defeats_human_no_bounty(db, _stub_chess_helpers, monkeypatch)
     ctx = _ctx_for(human, channel_id=1502)
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
-    async def _stub_pick(fen, elo):
+    async def _stub_pick(fen, elo, *, book_move=None):
         return chess.Move.from_uci("d8h4")  # Qh4# after g4
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
 
@@ -1516,7 +1644,7 @@ async def test_bot_reply_does_not_fire_for_pvp_game(db, _stub_chess_helpers, mon
     ctx.guild.members.append(black)
 
     pick_called = []
-    async def _stub_pick(fen, elo):
+    async def _stub_pick(fen, elo, *, book_move=None):
         pick_called.append((fen, elo))
         return chess.Move.from_uci("e7e5")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)

@@ -665,3 +665,10 @@ ALTER TABLE bot_roles ADD COLUMN IF NOT EXISTS guild_id BIGINT UNSIGNED NOT NULL
 ALTER TABLE bot_roles ADD COLUMN IF NOT EXISTS rank_pos INT NOT NULL DEFAULT 0;
 ALTER TABLE bot_roles DROP PRIMARY KEY;
 ALTER TABLE bot_roles ADD PRIMARY KEY (guild_id, role_id);
+
+-- ── 0024_add_chess_opening.sql ──
+-- 0024: add `opening` to chess_games so the bot's chosen opening line
+-- survives bot restarts. NULL means the bot is not following an opening
+-- (either it never started one, or it has been abandoned mid-game).
+
+ALTER TABLE chess_games ADD COLUMN IF NOT EXISTS opening VARCHAR(64) NULL;

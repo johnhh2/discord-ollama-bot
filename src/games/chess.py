@@ -24,7 +24,9 @@ from src.persistence import (
     load_head_to_head, count_pvp_wins_in_guild, try_set_record,
 )
 from src.games.ttt_c4 import _setup_pvp_game
-from src.games import chess_engine, chess_render, chess_bot
+import random as _random
+
+from src.games import chess_engine, chess_render, chess_bot, chess_openings
 from src.games.bot_chess_rewards import award_bot_defeat, RECORD_CATEGORY as _BOT_CHESS_RECORD
 from src import state
 
@@ -122,6 +124,18 @@ def _append_san_to_pgn(pgn_str: str, san: str) -> str:
         return pgn_str
     g.end().add_variation(move)
     return str(g)
+
+
+def _uci_history_from_pgn(pgn_str: str) -> list[str]:
+    """Parse a PGN and return the move list in UCI form (oldest first).
+    Returns [] if parsing fails or the game has no moves yet."""
+    try:
+        g = chess.pgn.read_game(io.StringIO(pgn_str))
+    except Exception:
+        return []
+    if g is None:
+        return []
+    return [move.uci() for move in g.mainline_moves()]
 
 
 def _player_display_name(guild: discord.Guild | None, uid: int, fallback: str) -> str:
@@ -279,6 +293,12 @@ class ChessCog(commands.Cog):
             "last_move": f"{white_name}'s turn (White)",
             "board_msg_id": None,
         }
+        # Roll for an opening line. Bot is always black; the chosen opening
+        # is stashed by name so persistence can resume it across restarts.
+        if _random.random() < chess_openings.opening_probability_for_elo(elo):
+            opening = chess_openings.pick_opening_for_elo(elo)
+            if opening is not None:
+                game["opening"] = opening.name
         state.active_chess_games[cid] = game
 
         desc = (
@@ -647,8 +667,32 @@ class ChessCog(commands.Cog):
         elo = game.get("elo", chess_bot.ELO_DEFAULT)
         bot_name = f"Stockfish ({elo} Elo)"
 
+        # Opening-book candidate (if the bot is following one). We look up the
+        # opening object by stored name and ask for the next scripted move
+        # given the actual move history. If the human deviated or we're past
+        # the book, book_move is None and we play normally.
+        book_move = None
+        opening_name = game.get("opening")
+        opening_obj = None
+        if opening_name is not None:
+            opening_obj = next(
+                (op for op in chess_openings.OPENINGS if op.name == opening_name),
+                None,
+            )
+            if opening_obj is not None:
+                history = _uci_history_from_pgn(game["pgn"])
+                book_move = chess_openings.book_move_for_position(opening_obj, history)
+                if book_move is None:
+                    # Human deviated or we ran out of book — abandon for the
+                    # rest of the game.
+                    game.pop("opening", None)
+            else:
+                # Stored opening name doesn't match any known opening (e.g.
+                # opening was removed in a deploy). Drop it.
+                game.pop("opening", None)
+
         try:
-            move = await chess_bot.pick_move(game["fen"], elo)
+            move = await chess_bot.pick_move(game["fen"], elo, book_move=book_move)
         except Exception as e:
             logging.error(f"stockfish pick_move failed: {e}", exc_info=True)
             await channel.send(embed=emb(
@@ -657,6 +701,12 @@ class ChessCog(commands.Cog):
                 C_RED,
             ))
             return
+
+        # If we had a book move and pick_move returned something else, the
+        # top-10 check rejected it — abandon the opening for the rest of the
+        # game so we don't keep proposing rejected book moves.
+        if book_move is not None and move != book_move:
+            game.pop("opening", None)
 
         # Re-fetch in case state changed during pick_move (~500ms+).
         game = state.active_chess_games.get(cid)

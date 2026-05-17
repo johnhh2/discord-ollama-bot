@@ -294,20 +294,24 @@ def _move_is_safe(board: chess.Board, move: chess.Move, mover: chess.Color) -> b
 
 
 async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.Board,
-                                elo: int) -> chess.Move:
+                                elo: int, *, book_move: chess.Move | None = None) -> chess.Move:
     """Sub-native tier: top-N pool sampling with SEE safety filter, plus a
     random-move blend at the very bottom (Elo <400) for true-beginner play.
 
     1. Analyse top-MULTIPV_COUNT moves at Elo-scaled depth.
-    2. Truncate to top-pool_size candidates.
-    3. With safety_filter_probability_for_elo: filter to candidates that don't
+    2. If `book_move` is provided AND it's in the top-MULTIPV_COUNT, play it
+       directly (opening book overrides sampling for a quality-validated
+       scripted move).
+    3. Otherwise truncate to top-pool_size candidates.
+    4. With safety_filter_probability_for_elo: filter to candidates that don't
        leave any of the mover's pieces hanging post-move; sample uniformly.
        If none pass, fall back to the rank-1 (best) move.
-    4. Otherwise: sample uniformly from the unfiltered candidate pool — the
+    5. Otherwise: sample uniformly from the unfiltered candidate pool — the
        'this Elo would have blundered' branch.
-    5. Finally, with random_blend_probability_for_elo: replace the chosen
+    6. Finally, with random_blend_probability_for_elo: replace the chosen
        move with a fully random legal move (also subject to the safety
        filter if it fires). Models beginner moves Stockfish wouldn't pick.
+       (Skipped when book_move is accepted — the book wins out.)
     """
     depth = multipv_depth_for_elo(elo)
     infos = await engine.analyse(
@@ -323,6 +327,13 @@ async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.B
         if result.move is None:
             raise chess.engine.EngineError("Stockfish returned no move")
         return result.move
+
+    # Book-move handoff: play the scripted move if Stockfish considers it at
+    # least top-10 here. Otherwise abandon and fall through to sampling.
+    if book_move is not None:
+        top_moves = {info["pv"][0] for info in pvs}
+        if book_move in top_moves:
+            return book_move
 
     pool_size = min(multipv_pool_size_for_elo(elo), len(pvs))
     candidates = [info["pv"][0] for info in pvs[:pool_size]]
@@ -351,9 +362,15 @@ async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.B
     return chosen
 
 
-async def pick_move(fen: str, elo: int) -> chess.Move:
+async def pick_move(fen: str, elo: int, *, book_move: chess.Move | None = None) -> chess.Move:
     """Spawn Stockfish, get one move at the target Elo, close. Per-move spawn
-    keeps zero processes alive when nobody's playing chess."""
+    keeps zero processes alive when nobody's playing chess.
+
+    If `book_move` is provided, it's offered to the sub-native sampler which
+    plays it iff Stockfish considers it top-MULTIPV_COUNT in this position.
+    Native tier ignores book moves (the Elo limiter already plays strong
+    book moves on its own).
+    """
     board = chess.Board(fen=fen)
     elo = clamp_elo(elo)
 
@@ -361,7 +378,7 @@ async def pick_move(fen: str, elo: int) -> chess.Move:
     try:
         if elo >= STOCKFISH_NATIVE_ELO_MIN:
             return await _native_elo_move(engine, board, elo)
-        return await _multipv_sampled_move(engine, board, elo)
+        return await _multipv_sampled_move(engine, board, elo, book_move=book_move)
     finally:
         try:
             await engine.quit()
