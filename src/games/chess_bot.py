@@ -8,50 +8,109 @@ import chess
 import chess.engine
 
 
-# Three-tier strength model:
+# Two-tier strength model:
 #   - Native UCI_Elo (1320-3190): Stockfish's built-in strength limiter.
-#   - MultiPV pick-worse (300-1319): ask Stockfish for top-10 moves and pick
-#     the Nth-best where N scales with Elo. Plays bad chess but reacts to
-#     direct threats (won't hang the queen or walk into mate-in-1 if at least
-#     one of the top-10 doesn't).
-#   - Random blend (100-299): true beginner — at Elo 100 nearly all moves are
-#     random; ramps to 0% random at the MultiPV floor.
+#   - Sub-native MultiPV+SEE (100-1319): ask Stockfish for top-10 moves at an
+#     Elo-scaled depth, sample uniformly from the top-N (N also Elo-scaled),
+#     and probabilistically filter out moves that would hang material via a
+#     post-move Static Exchange Evaluation check. See the per-Elo curves below
+#     for how depth, pool size, and filter probability scale together.
 STOCKFISH_NATIVE_ELO_MIN = 1320
 STOCKFISH_NATIVE_ELO_MAX = 3190
-MULTIPV_FLOOR = 300
 MULTIPV_COUNT = 10
-
-# Analysis depth in the MultiPV tier is INVERTED with respect to Elo:
-#   - Low Elo (300):  high depth (4 plies) + worst rank (10th of top-10).
-#     Stockfish actually sees one-move-deep threats so it doesn't blunder
-#     captures/mates, but it picks the worst defensive option from that
-#     position-aware analysis. Plays bad chess, not blind chess.
-#   - High Elo (1319): low depth (2 plies) + best rank (1st). Stockfish at
-#     depth 2 is genuinely weak (~1500 effective Elo, no 3-ply tactics) —
-#     picking its best move at that depth produces a coherent but limited
-#     player just below the native UCI_Elo floor.
-# This inversion fixes the prior problem where Elo 1100-1319 felt stronger
-# than 1400-1600 native: previously the upper MultiPV range used deep search
-# at rank 1, which gave full-strength play. Now depth caps strength even at
-# rank 1, so the curve is monotonic across the MultiPV→native boundary.
-MULTIPV_DEPTH_LOW_ELO = 4   # at MULTIPV_FLOOR
-MULTIPV_DEPTH_HIGH_ELO = 2  # at STOCKFISH_NATIVE_ELO_MIN - 1
 
 # What we accept from users via !chess @Bot <elo>.
 ELO_MIN = 100
 ELO_MAX = STOCKFISH_NATIVE_ELO_MAX
 ELO_DEFAULT = 1320
 
-# Per-move think time at native Elo. Sub-native paths use a short analyse
-# time instead since they only need the move list, not deep search.
+# Per-move think time at native Elo. Sub-native paths use depth-limited
+# analyse instead since they need the multipv list, not deep iterative play.
 MOVE_TIME_SECONDS = 0.5
-ANALYSE_TIME_SECONDS = 0.3
 
 # Debian's `stockfish` apt package installs at /usr/games/stockfish, which is
 # NOT on the default PATH for non-login shells (which is what asyncio's
 # subprocess sees). We can't rely on PATH lookup alone — must fall back to
 # the known install location.
 _DEBIAN_STOCKFISH_PATH = "/usr/games/stockfish"
+
+
+# Piecewise-linear curve anchors. Each list is [(elo, value), ...] sorted by
+# elo. _interp() handles linear interpolation between adjacent anchors and
+# clamps to the endpoints outside the range.
+_DEPTH_ANCHORS: list[tuple[int, int]] = [
+    (100, 1),     # Immediate captures only (depth-1 + quiescence)
+    (300, 2),     # Hanging pieces, mate-in-1
+    (500, 3),     # Simple 1-move tactics
+    (700, 5),     # 2-move combinations, basic forks
+    (900, 7),     # Most 2-3 move tactics
+    (1000, 8),    # 3-move tactics, simple mating attacks
+    (1100, 10),   # 4-move tactics
+    (1200, 12),   # 5-move forced sequences
+    (1319, 14),   # Strong club-player tactics — boundary with native tier
+]
+
+_POOL_SIZE_ANCHORS: list[tuple[int, int]] = [
+    (100, 10),
+    (400, 8),
+    (600, 6),
+    (800, 4),
+    (1000, 3),
+    (1100, 2),
+    (1200, 1),
+    (1319, 1),
+]
+
+# Filter probability calibrated so worst-case expected hangs per 40-move game
+# ≈ 5 at Elo 100 and ≈ 1 at Elo 1000+. Above 1000 the strength gradient comes
+# from deeper search + shrinking pool, so we cap P(filter) at 0.975.
+_FILTER_PROB_ANCHORS: list[tuple[int, float]] = [
+    (100, 0.875),
+    (1000, 0.975),
+    (1319, 0.975),
+]
+
+# Standard chess piece values used for the SEE swap loop. King is "infinite"
+# (sentinel — any side losing the king has already lost the game).
+_PIECE_VALUES: dict[chess.PieceType, int] = {
+    chess.PAWN: 1,
+    chess.KNIGHT: 3,
+    chess.BISHOP: 3,
+    chess.ROOK: 5,
+    chess.QUEEN: 9,
+    chess.KING: 10_000,
+}
+
+
+def _interp_int(anchors: list[tuple[int, int]], x: int) -> int:
+    """Piecewise-linear interpolation over (x, y) anchors with integer output.
+    Clamps below the first and above the last anchor."""
+    if x <= anchors[0][0]:
+        return anchors[0][1]
+    if x >= anchors[-1][0]:
+        return anchors[-1][1]
+    for (x0, y0), (x1, y1) in zip(anchors, anchors[1:]):
+        if x0 <= x <= x1:
+            if x1 == x0:
+                return y0
+            progress = (x - x0) / (x1 - x0)
+            return round(y0 + progress * (y1 - y0))
+    return anchors[-1][1]  # unreachable
+
+
+def _interp_float(anchors: list[tuple[int, float]], x: int) -> float:
+    """Piecewise-linear interpolation over (x, y) anchors with float output."""
+    if x <= anchors[0][0]:
+        return anchors[0][1]
+    if x >= anchors[-1][0]:
+        return anchors[-1][1]
+    for (x0, y0), (x1, y1) in zip(anchors, anchors[1:]):
+        if x0 <= x <= x1:
+            if x1 == x0:
+                return y0
+            progress = (x - x0) / (x1 - x0)
+            return y0 + progress * (y1 - y0)
+    return anchors[-1][1]  # unreachable
 
 
 def _resolve_stockfish_path() -> str:
@@ -75,54 +134,117 @@ def clamp_elo(elo: int) -> int:
     return elo
 
 
-def random_move_probability(elo: int) -> float:
-    """For the random-blend tier (100..MULTIPV_FLOOR-1): linear, 1.0 at
-    ELO_MIN, 0.0 at MULTIPV_FLOOR. Returns 0.0 outside this range."""
-    if elo >= MULTIPV_FLOOR:
-        return 0.0
-    if elo <= ELO_MIN:
-        return 1.0
-    span = MULTIPV_FLOOR - ELO_MIN  # 200
-    return (MULTIPV_FLOOR - elo) / span
-
-
-def multipv_rank_for_elo(elo: int) -> int:
-    """For the MultiPV tier (MULTIPV_FLOOR..STOCKFISH_NATIVE_ELO_MIN-1):
-    which 1-indexed rank to pick from the top-N analysis. Elo MULTIPV_FLOOR
-    picks rank MULTIPV_COUNT (worst), Elo STOCKFISH_NATIVE_ELO_MIN-1 picks
-    rank 1 (best). Linear interpolation between."""
-    if elo <= MULTIPV_FLOOR:
-        return MULTIPV_COUNT
-    if elo >= STOCKFISH_NATIVE_ELO_MIN:
-        return 1
-    span = STOCKFISH_NATIVE_ELO_MIN - 1 - MULTIPV_FLOOR  # 1019
-    progress = (elo - MULTIPV_FLOOR) / span  # 0..1 mapping low→high Elo
-    # Want progress 0 → rank MULTIPV_COUNT, progress 1 → rank 1.
-    rank = round(MULTIPV_COUNT - progress * (MULTIPV_COUNT - 1))
-    return max(1, min(MULTIPV_COUNT, rank))
-
-
 def multipv_depth_for_elo(elo: int) -> int:
-    """Analysis depth for the MultiPV tier. INVERTED — high depth at low Elo
-    (so the bot sees threats and doesn't blunder captures) ramping down to
-    low depth at high Elo (so even rank-1 is a shallow-search best move,
-    keeping the upper MultiPV range comparable to native UCI_Elo 1320)."""
-    if elo <= MULTIPV_FLOOR:
-        return MULTIPV_DEPTH_LOW_ELO
-    if elo >= STOCKFISH_NATIVE_ELO_MIN:
-        return MULTIPV_DEPTH_HIGH_ELO
-    span_elo = STOCKFISH_NATIVE_ELO_MIN - 1 - MULTIPV_FLOOR
-    span_depth = MULTIPV_DEPTH_LOW_ELO - MULTIPV_DEPTH_HIGH_ELO
-    progress = (elo - MULTIPV_FLOOR) / span_elo  # 0 at low, 1 at high
-    # progress 0 → MULTIPV_DEPTH_LOW_ELO; progress 1 → MULTIPV_DEPTH_HIGH_ELO
-    depth = round(MULTIPV_DEPTH_LOW_ELO - progress * span_depth)
-    lo, hi = sorted((MULTIPV_DEPTH_LOW_ELO, MULTIPV_DEPTH_HIGH_ELO))
-    return max(lo, min(hi, depth))
+    """Stockfish analysis depth for the sub-native MultiPV tier. Ramps UP with
+    Elo (opposite of the previous curve) so deeper Elo → meaningfully ordered
+    top-10 list. See _DEPTH_ANCHORS for the full ladder."""
+    return _interp_int(_DEPTH_ANCHORS, elo)
 
 
-def _pick_random_legal(board: chess.Board) -> chess.Move | None:
-    legal = list(board.legal_moves)
-    return random.choice(legal) if legal else None
+def multipv_pool_size_for_elo(elo: int) -> int:
+    """How many of the top-N PVs to sample from uniformly. Shrinks with Elo:
+    Elo 100 samples top-10 (noisy), Elo 1000 samples top-3 (focused), Elo
+    1200+ samples only rank-1 (deterministic, rejoins native tier cleanly)."""
+    return _interp_int(_POOL_SIZE_ANCHORS, elo)
+
+
+def safety_filter_probability_for_elo(elo: int) -> float:
+    """Probability that the SEE-based 'don't hang a piece' filter fires for a
+    given move. Linear from 0.875 at Elo 100 to 0.975 at Elo 1000+, capped
+    there — above 1000 the strength curve is driven by depth/pool, not by
+    further filter tightening."""
+    return _interp_float(_FILTER_PROB_ANCHORS, elo)
+
+
+def _piece_value(piece: chess.Piece | None) -> int:
+    if piece is None:
+        return 0
+    return _PIECE_VALUES[piece.piece_type]
+
+
+def see_capture(board: chess.Board, square: chess.Square, side_to_move: chess.Color) -> int:
+    """Static Exchange Evaluation: net material delta on `square` from the
+    perspective of `side_to_move` if they initiate the capture and both sides
+    always recapture with the cheapest available attacker.
+
+    Returns a positive value if `side_to_move` wins material by capturing,
+    negative if they lose material, 0 for an even trade.
+
+    Algorithm: classic cheapest-attacker swap-list (chessprogramming wiki).
+    Build a gain[] array where gain[d] is the net material to the initiator
+    after d captures, then minimax it backwards — at each ply, the side to
+    move chooses between continuing the exchange or standing pat.
+
+    We mutate a working copy of the board, removing each attacker as it
+    captures and re-querying attackers() each ply, which transparently picks
+    up x-ray attackers behind whatever piece just moved.
+
+    Known limitation: pinned defenders are still counted as recapturers.
+    Acceptable for sub-1000 Elo play; documented in module-level comments.
+    """
+    target = board.piece_at(square)
+    if target is None:
+        return 0
+
+    # The initiator MUST have an attacker on the square — otherwise there's
+    # no capture to evaluate.
+    initiator_attackers = board.attackers(side_to_move, square)
+    if not initiator_attackers:
+        return 0
+
+    work = board.copy(stack=False)
+
+    # gain[0] = value the initiator nets after capturing the target.
+    gains: list[int] = [_piece_value(target)]
+    color = side_to_move
+
+    # First capture: remove the cheapest initiator-attacker.
+    cheapest_sq = min(initiator_attackers, key=lambda sq: _piece_value(work.piece_at(sq)))
+    last_attacker_value = _piece_value(work.piece_at(cheapest_sq))
+    work.remove_piece_at(cheapest_sq)
+    color = not color  # opponent's turn to recapture
+
+    # Subsequent recaptures: each ply, the side-to-move picks their cheapest
+    # attacker (if any) and recaptures, gaining the value of the piece sitting
+    # on the square (i.e. the last attacker, which is now the target).
+    while True:
+        attackers = work.attackers(color, square)
+        if not attackers:
+            break
+        # gain[d] = value_of_piece_being_captured - gain[d-1], where the piece
+        # being captured is the previous attacker now sitting on `square`.
+        gains.append(last_attacker_value - gains[-1])
+        cheapest_sq = min(attackers, key=lambda sq: _piece_value(work.piece_at(sq)))
+        last_attacker_value = _piece_value(work.piece_at(cheapest_sq))
+        work.remove_piece_at(cheapest_sq)
+        color = not color
+
+    # Minimax pull-back: at each ply, the side to move would refuse the
+    # exchange if continuing loses them material (max with 0 / negate).
+    for i in range(len(gains) - 1, 0, -1):
+        gains[i - 1] = -max(-gains[i - 1], gains[i])
+    return gains[0]
+
+
+def hanging_squares(board: chess.Board, color: chess.Color) -> set[chess.Square]:
+    """Set of squares where `color`'s pieces are hanging — i.e. the opponent
+    can initiate a capture on that square with a positive SEE result.
+
+    A piece is "hanging" if the opponent wins material by capturing it; this
+    captures both undefended pieces under attack and defended pieces attacked
+    by lower-value pieces (or pieces whose defender chain loses to the
+    attacker chain). The classic queen-attacks-pawn-defended-by-pawn case
+    returns SEE < 0 for the queen's side, so the pawn does NOT hang.
+    """
+    opponent = not color
+    out: set[chess.Square] = set()
+    for square in chess.SQUARES:
+        piece = board.piece_at(square)
+        if piece is None or piece.color != color:
+            continue
+        if see_capture(board, square, opponent) > 0:
+            out.add(square)
+    return out
 
 
 async def _native_elo_move(engine: chess.engine.UciProtocol, board: chess.Board,
@@ -135,44 +257,58 @@ async def _native_elo_move(engine: chess.engine.UciProtocol, board: chess.Board,
     return result.move
 
 
-async def _multipv_worse_move(engine: chess.engine.UciProtocol, board: chess.Board,
-                              elo: int) -> chess.Move:
-    """Ask for top-MULTIPV_COUNT moves at depth-limited analysis, pick the Nth
-    where N depends on Elo. Both the depth and the rank scale with Elo: low
-    Elo gets shallow analysis (weak top-10) AND worse rank within that top-10."""
+def _move_is_safe(board: chess.Board, move: chess.Move, mover: chess.Color) -> bool:
+    """True if applying `move` to `board` leaves no piece of `mover` hanging
+    in the resulting position. This is the SEE filter's accept predicate.
+
+    Subsumes both 'don't create a new hang' and 'address an existing threat'
+    in one check: any pre-existing hanging piece that the move doesn't
+    resolve (by moving it, blocking, capturing the attacker, or adding a
+    defender) will still be hanging post-move and fail the check."""
+    after = board.copy(stack=False)
+    after.push(move)
+    return not hanging_squares(after, mover)
+
+
+async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.Board,
+                                elo: int) -> chess.Move:
+    """Sub-native tier: top-N pool sampling with SEE safety filter.
+
+    1. Analyse top-MULTIPV_COUNT moves at Elo-scaled depth.
+    2. Truncate to top-pool_size candidates.
+    3. With safety_filter_probability_for_elo: filter to candidates that don't
+       leave any of the mover's pieces hanging post-move; sample uniformly.
+       If none pass, fall back to the rank-1 (best) move.
+    4. Otherwise: sample uniformly from the unfiltered candidate pool — the
+       'this Elo would have blundered' branch.
+    """
     depth = multipv_depth_for_elo(elo)
     infos = await engine.analyse(
         board,
         chess.engine.Limit(depth=depth),
         multipv=MULTIPV_COUNT,
     )
-    # Filter to entries with a usable principal-variation. Stockfish always
-    # returns at least one but may return fewer than MULTIPV_COUNT in positions
-    # with few legal moves.
     pvs = [info for info in infos if info.get("pv")]
     if not pvs:
-        # Fall back to a single-move play to avoid stalling the game.
-        result = await engine.play(board, chess.engine.Limit(time=ANALYSE_TIME_SECONDS))
+        # Position has no usable analysis — fall back to a single-move play to
+        # avoid stalling the game.
+        result = await engine.play(board, chess.engine.Limit(time=MOVE_TIME_SECONDS))
         if result.move is None:
             raise chess.engine.EngineError("Stockfish returned no move")
         return result.move
-    target_rank = multipv_rank_for_elo(elo)  # 1-indexed
-    # Clamp the rank to what's actually available in this position.
-    idx = min(target_rank, len(pvs)) - 1
-    return pvs[idx]["pv"][0]
 
+    pool_size = min(multipv_pool_size_for_elo(elo), len(pvs))
+    candidates = [info["pv"][0] for info in pvs[:pool_size]]
+    mover = board.turn
 
-async def _blended_move(engine: chess.engine.UciProtocol, board: chess.Board,
-                        elo: int) -> chess.Move:
-    """True-beginner tier: get the MultiPV-worst move then with high
-    probability replace it with a fully random legal move."""
-    engine_move = await _multipv_worse_move(engine, board, elo)
-    p_random = random_move_probability(elo)
-    if p_random > 0 and random.random() < p_random:
-        random_move = _pick_random_legal(board)
-        if random_move is not None:
-            return random_move
-    return engine_move
+    if random.random() < safety_filter_probability_for_elo(elo):
+        safe = [mv for mv in candidates if _move_is_safe(board, mv, mover)]
+        if safe:
+            return random.choice(safe)
+        # No safe move in the pool: take Stockfish's best and accept the hang.
+        return pvs[0]["pv"][0]
+
+    return random.choice(candidates)
 
 
 async def pick_move(fen: str, elo: int) -> chess.Move:
@@ -185,9 +321,7 @@ async def pick_move(fen: str, elo: int) -> chess.Move:
     try:
         if elo >= STOCKFISH_NATIVE_ELO_MIN:
             return await _native_elo_move(engine, board, elo)
-        if elo >= MULTIPV_FLOOR:
-            return await _multipv_worse_move(engine, board, elo)
-        return await _blended_move(engine, board, elo)
+        return await _multipv_sampled_move(engine, board, elo)
     finally:
         try:
             await engine.quit()
