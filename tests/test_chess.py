@@ -133,6 +133,45 @@ class TestPushWithSan:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# describe_capture — used to annotate "**Last move:**" with what got taken
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestDescribeCapture:
+    def test_non_capture_returns_none(self):
+        b = chess_engine.new_board()
+        m = chess.Move.from_uci("e2e4")
+        assert chess_engine.describe_capture(b, m) is None
+
+    def test_pawn_takes_pawn(self):
+        # After 1.e4 d5 2.exd5 — white pawn captures black pawn.
+        b = chess_engine.new_board()
+        b.push_san("e4")
+        b.push_san("d5")
+        m = b.parse_san("exd5")
+        assert chess_engine.describe_capture(b, m) == "captured Black's pawn"
+
+    def test_knight_takes_bishop(self):
+        # White knight on f3 jumps to e5, capturing a black bishop.
+        b = chess.Board("4k3/8/8/4b3/8/5N2/8/4K3 w - - 0 1")
+        m = b.parse_san("Nxe5")
+        assert chess_engine.describe_capture(b, m) == "captured Black's bishop"
+
+    def test_en_passant_captures_pawn(self):
+        # White plays exd6 e.p. — captured pawn is on d5, not d6.
+        b = chess.Board("rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3")
+        m = b.parse_san("exd6")
+        assert b.is_en_passant(m)
+        assert chess_engine.describe_capture(b, m) == "captured Black's pawn"
+
+    def test_black_captures_white_queen(self):
+        # Black knight takes a white queen.
+        b = chess.Board("4k3/8/3n4/8/4Q3/8/8/4K3 b - - 0 1")
+        m = b.parse_san("Nxe4")
+        assert chess_engine.describe_capture(b, m) == "captured White's queen"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PGN helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -312,6 +351,45 @@ async def test_move_applies_and_flips_turn(db, _stub_chess_edit_board):
     assert g["current_id"] == black.id
     assert g["fen"] != chess_engine.STARTING_FEN
     assert "e4" in g["pgn"]
+
+
+@_aio
+async def test_capture_move_annotates_last_move_with_captured_piece(
+    db, _stub_chess_edit_board,
+):
+    """When a move captures, the rendered "Last move" line should name the
+    captured piece (e.g. "captured Black's pawn")."""
+    cog = ChessCog(bot=None)
+    white = FakeMember(uid=1108, display_name="White")
+    black = FakeMember(uid=1109, display_name="Black")
+    # Position after 1.e4 d5: white to move, exd5 captures a black pawn.
+    fen_after_e4_d5 = "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2"
+    _seed_chess_game(750, white.id, black.id, fen=fen_after_e4_d5)
+    ctx = _ctx_for(white, channel_id=750)
+    ctx.guild.members.append(black)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "exd5")
+
+    g = _state.active_chess_games[750]
+    assert g["last_move"] == "White played exd5 — captured Black's pawn"
+
+
+@_aio
+async def test_non_capture_move_leaves_last_move_unannotated(
+    db, _stub_chess_edit_board,
+):
+    """Non-capturing moves render without a trailing capture phrase."""
+    cog = ChessCog(bot=None)
+    white = FakeMember(uid=1110, display_name="White")
+    black = FakeMember(uid=1111, display_name="Black")
+    _seed_chess_game(751, white.id, black.id)
+    ctx = _ctx_for(white, channel_id=751)
+    ctx.guild.members.append(black)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "e4")
+
+    g = _state.active_chess_games[751]
+    assert g["last_move"] == "White played e4"
 
 
 @_aio

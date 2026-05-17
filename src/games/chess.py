@@ -521,6 +521,7 @@ class ChessCog(commands.Cog):
         prior_pgn = game["pgn"]
         prior_last_move = game["last_move"]
 
+        capture_phrase = chess_engine.describe_capture(board, move)
         san = chess_engine.push_with_san(board, move)
         new_fen = board.fen()
         new_pgn = _append_san_to_pgn(game["pgn"], san)
@@ -528,10 +529,13 @@ class ChessCog(commands.Cog):
 
         opponent_id = game["black_id"] if uid == game["white_id"] else game["white_id"]
 
+        last_move_text = f"{mover_name} played {san}"
+        if capture_phrase:
+            last_move_text += f" — {capture_phrase}"
         game["fen"] = new_fen
         game["pgn"] = new_pgn
         game["current_id"] = opponent_id
-        game["last_move"] = f"{mover_name} played {san}"
+        game["last_move"] = last_move_text
 
         # Game-over detection before persistence — if the move ended the game we
         # delete the row and insert a report instead of upserting.
@@ -665,11 +669,15 @@ class ChessCog(commands.Cog):
             logging.error(f"stockfish move {move} illegal for fen {game['fen']}")
             return
 
+        capture_phrase = chess_engine.describe_capture(board, move)
         san = chess_engine.push_with_san(board, move)
         game["fen"] = board.fen()
         game["pgn"] = _append_san_to_pgn(game["pgn"], san)
         game["current_id"] = game["white_id"]  # bot is always black in v1
-        game["last_move"] = f"{bot_name} played {san}"
+        last_move_text = f"{bot_name} played {san}"
+        if capture_phrase:
+            last_move_text += f" — {capture_phrase}"
+        game["last_move"] = last_move_text
 
         result, reason = chess_engine.game_over_info(board)
         if result is not None:

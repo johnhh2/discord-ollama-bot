@@ -46,6 +46,30 @@ def push_with_san(board: chess.Board, move: chess.Move) -> str:
     return san
 
 
+def describe_capture(board: chess.Board, move: chess.Move) -> str | None:
+    """If `move` is a capture against `board` (pre-push), return a phrase like
+    "captured Black's knight". Returns None for non-captures.
+
+    Must be called BEFORE the move is pushed — for en passant the captured
+    pawn isn't on move.to_square."""
+    if not board.is_capture(move):
+        return None
+    if board.is_en_passant(move):
+        # En passant: captured pawn sits on the file of move.to_square at the
+        # rank of move.from_square (the pawn that just double-stepped).
+        cap_square = chess.square(
+            chess.square_file(move.to_square),
+            chess.square_rank(move.from_square),
+        )
+        piece = board.piece_at(cap_square)
+    else:
+        piece = board.piece_at(move.to_square)
+    if piece is None:
+        return None
+    color_word = "White's" if piece.color == chess.WHITE else "Black's"
+    return f"captured {color_word} {chess.piece_name(piece.piece_type)}"
+
+
 def game_over_info(board: chess.Board) -> tuple[str | None, str | None]:
     outcome = board.outcome(claim_draw=True)
     if outcome is None:
