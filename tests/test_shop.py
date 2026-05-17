@@ -5,6 +5,7 @@ Strategy: drive the helpers (`shop_charge`) and a representative cog method
 work beyond stashing `bot`, so we can instantiate it with a dummy bot.
 """
 import asyncio
+import time as _time
 from unittest.mock import AsyncMock
 
 import discord
@@ -303,8 +304,6 @@ async def test_concurrent_shop_unoreverse_charges_once(monkeypatch):
 # and shop_unassignrole (roles could be stripped despite "role" protection).
 # These tests pin the fix: a buyer hitting an insured target must NOT be
 # charged and the effect must NOT be applied.
-
-import time as _time
 
 
 def _insure(uid: int, against: list[str]):

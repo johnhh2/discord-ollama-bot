@@ -319,7 +319,7 @@ async def test_top_alias_dispatch_does_not_crash_on_str_guild_access():
     this test fails with AttributeError: 'str' object has no attribute 'guild',
     matching the original production stack trace verbatim."""
     bot = _FakeBot()
-    cog = ShopCog(bot=bot)
+    ShopCog(bot=bot)
     alias_cmd = bot.commands_registered["unassignrole"]
 
     ctx = _StubCtx("!unassignrole <@393568333644955648> Rat King")
