@@ -1,4 +1,5 @@
 {
+  "chessthreats":  {"tier": "bot_admin", "hidden": false},
   "godmode":       {"tier": "bot_admin", "hidden": true},
   "adminragebait": {"tier": "bot_admin", "hidden": true},
   "adminjailbreak": {"tier": "bot_admin",  "hidden": true},

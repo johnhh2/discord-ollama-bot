@@ -17,7 +17,7 @@ from src.helpers import (
 from src.economy import (
     add_balance, record_gambling_event,
 )
-from src.permissions import check_chess_channel
+from src.permissions import check_chess_channel, requires_perm
 from src.guild_config import get_guild_cfg
 from src.persistence import (
     save_chess_game, delete_chess_game, save_chess_report, load_chess_report,
@@ -454,6 +454,57 @@ class ChessCog(commands.Cog):
             await ctx.send(f"✍️ Rounded Elo to **{elo}**.")
 
         await self._start_bot_chess(ctx, elo)
+
+    # ── !chessthreats: admin debug view of all hanging pieces ───────────────
+    @commands.command(name="chessthreats")
+    @requires_perm
+    async def cmd_chessthreats(self, ctx: commands.Context):
+        """Render the active game's board with a red glow on every square
+        whose piece is SEE-hanging (either color). Debugging tool for the
+        threat-awareness check."""
+        cid = ctx.channel.id
+        if cid not in state.active_chess_games:
+            await ctx.send(embed=emb(
+                "❌ No Game",
+                "No active chess game in this channel.",
+                C_RED,
+            ))
+            return
+        game = state.active_chess_games[cid]
+        try:
+            board = chess_engine.board_from_fen(game["fen"])
+        except Exception:
+            await ctx.send(embed=emb("❌ Bad State", "Couldn't parse game FEN.", C_RED))
+            return
+        threats = (
+            chess_bot.hanging_squares(board, chess.WHITE)
+            | chess_bot.hanging_squares(board, chess.BLACK)
+        )
+        # Orient the board for the admin if they're a player in the game,
+        # otherwise default to white's POV.
+        orientation = chess.WHITE
+        if ctx.author.id == game.get("black_id"):
+            orientation = chess.BLACK
+        try:
+            png = chess_render.render_board_png(
+                board,
+                orientation=orientation,
+                threat_squares=threats,
+            )
+        except RuntimeError as e:
+            await ctx.send(embed=emb(
+                "❌ Render Failed",
+                f"Couldn't render board: {e}",
+                C_RED,
+            ))
+            return
+        file = discord.File(io.BytesIO(png), filename=BOARD_IMG_FILENAME)
+        count = len(threats)
+        desc = (
+            f"**{count}** hanging piece{'s' if count != 1 else ''} on the board "
+            f"(red glow = SEE-losing for the side whose piece it is)."
+        )
+        await ctx.send(embed=emb("♟️ Chess Threats", desc, C_GREY), file=file)
 
     # ── !chess view <report_id> ─────────────────────────────────────────────
     async def _cmd_view(self, ctx: commands.Context, args: tuple[str, ...]):

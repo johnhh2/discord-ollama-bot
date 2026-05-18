@@ -1028,6 +1028,73 @@ async def test_chess_view_invalid_number(db):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# !chessthreats — admin debug view
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@_aio
+async def test_chessthreats_no_active_game(db, _stub_chess_edit_board):
+    """!chessthreats sends an error embed when there's no game in the channel."""
+    cog = ChessCog(bot=None)
+    admin = FakeMember(uid=1500)
+    ctx = _ctx_for(admin, channel_id=950)
+
+    await cog.cmd_chessthreats.callback(cog, ctx)
+
+    assert len(ctx.sent_embeds) == 1
+    assert "No Game" in ctx.sent_embeds[0].title
+
+
+@_aio
+async def test_chessthreats_with_hanging_pieces_sends_image(db, _stub_chess_edit_board, monkeypatch):
+    """!chessthreats on a game with hanging pieces sends an embed + file
+    attachment. The description should mention the count of hanging pieces."""
+    # Stub the renderer so the test doesn't require cairosvg locally.
+    import src.games.chess as _chess_mod
+    monkeypatch.setattr(
+        _chess_mod.chess_render, "render_board_png",
+        lambda board, **kwargs: b"FAKE_PNG_BYTES",
+    )
+    cog = ChessCog(bot=None)
+    admin = FakeMember(uid=1501)
+    other = FakeMember(uid=1502)
+    # White queen on d1 hanging to black rook on d8 (no white defenders).
+    _seed_chess_game(951, admin.id, other.id, fen="3rk3/8/8/8/8/8/8/3QK3 w - - 0 1")
+    ctx = _ctx_for(admin, channel_id=951)
+
+    await cog.cmd_chessthreats.callback(cog, ctx)
+
+    # Embed sent + file attached.
+    assert len(ctx.sent_embeds) == 1
+    embed = ctx.sent_embeds[0]
+    assert "Chess Threats" in embed.title
+    # Both queen (d1, hanging) and rook (d8, attacked by queen) hang in this
+    # position. The description mentions a count.
+    assert "hanging piece" in embed.description
+
+
+@_aio
+async def test_chessthreats_no_hanging_pieces_shows_zero(db, _stub_chess_edit_board, monkeypatch):
+    """!chessthreats on a quiet starting-position game shows '0 hanging pieces'."""
+    import src.games.chess as _chess_mod
+    monkeypatch.setattr(
+        _chess_mod.chess_render, "render_board_png",
+        lambda board, **kwargs: b"FAKE_PNG_BYTES",
+    )
+    cog = ChessCog(bot=None)
+    admin = FakeMember(uid=1503)
+    other = FakeMember(uid=1504)
+    _seed_chess_game(952, admin.id, other.id)  # default starting position
+    ctx = _ctx_for(admin, channel_id=952)
+
+    await cog.cmd_chessthreats.callback(cog, ctx)
+
+    assert len(ctx.sent_embeds) == 1
+    # Empty starting position has no hanging pieces.
+    assert "**0** hanging" in ctx.sent_embeds[0].description
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Special-move flows through cmd_move_chess (castling, en passant, promotion)
 # ─────────────────────────────────────────────────────────────────────────────
 
