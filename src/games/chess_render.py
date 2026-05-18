@@ -31,6 +31,12 @@ _LASTMOVE_RED = {
 }
 
 
+# Vivid red tint applied to threatened squares by !chessthreats. Uses
+# python-chess's native `fill=` overlay mechanism (same one it uses for
+# every board square) — no SVG post-processing.
+_THREAT_FILL_COLOR = "#ff5050"
+
+
 def render_board_png(
     board: chess.Board,
     *,
@@ -46,6 +52,10 @@ def render_board_png(
         )
     check_square = board.king(board.turn) if board.is_check() else None
     colors = _LASTMOVE_RED if last_move_was_capture else _LASTMOVE_BLUE
+    fill: dict[chess.Square, str] = {}
+    if threat_squares:
+        for sq in threat_squares:
+            fill[sq] = _THREAT_FILL_COLOR
     svg = chess.svg.board(
         board,
         orientation=orientation,
@@ -53,53 +63,6 @@ def render_board_png(
         check=check_square,
         size=size,
         colors=colors,
+        fill=fill,
     )
-    if threat_squares:
-        svg = _inject_threat_overlays(svg, threat_squares, orientation)
     return cairosvg.svg2png(bytestring=svg.encode("utf-8"), output_width=size)
-
-
-def _inject_threat_overlays(
-    svg: str, squares: set[chess.Square], orientation: chess.Color,
-) -> str:
-    """Post-process a python-chess SVG to add red radial-gradient overlays
-    on the given squares. Uses the same `check_gradient` def python-chess
-    already emits when `check=` is passed; we just add extra <rect> elements
-    pointing at it.
-
-    Layered RIGHT AFTER the `<defs>` block closes (before any pieces are
-    drawn), so the overlays sit BENEATH the pieces — pieces remain readable.
-    """
-    # python-chess uses these SVG constants. Keep in sync if upstream changes.
-    SQUARE_SIZE = 45  # noqa: N806 — matches chess.svg constant name
-    BOARD_OFFSET = 15  # padding before the playable squares begin
-    # Make sure the gradient def is present. python-chess only emits it when
-    # `check=` was passed; if our caller didn't, we inject our own.
-    if "check_gradient" not in svg:
-        gradient_def = (
-            '<radialGradient id="check_gradient" r="0.5">'
-            '<stop offset="0%" stop-color="#ff0000" stop-opacity="1.0" />'
-            '<stop offset="50%" stop-color="#e70000" stop-opacity="1.0" />'
-            '<stop offset="100%" stop-color="#9e0000" stop-opacity="0.0" />'
-            '</radialGradient>'
-        )
-        svg = svg.replace("</defs>", gradient_def + "</defs>", 1)
-
-    rects = []
-    for sq in squares:
-        file_idx = chess.square_file(sq)
-        rank_idx = chess.square_rank(sq)
-        if orientation == chess.WHITE:
-            x = BOARD_OFFSET + file_idx * SQUARE_SIZE
-            y = BOARD_OFFSET + (7 - rank_idx) * SQUARE_SIZE
-        else:
-            x = BOARD_OFFSET + (7 - file_idx) * SQUARE_SIZE
-            y = BOARD_OFFSET + rank_idx * SQUARE_SIZE
-        rects.append(
-            f'<rect x="{x}" y="{y}" width="{SQUARE_SIZE}" height="{SQUARE_SIZE}"'
-            f' class="threat" fill="url(#check_gradient)" />'
-        )
-
-    # Inject after the <defs>...</defs> block so the rects sit beneath pieces.
-    overlay = "".join(rects)
-    return svg.replace("</defs>", "</defs>" + overlay, 1)

@@ -44,87 +44,59 @@ def test_render_with_last_move_and_check():
 
 
 # -----------------------------------------------------------------------------
-# _inject_threat_overlays — SVG-level injection, doesn't need cairo
+# Threat-square overlay (uses python-chess's native fill= mechanism)
 # -----------------------------------------------------------------------------
 
 
-def test_inject_threat_overlays_adds_rect_per_square():
-    """For each threat square, exactly one <rect class="threat"> is added."""
-    import chess.svg
-    svg = chess.svg.board(chess.Board())
-    out = chess_render._inject_threat_overlays(
-        svg, {chess.A1, chess.H8, chess.E4}, chess.WHITE,
+@_skip_no_cairo
+def test_render_with_threat_squares_produces_png():
+    """Passing threat_squares={A1, H8} renders to PNG bytes without error."""
+    png = chess_render.render_board_png(
+        chess.Board(),
+        threat_squares={chess.A1, chess.H8},
     )
-    # Count threat rects.
-    import re
-    rects = re.findall(r'<rect[^>]*class="threat"[^>]*>', out)
-    assert len(rects) == 3
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
 
 
-def test_inject_threat_overlays_includes_gradient_def():
-    """When the upstream SVG didn't already define check_gradient (because
-    check= wasn't passed), the helper injects one."""
-    import chess.svg
-    svg = chess.svg.board(chess.Board())
-    assert "check_gradient" not in svg  # baseline
-    out = chess_render._inject_threat_overlays(svg, {chess.A1}, chess.WHITE)
-    assert "check_gradient" in out
-    assert "radialGradient" in out
+def test_render_passes_threat_fill_to_python_chess(monkeypatch):
+    """When threat_squares is set, the renderer forwards them to
+    chess.svg.board() via fill={square: red}."""
+    captured: dict = {}
+
+    def _fake_svg_board(board, **kwargs):
+        captured["fill"] = kwargs.get("fill")
+        return "<svg/>"
+    monkeypatch.setattr(chess_render.chess.svg, "board", _fake_svg_board)
+    # Mock cairosvg too so the test doesn't need the native lib.
+    monkeypatch.setattr(chess_render, "cairosvg",
+                        type("X", (), {"svg2png": staticmethod(lambda **k: b"PNG")}))
+
+    chess_render.render_board_png(
+        chess.Board(),
+        threat_squares={chess.A1, chess.H8},
+    )
+
+    assert captured["fill"] is not None
+    assert chess.A1 in captured["fill"]
+    assert chess.H8 in captured["fill"]
+    # Same red applied to all threat squares.
+    assert len(set(captured["fill"].values())) == 1
 
 
-def test_inject_threat_overlays_reuses_existing_gradient_def():
-    """When the SVG already has check_gradient (because check= was passed),
-    we don't add a duplicate definition."""
-    import chess.svg
-    svg = chess.svg.board(chess.Board(), check=chess.E1)
-    # Count opening <radialGradient tags (open+close both contain
-    # "radialGradient" as a substring, so we look for the open tag).
-    assert svg.count("<radialGradient") == 1
-    out = chess_render._inject_threat_overlays(svg, {chess.A1}, chess.WHITE)
-    # Still only one gradient def — we reused the existing one.
-    assert out.count("<radialGradient") == 1
+def test_render_no_threat_squares_passes_empty_fill(monkeypatch):
+    """When threat_squares is omitted, fill= is empty (no overlays)."""
+    captured: dict = {}
 
+    def _fake_svg_board(board, **kwargs):
+        captured["fill"] = kwargs.get("fill")
+        return "<svg/>"
+    monkeypatch.setattr(chess_render.chess.svg, "board", _fake_svg_board)
+    monkeypatch.setattr(chess_render, "cairosvg",
+                        type("X", (), {"svg2png": staticmethod(lambda **k: b"PNG")}))
 
-def test_inject_threat_overlays_coords_match_python_chess():
-    """Our coordinate math must match python-chess's own check-square coords.
-    Render a position with check on a known square; render again with no check
-    but use our injector on the same square; the resulting rect coordinates
-    should be identical."""
-    import chess.svg
-    import re
-    b = chess.Board("4k3/8/8/8/8/8/8/4K3 w - - 0 1")
-    # Reference: python-chess's own check rendering on a1.
-    upstream = chess.svg.board(b, check=chess.A1, orientation=chess.WHITE)
-    m_upstream = re.search(r'<rect[^>]*class="check"[^>]*x="(\d+)"[^>]*y="(\d+)"', upstream)
-    if m_upstream is None:
-        # Sometimes the attribute order differs.
-        m_upstream = re.search(r'<rect[^>]*x="(\d+)"[^>]*y="(\d+)"[^>]*class="check"', upstream)
-    assert m_upstream is not None
-    upstream_x, upstream_y = m_upstream.group(1), m_upstream.group(2)
+    chess_render.render_board_png(chess.Board())
 
-    # Our injection on the same square.
-    svg = chess.svg.board(b, orientation=chess.WHITE)
-    out = chess_render._inject_threat_overlays(svg, {chess.A1}, chess.WHITE)
-    m_ours = re.search(r'<rect[^>]*class="threat"[^>]*>', out)
-    assert m_ours is not None
-    threat_rect = m_ours.group(0)
-    assert f'x="{upstream_x}"' in threat_rect
-    assert f'y="{upstream_y}"' in threat_rect
-
-
-def test_inject_threat_overlays_flips_for_black_orientation():
-    """When orientation=BLACK, the same logical square renders at a different
-    pixel position (board is flipped)."""
-    import chess.svg
-    import re
-    b = chess.Board()
-    svg = chess.svg.board(b)
-    white_view = chess_render._inject_threat_overlays(svg, {chess.A1}, chess.WHITE)
-    black_view = chess_render._inject_threat_overlays(svg, {chess.A1}, chess.BLACK)
-    white_rect = re.search(r'<rect[^>]*class="threat"[^>]*>', white_view).group(0)
-    black_rect = re.search(r'<rect[^>]*class="threat"[^>]*>', black_view).group(0)
-    # Different pixel coordinates for the same square.
-    assert white_rect != black_rect
+    assert captured["fill"] == {}
 
 
 def test_render_fails_loudly_without_cairo(monkeypatch):
