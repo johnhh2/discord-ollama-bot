@@ -197,8 +197,9 @@ class TestNoticeProbabilityForEloAndPiece:
 
     def test_elo_100_queen_gets_full_bonus(self):
         p = chess_bot.notice_probability_for_elo_and_piece(100, chess.QUEEN)
-        # 0.15 + 0.35 = 0.50
-        assert abs(p - 0.50) < 0.001
+        # 0.15 + 0.60 = 0.75 — even Elo 100 spots a hanging queen 3/4
+        # of the time, matching real beginner behavior.
+        assert abs(p - 0.75) < 0.001
 
     def test_elo_1000_pawn_uses_base_ceiling(self):
         # Base 0.85 at Elo 1000 — even strong sub-Maia players miss some

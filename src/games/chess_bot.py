@@ -100,13 +100,14 @@ _NOTICE_BASE_ANCHORS: list[tuple[int, float]] = [
 
 # Bonus added to the base notice probability per piece type. Models the
 # real-beginner pattern that a hanging queen is way more obvious than a
-# hanging pawn. Combined notice rate is capped at 0.99.
+# hanging pawn — even Elo 100 humans rarely walk a queen into attack
+# without noticing. Combined notice rate is capped at 0.99.
 _PIECE_NOTICE_BONUS: dict[chess.PieceType, float] = {
     chess.PAWN: 0.0,
-    chess.KNIGHT: 0.15,
-    chess.BISHOP: 0.15,
-    chess.ROOK: 0.25,
-    chess.QUEEN: 0.35,
+    chess.KNIGHT: 0.25,
+    chess.BISHOP: 0.25,
+    chess.ROOK: 0.45,
+    chess.QUEEN: 0.60,
     chess.KING: 0.0,  # king "hanging" means check — handled by chess rules
 }
 
