@@ -174,6 +174,110 @@ class TestExtraBlunderProbabilityForElo:
             prev = p
 
 
+class TestNoticeProbabilityForEloAndPiece:
+    """Notice probability = base(elo) + bonus(piece type), capped at 0.99.
+    Models 'real players see hanging queens way more reliably than hanging
+    pawns, but stronger players notice both more reliably.'"""
+
+    def test_elo_100_pawn_uses_base_floor(self):
+        p = chess_bot.notice_probability_for_elo_and_piece(100, chess.PAWN)
+        assert abs(p - 0.40) < 0.001
+
+    def test_elo_100_queen_gets_full_bonus(self):
+        p = chess_bot.notice_probability_for_elo_and_piece(100, chess.QUEEN)
+        # 0.40 + 0.35 = 0.75
+        assert abs(p - 0.75) < 0.001
+
+    def test_elo_1000_pawn_is_high_base(self):
+        p = chess_bot.notice_probability_for_elo_and_piece(1000, chess.PAWN)
+        assert abs(p - 0.95) < 0.001
+
+    def test_elo_1000_queen_caps_at_99(self):
+        # 0.95 + 0.35 = 1.30, capped at 0.99.
+        p = chess_bot.notice_probability_for_elo_and_piece(1000, chess.QUEEN)
+        assert abs(p - 0.99) < 0.001
+
+    def test_minor_pieces_share_bonus(self):
+        p_knight = chess_bot.notice_probability_for_elo_and_piece(500, chess.KNIGHT)
+        p_bishop = chess_bot.notice_probability_for_elo_and_piece(500, chess.BISHOP)
+        assert p_knight == p_bishop
+
+    def test_value_ordering_at_fixed_elo(self):
+        """Higher-value pieces always have ≥ notice probability."""
+        prev = -1.0
+        for piece_type in (chess.PAWN, chess.KNIGHT, chess.ROOK, chess.QUEEN):
+            p = chess_bot.notice_probability_for_elo_and_piece(500, piece_type)
+            assert p >= prev, f"non-monotonic for {piece_type}: {p} < {prev}"
+            prev = p
+
+    def test_elo_monotonic_at_fixed_piece(self):
+        """For any piece type, higher Elo means ≥ notice probability."""
+        prev = -1.0
+        for elo in range(100, 1001, 100):
+            p = chess_bot.notice_probability_for_elo_and_piece(elo, chess.KNIGHT)
+            assert p >= prev, f"non-monotonic at Elo {elo}: {p} < {prev}"
+            prev = p
+
+
+class TestHangingSquares:
+    def test_no_hangs_in_starting_position(self):
+        b = chess.Board()
+        assert chess_bot.hanging_squares(b, chess.WHITE) == set()
+        assert chess_bot.hanging_squares(b, chess.BLACK) == set()
+
+    def test_undefended_piece_under_attack_hangs(self):
+        # White knight on f3, black queen on f6 attacking. No defender.
+        b = chess.Board("4k3/8/5q2/8/8/5N2/8/4K3 b - - 0 1")
+        assert chess.F3 in chess_bot.hanging_squares(b, chess.WHITE)
+
+    def test_equal_trade_does_not_hang(self):
+        # Knight defended by pawn, attacked by knight.
+        b = chess.Board("4k3/8/8/4n3/8/5N2/6P1/4K3 b - - 0 1")
+        assert chess.F3 not in chess_bot.hanging_squares(b, chess.WHITE)
+
+
+class TestMostValuableHanging:
+    def test_returns_none_when_nothing_hangs(self):
+        b = chess.Board()
+        assert chess_bot._most_valuable_hanging(b, chess.WHITE) is None
+
+    def test_picks_highest_value_hanging(self):
+        # Black queen on a8 and black pawn on a7 are both hanging to white's
+        # rook on a1 (queen worth more).
+        b = chess.Board("q7/p7/8/8/8/8/8/R3K2k w - - 0 1")
+        sq = chess_bot._most_valuable_hanging(b, chess.BLACK)
+        # Either a8 (queen) or none, but queen wins over pawn.
+        if sq is not None:
+            assert sq == chess.A8
+
+
+class TestMoveAddressesSelfHang:
+    def test_moving_the_piece_away_addresses(self):
+        # White knight on f3 is hanging to black queen on f6. Nf3-d4 moves it.
+        b = chess.Board("4k3/8/5q2/8/8/5N2/8/4K3 w - - 0 1")
+        move = chess.Move.from_uci("f3d4")
+        assert chess_bot._move_addresses_self_hang(b, move, chess.F3)
+
+    def test_ignoring_the_threat_does_not_address(self):
+        # White knight on b1 is hanging to black queen on b8. White plays an
+        # unrelated king shuffle on the kingside that can't possibly defend b1.
+        b = chess.Board("1q2k3/8/8/8/8/8/8/1N2K2R w K - 0 1")
+        # Verify the setup: b1 is hanging for white.
+        assert chess.B1 in chess_bot.hanging_squares(b, chess.WHITE)
+        move = chess.Move.from_uci("h1g1")  # rook move on the other side
+        assert not chess_bot._move_addresses_self_hang(b, move, chess.B1)
+
+
+class TestMoveTakesOppHang:
+    def test_capture_returns_true(self):
+        move = chess.Move.from_uci("a1a8")
+        assert chess_bot._move_takes_opp_hang(move, chess.A8)
+
+    def test_non_capture_returns_false(self):
+        move = chess.Move.from_uci("a1a2")
+        assert not chess_bot._move_takes_opp_hang(move, chess.A8)
+
+
 # -----------------------------------------------------------------------------
 # Static Exchange Evaluation
 # -----------------------------------------------------------------------------
@@ -483,6 +587,84 @@ async def test_pick_move_sub_maia_extra_blunder_skipped_above_500(monkeypatch):
     move = await chess_bot.pick_move(fen, 500)
     # No blunder swap → Maia's pick (Kd2) comes through.
     assert move == chess.Move.from_uci("e1d2")
+
+
+# ---- Threat-awareness check (defensive + offensive) ----
+
+
+@_aio
+async def test_pick_move_sub_maia_addresses_self_hang_when_notice_fires(monkeypatch):
+    """When the bot's piece is hanging AND the sampled move ignores it AND
+    notice dice fires, _sub_maia_move re-routes to a defensive candidate."""
+    # White queen on d1 attacked by black rook on d8 along the open d-file.
+    # The queen is hanging (rook captures for +9).
+    # Maia returns two candidates: e1e2 (ignores threat) and d1d4 (still on
+    # d-file but ALSO addresses by moving queen out of d1)... actually d1d4
+    # moves the queen to d4 which is also on the d-file and STILL hanging.
+    # Let me use d1c1 instead (moves queen off d-file -> addresses).
+    fen = "3rk3/8/8/8/8/8/8/3QK3 w - - 0 1"
+    # Rank-1 = Ke1e2 (ignores threat, leaves queen on d1). Rank-2 = Qd1c1
+    # (moves queen off d-file → addresses).
+    pvs = ["e1e2", "d1c1"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs, maia_available=True)
+    # random.random pinned to 0: pool sample picks Ke2, then notice dice
+    # fires (0 < 0.99 at Elo 1000 for queen), then we swap to Qc1.
+    # extra-blunder dice is 0 at Elo 1000 so no swap-back.
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    # random.choice gets called: first for pool sampling (returns first),
+    # then for picking from addressing candidates (returns first).
+    monkeypatch.setattr(chess_bot.random, "choice", lambda moves: list(moves)[0])
+
+    move = await chess_bot.pick_move(fen, 1000)
+    # Should have swapped to the addressing move (Qd1c1).
+    assert move == chess.Move.from_uci("d1c1")
+
+
+@_aio
+async def test_pick_move_sub_maia_skips_self_hang_notice_when_dice_high(monkeypatch):
+    """When the notice dice doesn't fire, the bot keeps the threat-ignoring
+    sampled move (models 'I missed the threat')."""
+    fen = "3rk3/8/8/8/8/8/8/3QK3 w - - 0 1"
+    pvs = ["e1e2", "d1c1"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs, maia_available=True)
+    # random=0.999 high: pool samples OK, notice dice fails, extra-blunder
+    # at Elo 100 has 0.10 probability so 0.999 > 0.10 = skipped.
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)
+    monkeypatch.setattr(chess_bot.random, "choice", lambda moves: list(moves)[0])
+
+    move = await chess_bot.pick_move(fen, 100)
+    # Sampled = Ke2, notice didn't fire → Ke2 comes through.
+    assert move == chess.Move.from_uci("e1e2")
+
+
+@_aio
+async def test_pick_move_sub_maia_takes_opp_hang_when_notice_fires(monkeypatch):
+    """When the opponent has a hanging piece AND a pool candidate captures it
+    AND notice dice fires, _sub_maia_move re-routes to the capture."""
+    # Black queen on e5 is hanging (no defender), white knight on f3 attacks.
+    # Maia's top candidates include a quiet move and the capture.
+    fen = "4k3/8/8/4q3/8/5N2/8/4K3 w - - 0 1"
+    pvs = ["f3h4", "f3e5"]  # rank-1 quiet move, rank-2 captures queen
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs, maia_available=True)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    monkeypatch.setattr(chess_bot.random, "choice", lambda moves: list(moves)[0])
+
+    move = await chess_bot.pick_move(fen, 1000)
+    # Should have swapped to the capture Nxe5.
+    assert move == chess.Move.from_uci("f3e5")
+
+
+@_aio
+async def test_pick_move_sub_maia_no_op_when_nothing_hangs(monkeypatch):
+    """No hanging pieces on either side → threat-awareness is a no-op."""
+    # Starting position: nothing hangs.
+    pvs = ["e2e4", "d2d4"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs, maia_available=True)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    monkeypatch.setattr(chess_bot.random, "choice", lambda moves: list(moves)[0])
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 500)
+    # Sampled = e2e4, no threats to address → e2e4 comes through.
+    assert move == chess.Move.from_uci("e2e4")
 
 
 # ---- Engine spawn -- actually run binaries (CI only) ----

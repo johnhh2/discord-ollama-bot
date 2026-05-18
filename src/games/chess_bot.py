@@ -87,6 +87,27 @@ _EXTRA_BLUNDER_ANCHORS: list[tuple[int, float]] = [
     (1000, 0.0),
 ]
 
+# Base probability that the bot NOTICES a hanging piece (its own or the
+# opponent's) and re-routes its move to address it. Linear from 0.40 at
+# Elo 100 to 0.95 at Elo 1000. Total notice rate adds a value-based bonus
+# (queens get noticed more than pawns); see _PIECE_NOTICE_BONUS below.
+_NOTICE_BASE_ANCHORS: list[tuple[int, float]] = [
+    (100, 0.40),
+    (1000, 0.95),
+]
+
+# Bonus added to the base notice probability per piece type. Models the
+# real-beginner pattern that a hanging queen is way more obvious than a
+# hanging pawn. Combined notice rate is capped at 0.99.
+_PIECE_NOTICE_BONUS: dict[chess.PieceType, float] = {
+    chess.PAWN: 0.0,
+    chess.KNIGHT: 0.15,
+    chess.BISHOP: 0.15,
+    chess.ROOK: 0.25,
+    chess.QUEEN: 0.35,
+    chess.KING: 0.0,  # king "hanging" means check — handled by chess rules
+}
+
 # Standard chess piece values used for the SEE swap loop. King is "infinite"
 # (sentinel — any side losing the king has already lost the game).
 _PIECE_VALUES: dict[chess.PieceType, int] = {
@@ -193,6 +214,16 @@ def extra_blunder_probability_for_elo(elo: int) -> float:
     return _interp_float(_EXTRA_BLUNDER_ANCHORS, elo)
 
 
+def notice_probability_for_elo_and_piece(elo: int, piece_type: chess.PieceType) -> float:
+    """Probability that the bot notices a hanging piece of the given type and
+    re-routes its move to address it. Combines the Elo-base rate with a piece-
+    value bonus so queens are noticed more reliably than pawns even at low Elo.
+    Capped at 0.99."""
+    base = _interp_float(_NOTICE_BASE_ANCHORS, elo)
+    bonus = _PIECE_NOTICE_BONUS.get(piece_type, 0.0)
+    return min(0.99, base + bonus)
+
+
 def _piece_value(piece: chess.Piece | None) -> int:
     if piece is None:
         return 0
@@ -244,6 +275,57 @@ def see_capture(board: chess.Board, square: chess.Square, side_to_move: chess.Co
     for i in range(len(gains) - 1, 0, -1):
         gains[i - 1] = -max(-gains[i - 1], gains[i])
     return gains[0]
+
+
+def hanging_squares(board: chess.Board, color: chess.Color) -> set[chess.Square]:
+    """Set of squares where `color`'s pieces are sitting on a SEE-losing
+    square — i.e. the opponent gains material by initiating a capture there.
+
+    Used by the threat-awareness check to detect both:
+    - Own pieces in danger (need to defend / move / capture attacker / block)
+    - Opponent pieces that could be captured for free (take-hanging)
+    """
+    opponent = not color
+    out: set[chess.Square] = set()
+    for square in chess.SQUARES:
+        piece = board.piece_at(square)
+        if piece is None or piece.color != color:
+            continue
+        if see_capture(board, square, opponent) > 0:
+            out.add(square)
+    return out
+
+
+def _most_valuable_hanging(board: chess.Board, color: chess.Color) -> chess.Square | None:
+    """The single highest-value hanging square for `color`, or None if no
+    pieces hang. Used to pick which threat the bot is most likely to notice."""
+    squares = hanging_squares(board, color)
+    if not squares:
+        return None
+    return max(squares, key=lambda sq: _piece_value(board.piece_at(sq)))
+
+
+def _move_addresses_self_hang(board: chess.Board, move: chess.Move,
+                              hang_square: chess.Square) -> bool:
+    """True iff applying `move` to `board` results in `hang_square` no longer
+    being hanging for the side that just moved. Covers all defensive options
+    in one check: piece moved away, attacker captured, defender added, line
+    blocked."""
+    mover = board.turn
+    after = board.copy(stack=False)
+    after.push(move)
+    # If the piece itself moved off the hanging square, the original threat
+    # is gone (whether or not a new threat exists on the destination).
+    if move.from_square == hang_square:
+        return True
+    # Otherwise the piece is still on hang_square. Check whether it's still
+    # SEE-losing for the mover (i.e. opponent can still win material there).
+    return see_capture(after, hang_square, not mover) <= 0
+
+
+def _move_takes_opp_hang(move: chess.Move, hang_square: chess.Square) -> bool:
+    """True iff `move` captures the opponent's hanging piece on `hang_square`."""
+    return move.to_square == hang_square
 
 
 def _find_see_losing_move(board: chess.Board, exclude: chess.Move | None = None) -> chess.Move | None:
@@ -346,26 +428,94 @@ async def _maia_top_n(board: chess.Board, elo: int, n: int) -> list[chess.Move]:
             transport.close()
 
 
+def _apply_threat_awareness(
+    board: chess.Board, candidates: list[chess.Move], sampled: chess.Move,
+    elo: int,
+) -> chess.Move:
+    """Apply the threat-awareness check: with Elo-dependent probability,
+    re-route the sampled move to address a hanging piece (own or opponent's)
+    that the sampled move ignored.
+
+    Logic mirrors the way real players notice threats:
+    1. If the bot's own most-valuable hanging piece isn't addressed by the
+       sampled move, with P(notice | piece value, Elo): swap to a candidate
+       that addresses it. (Defensive.)
+    2. If the opponent has a hanging piece a candidate could capture and
+       the sampled move ignores it, with P(notice | piece value, Elo):
+       swap to the capture. (Offensive.)
+
+    Notice rate scales with the hanging piece's value (queens are noticed
+    more than pawns) and with Elo (1000 noticed almost everything).
+
+    Fallback strategy when the safety dice fires but no candidate in the
+    pool addresses the threat: narrow the pool to top-N/2 (Maia's most
+    confident moves) and pick from there. Models 'I really see this — even
+    if it's not my usual style, I'll play tighter.'
+    """
+    mover = board.turn
+
+    # Defensive: address our own most-valuable hanging piece.
+    own_hang = _most_valuable_hanging(board, mover)
+    if own_hang is not None:
+        piece = board.piece_at(own_hang)
+        piece_type = piece.piece_type if piece is not None else chess.PAWN
+        p_notice = notice_probability_for_elo_and_piece(elo, piece_type)
+        if not _move_addresses_self_hang(board, sampled, own_hang):
+            if random.random() < p_notice:
+                addressing = [
+                    mv for mv in candidates
+                    if _move_addresses_self_hang(board, mv, own_hang)
+                ]
+                if addressing:
+                    sampled = random.choice(addressing)
+                else:
+                    # No pool candidate addresses — narrow to top-N/2.
+                    half = max(1, len(candidates) // 2)
+                    narrowed = candidates[:half]
+                    sampled = random.choice(narrowed) if len(narrowed) > 1 else narrowed[0]
+
+    # Offensive: grab opponent's most-valuable hanging piece if available
+    # in the candidate pool.
+    opp_hang = _most_valuable_hanging(board, not mover)
+    if opp_hang is not None:
+        target = board.piece_at(opp_hang)
+        target_type = target.piece_type if target is not None else chess.PAWN
+        p_notice = notice_probability_for_elo_and_piece(elo, target_type)
+        if not _move_takes_opp_hang(sampled, opp_hang):
+            capturing = [mv for mv in candidates if _move_takes_opp_hang(mv, opp_hang)]
+            if capturing and random.random() < p_notice:
+                sampled = random.choice(capturing)
+
+    return sampled
+
+
 async def _sub_maia_move(board: chess.Board, elo: int) -> chess.Move:
     """Elo 100-1000 tier: sample uniformly from Maia 1100's top-N policy
-    moves, then optionally inject a forced blunder.
+    moves, layer on a threat-awareness check, then optionally inject a
+    forced blunder.
 
     1. Ask Maia 1100 for its top-pool_size moves (each one is a real move
        1100-rated humans actually play, just less common at the tail).
     2. Sample one uniformly from the pool.
-    3. With extra_blunder_probability_for_elo (only nonzero below Elo 500):
+    3. Apply threat-awareness: with P(notice) based on Elo and piece value,
+       re-route to address a hanging piece (own or opponent's) the sampled
+       move ignored. Lower-Elo bots are more likely to miss threats; higher-
+       Elo bots almost never miss material hanging.
+    4. With extra_blunder_probability_for_elo (only nonzero below Elo 500):
        swap the chosen move for a SEE-losing alternative if one exists.
-    4. Return.
+    5. Return.
 
-    No pure-random replacement — at any Elo, every move comes from either
-    Maia's policy distribution or an explicit SEE-losing move. Both are
-    moves a real beginner might play; neither is engine-flavored noise.
+    Note: extra-blunder runs AFTER threat-awareness, so a low-Elo bot can
+    still "notice and grab" a hanging queen and then immediately blunder
+    elsewhere on the next move — same as real beginner play.
     """
     pool_size = maia_pool_size_for_elo(elo)
     top_n = await _maia_top_n(board, SUB_MAIA_BASELINE_ELO, pool_size)
     # Clamp in case Maia returned fewer than pool_size in tight positions.
     candidates = top_n[:pool_size]
     move = random.choice(candidates) if len(candidates) > 1 else candidates[0]
+
+    move = _apply_threat_awareness(board, candidates, move, elo)
 
     if random.random() < extra_blunder_probability_for_elo(elo):
         blunder = _find_see_losing_move(board, exclude=move)
