@@ -89,27 +89,23 @@ async def _bump_board(
     channel: discord.abc.Messageable, game: dict, embed: discord.Embed,
     *, file: discord.File | None = None,
 ):
-    """Delete the previous board+embed messages and send a fresh pair so the
-    board is always the most recent message in the channel. The embed and
-    image are sent as TWO separate messages (embed first, then board image)
-    so the board renders BELOW the embed in Discord's UI — same-message
-    attachments always render above their embed regardless of order.
+    """Send a fresh embed+board pair, THEN delete the prior pair. The embed
+    and image are sent as TWO separate messages (embed first, then board
+    image) so the board renders BELOW the embed in Discord's UI — same-
+    message attachments always render above their embed regardless of order.
+
+    Order matters: post-then-delete (rather than delete-then-post) means the
+    channel never has a window with no board visible. The user always sees
+    either the old or the new board, never an empty channel between them.
 
     Tracks both message IDs:
       - game['embed_msg_id']: the text/embed message (sent first)
       - game['board_msg_id']: the image attachment message (sent second)
     """
-    # Delete previous messages in reverse-send order (image, then embed) to
-    # minimize the "ghost embed" window.
-    for key in ("board_msg_id", "embed_msg_id"):
-        prior_id = game.get(key)
-        if prior_id is not None:
-            try:
-                old = await channel.fetch_message(prior_id)
-                await old.delete()
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                pass
+    # Snapshot the prior IDs before we overwrite them with the new send.
+    prior_ids = [game.get("board_msg_id"), game.get("embed_msg_id")]
 
+    # Send the new pair first so the channel always has a current board.
     embed_msg = await channel.send(embed=embed)
     game["embed_msg_id"] = embed_msg.id
     if file is not None:
@@ -119,6 +115,17 @@ async def _bump_board(
         # Render failed — no image; clear any stale board_msg_id so a future
         # bump doesn't try to delete a nonexistent message.
         game["board_msg_id"] = None
+
+    # Now delete the prior pair (image first, then embed) so the most recent
+    # message in the channel remains the new board.
+    for prior_id in prior_ids:
+        if prior_id is None:
+            continue
+        try:
+            old = await channel.fetch_message(prior_id)
+            await old.delete()
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
 
 
 def _initial_pgn(white_name: str, black_name: str, guild_name: str | None,

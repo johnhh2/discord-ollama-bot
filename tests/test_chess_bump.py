@@ -1,11 +1,13 @@
-"""Unit tests for _bump_board (chess board delete-and-resend on each move).
+"""Unit tests for _bump_board (chess board send-then-delete on each move).
 
 Lives in its own file so the autouse _bump_board-stub fixture in
 test_chess.py doesn't shadow the real function under test.
 
 _bump_board sends TWO messages on each bump (embed first, then board image)
-so the image renders BELOW the embed in Discord. Both message IDs are
-tracked in the game dict: embed_msg_id + board_msg_id.
+so the image renders BELOW the embed in Discord. The NEW pair is sent
+FIRST, then the prior pair is deleted — that way the channel always shows
+the current board, never an empty gap. Both message IDs are tracked in
+the game dict: embed_msg_id + board_msg_id.
 """
 from unittest.mock import AsyncMock, MagicMock
 
@@ -99,6 +101,43 @@ async def test_bump_board_first_send_no_prior_ids():
     channel.fetch_message.assert_not_awaited()
     assert game["embed_msg_id"] == 7001
     assert game["board_msg_id"] == 7002
+
+
+@_aio
+async def test_bump_board_sends_new_pair_before_deleting_old():
+    """The whole point of the post-then-delete order: the channel must show
+    the new board BEFORE we delete the old one, so users never see an
+    empty gap between turns."""
+    event_log: list[str] = []
+
+    def _fake_fetch(_msg_id):
+        m = MagicMock()
+        async def _record_delete():
+            event_log.append("delete")
+        m.delete = _record_delete
+        return m
+
+    embed_msg = MagicMock()
+    embed_msg.id = 9101
+    image_msg = MagicMock()
+    image_msg.id = 9102
+
+    async def _record_send(*args, **kwargs):
+        event_log.append("send")
+        return embed_msg if "embed" in kwargs else image_msg
+
+    channel = MagicMock()
+    channel.fetch_message = AsyncMock(side_effect=_fake_fetch)
+    channel.send = _record_send
+
+    fake_file = MagicMock(spec=discord.File)
+    game = {"embed_msg_id": 5001, "board_msg_id": 5002}
+    await _bump_board(channel, game, MagicMock(), file=fake_file)
+
+    # Both sends must happen before any delete.
+    assert event_log == ["send", "send", "delete", "delete"], (
+        f"expected send-send-delete-delete order, got {event_log}"
+    )
 
 
 @_aio
