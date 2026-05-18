@@ -83,6 +83,76 @@ def test_render_passes_threat_fill_to_python_chess(monkeypatch):
     assert len(set(captured["fill"].values())) == 1
 
 
+def test_threat_arrows_emits_attacker_and_defender(monkeypatch):
+    """For a hanging piece, _threat_arrows includes one arrow per attacker
+    AND one per defender (different colors)."""
+    # White queen on d1 attacked by black rook on d8 (open d-file). Defended
+    # by white king on e1.
+    b = chess.Board("3rk3/8/8/8/8/8/8/3QK3 w - - 0 1")
+    arrows = chess_render._threat_arrows(b, {chess.D1})
+    # Index by (tail, head) to make assertions order-independent.
+    by_pair = {(a.tail, a.head): a.color for a in arrows}
+    # Black rook attacks d1.
+    assert (chess.D8, chess.D1) in by_pair
+    # White king defends d1.
+    assert (chess.E1, chess.D1) in by_pair
+    # Colors differ (red vs green).
+    attacker_color = by_pair[(chess.D8, chess.D1)]
+    defender_color = by_pair[(chess.E1, chess.D1)]
+    assert attacker_color != defender_color
+
+
+def test_threat_arrows_color_by_side():
+    """White attackers use the white-shade red; black attackers use the
+    black-shade red. Same for defenders."""
+    # White knight on c4 attacks black knight on e5. Black king on d6 defends.
+    b = chess.Board("8/8/3k4/4n3/2N5/8/8/4K3 w - - 0 1")
+    arrows = chess_render._threat_arrows(b, {chess.E5})
+    by_pair = {(a.tail, a.head): a.color for a in arrows}
+    # White knight attacking: white-shade red.
+    assert by_pair[(chess.C4, chess.E5)] == chess_render._ATTACKER_ARROW_COLOR[chess.WHITE]
+    # Black king defending: black-shade green.
+    assert by_pair[(chess.D6, chess.E5)] == chess_render._DEFENDER_ARROW_COLOR[chess.BLACK]
+
+
+def test_threat_arrows_multiple_attackers():
+    """When a piece has multiple attackers, each gets its own arrow."""
+    # Black knight on e5 attacked by white bishop b2 and white knight c4.
+    b = chess.Board("4k3/8/8/4n3/2N5/8/1B6/4K3 w - - 0 1")
+    arrows = chess_render._threat_arrows(b, {chess.E5})
+    attacker_tails = {a.tail for a in arrows if a.head == chess.E5
+                      and a.color == chess_render._ATTACKER_ARROW_COLOR[chess.WHITE]}
+    assert chess.B2 in attacker_tails
+    assert chess.C4 in attacker_tails
+
+
+def test_threat_arrows_empty_when_no_threats():
+    """No threat squares → no arrows."""
+    b = chess.Board()
+    arrows = chess_render._threat_arrows(b, set())
+    assert arrows == []
+
+
+def test_render_passes_threat_arrows_to_python_chess(monkeypatch):
+    """When threat_squares is set, the renderer forwards arrows to
+    chess.svg.board() via arrows=."""
+    captured: dict = {}
+
+    def _fake_svg_board(board, **kwargs):
+        captured["arrows"] = kwargs.get("arrows")
+        return "<svg/>"
+    monkeypatch.setattr(chess_render.chess.svg, "board", _fake_svg_board)
+    monkeypatch.setattr(chess_render, "cairosvg",
+                        type("X", (), {"svg2png": staticmethod(lambda **k: b"PNG")}))
+
+    # Position with at least one hanging piece (white queen on d1).
+    b = chess.Board("3rk3/8/8/8/8/8/8/3QK3 w - - 0 1")
+    chess_render.render_board_png(b, threat_squares={chess.D1})
+
+    assert captured["arrows"]  # non-empty list of arrows
+    assert len(captured["arrows"]) >= 1
+
+
 def test_render_no_threat_squares_passes_empty_fill(monkeypatch):
     """When threat_squares is omitted, fill= is empty (no overlays)."""
     captured: dict = {}
