@@ -392,6 +392,16 @@ class EventsCog(commands.Cog):
             except Exception:
                 pass
 
+        # Resume any chess games where it's the bot's turn at restart —
+        # otherwise they'd freeze waiting for the human to make another
+        # move that triggers _play_bot_reply.
+        chess_cog = self.bot.get_cog("ChessCog")
+        if chess_cog is not None:
+            try:
+                await chess_cog.resume_pending_bot_turns()
+            except Exception as e:
+                logging.error(f"chess: resume_pending_bot_turns failed: {e}", exc_info=True)
+
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
         channel = guild.system_channel

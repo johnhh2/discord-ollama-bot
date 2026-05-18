@@ -13,8 +13,10 @@ Cog tests stub chess_bot.pick_move so they exercise the full move pipeline
 import asyncio
 import shutil
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import chess
+import discord
 import pytest
 
 import src.state as _state
@@ -1046,6 +1048,93 @@ async def test_bot_reply_handles_engine_error(db, _stub_chess_helpers, monkeypat
         kwargs.get("embed") is not None and "Chess Engine" in kwargs["embed"].title
         for _, kwargs in sent
     )
+
+
+@_aio
+async def test_resume_pending_bot_turns_schedules_reply_when_bot_to_move(
+    db, _stub_chess_helpers, monkeypatch,
+):
+    """When a loaded game has current_id == bot.user.id, resume_pending_bot_turns
+    fetches the channel and schedules _play_bot_reply as a background task."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2200)
+    # Seed a game where it's the BOT'S turn.
+    _seed_bot_chess_game(1200, human.id, cog.bot.user.id)
+    _state.active_chess_games[1200]["current_id"] = cog.bot.user.id
+
+    fetched_channels: list[int] = []
+    fake_channel = SimpleNamespace(id=1200, guild=None, send=AsyncMock())
+
+    async def _fake_fetch_channel(cid):
+        fetched_channels.append(cid)
+        return fake_channel
+    cog.bot.fetch_channel = _fake_fetch_channel
+
+    # Stub _play_bot_reply so we don't need a real engine; just confirm it gets called.
+    play_calls: list[tuple] = []
+    async def _stub_play(channel, cid):
+        play_calls.append((channel, cid))
+    monkeypatch.setattr(cog, "_play_bot_reply", _stub_play)
+
+    await cog.resume_pending_bot_turns()
+    # Background tasks need a tick to run.
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    assert fetched_channels == [1200]
+    assert play_calls == [(fake_channel, 1200)]
+
+
+@_aio
+async def test_resume_pending_bot_turns_skips_when_humans_turn(
+    db, _stub_chess_helpers, monkeypatch,
+):
+    """Game where current_id == human (not bot) is left alone."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2201)
+    _seed_bot_chess_game(1201, human.id, cog.bot.user.id)
+    _state.active_chess_games[1201]["current_id"] = human.id  # human's turn
+
+    cog.bot.fetch_channel = AsyncMock(side_effect=AssertionError("should not fetch"))
+
+    play_calls: list = []
+    async def _stub_play(channel, cid):
+        play_calls.append((channel, cid))
+    monkeypatch.setattr(cog, "_play_bot_reply", _stub_play)
+
+    await cog.resume_pending_bot_turns()
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    assert play_calls == []
+
+
+@_aio
+async def test_resume_pending_bot_turns_tolerates_missing_channel(
+    db, _stub_chess_helpers, monkeypatch,
+):
+    """If fetch_channel raises (channel deleted, bot kicked), we log and
+    move on rather than crashing."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2202)
+    _seed_bot_chess_game(1202, human.id, cog.bot.user.id)
+    _state.active_chess_games[1202]["current_id"] = cog.bot.user.id
+
+    async def _raising_fetch(_cid):
+        raise discord.NotFound(MagicMock(), "channel gone")
+    cog.bot.fetch_channel = _raising_fetch
+
+    play_calls: list = []
+    async def _stub_play(channel, cid):
+        play_calls.append((channel, cid))
+    monkeypatch.setattr(cog, "_play_bot_reply", _stub_play)
+
+    # Should not raise.
+    await cog.resume_pending_bot_turns()
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    assert play_calls == []
 
 
 @_aio

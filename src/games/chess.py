@@ -268,6 +268,31 @@ class ChessCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    async def resume_pending_bot_turns(self):
+        """Scan loaded chess games for any where it's the bot's turn and
+        schedule the bot's reply. Called from on_ready after init_db_state
+        so games that were mid-bot-turn at restart don't freeze waiting
+        for a human move to nudge them.
+
+        Each reply runs as a background task — we don't await them in serial
+        so startup isn't blocked by N parallel Maia spawns."""
+        bot_user = self.bot.user if self.bot is not None else None
+        if bot_user is None:
+            return
+        resumed = 0
+        for cid, game in list(state.active_chess_games.items()):
+            if game.get("current_id") != bot_user.id:
+                continue
+            try:
+                channel = await self.bot.fetch_channel(cid)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+                logging.warning(f"chess: can't resume bot turn in channel {cid}: {e}")
+                continue
+            asyncio.create_task(self._play_bot_reply(channel, cid))
+            resumed += 1
+        if resumed:
+            logging.info(f"chess: resumed {resumed} pending bot turn(s) after restart")
+
     # ── !chess: dispatch on subcommand ──────────────────────────────────────
     @commands.command(name="chess")
     async def cmd_chess(self, ctx: commands.Context, *args):
