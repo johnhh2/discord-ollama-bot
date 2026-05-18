@@ -1,31 +1,48 @@
 from __future__ import annotations
 
+import logging
 import os
 import random
 import shutil
+from pathlib import Path
 
 import chess
 import chess.engine
 
 
-# Two-tier strength model:
-#   - Native UCI_Elo (1320-3190): Stockfish's built-in strength limiter.
-#   - Sub-native MultiPV+SEE (100-1319): ask Stockfish for top-10 moves at an
-#     Elo-scaled depth, sample uniformly from the top-N (N also Elo-scaled),
-#     and probabilistically filter out moves that would hang material via a
-#     post-move Static Exchange Evaluation check. See the per-Elo curves below
-#     for how depth, pool size, and filter probability scale together.
-STOCKFISH_NATIVE_ELO_MIN = 1320
+# Three-tier strength model:
+#   - Sub-Maia (100-1000): Maia 1100 as the baseline (real human-shaped moves),
+#     with two probabilistic degraders layered on top:
+#       * random-move blend: swap Maia's pick for a random legal move
+#       * extra-blunder injection: swap for a SEE-losing move (drops material)
+#     Curves scale with Elo so 100 plays mostly random, 1000 plays nearly
+#     pure Maia 1100 with only ~1 extra blunder per game.
+#   - Maia (1100-1900): human-trained neural networks, one per 100-Elo bin.
+#     A single forward pass per move (`go nodes 1`) returns the move a real
+#     player at that rating would make. Each weights file is bundled in
+#     ./maia_weights/ and consumed by lc0 (Leela Chess Zero) as a UCI engine.
+#   - Native (2000+): Stockfish's UCI_LimitStrength + UCI_Elo limiter.
+#     Stockfish's native floor is 1320 but at that level it plays nothing
+#     like a real 1320 human; we let Maia cover everything up to 1900 and
+#     only switch back to Stockfish well above Maia's training range.
+STOCKFISH_NATIVE_ELO_MIN = 2000
 STOCKFISH_NATIVE_ELO_MAX = 3190
-MULTIPV_COUNT = 12
+MAIA_ELO_MIN = 1100
+MAIA_ELO_MAX = 1900
+# Baseline Maia network used for ALL sub-Maia Elos (100-1000). The lower
+# Elos are produced by degrading this baseline, not by training models at
+# those ratings (Maia has no networks below 1100).
+SUB_MAIA_BASELINE_ELO = 1100
 
-# What we accept from users via !chess @Bot <elo>.
+# What we accept from users via !chess @Bot <elo>. Caller (the cog) rounds
+# any non-multiple-of-100 input at the command boundary, so internally we
+# can assume Elo is always a multiple of 100.
 ELO_MIN = 100
 ELO_MAX = STOCKFISH_NATIVE_ELO_MAX
-ELO_DEFAULT = 1320
+ELO_DEFAULT = 1300
 
-# Per-move think time at native Elo. Sub-native paths use depth-limited
-# analyse instead since they need the multipv list, not deep iterative play.
+# Per-move think time at native Stockfish Elo. The sub-Maia and Maia paths
+# both use single-node policy-net calls (no time budget needed).
 MOVE_TIME_SECONDS = 0.5
 
 # Debian's `stockfish` apt package installs at /usr/games/stockfish, which is
@@ -34,85 +51,40 @@ MOVE_TIME_SECONDS = 0.5
 # the known install location.
 _DEBIAN_STOCKFISH_PATH = "/usr/games/stockfish"
 
+# Maia weights live alongside the source tree, copied into the Docker image
+# at /app/maia_weights/. One .pb.gz file per 100-Elo bin from 1100 to 1900.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_MAIA_WEIGHTS_DIR = _REPO_ROOT / "maia_weights"
 
-# Piecewise-linear curve anchors. Each list is [(elo, value), ...] sorted by
-# elo. _interp() handles linear interpolation between adjacent anchors and
-# clamps to the endpoints outside the range.
-#
-# Depth is intentionally flat at 2 across Elo 400-500 (a narrow plateau at
-# the bottom of the curve) — the strength gradient in that band comes from
-# the random-blend taper and the tightening safety filter, NOT from deeper
-# search. From Elo 600 upward depth ramps toward native (depth 14) by
-# Elo 1300 so the handoff to UCI_Elo 1320 is monotonic.
-#
-# Pool is similarly flat at 10 across Elo 400-700, then ramps down to 3 by
-# Elo 1200+. MULTIPV_COUNT must stay ≥ the largest pool anchor (currently 12).
-_DEPTH_ANCHORS: list[tuple[int, int]] = [
-    (100, 1),     # Immediate captures only (depth-1 + quiescence)
-    (300, 2),     # Hanging pieces, mate-in-1
-    (400, 2),     # Frozen plateau start
-    (500, 2),     # Frozen plateau end
-    (600, 4),     # Simple 1-move tactics
-    (700, 4),
-    (900, 7),     # Most 2-3 move tactics
-    (1000, 8),    # 3-move tactics, simple mating attacks
-    (1100, 10),   # 4-move tactics
-    (1200, 12),   # 5-move forced sequences
-    (1300, 14),   # Strong club-player tactics — boundary with native tier
+
+# Sub-Maia pool size: how many of Maia 1100's top-N policy moves we sample
+# uniformly from. Each move in Maia's top-N is a real move that 1100-rated
+# humans actually play in this position — just less common ones at the tail.
+# Sampling from a wider pool models a weaker player making more "unlikely but
+# human" choices. Even at the top of the range (Elo 1000) the pool is small
+# but >1 so sampling still varies the bot's response within Maia's most
+# confident moves. MULTIPV_COUNT below is the engine query size and must
+# be ≥ the largest pool anchor.
+MULTIPV_COUNT = 11
+_MAIA_POOL_SIZE_ANCHORS: list[tuple[int, int]] = [
+    (100, 11),
+    (400, 8),
+    (700, 5),
+    (800, 4),
+    (900, 3),
+    (1000, 2),
 ]
 
-_POOL_SIZE_ANCHORS: list[tuple[int, int]] = [
-    (100, 12),
-    (400, 10),    # Frozen plateau start
-    (700, 10),    # Frozen plateau end — same as Elo 400
-    (800, 8),
-    (900, 7),
-    (1000, 5),
-    (1100, 4),
-    (1200, 3),
-    (1300, 3),
-]
-
-# Filter probability calibrated so the upper-mid range plays competently —
-# ≈ 1 hang per 40-move game at Elo 1000+. At the bottom the filter is
-# permissive (0.20 at Elo 100) so beginner-feeling blunders come through.
-# Above 1000 the strength gradient comes from deeper search + shrinking pool,
-# so we cap P(filter) at 0.975.
-_FILTER_PROB_ANCHORS: list[tuple[int, float]] = [
-    (100, 0.20),
-    (400, 0.50),
-    (700, 0.80),
-    (1000, 0.975),
-    (1300, 0.975),
-]
-
-# Probability of taking a hanging opponent piece when it's available in the
-# top-N candidate pool. Models "spotting free material" as a fundamental
-# skill that improves with Elo — even beginners notice an undefended queen
-# most of the time. High floor (0.75 at Elo 100) since taking free pieces
-# is the easiest tactical pattern to spot.
-_TAKE_HANGING_ANCHORS: list[tuple[int, float]] = [
-    (100, 0.75),
-    (400, 0.85),
-    (600, 0.90),
-    (800, 0.95),
-    (1000, 0.99),
-    (1300, 0.99),
-]
-
-# Probability of replacing Stockfish's suggestion with a fully random legal
-# move. Real beginners play moves that aren't even in Stockfish's top-10 —
-# odd rook lifts, edge-pawn shuffles, etc. Strong at the bottom, tapering
-# to a small-but-nonzero rate through 400-600, fully off by Elo 700.
-_RANDOM_BLEND_ANCHORS: list[tuple[int, float]] = [
-    (100, 0.80),
-    (200, 0.50),
-    (300, 0.30),
-    (400, 0.15),
-    (500, 0.08),
-    (600, 0.03),
-    (700, 0.0),
-    (1319, 0.0),
+# Probability of injecting an EXTRA blunder on top of Maia's sampled move.
+# Swaps for a SEE-losing alternative (a move that drops material per static
+# exchange evaluation). Only fires at low Elo (≤500) — above 500, the wider
+# Maia pool already includes Maia's natural mistake distribution, no need
+# to force additional ones.
+_EXTRA_BLUNDER_ANCHORS: list[tuple[int, float]] = [
+    (100, 0.10),
+    (400, 0.01),
+    (500, 0.0),
+    (1000, 0.0),
 ]
 
 # Standard chess piece values used for the SEE swap loop. King is "infinite"
@@ -127,9 +99,34 @@ _PIECE_VALUES: dict[chess.PieceType, int] = {
 }
 
 
+def round_elo_to_bin(elo: int) -> int:
+    """Round an Elo value to the nearest multiple of 100. Maia weights are
+    indexed by bin (1100, 1200, ..., 1900) so the cog rounds inputs at the
+    command boundary; pick_move also rounds defensively for callers that
+    bypass the cog (e.g. tests)."""
+    return int(round(elo / 100.0)) * 100
+
+
+def maia_weights_path(elo: int) -> Path:
+    """Filesystem path to the Maia weights file for the given Elo bin."""
+    return _MAIA_WEIGHTS_DIR / f"maia-{elo}.pb.gz"
+
+
+def _resolve_lc0_path() -> str | None:
+    """Find the lc0 binary. PATH first, then common Linux install locations.
+    Returns None if not found — callers fall back to Stockfish."""
+    found = shutil.which("lc0")
+    if found:
+        return found
+    for candidate in ("/usr/games/lc0", "/usr/local/bin/lc0"):
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
 def _interp_int(anchors: list[tuple[int, int]], x: int) -> int:
-    """Piecewise-linear interpolation over (x, y) anchors with integer output.
-    Clamps below the first and above the last anchor."""
+    """Piecewise-linear interpolation with integer output. Clamps below the
+    first and above the last anchor."""
     if x <= anchors[0][0]:
         return anchors[0][1]
     if x >= anchors[-1][0]:
@@ -140,11 +137,12 @@ def _interp_int(anchors: list[tuple[int, int]], x: int) -> int:
                 return y0
             progress = (x - x0) / (x1 - x0)
             return round(y0 + progress * (y1 - y0))
-    return anchors[-1][1]  # unreachable
+    return anchors[-1][1]
 
 
 def _interp_float(anchors: list[tuple[int, float]], x: int) -> float:
-    """Piecewise-linear interpolation over (x, y) anchors with float output."""
+    """Piecewise-linear interpolation over (x, y) anchors with float output.
+    Clamps below the first and above the last anchor."""
     if x <= anchors[0][0]:
         return anchors[0][1]
     if x >= anchors[-1][0]:
@@ -179,42 +177,20 @@ def clamp_elo(elo: int) -> int:
     return elo
 
 
-def multipv_depth_for_elo(elo: int) -> int:
-    """Stockfish analysis depth for the sub-native MultiPV tier. Ramps UP with
-    Elo (opposite of the previous curve) so deeper Elo → meaningfully ordered
-    top-10 list. See _DEPTH_ANCHORS for the full ladder."""
-    return _interp_int(_DEPTH_ANCHORS, elo)
+def maia_pool_size_for_elo(elo: int) -> int:
+    """How many of Maia 1100's top-N policy moves to sample uniformly from.
+    Larger pool = more variety (and more of Maia's less-likely human moves,
+    which models weaker play). Pool=2 at Elo 1000 keeps a little response
+    variability even at the top of the sub-Maia range; pool=11 at Elo 100
+    samples broadly from Maia 1100's tail."""
+    return _interp_int(_MAIA_POOL_SIZE_ANCHORS, elo)
 
 
-def multipv_pool_size_for_elo(elo: int) -> int:
-    """How many of the top-N PVs to sample from uniformly. Shrinks with Elo:
-    Elo 100 samples top-10 (noisy), Elo 1000 samples top-3 (focused), Elo
-    1200+ samples only rank-1 (deterministic, rejoins native tier cleanly)."""
-    return _interp_int(_POOL_SIZE_ANCHORS, elo)
-
-
-def safety_filter_probability_for_elo(elo: int) -> float:
-    """Probability that the SEE-based 'don't hang a piece' filter fires for a
-    given move. Permissive at the bottom (0.20 at Elo 100) so beginner play
-    can blunder; tight by Elo 1000+ (0.975, capped) so competent play rarely
-    hangs material. Above 1000 the strength curve is driven by depth/pool."""
-    return _interp_float(_FILTER_PROB_ANCHORS, elo)
-
-
-def random_blend_probability_for_elo(elo: int) -> float:
-    """Probability of swapping Stockfish's pick for a fully random legal move
-    — models true-beginner play where moves aren't even in Stockfish's top-10.
-    0.80 at Elo 100, decays to 0 by Elo 700 and stays 0 above that."""
-    return _interp_float(_RANDOM_BLEND_ANCHORS, elo)
-
-
-def take_hanging_probability_for_elo(elo: int) -> float:
-    """Probability that the bot will actually take an opponent's hanging
-    piece when one is present in the top-N candidate pool. High at all
-    Elos (0.75 floor) since spotting a free piece is easy; ramps to 0.99
-    by Elo 1000+. Independent of the safety filter — even beginners take
-    free material most of the time."""
-    return _interp_float(_TAKE_HANGING_ANCHORS, elo)
+def extra_blunder_probability_for_elo(elo: int) -> float:
+    """Probability of swapping Maia's pick for a SEE-losing alternative
+    (a move that drops material). Only fires at sub-500 Elo — above that,
+    the wider Maia sampling pool already produces enough natural mistakes."""
+    return _interp_float(_EXTRA_BLUNDER_ANCHORS, elo)
 
 
 def _piece_value(piece: chess.Piece | None) -> int:
@@ -233,79 +209,71 @@ def see_capture(board: chess.Board, square: chess.Square, side_to_move: chess.Co
 
     Algorithm: classic cheapest-attacker swap-list (chessprogramming wiki).
     Build a gain[] array where gain[d] is the net material to the initiator
-    after d captures, then minimax it backwards — at each ply, the side to
-    move chooses between continuing the exchange or standing pat.
-
-    We mutate a working copy of the board, removing each attacker as it
-    captures and re-querying attackers() each ply, which transparently picks
-    up x-ray attackers behind whatever piece just moved.
+    after d captures, then minimax it backwards.
 
     Known limitation: pinned defenders are still counted as recapturers.
-    Acceptable for sub-1000 Elo play; documented in module-level comments.
+    Acceptable for sub-1000 Elo play.
     """
     target = board.piece_at(square)
     if target is None:
         return 0
 
-    # The initiator MUST have an attacker on the square — otherwise there's
-    # no capture to evaluate.
     initiator_attackers = board.attackers(side_to_move, square)
     if not initiator_attackers:
         return 0
 
     work = board.copy(stack=False)
-
-    # gain[0] = value the initiator nets after capturing the target.
     gains: list[int] = [_piece_value(target)]
     color = side_to_move
 
-    # First capture: remove the cheapest initiator-attacker.
     cheapest_sq = min(initiator_attackers, key=lambda sq: _piece_value(work.piece_at(sq)))
     last_attacker_value = _piece_value(work.piece_at(cheapest_sq))
     work.remove_piece_at(cheapest_sq)
-    color = not color  # opponent's turn to recapture
+    color = not color
 
-    # Subsequent recaptures: each ply, the side-to-move picks their cheapest
-    # attacker (if any) and recaptures, gaining the value of the piece sitting
-    # on the square (i.e. the last attacker, which is now the target).
     while True:
         attackers = work.attackers(color, square)
         if not attackers:
             break
-        # gain[d] = value_of_piece_being_captured - gain[d-1], where the piece
-        # being captured is the previous attacker now sitting on `square`.
         gains.append(last_attacker_value - gains[-1])
         cheapest_sq = min(attackers, key=lambda sq: _piece_value(work.piece_at(sq)))
         last_attacker_value = _piece_value(work.piece_at(cheapest_sq))
         work.remove_piece_at(cheapest_sq)
         color = not color
 
-    # Minimax pull-back: at each ply, the side to move would refuse the
-    # exchange if continuing loses them material (max with 0 / negate).
     for i in range(len(gains) - 1, 0, -1):
         gains[i - 1] = -max(-gains[i - 1], gains[i])
     return gains[0]
 
 
-def hanging_squares(board: chess.Board, color: chess.Color) -> set[chess.Square]:
-    """Set of squares where `color`'s pieces are hanging — i.e. the opponent
-    can initiate a capture on that square with a positive SEE result.
+def _find_see_losing_move(board: chess.Board, exclude: chess.Move | None = None) -> chess.Move | None:
+    """Walk legal moves and return a uniformly-random one whose destination
+    square has SEE < 0 for the moving side after the move is played — i.e.
+    a move that drops material in a static exchange.
 
-    A piece is "hanging" if the opponent wins material by capturing it; this
-    captures both undefended pieces under attack and defended pieces attacked
-    by lower-value pieces (or pieces whose defender chain loses to the
-    attacker chain). The classic queen-attacks-pawn-defended-by-pawn case
-    returns SEE < 0 for the queen's side, so the pawn does NOT hang.
-    """
-    opponent = not color
-    out: set[chess.Square] = set()
-    for square in chess.SQUARES:
-        piece = board.piece_at(square)
-        if piece is None or piece.color != color:
+    Used by the extra-blunder injector to find a concrete "losing piece"
+    move when we want to degrade Maia's pick. Excludes `exclude` (typically
+    Maia's chosen move) so the injector actually changes the move.
+
+    Returns None if no SEE-losing move exists in the position (rare in
+    middlegames; common in simplified endgames). Caller falls back to
+    keeping Maia's original move."""
+    mover = board.turn
+    opp = not mover
+    losing: list[chess.Move] = []
+    for mv in board.legal_moves:
+        if exclude is not None and mv == exclude:
             continue
-        if see_capture(board, square, opponent) > 0:
-            out.add(square)
-    return out
+        # SEE from the opponent's perspective: if they would gain material by
+        # capturing on our move's destination square AFTER we move there,
+        # that move drops material.
+        after = board.copy(stack=False)
+        after.push(mv)
+        if see_capture(after, mv.to_square, opp) > 0:
+            losing.append(mv)
+    if not losing:
+        return None
+    return random.choice(losing)
 
 
 async def _native_elo_move(engine: chess.engine.UciProtocol, board: chess.Board,
@@ -318,177 +286,143 @@ async def _native_elo_move(engine: chess.engine.UciProtocol, board: chess.Board,
     return result.move
 
 
-def _move_is_safe(board: chess.Board, move: chess.Move, mover: chess.Color) -> bool:
-    """True if applying `move` to `board` leaves the JUST-MOVED piece not
-    hanging in the resulting position. This is the SEE filter's accept
-    predicate.
+async def _spawn_maia_engine(elo: int):
+    """Spawn lc0 with the Maia weights file for the given Elo bin.
 
-    Restricted to the moving piece's destination square (rather than every
-    piece on the board) so the bot models 'don't walk into an attack' but
-    NOT 'spot every uncovered defender or discovered attack' — those are
-    higher-skill mistakes the lower-Elo bot is expected to miss. Pre-
-    existing hangs the move doesn't resolve also aren't a reason to reject
-    a move here; the take-hanging branch (which also restricts to the
-    opponent's last-moved piece) is the symmetric structure for offense."""
-    after = board.copy(stack=False)
-    after.push(move)
-    # Castling moves the king two squares — the king is the "moving piece"
-    # whose safety we care about; its destination is move.to_square.
-    return move.to_square not in hanging_squares(after, mover)
-
-
-def _capture_of_hanging_piece(
-    board: chess.Board, candidates: list[chess.Move], mover: chess.Color,
-    last_to_square: chess.Square | None,
-) -> chess.Move | None:
-    """If any candidate move captures the OPPONENT'S LAST-MOVED PIECE on a
-    hanging square (per SEE), return that move. Restricting to the last-
-    moved piece models the most common human mistake pattern: the opponent
-    blunders by moving a piece into attack, and the bot punishes it. Pre-
-    existing hangs (pieces the opponent failed to defend on earlier moves)
-    are NOT caught here — a real player at this Elo wouldn't have spotted
-    them either.
-
-    `last_to_square` is the destination square of the opponent's most recent
-    move (caller passes None when there's no prior move). Returns None if:
-    - no last move (bot moves first),
-    - that square isn't hanging,
-    - or no candidate in the top-N pool captures it.
-    """
-    if last_to_square is None:
-        return None
-    opp_hangs = hanging_squares(board, not mover)
-    if last_to_square not in opp_hangs:
-        return None
-    target = board.piece_at(last_to_square)
-    if target is None:
-        return None
-    for mv in candidates:
-        if mv.to_square == last_to_square:
-            return mv
-    return None
+    Raises chess.engine.EngineError if lc0 isn't installed or the weights
+    file is missing — caller catches and falls back."""
+    lc0_path = _resolve_lc0_path()
+    if lc0_path is None:
+        raise chess.engine.EngineError(
+            "lc0 binary not found; install lc0 or check PATH"
+        )
+    weights = maia_weights_path(elo)
+    if not weights.exists():
+        raise chess.engine.EngineError(f"Maia weights file missing: {weights}")
+    return await chess.engine.popen_uci([
+        lc0_path,
+        f"--weights={weights}",
+        "--backend=eigen",  # CPU backend; no GPU required
+    ])
 
 
-async def _multipv_sampled_move(engine: chess.engine.UciProtocol, board: chess.Board,
-                                elo: int, *,
-                                book_move: chess.Move | None = None,
-                                last_to_square: chess.Square | None = None) -> chess.Move:
-    """Sub-native tier: top-N pool sampling with SEE safety filter, plus a
-    random-move blend at the very bottom (Elo <400) for true-beginner play.
-
-    1. Analyse top-MULTIPV_COUNT moves at Elo-scaled depth.
-    2. If `book_move` is provided AND it's in the top-MULTIPV_COUNT, play it
-       directly (opening book overrides sampling for a quality-validated
-       scripted move).
-    3. Truncate to top-pool_size candidates.
-    4. Take-hanging check: if the opponent has a hanging piece AND a top-N
-       candidate captures it, play that capture with take_hanging_probability.
-       Models the basic skill of "spotting free material" — runs before
-       sampling/blending because it represents the most fundamental
-       tactical pattern.
-    5. With safety_filter_probability_for_elo: filter to candidates that don't
-       leave any of the mover's pieces hanging post-move; sample uniformly.
-       If none pass, fall back to the rank-1 (best) move.
-    6. Otherwise: sample uniformly from the unfiltered candidate pool — the
-       'this Elo would have blundered' branch.
-    7. Finally, with random_blend_probability_for_elo: replace the chosen
-       move with a fully random legal move (also subject to the safety
-       filter if it fires). Models beginner moves Stockfish wouldn't pick.
-    """
-    depth = multipv_depth_for_elo(elo)
-    infos = await engine.analyse(
-        board,
-        chess.engine.Limit(depth=depth),
-        multipv=MULTIPV_COUNT,
-    )
-    pvs = [info for info in infos if info.get("pv")]
-    if not pvs:
-        # Position has no usable analysis — fall back to a single-move play to
-        # avoid stalling the game.
-        result = await engine.play(board, chess.engine.Limit(time=MOVE_TIME_SECONDS))
+async def _maia_move(board: chess.Board, elo: int) -> chess.Move:
+    """Spawn Maia at the given Elo bin and ask for one move (`go nodes 1`).
+    Used by the pure-Maia tier (Elo 1100-1900); sub-Maia uses _maia_top_n."""
+    transport, engine = await _spawn_maia_engine(elo)
+    try:
+        result = await engine.play(board, chess.engine.Limit(nodes=1))
         if result.move is None:
-            raise chess.engine.EngineError("Stockfish returned no move")
+            raise chess.engine.EngineError("Maia returned no move")
         return result.move
-
-    # Book-move handoff: play the scripted move if Stockfish considers it at
-    # least top-10 here. Otherwise abandon and fall through to sampling.
-    if book_move is not None:
-        top_moves = {info["pv"][0] for info in pvs}
-        if book_move in top_moves:
-            return book_move
-
-    pool_size = min(multipv_pool_size_for_elo(elo), len(pvs))
-    candidates = [info["pv"][0] for info in pvs[:pool_size]]
-    mover = board.turn
-
-    # Take-hanging check: if the opponent's just-moved piece is hanging AND
-    # one of our top-N candidates captures it, take it with high probability.
-    # Restricting to the LAST-MOVED enemy piece models the common pattern of
-    # "I noticed your blunder" — pre-existing hangs the opponent failed to
-    # fix earlier are not caught here.
-    take_hanging = _capture_of_hanging_piece(board, candidates, mover, last_to_square)
-    if take_hanging is not None and random.random() < take_hanging_probability_for_elo(elo):
-        return take_hanging
-
-    filter_fires = random.random() < safety_filter_probability_for_elo(elo)
-
-    if filter_fires:
-        safe = [mv for mv in candidates if _move_is_safe(board, mv, mover)]
-        chosen = random.choice(safe) if safe else pvs[0]["pv"][0]
-    else:
-        chosen = random.choice(candidates)
-
-    # True-beginner random blend: at low Elo, sometimes replace the
-    # Stockfish-derived pick with a fully random legal move. If the safety
-    # filter fired, also apply it to the random candidates so the bot still
-    # avoids the most obvious hangs even in random mode.
-    if random.random() < random_blend_probability_for_elo(elo):
-        legal = list(board.legal_moves)
-        if legal:
-            if filter_fires:
-                safe_legal = [mv for mv in legal if _move_is_safe(board, mv, mover)]
-                if safe_legal:
-                    return random.choice(safe_legal)
-            return random.choice(legal)
-
-    return chosen
+    finally:
+        try:
+            await engine.quit()
+        except Exception:
+            transport.close()
 
 
-async def pick_move(
-    fen: str, elo: int, *,
-    book_move: chess.Move | None = None,
-    last_move_uci: str | None = None,
-) -> chess.Move:
-    """Spawn Stockfish, get one move at the target Elo, close. Per-move spawn
-    keeps zero processes alive when nobody's playing chess.
+async def _maia_top_n(board: chess.Board, elo: int, n: int) -> list[chess.Move]:
+    """Spawn Maia and return its top-N policy moves (ranked by the policy
+    net's probabilities, most-likely-human first). When the position has
+    fewer than N legal moves, returns whatever was available."""
+    transport, engine = await _spawn_maia_engine(elo)
+    try:
+        infos = await engine.analyse(
+            board,
+            chess.engine.Limit(nodes=1),
+            multipv=max(1, n),
+        )
+        moves = [info["pv"][0] for info in infos if info.get("pv")]
+        if not moves:
+            raise chess.engine.EngineError("Maia returned no moves")
+        return moves
+    finally:
+        try:
+            await engine.quit()
+        except Exception:
+            transport.close()
 
-    If `book_move` is provided, it's offered to the sub-native sampler which
-    plays it iff Stockfish considers it top-MULTIPV_COUNT in this position.
-    Native tier ignores book moves (the Elo limiter already plays strong
-    book moves on its own).
 
-    If `last_move_uci` is provided, it tells the take-hanging check which
-    square the opponent's last-moved piece landed on (so the bot only
-    punishes fresh blunders, not pre-existing hangs). Skipped silently if
-    the UCI doesn't parse.
+async def _sub_maia_move(board: chess.Board, elo: int) -> chess.Move:
+    """Elo 100-1000 tier: sample uniformly from Maia 1100's top-N policy
+    moves, then optionally inject a forced blunder.
+
+    1. Ask Maia 1100 for its top-pool_size moves (each one is a real move
+       1100-rated humans actually play, just less common at the tail).
+    2. Sample one uniformly from the pool.
+    3. With extra_blunder_probability_for_elo (only nonzero below Elo 500):
+       swap the chosen move for a SEE-losing alternative if one exists.
+    4. Return.
+
+    No pure-random replacement — at any Elo, every move comes from either
+    Maia's policy distribution or an explicit SEE-losing move. Both are
+    moves a real beginner might play; neither is engine-flavored noise.
+    """
+    pool_size = maia_pool_size_for_elo(elo)
+    top_n = await _maia_top_n(board, SUB_MAIA_BASELINE_ELO, pool_size)
+    # Clamp in case Maia returned fewer than pool_size in tight positions.
+    candidates = top_n[:pool_size]
+    move = random.choice(candidates) if len(candidates) > 1 else candidates[0]
+
+    if random.random() < extra_blunder_probability_for_elo(elo):
+        blunder = _find_see_losing_move(board, exclude=move)
+        if blunder is not None:
+            move = blunder
+
+    return move
+
+
+async def pick_move(fen: str, elo: int) -> chess.Move:
+    """Dispatch to the right chess engine based on Elo. Spawn-per-move keeps
+    zero processes alive when nobody's playing chess.
+
+    Routing (assuming Elo is a multiple of 100 — caller rounds at the
+    command boundary, and pick_move rounds defensively):
+      - Elo 100-1000: Maia 1100 + random-blend + extra-blunder degraders.
+      - Elo 1100-1900: pure Maia at the matching weights bin.
+      - Elo 2000+: Stockfish with UCI_LimitStrength + UCI_Elo.
+
+    If Maia fails to spawn (lc0 missing, weights missing) anywhere in the
+    100-1900 range, fall back to Stockfish at the nearest supported Elo.
     """
     board = chess.Board(fen=fen)
-    last_to_square: chess.Square | None = None
-    if last_move_uci:
-        try:
-            last_to_square = chess.Move.from_uci(last_move_uci).to_square
-        except (ValueError, chess.InvalidMoveError):
-            last_to_square = None
-    elo = clamp_elo(elo)
+    elo = clamp_elo(round_elo_to_bin(elo))
 
+    # Sub-Maia tier: Maia 1100 + degraders.
+    if elo < MAIA_ELO_MIN:
+        try:
+            return await _sub_maia_move(board, elo)
+        except (chess.engine.EngineError, FileNotFoundError, OSError) as e:
+            logging.warning(
+                f"Maia unavailable for sub-Maia Elo {elo}: {e}; "
+                "falling back to Stockfish UCI_Elo 1320"
+            )
+            return await _stockfish_fallback(board, 1320)
+
+    # Maia tier: single-node policy-net call at the matching bin.
+    if elo <= MAIA_ELO_MAX:
+        try:
+            return await _maia_move(board, elo)
+        except (chess.engine.EngineError, FileNotFoundError, OSError) as e:
+            logging.warning(
+                f"Maia engine unavailable at Elo {elo}: {e}; "
+                "falling back to Stockfish UCI_Elo 1320"
+            )
+            return await _stockfish_fallback(board, 1320)
+
+    # Native Stockfish tier.
+    return await _stockfish_fallback(board, elo)
+
+
+async def _stockfish_fallback(board: chess.Board, elo: int) -> chess.Move:
+    """Run Stockfish's UCI_Elo limiter at the given strength. Used both as
+    the 2000+ native tier and as the fallback when Maia is unavailable."""
     transport, engine = await chess.engine.popen_uci(_resolve_stockfish_path())
     try:
-        if elo >= STOCKFISH_NATIVE_ELO_MIN:
-            return await _native_elo_move(engine, board, elo)
-        return await _multipv_sampled_move(
-            engine, board, elo,
-            book_move=book_move, last_to_square=last_to_square,
-        )
+        # Stockfish's native floor is 1320; clamp up if asked for less.
+        effective = max(elo, 1320)
+        return await _native_elo_move(engine, board, effective)
     finally:
         try:
             await engine.quit()

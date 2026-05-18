@@ -119,6 +119,14 @@ def _translate(sql: str) -> str:
         out,
         flags=re.IGNORECASE,
     )
+    # `ALTER TABLE foo DROP COLUMN IF EXISTS bar` — SQLite 3.35+ supports
+    # DROP COLUMN but not the IF EXISTS clause. Strip just that token.
+    out = re.sub(
+        r"\b(ALTER\s+TABLE\s+\w+\s+DROP\s+COLUMN)\s+IF\s+EXISTS\b",
+        r"\1",
+        out,
+        flags=re.IGNORECASE,
+    )
     # Inline `INDEX idx_x (col)` inside CREATE TABLE — SQLite doesn't support this
     # form. Strip the line; tests don't rely on these indexes for correctness.
     out = re.sub(r",\s*INDEX\s+\w+\s*\([^)]*\)", "", out, flags=re.IGNORECASE)

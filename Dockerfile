@@ -6,12 +6,23 @@ RUN pip install --no-cache-dir --require-hashes --prefix=/install -r requirement
 FROM python:3.10-slim@sha256:cdbf8193cee2e31639ea8ea85ffdd8fa5cce98ee9abfde96ea5f329490048831
 WORKDIR /app
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libcairo2 stockfish \
+ && apt-get install -y --no-install-recommends libcairo2 stockfish ca-certificates curl xz-utils \
+ && (apt-get install -y --no-install-recommends lc0 \
+     || ( \
+       curl -fsSL -o /tmp/lc0.tar.gz \
+         "https://github.com/LeelaChessZero/lc0/releases/download/v0.31.2/lc0-v0.31.2-linux-cpu-eigen.tar.gz" \
+       && tar -xzf /tmp/lc0.tar.gz -C /tmp \
+       && install -m0755 /tmp/lc0 /usr/local/bin/lc0 \
+       && rm -rf /tmp/lc0 /tmp/lc0.tar.gz \
+     )) \
+ && apt-get purge -y curl xz-utils \
+ && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /install /usr/local
 COPY src/ ./src/
 COPY assets/ ./assets/
 COPY migrations/ ./migrations/
+COPY maia_weights/ ./maia_weights/
 COPY main.py ./
 RUN useradd --system --uid 1001 --no-create-home bot
 ENV HOME=/tmp \

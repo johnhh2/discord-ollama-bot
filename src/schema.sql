@@ -681,3 +681,11 @@ ALTER TABLE chess_games ADD COLUMN IF NOT EXISTS opening VARCHAR(64) NULL;
 -- the title/last-move/captures text.
 
 ALTER TABLE chess_games ADD COLUMN IF NOT EXISTS embed_msg_id BIGINT UNSIGNED NULL;
+
+-- ── 0026_drop_chess_opening.sql ──
+-- 0026: drop chess_games.opening column. The opening-book system was
+-- removed when the chess bot switched to Maia (which plays human-shaped
+-- openings naturally — no scripted book needed). Migration 0024 added
+-- this column; this migration drops it.
+
+ALTER TABLE chess_games DROP COLUMN IF EXISTS opening;

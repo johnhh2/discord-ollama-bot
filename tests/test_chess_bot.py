@@ -1,10 +1,14 @@
-"""Stockfish bot-opponent tests: chess_bot helpers + cog integration.
+"""Chess engine tests: pure helpers + engine-dispatch + cog integration.
 
-Engine-spawning tests (pick_move) skip cleanly when the stockfish binary
-isn't on PATH. CI's Docker image installs it via apt; local dev usually
-won't have it. The cog tests stub chess_bot.pick_move so they exercise the
-full move pipeline (mutate → save → render → bump → reply) without a real
-engine subprocess.
+The chess_bot module has three engine tiers:
+  - Sub-Maia (100-1000): Maia 1100 + random/blunder degraders.
+  - Maia (1100-1900): pure Maia at the matching weights bin.
+  - Native (2000+): Stockfish UCI_Elo.
+
+Engine-spawning tests skip cleanly when the relevant binary isn't on PATH.
+Dispatch tests mock chess.engine.popen_uci to avoid real subprocess spawns.
+Cog tests stub chess_bot.pick_move so they exercise the full move pipeline
+(mutate -> save -> render -> bump -> reply) without any engine.
 """
 import asyncio
 import shutil
@@ -25,9 +29,9 @@ _aio = pytest.mark.asyncio
 _STOCKFISH_AVAILABLE = shutil.which("stockfish") is not None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Pure helpers — no engine spawn
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# Pure helpers
+# -----------------------------------------------------------------------------
 
 
 class TestClampElo:
@@ -40,7 +44,7 @@ class TestClampElo:
         assert chess_bot.clamp_elo(chess_bot.ELO_MAX + 1) == chess_bot.ELO_MAX
 
     def test_inside_range(self):
-        for elo in (100, 500, 1320, 2000, 3190):
+        for elo in (100, 500, 1100, 2000, 3100):
             assert chess_bot.clamp_elo(elo) == elo
 
     def test_boundary_values(self):
@@ -51,7 +55,6 @@ class TestClampElo:
 class TestResolveStockfishPath:
     def test_env_var_wins(self, monkeypatch):
         monkeypatch.setenv("STOCKFISH_PATH", "/custom/path/sf")
-        # Even if shutil.which finds something, env wins.
         monkeypatch.setattr(chess_bot.shutil, "which", lambda _: "/usr/bin/stockfish")
         assert chess_bot._resolve_stockfish_path() == "/custom/path/sf"
 
@@ -61,376 +64,205 @@ class TestResolveStockfishPath:
         assert chess_bot._resolve_stockfish_path() == "/usr/local/bin/stockfish"
 
     def test_debian_fallback_when_neither_set(self, monkeypatch):
-        """Bug we shipped on the first try: relying on PATH alone fails in
-        Docker because /usr/games is not on the default non-login PATH."""
         monkeypatch.delenv("STOCKFISH_PATH", raising=False)
         monkeypatch.setattr(chess_bot.shutil, "which", lambda _: None)
         assert chess_bot._resolve_stockfish_path() == "/usr/games/stockfish"
 
     def test_empty_env_treated_as_unset(self, monkeypatch):
-        """STOCKFISH_PATH='' should not be treated as an explicit override."""
         monkeypatch.setenv("STOCKFISH_PATH", "")
         monkeypatch.setattr(chess_bot.shutil, "which", lambda _: "/usr/bin/stockfish")
         assert chess_bot._resolve_stockfish_path() == "/usr/bin/stockfish"
 
 
-class TestMultipvDepthForElo:
-    """Depth RAMPS UP with Elo but is intentionally FROZEN at depth=2
-    across Elo 400-500 (strength gradient in that band comes from random
-    blend taper + filter, not from deeper search). See _DEPTH_ANCHORS."""
+class TestRoundEloToBin:
+    def test_exact_multiples_unchanged(self):
+        for elo in (100, 400, 1100, 1500, 2000, 3100):
+            assert chess_bot.round_elo_to_bin(elo) == elo
+
+    def test_rounds_up_at_50(self):
+        assert chess_bot.round_elo_to_bin(1150) == 1200
+        assert chess_bot.round_elo_to_bin(1149) == 1100
+        assert chess_bot.round_elo_to_bin(1151) == 1200
+
+    def test_rounds_to_nearest(self):
+        assert chess_bot.round_elo_to_bin(1199) == 1200
+        assert chess_bot.round_elo_to_bin(1101) == 1100
+        assert chess_bot.round_elo_to_bin(101) == 100
+        assert chess_bot.round_elo_to_bin(149) == 100
+        assert chess_bot.round_elo_to_bin(151) == 200
+
+
+class TestMaiaWeightsPath:
+    """All 9 Maia weight files (1100-1900 in 100-Elo steps) are vendored
+    under maia_weights/ at the repo root."""
+
+    def test_all_maia_bins_exist_on_disk(self):
+        for elo in range(chess_bot.MAIA_ELO_MIN, chess_bot.MAIA_ELO_MAX + 100, 100):
+            p = chess_bot.maia_weights_path(elo)
+            assert p.exists(), f"Maia weights missing at Elo {elo}: {p}"
+
+    def test_path_format(self):
+        p = chess_bot.maia_weights_path(1100)
+        assert p.name == "maia-1100.pb.gz"
+
+
+# -----------------------------------------------------------------------------
+# Sub-Maia Elo curves (random blend + extra blunder)
+# -----------------------------------------------------------------------------
+
+
+class TestMaiaPoolSizeForElo:
+    """Maia pool size: how many of Maia 1100's top-N policy moves the sub-
+    Maia tier samples from. Wider pool at low Elo = more 'unlikely but
+    human' moves come through; small pool at the top of the range still
+    samples but mostly returns Maia 1100's top policy moves."""
 
     def test_anchor_points(self):
-        # Each tuple matches an anchor in _DEPTH_ANCHORS exactly.
-        anchors = [(100, 1), (300, 2), (400, 2), (500, 2), (600, 4), (700, 4),
-                   (900, 7), (1000, 8), (1100, 10), (1200, 12), (1300, 14)]
+        anchors = [(100, 11), (400, 8), (700, 5), (800, 4),
+                   (900, 3), (1000, 2)]
         for elo, expected in anchors:
-            assert chess_bot.multipv_depth_for_elo(elo) == expected, (
-                f"depth at Elo {elo}: expected {expected}, got "
-                f"{chess_bot.multipv_depth_for_elo(elo)}"
-            )
-
-    def test_frozen_plateau_400_to_500(self):
-        """All Elo in [400, 500] use the same depth as Elo 400."""
-        baseline = chess_bot.multipv_depth_for_elo(400)
-        for elo in (400, 425, 450, 475, 500):
-            assert chess_bot.multipv_depth_for_elo(elo) == baseline, (
-                f"depth at Elo {elo} = {chess_bot.multipv_depth_for_elo(elo)}; "
-                f"expected to match Elo 400 baseline of {baseline}"
-            )
-
-    def test_below_floor_clamps(self):
-        assert chess_bot.multipv_depth_for_elo(50) == 1
-        assert chess_bot.multipv_depth_for_elo(0) == 1
-
-    def test_above_top_clamps(self):
-        # Native path takes over above 1320, but the helper should still
-        # return a sensible value.
-        assert chess_bot.multipv_depth_for_elo(2000) == 14
-        assert chess_bot.multipv_depth_for_elo(9999) == 14
-        # Anchor is at Elo 1300, so 1319 (just below the native boundary)
-        # also clamps to the top depth.
-        assert chess_bot.multipv_depth_for_elo(1319) == 14
-
-    def test_monotonic_non_decreasing(self):
-        prev = 0
-        for elo in range(100, 1320, 25):
-            d = chess_bot.multipv_depth_for_elo(elo)
-            assert d >= prev, f"depth not monotonic at elo={elo}: {d} < {prev}"
-            prev = d
-
-
-class TestMultipvPoolSizeForElo:
-    """Pool size shrinks with Elo from 12 (top-12, noisy) down to 3 by Elo
-    1319. Frozen at 10 across Elo 400-700 (same reason as the depth plateau).
-    MULTIPV_COUNT must stay ≥ the largest pool anchor."""
-
-    def test_anchor_points(self):
-        anchors = [(100, 12), (400, 10), (700, 10), (800, 8), (900, 7),
-                   (1000, 5), (1100, 4), (1200, 3), (1300, 3)]
-        for elo, expected in anchors:
-            assert chess_bot.multipv_pool_size_for_elo(elo) == expected, (
+            assert chess_bot.maia_pool_size_for_elo(elo) == expected, (
                 f"pool size at Elo {elo}: expected {expected}, got "
-                f"{chess_bot.multipv_pool_size_for_elo(elo)}"
+                f"{chess_bot.maia_pool_size_for_elo(elo)}"
             )
 
-    def test_frozen_plateau_400_to_700(self):
-        """All Elo in [400, 700] use the same pool size as Elo 400."""
-        baseline = chess_bot.multipv_pool_size_for_elo(400)
-        for elo in (400, 450, 500, 600, 650, 700):
-            assert chess_bot.multipv_pool_size_for_elo(elo) == baseline, (
-                f"pool at Elo {elo} = {chess_bot.multipv_pool_size_for_elo(elo)}; "
-                f"expected to match Elo 400 baseline of {baseline}"
-            )
-
-    def test_below_floor_clamps_to_twelve(self):
-        assert chess_bot.multipv_pool_size_for_elo(50) == 12
-        assert chess_bot.multipv_pool_size_for_elo(-100) == 12
-
-    def test_above_top_clamps_to_three(self):
-        assert chess_bot.multipv_pool_size_for_elo(2000) == 3
-        assert chess_bot.multipv_pool_size_for_elo(9999) == 3
-
-    def test_multipv_count_can_satisfy_largest_pool(self):
-        """The engine query uses MULTIPV_COUNT; if any pool anchor exceeds
-        that, we'd silently truncate. Guard against accidental misconfig."""
-        largest = max(p for _, p in chess_bot._POOL_SIZE_ANCHORS)
-        assert chess_bot.MULTIPV_COUNT >= largest, (
-            f"MULTIPV_COUNT={chess_bot.MULTIPV_COUNT} < largest pool anchor {largest}"
-        )
+    def test_clamps_below_and_above(self):
+        assert chess_bot.maia_pool_size_for_elo(50) == 11
+        assert chess_bot.maia_pool_size_for_elo(1100) == 2
+        assert chess_bot.maia_pool_size_for_elo(2000) == 2
 
     def test_monotonic_non_increasing(self):
         prev = chess_bot.MULTIPV_COUNT + 1
-        for elo in range(100, 1320, 25):
-            n = chess_bot.multipv_pool_size_for_elo(elo)
+        for elo in range(100, 1001, 50):
+            n = chess_bot.maia_pool_size_for_elo(elo)
             assert n <= prev, f"pool size not monotonic at elo={elo}: {n} > {prev}"
             prev = n
 
-    def test_within_bounds(self):
-        for elo in range(100, 1320, 25):
-            n = chess_bot.multipv_pool_size_for_elo(elo)
-            assert 1 <= n <= chess_bot.MULTIPV_COUNT
+    def test_multipv_count_covers_largest_pool(self):
+        largest = max(p for _, p in chess_bot._MAIA_POOL_SIZE_ANCHORS)
+        assert chess_bot.MULTIPV_COUNT >= largest, (
+            f"MULTIPV_COUNT={chess_bot.MULTIPV_COUNT} < largest pool {largest}"
+        )
 
 
-class TestSafetyFilterProbabilityForElo:
-    """P(filter) is permissive at the bottom (0.20 at Elo 100) and tightens
-    to 0.975 by Elo 1000, capped there through 1319."""
-
-    def test_anchor_points(self):
-        anchors = [(100, 0.20), (400, 0.50), (700, 0.80),
-                   (1000, 0.975), (1100, 0.975), (1200, 0.975), (1300, 0.975)]
-        for elo, expected in anchors:
-            actual = chess_bot.safety_filter_probability_for_elo(elo)
-            assert abs(actual - expected) < 0.001, (
-                f"P(filter) at Elo {elo}: expected ~{expected}, got {actual}"
-            )
-
-    def test_cap_above_1000(self):
-        # Critical: must not exceed 0.975 above Elo 1000.
-        for elo in (1000, 1050, 1100, 1200, 1319):
-            p = chess_bot.safety_filter_probability_for_elo(elo)
-            assert p == 0.975, f"P(filter) at Elo {elo} = {p}, expected exactly 0.975"
-
-    def test_below_floor_clamps(self):
-        assert chess_bot.safety_filter_probability_for_elo(50) == 0.20
-        assert chess_bot.safety_filter_probability_for_elo(0) == 0.20
-
-    def test_monotonic_non_decreasing(self):
-        prev = 0.0
-        for elo in range(100, 1320, 25):
-            p = chess_bot.safety_filter_probability_for_elo(elo)
-            assert p >= prev, f"P(filter) not monotonic at elo={elo}: {p} < {prev}"
-            prev = p
-
-    def test_within_bounds(self):
-        for elo in range(100, 1320, 25):
-            p = chess_bot.safety_filter_probability_for_elo(elo)
-            assert 0.0 <= p <= 1.0
-
-
-class TestTakeHangingProbabilityForElo:
-    """P(take-hanging) — probability the bot takes a hanging opponent piece
-    when one is present in the top-N candidate pool. High floor (0.75 at
-    Elo 100) since spotting free material is easy; reaches 0.99 by 1000."""
+class TestExtraBlunderProbabilityForElo:
+    """Extra-blunder probability: forced SEE-losing moves layered on top of
+    Maia's sampled move. Only nonzero below Elo 500 — above that the wider
+    sampling pool already produces enough natural mistakes."""
 
     def test_anchor_points(self):
-        anchors = [(100, 0.75), (400, 0.85), (600, 0.90),
-                   (800, 0.95), (1000, 0.99), (1300, 0.99)]
+        anchors = [(100, 0.10), (400, 0.01), (500, 0.0), (1000, 0.0)]
         for elo, expected in anchors:
-            actual = chess_bot.take_hanging_probability_for_elo(elo)
+            actual = chess_bot.extra_blunder_probability_for_elo(elo)
             assert abs(actual - expected) < 0.001, (
-                f"P(take-hanging) at Elo {elo}: expected ~{expected}, got {actual}"
+                f"P(extra blunder) at Elo {elo}: expected ~{expected}, got {actual}"
             )
 
-    def test_below_floor_clamps(self):
-        assert chess_bot.take_hanging_probability_for_elo(50) == 0.75
-        assert chess_bot.take_hanging_probability_for_elo(0) == 0.75
+    def test_zero_at_and_above_500(self):
+        for elo in (500, 600, 700, 800, 1000, 1100, 2000):
+            assert chess_bot.extra_blunder_probability_for_elo(elo) == 0.0
 
-    def test_above_top_clamps(self):
-        # Above 1300 the helper clamps at the cap; native tier takes over.
-        assert chess_bot.take_hanging_probability_for_elo(2000) == 0.99
-        assert chess_bot.take_hanging_probability_for_elo(9999) == 0.99
-
-    def test_monotonic_non_decreasing(self):
-        prev = 0.0
-        for elo in range(100, 1320, 25):
-            p = chess_bot.take_hanging_probability_for_elo(elo)
-            assert p >= prev, f"P(take-hanging) not monotonic at elo={elo}: {p} < {prev}"
-            prev = p
-
-    def test_within_bounds(self):
-        for elo in range(100, 1320, 25):
-            p = chess_bot.take_hanging_probability_for_elo(elo)
-            assert 0.0 <= p <= 1.0
-
-
-class TestRandomBlendProbabilityForElo:
-    """Random-move replacement probability — high at the very bottom, tapers
-    through 400-600 with diminishing rates, fully off by Elo 700."""
-
-    def test_anchor_points(self):
-        anchors = [(100, 0.80), (200, 0.50), (300, 0.30),
-                   (400, 0.15), (500, 0.08), (600, 0.03), (700, 0.0)]
-        for elo, expected in anchors:
-            actual = chess_bot.random_blend_probability_for_elo(elo)
-            assert abs(actual - expected) < 0.001, (
-                f"P(random) at Elo {elo}: expected ~{expected}, got {actual}"
-            )
-
-    def test_zero_at_and_above_700(self):
-        for elo in (700, 800, 1000, 1319):
-            assert chess_bot.random_blend_probability_for_elo(elo) == 0.0
-
-    def test_nonzero_through_600(self):
-        # Critical: 400, 500, 600 must keep some randomness so the mid-low
-        # range still feels human (occasional weird moves).
-        for elo in (400, 500, 600):
-            p = chess_bot.random_blend_probability_for_elo(elo)
-            assert 0.0 < p < 0.2, f"P(random) at Elo {elo} = {p}; expected small but nonzero"
-
-    def test_below_floor_clamps(self):
-        assert chess_bot.random_blend_probability_for_elo(50) == 0.80
-        assert chess_bot.random_blend_probability_for_elo(0) == 0.80
+    def test_clamps_below_floor(self):
+        assert chess_bot.extra_blunder_probability_for_elo(50) == 0.10
+        assert chess_bot.extra_blunder_probability_for_elo(0) == 0.10
 
     def test_monotonic_non_increasing(self):
-        prev = 2.0
-        for elo in range(100, 800, 10):
-            p = chess_bot.random_blend_probability_for_elo(elo)
-            assert p <= prev, f"P(random) not monotonic at elo={elo}: {p} > {prev}"
+        prev = 1.0
+        for elo in range(100, 1001, 50):
+            p = chess_bot.extra_blunder_probability_for_elo(elo)
+            assert p <= prev, f"P(extra blunder) not monotonic at elo={elo}"
             prev = p
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Static Exchange Evaluation
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 
 class TestSEE:
     def test_undefended_pawn_under_attack_hangs(self):
-        # White pawn on e5, black knight on f3 attacking. No defender.
         b = chess.Board("4k3/8/8/4P3/8/5n2/8/4K3 b - - 0 1")
-        # Black to capture e5 with the knight: knight takes pawn (1).
-        # No white attacker to recapture. SEE for black = +1.
         assert chess_bot.see_capture(b, chess.E5, chess.BLACK) == 1
 
     def test_defended_pawn_attacked_by_equal_value_breaks_even(self):
-        # White pawn on e5 defended by white pawn on d4; black pawn on f6.
         b = chess.Board("4k3/8/5p2/4P3/3P4/8/8/4K3 b - - 0 1")
-        # Black pxe5: gains 1, then white dxe5 recapture: black loses pawn.
-        # Net for black = 0.
         assert chess_bot.see_capture(b, chess.E5, chess.BLACK) == 0
 
     def test_queen_attacks_pawn_defended_by_pawn_no_hang(self):
-        # White pawn on e4 defended by white pawn on d3; black queen on e8.
         b = chess.Board("4k3/8/8/8/4P3/3P4/8/3QK3 b - - 0 1")
-        # Black Qxe4 (gain 1), white dxe4 (loss of queen 9). Net = 1 - 9 = -8
-        # → black declines the capture. SEE = 0 (or whatever the gains[]
-        # minimax produces — we just need it ≤ 0 so e4 is NOT hanging).
         result = chess_bot.see_capture(b, chess.E4, chess.BLACK)
-        assert result <= 0, f"expected ≤0 (queen would lose material), got {result}"
-        # And from the perspective of "is white's e4 pawn hanging?": no.
-        assert chess.E4 not in chess_bot.hanging_squares(b, chess.WHITE)
+        assert result <= 0
 
-    def test_knight_defended_only_by_queen_attacked_by_rook_hangs(self):
-        # Black knight on e5 defended only by black queen on e8;
-        # white rook on e1 attacks down the e-file.
-        b = chess.Board("4q3/8/8/4n3/8/8/8/4R2K w - - 0 1")
-        # White Rxe5 (gain 3 knight), black Qxe5 (gain 5 rook), net for white
-        # = 3 - 5 = -2. Hmm — that's not actually a win for white. Adjust:
-        # we need a scenario where white wins material. Place a bishop to
-        # also attack e5 from white's side… actually the user's example was
-        # "rook attacks knight defended only by queen" = the knight DOES
-        # hang because after RxN, QxR, white has won N(3) and lost R(5) — net
-        # -2, so white shouldn't initiate. The textbook "knight defended only
-        # by queen" hang requires the attacker to be cheaper than rook OR
-        # there to be another attacker. Use: knight defended only by queen,
-        # attacked by a pawn — clearly hangs.
-        b = chess.Board("4q3/8/3P4/4n3/8/8/8/4K2R w - - 0 1")
-        # White d6→e7? No — pawn captures diagonally forward. Use d5xe6? No.
-        # Simpler: pawn on f4 attacks knight on e5 via f4xe5.
-        b = chess.Board("4q3/8/8/4n3/5P2/8/8/4K3 w - - 0 1")
-        # White fxe5 (gain knight 3), black Qxe5 (gain pawn 1). Net for
-        # white = 3 - 1 = +2. Knight hangs.
-        assert chess_bot.see_capture(b, chess.E5, chess.WHITE) == 2
-        assert chess.E5 in chess_bot.hanging_squares(b, chess.BLACK)
+    def test_no_attackers_returns_zero(self):
+        b = chess.Board()
+        assert chess_bot.see_capture(b, chess.E2, chess.BLACK) == 0
 
-    def test_xray_attacker_counted_after_swap(self):
-        # White rook on a1 behind white queen on a2; black pawn on a7.
-        # Sequence on a7: White Qxa7 (gain pawn 1), and there's no black
-        # defender — pawn just hangs. But if we add a defender, x-ray
-        # matters. Setup: black rook on a8 defends a7. White queen on a2,
-        # white rook on a1 (x-ray attacker behind the queen).
-        b = chess.Board("r3k3/p7/8/8/8/8/Q7/R3K3 w - - 0 1")
-        # White Qxa7 (+1 pawn), black Rxa2 (-9 queen), white Rxa2 (+9? no,
-        # white rook captures black rook on a2 → +5). Wait, we want to
-        # check capture ON a7. Sequence: Qxa7 gain 1, Rxa7 (black) lose 9
-        # (queen), Rxa7 (white, the x-ray rook now reaching a7 after queen
-        # is gone) gain 5 (rook). Net for white = 1 - 9 + 5 = -3. The x-ray
-        # MUST be counted or the result would be different. Verify:
-        result = chess_bot.see_capture(b, chess.A7, chess.WHITE)
-        # The exact result depends on the SEE minimax — what matters is that
-        # we get a value that REFLECTS the x-ray rook participating. Without
-        # x-ray: 1 - 9 = -8 (white refuses). With x-ray: minimax says white
-        # refuses (still negative after deepest continuation). Either way,
-        # the right answer is ≤ 0 (white doesn't initiate); the test value
-        # of the x-ray showing up is in the swap depth.
-        # More direct check: re-query the work board's attackers() picks up
-        # the rook after the queen moves. We test that path via the longer
-        # sequence below.
-        assert result <= 0  # white declines the capture
+    def test_empty_square_returns_zero(self):
+        b = chess.Board()
+        assert chess_bot.see_capture(b, chess.E4, chess.BLACK) == 0
 
-    @pytest.mark.xfail(reason="SEE does not detect pinned defenders — documented limitation")
+    @pytest.mark.xfail(reason="SEE does not detect pinned defenders -- known limitation")
     def test_pinned_defender_does_not_actually_defend(self):
-        # Documented edge case: a defender absolutely pinned to its king
-        # cannot legally recapture, but SEE counts it as a defender anyway.
-        # Acceptable for sub-1000 Elo play. This xfail marker is documentation.
         assert False  # noqa: B011
 
 
-class TestHangingSquares:
-    def test_no_hangs_in_starting_position(self):
-        b = chess.Board()
-        assert chess_bot.hanging_squares(b, chess.WHITE) == set()
-        assert chess_bot.hanging_squares(b, chess.BLACK) == set()
-
-    def test_lone_attacked_piece_hangs(self):
-        # White knight on f3, black queen on f6 attacking it. No defender.
-        b = chess.Board("4k3/8/5q2/8/8/5N2/8/4K3 b - - 0 1")
-        # Knight is hanging for white (black queen takes for free… well, it
-        # loses the queen if recaptured, but there's no white recapturer).
-        # Wait — black queen takes knight for +3, no white recapture: +3.
-        # SEE > 0 for black → white knight hangs.
-        assert chess.F3 in chess_bot.hanging_squares(b, chess.WHITE)
-
-    def test_equal_trade_does_not_hang(self):
-        # White knight on f3 attacked by black knight on e5, defended by
-        # white pawn on g2. Black NxN (gain 3), white pxN (gain 3). Net 0 for
-        # black — they wouldn't initiate. Not hanging.
-        b = chess.Board("4k3/8/8/4n3/8/5N2/6P1/4K3 b - - 0 1")
-        assert chess.F3 not in chess_bot.hanging_squares(b, chess.WHITE)
+# -----------------------------------------------------------------------------
+# _find_see_losing_move
+# -----------------------------------------------------------------------------
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Engine spawn — actually run stockfish (CI only)
-# ─────────────────────────────────────────────────────────────────────────────
+class TestFindSeeLosingMove:
+    """The extra-blunder injector picks a move that drops material per SEE
+    in the resulting position."""
+
+    def test_returns_none_when_no_losing_move(self):
+        b = chess.Board("4k3/8/8/8/8/8/8/4K3 w - - 0 1")
+        assert chess_bot._find_see_losing_move(b) is None
+
+    def test_finds_a_hanging_drop(self, monkeypatch):
+        b = chess.Board("3rk3/8/8/8/8/8/8/3QK3 w - - 0 1")
+        monkeypatch.setattr(chess_bot.random, "choice", lambda moves: moves[0])
+        result = chess_bot._find_see_losing_move(b)
+        assert result is not None
+        after = b.copy(stack=False)
+        after.push(result)
+        assert chess_bot.see_capture(after, result.to_square, chess.BLACK) > 0
+
+    def test_excludes_specified_move(self, monkeypatch):
+        b = chess.Board("3rk3/8/8/8/8/8/8/3QK3 w - - 0 1")
+        monkeypatch.setattr(chess_bot.random, "choice", lambda moves: moves[0])
+        first = chess_bot._find_see_losing_move(b)
+        assert first is not None
+        for _ in range(10):
+            other = chess_bot._find_see_losing_move(b, exclude=first)
+            if other is None:
+                break
+            assert other != first
 
 
-@pytest.mark.skipif(not _STOCKFISH_AVAILABLE, reason="stockfish binary not on PATH")
-@_aio
-async def test_pick_move_returns_legal_move():
-    """pick_move at native Elo returns a legal first move from the starting position."""
-    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 2000)
-    board = chess.Board()
-    assert move in board.legal_moves
+# -----------------------------------------------------------------------------
+# Engine dispatch -- mock chess.engine.popen_uci to avoid subprocess spawns
+# -----------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not _STOCKFISH_AVAILABLE, reason="stockfish binary not on PATH")
-@_aio
-async def test_pick_move_sub_native_elo_returns_legal_move():
-    """pick_move at sub-native Elo (Skill Level mapping) still returns legal."""
-    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 500)
-    board = chess.Board()
-    assert move in board.legal_moves
+def _install_fake_engine(monkeypatch, *, play_move: str = "e2e4",
+                         analyse_pvs: list[str] | None = None,
+                         maia_available: bool = False):
+    """Replace chess.engine.popen_uci with a fake that records play(),
+    analyse(), and configure() calls. Returns the calls-recording dict.
 
+    `analyse_pvs` is the list of UCI strings the fake's analyse() returns
+    (ranked most-likely-first). Used by sub-Maia tests that exercise the
+    top-N policy sampling. Default is a 10-move list of legal opening moves.
 
-# ─────────────────────────────────────────────────────────────────────────────
-# pick_move config branching (no real engine — mocked subprocess)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _install_fake_engine(monkeypatch, *, analyse_pvs: list[str] | None = None,
-                         play_move: str = "e2e4"):
-    """Replace chess.engine.popen_uci with a fake that records configure() calls,
-    serves analyse() with the given list of UCI move strings (ranked best→worst),
-    and serves play() with a single fixed move. Returns the calls-recording dict.
-
-    Default analyse_pvs makes a 10-move list of distinct legal opening moves so
-    the MultiPV picker has something to choose from."""
+    By default `maia_available=False`: _resolve_lc0_path() returns None so
+    any Maia-tier Elo (1100-1900) raises EngineError and pick_move falls
+    back to Stockfish. Set maia_available=True to test Maia routing."""
     if analyse_pvs is None:
-        # 10 legal first moves for white, in some order. The MultiPV picker
-        # treats the first as best, last as worst.
         analyse_pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3",
                        "d2d3", "b1c3", "a2a3", "h2h3", "g2g3"]
-    calls: dict = {"configure": [], "quit": 0, "analyse_limit": [], "play_limit": []}
+    calls: dict = {"configure": [], "quit": 0, "play_limit": [],
+                   "analyse_limit": [], "popen_args": []}
 
     class _FakeEngine:
         async def configure(self, options):
@@ -442,7 +274,8 @@ def _install_fake_engine(monkeypatch, *, analyse_pvs: list[str] | None = None,
 
         async def analyse(self, board, limit, multipv=None, **kwargs):
             calls["analyse_limit"].append((limit, multipv))
-            return [{"pv": [chess.Move.from_uci(uci)]} for uci in analyse_pvs[:multipv or len(analyse_pvs)]]
+            n = multipv or len(analyse_pvs)
+            return [{"pv": [chess.Move.from_uci(uci)]} for uci in analyse_pvs[:n]]
 
         async def quit(self):
             calls["quit"] += 1
@@ -451,17 +284,23 @@ def _install_fake_engine(monkeypatch, *, analyse_pvs: list[str] | None = None,
         def close(self):
             pass
 
-    async def _fake_popen(_path):
+    async def _fake_popen(path_or_args):
+        calls["popen_args"].append(path_or_args)
         return _FakeTransport(), _FakeEngine()
 
     monkeypatch.setattr(chess_bot.chess.engine, "popen_uci", _fake_popen)
+    if maia_available:
+        monkeypatch.setattr(chess_bot, "_resolve_lc0_path", lambda: "/usr/bin/lc0")
+    else:
+        monkeypatch.setattr(chess_bot, "_resolve_lc0_path", lambda: None)
     return calls
+
+
+# ---- Native tier (Elo 2000+) ----
 
 
 @_aio
 async def test_pick_move_native_elo_uses_uci_limit_strength(monkeypatch):
-    """Elo >= STOCKFISH_NATIVE_ELO_MIN: native path configures
-    UCI_LimitStrength + UCI_Elo and calls engine.play (not analyse)."""
     calls = _install_fake_engine(monkeypatch)
     move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 2000)
 
@@ -469,382 +308,198 @@ async def test_pick_move_native_elo_uses_uci_limit_strength(monkeypatch):
     opts = calls["configure"][0]
     assert opts.get("UCI_LimitStrength") is True
     assert opts.get("UCI_Elo") == 2000
-    # Native path uses play(), not analyse().
     assert len(calls["play_limit"]) == 1
-    assert calls["analyse_limit"] == []
-    assert move == chess.Move.from_uci("e2e4")
-
-
-@_aio
-async def test_pick_move_multipv_tier_skips_configure(monkeypatch):
-    """Sub-native tier (100..1319): no UCI_Elo configure; just analyse()
-    with multipv=MULTIPV_COUNT and Elo-scaled depth."""
-    calls = _install_fake_engine(monkeypatch)
-    await chess_bot.pick_move(chess_engine.STARTING_FEN, 700)
-
-    assert calls["configure"] == []
-    assert len(calls["analyse_limit"]) == 1
-    limit, multipv = calls["analyse_limit"][0]
-    assert multipv == chess_bot.MULTIPV_COUNT
-    expected_depth = chess_bot.multipv_depth_for_elo(700)
-    assert limit.depth == expected_depth
-
-
-@_aio
-async def test_pick_move_depth_ramps_up_with_elo(monkeypatch):
-    """Depth now RAMPS UP with Elo. Pin the two extremes."""
-    calls_low = _install_fake_engine(monkeypatch)
-    await chess_bot.pick_move(chess_engine.STARTING_FEN, 100)
-    limit_low, _ = calls_low["analyse_limit"][0]
-    assert limit_low.depth == chess_bot.multipv_depth_for_elo(100)  # == 1
-
-    calls_high = _install_fake_engine(monkeypatch)
-    await chess_bot.pick_move(chess_engine.STARTING_FEN, 1319)
-    limit_high, _ = calls_high["analyse_limit"][0]
-    assert limit_high.depth == chess_bot.multipv_depth_for_elo(1319)  # == 14
-    # Sanity check the inversion fix: high Elo has DEEPER search now.
-    assert limit_high.depth > limit_low.depth
-
-
-@_aio
-async def test_pick_move_samples_from_top_n_pool(monkeypatch):
-    """At Elo 1000 (pool=5), pick_move samples from the top-5 of the analysed
-    PVs. Force the safety filter OFF (random() > P(filter)) so we observe pure
-    pool sampling. Pin random.choice to a sentinel that returns the last item
-    to prove sampling sees the top-5, not just rank-1."""
-    pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3",
-           "d2d3", "b1c3", "a2a3", "h2h3", "g2g3"]
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    # P(filter) at Elo 1000 = 0.975; random()=0.999 skips filter.
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[-1])
-
-    expected_pool = chess_bot.multipv_pool_size_for_elo(1000)
-    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 1000)
-    # "Last" candidate is pvs[expected_pool - 1].
-    assert move == chess.Move.from_uci(pvs[expected_pool - 1])
-
-
-@_aio
-async def test_pick_move_pool_at_high_elo_samples_small_top_n(monkeypatch):
-    """At the upper end of the sub-native tier the pool is small (3 by
-    Elo 1200) — sampling stays within the top-3 PVs."""
-    pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3"]
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)  # skip filter
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[-1])
-    expected_pool = chess_bot.multipv_pool_size_for_elo(1200)
-    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 1200)
-    assert move == chess.Move.from_uci(pvs[expected_pool - 1])
-
-
-@_aio
-async def test_pick_move_just_below_native_samples_small_pool(monkeypatch):
-    """At Elo 1319 the pool is small (3); sampling stays within rank-1..3."""
-    pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3"]
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)  # skip filter
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 1319)
-    # First of the top-pool candidates is pvs[0].
-    assert move == chess.Move.from_uci(pvs[0])
-
-
-@_aio
-async def test_pick_move_handles_short_pv_list(monkeypatch):
-    """When fewer PVs come back than pool_size, sampling uses what's available."""
-    pvs = ["e2e4", "d2d4"]  # only 2 variations
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)  # skip filter
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[-1])
-    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 100)
-    # Elo 100 pool would be 12, clamped to len(pvs)=2; choice picks last.
-    assert move == chess.Move.from_uci(pvs[-1])
-
-
-@_aio
-async def test_pick_move_safety_filter_rejects_hanging_move(monkeypatch):
-    """When the filter fires and rank-1 hangs material, pick_move returns a
-    safer candidate from later in the pool."""
-    # Position: white to move. Rank-1 (Qb1-h7) leaves the queen attacked by
-    # the black king on h8. Use a simpler setup: white queen plays to a square
-    # where it hangs vs. a square where it doesn't.
-    # White queen on d1, black knight on c3 attacks b1. Rank-1 = Qb1 (queen
-    # walks into attack, hangs). Rank-2 = Qd2 (safe square).
-    fen = "4k3/8/8/8/8/2n5/8/3QK3 w - - 0 1"
-    pvs = ["d1b1", "d1d2"]  # rank-1 hangs queen, rank-2 doesn't
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    # Force filter to fire (random()=0 < P(filter) for any Elo).
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
-    # If filter passes more than one candidate, random.choice picks; make it
-    # deterministic by returning the first survivor.
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-
-    move = await chess_bot.pick_move(fen, 700)
-    # Must reject the hanging rank-1; pick the safe rank-2.
-    assert move == chess.Move.from_uci("d1d2")
-
-
-@_aio
-async def test_pick_move_safety_filter_fallback_to_rank_1_when_all_hang(monkeypatch):
-    """When every candidate in the pool hangs material and the filter fires,
-    pick_move falls back to rank-1 (Stockfish's best move)."""
-    # White queen on d1, white king on e1, black knight on c3. Knight from c3
-    # attacks b1, a2, a4, b5, d5, e2, e4, d1. Pick candidates that all move
-    # the queen to knight-attacked squares with no white defender.
-    fen = "4k3/8/8/8/8/2n5/8/3QK3 w - - 0 1"
-    pvs = ["d1a4", "d1b5", "d1d5"]  # all attacked by knight, all undefended
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)  # filter on
-    monkeypatch.setattr(chess_bot.random, "choice",
-                        lambda _c: pytest.fail("fallback should bypass random.choice"))
-    move = await chess_bot.pick_move(fen, 700)
-    # All hang → fallback returns rank-1.
-    assert move == chess.Move.from_uci(pvs[0])
-
-
-@_aio
-async def test_pick_move_filter_skipped_when_dice_high(monkeypatch):
-    """At Elo 100 (P(filter)=0.875), if random()=0.99 the filter doesn't fire
-    and the unfiltered candidate pool is sampled (may include hanging moves)."""
-    fen = "4k3/8/8/8/8/2n5/8/3QK3 w - - 0 1"
-    pvs = ["d1b1", "d1d2"]  # rank-1 hangs, rank-2 doesn't
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    # 0.99 > 0.875, so filter skipped — unfiltered sampling.
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.99)
-    # Pin choice to the first candidate so we see the hanging move come through.
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-    move = await chess_bot.pick_move(fen, 100)
-    assert move == chess.Move.from_uci("d1b1")  # the hanging move
-
-
-@_aio
-async def test_pick_move_random_blend_replaces_stockfish_pick(monkeypatch):
-    """At Elo 100 (blend=0.80) with both dice rolling 0, the random-blend
-    branch returns a random legal move, NOT one of Stockfish's PVs."""
-    _install_fake_engine(monkeypatch)  # default top-10 e2e4 etc.
-    # random() returns 0 for both filter-dice and blend-dice rolls.
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
-    # random.choice gets called twice: once for the pool pick, once for the
-    # random legal-moves pool. We want the blend pick to win; return distinct
-    # sentinels per call so we can distinguish.
-    call_log = []
-    def _fake_choice(seq):
-        call_log.append(list(seq))
-        return seq[-1]
-    monkeypatch.setattr(chess_bot.random, "choice", _fake_choice)
-
-    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 100)
-    board = chess.Board()
-    legal = list(board.legal_moves)
-    # The LAST random.choice call should be the legal-moves list (the blend
-    # branch). With filter on at Elo 100, that list is filtered to safe moves.
-    # In the starting position no move hangs anything, so safe == legal.
-    assert call_log[-1] == legal or set(call_log[-1]).issubset(set(legal))
-    assert move == legal[-1]
-
-
-@_aio
-async def test_pick_move_random_blend_skipped_when_dice_high(monkeypatch):
-    """At Elo 100 with random()=0.99, blend doesn't fire (0.99 > 0.80).
-    Stockfish's pool pick wins through."""
-    pvs = ["e2e4", "d2d4"]
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.99)
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 100)
-    # 0.99 > 0.20 (filter) → skip filter. 0.99 > 0.80 (blend) → skip blend.
-    # Pool sampling returns first PV.
-    assert move == chess.Move.from_uci(pvs[0])
-
-
-@_aio
-async def test_pick_move_random_blend_zero_at_700_and_above(monkeypatch):
-    """At Elo 700+ the random blend probability is 0 — random.random()=0
-    fires the filter but NOT the blend; the pool pick wins through."""
-    pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3",
-           "d2d3", "b1c3", "a2a3", "h2h3", "g2g3"]
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 700)
-    # At Elo 700: filter fires (0 < 0.80), pool sampled (returns first safe),
-    # blend skipped (blend_prob=0 at Elo 700). Result: filtered pool pick.
-    assert move == chess.Move.from_uci(pvs[0])
-
-
-@_aio
-async def test_pick_move_takes_hanging_piece_when_dice_succeed(monkeypatch):
-    """When the opponent's LAST-MOVED piece is hanging AND a top-N candidate
-    captures it AND the take-hanging dice roll succeeds, pick_move returns
-    the capture regardless of what filter/blend/sampling would have produced."""
-    # White knight on f4, black queen JUST MOVED to h5 (e.g. from h7). h5
-    # is undefended → hanging. Bot can play Nxh5.
-    fen = "4k3/8/8/7q/5N2/8/8/4K3 w - - 0 1"
-    pvs = ["f4h5", "f4d5", "f4e6"]  # rank-1 IS the capture; pool includes it
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
-    monkeypatch.setattr(chess_bot.random, "choice",
-                        lambda _c: pytest.fail("take-hanging path should bypass random.choice"))
-
-    move = await chess_bot.pick_move(fen, 400, last_move_uci="h7h5")
-    assert move == chess.Move.from_uci("f4h5")
-
-
-@_aio
-async def test_pick_move_take_hanging_ignores_pre_existing_hangs(monkeypatch):
-    """The take-hanging check ONLY punishes the opponent's most recent move.
-    Pre-existing hanging pieces (where the opponent moved some OTHER piece)
-    are not caught — modelling the human pattern of 'I noticed your last
-    blunder, not the one you made three moves ago.'"""
-    # Black rook on h8 is hanging (white queen on a1 attacks down the long
-    # diagonal). Opponent's last move was a king shuffle (e8→e7), NOT the
-    # rook. So take-hanging should NOT fire even though Qxh8 is available.
-    # All queen alternatives (Qa2, Qa3) sit on the a-file where black's rook
-    # can't reach, so the safety filter accepts them.
-    fen = "4k2r/8/8/8/8/8/8/Q3K3 w - - 0 1"
-    pvs = ["a1a2", "a1a3", "a1h8"]  # Qxh8 (capture) exists in pool
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-
-    move = await chess_bot.pick_move(fen, 800, last_move_uci="e8e7")
-    # last_move was the king, not the rook → no take-hanging. Filter fires
-    # and sampling returns first safe candidate.
-    assert move == chess.Move.from_uci("a1a2")
-
-
-@_aio
-async def test_pick_move_take_hanging_no_op_when_no_last_move(monkeypatch):
-    """When `last_move_uci` is None (bot moves first), take-hanging is a
-    no-op regardless of what's hanging."""
-    fen = "4k2r/8/8/8/8/8/8/Q3K3 w - - 0 1"
-    pvs = ["a1a2", "a1a3", "a1h8"]
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-    move = await chess_bot.pick_move(fen, 800)  # no last_move_uci
-    # No last move → no take-hanging fire. Sampling returns rank-1 safe move.
-    assert move == chess.Move.from_uci("a1a2")
-
-
-@_aio
-async def test_pick_move_take_hanging_skipped_when_dice_high(monkeypatch):
-    """At Elo 100 (P(take-hanging)=0.75), random()=0.99 misses the take-
-    hanging dice and the bot falls through to normal sampling."""
-    fen = "4k3/8/8/7q/5N2/8/8/4K3 w - - 0 1"
-    pvs = ["f4d5", "f4e6", "f4h5"]  # capture is rank-3, NOT rank-1
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.99)
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-
-    move = await chess_bot.pick_move(fen, 100, last_move_uci="h7h5")
-    assert move == chess.Move.from_uci("f4d5")  # NOT the capture
-
-
-@_aio
-async def test_pick_move_take_hanging_no_op_when_last_move_not_hanging(monkeypatch):
-    """When the opponent's last-moved piece is NOT hanging, take-hanging
-    is a no-op even with the dice forced on."""
-    # Starting position: human plays e2e4. e4 is defended (by d1 queen,
-    # f1 bishop, etc.) and not under attack → not hanging.
-    fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
-    pvs = ["e7e5", "e7e6", "g8f6"]
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-    move = await chess_bot.pick_move(fen, 800, last_move_uci="e2e4")
-    # e4 not hanging → take-hanging finds nothing → filter+sampling proceeds.
-    assert move == chess.Move.from_uci("e7e5")
-
-
-@_aio
-async def test_pick_move_take_hanging_only_considers_top_n_pool(monkeypatch):
-    """If the capture-of-last-moved-piece is OUTSIDE the top-N pool, the
-    bot doesn't see it and proceeds to normal sampling."""
-    # Elo 1200 → pool=3. Capture is at rank-4, outside the pool.
-    fen = "4k3/8/8/7q/5N2/8/8/4K3 w - - 0 1"
-    pvs = ["f4d5", "f4e6", "f4g6", "f4h5"]  # capture is rank-4
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-    move = await chess_bot.pick_move(fen, 1200, last_move_uci="h7h5")
-    assert move != chess.Move.from_uci("f4h5")
-
-
-@_aio
-async def test_pick_move_book_move_accepted_when_in_top_10(monkeypatch):
-    """If a book_move is provided AND it's in Stockfish's top-10 PV list,
-    pick_move plays it directly without sampling."""
-    pvs = ["e2e4", "d2d4", "g1f3"]  # book move d2d4 is rank 2 — in top-10
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    # Sentinels: if sampling runs, these will fail the test.
-    monkeypatch.setattr(chess_bot.random, "random",
-                        lambda: pytest.fail("book-move path should bypass sampling dice"))
-    monkeypatch.setattr(chess_bot.random, "choice",
-                        lambda _c: pytest.fail("book-move path should bypass random.choice"))
-
-    move = await chess_bot.pick_move(
-        chess_engine.STARTING_FEN, 700,
-        book_move=chess.Move.from_uci("d2d4"),
-    )
-    assert move == chess.Move.from_uci("d2d4")
-
-
-@_aio
-async def test_pick_move_book_move_rejected_when_not_in_top_10(monkeypatch):
-    """If a book_move is provided but Stockfish doesn't list it in the top-10,
-    pick_move abandons the book and falls through to normal sampling."""
-    pvs = ["e2e4", "d2d4", "g1f3"]  # book move h2h4 is NOT in this list
-    _install_fake_engine(monkeypatch, analyse_pvs=pvs)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)  # skip filter+blend
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-
-    move = await chess_bot.pick_move(
-        chess_engine.STARTING_FEN, 1200,
-        book_move=chess.Move.from_uci("h2h4"),
-    )
-    # Book rejected; random.choice pinned to candidates[0] so returns pvs[0].
-    assert move == chess.Move.from_uci(pvs[0])
-
-
-@_aio
-async def test_pick_move_native_elo_never_samples(monkeypatch):
-    """Native tier never invokes random.random or random.choice. Force both
-    paths to sentinels to confirm the native branch doesn't touch them."""
-    _install_fake_engine(monkeypatch)
-    monkeypatch.setattr(chess_bot.random, "random",
-                        lambda: pytest.fail("random.random should not be called at native Elo"))
-    monkeypatch.setattr(chess_bot.random, "choice",
-                        lambda _moves: pytest.fail("random.choice should not be called at native Elo"))
-
-    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 2000)
     assert move == chess.Move.from_uci("e2e4")
 
 
 @_aio
 async def test_pick_move_clamps_above_max(monkeypatch):
-    """Elo 9999 clamps to ELO_MAX (3190), takes the native path."""
     calls = _install_fake_engine(monkeypatch)
     await chess_bot.pick_move(chess_engine.STARTING_FEN, 9999)
     opts = calls["configure"][0]
     assert opts.get("UCI_Elo") == chess_bot.ELO_MAX
 
 
+# ---- Maia tier (Elo 1100-1900) ----
+
+
 @_aio
-async def test_pick_move_clamps_below_min(monkeypatch):
-    """Elo 50 clamps to 100 → sub-native sampled path (no configure call)."""
-    calls = _install_fake_engine(monkeypatch)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)  # skip filter
-    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[0])
-    await chess_bot.pick_move(chess_engine.STARTING_FEN, 50)
+async def test_pick_move_routes_to_maia_in_1100_1900(monkeypatch):
+    calls = _install_fake_engine(monkeypatch, maia_available=True)
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 1500)
+
+    args = calls["popen_args"][-1]
+    assert isinstance(args, list), f"expected list of args for lc0, got {args!r}"
+    assert any("lc0" in str(a) for a in args)
+    assert any("maia-1500" in str(a) for a in args)
+    assert len(calls["play_limit"]) == 1
+    assert calls["play_limit"][0].nodes == 1
     assert calls["configure"] == []
+    assert move == chess.Move.from_uci("e2e4")
+
+
+@_aio
+async def test_pick_move_maia_each_bin_picks_correct_weights(monkeypatch):
+    for elo in (1100, 1300, 1500, 1700, 1900):
+        calls = _install_fake_engine(monkeypatch, maia_available=True)
+        await chess_bot.pick_move(chess_engine.STARTING_FEN, elo)
+        args = calls["popen_args"][-1]
+        assert any(f"maia-{elo}" in str(a) for a in args), (
+            f"Elo {elo} should select maia-{elo} weights; got args {args!r}"
+        )
+
+
+@_aio
+async def test_pick_move_maia_fallback_to_stockfish_when_lc0_missing(monkeypatch):
+    calls = _install_fake_engine(monkeypatch, maia_available=False)
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 1500)
+    assert calls["configure"] != [], "expected Stockfish configure call after fallback"
+    opts = calls["configure"][0]
+    assert opts.get("UCI_Elo") == 1320
+    assert isinstance(move, chess.Move)
+
+
+@_aio
+async def test_pick_move_2000_uses_stockfish_native(monkeypatch):
+    calls = _install_fake_engine(monkeypatch)
+    await chess_bot.pick_move(chess_engine.STARTING_FEN, 2000)
+    assert calls["configure"] != []
+    opts = calls["configure"][0]
+    assert opts.get("UCI_Elo") == 2000
+
+
+@_aio
+async def test_pick_move_rounds_elo_to_nearest_hundred(monkeypatch):
+    calls = _install_fake_engine(monkeypatch, maia_available=True)
+    await chess_bot.pick_move(chess_engine.STARTING_FEN, 1149)
+    args = calls["popen_args"][-1]
+    assert any("maia-1100" in str(a) for a in args)
+
+
+# ---- Sub-Maia tier (Elo 100-1000): Maia 1100 baseline + degraders ----
+
+
+@_aio
+async def test_pick_move_sub_maia_uses_maia_1100_baseline(monkeypatch):
+    """Sub-Maia tier always calls Maia 1100 as its baseline engine,
+    regardless of the user-facing Elo."""
+    calls = _install_fake_engine(monkeypatch, maia_available=True)
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 500)
+    args = calls["popen_args"][-1]
+    assert any("maia-1100" in str(a) for a in args), (
+        f"sub-Maia at Elo 500 should call maia-1100, got args {args!r}"
+    )
+    # Default analyse_pvs starts with e2e4; pool sampling at Elo 500 (pool=~5)
+    # with random.choice unpinned picks something from the top-5.
+    assert isinstance(move, chess.Move)
+
+
+@_aio
+async def test_pick_move_sub_maia_uses_analyse_with_pool_size_multipv(monkeypatch):
+    """Sub-Maia tier calls engine.analyse(multipv=N) where N is the pool
+    size for the given Elo. Native Maia tier uses engine.play(), not analyse."""
+    calls = _install_fake_engine(monkeypatch, maia_available=True)
+    expected_pool = chess_bot.maia_pool_size_for_elo(400)
+    await chess_bot.pick_move(chess_engine.STARTING_FEN, 400)
+    assert len(calls["analyse_limit"]) == 1
+    _limit, multipv = calls["analyse_limit"][0]
+    assert multipv == expected_pool, f"expected multipv={expected_pool}, got {multipv}"
+    # Sub-Maia path doesn't call play().
+    assert calls["play_limit"] == []
+
+
+@_aio
+async def test_pick_move_sub_maia_samples_uniformly_from_pool(monkeypatch):
+    """Pool sampling uses random.choice over the top-N PV list. Pin
+    random.choice to a sentinel to prove it sees more than just rank-1."""
+    pvs = ["e2e4", "d2d4", "g1f3", "c2c4", "e2e3",
+           "d2d3", "b1c3", "a2a3", "h2h3", "g2g3"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs, maia_available=True)
+    # Disable extra-blunder dice so we observe pure pool sampling.
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)
+    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[-1])
+    expected_pool = chess_bot.maia_pool_size_for_elo(400)
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 400)
+    # candidates[-1] = pvs[expected_pool - 1].
+    assert move == chess.Move.from_uci(pvs[expected_pool - 1])
+
+
+@_aio
+async def test_pick_move_sub_maia_at_top_of_range_samples_small_pool(monkeypatch):
+    """At the top of sub-Maia (Elo 1000) the pool is small (2); sampling
+    stays within rank-1..2."""
+    pvs = ["e2e4", "d2d4", "g1f3"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs, maia_available=True)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)
+    monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: candidates[-1])
+    expected_pool = chess_bot.maia_pool_size_for_elo(1000)
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 1000)
+    assert move == chess.Move.from_uci(pvs[expected_pool - 1])
+
+
+@_aio
+async def test_pick_move_sub_maia_extra_blunder_swaps_to_see_losing(monkeypatch):
+    """When extra-blunder dice fires AND a SEE-losing alternative exists,
+    the sampled move is replaced with that losing move."""
+    fen = "3rk3/8/8/8/8/8/8/3QK3 w - - 0 1"
+    # Maia's analyse returns Kd2 (safe king move).
+    pvs = ["e1d2"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs, maia_available=True)
+    # Force the extra-blunder dice to fire (random=0.0 < 0.10 at Elo 100).
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    # random.choice called twice: once for pool sample (single-item, returns
+    # Kd2), once for _find_see_losing_move (pick first SEE-losing move).
+    monkeypatch.setattr(chess_bot.random, "choice", lambda moves: list(moves)[0])
+
+    move = await chess_bot.pick_move(fen, 100)
+    board = chess.Board(fen)
+    assert move in board.legal_moves
+    after = board.copy(stack=False)
+    after.push(move)
+    assert chess_bot.see_capture(after, move.to_square, chess.BLACK) > 0
+
+
+@_aio
+async def test_pick_move_sub_maia_extra_blunder_falls_back_when_no_losing_move(monkeypatch):
+    """If the position has no SEE-losing move, the blunder branch is a no-op
+    and Maia's sampled move comes through."""
+    fen = "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
+    pvs = ["e1e2"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs, maia_available=True)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    move = await chess_bot.pick_move(fen, 100)
+    assert move == chess.Move.from_uci("e1e2")
+
+
+@_aio
+async def test_pick_move_sub_maia_extra_blunder_skipped_above_500(monkeypatch):
+    """At Elo 500+, extra-blunder probability is 0 — even with random()=0
+    pinned, the dice never fires."""
+    fen = "3rk3/8/8/8/8/8/8/3QK3 w - - 0 1"
+    pvs = ["e1d2"]
+    _install_fake_engine(monkeypatch, analyse_pvs=pvs, maia_available=True)
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    monkeypatch.setattr(chess_bot.random, "choice", lambda moves: list(moves)[0])
+    move = await chess_bot.pick_move(fen, 500)
+    # No blunder swap → Maia's pick (Kd2) comes through.
+    assert move == chess.Move.from_uci("e1d2")
+
+
+# ---- Engine spawn -- actually run binaries (CI only) ----
+
+
+@pytest.mark.skipif(not _STOCKFISH_AVAILABLE, reason="stockfish binary not on PATH")
+@_aio
+async def test_pick_move_returns_legal_move_at_native_elo():
+    move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 2000)
+    board = chess.Board()
+    assert move in board.legal_moves
 
 
 @_aio
 async def test_pick_move_quits_engine_even_when_configure_raises(monkeypatch):
-    """If configure() raises (native tier), the finally clause must still
-    close the engine."""
+    """If configure() raises during the native path, the finally clause must
+    still close the engine."""
     quit_count = {"n": 0}
 
     class _FakeEngine:
@@ -853,9 +508,6 @@ async def test_pick_move_quits_engine_even_when_configure_raises(monkeypatch):
 
         async def play(self, board, limit):
             return SimpleNamespace(move=chess.Move.from_uci("e2e4"))
-
-        async def analyse(self, board, limit, multipv=None, **kwargs):
-            return [{"pv": [chess.Move.from_uci("e2e4")]}]
 
         async def quit(self):
             quit_count["n"] += 1
@@ -1159,7 +811,7 @@ async def test_human_move_triggers_bot_reply(db, _stub_chess_helpers, monkeypatc
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     # Stub Stockfish to always play e7e5.
-    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
+    async def _stub_pick(fen, elo):
         return chess.Move.from_uci("e7e5")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
 
@@ -1188,7 +840,7 @@ async def test_bot_reply_handles_engine_error(db, _stub_chess_helpers, monkeypat
     ctx = _ctx_for(human, channel_id=1101)
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
-    async def _broken_pick(fen, elo, *, book_move=None, last_move_uci=None):
+    async def _broken_pick(fen, elo):
         raise RuntimeError("simulated stockfish crash")
     monkeypatch.setattr(chess_bot, "pick_move", _broken_pick)
 
@@ -1209,7 +861,7 @@ async def test_bot_reply_handles_engine_error(db, _stub_chess_helpers, monkeypat
     assert "e4" in g["pgn"]
     # Error message was posted to the channel.
     assert any(
-        kwargs.get("embed") is not None and "Stockfish" in kwargs["embed"].title
+        kwargs.get("embed") is not None and "Chess Engine" in kwargs["embed"].title
         for _, kwargs in sent
     )
 
@@ -1245,7 +897,7 @@ async def test_bot_reply_uses_game_elo_not_default(db, _stub_chess_helpers, monk
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     received: list[int] = []
-    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
+    async def _stub_pick(fen, elo):
         received.append(elo)
         return chess.Move.from_uci("e7e5")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
@@ -1279,7 +931,7 @@ async def test_persisted_elo_used_after_reload(db, _stub_chess_helpers, monkeypa
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     received: list[int] = []
-    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
+    async def _stub_pick(fen, elo):
         received.append(elo)
         return chess.Move.from_uci("e7e5")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
@@ -1289,98 +941,6 @@ async def test_persisted_elo_used_after_reload(db, _stub_chess_helpers, monkeypa
         await asyncio.sleep(0)
 
     assert received == [1850], f"expected reloaded Elo 1850, got {received}"
-
-
-@_aio
-async def test_bot_reply_passes_book_move_when_following_opening(
-    db, _stub_chess_helpers, monkeypatch,
-):
-    """When the game dict has an opening name and the human plays the expected
-    move, _play_bot_reply hands the book move to pick_move."""
-    from src.games import chess_openings
-    cog = _make_bot_cog()
-    human = FakeMember(uid=2500, display_name="Alice")
-    _seed_bot_chess_game(1500, human.id, cog.bot.user.id, elo=600)
-    _state.active_chess_games[1500]["opening"] = "Italian Game (Black)"
-    ctx = _ctx_for(human, channel_id=1500)
-    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
-
-    received_book: list = []
-    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
-        received_book.append(book_move)
-        # Honor the book move so the opening continues.
-        return book_move if book_move is not None else chess.Move.from_uci("e7e5")
-    monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
-
-    # Human plays e4 — Italian Game's expected first white move.
-    await cog.cmd_move_chess.callback(cog, ctx, "e4")
-    for _ in range(5):
-        await asyncio.sleep(0)
-
-    # pick_move was called with the book move e7e5.
-    assert received_book == [chess.Move.from_uci("e7e5")]
-    # Opening still active (book wasn't rejected).
-    assert _state.active_chess_games[1500].get("opening") == "Italian Game (Black)"
-    # Verify the opening object lookup uses the stored name.
-    op = next(o for o in chess_openings.OPENINGS if o.name == "Italian Game (Black)")
-    assert op.moves[0] == "e2e4"
-
-
-@_aio
-async def test_bot_reply_clears_opening_when_human_deviates(
-    db, _stub_chess_helpers, monkeypatch,
-):
-    """When the human plays an off-book move, the bot abandons the opening
-    by removing it from the game dict."""
-    cog = _make_bot_cog()
-    human = FakeMember(uid=2501, display_name="Alice")
-    _seed_bot_chess_game(1501, human.id, cog.bot.user.id, elo=600)
-    _state.active_chess_games[1501]["opening"] = "Italian Game (Black)"
-    ctx = _ctx_for(human, channel_id=1501)
-    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
-
-    received_book: list = []
-    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
-        received_book.append(book_move)
-        return chess.Move.from_uci("g8f6")  # generic black reply
-    monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
-
-    # Italian wants e4; human plays d4 — deviation.
-    await cog.cmd_move_chess.callback(cog, ctx, "d4")
-    for _ in range(5):
-        await asyncio.sleep(0)
-
-    # pick_move was called with book_move=None (opening abandoned before call).
-    assert received_book == [None]
-    # Opening cleared from game dict.
-    assert "opening" not in _state.active_chess_games[1501]
-
-
-@_aio
-async def test_bot_reply_clears_opening_when_pick_move_rejects_book(
-    db, _stub_chess_helpers, monkeypatch,
-):
-    """If pick_move returns a different move than book_move (top-10 rejected
-    it), _play_bot_reply also clears the opening to avoid proposing it again."""
-    cog = _make_bot_cog()
-    human = FakeMember(uid=2502, display_name="Alice")
-    _seed_bot_chess_game(1502, human.id, cog.bot.user.id, elo=600)
-    _state.active_chess_games[1502]["opening"] = "Italian Game (Black)"
-    ctx = _ctx_for(human, channel_id=1502)
-    ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
-
-    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
-        # Simulate Stockfish rejecting the book and returning a different move.
-        assert book_move == chess.Move.from_uci("e7e5")
-        return chess.Move.from_uci("c7c5")
-    monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
-
-    await cog.cmd_move_chess.callback(cog, ctx, "e4")
-    for _ in range(5):
-        await asyncio.sleep(0)
-
-    # Opening cleared (book was rejected).
-    assert "opening" not in _state.active_chess_games[1502]
 
 
 @_aio
@@ -1413,7 +973,7 @@ async def test_stockfish_mate_creates_report_with_bot_as_winner(db, _stub_chess_
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
     # Stockfish plays Qh4# after white's g4.
-    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
+    async def _stub_pick(fen, elo):
         return chess.Move.from_uci("d8h4")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
 
@@ -1456,7 +1016,7 @@ async def test_stockfish_mate_headline_uses_stockfish_label_not_raw_uid(
     ctx = _ctx_for(human, channel_id=1401)
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
-    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
+    async def _stub_pick(fen, elo):
         return chess.Move.from_uci("d8h4")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
 
@@ -1596,7 +1156,7 @@ async def test_bot_defeats_human_no_bounty(db, _stub_chess_helpers, monkeypatch)
     ctx = _ctx_for(human, channel_id=1502)
     ctx.guild.members.append(FakeMember(uid=cog.bot.user.id))
 
-    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
+    async def _stub_pick(fen, elo):
         return chess.Move.from_uci("d8h4")  # Qh4# after g4
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
 
@@ -1821,7 +1381,7 @@ async def test_bot_reply_does_not_fire_for_pvp_game(db, _stub_chess_helpers, mon
     ctx.guild.members.append(black)
 
     pick_called = []
-    async def _stub_pick(fen, elo, *, book_move=None, last_move_uci=None):
+    async def _stub_pick(fen, elo):
         pick_called.append((fen, elo))
         return chess.Move.from_uci("e7e5")
     monkeypatch.setattr(chess_bot, "pick_move", _stub_pick)
