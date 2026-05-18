@@ -302,7 +302,9 @@ async def _spawn_maia_engine(elo: int):
     return await chess.engine.popen_uci([
         lc0_path,
         f"--weights={weights}",
-        "--backend=eigen",  # CPU backend; no GPU required
+        # No --backend flag: lc0 auto-selects the backend it was compiled
+        # with. Our Docker image builds lc0 with OpenBLAS (CPU). If you want
+        # to force a specific backend at runtime, add e.g. --backend=blas.
     ])
 
 

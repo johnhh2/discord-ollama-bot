@@ -3,21 +3,30 @@ WORKDIR /app
 COPY requirements.txt requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes --prefix=/install -r requirements.lock
 
+# ── lc0 build stage ──────────────────────────────────────────────────────────
+# lc0 isn't packaged in Debian apt and the project doesn't publish Linux
+# binaries (only Windows/macOS/Android). Build from source with the OpenBLAS
+# CPU backend (no GPU/CUDA). Pinned to a specific tag for reproducibility.
+FROM python:3.10-slim@sha256:cdbf8193cee2e31639ea8ea85ffdd8fa5cce98ee9abfde96ea5f329490048831 AS lc0-builder
+ARG LC0_VERSION=v0.31.2
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      git ca-certificates build-essential gcc g++ \
+      zlib1g-dev libopenblas-dev ninja-build python3-pip \
+ && pip install --no-cache-dir meson \
+ && git clone --branch ${LC0_VERSION} --depth 1 --recurse-submodules \
+      https://github.com/LeelaChessZero/lc0.git /tmp/lc0 \
+ && cd /tmp/lc0 \
+ && INSTALL_PREFIX=/usr/local ./build.sh \
+ && rm -rf /tmp/lc0
+
+# ── Runtime stage ────────────────────────────────────────────────────────────
 FROM python:3.10-slim@sha256:cdbf8193cee2e31639ea8ea85ffdd8fa5cce98ee9abfde96ea5f329490048831
 WORKDIR /app
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libcairo2 stockfish ca-certificates curl xz-utils \
- && (apt-get install -y --no-install-recommends lc0 \
-     || ( \
-       curl -fsSL -o /tmp/lc0.tar.gz \
-         "https://github.com/LeelaChessZero/lc0/releases/download/v0.31.2/lc0-v0.31.2-linux-cpu-eigen.tar.gz" \
-       && tar -xzf /tmp/lc0.tar.gz -C /tmp \
-       && install -m0755 /tmp/lc0 /usr/local/bin/lc0 \
-       && rm -rf /tmp/lc0 /tmp/lc0.tar.gz \
-     )) \
- && apt-get purge -y curl xz-utils \
- && apt-get autoremove -y \
+ && apt-get install -y --no-install-recommends libcairo2 stockfish libopenblas0 \
  && rm -rf /var/lib/apt/lists/*
+COPY --from=lc0-builder /usr/local/bin/lc0 /usr/local/bin/lc0
 COPY --from=builder /install /usr/local
 COPY src/ ./src/
 COPY assets/ ./assets/
