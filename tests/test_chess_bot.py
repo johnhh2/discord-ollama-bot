@@ -149,24 +149,34 @@ class TestMaiaPoolSizeForElo:
 
 class TestExtraBlunderProbabilityForElo:
     """Extra-blunder probability: forced SEE-losing moves layered on top of
-    Maia's sampled move. Tapers from 0.25 at Elo 100 down to 0 at Elo 700+,
-    where the wider sampling pool produces enough natural mistakes on its own."""
+    Maia's sampled move. Calibrated against published per-Elo blunder rates
+    (Maia paper + Lichess data): real Elo 100 humans blunder ~5-8 times per
+    game, Elo 1000 ~2-3. Curve tapers from 0.15 at Elo 100 to 0.01 at Elo
+    1000 (never fully zero — even Elo 1000 humans drop the occasional piece)."""
 
     def test_anchor_points(self):
-        anchors = [(100, 0.25), (400, 0.10), (600, 0.02), (700, 0.0), (1000, 0.0)]
+        anchors = [(100, 0.15), (400, 0.07), (700, 0.03), (1000, 0.01)]
         for elo, expected in anchors:
             actual = chess_bot.extra_blunder_probability_for_elo(elo)
             assert abs(actual - expected) < 0.001, (
                 f"P(extra blunder) at Elo {elo}: expected ~{expected}, got {actual}"
             )
 
-    def test_zero_at_and_above_700(self):
-        for elo in (700, 800, 1000, 1100, 2000):
-            assert chess_bot.extra_blunder_probability_for_elo(elo) == 0.0
+    def test_nonzero_through_full_sub_maia_range(self):
+        """Unlike prior versions, this curve stays nonzero at every Elo in
+        sub-Maia — even Elo 1000 humans blunder occasionally."""
+        for elo in (100, 400, 700, 1000):
+            assert chess_bot.extra_blunder_probability_for_elo(elo) > 0.0
 
     def test_clamps_below_floor(self):
-        assert chess_bot.extra_blunder_probability_for_elo(50) == 0.25
-        assert chess_bot.extra_blunder_probability_for_elo(0) == 0.25
+        assert chess_bot.extra_blunder_probability_for_elo(50) == 0.15
+        assert chess_bot.extra_blunder_probability_for_elo(0) == 0.15
+
+    def test_clamps_above_top(self):
+        # Above 1000 stays at the cap (sub-Maia curve doesn't apply at
+        # Maia tier; this is just defensive behavior of the helper).
+        assert chess_bot.extra_blunder_probability_for_elo(1100) == 0.01
+        assert chess_bot.extra_blunder_probability_for_elo(2000) == 0.01
 
     def test_monotonic_non_increasing(self):
         prev = 1.0
@@ -183,19 +193,22 @@ class TestNoticeProbabilityForEloAndPiece:
 
     def test_elo_100_pawn_uses_base_floor(self):
         p = chess_bot.notice_probability_for_elo_and_piece(100, chess.PAWN)
-        assert abs(p - 0.20) < 0.001
+        assert abs(p - 0.15) < 0.001
 
     def test_elo_100_queen_gets_full_bonus(self):
         p = chess_bot.notice_probability_for_elo_and_piece(100, chess.QUEEN)
-        # 0.20 + 0.35 = 0.55
-        assert abs(p - 0.55) < 0.001
+        # 0.15 + 0.35 = 0.50
+        assert abs(p - 0.50) < 0.001
 
-    def test_elo_1000_pawn_is_high_base(self):
+    def test_elo_1000_pawn_uses_base_ceiling(self):
+        # Base 0.85 at Elo 1000 — even strong sub-Maia players miss some
+        # pawn threats. Pawn bonus is 0, so the base shows through.
         p = chess_bot.notice_probability_for_elo_and_piece(1000, chess.PAWN)
-        assert abs(p - 0.95) < 0.001
+        assert abs(p - 0.85) < 0.001
 
-    def test_elo_1000_queen_caps_at_99(self):
-        # 0.95 + 0.35 = 1.30, capped at 0.99.
+    def test_elo_1000_queen_is_near_certain(self):
+        # 0.85 + 0.35 = 1.20, capped at 0.99 — hanging queens essentially
+        # always grabbed at the top of the sub-Maia range.
         p = chess_bot.notice_probability_for_elo_and_piece(1000, chess.QUEEN)
         assert abs(p - 0.99) < 0.001
 
@@ -578,16 +591,17 @@ async def test_pick_move_sub_maia_extra_blunder_falls_back_when_no_losing_move(m
 
 
 @_aio
-async def test_pick_move_sub_maia_extra_blunder_skipped_above_700(monkeypatch):
-    """At Elo 700+, extra-blunder probability is 0 — even with random()=0
-    pinned, the dice never fires."""
+async def test_pick_move_sub_maia_extra_blunder_skipped_when_dice_high(monkeypatch):
+    """At Elo 1000 (P=0.01), random()=0.99 doesn't fire the blunder dice
+    and Maia's sampled move comes through unchanged."""
     fen = "3rk3/8/8/8/8/8/8/3QK3 w - - 0 1"
     pvs = ["e1d2"]
     _install_fake_engine(monkeypatch, analyse_pvs=pvs, maia_available=True)
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    # 0.99 > 0.01 (blunder), 0.99 > notice base for any piece type at 1000+bonus.
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.99)
     monkeypatch.setattr(chess_bot.random, "choice", lambda moves: list(moves)[0])
-    move = await chess_bot.pick_move(fen, 700)
-    # No blunder swap → Maia's pick (Kd2) comes through.
+    move = await chess_bot.pick_move(fen, 1000)
+    # No swap → Maia's pick (Kd2) comes through.
     assert move == chess.Move.from_uci("e1d2")
 
 
@@ -598,21 +612,15 @@ async def test_pick_move_sub_maia_extra_blunder_skipped_above_700(monkeypatch):
 async def test_pick_move_sub_maia_addresses_self_hang_when_notice_fires(monkeypatch):
     """When the bot's piece is hanging AND the sampled move ignores it AND
     notice dice fires, _sub_maia_move re-routes to a defensive candidate."""
-    # White queen on d1 attacked by black rook on d8 along the open d-file.
-    # The queen is hanging (rook captures for +9).
-    # Maia returns two candidates: e1e2 (ignores threat) and d1d4 (still on
-    # d-file but ALSO addresses by moving queen out of d1)... actually d1d4
-    # moves the queen to d4 which is also on the d-file and STILL hanging.
-    # Let me use d1c1 instead (moves queen off d-file -> addresses).
     fen = "3rk3/8/8/8/8/8/8/3QK3 w - - 0 1"
     # Rank-1 = Ke1e2 (ignores threat, leaves queen on d1). Rank-2 = Qd1c1
     # (moves queen off d-file → addresses).
     pvs = ["e1e2", "d1c1"]
     _install_fake_engine(monkeypatch, analyse_pvs=pvs, maia_available=True)
-    # random.random pinned to 0: pool sample picks Ke2, then notice dice
-    # fires (0 < 0.99 at Elo 1000 for queen), then we swap to Qc1.
-    # extra-blunder dice is 0 at Elo 1000 so no swap-back.
-    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
+    # random.random pinned to 0.5: high enough to skip the extra-blunder
+    # dice (P=0.01 at Elo 1000) but low enough to fire the notice dice
+    # (P=0.99 for queen at Elo 1000).
+    monkeypatch.setattr(chess_bot.random, "random", lambda: 0.5)
     # random.choice gets called: first for pool sampling (returns first),
     # then for picking from addressing candidates (returns first).
     monkeypatch.setattr(chess_bot.random, "choice", lambda moves: list(moves)[0])

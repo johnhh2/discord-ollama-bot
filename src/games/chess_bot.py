@@ -81,11 +81,10 @@ _MAIA_POOL_SIZE_ANCHORS: list[tuple[int, int]] = [
 # Maia pool already includes Maia's natural mistake distribution, no need
 # to force additional ones.
 _EXTRA_BLUNDER_ANCHORS: list[tuple[int, float]] = [
-    (100, 0.25),
-    (400, 0.10),
-    (600, 0.02),
-    (700, 0.0),
-    (1000, 0.0),
+    (100, 0.15),
+    (400, 0.07),
+    (700, 0.03),
+    (1000, 0.01),
 ]
 
 # Base probability that the bot NOTICES a hanging piece (its own or the
@@ -93,10 +92,10 @@ _EXTRA_BLUNDER_ANCHORS: list[tuple[int, float]] = [
 # Elo 100 to 0.95 at Elo 1000. Total notice rate adds a value-based bonus
 # (queens get noticed more than pawns); see _PIECE_NOTICE_BONUS below.
 _NOTICE_BASE_ANCHORS: list[tuple[int, float]] = [
-    (100, 0.20),
-    (400, 0.30),
-    (700, 0.65),
-    (1000, 0.95),
+    (100, 0.15),
+    (400, 0.25),
+    (700, 0.55),
+    (1000, 0.85),
 ]
 
 # Bonus added to the base notice probability per piece type. Models the
