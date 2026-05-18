@@ -1272,24 +1272,25 @@ async def test_stockfish_mate_creates_report_with_bot_as_winner(db, _stub_chess_
 
 
 @_aio
-async def test_stockfish_mate_headline_uses_stockfish_label_not_raw_uid(
+async def test_bot_mate_headline_uses_engine_label_not_raw_uid(
     db, _stub_chess_helpers, monkeypatch,
 ):
-    """When Stockfish mates the human, the game-over embed must show
-    'Stockfish (1320 Elo)' not the raw 18-digit bot user id."""
+    """When the bot mates the human, the game-over embed must show the
+    engine label (e.g. 'Maia (1300 Elo)') not the raw 18-digit bot user id.
+    Uses Elo 1300 which routes to the Maia tier."""
     cog = _make_bot_cog()
     human = FakeMember(uid=2401, display_name="Alice")
     _state.active_chess_games[1401] = {
         "fen": "rnbqkbnr/pppp1ppp/8/4p3/8/5P2/PPPPP1PP/RNBQKBNR w KQkq - 0 2",
         "pgn": _initial_pgn(
-            "Alice", "Stockfish (1320 Elo)", None,
+            "Alice", "Maia (1300 Elo)", None,
             starting_fen="rnbqkbnr/pppp1ppp/8/4p3/8/5P2/PPPPP1PP/RNBQKBNR w KQkq - 0 2",
         ),
         "white_id": human.id,
         "black_id": cog.bot.user.id,
         "current_id": human.id,
         "amount": 0,
-        "elo": 1320,
+        "elo": 1300,
         "last_move": "",
         "board_msg_id": 1,
     }
@@ -1314,7 +1315,8 @@ async def test_stockfish_mate_headline_uses_stockfish_label_not_raw_uid(
     last = game_over_embeds[-1]
     assert bot_uid_str not in (last.description or ""), \
         f"raw bot uid leaked into game-over description: {last.description!r}"
-    assert "Stockfish" in (last.description or "")
+    # Engine label for Elo 1300 is "Maia" — should appear in the description.
+    assert "Maia" in (last.description or "")
 
 
 @_aio

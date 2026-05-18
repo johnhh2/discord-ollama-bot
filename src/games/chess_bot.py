@@ -123,6 +123,22 @@ _PIECE_VALUES: dict[chess.PieceType, int] = {
 }
 
 
+def engine_label_for_elo(elo: int) -> str:
+    """Human-readable engine name for the given Elo, used in chess match
+    embeds and game-over reports. Reflects which tier actually plays:
+    'Sub-Maia' for 100-1000, 'Maia' for 1100-1900, 'Stockfish' for 2000+."""
+    if elo >= STOCKFISH_NATIVE_ELO_MIN:
+        return "Stockfish"
+    if elo >= MAIA_ELO_MIN:
+        return "Maia"
+    return "Sub-Maia"
+
+
+def engine_name_with_elo(elo: int) -> str:
+    """e.g. 'Maia (1500 Elo)' for use in match embeds and player labels."""
+    return f"{engine_label_for_elo(elo)} ({elo} Elo)"
+
+
 def round_elo_to_bin(elo: int) -> int:
     """Round an Elo value to the nearest multiple of 100. Maia weights are
     indexed by bin (1100, 1200, ..., 1900) so the cog rounds inputs at the

@@ -409,7 +409,7 @@ class ChessCog(commands.Cog):
 
         white_id, black_id = uid, bot_user.id
         white_name = ctx.author.display_name
-        black_name = f"Stockfish ({elo} Elo)"
+        black_name = chess_bot.engine_name_with_elo(elo)
         guild_name = ctx.guild.name if ctx.guild else None
 
         game = {
@@ -558,12 +558,17 @@ class ChessCog(commands.Cog):
         if winner_id is None:
             outcome_line = f"Draw ({report['result']})"
         else:
+            # Prefer PGN-header names (always accurate, including the engine
+            # label "Sub-Maia/Maia/Stockfish (N Elo)" for bot wins) over
+            # guild.get_member (often misses without the privileged members
+            # intent).
+            pgn_white, pgn_black = _names_from_pgn(report.get("pgn", ""))
             if bot_user is not None and winner_id == bot_user.id:
-                winner_name = "Stockfish"
+                # Bot won — use whichever PGN header corresponds to the bot.
+                winner_name = (
+                    pgn_black if winner_id == report["black_id"] else pgn_white
+                ) or "Bot"
             else:
-                # Prefer PGN-header names (always accurate) over guild.get_member
-                # (often misses without the privileged members intent).
-                pgn_white, pgn_black = _names_from_pgn(report.get("pgn", ""))
                 if winner_id == report["white_id"] and pgn_white:
                     winner_name = pgn_white
                 elif winner_id == report["black_id"] and pgn_black:
@@ -637,7 +642,8 @@ class ChessCog(commands.Cog):
         desc = (
             "**Start a game**\n"
             "`!chess @user [wager]` — Play another player. Optional wager in 🪙; winner takes the pot.\n"
-            f"`!chessbot [elo]` (alias `!chess @TheBot [elo]`) — Play Stockfish. Elo `{elo_lo}`–`{elo_hi}`, default `{elo_default}`.\n"
+            f"`!chessbot [elo]` (alias `!chess @TheBot [elo]`) — Play the bot. Elo `{elo_lo}`–`{elo_hi}`, default `{elo_default}`. "
+            f"Elo 100-1000 uses Sub-Maia, 1100-1900 uses Maia, 2000+ uses Stockfish.\n"
             f"  • Beat the bot to earn **{COINS_PER_NEW_ELO_LOW} 🪙 per new Elo point under {LOW_ELO_THRESHOLD}**, "
             f"**{COINS_PER_NEW_ELO} 🪙 per new Elo point at/above {LOW_ELO_THRESHOLD}** "
             "(above your daily highwater; resets 5am CT).\n"
@@ -667,7 +673,7 @@ class ChessCog(commands.Cog):
         asyncio.create_task(_delete_after(ctx.message))
 
         if cid not in state.active_chess_games:
-            err = await ctx.send("No active chess game in this channel. Start one with `!chess @user [amount]` (PvP) or `!chessbot [elo]` (vs Stockfish).")
+            err = await ctx.send("No active chess game in this channel. Start one with `!chess @user [amount]` (PvP) or `!chessbot [elo]` (vs the bot).")
             asyncio.create_task(_delete_after(err))
             return
 
@@ -817,7 +823,7 @@ class ChessCog(commands.Cog):
         bot_user = self.bot.user if self.bot is not None else None
         if bot_user is not None and opponent_id == bot_user.id:
             elo = game.get("elo", chess_bot.ELO_DEFAULT)
-            next_mention = f"🤖 Stockfish ({elo} Elo)"
+            next_mention = f"🤖 **{chess_bot.engine_name_with_elo(elo)}**"
         else:
             next_mention = next_player.mention if next_player else "Next player"
         check_note = " — **check!**" if board.is_check() else ""
@@ -848,7 +854,7 @@ class ChessCog(commands.Cog):
             return
 
         elo = game.get("elo", chess_bot.ELO_DEFAULT)
-        bot_name = f"Stockfish ({elo} Elo)"
+        bot_name = chess_bot.engine_name_with_elo(elo)
 
         try:
             move = await chess_bot.pick_move(game["fen"], elo)
@@ -959,9 +965,9 @@ class ChessCog(commands.Cog):
         else:
             if bot_user is not None and winner_id == bot_user.id:
                 # Bot winner — guild.get_member often returns None for the bot
-                # itself, so use the stored stockfish label instead of the raw uid.
+                # itself, so use the engine-and-Elo label instead of the raw uid.
                 elo = game.get("elo", chess_bot.ELO_DEFAULT)
-                winner_name = f"Stockfish ({elo} Elo)"
+                winner_name = chess_bot.engine_name_with_elo(elo)
             else:
                 # Prefer the name embedded in the PGN headers at game-start
                 # (always accurate) over guild.get_member (often misses without
