@@ -1,9 +1,13 @@
-"""Payout + record-setting when a human beats Stockfish.
+"""Payout + record-setting when a human beats the chess bot.
 
 Daily-resetting highwater: each user has a "highest bot Elo defeated today"
-field on their economy row. New Elo points below 1000 pay 10 coins each;
-new Elo points at/above 1000 pay 20 coins each. Daily reset (5am CT) zeroes
-it out so the same Elo can be beaten again tomorrow for full credit.
+field on their economy row. The payout rate doubles at the sub-Maia / Maia
+boundary (Elo 1100):
+  - Sub-Maia tier (Elo 100-1000): 5 coins per new Elo point.
+  - Maia / Stockfish tier (Elo 1100+): 10 coins per new Elo point.
+
+Daily reset (5am CT) zeroes it out so the same Elo can be beaten again
+tomorrow for full credit.
 
 This module is intentionally thin: pure calculation + state mutation + DB
 write. The cog (_finalize_game) decides WHEN to call award_bot_defeat. The
@@ -16,17 +20,19 @@ from src.economy import _ct_today, add_balance, _ensure_user
 from src.persistence import save_economy, try_set_record
 
 
-# Per-elo-point payout above the LOW_ELO_THRESHOLD. New Elo below the
-# threshold pays COINS_PER_NEW_ELO_LOW per point.
-COINS_PER_NEW_ELO = 20
-COINS_PER_NEW_ELO_LOW = 10
-LOW_ELO_THRESHOLD = 1000
+# Per-elo-point payout. Sub-Maia tier (Elo 100-1000) pays COINS_PER_NEW_ELO_LOW;
+# Maia/Stockfish tier (Elo 1100+) pays double via COINS_PER_NEW_ELO. Boundary
+# matches the engine-tier handoff in chess_bot.py (MAIA_ELO_MIN = 1100).
+COINS_PER_NEW_ELO = 10
+COINS_PER_NEW_ELO_LOW = 5
+LOW_ELO_THRESHOLD = 1100
 
 
 def _payout_for_range(prior: int, new_high: int) -> int:
     """Coins owed for raising the daily highwater from `prior` to `new_high`.
     Elo gained below LOW_ELO_THRESHOLD pays COINS_PER_NEW_ELO_LOW; at/above
-    pays COINS_PER_NEW_ELO."""
+    pays COINS_PER_NEW_ELO (which is double — the full-Maia tier earns 2x
+    the sub-Maia rate per Elo point)."""
     if new_high <= prior:
         return 0
     low_end = min(new_high, LOW_ELO_THRESHOLD)

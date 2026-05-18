@@ -24,10 +24,11 @@ async def test_first_win_pays_full_elo_times_low_rate(db):
     payout, record_broken = await br.award_bot_defeat(
         user_id=5001, guild_id=42, holder_name="Alice", bot_elo=400,
     )
-    # 400 Elo all below the 1000 threshold → 400 * 10.
-    assert payout == 400 * br.COINS_PER_NEW_ELO_LOW  # 4000
+    # 400 Elo all below the 1100 threshold → 400 * COINS_PER_NEW_ELO_LOW.
+    expected = 400 * br.COINS_PER_NEW_ELO_LOW
+    assert payout == expected
     assert record_broken is True
-    assert await get_balance(5001) == 4000
+    assert await get_balance(5001) == expected
 
     u = await _user_dict(5001)
     assert u["bot_chess_elo_max_today"] == 400
@@ -36,15 +37,17 @@ async def test_first_win_pays_full_elo_times_low_rate(db):
 
 @_aio
 async def test_second_win_higher_elo_pays_only_delta(db):
-    """After beating 400, beating 500 the same day pays just (500-400)*10."""
+    """After beating 400, beating 500 the same day pays just (500-400) *
+    COINS_PER_NEW_ELO_LOW (both below the threshold)."""
     await br.award_bot_defeat(user_id=5002, guild_id=42, holder_name="Alice", bot_elo=400)
     bal_after_first = await get_balance(5002)
 
     payout, _ = await br.award_bot_defeat(
         user_id=5002, guild_id=42, holder_name="Alice", bot_elo=500,
     )
-    assert payout == (500 - 400) * br.COINS_PER_NEW_ELO_LOW  # 1000
-    assert await get_balance(5002) == bal_after_first + 1000
+    expected = (500 - 400) * br.COINS_PER_NEW_ELO_LOW
+    assert payout == expected
+    assert await get_balance(5002) == bal_after_first + expected
 
     u = await _user_dict(5002)
     assert u["bot_chess_elo_max_today"] == 500
@@ -135,17 +138,23 @@ async def test_record_broken_signaled_on_new_high(db):
 
 @_aio
 async def test_payout_splits_across_low_and_high_threshold(db):
-    """First win at 1200 from a zero baseline pays 1000*10 + 200*20."""
+    """First win at 1200 from a zero baseline pays LOW_ELO_THRESHOLD points
+    at the low rate plus the remainder at the high rate."""
+    win_elo = 1200
     payout, _ = await br.award_bot_defeat(
-        user_id=5020, guild_id=42, holder_name="A", bot_elo=1200,
+        user_id=5020, guild_id=42, holder_name="A", bot_elo=win_elo,
     )
-    expected = br.LOW_ELO_THRESHOLD * br.COINS_PER_NEW_ELO_LOW + 200 * br.COINS_PER_NEW_ELO
-    assert payout == expected  # 10000 + 4000 = 14000
+    expected = (
+        br.LOW_ELO_THRESHOLD * br.COINS_PER_NEW_ELO_LOW
+        + (win_elo - br.LOW_ELO_THRESHOLD) * br.COINS_PER_NEW_ELO
+    )
+    assert payout == expected
 
 
 @_aio
 async def test_payout_above_threshold_only_uses_high_rate(db):
-    """After beating 1200, beating 1500 same day pays 300*20 (all above 1000)."""
+    """After beating 1200, beating 1500 same day pays the delta at the high
+    rate only (both above the threshold)."""
     await br.award_bot_defeat(user_id=5021, guild_id=42, holder_name="A", bot_elo=1200)
     bal = await get_balance(5021)
     payout, _ = await br.award_bot_defeat(
@@ -157,14 +166,19 @@ async def test_payout_above_threshold_only_uses_high_rate(db):
 
 @_aio
 async def test_payout_delta_straddles_threshold(db):
-    """After beating 800, beating 1300 pays (1000-800)*10 + (1300-1000)*20."""
-    await br.award_bot_defeat(user_id=5022, guild_id=42, holder_name="A", bot_elo=800)
+    """A delta that straddles the threshold pays the portion below it at the
+    low rate, the portion above at the high rate."""
+    prior_elo = 800
+    new_elo = 1300
+    await br.award_bot_defeat(user_id=5022, guild_id=42, holder_name="A", bot_elo=prior_elo)
     bal = await get_balance(5022)
     payout, _ = await br.award_bot_defeat(
-        user_id=5022, guild_id=42, holder_name="A", bot_elo=1300,
+        user_id=5022, guild_id=42, holder_name="A", bot_elo=new_elo,
     )
-    expected = 200 * br.COINS_PER_NEW_ELO_LOW + 300 * br.COINS_PER_NEW_ELO
-    assert payout == expected  # 2000 + 6000 = 8000
+    low_gain = br.LOW_ELO_THRESHOLD - prior_elo
+    high_gain = new_elo - br.LOW_ELO_THRESHOLD
+    expected = low_gain * br.COINS_PER_NEW_ELO_LOW + high_gain * br.COINS_PER_NEW_ELO
+    assert payout == expected
     assert await get_balance(5022) == bal + expected
 
 
