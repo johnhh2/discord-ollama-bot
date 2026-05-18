@@ -1050,6 +1050,7 @@ class ChessCog(commands.Cog):
             f"{mover_name} played **{san}**.\n\n"
             f"**{headline}**{payout_line}"
             f"{h2h_line}"
+            f"{_captures_block(game)}"
             f"{view_line}"
         )
 
