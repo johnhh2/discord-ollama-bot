@@ -348,22 +348,30 @@ def _move_takes_opp_hang(move: chess.Move, hang_square: chess.Square) -> bool:
 
 
 def _find_see_losing_move(board: chess.Board, exclude: chess.Move | None = None) -> chess.Move | None:
-    """Walk legal moves and return a uniformly-random one whose destination
-    square has SEE < 0 for the moving side after the move is played — i.e.
-    a move that drops material in a static exchange.
+    """Walk legal moves and return a SEE-losing one weighted INVERSELY by
+    the value of the piece being dropped.
 
-    Used by the extra-blunder injector to find a concrete "losing piece"
-    move when we want to degrade Maia's pick. Excludes `exclude` (typically
+    Weighting by 1/piece_value matches the real-beginner pattern: hanging
+    a pawn happens often, hanging a queen rarely. Without this weighting,
+    a uniform-random pick treats queen-drops and pawn-drops equally, which
+    makes the bot hang queens on early moves at any Elo (not realistic).
+
+    Used by the extra-blunder injector. Excludes `exclude` (typically
     Maia's chosen move) so the injector actually changes the move.
 
-    Returns None if no SEE-losing move exists in the position (rare in
-    middlegames; common in simplified endgames). Caller falls back to
-    keeping Maia's original move."""
+    Returns None if no SEE-losing move exists (rare in middlegames; common
+    in simplified endgames). Caller falls back to keeping Maia's pick."""
     mover = board.turn
     opp = not mover
     losing: list[chess.Move] = []
+    weights: list[float] = []
     for mv in board.legal_moves:
         if exclude is not None and mv == exclude:
+            continue
+        # The "dropped piece" is the one ON `mv.from_square` BEFORE the move
+        # — that's what would walk into the losing exchange on mv.to_square.
+        piece = board.piece_at(mv.from_square)
+        if piece is None:
             continue
         # SEE from the opponent's perspective: if they would gain material by
         # capturing on our move's destination square AFTER we move there,
@@ -372,9 +380,14 @@ def _find_see_losing_move(board: chess.Board, exclude: chess.Move | None = None)
         after.push(mv)
         if see_capture(after, mv.to_square, opp) > 0:
             losing.append(mv)
+            # Weight inversely by piece value. Pawn (1) → weight 1.0,
+            # knight/bishop (3) → 0.33, rook (5) → 0.2, queen (9) → 0.11.
+            # King hangs shouldn't be reachable here (illegal move), but
+            # guard with the same formula via _piece_value.
+            weights.append(1.0 / _piece_value(piece))
     if not losing:
         return None
-    return random.choice(losing)
+    return random.choices(losing, weights=weights, k=1)[0]
 
 
 async def _native_elo_move(engine: chess.engine.UciProtocol, board: chess.Board,

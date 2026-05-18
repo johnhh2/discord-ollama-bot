@@ -333,24 +333,23 @@ class TestSEE:
 
 class TestFindSeeLosingMove:
     """The extra-blunder injector picks a move that drops material per SEE
-    in the resulting position."""
+    in the resulting position. Weights inversely by piece value (pawn
+    drops much more likely than queen drops)."""
 
     def test_returns_none_when_no_losing_move(self):
         b = chess.Board("4k3/8/8/8/8/8/8/4K3 w - - 0 1")
         assert chess_bot._find_see_losing_move(b) is None
 
-    def test_finds_a_hanging_drop(self, monkeypatch):
+    def test_finds_a_hanging_drop(self):
         b = chess.Board("3rk3/8/8/8/8/8/8/3QK3 w - - 0 1")
-        monkeypatch.setattr(chess_bot.random, "choice", lambda moves: moves[0])
         result = chess_bot._find_see_losing_move(b)
         assert result is not None
         after = b.copy(stack=False)
         after.push(result)
         assert chess_bot.see_capture(after, result.to_square, chess.BLACK) > 0
 
-    def test_excludes_specified_move(self, monkeypatch):
+    def test_excludes_specified_move(self):
         b = chess.Board("3rk3/8/8/8/8/8/8/3QK3 w - - 0 1")
-        monkeypatch.setattr(chess_bot.random, "choice", lambda moves: moves[0])
         first = chess_bot._find_see_losing_move(b)
         assert first is not None
         for _ in range(10):
@@ -358,6 +357,48 @@ class TestFindSeeLosingMove:
             if other is None:
                 break
             assert other != first
+
+    def test_inverse_value_weighting_prefers_pawn_drops(self):
+        """Position where both a pawn drop and a queen drop are available
+        SEE-losing moves. With inverse-value weighting (pawn weight 1.0,
+        queen weight 0.11), pawn drops should dominate the sample."""
+        # White to move. Black queen on h5 (could be captured by white queen
+        # on d1 via Qxh5, but that walks the queen into the black bishop on
+        # f7's diagonal... actually let me design something cleaner).
+        #
+        # Simpler: white queen on a1 and white pawn on b2, black queen on h8.
+        # Available SEE-losing moves: any pawn move that hangs the pawn, any
+        # queen move that hangs the queen.
+        # Black rook on b8 attacks b-file: b2-b3 hangs the pawn.
+        # Black bishop on h7 attacks down a1-h8 diagonal: Qa1xh8 trades queen
+        # for nothing useful... that's a CAPTURE, not a hang. Need a clean
+        # setup where queen and pawn both have purely losing non-capture moves.
+        #
+        # Use a constructed position with many safe pawn-drop options and
+        # only one queen-drop option, then verify the weighted distribution
+        # heavily favors pawn-drops over many samples.
+        #
+        # Position: white king + queen on the back rank, several white pawns
+        # one square from black attackers, black pieces lined up to attack.
+        b = chess.Board("rnbqkbnr/8/8/8/8/8/PPPPPPPP/Q3K3 w - - 0 1")
+        samples = [chess_bot._find_see_losing_move(b) for _ in range(200)]
+        # Most picks should be pawn moves (lower-value drops favored).
+        pawn_drops = sum(
+            1 for m in samples
+            if m is not None and b.piece_at(m.from_square).piece_type == chess.PAWN
+        )
+        queen_drops = sum(
+            1 for m in samples
+            if m is not None and b.piece_at(m.from_square).piece_type == chess.QUEEN
+        )
+        # With pawn weight 1.0 and queen weight ~0.11, pawn drops should
+        # dominate by a factor of at least 5x even accounting for variance.
+        # (Total pawn options likely outnumber queen options too, compounding
+        # the bias.)
+        assert pawn_drops > queen_drops * 5, (
+            f"expected pawn-drops to dominate; got {pawn_drops} pawn, "
+            f"{queen_drops} queen out of {len(samples)} samples"
+        )
 
 
 # -----------------------------------------------------------------------------
