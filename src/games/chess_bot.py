@@ -81,9 +81,9 @@ _MAIA_POOL_SIZE_ANCHORS: list[tuple[int, int]] = [
 # Maia pool already includes Maia's natural mistake distribution, no need
 # to force additional ones.
 _EXTRA_BLUNDER_ANCHORS: list[tuple[int, float]] = [
-    (100, 0.15),
-    (400, 0.07),
-    (700, 0.03),
+    (100, 0.10),
+    (400, 0.02),
+    (700, 0.02),
     (1000, 0.01),
 ]
 
@@ -92,9 +92,9 @@ _EXTRA_BLUNDER_ANCHORS: list[tuple[int, float]] = [
 # Elo 100 to 0.95 at Elo 1000. Total notice rate adds a value-based bonus
 # (queens get noticed more than pawns); see _PIECE_NOTICE_BONUS below.
 _NOTICE_BASE_ANCHORS: list[tuple[int, float]] = [
-    (100, 0.15),
-    (400, 0.25),
-    (700, 0.55),
+    (100, 0.25),
+    (400, 0.55),
+    (700, 0.70),
     (1000, 0.85),
 ]
 

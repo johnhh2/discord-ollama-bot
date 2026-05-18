@@ -155,7 +155,7 @@ class TestExtraBlunderProbabilityForElo:
     1000 (never fully zero — even Elo 1000 humans drop the occasional piece)."""
 
     def test_anchor_points(self):
-        anchors = [(100, 0.15), (400, 0.07), (700, 0.03), (1000, 0.01)]
+        anchors = [(100, 0.10), (400, 0.02), (700, 0.02), (1000, 0.01)]
         for elo, expected in anchors:
             actual = chess_bot.extra_blunder_probability_for_elo(elo)
             assert abs(actual - expected) < 0.001, (
@@ -169,8 +169,8 @@ class TestExtraBlunderProbabilityForElo:
             assert chess_bot.extra_blunder_probability_for_elo(elo) > 0.0
 
     def test_clamps_below_floor(self):
-        assert chess_bot.extra_blunder_probability_for_elo(50) == 0.15
-        assert chess_bot.extra_blunder_probability_for_elo(0) == 0.15
+        assert chess_bot.extra_blunder_probability_for_elo(50) == 0.10
+        assert chess_bot.extra_blunder_probability_for_elo(0) == 0.10
 
     def test_clamps_above_top(self):
         # Above 1000 stays at the cap (sub-Maia curve doesn't apply at
@@ -193,13 +193,13 @@ class TestNoticeProbabilityForEloAndPiece:
 
     def test_elo_100_pawn_uses_base_floor(self):
         p = chess_bot.notice_probability_for_elo_and_piece(100, chess.PAWN)
-        assert abs(p - 0.15) < 0.001
+        assert abs(p - 0.25) < 0.001
 
     def test_elo_100_queen_gets_full_bonus(self):
         p = chess_bot.notice_probability_for_elo_and_piece(100, chess.QUEEN)
-        # 0.15 + 0.60 = 0.75 — even Elo 100 spots a hanging queen 3/4
-        # of the time, matching real beginner behavior.
-        assert abs(p - 0.75) < 0.001
+        # 0.25 + 0.60 = 0.85 — Elo 100 spots a hanging queen most of the
+        # time, matching real beginner behavior.
+        assert abs(p - 0.85) < 0.001
 
     def test_elo_1000_pawn_uses_base_ceiling(self):
         # Base 0.85 at Elo 1000 — even strong sub-Maia players miss some
