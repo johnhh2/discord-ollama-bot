@@ -118,7 +118,7 @@ class TestMaiaPoolSizeForElo:
     samples but mostly returns Maia 1100's top policy moves."""
 
     def test_anchor_points(self):
-        anchors = [(100, 11), (400, 8), (700, 5), (800, 4),
+        anchors = [(100, 11), (400, 10), (700, 5), (800, 4),
                    (900, 3), (1000, 2)]
         for elo, expected in anchors:
             assert chess_bot.maia_pool_size_for_elo(elo) == expected, (
@@ -147,24 +147,24 @@ class TestMaiaPoolSizeForElo:
 
 class TestExtraBlunderProbabilityForElo:
     """Extra-blunder probability: forced SEE-losing moves layered on top of
-    Maia's sampled move. Only nonzero below Elo 500 — above that the wider
-    sampling pool already produces enough natural mistakes."""
+    Maia's sampled move. Tapers from 0.25 at Elo 100 down to 0 at Elo 700+,
+    where the wider sampling pool produces enough natural mistakes on its own."""
 
     def test_anchor_points(self):
-        anchors = [(100, 0.10), (400, 0.01), (500, 0.0), (1000, 0.0)]
+        anchors = [(100, 0.25), (400, 0.10), (600, 0.02), (700, 0.0), (1000, 0.0)]
         for elo, expected in anchors:
             actual = chess_bot.extra_blunder_probability_for_elo(elo)
             assert abs(actual - expected) < 0.001, (
                 f"P(extra blunder) at Elo {elo}: expected ~{expected}, got {actual}"
             )
 
-    def test_zero_at_and_above_500(self):
-        for elo in (500, 600, 700, 800, 1000, 1100, 2000):
+    def test_zero_at_and_above_700(self):
+        for elo in (700, 800, 1000, 1100, 2000):
             assert chess_bot.extra_blunder_probability_for_elo(elo) == 0.0
 
     def test_clamps_below_floor(self):
-        assert chess_bot.extra_blunder_probability_for_elo(50) == 0.10
-        assert chess_bot.extra_blunder_probability_for_elo(0) == 0.10
+        assert chess_bot.extra_blunder_probability_for_elo(50) == 0.25
+        assert chess_bot.extra_blunder_probability_for_elo(0) == 0.25
 
     def test_monotonic_non_increasing(self):
         prev = 1.0
@@ -181,12 +181,12 @@ class TestNoticeProbabilityForEloAndPiece:
 
     def test_elo_100_pawn_uses_base_floor(self):
         p = chess_bot.notice_probability_for_elo_and_piece(100, chess.PAWN)
-        assert abs(p - 0.40) < 0.001
+        assert abs(p - 0.20) < 0.001
 
     def test_elo_100_queen_gets_full_bonus(self):
         p = chess_bot.notice_probability_for_elo_and_piece(100, chess.QUEEN)
-        # 0.40 + 0.35 = 0.75
-        assert abs(p - 0.75) < 0.001
+        # 0.20 + 0.35 = 0.55
+        assert abs(p - 0.55) < 0.001
 
     def test_elo_1000_pawn_is_high_base(self):
         p = chess_bot.notice_probability_for_elo_and_piece(1000, chess.PAWN)
@@ -576,15 +576,15 @@ async def test_pick_move_sub_maia_extra_blunder_falls_back_when_no_losing_move(m
 
 
 @_aio
-async def test_pick_move_sub_maia_extra_blunder_skipped_above_500(monkeypatch):
-    """At Elo 500+, extra-blunder probability is 0 — even with random()=0
+async def test_pick_move_sub_maia_extra_blunder_skipped_above_700(monkeypatch):
+    """At Elo 700+, extra-blunder probability is 0 — even with random()=0
     pinned, the dice never fires."""
     fen = "3rk3/8/8/8/8/8/8/3QK3 w - - 0 1"
     pvs = ["e1d2"]
     _install_fake_engine(monkeypatch, analyse_pvs=pvs, maia_available=True)
     monkeypatch.setattr(chess_bot.random, "random", lambda: 0.0)
     monkeypatch.setattr(chess_bot.random, "choice", lambda moves: list(moves)[0])
-    move = await chess_bot.pick_move(fen, 500)
+    move = await chess_bot.pick_move(fen, 700)
     # No blunder swap → Maia's pick (Kd2) comes through.
     assert move == chess.Move.from_uci("e1d2")
 

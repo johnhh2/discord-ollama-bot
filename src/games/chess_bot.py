@@ -68,7 +68,7 @@ _MAIA_WEIGHTS_DIR = _REPO_ROOT / "maia_weights"
 MULTIPV_COUNT = 11
 _MAIA_POOL_SIZE_ANCHORS: list[tuple[int, int]] = [
     (100, 11),
-    (400, 8),
+    (400, 10),
     (700, 5),
     (800, 4),
     (900, 3),
@@ -81,9 +81,10 @@ _MAIA_POOL_SIZE_ANCHORS: list[tuple[int, int]] = [
 # Maia pool already includes Maia's natural mistake distribution, no need
 # to force additional ones.
 _EXTRA_BLUNDER_ANCHORS: list[tuple[int, float]] = [
-    (100, 0.10),
-    (400, 0.01),
-    (500, 0.0),
+    (100, 0.25),
+    (400, 0.10),
+    (600, 0.02),
+    (700, 0.0),
     (1000, 0.0),
 ]
 
@@ -92,7 +93,9 @@ _EXTRA_BLUNDER_ANCHORS: list[tuple[int, float]] = [
 # Elo 100 to 0.95 at Elo 1000. Total notice rate adds a value-based bonus
 # (queens get noticed more than pawns); see _PIECE_NOTICE_BONUS below.
 _NOTICE_BASE_ANCHORS: list[tuple[int, float]] = [
-    (100, 0.40),
+    (100, 0.20),
+    (400, 0.30),
+    (700, 0.65),
     (1000, 0.95),
 ]
 
