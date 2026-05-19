@@ -21,6 +21,7 @@ from src.economy import (
 from src.permissions import (
     requires_perm,
 )
+from src.guild_config import get_guild_cfg
 from src.persistence import (
     save_economy, save_rigged_steal,
     load_lottery, load_records, load_global_records,
@@ -148,18 +149,37 @@ class EconomyCog(commands.Cog):
 
 
     @commands.command(name="leaderboard", aliases=["leaderboards", "lb"])
-    async def cmd_leaderboard(self, ctx: commands.Context):
+    async def cmd_leaderboard(self, ctx: commands.Context, scope: str = None):
         if ctx.guild is None:
             await ctx.send("Leaderboard is only available in servers.")
             return
+
+        cfg = get_guild_cfg(ctx.guild.id)
+        default_scope = cfg.get("leaderboard_default_scope", "global")
+        if scope is not None and scope.lower() in ("server", "global"):
+            scope = scope.lower()
+        else:
+            scope = default_scope
+        server_only = scope == "server"
+
         lottery = await load_lottery(ctx.guild.id)
         lottery_players = lottery.get("players", {})
-        sorted_users = sorted(
+        ranked = sorted(
             ((k, v) for k, v in state.economy["users"].items() if v["balance"] > 0 or k in lottery_players),
             key=lambda x: x[1]["balance"], reverse=True
-        )[:10]
+        )
+        # Server scope filters the global economy down to members of this guild.
+        # The member cache is only populated for users who've interacted (the
+        # bot runs without the privileged members intent), so this reflects
+        # active members rather than the full roster.
+        if server_only:
+            ranked = [(k, v) for k, v in ranked if ctx.guild.get_member(int(k)) is not None]
+        sorted_users = ranked[:10]
+
+        title = "🪙 Server Leaderboard" if server_only else "🪙 Leaderboard"
         if not sorted_users:
-            await ctx.send(embed=emb("🪙 Leaderboard", "No users yet.", C_GREEN))
+            empty_msg = "No members on the leaderboard yet." if server_only else "No users yet."
+            await ctx.send(embed=emb(title, empty_msg, C_GREEN))
             return
         medals = ["🥇", "🥈", "🥉"]
 
@@ -181,8 +201,9 @@ class EconomyCog(commands.Cog):
             tickets = lottery_players.get(uid_str, 0)
             ticket_str = f" • {tickets:,} 🎟️" if tickets else ""
             lines.append(f"{prefix} **{name}** — {data['balance']:,} 🪙{ticket_str}")
-        lines.append("\n*Also: `!levels` XP · `!lbr` roles*")
-        await ctx.send(embed=emb("🪙 Leaderboard", "\n".join(lines), C_GREEN))
+        other_scope = "global" if server_only else "server"
+        lines.append(f"\n*Scope: **{scope}** · try `!lb {other_scope}` · `!levels` XP · `!lbr` roles*")
+        await ctx.send(embed=emb(title, "\n".join(lines), C_GREEN))
 
 
     # ── !crime ────────────────────────────────────────────────────────────────

@@ -86,6 +86,10 @@ class SettingsCog(commands.Cog):
         quote_bypass_val = "✅ enabled" if cfg.get("quote_bypass_restrictions", False) else "❌ disabled"
         quote_bypass_val += "\n*Subcommand: `quote bypass on|off`*"
 
+        lb_scope = cfg.get("leaderboard_default_scope", "global")
+        lb_val = f"default scope: **{lb_scope}**"
+        lb_val += "\n*Subcommand: `leaderboard server|global` — default scope for `!lb` (users can still pass `!lb server`/`!lb global`)*"
+
         embed = discord.Embed(title="⚙️ Server Settings", color=C_BLUE)
         embed.add_field(
             name="📁 Channel Settings",
@@ -100,6 +104,7 @@ class SettingsCog(commands.Cog):
         embed.add_field(name="🏷️ Tax aliases", value=tax_aliases_val, inline=False)
         embed.add_field(name="📖 Story aliases", value=story_aliases_val, inline=False)
         embed.add_field(name="💬 Quote bypass", value=quote_bypass_val, inline=False)
+        embed.add_field(name="🪙 Leaderboard", value=lb_val, inline=False)
         embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
         embed.add_field(name="🔞 NSFW", value=nsfw_val, inline=False)
 
@@ -125,6 +130,30 @@ class SettingsCog(commands.Cog):
         await save_guild_settings()
         status = "✅ enabled" if enabled else "❌ disabled"
         await ctx.send(embed=emb("⚙️ Shop", f"**{item}** is now {status}.", C_GREEN))
+
+    # ── !settings leaderboard ─────────────────────────────────────────────────
+    @cmd_settings.command(name="leaderboard")
+    @requires_perm
+    async def settings_leaderboard(self, ctx: commands.Context, scope: str = None):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        if scope is None or scope.lower() not in ("server", "global"):
+            current = cfg.get("leaderboard_default_scope", "global")
+            await ctx.send(embed=emb(
+                "🪙 Leaderboard",
+                f"Usage: `!settings leaderboard server|global`\nCurrent default: **{current}**",
+                C_GREY,
+            ))
+            return
+        cfg["leaderboard_default_scope"] = scope.lower()
+        await save_guild_settings()
+        await ctx.send(embed=emb(
+            "🪙 Leaderboard",
+            f"`!lb` now defaults to **{scope.lower()}** scope. Users can still override with `!lb server` or `!lb global`.",
+            C_GREEN,
+        ))
 
     # ── !settings nsfw ────────────────────────────────────────────────────────
     @cmd_settings.command(name="nsfw")
