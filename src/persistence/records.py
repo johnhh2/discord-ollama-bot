@@ -63,3 +63,22 @@ async def try_set_record(guild_id: int, category: str, value: int, holder_id: in
         await save_records(guild_id, records)
         return True
     return False
+
+
+async def is_global_top(category: str, value: int, source_guild_id: int) -> bool:
+    """Return True iff *value* strictly beats the best value held by any guild
+    other than *source_guild_id* for *category*. Used to decide whether a new
+    per-guild record also constitutes a new global record.
+
+    Call this AFTER try_set_record has persisted the new value — the source
+    guild is excluded so its own freshly-written row doesn't shadow the
+    comparison.
+    """
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT MAX(value) FROM records WHERE category=%s AND guild_id<>%s",
+            (category, source_guild_id),
+        )
+        row = await cur.fetchone()
+    other_max = row[0] if row and row[0] is not None else -1
+    return value > other_max

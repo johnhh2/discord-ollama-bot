@@ -44,12 +44,34 @@ def _record_label(category: str) -> str:
     return RECORD_LABELS.get(category, category.replace("_", " "))
 
 
+def _resolve_channel_via(source_channel, target_id: int):
+    """Best-effort cache lookup for a channel id, using *source_channel* as a
+    handle into the bot's ConnectionState. Returns None if not found or if
+    the lookup raises. Used to deliver server-records / global-records embeds
+    without threading the bot reference through every announce call site.
+    """
+    if target_id is None:
+        return None
+    try:
+        client = source_channel._state._get_client()
+        return client.get_channel(int(target_id))
+    except Exception:
+        return None
+
+
 async def announce_record(channel, category: str, holder_name: str, value: int) -> None:
     """Send a record-broken announcement embed to `channel`. Best-effort; swallows errors.
 
     Also logs the break to `notable_events` so !recap can mention records
     set today. This is the single hook point for every record category —
     callers in lottery/gambling/games all funnel through here.
+
+    Additional routing (each best-effort, never blocks the source-channel post):
+    - If the guild has `records_channel` configured, an extra copy is posted
+      there as well.
+    - If `bot_settings.global_records_channel` is configured AND this value
+      is also a new GLOBAL top (beats every other guild's value for the
+      category), an extra copy is posted there, tagged with the source guild.
     """
     if channel is None:
         return
@@ -61,15 +83,54 @@ async def announce_record(channel, category: str, holder_name: str, value: int) 
     else:
         suffix = f"**{value:,} 🪙**"
     desc = f"**{holder_name}** just set a new {label} record: {suffix}"
+    embed = emb("🏆 New Record!", desc, C_GOLD)
     try:
-        await channel.send(embed=emb("🏆 New Record!", desc, C_GOLD))
+        await channel.send(embed=embed)
     except Exception:
         pass
+
+    guild = getattr(channel, "guild", None)
+
+    # Per-guild records channel — extra copy in addition to the source channel.
+    if guild is not None:
+        from src.guild_config import get_guild_cfg
+        records_chan_id = get_guild_cfg(guild.id).get("records_channel")
+        if records_chan_id and int(records_chan_id) != getattr(channel, "id", None):
+            records_chan = _resolve_channel_via(channel, records_chan_id)
+            if records_chan is not None:
+                try:
+                    await records_chan.send(embed=embed)
+                except Exception:
+                    pass
+
+    # Global records channel — only when this is the global top for the
+    # category. The check excludes the source guild, since try_set_record
+    # already wrote the new value before this function runs.
+    if guild is not None:
+        from src.persistence import is_global_top
+        global_chan_id = state.bot_settings.get("global_records_channel")
+        if global_chan_id:
+            try:
+                is_top = await is_global_top(category, value, guild.id)
+            except Exception:
+                is_top = False
+            if is_top:
+                global_chan = _resolve_channel_via(channel, global_chan_id)
+                if global_chan is not None and getattr(global_chan, "id", None) != getattr(channel, "id", None):
+                    try:
+                        global_embed = emb(
+                            "🌍 New Global Record!",
+                            f"{desc}\n*from {guild.name}*",
+                            C_GOLD,
+                        )
+                        await global_chan.send(embed=global_embed)
+                    except Exception:
+                        pass
+
     # Best-effort notable-events log — failures here must never break the
     # announcement path. Function-local imports dodge the helpers↔economy
     # import cycle.
     try:
-        guild = getattr(channel, "guild", None)
         if guild is not None:
             from src.economy import _ct_today
             from src.persistence import log_notable_event

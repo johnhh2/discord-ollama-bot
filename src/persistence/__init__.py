@@ -75,6 +75,7 @@ from src.persistence.records import (  # noqa: F401
     load_records,
     save_records,
     try_set_record,
+    is_global_top,
 )
 from src.persistence.history import (  # noqa: F401
     load_balance_history,
