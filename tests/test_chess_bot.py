@@ -1584,15 +1584,16 @@ async def test_pvp_game_end_shows_head_to_head_in_embed(db, _stub_chess_helpers)
 
 
 @_aio
-async def test_bot_game_end_does_not_show_head_to_head(db, _stub_chess_helpers):
-    """Bot games (carry 'elo' key) skip the H2H block entirely."""
+async def test_bot_game_end_shows_per_elo_head_to_head(db, _stub_chess_helpers):
+    """Bot games show a 'vs <engine_label> (N Elo)' record line in the
+    game-over embed, scoped to that specific Elo bin."""
     cog = _make_bot_cog()
     human = FakeMember(uid=2710, display_name="Solo")
 
     _state.active_chess_games[1710] = {
         "fen": "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
         "pgn": _initial_pgn(
-            "Solo", "Stockfish (800 Elo)", None,
+            "Solo", "Sub-Maia (800 Elo)", None,
             starting_fen="r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
         ),
         "white_id": human.id,
@@ -1616,7 +1617,43 @@ async def test_bot_game_end_does_not_show_head_to_head(db, _stub_chess_helpers):
     ]
     assert game_over
     desc = game_over[-1].description or ""
-    assert "Head-to-head:" not in desc, f"H2H should not appear in bot games: {desc}"
+    # Bot games use a per-Elo record line ("vs Sub-Maia (800 Elo)"), not
+    # the PvP-style "Head-to-head:" line.
+    assert "vs Sub-Maia (800 Elo)" in desc, f"expected bot h2h line in: {desc}"
+    assert "Head-to-head:" not in desc, f"PvP H2H should not appear in bot games: {desc}"
+
+
+@_aio
+async def test_bot_head_to_head_is_per_elo(db, _stub_chess_helpers):
+    """Wins at Elo 400 should NOT count toward the record at Elo 800.
+    Each bot Elo bin keeps an isolated record."""
+    from src.persistence import load_bot_head_to_head, save_chess_report
+    cog = _make_bot_cog()
+    human = FakeMember(uid=2711, display_name="Solo")
+    bot_id = cog.bot.user.id
+
+    # Persist three game reports manually: 2 wins at Elo 400, 1 loss at Elo 800.
+    await save_chess_report(
+        guild_id=42, channel_id=1701, white_id=human.id, black_id=bot_id,
+        winner_id=human.id, result="1-0", pgn="", final_fen="", elo=400,
+    )
+    await save_chess_report(
+        guild_id=42, channel_id=1702, white_id=human.id, black_id=bot_id,
+        winner_id=human.id, result="1-0", pgn="", final_fen="", elo=400,
+    )
+    await save_chess_report(
+        guild_id=42, channel_id=1703, white_id=human.id, black_id=bot_id,
+        winner_id=bot_id, result="0-1", pgn="", final_fen="", elo=800,
+    )
+
+    record_400 = await load_bot_head_to_head(human.id, bot_id, 400)
+    record_800 = await load_bot_head_to_head(human.id, bot_id, 800)
+    record_1500 = await load_bot_head_to_head(human.id, bot_id, 1500)
+
+    assert record_400 == {"wins": 2, "losses": 0, "draws": 0}
+    assert record_800 == {"wins": 0, "losses": 1, "draws": 0}
+    # Untouched Elo bin reports zero across the board.
+    assert record_1500 == {"wins": 0, "losses": 0, "draws": 0}
 
 
 @_aio

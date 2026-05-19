@@ -61,12 +61,16 @@ async def save_chess_games() -> None:
 async def save_chess_report(
     *, guild_id: int | None, channel_id: int, white_id: int, black_id: int,
     winner_id: int | None, result: str, pgn: str, final_fen: str,
+    elo: int | None = None,
 ) -> int:
+    """Persist a finished chess game. `elo` is NULL for PvP games and the
+    bot's Elo bin for bot games — used to bucket bot-game records by
+    difficulty (via load_bot_head_to_head)."""
     async with with_cursor() as cur:
         await cur.execute(
             "INSERT INTO chess_reports "
-            "(guild_id, channel_id, white_id, black_id, winner_id, result, pgn, final_fen) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            "(guild_id, channel_id, white_id, black_id, winner_id, result, pgn, final_fen, elo) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
             (
                 int(guild_id) if guild_id is not None else None,
                 int(channel_id),
@@ -76,6 +80,7 @@ async def save_chess_report(
                 result,
                 pgn,
                 final_fen,
+                int(elo) if elo is not None else None,
             ),
         )
         return cur.lastrowid
@@ -105,6 +110,35 @@ async def load_head_to_head(uid_a: int, uid_b: int) -> dict:
         elif int(winner_id) == b:
             wins_b += int(count)
     return {"wins_a": wins_a, "wins_b": wins_b, "draws": draws}
+
+
+async def load_bot_head_to_head(uid: int, bot_user_id: int, elo: int) -> dict:
+    """All-time record between `uid` and the bot AT THE GIVEN ELO bin.
+    Returns {'wins': N, 'losses': N, 'draws': N} where 'wins' = the user
+    won, 'losses' = the bot won, 'draws' = neither.
+
+    Only counts games where chess_reports.elo == the given elo, so a
+    user's record at Elo 400 doesn't bleed into their record at Elo 700.
+    """
+    u, b = int(uid), int(bot_user_id)
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT winner_id, COUNT(*) FROM chess_reports "
+            "WHERE elo=%s "
+            "AND ((white_id=%s AND black_id=%s) OR (white_id=%s AND black_id=%s)) "
+            "GROUP BY winner_id",
+            (int(elo), u, b, b, u),
+        )
+        rows = await cur.fetchall()
+    wins = losses = draws = 0
+    for winner_id, count in rows:
+        if winner_id is None:
+            draws += int(count)
+        elif int(winner_id) == u:
+            wins += int(count)
+        elif int(winner_id) == b:
+            losses += int(count)
+    return {"wins": wins, "losses": losses, "draws": draws}
 
 
 async def count_pvp_wins_in_guild(uid: int, guild_id: int, bot_user_id: int) -> int:

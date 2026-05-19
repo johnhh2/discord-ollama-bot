@@ -21,7 +21,7 @@ from src.permissions import check_chess_channel, requires_perm
 from src.guild_config import get_guild_cfg
 from src.persistence import (
     save_chess_game, delete_chess_game, save_chess_report, load_chess_report,
-    load_head_to_head, count_pvp_wins_in_guild, try_set_record,
+    load_head_to_head, load_bot_head_to_head, count_pvp_wins_in_guild, try_set_record,
 )
 from src.games.ttt_c4 import _setup_pvp_game
 from src.games import chess_engine, chess_render, chess_bot
@@ -947,6 +947,7 @@ class ChessCog(commands.Cog):
                 result=result,
                 pgn=final_pgn,
                 final_fen=board.fen(),
+                elo=game.get("elo"),
             )
         except Exception as e:
             logging.error(f"chess save_chess_report failed: {e}", exc_info=True)
@@ -1007,8 +1008,9 @@ class ChessCog(commands.Cog):
                 except Exception as e:
                     logging.error(f"bot_chess_rewards.award_bot_defeat failed: {e}", exc_info=True)
 
-        # PvP-only: head-to-head line + chess_pvp_wins record on a non-draw win.
-        # Bot games (those with an "elo" key) skip this block — bot bounty handled above.
+        # Head-to-head line. PvP uses the all-time pairwise record; bot games
+        # use the per-Elo record so a 0-3 vs Sub-Maia 400 doesn't pollute the
+        # 5-1 vs Maia 1500 record.
         h2h_line = ""
         is_pvp = "elo" not in game and (
             bot_user is None
@@ -1044,6 +1046,27 @@ class ChessCog(commands.Cog):
                         )
                 except Exception as e:
                     logging.error(f"chess_pvp_wins record update failed: {e}", exc_info=True)
+        elif bot_user is not None and "elo" in game:
+            # Bot game: show user's per-Elo record vs the bot.
+            try:
+                bot_elo = game["elo"]
+                human_id = (
+                    game["white_id"] if game["white_id"] != bot_user.id
+                    else game["black_id"]
+                )
+                pgn_white, pgn_black = _names_from_pgn(game.get("pgn", ""))
+                human_name = (
+                    pgn_white if human_id == game["white_id"] else pgn_black
+                ) or _player_display_name(guild, human_id, str(human_id))
+                bot_label = chess_bot.engine_name_with_elo(bot_elo)
+                bot_h2h = await load_bot_head_to_head(human_id, bot_user.id, bot_elo)
+                h2h_line = (
+                    f"\n\n**vs {bot_label}:** {human_name} "
+                    f"{bot_h2h['wins']} – {bot_h2h['losses']}"
+                    + (f" ({bot_h2h['draws']} draws)" if bot_h2h['draws'] else "")
+                )
+            except Exception as e:
+                logging.error(f"chess bot head-to-head load failed: {e}", exc_info=True)
 
         view_line = f"\n\nView this game: `!chess view {report_id}`" if report_id is not None else ""
         desc = (
