@@ -5,6 +5,7 @@ import datetime
 import io
 import logging
 import time
+import urllib.parse
 
 import chess
 import chess.pgn
@@ -299,6 +300,27 @@ def _player_display_name(guild: discord.Guild | None, uid: int, fallback: str) -
         if m is not None:
             return m.display_name
     return fallback
+
+
+_ANALYSIS_LINK_MAX_URL_LEN = 1800
+
+
+def _analysis_links(pgn_str: str) -> str:
+    """Build clickable chess.com + lichess analysis links for a PGN.
+
+    chess.com loads the full PGN (tags + moves) via ?pgn=. lichess's
+    /analysis/pgn/<moves> path is moves-only — headers are stripped.
+    Either link is dropped if its encoded URL would blow the embed
+    description budget (long-game PGNs encode to many KB).
+    """
+    parts = []
+    chesscom = "https://www.chess.com/analysis?pgn=" + urllib.parse.quote(pgn_str, safe="")
+    if len(chesscom) <= _ANALYSIS_LINK_MAX_URL_LEN:
+        parts.append(f"[Analyze on chess.com]({chesscom})")
+    lichess = "https://lichess.org/analysis/pgn/" + urllib.parse.quote(_movetext_only(pgn_str), safe="")
+    if len(lichess) <= _ANALYSIS_LINK_MAX_URL_LEN:
+        parts.append(f"[Analyze on lichess]({lichess})")
+    return " · ".join(parts)
 
 
 def _names_from_pgn(pgn_str: str) -> tuple[str | None, str | None]:
@@ -653,7 +675,9 @@ class ChessCog(commands.Cog):
         if len(pgn_block) > 3800:
             pgn_block = f"```pgn\n{movetext[:3600]}\n... (truncated)```"
         pgn_hint = f"\n*Full PGN: `!chess pgn {report_id}`*"
-        desc = f"{outcome_line}\n\n{pgn_block}{pgn_hint}"
+        links = _analysis_links(report["pgn"])
+        links_line = f"\n{links}" if links else ""
+        desc = f"{outcome_line}\n\n{pgn_block}{pgn_hint}{links_line}"
         e = emb(f"♟️ Chess Game #{report_id}", desc, C_GREY)
         if file is not None:
             # Attach as top-level file so the board renders outside the embed
@@ -677,17 +701,19 @@ class ChessCog(commands.Cog):
             await send_ephemeral(ctx, embed=emb("❌ Not Found", f"No chess game with report id `{report_id}`.", C_RED))
             return
 
+        links = _analysis_links(report["pgn"])
+        links_line = f"\n{links}" if links else ""
         pgn_block = f"```pgn\n{report['pgn']}\n```"
-        if len(pgn_block) > 3900:
+        if len(pgn_block) + len(links_line) > 3900:
             # PGN too long for an embed code block; fall back to a file attachment.
             file = discord.File(io.BytesIO(report["pgn"].encode("utf-8")), filename=f"chess_{report_id}.pgn")
             await send_ephemeral(
                 ctx,
-                embed=emb(f"♟️ Chess Game #{report_id} — PGN", "Full PGN attached (too long for embed).", C_GREY),
+                embed=emb(f"♟️ Chess Game #{report_id} — PGN", f"Full PGN attached (too long for embed).{links_line}", C_GREY),
                 file=file,
             )
         else:
-            await send_ephemeral(ctx, embed=emb(f"♟️ Chess Game #{report_id} — PGN", pgn_block, C_GREY))
+            await send_ephemeral(ctx, embed=emb(f"♟️ Chess Game #{report_id} — PGN", f"{pgn_block}{links_line}", C_GREY))
 
     # ── !chess (no args) / !chess help: show the chess command menu ─────────
     async def _cmd_help(self, ctx: commands.Context):
