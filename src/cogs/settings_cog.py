@@ -570,6 +570,7 @@ class SettingsCog(commands.Cog):
         feature_req_val += "\n*Subcommand: `feature-request #channel / clear`*"
 
         records_val = f"<#{records_channel_id}>" if records_channel_id else "❌ disabled (records post only where the event happened)"
+        records_val += "\nShows this server's records **plus** every new global-top record from any server."
         records_val += "\n*Subcommand: `records #channel / clear`*"
 
         embed = discord.Embed(title="⚙️ Server Channel Settings", color=C_BLUE)
@@ -598,11 +599,6 @@ class SettingsCog(commands.Cog):
             issue_chan_val = f"<#{issue_chan_id}>" if issue_chan_id else "❌ disabled"
             issue_chan_val += "\n*Subcommand: `internal-issue #channel / clear`*"
             embed.add_field(name="🐛 Internal issue channel (global)", value=issue_chan_val, inline=False)
-
-            global_records_id = state.bot_settings.get("global_records_channel")
-            global_records_val = f"<#{global_records_id}>" if global_records_id else "❌ disabled"
-            global_records_val += "\n*Subcommand: `global-records #channel / clear` — only fires on a new global top across every server*"
-            embed.add_field(name="🌍 Global records channel (global)", value=global_records_val, inline=False)
 
         await send_ephemeral(ctx, embed=embed)
 
@@ -780,7 +776,8 @@ class SettingsCog(commands.Cog):
             await save_guild_settings()
             await ctx.send(embed=emb(
                 "🏆 Records Channel",
-                f"New records in this server will also be posted to {channel.mention} (in addition to the channel where the event happened).",
+                f"{channel.mention} will now show this server's new records **plus** every new global-top record from any server "
+                "(in addition to the channel where the event happened).",
                 C_GREEN,
             ))
         else:
@@ -892,30 +889,6 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb(
                 "🐛 Internal Issue Channel",
                 "Usage: `!settings-channel internal-issue #channel` or `!settings-channel internal-issue clear`",
-                C_GREY,
-            ))
-
-    # ── !settings-channel global-records (global, bot-admin only) ────────────
-    @cmd_settings_channel.command(name="global-records")
-    @requires_perm
-    async def settings_channel_global_records(self, ctx: commands.Context, *args):
-        if args and args[0].lower() == "clear":
-            state.bot_settings.pop("global_records_channel", None)
-            await save_bot_settings()
-            await ctx.send(embed=emb("🌍 Global Records Channel", "Global records mirror disabled.", C_GREEN))
-        elif ctx.message.channel_mentions:
-            channel = ctx.message.channel_mentions[0]
-            state.bot_settings["global_records_channel"] = str(channel.id)
-            await save_bot_settings()
-            await ctx.send(embed=emb(
-                "🌍 Global Records Channel",
-                f"New **global-top** records from any server will be posted to {channel.mention}. (Only fires when the new value beats every other server's value for that category.)",
-                C_GREEN,
-            ))
-        else:
-            await ctx.send(embed=emb(
-                "🌍 Global Records Channel",
-                "Usage: `!settings-channel global-records #channel` or `!settings-channel global-records clear`",
                 C_GREY,
             ))
 

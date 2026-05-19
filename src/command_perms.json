@@ -32,7 +32,6 @@
   "settings-channel admin-log": {"tier": "bot_admin", "hidden": true},
   "settings-channel error-log": {"tier": "bot_admin", "hidden": true},
   "settings-channel internal-issue": {"tier": "bot_admin", "hidden": true},
-  "settings-channel global-records": {"tier": "bot_admin", "hidden": true},
   "bugreport":     {"tier": "everyone",    "hidden": false},
   "featurerequest": {"tier": "everyone",   "hidden": false},
   "issue":         {"tier": "bot_admin",   "hidden": false},
