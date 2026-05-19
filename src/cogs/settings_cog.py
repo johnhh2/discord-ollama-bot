@@ -87,17 +87,21 @@ class SettingsCog(commands.Cog):
         quote_bypass_val += "\n*Subcommand: `quote bypass on|off`*"
 
         embed = discord.Embed(title="⚙️ Server Settings", color=C_BLUE)
-        embed.description = (
-            "Channel-related settings have moved to **`!settings-channel`** "
-            "(AI channels, whitelist/blacklist, games, chess, lottery, level-up, etc.)."
+        embed.add_field(
+            name="📁 Channel Settings",
+            value=(
+                "Channel-related settings have moved to **`!settings-channel`** "
+                "(AI channels, whitelist/blacklist, games, chess, lottery, level-up, records, etc.)."
+            ),
+            inline=False,
         )
         embed.add_field(name="🛒 Shop items", value=shop_val, inline=False)
-        embed.add_field(name="🔞 NSFW", value=nsfw_val, inline=False)
-        embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
         embed.add_field(name="🎲 Gambler role", value=gambler_role_val, inline=False)
         embed.add_field(name="🏷️ Tax aliases", value=tax_aliases_val, inline=False)
         embed.add_field(name="📖 Story aliases", value=story_aliases_val, inline=False)
         embed.add_field(name="💬 Quote bypass", value=quote_bypass_val, inline=False)
+        embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
+        embed.add_field(name="🔞 NSFW", value=nsfw_val, inline=False)
 
         await send_ephemeral(ctx, embed=embed)
 
@@ -569,14 +573,14 @@ class SettingsCog(commands.Cog):
         records_val += "\n*Subcommand: `records #channel / clear`*"
 
         embed = discord.Embed(title="⚙️ Server Channel Settings", color=C_BLUE)
-        embed.add_field(name="🤖 AI channels", value=ai_val, inline=False)
         embed.add_field(name="✅ Channel whitelist", value=whitelist_val, inline=False)
         embed.add_field(name="❌ Channel blacklist", value=blacklist_val, inline=False)
+        embed.add_field(name="🤖 AI channels", value=ai_val, inline=False)
         embed.add_field(name="🎮 Game channels", value=game_val, inline=False)
-        embed.add_field(name="♟️ Chess channels", value=chess_val, inline=False)
         embed.add_field(name="🎰 Lottery channel", value=lottery_val, inline=False)
         embed.add_field(name="📊 Level-up channel", value=levelup_val, inline=False)
         embed.add_field(name="🏆 Records channel", value=records_val, inline=False)
+        embed.add_field(name="♟️ Chess channels", value=chess_val, inline=False)
         embed.add_field(name="📖 Feature request channel", value=feature_req_val, inline=False)
 
         if is_admin(ctx):
