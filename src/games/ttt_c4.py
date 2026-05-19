@@ -5,7 +5,7 @@ from discord.ext import commands
 
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_BLUE, C_GREY,
-    _delete_after, _edit_board,
+    _delete_after, _edit_board, parse_int_amount,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, record_gambling_event,
@@ -172,7 +172,10 @@ async def _send_game_board(ctx: commands.Context, game: dict, title: str,
 
 async def _setup_pvp_game(ctx, opponent, amount, invite_title):
     """Validates opponent, deducts wagers, waits for confirmation.
-    Returns True if game should proceed; False if an error was already sent."""
+
+    `amount` is the already-parsed wager (int >= 0); callers parse the raw
+    string (with `k`/`m` shorthand) before invoking. Returns True if the game
+    should proceed; False if an error was already sent."""
     uid = ctx.author.id
     if opponent is None:
         await ctx.send(f"Usage: `!{ctx.invoked_with} @user [amount]`")
@@ -352,13 +355,17 @@ class TttC4Cog(commands.Cog):
         self.bot = bot
 
     @commands.command(name="ttt")
-    async def cmd_ttt(self, ctx: commands.Context, opponent: discord.User = None, amount: int = 0):
+    async def cmd_ttt(self, ctx: commands.Context, opponent: discord.User = None, amount: str = "0"):
         if await check_game_channel(ctx):
             return
         cid = ctx.channel.id
         uid = ctx.author.id
         if cid in state.active_ttt_games or cid in state.active_c4_games:
             await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
+            return
+        amount = parse_int_amount(amount)
+        if amount is None:
+            await ctx.send("Amount must be a positive whole number (e.g. `100`, `2.5k`).")
             return
         if not await _setup_pvp_game(ctx, opponent, amount, "📨 Tic-Tac-Toe Invite"):
             return
@@ -378,13 +385,17 @@ class TttC4Cog(commands.Cog):
         await _add_initial_reactions(ctx.channel, state.active_ttt_games[cid]["board_msg_id"], "ttt")
 
     @commands.command(name="c4")
-    async def cmd_c4(self, ctx: commands.Context, opponent: discord.User = None, amount: int = 0):
+    async def cmd_c4(self, ctx: commands.Context, opponent: discord.User = None, amount: str = "0"):
         if await check_game_channel(ctx):
             return
         cid = ctx.channel.id
         uid = ctx.author.id
         if cid in state.active_ttt_games or cid in state.active_c4_games:
             await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
+            return
+        amount = parse_int_amount(amount)
+        if amount is None:
+            await ctx.send("Amount must be a positive whole number (e.g. `100`, `2.5k`).")
             return
         if not await _setup_pvp_game(ctx, opponent, amount, "📨 Connect 4 Invite"):
             return

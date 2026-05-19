@@ -14,7 +14,7 @@ from discord.ext import commands
 
 from src.helpers import (
     emb, C_RED, C_GOLD, C_BLUE, C_GREEN, C_GREY,
-    _delete_after, send_ephemeral, announce_record,
+    _delete_after, send_ephemeral, announce_record, parse_int_amount,
 )
 from src.economy import (
     add_balance, record_gambling_event,
@@ -432,7 +432,14 @@ class ChessCog(commands.Cog):
             await self._start_bot_chess(ctx, elo)
             return
 
-        amount = trailing_int if trailing_int is not None else 0
+        # PvP wager: re-parse the trailing token with `k`/`m` shorthand support
+        # (bot-game Elo above stays a plain int). Default to 0 when the only
+        # arg is the opponent mention.
+        wager_token = args[-1] if args and not args[-1].startswith("<@") else "0"
+        amount = parse_int_amount(wager_token)
+        if amount is None:
+            await ctx.send("Wager must be a positive whole number (e.g. `100`, `2.5k`).")
+            return
         await self._start_pvp_chess(ctx, opponent, amount)
 
     async def _start_pvp_chess(self, ctx: commands.Context, opponent, amount: int):

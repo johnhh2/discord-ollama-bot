@@ -245,14 +245,56 @@ async def send_ephemeral(ctx: commands.Context, *args, **kwargs) -> discord.Mess
     return msg
 
 
+def parse_int_amount(value: str, allow_negative: bool = False) -> "int | None":
+    """Parse a coin/ticket/bet amount string into an int.
+
+    Accepts plain integers and a `k`/`m` suffix shorthand (case-insensitive)
+    where `k` = thousand and `m` = million, including decimal multipliers:
+    `1k` → 1000, `2.5k` → 2500, `100k` → 100000, `3m` → 3000000.
+    Underscores and commas as digit separators are also accepted (`1_000`,
+    `1,000`). Returns None if the string isn't a valid amount.
+
+    By default negatives are rejected (returns None). Pass
+    ``allow_negative=True`` for signed admin grants like `!give @user -5k`.
+    """
+    s = value.strip().lower().replace("_", "").replace(",", "")
+    if not s:
+        return None
+
+    sign = 1
+    if s[0] in ("+", "-"):
+        if s[0] == "-":
+            sign = -1
+        s = s[1:]
+
+    mult = 1
+    if s and s[-1] in ("k", "m"):
+        mult = 1000 if s[-1] == "k" else 1_000_000
+        s = s[:-1]
+
+    try:
+        if mult != 1:
+            amount = sign * int(float(s) * mult)
+        else:
+            # Reject decimals for plain integers (e.g. "2.5" is not a count).
+            amount = sign * int(s)
+    except ValueError:
+        return None
+
+    if amount < 0 and not allow_negative:
+        return None
+    return amount
+
+
 async def parse_amount(
     ctx: commands.Context, value: str, min_val: int = 1,
     error_msg: str = "Please provide a positive whole number amount."
 ) -> "int | None":
     """Parse a string as a positive integer >= min_val.
 
-    Accepts plain integers or percentage strings like '50%', which resolve
-    to that percentage of the caller's current balance.
+    Accepts plain integers, a `k`/`m` suffix shorthand (`2.5k` → 2500), or
+    percentage strings like '50%', which resolve to that percentage of the
+    caller's current balance.
     """
     from src.economy import get_balance
 
@@ -269,9 +311,8 @@ async def parse_amount(
             await ctx.send("Percentage must be between 1% and 100%.")
             return None
     else:
-        try:
-            amount = int(resolved)
-        except ValueError:
+        amount = parse_int_amount(resolved)
+        if amount is None:
             if error_msg:
                 await ctx.send(error_msg)
             return None

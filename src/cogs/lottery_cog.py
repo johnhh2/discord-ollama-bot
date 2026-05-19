@@ -5,7 +5,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, C_GREY, announce_record,
+    emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, C_GREY, announce_record, parse_int_amount,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, drain_bot_balance_into_lottery, announce_new_lottery,
@@ -166,11 +166,8 @@ class LotteryCog(commands.Cog):
             await ctx.send(embed=emb("🔒 Lottery Locked", "Ticket sales are closed for the final hour before the draw. Check back after 6pm CT!", C_RED))
             return
 
-        try:
-            tickets = int(n)
-            if tickets <= 0:
-                raise ValueError
-        except ValueError:
+        tickets = parse_int_amount(n)
+        if tickets is None or tickets <= 0:
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a positive number.", C_RED))
             return
 

@@ -16,7 +16,7 @@ from src.leveling import (
     _xp_cost, xp_for_level, level_from_xp, xp_for_next_level, levelup_coin_reward,
     _bar,
 )
-from src.helpers import parse_amount, MemberConverter
+from src.helpers import parse_amount, parse_int_amount, MemberConverter
 from src.permissions import get_command_perm
 from src.economy import add_balance
 
@@ -209,6 +209,56 @@ class TestParseAmount:
         await add_balance(11, 1000)
         assert await parse_amount(ctx, "  42  ") == 42
         assert await parse_amount(ctx, " 50% ") == 500
+
+    async def test_k_suffix(self, db):
+        ctx = _parse_ctx(uid=12)
+        await add_balance(12, 1000)
+        assert await parse_amount(ctx, "1k") == 1000
+        assert await parse_amount(ctx, "2.5k") == 2500
+        assert await parse_amount(ctx, "100K") == 100000
+
+
+# ── parse_int_amount ──────────────────────────────────────────────────────────
+
+class TestParseIntAmount:
+    def test_plain_integer(self):
+        assert parse_int_amount("42") == 42
+        assert parse_int_amount("0") == 0
+
+    def test_k_suffix_is_thousands(self):
+        assert parse_int_amount("1k") == 1000
+        assert parse_int_amount("100k") == 100000
+        assert parse_int_amount("2.5k") == 2500
+
+    def test_m_suffix_is_millions(self):
+        assert parse_int_amount("3m") == 3_000_000
+        assert parse_int_amount("1.5M") == 1_500_000
+
+    def test_case_insensitive(self):
+        assert parse_int_amount("5K") == 5000
+        assert parse_int_amount(" 2.5K ") == 2500
+
+    def test_digit_separators(self):
+        assert parse_int_amount("1_000") == 1000
+        assert parse_int_amount("1,000") == 1000
+
+    def test_plain_decimal_rejected(self):
+        # A bare "2.5" is not a whole count; only the k/m forms allow decimals.
+        assert parse_int_amount("2.5") is None
+
+    def test_non_numeric_rejected(self):
+        assert parse_int_amount("abc") is None
+        assert parse_int_amount("") is None
+        assert parse_int_amount("k") is None
+
+    def test_negative_rejected_by_default(self):
+        assert parse_int_amount("-5") is None
+        assert parse_int_amount("-2k") is None
+
+    def test_negative_allowed_when_opted_in(self):
+        assert parse_int_amount("-5", allow_negative=True) == -5
+        assert parse_int_amount("-2.5k", allow_negative=True) == -2500
+        assert parse_int_amount("+3k", allow_negative=True) == 3000
 
 
 # ── MemberConverter ───────────────────────────────────────────────────────────

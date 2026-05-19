@@ -9,7 +9,7 @@ import discord
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_GOLD, C_ORANGE, C_GREY, C_BLUE, parse_amount, send_ephemeral, fetch_member, shop_charge, OptionalMember,
+    emb, C_GREEN, C_RED, C_GOLD, C_ORANGE, C_GREY, C_BLUE, parse_amount, parse_int_amount, send_ephemeral, fetch_member, shop_charge, OptionalMember,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
@@ -1399,11 +1399,8 @@ class EconomyCog(commands.Cog):
         if amount is None:
             await ctx.send(embed=emb("⚙️ Event", "Usage: `!event <amount> [duration_hours] [#channel]`", C_GREY))
             return
-        try:
-            amount = int(amount)
-            if amount <= 0:
-                raise ValueError
-        except ValueError:
+        amount = parse_int_amount(amount)
+        if amount is None or amount <= 0:
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a positive whole number.", C_RED))
             return
 
@@ -1477,18 +1474,15 @@ class EconomyCog(commands.Cog):
         if target is None or amount is None:
             await ctx.send(embed=emb("⚙️ Give", "Usage: `!give @user <amount>`", C_GREY))
             return
-        try:
-            amount = int(amount)
-            if amount == 0:
-                raise ValueError
-            if amount < 0:
-                if self.bot.user and target.id == self.bot.user.id:
-                    amount = max(amount, -1 * get_guild_house_balance(ctx.guild.id if ctx.guild else 0))
-                else:
-                    amount = max(amount, -1 * await get_balance(target.id))
-        except ValueError:
+        amount = parse_int_amount(amount, allow_negative=True)
+        if amount is None or amount == 0:
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a non-zero whole number.", C_RED))
             return
+        if amount < 0:
+            if self.bot.user and target.id == self.bot.user.id:
+                amount = max(amount, -1 * get_guild_house_balance(ctx.guild.id if ctx.guild else 0))
+            else:
+                amount = max(amount, -1 * await get_balance(target.id))
         if self.bot.user and target.id == self.bot.user.id and ctx.guild:
             await add_guild_house(ctx.guild.id, amount)
             action = "given to" if amount > 0 else "removed from"
@@ -1518,11 +1512,8 @@ class EconomyCog(commands.Cog):
         if not ctx.guild:
             await ctx.send(embed=emb("❌ Guild Only", "This command can only be used in a server.", C_RED))
             return
-        try:
-            amount = int(amount)
-            if amount == 0:
-                raise ValueError
-        except ValueError:
+        amount = parse_int_amount(amount, allow_negative=True)
+        if amount is None or amount == 0:
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a non-zero whole number.", C_RED))
             return
 
