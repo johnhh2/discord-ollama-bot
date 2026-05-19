@@ -126,7 +126,13 @@ class GraphCog(commands.Cog):
 
     @_snapshot_loop.before_loop
     async def _wait_for_ready(self):
+        # wait_until_ready only blocks on gateway readiness; init_db_state
+        # runs separately and may still be loading state. Snapshotting
+        # before it finishes captures an empty state.economy["users"] and
+        # UPSERTs a 0-user row over today's real bucket — losing data.
         await self.bot.wait_until_ready()
+        import src.persistence as _pkg
+        await _pkg.init_done.wait()
 
     @commands.group(name="graph", invoke_without_command=True)
     @requires_perm

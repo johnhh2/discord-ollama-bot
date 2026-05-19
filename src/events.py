@@ -369,7 +369,14 @@ class EventsCog(commands.Cog):
     async def on_ready(self):
         logging.info(f"Logged in as {self.bot.user} ({self.bot.user.id})")
 
-        await init_db_state()
+        # Shield init from on_ready cancellation: if this listener task
+        # is killed mid-await (gateway hiccup, container signal), the
+        # inner `async with with_cursor()` raises GeneratorExit during
+        # cleanup, init_done never gets set, and every subsequent
+        # on_message hits its 60s timeout and silently drops — bot looks
+        # unresponsive until manual restart. Shield wraps the coro in a
+        # Task that keeps running even if the outer await is cancelled.
+        await asyncio.shield(init_db_state())
 
         # Edit the restart confirmation message if one was saved
         restart_data = await load_restart_msg()
