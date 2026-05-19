@@ -390,6 +390,103 @@ def _find_see_losing_move(board: chess.Board, exclude: chess.Move | None = None)
     return random.choices(losing, weights=weights, k=1)[0]
 
 
+# Sub-Maia tier with mate-check enabled. Below 300, the bot is expected to
+# walk into mate-in-1 occasionally (authentic beginner behavior). From 300+
+# we filter out candidates that allow immediate mate. From 700+ we also
+# spawn Stockfish at depth 4 to catch mate-in-2 setups.
+_MATE_CHECK_MIN_ELO = 300
+_MATE_TWO_PLY_MIN_ELO = 700
+_MATE_TWO_PLY_STOCKFISH_DEPTH = 4
+
+
+def _move_allows_mate_in_one(board: chess.Board, move: chess.Move) -> bool:
+    """True iff playing `move` lets the opponent deliver mate in 1.
+    Pure Python; ~microseconds per call (scans opponent's legal moves
+    after our push). Used at Elo 300+ to filter out candidates that
+    walk into the simplest tactical losses."""
+    after = board.copy(stack=False)
+    after.push(move)
+    if after.is_game_over():
+        # Move ended the game (mate, stalemate, etc.) — opponent has no reply,
+        # so by definition no mate-in-1 reply exists.
+        return False
+    for reply in after.legal_moves:
+        with_reply = after.copy(stack=False)
+        with_reply.push(reply)
+        if with_reply.is_checkmate():
+            return True
+    return False
+
+
+async def _move_allows_mate_in_two(board: chess.Board, move: chess.Move) -> bool:
+    """True iff playing `move` lets the opponent force mate within 2 plies
+    (2 full opponent moves with our move in between). Implemented via
+    Stockfish at depth 4 — that's deep enough to find any mate-in-2
+    instantly.
+
+    Returns False on engine failure (no Stockfish) — we'd rather let the
+    move through than block on engine unavailability."""
+    after = board.copy(stack=False)
+    after.push(move)
+    if after.is_game_over():
+        return False
+    try:
+        transport, engine = await chess.engine.popen_uci(_resolve_stockfish_path())
+    except (chess.engine.EngineError, FileNotFoundError, OSError):
+        return False
+    try:
+        # Always pass multipv=1 so the return shape is always a list (real
+        # engines return a dict when multipv is unset, list when it's set —
+        # forcing the list shape simplifies the test fake too).
+        infos = await engine.analyse(
+            after,
+            chess.engine.Limit(depth=_MATE_TWO_PLY_STOCKFISH_DEPTH),
+            multipv=1,
+        )
+        if not infos:
+            return False
+        info = infos[0]
+        score = info.get("score")
+        if score is None:
+            return False
+        # Opponent's POV after our push. A mate score from their POV with
+        # 1 or 2 plies means they have a forced mate-in-1-or-2 from here.
+        # python-chess's PovScore.relative is relative to side-to-move
+        # (the opponent here).
+        mate = score.relative.mate()
+        if mate is None:
+            return False
+        # mate > 0 means side-to-move (opponent) mates in `mate` moves.
+        # mate <= 2 means within our threshold.
+        return 0 < mate <= 2
+    except chess.engine.EngineError:
+        return False
+    finally:
+        try:
+            await engine.quit()
+        except Exception:
+            transport.close()
+
+
+def _filter_mate_in_one(board: chess.Board, candidates: list[chess.Move]) -> list[chess.Move]:
+    """Return the subset of candidates that DON'T allow mate-in-1. If every
+    candidate allows mate (we're in a lost position), return the original
+    list unchanged so the caller still has something to play."""
+    safe = [mv for mv in candidates if not _move_allows_mate_in_one(board, mv)]
+    return safe if safe else candidates
+
+
+async def _filter_mate_in_two(board: chess.Board, candidates: list[chess.Move]) -> list[chess.Move]:
+    """Return the subset of candidates that DON'T allow mate within 2 plies.
+    Same fallback behavior as _filter_mate_in_one when nothing survives."""
+    safe: list[chess.Move] = []
+    for mv in candidates:
+        allows = await _move_allows_mate_in_two(board, mv)
+        if not allows:
+            safe.append(mv)
+    return safe if safe else candidates
+
+
 async def _native_elo_move(engine: chess.engine.UciProtocol, board: chess.Board,
                            elo: int) -> chess.Move:
     """Stockfish's built-in strength limiter — only works for 1320-3190."""
@@ -528,31 +625,51 @@ async def _sub_maia_move(board: chess.Board, elo: int) -> chess.Move:
 
     1. Ask Maia 1100 for its top-pool_size moves (each one is a real move
        1100-rated humans actually play, just less common at the tail).
-    2. Sample one uniformly from the pool.
-    3. Apply threat-awareness: with P(notice) based on Elo and piece value,
+    2. Filter the pool for mate-avoidance:
+         - Elo 300-600: drop candidates that allow opponent mate-in-1.
+         - Elo 700-1000: drop candidates that allow opponent mate-in-2
+           (Stockfish at depth 4).
+         - Elo 100-200: no filter — real beginners walk into mate.
+       If all candidates allow mate, keep the original list (lost position).
+    3. Sample one uniformly from the filtered pool.
+    4. Apply threat-awareness: with P(notice) based on Elo and piece value,
        re-route to address a hanging piece (own or opponent's) the sampled
-       move ignored. Lower-Elo bots are more likely to miss threats; higher-
-       Elo bots almost never miss material hanging.
-    4. With extra_blunder_probability_for_elo (only nonzero below Elo 500):
-       swap the chosen move for a SEE-losing alternative if one exists.
-    5. Return.
-
-    Note: extra-blunder runs AFTER threat-awareness, so a low-Elo bot can
-    still "notice and grab" a hanging queen and then immediately blunder
-    elsewhere on the next move — same as real beginner play.
+       move ignored.
+    5. With extra_blunder_probability_for_elo (only nonzero below Elo 500):
+       swap the chosen move for a SEE-losing alternative if one exists —
+       but verify it doesn't also allow mate.
+    6. Return.
     """
     pool_size = maia_pool_size_for_elo(elo)
     top_n = await _maia_top_n(board, SUB_MAIA_BASELINE_ELO, pool_size)
     # Clamp in case Maia returned fewer than pool_size in tight positions.
     candidates = top_n[:pool_size]
+
+    # Mate-check filter (skipped when we're already in check — chess rules
+    # already constrain legal moves to address it).
+    if not board.is_check():
+        if elo >= _MATE_TWO_PLY_MIN_ELO:
+            candidates = await _filter_mate_in_two(board, candidates)
+        elif elo >= _MATE_CHECK_MIN_ELO:
+            candidates = _filter_mate_in_one(board, candidates)
+
     move = random.choice(candidates) if len(candidates) > 1 else candidates[0]
 
     move = _apply_threat_awareness(board, candidates, move, elo)
 
     if random.random() < extra_blunder_probability_for_elo(elo):
         blunder = _find_see_losing_move(board, exclude=move)
+        # If a blunder candidate exists, make sure it doesn't also allow
+        # mate when the mate-check tier is active.
         if blunder is not None:
-            move = blunder
+            allows_mate = False
+            if not board.is_check():
+                if elo >= _MATE_TWO_PLY_MIN_ELO:
+                    allows_mate = await _move_allows_mate_in_two(board, blunder)
+                elif elo >= _MATE_CHECK_MIN_ELO:
+                    allows_mate = _move_allows_mate_in_one(board, blunder)
+            if not allows_mate:
+                move = blunder
 
     return move
 
