@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import io
 import logging
+import time
 
 import chess
 import chess.pgn
@@ -213,6 +214,61 @@ def _captures_block(game: dict) -> str:
     return f"\nWhite captured: {white_caps or '—'}\nBlack captured: {black_caps or '—'}"
 
 
+def _format_seconds(secs: int) -> str:
+    """Auto-scale seconds to a readable string: '12s' under a minute,
+    'm:ss' under an hour, 'h:mm:ss' beyond. Used in the game-over embed
+    for per-player thinking time."""
+    secs = max(0, int(secs))
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}:{secs % 60:02d}"
+    h = secs // 3600
+    m = (secs % 3600) // 60
+    s = secs % 60
+    return f"{h}:{m:02d}:{s:02d}"
+
+
+def _record_turn_time(game: dict, mover_id: int) -> None:
+    """Stop the clock for the player who just moved, then start the clock
+    for the opponent. Adds elapsed seconds since turn_started_at to the
+    mover's column, then resets turn_started_at to now.
+
+    No-op when turn_started_at isn't set (game just started; first move
+    will see its own clock begin via _start_clock)."""
+    if game.get("turn_started_at") is None:
+        # First move ever, or post-restart with no recorded start. Start the
+        # clock from now so subsequent moves have a baseline.
+        game["turn_started_at"] = int(time.time())
+        return
+    now = int(time.time())
+    elapsed = max(0, now - int(game["turn_started_at"]))
+    if mover_id == game["white_id"]:
+        game["white_seconds"] = int(game.get("white_seconds", 0)) + elapsed
+    elif mover_id == game["black_id"]:
+        game["black_seconds"] = int(game.get("black_seconds", 0)) + elapsed
+    game["turn_started_at"] = now
+
+
+def _start_clock(game: dict) -> None:
+    """Start (or restart) the clock for the current player's turn. Called
+    at game creation."""
+    game["turn_started_at"] = int(time.time())
+    game.setdefault("white_seconds", 0)
+    game.setdefault("black_seconds", 0)
+
+
+def _time_summary_block(game: dict) -> str:
+    """Two-line summary of each side's total thinking time for the game-
+    over embed. Empty string if neither side has any recorded time (e.g.
+    a game that ended in a single move before the clock could tick)."""
+    w = int(game.get("white_seconds", 0))
+    b = int(game.get("black_seconds", 0))
+    if w == 0 and b == 0:
+        return ""
+    return f"\nTime: White {_format_seconds(w)} / Black {_format_seconds(b)}"
+
+
 def _captures_summary(board: chess.Board, captor_color: chess.Color) -> str:
     """Return a compact summary of pieces `captor_color` has taken from the
     opponent. Format: '<glyph1>,<glyph2>+N' where the two glyphs are the
@@ -379,6 +435,7 @@ class ChessCog(commands.Cog):
             "last_move": f"{white_name}'s turn (White)",
             "board_msg_id": None,
         }
+        _start_clock(game)
         state.active_chess_games[cid] = game
 
         wager_info = f"\nWager: {amount:,} 🪙 each" if amount > 0 else ""
@@ -423,6 +480,7 @@ class ChessCog(commands.Cog):
             "last_move": f"{white_name}'s turn (White)",
             "board_msg_id": None,
         }
+        _start_clock(game)
         state.active_chess_games[cid] = game
 
         desc = (
@@ -744,6 +802,12 @@ class ChessCog(commands.Cog):
         game["pgn"] = new_pgn
         game["current_id"] = opponent_id
         game["last_move"] = last_move_text
+        # Snapshot timing fields so rollback on save failure restores them
+        # alongside the position state.
+        prior_turn_started = game.get("turn_started_at")
+        prior_white_secs = game.get("white_seconds", 0)
+        prior_black_secs = game.get("black_seconds", 0)
+        _record_turn_time(game, uid)
 
         # Game-over detection before persistence — if the move ended the game we
         # delete the row and insert a report instead of upserting.
@@ -760,6 +824,9 @@ class ChessCog(commands.Cog):
             game["pgn"] = prior_pgn
             game["current_id"] = prior_current
             game["last_move"] = prior_last_move
+            game["turn_started_at"] = prior_turn_started
+            game["white_seconds"] = prior_white_secs
+            game["black_seconds"] = prior_black_secs
             logging.error(f"chess save_chess_game failed: {e}", exc_info=True)
             err = await channel.send(embed=emb("❌ Save Failed", "Couldn't save the move. Try again.", C_RED))
             asyncio.create_task(_delete_after(err))
@@ -887,6 +954,8 @@ class ChessCog(commands.Cog):
         if capture_phrase:
             last_move_text += f" — {capture_phrase}"
         game["last_move"] = last_move_text
+        # The bot is black in v1; record the time it just spent thinking.
+        _record_turn_time(game, bot_user.id)
 
         result, reason = chess_engine.game_over_info(board)
         if result is not None:
@@ -1074,6 +1143,7 @@ class ChessCog(commands.Cog):
             f"**{headline}**{payout_line}"
             f"{h2h_line}"
             f"{_captures_block(game)}"
+            f"{_time_summary_block(game)}"
             f"{view_line}"
         )
 

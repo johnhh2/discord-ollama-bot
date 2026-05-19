@@ -347,6 +347,119 @@ class TestCapturesSummary:
         assert _captures_summary(b, chess.WHITE) == "♛,♜+4"
 
 
+class TestFormatSeconds:
+    """_format_seconds auto-scales to s / m:ss / h:mm:ss based on duration."""
+
+    def test_under_minute_uses_s_suffix(self):
+        from src.games.chess import _format_seconds
+        assert _format_seconds(0) == "0s"
+        assert _format_seconds(12) == "12s"
+        assert _format_seconds(59) == "59s"
+
+    def test_under_hour_uses_m_ss(self):
+        from src.games.chess import _format_seconds
+        assert _format_seconds(60) == "1:00"
+        assert _format_seconds(273) == "4:33"
+        assert _format_seconds(3599) == "59:59"
+
+    def test_hours_and_above_uses_h_mm_ss(self):
+        from src.games.chess import _format_seconds
+        assert _format_seconds(3600) == "1:00:00"
+        assert _format_seconds(5110) == "1:25:10"
+        assert _format_seconds(7325) == "2:02:05"
+
+    def test_negative_clamped_to_zero(self):
+        """Defensive: negative input (e.g. clock drift) renders as 0s."""
+        from src.games.chess import _format_seconds
+        assert _format_seconds(-5) == "0s"
+
+
+class TestRecordTurnTime:
+    """_record_turn_time stops the mover's clock and starts the opponent's."""
+
+    def test_no_op_when_turn_started_at_unset(self):
+        """First move ever: turn_started_at gets set, but no time is added
+        because there's no baseline. Subsequent moves will tick properly."""
+        from src.games.chess import _record_turn_time
+        game = {"white_id": 1, "black_id": 2, "white_seconds": 0, "black_seconds": 0}
+        _record_turn_time(game, mover_id=1)
+        assert game["white_seconds"] == 0
+        assert game["black_seconds"] == 0
+        assert game["turn_started_at"] is not None
+
+    def test_adds_elapsed_to_white_when_white_moves(self, monkeypatch):
+        """White moves after 30 seconds of thinking → white_seconds += 30."""
+        import time as _time
+        from src.games.chess import _record_turn_time
+        # Pin time.time to a constant "now" — turn was started at t=100,
+        # current time is t=130, so elapsed = 30s.
+        monkeypatch.setattr(_time, "time", lambda: 130.0)
+        game = {
+            "white_id": 1, "black_id": 2,
+            "turn_started_at": 100, "white_seconds": 0, "black_seconds": 0,
+        }
+        _record_turn_time(game, mover_id=1)
+        assert game["white_seconds"] == 30
+        assert game["black_seconds"] == 0
+        assert game["turn_started_at"] == 130  # opponent's clock starts now
+
+    def test_adds_elapsed_to_black_when_black_moves(self, monkeypatch):
+        import time as _time
+        from src.games.chess import _record_turn_time
+        monkeypatch.setattr(_time, "time", lambda: 250.0)
+        game = {
+            "white_id": 1, "black_id": 2,
+            "turn_started_at": 200, "white_seconds": 5, "black_seconds": 10,
+        }
+        _record_turn_time(game, mover_id=2)
+        assert game["white_seconds"] == 5
+        assert game["black_seconds"] == 60  # 10 + (250 - 200)
+        assert game["turn_started_at"] == 250
+
+    def test_accumulates_across_multiple_turns(self, monkeypatch):
+        import time as _time
+        from src.games.chess import _record_turn_time
+        # Sequence: turn started at 0, white moves at 10, black moves at 30,
+        # white moves at 45 → white = 10 + 15 = 25; black = 20.
+        clock = {"now": 10.0}
+        monkeypatch.setattr(_time, "time", lambda: clock["now"])
+        game = {
+            "white_id": 1, "black_id": 2,
+            "turn_started_at": 0, "white_seconds": 0, "black_seconds": 0,
+        }
+        _record_turn_time(game, mover_id=1)  # white moved at t=10 (10s)
+        clock["now"] = 30.0
+        _record_turn_time(game, mover_id=2)  # black moved at t=30 (+20s)
+        clock["now"] = 45.0
+        _record_turn_time(game, mover_id=1)  # white moved at t=45 (+15s)
+        assert game["white_seconds"] == 25
+        assert game["black_seconds"] == 20
+
+
+class TestTimeSummaryBlock:
+    """_time_summary_block renders per-player totals for the game-over embed."""
+
+    def test_empty_when_no_time_recorded(self):
+        from src.games.chess import _time_summary_block
+        game = {"white_seconds": 0, "black_seconds": 0}
+        assert _time_summary_block(game) == ""
+
+    def test_renders_both_totals(self):
+        from src.games.chess import _time_summary_block
+        game = {"white_seconds": 273, "black_seconds": 45}
+        block = _time_summary_block(game)
+        assert "White 4:33" in block
+        assert "Black 45s" in block
+        assert block.startswith("\n")
+
+    def test_renders_when_only_one_side_has_time(self):
+        from src.games.chess import _time_summary_block
+        game = {"white_seconds": 60, "black_seconds": 0}
+        block = _time_summary_block(game)
+        assert "White 1:00" in block
+        assert "Black 0s" in block
+
+
 class TestCapturesBlock:
     """_captures_block builds the two-line embed snippet."""
 
