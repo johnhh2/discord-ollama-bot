@@ -907,7 +907,7 @@ class UtilityCog(commands.Cog):
         if not chan_id:
             await ctx.send(embed=emb(
                 title,
-                "Feature requests are not configured for this server. Ask an admin to run `!settings feature-request-channel #channel`.",
+                "Feature requests are not configured for this server. Ask an admin to run `!settings-channel feature-request #channel`.",
                 C_GREY,
             ))
             return

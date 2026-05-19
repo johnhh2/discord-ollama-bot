@@ -46,7 +46,7 @@ def _user_ctx(*, uid: int = 50, guild_id: int = 42) -> FakeCtx:
 
 
 async def test_featurerequest_no_channel_configured_warns(db):
-    """Server hasn't run `!settings feature-request-channel #ch` → the
+    """Server hasn't run `!settings-channel feature-request #ch` → the
     command tells the user and writes no row."""
     cog = UtilityCog(bot=_StubBot())
     ctx = _user_ctx(guild_id=42)

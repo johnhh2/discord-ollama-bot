@@ -117,7 +117,7 @@ def is_bannable(member) -> bool:
 
 def get_command_perm(command_name: str) -> dict:
     perms = state.command_perms
-    # Walk from most-specific to least-specific: "settings ai-channels" → "settings" → default
+    # Walk from most-specific to least-specific: "settings-channel ai" → "settings-channel" → default
     parts = command_name.split(" ")
     for i in range(len(parts), 0, -1):
         key = " ".join(parts[:i])

@@ -371,9 +371,9 @@ class TestGetCommandPermFallback:
         assert get_command_perm("shop nickname") == {"tier": "server_admin", "hidden": False}
 
     def test_three_level_fallback(self):
-        """For `settings ai-channels` if only `settings` is set, fall back to it."""
-        _state.command_perms["settings"] = {"tier": "server_admin", "hidden": False}
-        assert get_command_perm("settings ai-channels") == {"tier": "server_admin", "hidden": False}
+        """For `settings-channel ai` if only `settings-channel` is set, fall back to it."""
+        _state.command_perms["settings-channel"] = {"tier": "server_admin", "hidden": False}
+        assert get_command_perm("settings-channel ai") == {"tier": "server_admin", "hidden": False}
 
     def test_unconfigured_returns_default(self):
         # No entries at all — get_command_perm returns the {everyone, not hidden} default.

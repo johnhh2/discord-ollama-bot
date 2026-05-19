@@ -2,7 +2,7 @@
 
 Two pieces under test:
 
-1. The `!settings admin-log-channel` setter on SettingsCog. Mutates
+1. The `!settings-channel admin-log` setter on SettingsCog. Mutates
    `state.bot_settings["admin_log_channel"]` and persists via
    `save_bot_settings`. With the `db` fixture this round-trips through
    real SQL (the `bot_settings` table).
@@ -32,7 +32,7 @@ pytestmark = pytest.mark.asyncio
 
 def _bot_admin_ctx(channel_mentions=None) -> FakeCtx:
     """A FakeCtx whose author is in state.bot_admins (so the bot_admin tier
-    on `settings admin-log-channel` lets the call through)."""
+    on `settings-channel admin-log` lets the call through)."""
     author = FakeMember(uid=1)
     _state.bot_admins.add(author.id)
     ctx = FakeCtx(author=author, guild=FakeGuild(gid=42))
@@ -94,9 +94,9 @@ async def test_admin_log_channel_set_persists(db):
     cog = SettingsCog(bot=None)
     chan = FakeTextChannel(ch_id=5555)
     ctx = _bot_admin_ctx(channel_mentions=[chan])
-    ctx.command.qualified_name = "settings admin-log-channel"
+    ctx.command.qualified_name = "settings-channel admin-log"
 
-    await cog.settings_admin_log_channel.callback(cog, ctx)
+    await cog.settings_channel_admin_log.callback(cog, ctx)
 
     assert _state.bot_settings.get("admin_log_channel") == "5555"
     assert await _read_bot_setting("admin_log_channel") == "5555"
@@ -110,9 +110,9 @@ async def test_admin_log_channel_clear_removes_key(db):
     _state.bot_settings["admin_log_channel"] = "9999"
 
     ctx = _bot_admin_ctx()
-    ctx.command.qualified_name = "settings admin-log-channel"
+    ctx.command.qualified_name = "settings-channel admin-log"
 
-    await cog.settings_admin_log_channel.callback(cog, ctx, "clear")
+    await cog.settings_channel_admin_log.callback(cog, ctx, "clear")
 
     assert "admin_log_channel" not in _state.bot_settings
 
@@ -122,9 +122,9 @@ async def test_admin_log_channel_no_args_no_mutation(db):
     and does not touch state.bot_settings."""
     cog = SettingsCog(bot=None)
     ctx = _bot_admin_ctx()
-    ctx.command.qualified_name = "settings admin-log-channel"
+    ctx.command.qualified_name = "settings-channel admin-log"
 
-    await cog.settings_admin_log_channel.callback(cog, ctx)
+    await cog.settings_channel_admin_log.callback(cog, ctx)
 
     assert "admin_log_channel" not in _state.bot_settings
     assert await _read_bot_setting("admin_log_channel") is None

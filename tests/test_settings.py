@@ -8,9 +8,9 @@ guild_settings DB row.
 Representative subset (the remaining ~10 setters all follow the same
 shape: parse args → mutate cfg dict → save_guild_settings() → embed):
 - shop on/off (toggles dict entry)
-- ai-channels (list mutation, accepts mentions or `clear`)
-- cmd-blacklist (list mutation read by on_message)
-- lottery-channel (sets/clears, plus the new-week reset side effect)
+- ai (list mutation, accepts mentions or `clear`) — under !settings-channel
+- blacklist (list mutation read by on_message) — under !settings-channel
+- lottery (sets/clears, plus the new-week reset side effect) — under !settings-channel
 - nsfw on/off (flag toggle)
 """
 import json
@@ -89,16 +89,16 @@ async def test_shop_subcommand_invalid_item_does_not_persist(db):
     assert await _read_guild_settings(42) == {}
 
 
-# ── !settings ai-channels ─────────────────────────────────────────────────────
+# ── !settings-channel ai ──────────────────────────────────────────────────────
 
 async def test_ai_channels_set_persists_channel_ids(db):
     cog = SettingsCog(bot=None)
     chan_a = FakeTextChannel(ch_id=8001)
     chan_b = FakeTextChannel(ch_id=8002)
     ctx = _admin_ctx(guild_id=42, channel_mentions=[chan_a, chan_b])
-    ctx.command.qualified_name = "settings ai-channels"
+    ctx.command.qualified_name = "settings-channel ai"
 
-    await cog.settings_ai_channels.callback(cog, ctx)
+    await cog.settings_channel_ai.callback(cog, ctx)
 
     assert _state.guild_settings["42"]["ai_channels"] == [8001, 8002]
     persisted = await _read_guild_settings(42)
@@ -111,9 +111,9 @@ async def test_ai_channels_clear_empties_list(db):
     _state.guild_settings["42"] = {"ai_channels": [9001, 9002]}
 
     ctx = _admin_ctx(guild_id=42)
-    ctx.command.qualified_name = "settings ai-channels"
+    ctx.command.qualified_name = "settings-channel ai"
 
-    await cog.settings_ai_channels.callback(cog, ctx, "clear")
+    await cog.settings_channel_ai.callback(cog, ctx, "clear")
 
     assert _state.guild_settings["42"]["ai_channels"] == []
     persisted = await _read_guild_settings(42)
@@ -124,23 +124,23 @@ async def test_ai_channels_no_args_no_mutation(db):
     """Calling without `clear` and without channel mentions just sends help."""
     cog = SettingsCog(bot=None)
     ctx = _admin_ctx(guild_id=42)
-    ctx.command.qualified_name = "settings ai-channels"
+    ctx.command.qualified_name = "settings-channel ai"
 
-    await cog.settings_ai_channels.callback(cog, ctx)
+    await cog.settings_channel_ai.callback(cog, ctx)
 
     assert "ai_channels" not in _state.guild_settings.get("42", {})
     assert await _read_guild_settings(42) == {}
 
 
-# ── !settings cmd-blacklist ───────────────────────────────────────────────────
+# ── !settings-channel blacklist ───────────────────────────────────────────────
 
 async def test_cmd_blacklist_set_persists(db):
     cog = SettingsCog(bot=None)
     chan = FakeTextChannel(ch_id=7777)
     ctx = _admin_ctx(guild_id=42, channel_mentions=[chan])
-    ctx.command.qualified_name = "settings cmd-blacklist"
+    ctx.command.qualified_name = "settings-channel blacklist"
 
-    await cog.settings_cmd_blacklist.callback(cog, ctx)
+    await cog.settings_channel_blacklist.callback(cog, ctx)
 
     assert _state.guild_settings["42"]["command_blacklist"] == [7777]
     persisted = await _read_guild_settings(42)
@@ -151,15 +151,15 @@ async def test_cmd_blacklist_clear_empties(db):
     cog = SettingsCog(bot=None)
     _state.guild_settings["42"] = {"command_blacklist": [9999]}
     ctx = _admin_ctx(guild_id=42)
-    ctx.command.qualified_name = "settings cmd-blacklist"
+    ctx.command.qualified_name = "settings-channel blacklist"
 
-    await cog.settings_cmd_blacklist.callback(cog, ctx, "clear")
+    await cog.settings_channel_blacklist.callback(cog, ctx, "clear")
 
     persisted = await _read_guild_settings(42)
     assert persisted["command_blacklist"] == []
 
 
-# ── !settings lottery-channel ─────────────────────────────────────────────────
+# ── !settings-channel lottery ─────────────────────────────────────────────────
 
 async def test_lottery_channel_set_persists_and_seeds_lottery(db, monkeypatch):
     """Setting the lottery channel for the first time also creates a fresh
@@ -172,9 +172,9 @@ async def test_lottery_channel_set_persists_and_seeds_lottery(db, monkeypatch):
     cog = SettingsCog(bot=None)
     chan = FakeTextChannel(ch_id=5555)
     ctx = _admin_ctx(guild_id=99, channel_mentions=[chan])
-    ctx.command.qualified_name = "settings lottery-channel"
+    ctx.command.qualified_name = "settings-channel lottery"
 
-    await cog.settings_lottery_channel.callback(cog, ctx)
+    await cog.settings_channel_lottery.callback(cog, ctx)
 
     assert _state.guild_settings["99"]["lottery_channel"] == 5555
     persisted = await _read_guild_settings(99)
@@ -190,9 +190,9 @@ async def test_lottery_channel_clear_disables(db):
     _state.guild_settings["42"] = {"lottery_channel": 1234}
 
     ctx = _admin_ctx(guild_id=42)
-    ctx.command.qualified_name = "settings lottery-channel"
+    ctx.command.qualified_name = "settings-channel lottery"
 
-    await cog.settings_lottery_channel.callback(cog, ctx, "clear")
+    await cog.settings_channel_lottery.callback(cog, ctx, "clear")
 
     assert _state.guild_settings["42"]["lottery_channel"] is None
     persisted = await _read_guild_settings(42)
@@ -229,17 +229,17 @@ async def test_nsfw_off_persists_flag(db):
 # ── permission gating ─────────────────────────────────────────────────────────
 
 async def test_settings_subcommand_blocked_for_non_admin(db):
-    """The `settings` tier is server_admin; non-admin callers are denied."""
+    """The `settings-channel` tier is server_admin; non-admin callers are denied."""
     cog = SettingsCog(bot=None)
     # Configure the gate explicitly so we exercise the real check.
-    _state.command_perms["settings"] = {"tier": "server_admin", "hidden": False}
+    _state.command_perms["settings-channel"] = {"tier": "server_admin", "hidden": False}
 
     author = FakeMember(uid=2, administrator=False)
     ctx = FakeCtx(author=author, guild=FakeGuild(gid=42))
     ctx.message.channel_mentions = []
-    ctx.command.qualified_name = "settings ai-channels"
+    ctx.command.qualified_name = "settings-channel ai"
 
-    await cog.settings_ai_channels.callback(cog, ctx, "clear")
+    await cog.settings_channel_ai.callback(cog, ctx, "clear")
 
     # Denied → no state mutation, no DB write.
     assert "ai_channels" not in _state.guild_settings.get("42", {})
