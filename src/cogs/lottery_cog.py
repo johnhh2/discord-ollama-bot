@@ -16,6 +16,7 @@ from src.persistence import (
     load_lottery, try_set_record, log_notable_event,
 )
 from src.guild_config import get_guild_cfg
+from src.confirm_view import confirm_purchase
 
 
 class LotteryCog(commands.Cog):
@@ -166,24 +167,88 @@ class LotteryCog(commands.Cog):
             await ctx.send(embed=emb("🔒 Lottery Locked", "Ticket sales are closed for the final hour before the draw. Check back after 6pm CT!", C_RED))
             return
 
-        tickets = parse_int_amount(n)
-        if tickets is None or tickets <= 0:
-            await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a positive number.", C_RED))
-            return
-
         TICKET_CAP = 5000
-        current_tickets = int(lottery.get("players", {}).get(str(uid), 0))
-        if current_tickets + tickets > TICKET_CAP:
-            remaining = TICKET_CAP - current_tickets
-            await ctx.send(embed=emb(
-                "🎟️ Ticket Cap Reached",
-                f"Each player can hold at most **{TICKET_CAP:,}** 🎟️ per lottery.\n"
-                f"You have **{current_tickets:,}**; you can buy up to **{remaining:,}** more.",
-                C_RED,
-            ))
-            return
+        players_dict = lottery.get("players", {})
+        current_tickets = int(players_dict.get(str(uid), 0))
 
-        cost = tickets * 10
+        if n.lower() == "match":
+            # Buy enough tickets to tie the current leader in this guild's lottery.
+            other_max = max(
+                (int(v) for k, v in players_dict.items() if k != str(uid)),
+                default=0,
+            )
+            if other_max <= current_tickets:
+                await ctx.send(embed=emb(
+                    "🎟️ Nothing to Match",
+                    f"You already have **{current_tickets:,}** 🎟️ — nobody else is ahead of you.",
+                    C_GOLD,
+                ))
+                return
+            tickets = other_max - current_tickets
+            # Respect the per-player cap even when matching.
+            if current_tickets + tickets > TICKET_CAP:
+                tickets = TICKET_CAP - current_tickets
+            if tickets <= 0:
+                await ctx.send(embed=emb(
+                    "🎟️ Ticket Cap Reached",
+                    f"You're already at the **{TICKET_CAP:,}** 🎟️ cap.",
+                    C_RED,
+                ))
+                return
+            cost = tickets * 10
+            payer_bal = await get_balance(uid)
+            if payer_bal < cost:
+                await ctx.send(embed=emb(
+                    "💸 Insufficient Funds",
+                    f"Matching the leader costs **{cost:,} 🪙** for **{tickets:,}** 🎟️ — you have **{payer_bal:,} 🪙**.",
+                    C_RED,
+                ))
+                return
+
+            confirmed = await confirm_purchase(
+                ctx,
+                title="🎰 Match Leader",
+                description=f"Buy **{tickets:,}** 🎟️ to tie the leader at **{other_max:,}** tickets.",
+                cost=cost,
+                payer=ctx.author,
+            )
+            if not confirmed:
+                return
+
+            # Re-validate after the confirm window — leader may have bought more,
+            # the lock window may have opened, or balance may have dropped.
+            now_cst = _ct_now()
+            if now_cst.weekday() == 5 and now_cst.hour == 17:
+                await ctx.send(embed=emb("🔒 Lottery Locked", "Ticket sales closed during confirmation.", C_RED))
+                return
+            lottery = await load_lottery(ctx.guild.id)
+            players_dict = lottery.get("players", {})
+            current_tickets = int(players_dict.get(str(uid), 0))
+            if current_tickets + tickets > TICKET_CAP:
+                await ctx.send(embed=emb(
+                    "🎟️ Ticket Cap Reached",
+                    f"Your tickets changed during confirmation — cancelling to avoid going over the **{TICKET_CAP:,}** cap.",
+                    C_RED,
+                ))
+                return
+        else:
+            tickets = parse_int_amount(n)
+            if tickets is None or tickets <= 0:
+                await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a positive number.", C_RED))
+                return
+
+            if current_tickets + tickets > TICKET_CAP:
+                remaining = TICKET_CAP - current_tickets
+                await ctx.send(embed=emb(
+                    "🎟️ Ticket Cap Reached",
+                    f"Each player can hold at most **{TICKET_CAP:,}** 🎟️ per lottery.\n"
+                    f"You have **{current_tickets:,}**; you can buy up to **{remaining:,}** more.",
+                    C_RED,
+                ))
+                return
+
+            cost = tickets * 10
+
         if not await deduct_balance(uid, cost):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"Need {cost:,} 🪙. Balance: {await get_balance(uid):,} 🪙", C_RED))
             return
