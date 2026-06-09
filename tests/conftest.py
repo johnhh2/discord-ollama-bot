@@ -71,6 +71,8 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "blocklist", {})
     monkeypatch.setattr(_state, "global_blocklist", {})
     monkeypatch.setattr(_state, "leveling", {})
+    monkeypatch.setattr(_state, "voice_pings", {})
+    monkeypatch.setattr(_state, "voice_ping_ignores", {})
     monkeypatch.setattr(_state, "active_taxes", {})
     monkeypatch.setattr(_state, "active_curses", {})
     monkeypatch.setattr(_state, "active_mocks", {})

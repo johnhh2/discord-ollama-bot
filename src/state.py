@@ -40,6 +40,12 @@ recap_usage: dict = {}   # {(guild_id, user_id): last_recap_date_str} — !recap
 # DM sent on 0→1 human transitions; per-(channel,user) 30-min cooldown via
 # last_pinged_at (unix seconds). Source of truth is voice_pings table.
 voice_pings: dict = {}
+# Per-subscriber voice-ping ignore lists, guild-scoped:
+# {(guild_id, user_id): set[ignored_user_id]}
+# If the member who triggers a 0→1 transition is in the subscriber's set, that
+# subscriber is skipped WITHOUT consuming their cooldown. Source of truth is the
+# voice_ping_ignores table.
+voice_ping_ignores: dict = {}
 quote_log: list = []
 leveling: dict = {}
 command_perms: dict = {}

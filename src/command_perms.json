@@ -53,5 +53,6 @@
   "bail":          {"tier": "everyone",    "hidden": false},
   "tip":           {"tier": "everyone",    "hidden": false},
   "recap":         {"tier": "everyone",    "hidden": false},
-  "subscribe":     {"tier": "everyone",    "hidden": false}
+  "subscribe":     {"tier": "everyone",    "hidden": false},
+  "subscribe ignore": {"tier": "everyone", "hidden": false}
 }

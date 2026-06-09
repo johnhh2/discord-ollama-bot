@@ -46,6 +46,7 @@ _TABLE_PKS = {
     "gambler_streak": ("user_id",),
     "recap_usage": ("guild_id", "user_id"),
     "voice_pings": ("channel_id", "user_id"),
+    "voice_ping_ignores": ("guild_id", "user_id", "ignored_user_id"),
     "quote_log": ("id",),
     "saved_quotes": ("id",),
     "balance_history": ("snapshot_date", "bucket", "user_id"),

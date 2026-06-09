@@ -46,6 +46,9 @@ from src.persistence.voice_pings import (  # noqa: F401
     delete_voice_ping,
     update_voice_ping_last_pinged,
     load_voice_pings,
+    save_voice_ping_ignore,
+    delete_voice_ping_ignore,
+    load_voice_ping_ignores,
 )
 from src.persistence.notable_events import (  # noqa: F401
     log_notable_event,

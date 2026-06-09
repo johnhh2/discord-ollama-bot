@@ -10,6 +10,8 @@ from src.persistence import (
     save_voice_ping,
     delete_voice_ping,
     update_voice_ping_last_pinged,
+    save_voice_ping_ignore,
+    delete_voice_ping_ignore,
 )
 from src import state
 
@@ -21,11 +23,32 @@ def _count_humans(channel: discord.VoiceChannel) -> int:
     return sum(1 for m in channel.members if not m.bot)
 
 
+def _is_first_relevant_arrival(channel, joiner, ignored) -> bool:
+    """True if `joiner` is the only human in `channel` that a subscriber cares
+    about — i.e. every other current member is a bot or is in `ignored`.
+
+    This is the per-subscriber generalization of the old 0→1 rule: with an empty
+    ignore list it reduces to "the joiner is the only human present". With an
+    ignore list, ignored members (and bots) don't count, so a non-ignored person
+    arriving as the 2nd/3rd member still counts as the first relevant arrival —
+    as long as everyone already there was ignored or a bot.
+    """
+    for m in channel.members:
+        if m.id == joiner.id:
+            continue
+        if m.bot:
+            continue
+        if m.id in ignored:
+            continue
+        return False  # someone the subscriber cares about was already here
+    return True
+
+
 class VoiceCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="subscribe", aliases=["ping"])
+    @commands.group(name="subscribe", aliases=["ping"], invoke_without_command=True)
     @requires_perm
     async def cmd_subscribe(
         self,
@@ -93,6 +116,95 @@ class VoiceCog(commands.Cog):
             C_GREEN,
         ))
 
+    @cmd_subscribe.command(name="ignore", aliases=["unignore"])
+    @requires_perm
+    async def cmd_subscribe_ignore(
+        self,
+        ctx: commands.Context,
+        member: discord.Member = None,
+    ):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "Use this command in a server.", C_RED))
+            return
+
+        key = (ctx.guild.id, ctx.author.id)
+
+        if member is None:
+            # List the caller's ignored users in this guild.
+            ignored = state.voice_ping_ignores.get(key, set())
+            if not ignored:
+                await ctx.send(embed=emb(
+                    "🙈 Ignored Triggers",
+                    "You aren't ignoring anyone for voice pings in this server.\n"
+                    "Use `!subscribe ignore @user` to ignore someone — you won't be "
+                    "pinged when *they* fill up a channel you're subscribed to, and it "
+                    "won't burn your per-channel cooldown.",
+                    C_GREY,
+                ))
+                return
+            lines = []
+            for uid in ignored:
+                m = ctx.guild.get_member(uid)
+                lines.append(f"• {m.mention if m else f'`{uid}` (left server)'}")
+            await ctx.send(embed=emb(
+                "🙈 Ignored Triggers",
+                "You won't be pinged when these users fill up a channel you're "
+                "subscribed to:\n" + "\n".join(lines)
+                + "\n\nRun `!subscribe ignore @user` again to stop ignoring them.",
+                C_GOLD,
+            ))
+            return
+
+        if member.id == ctx.author.id:
+            await ctx.send(embed=emb(
+                "❌ Can't Ignore Yourself",
+                "You're already never pinged for channels you fill up yourself.",
+                C_RED,
+            ))
+            return
+        if member.bot:
+            await ctx.send(embed=emb(
+                "❌ Bots Don't Trigger Pings",
+                "Bots never count toward a channel filling up, so ignoring one does nothing.",
+                C_RED,
+            ))
+            return
+
+        ignored = state.voice_ping_ignores.get(key)
+        if ignored and member.id in ignored:
+            ignored.discard(member.id)
+            if not ignored:
+                state.voice_ping_ignores.pop(key, None)
+            await delete_voice_ping_ignore(ctx.guild.id, ctx.author.id, member.id)
+            await ctx.send(embed=emb(
+                "🔔 No Longer Ignoring",
+                f"You'll be pinged again when **{member.display_name}** fills up a "
+                "channel you're subscribed to.",
+                C_GREY,
+            ))
+            return
+
+        state.voice_ping_ignores.setdefault(key, set()).add(member.id)
+        await save_voice_ping_ignore(ctx.guild.id, ctx.author.id, member.id)
+        await ctx.send(embed=emb(
+            "🙈 Ignoring Triggers",
+            f"You won't be pinged when **{member.display_name}** fills up a channel "
+            "you're subscribed to, and it won't use up your per-channel cooldown.\n"
+            "Run `!subscribe ignore @user` again to undo, or `!subscribe ignore` to see your list.",
+            C_GREEN,
+        ))
+
+    @cmd_subscribe_ignore.error
+    async def cmd_subscribe_ignore_error(self, ctx, error):
+        if isinstance(error, (commands.MemberNotFound, commands.BadArgument)):
+            await ctx.send(embed=emb(
+                "❌ User Not Found",
+                "I couldn't find that user. Try a `@mention`, name, or user ID of someone in this server.",
+                C_RED,
+            ))
+            return
+        raise error
+
     @cmd_subscribe.error
     async def cmd_subscribe_error(self, ctx, error):
         if isinstance(error, commands.ChannelNotFound):
@@ -130,12 +242,10 @@ class VoiceCog(commands.Cog):
         if not isinstance(channel, discord.VoiceChannel):
             return
 
-        humans = _count_humans(channel)
-        # _count_humans includes the just-joined member; "empty before" means
-        # they were the only human to arrive.
-        if humans != 1:
-            return
-
+        # We don't gate on a global 0→1 transition here. Whether this join is a
+        # "fill up" event is decided per-subscriber below, because each
+        # subscriber's ignore list changes what counts as the first relevant
+        # arrival (see _is_first_relevant_arrival).
         subscribers = [
             (uid, data) for (cid, uid), data in state.voice_pings.items()
             if cid == channel.id
@@ -144,10 +254,24 @@ class VoiceCog(commands.Cog):
             return
 
         now = int(time.time())
+        guild_id = channel.guild.id
         for uid, data in subscribers:
             # Skip if the subscriber is the person who just joined — they
             # obviously know the channel filled up.
             if uid == member.id:
+                continue
+            ignored = state.voice_ping_ignores.get((guild_id, uid), ())
+            # Skip if this subscriber has ignored the triggering member. This
+            # happens BEFORE the cooldown check and never touches last_pinged_at,
+            # so an ignored trigger doesn't burn the cooldown — a later trigger
+            # by a non-ignored member can still ping.
+            if member.id in ignored:
+                continue
+            # Only ping when `member` is the FIRST human this subscriber cares
+            # about to be in the channel. If a non-ignored human was already
+            # present before this join, the subscriber was already notified for
+            # them; don't ping again for every subsequent joiner.
+            if not _is_first_relevant_arrival(channel, member, ignored):
                 continue
             last = data.get("last_pinged_at")
             if last is not None and now - last < PING_COOLDOWN_SECS:

@@ -282,6 +282,18 @@ async def _init_db_state_inner(state, run_migrations):
         except Exception as e:
             logging.error(f"[init_db_state] voice_pings failed: {e}", exc_info=True)
 
+        # ── voice_ping_ignores ────────────────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT guild_id, user_id, ignored_user_id FROM voice_ping_ignores"
+            )
+            ignores: dict = {}
+            for r in await cur.fetchall():
+                ignores.setdefault((int(r[0]), int(r[1])), set()).add(int(r[2]))
+            state.voice_ping_ignores = ignores
+        except Exception as e:
+            logging.error(f"[init_db_state] voice_ping_ignores failed: {e}", exc_info=True)
+
         # ── chess_games ───────────────────────────────────────────────────
         try:
             await cur.execute(
