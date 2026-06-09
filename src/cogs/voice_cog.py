@@ -4,7 +4,7 @@ import time
 import discord
 from discord.ext import commands
 
-from src.helpers import emb, C_GREEN, C_RED, C_GREY, C_GOLD
+from src.helpers import emb, MemberConverter, C_GREEN, C_RED, C_GREY, C_GOLD
 from src.permissions import requires_perm
 from src.persistence import (
     save_voice_ping,
@@ -121,13 +121,37 @@ class VoiceCog(commands.Cog):
     async def cmd_subscribe_ignore(
         self,
         ctx: commands.Context,
-        member: discord.Member = None,
+        *,
+        query: str = None,
     ):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "Use this command in a server.", C_RED))
             return
 
         key = (ctx.guild.id, ctx.author.id)
+
+        # Resolve the target ourselves (project MemberConverter supports
+        # case-insensitive display-name / username substring matching, which the
+        # raw `discord.Member` annotation doesn't). Resolving inline also lets us
+        # tell "no argument → list" apart from "given but not found → error",
+        # and keeps the not-found path from escaping as an unhandled
+        # MemberNotFound that the global error logger would report.
+        member = None
+        if query is not None:
+            try:
+                member = await MemberConverter().convert(ctx, query.strip())
+            except commands.BadArgument as exc:
+                msg = str(exc)
+                if "matched multiple members" in msg:
+                    await ctx.send(embed=emb("❌ Ambiguous User", msg, C_RED))
+                else:
+                    await ctx.send(embed=emb(
+                        "❌ User Not Found",
+                        f"I couldn't find a member matching **{query.strip()}** in this server. "
+                        "Try a `@mention`, user ID, or part of their name.",
+                        C_RED,
+                    ))
+                return
 
         if member is None:
             # List the caller's ignored users in this guild.
@@ -194,25 +218,18 @@ class VoiceCog(commands.Cog):
             C_GREEN,
         ))
 
-    @cmd_subscribe_ignore.error
-    async def cmd_subscribe_ignore_error(self, ctx, error):
-        if isinstance(error, (commands.MemberNotFound, commands.BadArgument)):
-            await ctx.send(embed=emb(
-                "❌ User Not Found",
-                "I couldn't find that user. Try a `@mention`, name, or user ID of someone in this server.",
-                C_RED,
-            ))
-            return
-        raise error
-
     @cmd_subscribe.error
     async def cmd_subscribe_error(self, ctx, error):
+        # `ignore`/`unignore` resolve their target inside the command body, so a
+        # bad user argument never surfaces here — only a bad voice-channel
+        # argument to the base `!subscribe <channel>` does.
         if isinstance(error, commands.ChannelNotFound):
             await ctx.send(embed=emb(
                 "❌ Channel Not Found",
                 "I couldn't find that voice channel. Try the channel ID, name, or `#mention`.",
                 C_RED,
             ))
+            error.handled = True
             return
         if isinstance(error, commands.BadArgument):
             await ctx.send(embed=emb(
@@ -220,6 +237,7 @@ class VoiceCog(commands.Cog):
                 "That doesn't look like a voice channel.",
                 C_RED,
             ))
+            error.handled = True
             return
         raise error
 

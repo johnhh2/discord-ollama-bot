@@ -199,59 +199,164 @@ from tests.fakes.discord import FakeCtx, FakeGuild, FakeMember  # noqa: E402
 from src.persistence import load_voice_ping_ignores  # noqa: E402
 
 
-def _ctx():
-    author = FakeMember(uid=SUBSCRIBER_ID)
-    ctx = FakeCtx(author=author, guild=FakeGuild(gid=GUILD_ID),
-                  command_name="subscribe ignore")
+@pytest.fixture
+def _no_builtin_member_converter(monkeypatch):
+    """Force src.helpers.MemberConverter to use its substring fallback.
+
+    discord.py's built-in MemberConverter requires real discord.Member objects
+    and a populated _state (it does isinstance(result, discord.Member) and a
+    gateway query), neither of which our FakeMember/FakeGuild provide. In
+    production it handles mentions/IDs; here we make it raise BadArgument so the
+    project converter falls through to the case-insensitive substring match we
+    actually want to exercise."""
+    import discord.ext.commands as _c
+
+    async def _always_bad(self, ctx, argument):
+        raise _c.BadArgument(f"Member '{argument}' not found.")
+
+    monkeypatch.setattr(_c.MemberConverter, "convert", _always_bad)
+
+
+def _ctx(members=()):
+    author = FakeMember(uid=SUBSCRIBER_ID, display_name="Xeph")
+    guild = FakeGuild(gid=GUILD_ID)
+    guild.members = list(members)
+    ctx = FakeCtx(author=author, guild=guild, command_name="subscribe ignore")
     return ctx
 
 
-def _target_member(uid=TRIGGER_ID, *, bot=False):
-    return SimpleNamespace(id=uid, bot=bot, display_name=f"user{uid}")
+def _guild_member(uid=TRIGGER_ID, name="Racist", *, bot=False):
+    m = FakeMember(uid=uid, display_name=name)
+    m.bot = bot
+    return m
 
 
 @_aio
-async def test_ignore_command_adds_then_removes(db):
+async def test_ignore_command_adds_then_removes_by_name_substring(db, _no_builtin_member_converter):
     cog, _ = _make_cog(set())
-    ctx = _ctx()
-    target = _target_member()
+    target = _guild_member(name="Racist")
 
-    # Add.
-    await cog.cmd_subscribe_ignore.callback(cog, ctx, member=target)
+    # Add — resolved by case-insensitive name substring ("raci" → "Racist").
+    ctx = _ctx(members=[target])
+    await cog.cmd_subscribe_ignore.callback(cog, ctx, query="raci")
     assert TRIGGER_ID in _state.voice_ping_ignores[(GUILD_ID, SUBSCRIBER_ID)]
     assert (await load_voice_ping_ignores())[(GUILD_ID, SUBSCRIBER_ID)] == {TRIGGER_ID}
     assert any("Ignoring" in (e.title or "") for e in ctx.sent_embeds)
 
-    # Toggle off — same command, same target.
-    ctx2 = _ctx()
-    await cog.cmd_subscribe_ignore.callback(cog, ctx2, member=target)
+    # Toggle off — same query.
+    ctx2 = _ctx(members=[target])
+    await cog.cmd_subscribe_ignore.callback(cog, ctx2, query="raci")
     assert (GUILD_ID, SUBSCRIBER_ID) not in _state.voice_ping_ignores
     assert (await load_voice_ping_ignores()) == {}
     assert any("No Longer Ignoring" in (e.title or "") for e in ctx2.sent_embeds)
 
 
 @_aio
-async def test_ignore_command_lists_when_no_member(db):
+async def test_ignore_command_lists_when_no_query(db):
     cog, _ = _make_cog(set())
     _state.voice_ping_ignores[(GUILD_ID, SUBSCRIBER_ID)] = {TRIGGER_ID}
-    ctx = _ctx()
-    ctx.guild.members = [FakeMember(uid=TRIGGER_ID)]
+    ctx = _ctx(members=[_guild_member()])
 
-    await cog.cmd_subscribe_ignore.callback(cog, ctx, member=None)
+    await cog.cmd_subscribe_ignore.callback(cog, ctx, query=None)
     assert any("Ignored Triggers" in (e.title or "") for e in ctx.sent_embeds)
 
 
 @_aio
-async def test_ignore_command_rejects_self_and_bots(db):
+async def test_ignore_command_unknown_name_sends_not_found(db, _no_builtin_member_converter):
+    """A name that matches nobody must NOT be treated as the list request, and
+    must NOT raise (which would leak to the global error logger)."""
+    cog, _ = _make_cog(set())
+    ctx = _ctx(members=[_guild_member(name="Racist")])
+
+    await cog.cmd_subscribe_ignore.callback(cog, ctx, query="Nobody")
+    assert any("Not Found" in (e.title or "") for e in ctx.sent_embeds)
+    assert (GUILD_ID, SUBSCRIBER_ID) not in _state.voice_ping_ignores
+
+
+@_aio
+async def test_ignore_command_ambiguous_name(db, _no_builtin_member_converter):
+    cog, _ = _make_cog(set())
+    ctx = _ctx(members=[
+        _guild_member(uid=TRIGGER_ID, name="Racer One"),
+        _guild_member(uid=TRIGGER_ID + 1, name="Racer Two"),
+    ])
+
+    await cog.cmd_subscribe_ignore.callback(cog, ctx, query="Racer")
+    assert any("Ambiguous" in (e.title or "") for e in ctx.sent_embeds)
+    assert (GUILD_ID, SUBSCRIBER_ID) not in _state.voice_ping_ignores
+
+
+@_aio
+async def test_ignore_command_rejects_self_and_bots(db, _no_builtin_member_converter):
     cog, _ = _make_cog(set())
 
-    ctx = _ctx()
-    await cog.cmd_subscribe_ignore.callback(
-        cog, ctx, member=_target_member(uid=SUBSCRIBER_ID))
+    me = FakeMember(uid=SUBSCRIBER_ID, display_name="Xeph")
+    ctx = _ctx(members=[me])
+    await cog.cmd_subscribe_ignore.callback(cog, ctx, query="Xeph")
     assert any("Yourself" in (e.title or "") for e in ctx.sent_embeds)
 
-    ctx2 = _ctx()
-    await cog.cmd_subscribe_ignore.callback(
-        cog, ctx2, member=_target_member(bot=True))
+    botm = _guild_member(uid=999, name="Botty", bot=True)
+    ctx2 = _ctx(members=[botm])
+    await cog.cmd_subscribe_ignore.callback(cog, ctx2, query="Botty")
     assert any("Bots" in (e.title or "") for e in ctx2.sent_embeds)
     assert (GUILD_ID, SUBSCRIBER_ID) not in _state.voice_ping_ignores
+
+
+# ── global error handler honors error.handled (no "⚠️ Command Error" report) ──
+
+@_aio
+async def test_global_handler_skips_reported_when_error_handled(monkeypatch):
+    """A command-local handler that set error.handled=True must not also trigger
+    the global audit log / "⚠️ Command Error" report."""
+    import src.events as _events
+    cog = _events.EventsCog(bot=SimpleNamespace())
+
+    logged = []
+
+    async def _spy_log(bot, ctx, error):
+        logged.append(error)
+
+    monkeypatch.setattr(_events, "_log_command_error", _spy_log)
+    _state.audit_log.clear()
+
+    err = discord.ext.commands.BadArgument("That doesn't look like a voice channel.")
+    err.handled = True
+    ctx = SimpleNamespace(
+        guild=SimpleNamespace(id=GUILD_ID),
+        author=SimpleNamespace(display_name="Xeph", id=SUBSCRIBER_ID),
+        message=SimpleNamespace(content="!subscribe nope"),
+        command=SimpleNamespace(qualified_name="subscribe"),
+    )
+
+    await cog.on_command_error(ctx, err)
+
+    assert logged == []                 # no report sent
+    assert len(_state.audit_log) == 0   # nothing recorded
+
+
+@_aio
+async def test_global_handler_reports_unhandled_error(monkeypatch):
+    """Sanity check the opposite: an error without .handled still gets reported."""
+    import src.events as _events
+    cog = _events.EventsCog(bot=SimpleNamespace())
+
+    logged = []
+
+    async def _spy_log(bot, ctx, error):
+        logged.append(error)
+
+    monkeypatch.setattr(_events, "_log_command_error", _spy_log)
+    _state.audit_log.clear()
+
+    err = RuntimeError("boom")
+    ctx = SimpleNamespace(
+        guild=SimpleNamespace(id=GUILD_ID),
+        author=SimpleNamespace(display_name="Xeph", id=SUBSCRIBER_ID),
+        message=SimpleNamespace(content="!subscribe nope"),
+        command=SimpleNamespace(qualified_name="subscribe"),
+    )
+
+    with pytest.raises(RuntimeError):
+        await cog.on_command_error(ctx, err)
+    assert logged == [err]              # reported
+    assert len(_state.audit_log) == 1

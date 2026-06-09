@@ -67,6 +67,16 @@ class FakeGuild:
                 return m
         return None
 
+    def get_member_named(self, name: str):
+        """Exact match on display_name or name, mirroring discord.Guild.
+        Real guilds expose this; discord.py's built-in MemberConverter calls it
+        for non-mention/non-id arguments. Returns None when nothing matches so
+        the project MemberConverter falls through to its substring search."""
+        for m in self.members:
+            if name in (getattr(m, "display_name", None), getattr(m, "name", None)):
+                return m
+        return None
+
     def get_role(self, role_id: int):
         for r in self.roles:
             if r.id == role_id:

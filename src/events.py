@@ -463,6 +463,12 @@ class EventsCog(commands.Cog):
         if isinstance(error, commands.CommandNotFound):
             logging.debug(f"[debug] {error}")
             return
+        # A command-local `@cmd.error` handler that fully dealt with the error
+        # (sent the user a friendly message) sets `error.handled = True`.
+        # discord.py still dispatches this global listener afterwards, so honor
+        # the flag and skip the audit log / "⚠️ Command Error" report for those.
+        if getattr(error, "handled", False):
+            return
         from src.level_unlocks import LevelLocked
         if isinstance(error, LevelLocked):
             return  # gate already sent its own message
