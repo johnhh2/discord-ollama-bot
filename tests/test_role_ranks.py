@@ -84,7 +84,7 @@ async def test_shop_createrole_first_role_gets_rank_1(db, force_member_converter
     target.add_roles = AsyncMock()
     ctx = FakeCtx(author=buyer, guild=guild)
 
-    await cog.shop_createrole.callback(cog, ctx, "target", "First", "ff00aa")
+    await cog.shop_createrole.callback(cog, ctx, "target", "First")
 
     assert _state.bot_role_ranks[(100, 10001)] == 1
 
@@ -108,7 +108,7 @@ async def test_shop_createrole_subsequent_role_gets_bottom_rank(db, force_member
     target.add_roles = AsyncMock()
     ctx = FakeCtx(author=buyer, guild=guild)
 
-    await cog.shop_createrole.callback(cog, ctx, "target", "Second", "ff00aa")
+    await cog.shop_createrole.callback(cog, ctx, "target", "Second")
 
     assert _state.bot_role_ranks[(100, 10002)] == 2, (
         "New role must land at the bottom (max(rank)+1), not displace existing ranks"

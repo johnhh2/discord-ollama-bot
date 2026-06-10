@@ -85,11 +85,13 @@ async def test_shop_createrole_creates_role_and_persists(db, force_member_conver
 
     ctx = FakeCtx(author=buyer, guild=guild)
 
-    await cog.shop_createrole.callback(cog, ctx, "target", "MyRole", "ff00aa")
+    await cog.shop_createrole.callback(cog, ctx, "target", "MyRole")
 
     assert await get_balance(buyer.id) == 1000
     assert await _read_db_balance(buyer.id) == 1000
     guild.create_role.assert_awaited_once()
+    # No color param anymore — the role is created uncolored.
+    assert "color" not in guild.create_role.call_args.kwargs
     target.add_roles.assert_awaited_once_with(new_role)
     assert new_role.id in _state.bot_roles
 
@@ -105,26 +107,9 @@ async def test_shop_createrole_rejects_admin_in_name(db, force_member_converter_
     guild.create_role = AsyncMock()
     ctx = FakeCtx(author=buyer, guild=guild)
 
-    await cog.shop_createrole.callback(cog, ctx, "target", "ADMIN of stuff", "ff00aa")
+    await cog.shop_createrole.callback(cog, ctx, "target", "ADMIN of stuff")
 
     # Rejected before charging.
-    assert await get_balance(buyer.id) == SHOP_ROLE_CREATE_COST + 1000
-    guild.create_role.assert_not_called()
-
-
-async def test_shop_createrole_invalid_color_no_charge(db, force_member_converter_fallback):
-    cog = ShopCog(bot=None)
-    buyer = FakeMember(uid=1005)
-    target = FakeMember(uid=1006, display_name="target")
-    await add_balance(buyer.id, SHOP_ROLE_CREATE_COST + 1000)
-
-    guild = FakeGuild(gid=42)
-    guild.members = [buyer, target]
-    guild.create_role = AsyncMock()
-    ctx = FakeCtx(author=buyer, guild=guild)
-
-    await cog.shop_createrole.callback(cog, ctx, "target", "Cool", "notacolor")
-
     assert await get_balance(buyer.id) == SHOP_ROLE_CREATE_COST + 1000
     guild.create_role.assert_not_called()
 
@@ -144,7 +129,7 @@ async def test_shop_createrole_refunds_on_forbidden(db, force_member_converter_f
     ))
     ctx = FakeCtx(author=buyer, guild=guild)
 
-    await cog.shop_createrole.callback(cog, ctx, "target", "Cool", "ff00aa")
+    await cog.shop_createrole.callback(cog, ctx, "target", "Cool")
 
     # Refunded back to starting balance.
     assert await get_balance(buyer.id) == starting
@@ -185,7 +170,7 @@ async def test_shop_createrole_rejects_oversize_name(db, force_member_converter_
     ctx = FakeCtx(author=buyer, guild=guild)
 
     long_name = "r" * 101
-    await cog.shop_createrole.callback(cog, ctx, "target", long_name, "ff00aa")
+    await cog.shop_createrole.callback(cog, ctx, "target", long_name)
 
     assert await get_balance(buyer.id) == starting
     guild.create_role.assert_not_called()
@@ -431,12 +416,13 @@ async def test_shop_tax_self_rejected(db, force_member_converter_fallback):
 # declarative alias table is internally consistent.
 
 async def test_shop_top_aliases_resolve_to_real_methods():
-    """Every (top_name, sub_attr) entry must point at a method that exists on
-    ShopCog. A typo in sub_attr would have crashed at cog load time, but the
-    test makes the guarantee explicit so refactors get a clear failure."""
+    """Every (top_name, sub_attr, legacy_aliases) entry must point at a method
+    that exists on ShopCog. A typo in sub_attr would have crashed at cog load
+    time, but the test makes the guarantee explicit so refactors get a clear
+    failure."""
     from src.cogs.shop_cog import _SHOP_TOP_ALIASES, ShopCog
     cog = ShopCog(bot=None)
-    for top_name, sub_attr in _SHOP_TOP_ALIASES:
+    for top_name, sub_attr, _ in _SHOP_TOP_ALIASES:
         assert hasattr(cog, sub_attr), (
             f"!{top_name} alias points at ShopCog.{sub_attr} which does not exist"
         )
@@ -447,7 +433,7 @@ async def test_shop_roleup_and_roledown_share_handler_with_directional_dispatch(
     ctx.invoked_with to pick direction. If a future edit splits them onto
     different handlers, the dispatch contract has to change too."""
     from src.cogs.shop_cog import _SHOP_TOP_ALIASES
-    table = dict(_SHOP_TOP_ALIASES)
+    table = {top: sub for top, sub, _ in _SHOP_TOP_ALIASES}
     assert table["roleup"] == "shop_roleup"
     assert table["roledown"] == "shop_roleup", (
         "Both top-level aliases must route to shop_roleup so its "

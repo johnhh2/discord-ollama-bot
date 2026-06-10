@@ -113,8 +113,10 @@ async def test_known_top_level_commands_are_registered(loaded_bot):
         # Economy / economy_cog
         "daily", "balance", "leaderboard", "steal", "mug", "jailbreak",
         "admingive", "admingivexp", "event",
-        # Shop top-level aliases (registered via the _SHOP_TOP_ALIASES table)
-        "nickname", "createrole", "rolecolor", "ragebait", "mock",
+        # Shop top-level aliases (registered via the _SHOP_TOP_ALIASES table).
+        # Canonical names after the role*/channel* rename; legacy verb-first
+        # names (createrole, …) survive as aliases.
+        "nickname", "rolecreate", "rolecolor", "ragebait", "mock",
         "insurance", "tax", "curse", "mute", "roleup", "roledown",
         # Settings / settings_cog
         "settings", "model", "roleplaymodel", "codingmodel", "vramtext",
@@ -143,7 +145,7 @@ async def test_shop_top_aliases_all_registered_at_top_level(loaded_bot):
     appear here."""
     from src.cogs.shop_cog import _SHOP_TOP_ALIASES
     actual = {cmd.name for cmd in loaded_bot.commands}
-    for top_name, _sub_attr in _SHOP_TOP_ALIASES:
+    for top_name, _sub_attr, _legacy in _SHOP_TOP_ALIASES:
         assert top_name in actual, (
             f"!{top_name} (from _SHOP_TOP_ALIASES) not registered on the bot"
         )

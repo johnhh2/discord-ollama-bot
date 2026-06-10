@@ -39,11 +39,12 @@ class _FakeBot:
 # ── Registration ──────────────────────────────────────────────────────────────
 
 async def test_shop_cog_init_registers_every_top_alias_on_the_bot():
-    """Every (top_name, sub_attr) entry in _SHOP_TOP_ALIASES becomes a
-    top-level commands.Command on the bot."""
+    """Every (top_name, sub_attr, legacy_aliases) entry in _SHOP_TOP_ALIASES
+    becomes a top-level commands.Command on the bot, keyed by its canonical
+    name. Legacy aliases live in cmd.aliases, not as separate registrations."""
     bot = _FakeBot()
     ShopCog(bot=bot)
-    expected_names = {top for top, _ in _SHOP_TOP_ALIASES}
+    expected_names = {top for top, _, _ in _SHOP_TOP_ALIASES}
     assert set(bot.commands_registered) == expected_names
 
 
@@ -52,12 +53,31 @@ async def test_each_alias_command_callback_points_at_real_subcommand():
     not some other random function. Catches a typo in the table."""
     bot = _FakeBot()
     cog = ShopCog(bot=bot)
-    for top_name, sub_attr in _SHOP_TOP_ALIASES:
+    for top_name, sub_attr, _ in _SHOP_TOP_ALIASES:
         registered_cmd = bot.commands_registered[top_name]
         sub_cmd = getattr(cog, sub_attr)
         assert registered_cmd.callback is sub_cmd.callback, (
             f"!{top_name} → ShopCog.{sub_attr} mismatch"
         )
+
+
+async def test_legacy_role_channel_aliases_are_attached_to_canonical_commands():
+    """The pre-rename verb-first names (createrole, createchannel, …) must
+    survive as aliases on their renamed canonical command so old muscle
+    memory keeps working."""
+    bot = _FakeBot()
+    ShopCog(bot=bot)
+    legacy_to_canonical = {
+        "createrole": "rolecreate", "deleterole": "roledelete",
+        "assignrole": "roleassign", "unassignrole": "roleunassign",
+        "renamerole": "rolerename", "lockrole": "rolelock",
+        "unlockrole": "roleunlock", "createchannel": "channelcreate",
+        "deletechannel": "channeldelete", "renamechannel": "channelrename",
+        "lockchannel": "channellock", "unlockchannel": "channelunlock",
+    }
+    for legacy, canonical in legacy_to_canonical.items():
+        cmd = bot.commands_registered[canonical]
+        assert legacy in cmd.aliases, f"!{legacy} should be an alias of !{canonical}"
 
 
 async def test_roleup_and_roledown_share_the_same_callback():
@@ -110,7 +130,7 @@ async def test_cog_can_be_loaded_unloaded_loaded_again():
     cog.cog_unload()
     # Second load — would raise if any aliases lingered.
     ShopCog(bot=bot)
-    expected_names = {top for top, _ in _SHOP_TOP_ALIASES}
+    expected_names = {top for top, _, _ in _SHOP_TOP_ALIASES}
     assert set(bot.commands_registered) == expected_names
 
 
@@ -121,7 +141,7 @@ async def test_every_shop_subcommand_in_the_table_actually_exists():
     will silently keep an entry that AttributeError's at registration.
     This guards against the typo."""
     cog = ShopCog(bot=None)
-    for top_name, sub_attr in _SHOP_TOP_ALIASES:
+    for top_name, sub_attr, _ in _SHOP_TOP_ALIASES:
         attr = getattr(cog, sub_attr, None)
         assert attr is not None, f"_SHOP_TOP_ALIASES references missing attr {sub_attr!r}"
         # Must be a discord.py Command (has a .callback attribute).
@@ -190,7 +210,7 @@ async def test_every_top_alias_command_has_cog_bound():
     and downstream `.guild` access on a string crashes the command."""
     bot = _FakeBot()
     cog = ShopCog(bot=bot)
-    for top_name, _ in _SHOP_TOP_ALIASES:
+    for top_name, _, _ in _SHOP_TOP_ALIASES:
         registered_cmd = bot.commands_registered[top_name]
         assert registered_cmd.cog is cog, (
             f"!{top_name} alias is not bound to the cog — "
@@ -258,7 +278,7 @@ async def test_top_alias_dispatch_passes_cog_as_self_not_context():
     string — which is exactly the production bug."""
     bot = _FakeBot()
     cog = ShopCog(bot=bot)
-    alias_cmd = bot.commands_registered["unassignrole"]
+    alias_cmd = bot.commands_registered["roleunassign"]
 
     ctx = _StubCtx("!unassignrole <@1> Rat King")
     await alias_cmd._parse_arguments(ctx)
@@ -280,7 +300,7 @@ async def test_top_alias_dispatch_wrapper_sees_correct_self_and_ctx():
     cog binding were missing."""
     bot = _FakeBot()
     cog = ShopCog(bot=bot)
-    alias_cmd = bot.commands_registered["unassignrole"]
+    alias_cmd = bot.commands_registered["roleunassign"]
 
     captured: dict = {}
 
@@ -320,7 +340,7 @@ async def test_top_alias_dispatch_does_not_crash_on_str_guild_access():
     matching the original production stack trace verbatim."""
     bot = _FakeBot()
     ShopCog(bot=bot)
-    alias_cmd = bot.commands_registered["unassignrole"]
+    alias_cmd = bot.commands_registered["roleunassign"]
 
     ctx = _StubCtx("!unassignrole <@393568333644955648> Rat King")
     await alias_cmd._parse_arguments(ctx)

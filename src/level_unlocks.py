@@ -2,7 +2,7 @@
 Level-gated command catalog.
 
 Single source of truth for which commands unlock at which level, plus the
-per-server enabled predicate (e.g. createchannel only counts as a "reward"
+per-server enabled predicate (e.g. channelcreate only counts as a "reward"
 if the shop_items.createchannel toggle is on).
 
 Used by:
@@ -56,20 +56,22 @@ UNLOCKS: dict[str, dict] = {
     # Level 3 — savings (advertised: savings)
     "savings":     {"level": 3, "enabled": _always,                       "usage": "`!savings add|remove <amount>` — piggy bank with 1% daily interest", "reward": True},
 
-    # Level 5 — role family (advertised: createrole). lockrole/unlockrole gated separately at 12.
+    # Level 5 — role family (advertised: rolecreate). rolelock/roleunlock gated separately at 8.
     # !roles is the role leaderboard — never gated.
-    "createrole":  {"level": 5, "enabled": _shop_item_enabled("createrole"), "usage": "`!createrole @user <name> <hex>` — create a custom role", "reward": True},
-    "assignrole":  {"level": 5, "enabled": _shop_item_enabled("assignrole"), "usage": "`!assignrole @user <name>` — assign an existing role"},
-    "unassignrole":  {"level": 5, "enabled": _shop_item_enabled("unassignrole"), "usage": "`!unassignrole [@user] <name>` — remove a role"},
-    "deleterole":  {"level": 5, "enabled": _shop_item_enabled("deleterole"), "usage": "`!deleterole <name>` — permanently delete a role"},
-    "renamerole":  {"level": 5, "enabled": _always,                       "usage": "`!renamerole <old> <new>` — rename a role"},
+    # Keys are the canonical (renamed) command names; the _shop_item_enabled
+    # arg keeps the original shop_items toggle key (a persisted config name).
+    "rolecreate":  {"level": 5, "enabled": _shop_item_enabled("createrole"), "usage": "`!rolecreate @user <name>` — create a role", "reward": True},
+    "roleassign":  {"level": 5, "enabled": _shop_item_enabled("assignrole"), "usage": "`!roleassign @user <name>` — assign an existing role"},
+    "roleunassign":  {"level": 5, "enabled": _shop_item_enabled("unassignrole"), "usage": "`!roleunassign [@user] <name>` — remove a role"},
+    "roledelete":  {"level": 5, "enabled": _shop_item_enabled("deleterole"), "usage": "`!roledelete <name>` — permanently delete a role"},
+    "rolerename":  {"level": 5, "enabled": _always,                       "usage": "`!rolerename <old> <new>` — rename a role"},
     "rolecolor":   {"level": 5, "enabled": _shop_item_enabled("rolecolor"),  "usage": "`!rolecolor @role <hex>` — change a role's color"},
     "roleup":      {"level": 5, "enabled": _shop_item_enabled("roleup"),     "usage": "`!roleup <name>` — move role up one position"},
     "roledown":    {"level": 5, "enabled": _shop_item_enabled("roledown"),   "usage": "`!roledown <name>` — move role down one position"},
 
     # Level 8 — role locking
-    "lockrole":    {"level": 8, "enabled": _always,                      "usage": "`!lockrole <name>` — lock a role against changes", "reward": True},
-    "unlockrole":  {"level": 8, "enabled": _always,                      "usage": "`!unlockrole <name>` — unlock a role (lock owner only)"},
+    "rolelock":    {"level": 8, "enabled": _always,                      "usage": "`!rolelock <name>` — lock a role against changes", "reward": True},
+    "roleunlock":  {"level": 8, "enabled": _always,                      "usage": "`!roleunlock <name>` — unlock a role (lock owner only)"},
 
     # Level 10 — steal (advertised: steal)
     "steal":       {"level": 10, "enabled": _always,                       "usage": "`!steal @user [tier]` — pick a pocket", "reward": True},
@@ -83,31 +85,34 @@ UNLOCKS: dict[str, dict] = {
     # Level 20 — unoreverse (advertised: unoreverse)
     "unoreverse":  {"level": 18, "enabled": _shop_item_enabled("unoreverse"), "usage": "`!unoreverse @user` — redirect mock/ragebait/curse to someone else", "reward": True},
 
-    # Level 25 — channel family (advertised: createchannel). lockchannel/unlockchannel gated separately at 25.
-    "createchannel": {"level": 20, "enabled": _shop_item_enabled("createchannel"), "usage": "`!createchannel <name>` — create a channel", "reward": True},
-    "deletechannel": {"level": 20, "enabled": _shop_item_enabled("deletechannel"), "usage": "`!deletechannel <name>` — delete a bot-created channel"},
-    "renamechannel": {"level": 20, "enabled": _shop_item_enabled("renamechannel"), "usage": "`!renamechannel <old> <new>` — rename a channel"},
+    # Level 20 — channel family (advertised: channelcreate). channellock/channelunlock gated separately at 25.
+    "channelcreate": {"level": 20, "enabled": _shop_item_enabled("createchannel"), "usage": "`!channelcreate <name>` — create a channel", "reward": True},
+    "channeldelete": {"level": 20, "enabled": _shop_item_enabled("deletechannel"), "usage": "`!channeldelete <name>` — delete a bot-created channel"},
+    "channelrename": {"level": 20, "enabled": _shop_item_enabled("renamechannel"), "usage": "`!channelrename <old> <new>` — rename a channel"},
     "rolechannel":   {"level": 20, "enabled": _shop_item_enabled("rolechannel"), "usage": "`!rolechannel @role <name>` — create a role-locked channel"},
 
-    # Level 30 — channel locking
-    "lockchannel":   {"level": 25, "enabled": _always,                    "usage": "`!lockchannel <name>` — lock a channel against changes", "reward": True},
-    "unlockchannel": {"level": 25, "enabled": _always,                    "usage": "`!unlockchannel <name>` — unlock a channel (lock owner only)"},
+    # Level 25 — channel locking
+    "channellock":   {"level": 25, "enabled": _always,                    "usage": "`!channellock <name>` — lock a channel against changes", "reward": True},
+    "channelunlock": {"level": 25, "enabled": _always,                    "usage": "`!channelunlock <name>` — unlock a channel (lock owner only)"},
 }
 
 # Also gate the !shop <subcommand> form. Maps "shop X" → same entry as "X".
+# Uses canonical subcommand names (qualified_name); legacy aliases like
+# "shop createrole" resolve to the same command, so qualified_name is already
+# the new name by the time the gate runs.
 _SHOP_SUBCOMMANDS = {
-    "createrole", "assignrole", "unassignrole", "deleterole", "renamerole",
-    "rolecolor", "lockrole", "unlockrole", "roleup", "roledown",
+    "rolecreate", "roleassign", "roleunassign", "roledelete", "rolerename",
+    "rolecolor", "rolelock", "roleunlock", "roleup", "roledown",
     "nickname", "removenickname",
-    "createchannel", "deletechannel", "renamechannel", "lockchannel",
-    "unlockchannel", "rolechannel", "unoreverse",
+    "channelcreate", "channeldelete", "channelrename", "channellock",
+    "channelunlock", "rolechannel", "unoreverse",
 }
 
 
 def lookup(qualified_name: str) -> Optional[dict]:
     """Return the unlock entry for a command, or None if it isn't level-gated.
 
-    Handles `!shop createrole` and `!createrole` as the same gate.
+    Handles `!shop rolecreate` and `!rolecreate` as the same gate.
     """
     if qualified_name in UNLOCKS:
         return UNLOCKS[qualified_name]
