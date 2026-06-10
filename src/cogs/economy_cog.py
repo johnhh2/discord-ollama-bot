@@ -43,6 +43,37 @@ STEAL_TIERS = [
 ]
 
 
+def _is_public_channel(channel) -> bool:
+    """True if @everyone can view this channel (i.e. it's a public channel).
+
+    A channel is considered private when the guild's default role (@everyone)
+    is denied `view_channel` via a permission overwrite. Crimes (steal / mug /
+    bankheist) are blocked in private channels so they can only target people
+    in the open. DMs / non-guild contexts return False (not public)."""
+    guild = getattr(channel, "guild", None)
+    if guild is None:
+        return False
+    default_role = getattr(guild, "default_role", None)
+    perms_for = getattr(channel, "permissions_for", None)
+    if default_role is None or perms_for is None:
+        # Channel doesn't expose permission introspection (e.g. an exotic
+        # channel type) — fail open and treat it as public.
+        return True
+    return bool(perms_for(default_role).view_channel)
+
+
+def _crime_public_only_error(ctx) -> discord.Embed | None:
+    """Return an error embed if this crime can't run in the current channel
+    because it's private, else None. Crimes are public-channel only."""
+    if not _is_public_channel(ctx.channel):
+        return emb(
+            "🔒 Private Channel",
+            "Crimes can only be committed out in the open — try this in a public channel.",
+            C_RED,
+        )
+    return None
+
+
 def _jail_body(name: str, jail_until_ts: float, reason: str | None) -> str:
     """Render the standard 'in jail' embed body. Omits the Reason line
     when reason is None/empty (legacy jails written before jail_reason existed)."""
@@ -239,6 +270,10 @@ class EconomyCog(commands.Cog):
     async def cmd_steal(self, ctx: commands.Context, target: OptionalMember = None):
         if target is None:
             await ctx.invoke(self.cmd_crime)
+            return
+
+        if (err := _crime_public_only_error(ctx)) is not None:
+            await ctx.send(embed=err)
             return
 
         # Parse tier from the rest of the message; if not present, show picker.
@@ -693,6 +728,10 @@ class EconomyCog(commands.Cog):
             ))
             return
 
+        if (err := _crime_public_only_error(ctx)) is not None:
+            await ctx.send(embed=err)
+            return
+
         host = ctx.author
         gid = ctx.guild.id if ctx.guild else 0
 
@@ -1034,6 +1073,10 @@ class EconomyCog(commands.Cog):
 
         if target is None or amount is None:
             await ctx.invoke(self.cmd_crime)
+            return
+
+        if (err := _crime_public_only_error(ctx)) is not None:
+            await ctx.send(embed=err)
             return
 
         if uid in self._crime_active:

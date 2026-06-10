@@ -19,7 +19,7 @@ import src.persistence as _persistence
 import src.economy as _economy
 from src.cogs.economy_cog import EconomyCog
 
-from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild, FakeMessage
+from tests.fakes.discord import FakeCtx, FakeChannel, FakeMember, FakeGuild, FakeMessage
 
 
 pytestmark = pytest.mark.asyncio
@@ -97,6 +97,72 @@ def _grant_level(uid: int, internal_level: int, gid: int = 42) -> None:
             "balance": 0, "savings": [],
         })
         _state.economy["users"][str(uid)]["crime_eligible"] = True
+
+
+# ── crimes are public-channel only ──────────────────────────────────────────────
+
+async def test_steal_blocked_in_private_channel(db, monkeypatch):
+    """!steal in a channel @everyone can't view is refused; no coins move."""
+    cog = EconomyCog(bot=_StubBot())
+    thief = FakeMember(uid=150, display_name="thief")
+    victim = FakeMember(uid=250, display_name="victim")
+    await _economy.add_balance(thief.id, 5000)
+    await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 9)
+
+    guild = FakeGuild(gid=42)
+    ctx = FakeCtx(author=thief, guild=guild,
+                  channel=FakeChannel(guild=guild, public=False))
+    ctx.bot = _StubBot()
+    ctx.message = FakeMessage(content="!steal @victim 1")
+
+    await cog.cmd_steal.callback(cog, ctx, target=victim)
+
+    # Refused with the private-channel embed; balances untouched.
+    assert len(ctx.sent_embeds) == 1
+    assert "Private Channel" in ctx.sent_embeds[0].title
+    assert await _economy.get_balance(thief.id) == 5000
+    assert await _economy.get_balance(victim.id) == 10_000
+    assert thief.id not in cog._crime_active
+
+
+async def test_mug_blocked_in_private_channel(db):
+    """!mug in a private channel is refused before the crime lock is taken."""
+    cog = EconomyCog(bot=_StubBot())
+    thief = FakeMember(uid=151, display_name="thief")
+    victim = FakeMember(uid=251, display_name="victim")
+    await _economy.add_balance(thief.id, 5000)
+    _grant_level(victim.id, 9)
+
+    guild = FakeGuild(gid=42)
+    ctx = FakeCtx(author=thief, guild=guild,
+                  channel=FakeChannel(guild=guild, public=False))
+    ctx.bot = _StubBot()
+
+    await cog.cmd_mug.callback(cog, ctx, target=victim, amount="100")
+
+    assert len(ctx.sent_embeds) == 1
+    assert "Private Channel" in ctx.sent_embeds[0].title
+    assert thief.id not in cog._crime_active
+
+
+async def test_bankheist_blocked_in_private_channel(db):
+    """!bankheist in a private channel is refused before a lobby opens."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=152, display_name="host")
+    victim = FakeMember(uid=252, display_name="victim")
+    _grant_level(victim.id, 9)
+
+    guild = FakeGuild(gid=42)
+    ctx = FakeCtx(author=host, guild=guild,
+                  channel=FakeChannel(guild=guild, public=False))
+    ctx.bot = _StubBot()
+
+    await cog.cmd_bankheist.callback(cog, ctx, target=victim)
+
+    assert len(ctx.sent_embeds) == 1
+    assert "Private Channel" in ctx.sent_embeds[0].title
+    assert ctx.channel.id not in cog._active_heists
 
 
 # ── !steal ────────────────────────────────────────────────────────────────────

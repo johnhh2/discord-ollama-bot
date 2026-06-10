@@ -6,6 +6,7 @@ scope — keep these dumb.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -91,11 +92,27 @@ class FakeGuild:
 
 
 class FakeChannel:
-    """Generic non-text channel stand-in (won't satisfy isinstance discord.TextChannel)."""
-    def __init__(self, ch_id: int = 100, guild: "FakeGuild | None" = None):
+    """Generic non-text channel stand-in (won't satisfy isinstance discord.TextChannel).
+
+    Pass `public=False` to simulate a private channel: `permissions_for` then
+    reports `view_channel=False` for the guild's @everyone role, which is how
+    `_is_public_channel` (crimes are public-channel only) detects privacy. The
+    `permissions_for`/`default_role` plumbing is only set up when a guild is
+    provided, so callers that don't care keep the bare stub.
+    """
+    def __init__(self, ch_id: int = 100, guild: "FakeGuild | None" = None,
+                 public: bool = True):
         self.id = ch_id
         self.guild = guild
         self.send = AsyncMock()
+        if guild is not None:
+            if getattr(guild, "default_role", None) is None:
+                guild.default_role = object()
+
+            def _permissions_for(_role, _public=public):
+                return SimpleNamespace(view_channel=_public)
+
+            self.permissions_for = _permissions_for
 
 
 # Subclass discord.TextChannel so isinstance() checks pass without pulling in
@@ -197,7 +214,11 @@ class FakeCtx:
     ):
         self.author = author or FakeMember(uid=1)
         self.guild = guild or FakeGuild()
-        self.channel = channel or FakeChannel()
+        # Default channel is bound to this ctx's guild so `channel.guild` is set
+        # (real guild commands always have it). This makes the channel look like
+        # a public guild channel — `permissions_for(@everyone).view_channel` is
+        # True — which is what `_is_public_channel` checks for crime commands.
+        self.channel = channel or FakeChannel(guild=self.guild)
         self.bot = None  # cogs that need .bot can set this in tests
         # `command` is referenced by check_command_permission via .qualified_name.
         self.command = type("Cmd", (), {
