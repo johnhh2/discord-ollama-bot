@@ -162,6 +162,71 @@ class ShopCog(commands.Cog):
             return ch if isinstance(ch, discord.TextChannel) else None
         return None
 
+    def _role_section_lines(self, shop_items: dict, uid: int, gid: int) -> list[str]:
+        """Cost-sorted, level-aware, shop_items-gated lines for the Roles menu.
+
+        Shared by the main !shop pointer (presence check only) and the
+        dedicated !shop roles sub-help menu. Returns [] when every role item
+        is disabled.
+        """
+        from src.level_unlocks import fmt_line
+        def L(cmd, text):
+            return fmt_line(cmd, text, uid, gid)
+        items = []
+        if shop_items.get("unassignrole", True):
+            items.append((SHOP_ROLE_REMOVE_COST, L("unassignrole", f"`!shop unassignrole [@user] <name>` — Remove a bot-created role from yourself or another user — **{SHOP_ROLE_REMOVE_COST:,} 🪙**")))
+        if shop_items.get("deleterole", True):
+            items.append((SHOP_ROLE_DELETE_COST, L("deleterole", f"`!shop deleterole <name>` — Permanently delete a bot-created role — **{SHOP_ROLE_DELETE_COST:,} 🪙**")))
+        if shop_items.get("createrole", True):
+            items.append((SHOP_ROLE_CREATE_COST, L("createrole", f"`!shop createrole @user <name> <hex>` — Create a custom colored role for a user — **{SHOP_ROLE_CREATE_COST:,} 🪙**")))
+        if shop_items.get("assignrole", True):
+            items.append((SHOP_ROLE_ASSIGN_COST, L("assignrole", f"`!shop assignrole @user <name>` — Assign an existing bot-created role to a user — **{SHOP_ROLE_ASSIGN_COST:,} 🪙**")))
+        if shop_items.get("roleup", True):
+            items.append((SHOP_ROLE_MOVE_COST, L("roleup", f"`!shop roleup <role name>` — Move a bot-created role up one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**")))
+        if shop_items.get("roledown", True):
+            items.append((SHOP_ROLE_MOVE_COST, L("roledown", f"`!shop roledown <role name>` — Move a bot-created role down one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**")))
+        if shop_items.get("rolecolor", True):
+            items.append((SHOP_ROLECOLOR_COST, L("rolecolor", f"`!shop rolecolor @role <color>` — Change a role's color — **{SHOP_ROLECOLOR_COST:,} 🪙**")))
+        if shop_items.get("renamerole", True):
+            items.append((SHOP_RENAME_COST, L("renamerole", f"`!shop renamerole @role | <new name>` — Rename a bot-created role — **{SHOP_RENAME_COST:,} 🪙**")))
+        if shop_items.get("lockrole", True):
+            items.append((SHOP_LOCK_COST, L("lockrole", f"`!shop lockrole <role name>` — Lock a role against changes — **{SHOP_LOCK_COST:,} 🪙**")))
+        if not items:
+            return []
+        items.sort(key=lambda x: x[0])
+        lines = [item[1] for item in items]
+        if shop_items.get("lockrole", True):
+            lines.append(L("unlockrole", "`!shop unlockrole <role name>` — Unlock a role (lock owner only)"))
+        return lines
+
+    def _channel_section_lines(self, shop_items: dict, uid: int, gid: int) -> list[str]:
+        """Cost-sorted, level-aware, shop_items-gated lines for the Channels menu.
+
+        Shared by the main !shop pointer (presence check only) and the
+        dedicated !shop channels sub-help menu. Returns [] when every channel
+        item is disabled.
+        """
+        from src.level_unlocks import fmt_line
+        def L(cmd, text):
+            return fmt_line(cmd, text, uid, gid)
+        items = []
+        if shop_items.get("channel", True):
+            items.append((SHOP_CHANNEL_COST, L("createchannel", f"`!shop createchannel <name>` — Create a new text channel — **{SHOP_CHANNEL_COST:,} 🪙**")))
+            items.append((SHOP_CHANNEL_DELETE_COST, L("deletechannel", f"`!shop deletechannel <name>` — Delete a bot-created channel — **{SHOP_CHANNEL_DELETE_COST:,} 🪙**")))
+        if shop_items.get("renamechannel", True):
+            items.append((SHOP_RENAME_COST, L("renamechannel", f"`!shop renamechannel <channel> <new name>` — Rename a bot-created channel — **{SHOP_RENAME_COST:,} 🪙**")))
+        if shop_items.get("lockchannel", True):
+            items.append((SHOP_LOCK_COST, L("lockchannel", f"`!shop lockchannel #channel` — Lock a channel against changes — **{SHOP_LOCK_COST:,} 🪙**")))
+        if shop_items.get("rolechannel", True):
+            items.append((SHOP_ROLECHANNEL_COST, L("rolechannel", f"`!shop rolechannel @role #channel` — Restrict a channel to a role — **{SHOP_ROLECHANNEL_COST:,} 🪙**")))
+        if not items:
+            return []
+        items.sort(key=lambda x: x[0])
+        lines = [item[1] for item in items]
+        if shop_items.get("lockchannel", True):
+            lines.append(L("unlockchannel", "`!shop unlockchannel #channel` — Unlock a channel (lock owner only)"))
+        return lines
+
     @commands.Cog.listener()
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
         """Route !<alias> @user to shop_tax when the alias is a guild-configured tax alias."""
@@ -203,15 +268,15 @@ class ShopCog(commands.Cog):
                 return
 
         _si = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
-        from src.level_unlocks import fmt_line
         _gid = ctx.guild.id if ctx.guild else 0
         _uid = ctx.author.id
-        def L(cmd, text):  # shorthand for level-aware line
-            return fmt_line(cmd, text, _uid, _gid)
         sections = {}
 
         # Nicknames (sorted by cost)
         if _si.get("nickname", True):
+            from src.level_unlocks import fmt_line
+            def L(cmd, text):  # shorthand for level-aware line
+                return fmt_line(cmd, text, _uid, _gid)
             nickname_items = [
                 (SHOP_NICKNAME_SELF_COST,   L("nickname", f"`!shop nickname <new_name>` — Change your own nickname — **{SHOP_NICKNAME_SELF_COST:,} 🪙**")),
                 (SHOP_NICKNAME_REMOVE_COST, L("removenickname", f"`!shop removenickname` — Remove your own nickname — **{SHOP_NICKNAME_REMOVE_COST:,} 🪙**")),
@@ -220,51 +285,13 @@ class ShopCog(commands.Cog):
             nickname_items.sort(key=lambda x: x[0])
             sections["🎭 Nicknames"] = [item[1] for item in nickname_items]
 
-        # Roles (sorted by cost)
-        role_items = []
-        if _si.get("unassignrole", True):
-            role_items.append((SHOP_ROLE_REMOVE_COST, L("unassignrole", f"`!shop unassignrole [@user] <name>` — Remove a bot-created role from yourself or another user — **{SHOP_ROLE_REMOVE_COST:,} 🪙**")))
-        if _si.get("deleterole", True):
-            role_items.append((SHOP_ROLE_DELETE_COST, L("deleterole", f"`!shop deleterole <name>` — Permanently delete a bot-created role — **{SHOP_ROLE_DELETE_COST:,} 🪙**")))
-        if _si.get("createrole", True):
-            role_items.append((SHOP_ROLE_CREATE_COST, L("createrole", f"`!shop createrole @user <name> <hex>` — Create a custom colored role for a user — **{SHOP_ROLE_CREATE_COST:,} 🪙**")))
-        if _si.get("assignrole", True):
-            role_items.append((SHOP_ROLE_ASSIGN_COST, L("assignrole", f"`!shop assignrole @user <name>` — Assign an existing bot-created role to a user — **{SHOP_ROLE_ASSIGN_COST:,} 🪙**")))
-        if _si.get("roleup", True):
-            role_items.append((SHOP_ROLE_MOVE_COST, L("roleup", f"`!shop roleup <role name>` — Move a bot-created role up one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**")))
-        if _si.get("roledown", True):
-            role_items.append((SHOP_ROLE_MOVE_COST, L("roledown", f"`!shop roledown <role name>` — Move a bot-created role down one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**")))
-        if _si.get("rolecolor", True):
-            role_items.append((SHOP_ROLECOLOR_COST, L("rolecolor", f"`!shop rolecolor @role <color>` — Change a role's color — **{SHOP_ROLECOLOR_COST:,} 🪙**")))
-        if _si.get("renamerole", True):
-            role_items.append((SHOP_RENAME_COST, L("renamerole", f"`!shop renamerole @role | <new name>` — Rename a bot-created role — **{SHOP_RENAME_COST:,} 🪙**")))
-        if _si.get("lockrole", True):
-            role_items.append((SHOP_LOCK_COST, L("lockrole", f"`!shop lockrole <role name>` — Lock a role against changes — **{SHOP_LOCK_COST:,} 🪙**")))
-        if role_items:
-            role_items.sort(key=lambda x: x[0])
-            items_list = [item[1] for item in role_items]
-            if _si.get("lockrole", True):
-                items_list.append(L("unlockrole", "`!shop unlockrole <role name>` — Unlock a role (lock owner only)"))
-            sections["👑 Roles"] = items_list
-
-        # Channels (sorted by cost)
-        channel_items = []
-        if _si.get("channel", True):
-            channel_items.append((SHOP_CHANNEL_COST, L("createchannel", f"`!shop createchannel <name>` — Create a new text channel — **{SHOP_CHANNEL_COST:,} 🪙**")))
-        if _si.get("channel", True):
-            channel_items.append((SHOP_CHANNEL_DELETE_COST, L("deletechannel", f"`!shop deletechannel <name>` — Delete a bot-created channel — **{SHOP_CHANNEL_DELETE_COST:,} 🪙**")))
-        if _si.get("renamechannel", True):
-            channel_items.append((SHOP_RENAME_COST, L("renamechannel", f"`!shop renamechannel <channel> <new name>` — Rename a bot-created channel — **{SHOP_RENAME_COST:,} 🪙**")))
-        if _si.get("lockchannel", True):
-            channel_items.append((SHOP_LOCK_COST, L("lockchannel", f"`!shop lockchannel #channel` — Lock a channel against changes — **{SHOP_LOCK_COST:,} 🪙**")))
-        if _si.get("rolechannel", True):
-            channel_items.append((SHOP_ROLECHANNEL_COST, L("rolechannel", f"`!shop rolechannel @role #channel` — Restrict a channel to a role — **{SHOP_ROLECHANNEL_COST:,} 🪙**")))
-        if channel_items:
-            channel_items.sort(key=lambda x: x[0])
-            items_list = [item[1] for item in channel_items]
-            if _si.get("lockchannel", True):
-                items_list.append(L("unlockchannel", "`!shop unlockchannel #channel` — Unlock a channel (lock owner only)"))
-            sections["📢 Channels"] = items_list
+        # Roles and Channels each get a dedicated sub-help menu (!shop roles /
+        # !shop channels) instead of a wall of commands here. Show a one-line
+        # pointer to each when any of its items is enabled.
+        if self._role_section_lines(_si, _uid, _gid):
+            sections["👑 Roles"] = ["`!shop roles` — Role commands (create, assign, rename, color, lock, rank, …)"]
+        if self._channel_section_lines(_si, _uid, _gid):
+            sections["📢 Channels"] = ["`!shop channels` — Channel commands (create, delete, rename, restrict, lock, …)"]
 
         # Fun & Social (sorted by cost)
         fun_items = [
@@ -286,6 +313,30 @@ class ShopCog(commands.Cog):
 
         desc = "\n\n".join(f"**{section}**\n" + "\n".join(items) for section, items in sections.items())
         await send_ephemeral(ctx, embed=emb("🛒 Shop", desc, C_PURPLE))
+
+    # ── !shop roles ───────────────────────────────────────────────────────────
+    @cmd_shop.command(name="roles", aliases=["role"])
+    @_shop_subcommand(None)
+    async def shop_roles(self, ctx: commands.Context):
+        _si = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
+        _gid = ctx.guild.id if ctx.guild else 0
+        lines = self._role_section_lines(_si, ctx.author.id, _gid)
+        if not lines:
+            await send_ephemeral(ctx, embed=emb("👑 Role Shop", "No role shop items are currently available.", C_PURPLE))
+            return
+        await send_ephemeral(ctx, embed=emb("👑 Role Shop", "\n".join(lines), C_PURPLE))
+
+    # ── !shop channels ────────────────────────────────────────────────────────
+    @cmd_shop.command(name="channels", aliases=["channel"])
+    @_shop_subcommand(None)
+    async def shop_channels(self, ctx: commands.Context):
+        _si = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
+        _gid = ctx.guild.id if ctx.guild else 0
+        lines = self._channel_section_lines(_si, ctx.author.id, _gid)
+        if not lines:
+            await send_ephemeral(ctx, embed=emb("📢 Channel Shop", "No channel shop items are currently available.", C_PURPLE))
+            return
+        await send_ephemeral(ctx, embed=emb("📢 Channel Shop", "\n".join(lines), C_PURPLE))
 
     # ── !shop nickname ────────────────────────────────────────────────────────
     @cmd_shop.command(name="nickname")
