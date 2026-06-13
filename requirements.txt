@@ -1,5 +1,5 @@
 discord.py==2.7.1
-aiohttp==3.13.5
+aiohttp==3.14.0
 python-dotenv==1.2.2
 tzdata==2026.2
 matplotlib==3.10.9
@@ -7,3 +7,6 @@ aiomysql==0.3.2
 prometheus-client==0.25.0
 chess==1.11.2
 cairosvg==2.9.0
+
+# Transitive (via yarl); pinned to clear CVE-2026-45409
+idna==3.15
