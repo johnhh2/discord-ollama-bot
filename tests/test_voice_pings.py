@@ -360,3 +360,75 @@ async def test_global_handler_reports_unhandled_error(monkeypatch):
         await cog.on_command_error(ctx, err)
     assert logged == [err]              # reported
     assert len(_state.audit_log) == 1
+
+
+@_aio
+async def test_global_handler_shows_usage_on_bad_argument(monkeypatch):
+    """Bad input to a typed param (e.g. `!scratch help` → BadArgument) must reply
+    with the command's usage, NOT route to the "⚠️ Command Error" admin report."""
+    import src.events as _events
+    cog = _events.EventsCog(bot=SimpleNamespace())
+
+    logged = []
+
+    async def _spy_log(bot, ctx, error):
+        logged.append(error)
+
+    monkeypatch.setattr(_events, "_log_command_error", _spy_log)
+    _state.audit_log.clear()
+
+    sent = []
+
+    async def _send(msg):
+        sent.append(msg)
+
+    err = discord.ext.commands.BadArgument(
+        'Converting to "int" failed for parameter "count".'
+    )
+    ctx = SimpleNamespace(
+        guild=SimpleNamespace(id=GUILD_ID),
+        author=SimpleNamespace(display_name="Xeph", id=SUBSCRIBER_ID),
+        message=SimpleNamespace(content="!scratch help"),
+        command=SimpleNamespace(qualified_name="scratch", signature="[count]"),
+        clean_prefix="!",
+        send=_send,
+    )
+
+    # Must NOT raise (the old behavior re-raised the error).
+    await cog.on_command_error(ctx, err)
+
+    assert logged == []                 # no admin bug-report
+    assert len(_state.audit_log) == 0   # nothing recorded
+    assert sent == ["❌ Usage: `!scratch [count]`"]
+
+
+@_aio
+async def test_global_handler_shows_usage_on_missing_required_argument(monkeypatch):
+    """MissingRequiredArgument (also a UserInputError) takes the same usage path."""
+    import src.events as _events
+    cog = _events.EventsCog(bot=SimpleNamespace())
+
+    monkeypatch.setattr(_events, "_log_command_error", lambda *a: None)
+    _state.audit_log.clear()
+
+    sent = []
+
+    async def _send(msg):
+        sent.append(msg)
+
+    # MissingRequiredArgument needs a Parameter; fabricate a minimal one.
+    param = SimpleNamespace(name="opponent", displayed_name=None)
+    err = discord.ext.commands.MissingRequiredArgument(param)
+    ctx = SimpleNamespace(
+        guild=SimpleNamespace(id=GUILD_ID),
+        author=SimpleNamespace(display_name="Xeph", id=SUBSCRIBER_ID),
+        message=SimpleNamespace(content="!ttt"),
+        command=SimpleNamespace(qualified_name="ttt", signature="[opponent] [amount]"),
+        clean_prefix="!",
+        send=_send,
+    )
+
+    await cog.on_command_error(ctx, err)
+
+    assert len(_state.audit_log) == 0
+    assert sent == ["❌ Usage: `!ttt [opponent] [amount]`"]

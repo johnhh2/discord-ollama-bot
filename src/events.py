@@ -482,6 +482,17 @@ class EventsCog(commands.Cog):
                 msg = "Commands are not allowed in this channel."
             await _wrong_channel_reply(ctx, msg)
             return
+        # Bad/missing/extra arguments to a typed parameter (e.g. `!scratch help`
+        # failing to convert "help" to int). discord.py raises BadArgument /
+        # MissingRequiredArgument / TooManyArguments — all subclasses of
+        # UserInputError. Show the command's usage instead of routing this to the
+        # admin "⚠️ Command Error" bug-report path and re-raising.
+        if isinstance(error, commands.UserInputError):
+            if ctx.command is not None:
+                prefix = ctx.clean_prefix or "!"
+                usage = f"{prefix}{ctx.command.qualified_name} {ctx.command.signature}".rstrip()
+                await ctx.send(f"❌ Usage: `{usage}`")
+            return
         state.audit_log.append({
             "time": time.time(),
             "user": f"{ctx.author.display_name} ({ctx.author.id})",
