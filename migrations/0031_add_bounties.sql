@@ -38,7 +38,9 @@ CREATE TABLE IF NOT EXISTS bounties (
     message_id          BIGINT          NOT NULL UNIQUE,
     author_id           BIGINT          NOT NULL,
     amount              BIGINT          NOT NULL,
-    condition           TEXT            NOT NULL,
+    -- `condition` is a MariaDB reserved word — must be backticked here. (The
+    -- runtime queries in src/persistence/bounties.py already backtick it.)
+    `condition`         TEXT            NOT NULL,
     status              VARCHAR(16)     NOT NULL DEFAULT 'open',
     claimant_id         BIGINT,
     dm_message_id       BIGINT,
