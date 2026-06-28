@@ -1031,6 +1031,20 @@ class ShopCog(commands.Cog):
             C_PURPLE,
         ))
 
+    # ── !shop bounty ──────────────────────────────────────────────────────────
+    @cmd_shop.command(name="bounty")
+    @_shop_subcommand(None)
+    async def shop_bounty(self, ctx: commands.Context, *args):
+        # The whole bounty feature lives in BountyCog (its own persistence,
+        # reaction dispatch, and expiry loop). This subcommand and the !bounty
+        # top-level alias both funnel into create_bounty so the channel gating,
+        # escrow, and embed are defined in one place.
+        cog = self.bot.get_cog("BountyCog") if self.bot else None
+        if cog is None:
+            await ctx.send(embed=emb("🎯 Bounty", "Bounties are unavailable right now.", C_GREY))
+            return
+        await cog.create_bounty(ctx, args)
+
     # ── !shop insurance ───────────────────────────────────────────────────────
     @cmd_shop.command(name="insurance")
     @_shop_subcommand(None)

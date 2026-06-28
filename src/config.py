@@ -123,5 +123,15 @@ SHOP_TAX_PER_MESSAGE         = 10
 SHOP_TAX_DURATION_SECS       = 86_400  # 24 hours
 SHOP_SPELLCHECK_DURATION_SECS = 86_400  # 24 hours per purchased day
 
+# Bounty (!shop bounty / !bounty) parameters
+BOUNTY_MIN_AMOUNT        = 1_000      # smallest bounty an author may post
+BOUNTY_CLAIM_DURATION_SECS   = 7 * 86_400   # author has 1 week to accept/reject a claim
+BOUNTY_CONTEST_DURATION_SECS = 3 * 86_400   # rejected claimant has 3 days to contest
+BOUNTY_POLL_DURATION_SECS    = 3 * 86_400   # @everyone contest poll runs for 3 days
+# Poll payout scaling: <50% yes → 0; 50%→50% payout, ramping linearly up to
+# ≥66.666% yes → 100% payout.
+BOUNTY_POLL_MIN_RATIO    = 0.5            # below this, no payout
+BOUNTY_POLL_FULL_RATIO   = 2.0 / 3.0      # at/above this, full payout
+
 # Ephemeral message auto-delete timeout
 EPHEMERAL_DELETE_AFTER = 60

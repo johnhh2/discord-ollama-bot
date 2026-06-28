@@ -24,6 +24,7 @@ Async Python on top of `discord.py` and `aiomysql`, with streaming LLM output, a
 - `!savings` with compounding principal/interest tracking
 - `!steal` / `!mug` / `!jail` / `!jailbreak` PvP economy actions with insurance you can buy in the shop
 - `!leaderboard`, `!records`, `!economy` overview, `!graph` for visualizing balance history
+- `!bounty <coins> <condition>` — post an escrowed, honor-based reward another user can claim; the author accepts/rejects via DM, with a community-vote contest path. Gated to a channel set by `!settings bounty-channel #channel`
 
 **Games**
 - `!hangman` (with a ~7.5k-word list and rarity-weighted payouts)

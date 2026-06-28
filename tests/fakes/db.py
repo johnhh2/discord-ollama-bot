@@ -63,6 +63,7 @@ _TABLE_PKS = {
     "global_blocklist": ("user_id",),
     "schema_migrations": ("version",),
     "error_mutes": ("mute_key",),
+    "bounties": ("id",),
 }
 
 

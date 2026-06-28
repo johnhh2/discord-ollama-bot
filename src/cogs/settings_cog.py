@@ -155,6 +155,34 @@ class SettingsCog(commands.Cog):
             C_GREEN,
         ))
 
+    # ── !settings bounty-channel ──────────────────────────────────────────────
+    @cmd_settings.command(name="bounty-channel")
+    @requires_perm
+    async def settings_bounty_channel(self, ctx: commands.Context, *args):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        if args and args[0].lower() == "clear":
+            cfg["bounty_channel"] = None
+            await save_guild_settings()
+            await ctx.send(embed=emb("🎯 Bounty Channel", "Bounties disabled.", C_GREEN))
+        elif ctx.message.channel_mentions:
+            channel = ctx.message.channel_mentions[0]
+            cfg["bounty_channel"] = channel.id
+            await save_guild_settings()
+            await ctx.send(embed=emb(
+                "🎯 Bounty Channel",
+                f"Bounties can now be posted in {channel.mention} with `!bounty <coins> <condition>`.",
+                C_GREEN,
+            ))
+        else:
+            await ctx.send(embed=emb(
+                "🎯 Bounty Channel",
+                "Usage: `!settings bounty-channel #channel` or `!settings bounty-channel clear`",
+                C_GREY,
+            ))
+
     # ── !settings nsfw ────────────────────────────────────────────────────────
     @cmd_settings.command(name="nsfw")
     @requires_perm

@@ -132,6 +132,15 @@ from src.persistence.issues import (  # noqa: F401
     delete_error_mute,
     load_error_mutes,
 )
+from src.persistence.bounties import (  # noqa: F401
+    insert_bounty,
+    get_bounty_by_message,
+    get_bounty_by_dm,
+    get_bounty_by_contest,
+    get_bounty_by_poll,
+    update_bounty,
+    load_active_bounties,
+)
 from src.persistence.feature_requests import (  # noqa: F401
     insert_feature_request,
     get_feature_request_by_message,

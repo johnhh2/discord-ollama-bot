@@ -28,6 +28,13 @@ active_mocks: dict = {}
 active_taxes: dict = {}
 active_curses: dict = {}
 active_spellchecks: dict = {}
+# In-flight bounties (!shop bounty / !bounty), keyed by the bounty embed's
+# message_id. Value is the row dict from src.persistence.bounties (status,
+# author_id, amount, condition, claimant_id, the various *_message_id /
+# *_expires_at fields, claim_log). Terminal bounties (accepted/rejected/
+# cancelled) are dropped from this dict but kept in the DB as history.
+# Source of truth is the bounties table; loaded at boot.
+active_bounties: dict = {}
 active_chess_games: dict = {}
 rigged_slots: dict = {}
 rigged_flips: dict = {}
