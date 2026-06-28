@@ -480,6 +480,25 @@ async def test_spellcheck_silent_when_unchanged(db, cog, monkeypatch):
     channel.send.assert_not_awaited()
 
 
+async def test_spellcheck_silent_when_correct_has_trailing_punctuation(db, cog, monkeypatch):
+    """The conservative prompt's 'CORRECT' no-op signal is honored even if the
+    model adds punctuation like 'CORRECT.'."""
+    target = FakeMember(uid=5021, display_name="x")
+    guild = FakeGuild(gid=42)
+    channel = _Channel()
+
+    async def _correct(messages, model=None):
+        return "CORRECT."
+    monkeypatch.setattr(_events, "ollama_complete", _correct)
+
+    _state.active_spellchecks[(42, target.id)] = {
+        "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
+    }
+    await cog.on_message(_Msg(target, "playing Elden Ring rn", guild, channel))
+
+    channel.send.assert_not_awaited()
+
+
 async def test_spellcheck_does_not_fire_on_command_messages(db, cog, monkeypatch):
     target = FakeMember(uid=5004, display_name="x")
     guild = FakeGuild(gid=42)

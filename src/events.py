@@ -746,22 +746,35 @@ class EventsCog(commands.Cog):
             return
 
         system_prompt = (
-            "You are a spelling and grammar checker. The user gives you a single message. "
-            "If it contains any spelling or grammatical errors, reply with ONLY the corrected "
-            "version of the message — no quotes, no explanation, no preamble. If the message "
-            "is already correct, reply with exactly the single word: CORRECT. "
-            "Preserve the original meaning, tone, casing, and emoji."
+            "You are a conservative spelling and grammar checker for casual chat "
+            "messages. You will be given one message. Only fix mistakes that are "
+            "UNAMBIGUOUS errors no matter the context — a clearly misspelled common "
+            "word (e.g. 'teh' -> 'the', 'recieve' -> 'receive') or a clear grammar "
+            "mistake (e.g. 'i has' -> 'i have', 'should of' -> 'should have').\n\n"
+            "Do NOT change anything that could be intentional or that you simply "
+            "don't recognize. Leave these EXACTLY as written: proper nouns and the "
+            "names of people, places, games, shows, songs, brands, characters, and "
+            "usernames; slang, abbreviations, internet shorthand (lol, idk, tbh, "
+            "gonna, imma); deliberate stylization, emoji, emoticons, and casing; "
+            "and any unfamiliar word that might be a real name or term. When you are "
+            "not sure whether something is an error, treat it as correct.\n\n"
+            "If — and only if — the message contains at least one unambiguous error, "
+            "reply with ONLY the corrected message: no quotes, no explanation, no "
+            "preamble, and change nothing except the actual errors. Otherwise reply "
+            "with exactly the single word: CORRECT."
         )
         corrected = await ollama_complete([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": content},
         ])
         corrected = corrected.strip()
-        if not corrected or corrected.upper() == "CORRECT":
+        # Treat any "CORRECT"-ish no-op signal as "leave it alone" (the model
+        # sometimes adds punctuation, e.g. "CORRECT.").
+        if not corrected or corrected.strip(" .!").upper() == "CORRECT":
             return
-        # The model occasionally echoes the input verbatim instead of "CORRECT";
-        # don't bother replying if nothing changed.
-        if corrected == content:
+        # The model occasionally echoes the input instead of "CORRECT" — skip if
+        # nothing meaningful changed (ignore surrounding whitespace).
+        if corrected == content or corrected.strip() == content.strip():
             return
         await message.channel.send(f"{corrected} *")
 
