@@ -131,6 +131,11 @@ def _translate(sql: str) -> str:
     # Inline `INDEX idx_x (col)` inside CREATE TABLE — SQLite doesn't support this
     # form. Strip the line; tests don't rely on these indexes for correctness.
     out = re.sub(r",\s*INDEX\s+\w+\s*\([^)]*\)", "", out, flags=re.IGNORECASE)
+    # `ALTER TABLE foo MODIFY COLUMN ...` — MariaDB-only (used to widen an
+    # ENUM, change a type, etc.). SQLite has no MODIFY COLUMN and, since ENUMs
+    # are already TEXT here, the change is a no-op for the test DB. Drop it.
+    if re.match(r"\s*ALTER\s+TABLE\s+\w+\s+MODIFY\s+COLUMN\b", out, flags=re.IGNORECASE):
+        return ""
     # SQLite's ALTER TABLE doesn't support DROP PRIMARY KEY. Drop the
     # statement entirely; the matching ADD PRIMARY KEY below handles the
     # full PK rewrite by recreating the table.

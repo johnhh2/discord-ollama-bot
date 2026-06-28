@@ -221,6 +221,22 @@ async def _init_db_state_inner(state, run_migrations):
         except Exception as e:
             logging.error(f"[init_db_state] shop_effects.tax failed: {e}", exc_info=True)
 
+        # ── shop_effects: spellcheck ──────────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT user_id, master_id, remaining, channel_id, activated_at"
+                " FROM shop_effects WHERE effect_type='spellcheck'"
+            )
+            for uid, master_id, remaining, channel_id, activated_at in await cur.fetchall():
+                state.active_spellchecks[uid] = {
+                    "started_by": master_id,
+                    "days": remaining,
+                    "channel_id": channel_id,
+                    "activated_at": activated_at,
+                }
+        except Exception as e:
+            logging.error(f"[init_db_state] shop_effects.spellcheck failed: {e}", exc_info=True)
+
         # ── rigged_slots ──────────────────────────────────────────────────
         try:
             await cur.execute("SELECT user_id, symbol FROM rigged_slots")

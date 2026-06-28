@@ -200,6 +200,39 @@ async def check_ollama_connected() -> bool:
         return False
 
 
+async def ollama_complete(messages: list, model: str = None) -> str:
+    """Run a single non-streaming Ollama chat completion and return the full
+    text. Used by side-effect handlers (e.g. spellcheck) that need a one-off
+    correction rather than a streamed reply edited into a placeholder.
+
+    Returns "" if the bot's AI is disabled or the request fails — callers
+    should treat an empty string as "no result, do nothing".
+    """
+    if not state.bot_settings.get("ai_enabled", True):
+        return ""
+    used_model = model or OLLAMA_MODEL
+    payload = {
+        "model": used_model,
+        "messages": messages,
+        "stream": False,
+        "options": {"num_predict": OLLAMA_NUM_PREDICT},
+    }
+    try:
+        async with ollama_semaphore:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{OLLAMA_BASE_URL}/api/chat",
+                    json=payload,
+                    timeout=OLLAMA_REQUEST_TIMEOUT,
+                ) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+        return (data.get("message", {}) or {}).get("content", "") or ""
+    except Exception as e:
+        log.warning("ollama_complete_failed", extra={"error": type(e).__name__, "detail": str(e)})
+        return ""
+
+
 async def keep_typing(channel: discord.abc.Messageable):
     try:
         while True:

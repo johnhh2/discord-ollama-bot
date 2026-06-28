@@ -23,8 +23,9 @@ from src.permissions import (
 from src.persistence import (
     save_insurance, save_guild_settings,
     save_bot_roles,
-    save_ragebait, save_mock, save_tax, save_curse
+    save_ragebait, save_mock, save_tax, save_curse, save_spellcheck
 )
+from src.confirm_view import confirm_purchase
 from src.guild_config import get_guild_cfg
 from src.ai import (
     keep_typing,
@@ -38,6 +39,7 @@ from src.config import (
     SHOP_INSURANCE_DURATION_SECS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
     SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_TAX_PER_MESSAGE,
     SHOP_TAX_DURATION_SECS,
+    SHOP_SPELLCHECK_COST, SHOP_SPELLCHECK_DURATION_SECS,
 )
 from src import state
 
@@ -113,6 +115,7 @@ _SHOP_TOP_ALIASES: list[tuple[str, str, list[str]]] = [
     ("mute",           "shop_mute",          []),
     ("tax",            "shop_tax",           []),
     ("curse",          "shop_curse",         []),
+    ("spellcheck",     "shop_spellcheck",    []),
     ("unoreverse",     "shop_unoreverse",    []),
     # roleup and roledown both dispatch via shop_roleup (it reads
     # ctx.invoked_with to pick direction).
@@ -307,6 +310,7 @@ class ShopCog(commands.Cog):
             fun_items.append((SHOP_RAGEBAIT_COST, f"`!shop ragebait @user [topic]` — Ragebait for {SHOP_RAGEBAIT_MESSAGES + 1} messages — **{SHOP_RAGEBAIT_COST:,} 🪙**"))
         fun_items.append((SHOP_MUTE_COST,  f"`!shop mute @user` — Server mute for {SHOP_MUTE_MINUTES} minutes — **{SHOP_MUTE_COST:,} 🪙**"))
         fun_items.append((SHOP_CURSE_COST, f"`!shop curse @user` — Curse someone's messages for {SHOP_CURSE_MESSAGES} messages — **{SHOP_CURSE_COST:,} 🪙**"))
+        fun_items.append((SHOP_SPELLCHECK_COST, f"`!shop spellcheck @user [days]` — AI corrects their messages — **{SHOP_SPELLCHECK_COST:,} 🪙/day**"))
         fun_items.append((SHOP_UNOREVERSE_COST, L("unoreverse", f"`!shop unoreverse @user` — Redirect active mock/ragebait/curse onto someone else — **{SHOP_UNOREVERSE_COST:,} 🪙**")))
         fun_items.sort(key=lambda x: x[0])
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
@@ -1054,7 +1058,7 @@ class ShopCog(commands.Cog):
         expires_at = int(time.time() + SHOP_INSURANCE_DURATION_SECS)
         state.insurance[key] = {
             "expires_at": expires_at,
-            "protected_from": ["ragebait", "mock", "nickname", "role", "steal", "tax"],
+            "protected_from": ["ragebait", "mock", "nickname", "role", "steal", "tax", "spellcheck"],
         }
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST:,}"):
             # Roll back to whatever insurance state existed before.
@@ -1066,7 +1070,7 @@ class ShopCog(commands.Cog):
         await save_insurance()
         await ctx.send(embed=emb(
             "🛡️ Insurance Purchased",
-            f"Protected against ragebait, mock, nickname, role assignments, steal, and tax! (expires <t:{expires_at}:R>)",
+            f"Protected against ragebait, mock, nickname, role assignments, steal, tax, and spellcheck! (expires <t:{expires_at}:R>)",
             C_GREEN,
         ))
 
@@ -1220,6 +1224,78 @@ class ShopCog(commands.Cog):
         await ctx.send(embed=emb(
             "🔮 Curse Activated",
             f"**{target.display_name}** is now cursed for the next **{SHOP_CURSE_MESSAGES}** messages!",
+            C_PURPLE,
+        ))
+
+    # ── !shop spellcheck ──────────────────────────────────────────────────────
+    @cmd_shop.command(name="spellcheck")
+    @_shop_subcommand(None)
+    async def shop_spellcheck(self, ctx: commands.Context, *args):
+        uid = ctx.author.id
+
+        if not args:
+            await ctx.send(embed=emb(
+                "🛒 Shop",
+                f"Usage: `!shop spellcheck @user [days]` — **{SHOP_SPELLCHECK_COST:,} 🪙** per day (default 1).",
+                C_PURPLE,
+            ))
+            return
+
+        # Optional trailing days arg. If the last token parses as a positive
+        # int it's the day count; otherwise treat everything as the target.
+        days = 1
+        target_args = list(args)
+        if len(args) >= 2:
+            maybe_days = args[-1]
+            if maybe_days.isdigit() and int(maybe_days) > 0:
+                days = int(maybe_days)
+                target_args = list(args[:-1])
+
+        try:
+            target = await MemberConverter().convert(ctx, target_args[0])
+        except commands.BadArgument:
+            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop spellcheck @user [days]`", C_PURPLE))
+            return
+
+        if target.id == uid:
+            await ctx.send(embed=emb("❌ Self Spellcheck", "You can't spellcheck yourself!", C_RED))
+            return
+        if self.bot and self.bot.user and target.id == self.bot.user.id:
+            await ctx.send(embed=emb("❌ Invalid Target", "You can't spellcheck the bot.", C_RED))
+            return
+        if await is_insured(target.id, "spellcheck"):
+            _exp = get_insurance_expiry(target.id)
+            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be spellchecked (expires <t:{_exp}:R>).", C_GOLD))
+            return
+
+        cost = 0 if uid in state.godmode_users else SHOP_SPELLCHECK_COST * days
+
+        day_label = "1 day" if days == 1 else f"{days} days"
+        confirmed = await confirm_purchase(
+            ctx,
+            title="📝 Spellcheck",
+            description=f"Have the AI correct **{target.display_name}**'s messages for **{day_label}**.",
+            cost=cost,
+            payer=ctx.author,
+        )
+        if not confirmed:
+            return
+
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{cost:,}"):
+            return
+
+        activated_at = time.time()
+        expires_ts = int(activated_at + days * SHOP_SPELLCHECK_DURATION_SECS)
+        state.active_spellchecks[target.id] = {
+            "started_by": uid,
+            "days": days,
+            "channel_id": ctx.channel.id,
+            "activated_at": activated_at,
+        }
+        await save_spellcheck()
+        await ctx.send(embed=emb(
+            "📝 Spellcheck Activated",
+            f"**{target.display_name}**'s messages will be corrected by the AI for **{day_label}**! Expires <t:{expires_ts}:R>.",
             C_PURPLE,
         ))
 

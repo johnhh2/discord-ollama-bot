@@ -111,6 +111,7 @@ SHOP_RAGEBAIT_COST        = 2_500
 SHOP_MUTE_COST            = 5_000
 SHOP_CURSE_COST           = 10_000
 SHOP_UNOREVERSE_COST      = 10_000
+SHOP_SPELLCHECK_COST      = 10_000  # per day
 
 # Shop effect parameters
 SHOP_INSURANCE_DURATION_SECS = 86_400  # 24 hours
@@ -120,6 +121,7 @@ SHOP_CURSE_MESSAGES          = 5
 SHOP_MUTE_MINUTES            = 5
 SHOP_TAX_PER_MESSAGE         = 10
 SHOP_TAX_DURATION_SECS       = 86_400  # 24 hours
+SHOP_SPELLCHECK_DURATION_SECS = 86_400  # 24 hours per purchased day
 
 # Ephemeral message auto-delete timeout
 EPHEMERAL_DELETE_AFTER = 60

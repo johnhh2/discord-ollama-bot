@@ -346,6 +346,134 @@ async def test_shop_tax_refuses_against_insured_target(db, monkeypatch):
     assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
 
 
+async def test_shop_spellcheck_purchase_charges_per_day_and_persists(db, monkeypatch):
+    """!shop spellcheck @user 3 charges 3× the per-day cost, activates the
+    effect with the day count, and persists it to shop_effects."""
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_SPELLCHECK_COST
+
+    cog = ShopCog(bot=None)
+    buyer_uid = 8101
+    target_uid = 8102
+    await add_balance(buyer_uid, SHOP_SPELLCHECK_COST * 5)
+    target = FakeMember(uid=target_uid, display_name="typo-haver")
+
+    class _StubConverter:
+        async def convert(self, ctx, arg):
+            return target
+
+    monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+
+    async def _yes_confirm(*a, **k):
+        return True
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _yes_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=FakeGuild(gid=42))
+    await cog.shop_spellcheck.callback(cog, ctx, f"<@{target_uid}>", "3")
+
+    # Charged 3 days' worth.
+    assert await get_balance(buyer_uid) == SHOP_SPELLCHECK_COST * 5 - SHOP_SPELLCHECK_COST * 3
+    # Effect activated with the day count.
+    assert target_uid in _state.active_spellchecks
+    assert _state.active_spellchecks[target_uid]["days"] == 3
+    assert _state.active_spellchecks[target_uid]["started_by"] == buyer_uid
+
+    # Persisted to shop_effects with remaining == days.
+    pool = await _persistence.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT remaining, master_id FROM shop_effects"
+                " WHERE effect_type='spellcheck' AND user_id=?",
+                (target_uid,),
+            )
+            row = await cur.fetchone()
+    assert row is not None
+    assert row[0] == 3
+    assert row[1] == buyer_uid
+
+
+async def test_shop_spellcheck_defaults_to_one_day(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_SPELLCHECK_COST
+
+    cog = ShopCog(bot=None)
+    buyer_uid = 8103
+    target_uid = 8104
+    await add_balance(buyer_uid, SHOP_SPELLCHECK_COST + 500)
+    target = FakeMember(uid=target_uid, display_name="t")
+
+    class _StubConverter:
+        async def convert(self, ctx, arg):
+            return target
+
+    monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", lambda *a, **k: _async_true())
+
+    ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=FakeGuild(gid=42))
+    await cog.shop_spellcheck.callback(cog, ctx, f"<@{target_uid}>")
+
+    assert await get_balance(buyer_uid) == 500
+    assert _state.active_spellchecks[target_uid]["days"] == 1
+
+
+async def test_shop_spellcheck_declined_confirm_no_charge(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_SPELLCHECK_COST
+
+    cog = ShopCog(bot=None)
+    buyer_uid = 8105
+    target_uid = 8106
+    await add_balance(buyer_uid, SHOP_SPELLCHECK_COST + 500)
+    target = FakeMember(uid=target_uid, display_name="t")
+
+    class _StubConverter:
+        async def convert(self, ctx, arg):
+            return target
+
+    monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+
+    async def _no_confirm(*a, **k):
+        return False
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _no_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=FakeGuild(gid=42))
+    await cog.shop_spellcheck.callback(cog, ctx, f"<@{target_uid}>")
+
+    assert await get_balance(buyer_uid) == SHOP_SPELLCHECK_COST + 500
+    assert target_uid not in _state.active_spellchecks
+
+
+async def test_shop_spellcheck_refuses_against_insured_target(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_SPELLCHECK_COST
+
+    cog = ShopCog(bot=None)
+    buyer_uid = 8107
+    target_uid = 8108
+    await add_balance(buyer_uid, SHOP_SPELLCHECK_COST + 500)
+    target = FakeMember(uid=target_uid, display_name="insured")
+    _insure(target_uid, ["spellcheck"])
+
+    class _StubConverter:
+        async def convert(self, ctx, arg):
+            return target
+
+    monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", lambda *a, **k: _async_true())
+
+    ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=FakeGuild(gid=42))
+    await cog.shop_spellcheck.callback(cog, ctx, f"<@{target_uid}>")
+
+    assert await get_balance(buyer_uid) == SHOP_SPELLCHECK_COST + 500
+    assert target_uid not in _state.active_spellchecks
+    assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
+
+
+async def _async_true():
+    return True
+
+
 async def test_shop_mock_refuses_against_insured_target(db, monkeypatch):
     """!shop mock @insured must NOT charge the buyer and must NOT add to
     state.active_mocks. Pre-fix the mock effect was applied and runtime

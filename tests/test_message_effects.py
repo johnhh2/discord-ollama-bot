@@ -24,7 +24,7 @@ import src.persistence as _persistence
 import src.economy as _economy
 import src.events as _events
 from src.events import EventsCog
-from src.config import SHOP_TAX_PER_MESSAGE, SHOP_TAX_DURATION_SECS
+from src.config import SHOP_TAX_PER_MESSAGE, SHOP_TAX_DURATION_SECS, SHOP_SPELLCHECK_DURATION_SECS
 
 from tests.fakes.discord import FakeMember, FakeGuild
 
@@ -418,3 +418,176 @@ async def test_ragebait_skips_when_target_is_insured(db, cog):
     # Counter and history must be untouched.
     assert rage["remaining"] == 3
     assert rage["history"] == []
+
+
+# ── Spellcheck correction ──────────────────────────────────────────────────────
+
+async def test_spellcheck_corrects_message_with_errors(db, cog, monkeypatch):
+    """A spellchecked user's message with errors gets an AI-corrected reply
+    suffixed with ' *'."""
+    target = FakeMember(uid=5001, display_name="typo")
+    guild = FakeGuild(gid=42)
+    channel = _Channel()
+
+    async def _correct(messages, model=None):
+        return "I went to the store."
+    monkeypatch.setattr(_events, "ollama_complete", _correct)
+
+    _state.active_spellchecks[target.id] = {
+        "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
+    }
+    await cog.on_message(_Msg(target, "i goed to teh stor", guild, channel))
+
+    channel.send.assert_awaited()
+    assert channel.send.call_args.args[0] == "I went to the store. *"
+
+
+async def test_spellcheck_silent_when_ai_says_correct(db, cog, monkeypatch):
+    target = FakeMember(uid=5002, display_name="clean")
+    guild = FakeGuild(gid=42)
+    channel = _Channel()
+
+    async def _correct(messages, model=None):
+        return "CORRECT"
+    monkeypatch.setattr(_events, "ollama_complete", _correct)
+
+    _state.active_spellchecks[target.id] = {
+        "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
+    }
+    await cog.on_message(_Msg(target, "This sentence is fine.", guild, channel))
+
+    channel.send.assert_not_awaited()
+
+
+async def test_spellcheck_silent_when_unchanged(db, cog, monkeypatch):
+    target = FakeMember(uid=5003, display_name="x")
+    guild = FakeGuild(gid=42)
+    channel = _Channel()
+
+    async def _echo(messages, model=None):
+        return "same text"
+    monkeypatch.setattr(_events, "ollama_complete", _echo)
+
+    _state.active_spellchecks[target.id] = {
+        "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
+    }
+    await cog.on_message(_Msg(target, "same text", guild, channel))
+
+    channel.send.assert_not_awaited()
+
+
+async def test_spellcheck_does_not_fire_on_command_messages(db, cog, monkeypatch):
+    target = FakeMember(uid=5004, display_name="x")
+    guild = FakeGuild(gid=42)
+    channel = _Channel()
+
+    called = False
+
+    async def _correct(messages, model=None):
+        nonlocal called
+        called = True
+        return "fixed"
+    monkeypatch.setattr(_events, "ollama_complete", _correct)
+
+    _state.active_spellchecks[target.id] = {
+        "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
+    }
+    await cog.on_message(_Msg(target, "!balance", guild, channel))
+
+    assert called is False
+
+
+async def test_spellcheck_expires_and_cleans_up(db, cog, monkeypatch):
+    target = FakeMember(uid=5005, display_name="x")
+    guild = FakeGuild(gid=42)
+    channel = _Channel()
+
+    async def _correct(messages, model=None):
+        return "fixed"
+    monkeypatch.setattr(_events, "ollama_complete", _correct)
+
+    # Activated 2 days ago, only 1 day purchased → expired.
+    _state.active_spellchecks[target.id] = {
+        "started_by": 9, "days": 1, "channel_id": None,
+        "activated_at": time.time() - 2 * SHOP_SPELLCHECK_DURATION_SECS,
+    }
+    await cog.on_message(_Msg(target, "i has errors", guild, channel))
+
+    assert target.id not in _state.active_spellchecks
+    channel.send.assert_not_awaited()
+
+
+async def test_spellcheck_skips_blacklisted_channel(db, cog, monkeypatch):
+    target = FakeMember(uid=5006, display_name="x")
+    guild = FakeGuild(gid=42)
+    channel = _Channel(ch_id=777)
+    _state.guild_settings["42"] = {"command_blacklist": [777]}
+
+    async def _correct(messages, model=None):
+        return "fixed"
+    monkeypatch.setattr(_events, "ollama_complete", _correct)
+
+    _state.active_spellchecks[target.id] = {
+        "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
+    }
+    await cog.on_message(_Msg(target, "i has errors", guild, channel))
+
+    channel.send.assert_not_awaited()
+
+
+async def test_spellcheck_skips_channel_not_in_whitelist(db, cog, monkeypatch):
+    target = FakeMember(uid=5007, display_name="x")
+    guild = FakeGuild(gid=42)
+    channel = _Channel(ch_id=200)
+    _state.guild_settings["42"] = {"command_whitelist": [100]}  # 200 not allowed
+
+    async def _correct(messages, model=None):
+        return "fixed"
+    monkeypatch.setattr(_events, "ollama_complete", _correct)
+
+    _state.active_spellchecks[target.id] = {
+        "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
+    }
+    await cog.on_message(_Msg(target, "i has errors", guild, channel))
+
+    channel.send.assert_not_awaited()
+
+
+async def test_spellcheck_fires_in_whitelisted_channel(db, cog, monkeypatch):
+    target = FakeMember(uid=5008, display_name="x")
+    guild = FakeGuild(gid=42)
+    channel = _Channel(ch_id=100)
+    _state.guild_settings["42"] = {"command_whitelist": [100]}
+
+    async def _correct(messages, model=None):
+        return "I have errors."
+    monkeypatch.setattr(_events, "ollama_complete", _correct)
+
+    _state.active_spellchecks[target.id] = {
+        "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
+    }
+    await cog.on_message(_Msg(target, "i has errors", guild, channel))
+
+    channel.send.assert_awaited()
+    assert channel.send.call_args.args[0] == "I have errors. *"
+
+
+async def test_spellcheck_skips_insured_target(db, cog, monkeypatch):
+    target = FakeMember(uid=5009, display_name="x")
+    guild = FakeGuild(gid=42)
+    channel = _Channel()
+
+    async def _correct(messages, model=None):
+        return "fixed"
+    monkeypatch.setattr(_events, "ollama_complete", _correct)
+
+    _state.insurance[str(target.id)] = {
+        "expires_at": time.time() + 3600,
+        "protected_from": ["spellcheck"],
+    }
+    _state.active_spellchecks[target.id] = {
+        "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
+    }
+    await cog.on_message(_Msg(target, "i has errors", guild, channel))
+
+    channel.send.assert_not_awaited()

@@ -27,6 +27,7 @@ active_ragebaits: dict = {}
 active_mocks: dict = {}
 active_taxes: dict = {}
 active_curses: dict = {}
+active_spellchecks: dict = {}
 active_chess_games: dict = {}
 rigged_slots: dict = {}
 rigged_flips: dict = {}

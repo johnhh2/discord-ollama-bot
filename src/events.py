@@ -18,18 +18,19 @@ from src.permissions import (
     get_command_perm,
 )
 from src.persistence import (
-    init_db_state, save_economy, save_ragebait, save_mock, save_tax, save_curse, load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs,
+    init_db_state, save_economy, save_ragebait, save_mock, save_tax, save_curse, save_spellcheck, load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs,
     insert_issue,
 )
 from src.guild_config import get_guild_cfg
 from src.ai import (
     check_ollama_connected, keep_typing,
-    stream_ollama, finalize, respond,
+    stream_ollama, finalize, respond, ollama_complete,
     _norm_puzzle_answer,
 )
 from src.config import (
     ACTIVE_CHANNEL_IDS, SHOP_TAX_PER_MESSAGE,
-    SHOP_TAX_DURATION_SECS, SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
+    SHOP_TAX_DURATION_SECS, SHOP_SPELLCHECK_DURATION_SECS,
+    SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
     DAILY_REWARD,
 )
 from src import state
@@ -591,6 +592,7 @@ class EventsCog(commands.Cog):
         await self._handle_mock(message)
         await self._handle_tax(message)
         await self._handle_curse(message)
+        await self._handle_spellcheck(message)
         await self._handle_auto_daily(message)
 
         # Interceptors — return True if they consumed the message and the rest
@@ -701,6 +703,64 @@ class EventsCog(commands.Cog):
         if curse["remaining"] <= 0:
             del state.active_curses[uid]
         await save_curse(state.active_curses)
+
+    async def _handle_spellcheck(self, message: discord.Message):
+        """Reply with an AI-corrected version of a spellchecked user's message.
+
+        Fires on every non-command message from a user with an active
+        spellcheck, except in blacklisted channels (or, if a whitelist is set,
+        channels not in it). Posts ``<corrected sentence> *`` only when the AI
+        finds spelling/grammar errors; clean messages are left alone.
+        """
+        uid = message.author.id
+        sc = state.active_spellchecks.get(uid)
+        if not (sc and not message.content.startswith("!")):
+            return
+
+        # Expire after the purchased number of days.
+        activated_at = sc.get("activated_at", 0)
+        days = sc.get("days", 1) or 1
+        if time.time() - activated_at > days * SHOP_SPELLCHECK_DURATION_SECS:
+            del state.active_spellchecks[uid]
+            await save_spellcheck()
+            return
+
+        if await is_insured(uid, "spellcheck"):
+            return
+
+        # Channel gating: blacklist denies, a whitelist (if set) allows only
+        # its members. Mirrors the global command-channel check.
+        if message.guild:
+            cfg = get_guild_cfg(message.guild.id)
+            if message.channel.id in cfg.get("command_blacklist", []):
+                return
+            whitelist = cfg.get("command_whitelist", [])
+            if whitelist and message.channel.id not in whitelist:
+                return
+
+        content = message.content.strip()
+        if not content:
+            return
+
+        system_prompt = (
+            "You are a spelling and grammar checker. The user gives you a single message. "
+            "If it contains any spelling or grammatical errors, reply with ONLY the corrected "
+            "version of the message — no quotes, no explanation, no preamble. If the message "
+            "is already correct, reply with exactly the single word: CORRECT. "
+            "Preserve the original meaning, tone, casing, and emoji."
+        )
+        corrected = await ollama_complete([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content},
+        ])
+        corrected = corrected.strip()
+        if not corrected or corrected.upper() == "CORRECT":
+            return
+        # The model occasionally echoes the input verbatim instead of "CORRECT";
+        # don't bother replying if nothing changed.
+        if corrected == content:
+            return
+        await message.channel.send(f"{corrected} *")
 
     async def _handle_auto_daily(self, message: discord.Message):
         """Auto-claim daily reward on the first qualifying interaction each day."""

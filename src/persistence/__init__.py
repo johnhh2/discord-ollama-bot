@@ -32,6 +32,7 @@ from src.persistence.shop_effects import (  # noqa: F401
     save_mock,
     save_curse,
     save_tax,
+    save_spellcheck,
 )
 from src.persistence.rigged import (  # noqa: F401
     save_rigged_slots,

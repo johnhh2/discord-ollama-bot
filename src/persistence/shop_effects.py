@@ -50,3 +50,17 @@ async def save_tax(tax_data: dict):
                 (int(uid), data.get("master"), data.get("type", "tax"),
                  data.get("emoji", "💰"), data.get("channel_id"), data.get("activated_at")),
             )
+
+
+async def save_spellcheck():
+    """Persist active spellchecks. `remaining` holds the number of purchased
+    days; expiry is computed at message time as activated_at + days * duration."""
+    async with with_cursor() as cur:
+        await cur.execute("DELETE FROM shop_effects WHERE effect_type='spellcheck'")
+        for uid, data in state.active_spellchecks.items():
+            await cur.execute(
+                "INSERT INTO shop_effects (user_id, effect_type, master_id, remaining, channel_id, activated_at)"
+                " VALUES (%s,'spellcheck',%s,%s,%s,%s)",
+                (int(uid), data.get("started_by"), data.get("days"),
+                 data.get("channel_id"), data.get("activated_at")),
+            )
