@@ -124,6 +124,29 @@ class BountyCog(commands.Cog):
         except (discord.NotFound, discord.Forbidden, discord.HTTPException) as ex:
             logging.warning("[bounty] failed to refresh embed %s: %s", bounty["message_id"], ex)
 
+    async def _clear_claim_reaction(self, bounty: dict):
+        """Remove the 🙋 claim reaction from a bounty's channel embed once it's
+        no longer claimable (claimed/cancelled/etc.), so it doesn't keep
+        inviting reactions. Best-effort — needs Manage Messages to clear other
+        users' reactions; falls back to removing just the bot's own reaction."""
+        try:
+            channel = self.bot.get_channel(bounty["channel_id"]) or await self.bot.fetch_channel(bounty["channel_id"])
+            msg = await channel.fetch_message(bounty["message_id"])
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as ex:
+            logging.warning("[bounty] failed to fetch message to clear reactions %s: %s", bounty["message_id"], ex)
+            return
+        try:
+            await msg.clear_reaction(CLAIM_EMOJI)
+        except discord.Forbidden:
+            # No Manage Messages — at least drop the bot's own 🙋 so the count
+            # ticks down and the prompt is less inviting.
+            try:
+                await msg.remove_reaction(CLAIM_EMOJI, self.bot.user)
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                pass
+        except (discord.HTTPException, discord.NotFound) as ex:
+            logging.warning("[bounty] failed to clear claim reaction %s: %s", bounty["message_id"], ex)
+
     async def _persist_and_cache(self, message_id: int, bounty: dict, **fields):
         """Apply `fields` to the in-memory bounty dict, persist them, and keep
         state.active_bounties in sync. Pass the bounty dict so the in-memory
@@ -289,6 +312,7 @@ class BountyCog(commands.Cog):
                 await add_balance(bounty["author_id"], bounty["amount"])
             await self._persist_and_cache(mid, live, status="cancelled")
             await self._refresh_embed(live)
+            await self._clear_claim_reaction(live)
             return
 
         # Another user submits a claim.
@@ -314,6 +338,9 @@ class BountyCog(commands.Cog):
             claim_expires_at=claim_exp, claim_log=log,
         )
         await self._refresh_embed(live)
+        # Bounty is now claimed (pending review) — drop the 🙋 so nobody else
+        # tries to claim it while the author reviews.
+        await self._clear_claim_reaction(live)
 
         # If the author's DMs are closed, the claim can still be settled from the
         # channel side later; surface a hint in the channel.

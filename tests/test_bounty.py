@@ -12,7 +12,7 @@ import pytest
 
 import src.state as _state
 import src.persistence as _persistence
-from src.cogs.bounty_cog import BountyCog, _poll_payout_fraction
+from src.cogs.bounty_cog import BountyCog, _poll_payout_fraction, CLAIM_EMOJI
 from src.economy import add_balance, get_balance
 from src.guild_config import get_guild_cfg
 
@@ -25,12 +25,23 @@ GUILD_ID = 777
 BOUNTY_CHANNEL_ID = 888
 
 
+class _FakeResp:
+    """Minimal stand-in for the aiohttp response object discord.HTTPException
+    subclasses require as their first arg."""
+
+    def __init__(self, status: int):
+        self.status = status
+        self.reason = "test"
+
+
 class _FakeMsg:
     def __init__(self, msg_id):
         self.id = msg_id
         self.embeds = []
         self.edit = AsyncMock(side_effect=self._edit)
         self.add_reaction = AsyncMock()
+        self.clear_reaction = AsyncMock()
+        self.remove_reaction = AsyncMock()
         self.reactions = []
 
     async def _edit(self, *, embed=None, **kw):
@@ -209,6 +220,8 @@ async def test_author_self_claim_cancels_and_refunds(db):
     assert mid not in _state.active_bounties            # terminal, dropped
     row = await _persistence.get_bounty_by_message(mid)
     assert row["status"] == "cancelled"
+    # The 🙋 claim reaction is cleared from the channel embed.
+    channel._messages[mid].clear_reaction.assert_awaited_with(CLAIM_EMOJI)
 
 
 async def test_claim_then_accept_pays_claimant(db):
@@ -222,12 +235,33 @@ async def test_claim_then_accept_pays_claimant(db):
     assert _state.active_bounties[mid]["claimant_id"] == claimant
     # Author was DM'd accept/reject.
     assert bot.get_user(author).sent
+    # Once claimed, the 🙋 reaction is cleared so nobody else can claim.
+    channel._messages[mid].clear_reaction.assert_awaited_with(CLAIM_EMOJI)
 
     await cog._resolve_claim(_state.active_bounties.get(mid, bounty), accepted=True)
     assert await get_balance(claimant) == 10_000
     assert mid not in _state.active_bounties
     row = await _persistence.get_bounty_by_message(mid)
     assert row["status"] == "accepted"
+
+
+async def test_claim_reaction_cleanup_falls_back_when_no_manage_messages(db):
+    """Without Manage Messages, clear_reaction raises Forbidden — the cog
+    should fall back to removing just the bot's own 🙋 reaction."""
+    import discord
+    cog, bot, channel = _make_cog()
+    mid, author = await _open_bounty(cog, channel)
+
+    msg = channel._messages[mid]
+    msg.clear_reaction = AsyncMock(
+        side_effect=discord.Forbidden(_FakeResp(403), "no perms")
+    )
+
+    await cog._handle_claim_reaction(_state.active_bounties[mid], 30)
+
+    msg.clear_reaction.assert_awaited_with(CLAIM_EMOJI)
+    # Fell back to removing the bot's own reaction.
+    msg.remove_reaction.assert_awaited_with(CLAIM_EMOJI, bot.user)
 
 
 async def test_concurrent_claims_only_first_wins(db):
