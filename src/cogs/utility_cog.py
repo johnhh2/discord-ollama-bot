@@ -177,6 +177,7 @@ class UtilityCog(commands.Cog):
         help_embed.add_field(name="🎉 Fun", inline=False, value=(
             "`!dog` — Random dog picture\n"
             "`!cat` — Random cat picture\n"
+            "`!effects [@user]` — View active shop effects (mock, tax, curse, spellcheck, …)\n"
             "`!quote` — Save a quoted message (reply) or display a random saved quote\n"
             "`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote\n"
             "`!tip` — Show a random tip about hidden commands"
@@ -782,6 +783,12 @@ class UtilityCog(commands.Cog):
             "`!audit` — Last 5 failed command attempts\n"
             "`!clear <n>` — Delete last n messages (any author)\n"
             "`!saved` — Show saved data (admin-only)"
+        ))
+        admin_embed.add_field(name="✨ Effects", inline=False, value=(
+            "`!effects list` — List every available effect type\n"
+            "`!effects @user add <effect> [duration]` — Grant a duration-based effect "
+            "(spellcheck, tax, insurance); no duration = permanent\n"
+            "`!effects @user remove <effect>` — Clear an effect from a user"
         ))
         if is_admin(ctx):
             admin_embed.add_field(name="🪙 Economy", inline=False, value=(
