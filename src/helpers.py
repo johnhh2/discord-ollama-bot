@@ -286,6 +286,73 @@ def parse_int_amount(value: str, allow_negative: bool = False) -> "int | None":
     return amount
 
 
+_DURATION_UNITS = {
+    "s": 1,
+    "m": 60,
+    "h": 3600,
+    "d": 86_400,
+    "w": 604_800,
+    "mo": 2_592_000,    # 30 days
+    "y": 31_536_000,    # 365 days
+}
+
+
+def parse_duration(value: str) -> "int | None":
+    """Parse a duration string like ``1s``/``5m``/``2h``/``3d``/``1w``/``6mo``/``1y``
+    into seconds. Returns None if the string isn't a valid duration.
+
+    Units (case-insensitive): ``s`` seconds, ``m`` minutes, ``h`` hours,
+    ``d`` days, ``w`` weeks, ``mo`` months (30d), ``y`` years (365d). Note the
+    minute/month collision is resolved by spelling month as ``mo`` — a bare
+    ``m`` is always minutes. A decimal multiplier is allowed (``1.5h``).
+    """
+    s = value.strip().lower()
+    if not s:
+        return None
+    # Longest-suffix-first so "mo" wins over "m".
+    for unit in ("mo", "s", "m", "h", "d", "w", "y"):
+        if s.endswith(unit):
+            num = s[: -len(unit)]
+            if not num:
+                return None
+            try:
+                qty = float(num)
+            except ValueError:
+                return None
+            if qty <= 0:
+                return None
+            return int(qty * _DURATION_UNITS[unit])
+    return None
+
+
+def format_duration(seconds: "int | float") -> str:
+    """Render a duration in seconds as a compact human string, e.g.
+    ``90`` → ``1m 30s``, ``93784`` → ``1d 2h 3m``. Used by !effects to show
+    remaining time. Shows at most the two largest non-zero units."""
+    seconds = int(seconds)
+    if seconds <= 0:
+        return "0s"
+    units = [("d", 86_400), ("h", 3600), ("m", 60), ("s", 1)]
+    parts = []
+    for label, size in units:
+        if seconds >= size:
+            qty, seconds = divmod(seconds, size)
+            parts.append(f"{qty}{label}")
+    return " ".join(parts[:2])
+
+
+def _effect_expired(data: dict) -> bool:
+    """True if a shop-effect dict has a set `expires_at` that's in the past.
+
+    An effect with no `expires_at` (None or missing) is permanent and never
+    expires by time. Counter-based effects (mock/curse/ragebait) leave
+    expires_at unset and are expired by their `remaining` counter instead.
+    """
+    import time as _t
+    exp = data.get("expires_at")
+    return exp is not None and exp <= _t.time()
+
+
 async def parse_amount(
     ctx: commands.Context, value: str, min_val: int = 1,
     error_msg: str = "Please provide a positive whole number amount."

@@ -145,27 +145,32 @@ async def _init_db_state_inner(state, run_migrations):
         except Exception as e:
             logging.error(f"[init_db_state] bot_settings failed: {e}", exc_info=True)
 
-        # ── shop_insurance ────────────────────────────────────────────────
+        # ── shop_effects: insurance ───────────────────────────────────────
+        # Insurance lives in shop_effects (effect_type='insurance') since
+        # migration 0032: protected_from in history_json, expiry in expires_at.
         try:
-            await cur.execute("SELECT user_id, expires_at, protected_from FROM shop_insurance")
+            await cur.execute(
+                "SELECT guild_id, user_id, expires_at, history_json"
+                " FROM shop_effects WHERE effect_type='insurance'"
+            )
             now = _time.time()
-            for uid, expires_at, protected_json in await cur.fetchall():
-                if expires_at > now:
-                    state.insurance[str(uid)] = {
+            for guild_id, uid, expires_at, protected_json in await cur.fetchall():
+                if expires_at and expires_at > now:
+                    state.insurance[(int(guild_id), int(uid))] = {
                         "expires_at": expires_at,
                         "protected_from": json.loads(protected_json) if protected_json else [],
                     }
         except Exception as e:
-            logging.error(f"[init_db_state] shop_insurance failed: {e}", exc_info=True)
+            logging.error(f"[init_db_state] shop_effects.insurance failed: {e}", exc_info=True)
 
         # ── shop_effects: ragebait ────────────────────────────────────────
         try:
             await cur.execute(
-                "SELECT user_id, remaining, started_by, history_json, channel_id"
+                "SELECT guild_id, user_id, remaining, started_by, history_json, channel_id"
                 " FROM shop_effects WHERE effect_type='ragebait'"
             )
-            for uid, remaining, started_by, history_json, channel_id in await cur.fetchall():
-                state.active_ragebaits[uid] = {
+            for guild_id, uid, remaining, started_by, history_json, channel_id in await cur.fetchall():
+                state.active_ragebaits[(int(guild_id), int(uid))] = {
                     "remaining": remaining,
                     "started_by": started_by,
                     "history": json.loads(history_json) if history_json else [],
@@ -177,11 +182,11 @@ async def _init_db_state_inner(state, run_migrations):
         # ── shop_effects: mock ────────────────────────────────────────────
         try:
             await cur.execute(
-                "SELECT user_id, remaining, started_by, channel_id"
+                "SELECT guild_id, user_id, remaining, started_by, channel_id"
                 " FROM shop_effects WHERE effect_type='mock'"
             )
-            for uid, remaining, started_by, channel_id in await cur.fetchall():
-                state.active_mocks[uid] = {
+            for guild_id, uid, remaining, started_by, channel_id in await cur.fetchall():
+                state.active_mocks[(int(guild_id), int(uid))] = {
                     "remaining": remaining,
                     "started_by": started_by,
                     "channel_id": channel_id,
@@ -192,11 +197,11 @@ async def _init_db_state_inner(state, run_migrations):
         # ── shop_effects: curse ───────────────────────────────────────────
         try:
             await cur.execute(
-                "SELECT user_id, remaining, cursed_by, channel_id"
+                "SELECT guild_id, user_id, remaining, cursed_by, channel_id"
                 " FROM shop_effects WHERE effect_type='curse'"
             )
-            for uid, remaining, cursed_by, channel_id in await cur.fetchall():
-                state.active_curses[uid] = {
+            for guild_id, uid, remaining, cursed_by, channel_id in await cur.fetchall():
+                state.active_curses[(int(guild_id), int(uid))] = {
                     "remaining": remaining,
                     "cursed_by": cursed_by,
                     "channel_id": channel_id,
@@ -207,16 +212,17 @@ async def _init_db_state_inner(state, run_migrations):
         # ── shop_effects: tax ─────────────────────────────────────────────
         try:
             await cur.execute(
-                "SELECT user_id, master_id, tax_type, tax_emoji, channel_id, activated_at"
+                "SELECT guild_id, user_id, master_id, tax_type, tax_emoji, channel_id, activated_at, expires_at"
                 " FROM shop_effects WHERE effect_type='tax'"
             )
-            for uid, master_id, tax_type, tax_emoji, channel_id, activated_at in await cur.fetchall():
-                state.active_taxes[uid] = {
+            for guild_id, uid, master_id, tax_type, tax_emoji, channel_id, activated_at, expires_at in await cur.fetchall():
+                state.active_taxes[(int(guild_id), int(uid))] = {
                     "master": master_id,
                     "type": tax_type,
                     "emoji": tax_emoji,
                     "channel_id": channel_id,
                     "activated_at": activated_at,
+                    "expires_at": expires_at,
                 }
         except Exception as e:
             logging.error(f"[init_db_state] shop_effects.tax failed: {e}", exc_info=True)
@@ -224,15 +230,16 @@ async def _init_db_state_inner(state, run_migrations):
         # ── shop_effects: spellcheck ──────────────────────────────────────
         try:
             await cur.execute(
-                "SELECT user_id, master_id, remaining, channel_id, activated_at"
+                "SELECT guild_id, user_id, master_id, remaining, channel_id, activated_at, expires_at"
                 " FROM shop_effects WHERE effect_type='spellcheck'"
             )
-            for uid, master_id, remaining, channel_id, activated_at in await cur.fetchall():
-                state.active_spellchecks[uid] = {
+            for guild_id, uid, master_id, remaining, channel_id, activated_at, expires_at in await cur.fetchall():
+                state.active_spellchecks[(int(guild_id), int(uid))] = {
                     "started_by": master_id,
                     "days": remaining,
                     "channel_id": channel_id,
                     "activated_at": activated_at,
+                    "expires_at": expires_at,
                 }
         except Exception as e:
             logging.error(f"[init_db_state] shop_effects.spellcheck failed: {e}", exc_info=True)

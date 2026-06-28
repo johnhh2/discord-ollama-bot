@@ -30,6 +30,7 @@ EXTENSIONS = [
     "src.gambling.slots",
     "src.cogs.economy_cog",
     "src.cogs.shop_cog",
+    "src.cogs.effects_cog",
     "src.cogs.bounty_cog",
     "src.cogs.settings_cog",
     "src.cogs.moderation_cog",

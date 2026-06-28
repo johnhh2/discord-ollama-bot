@@ -125,7 +125,7 @@ async def test_tax_deducts_per_message_and_credits_master(db, cog):
     channel = _Channel(ch_id=500)
 
     await _economy.add_balance(payer.id, 5000)
-    _state.active_taxes[payer.id] = {
+    _state.active_taxes[(42, payer.id)] = {
         "master": master.id,
         "type": "tax",
         "emoji": "💰",
@@ -158,7 +158,7 @@ async def test_tax_does_not_fire_on_command_messages(db, cog):
     # Mark today's auto-daily as already claimed.
     _state.economy["users"][str(payer.id)]["daily_date"] = _economy._ct_today()
 
-    _state.active_taxes[payer.id] = {
+    _state.active_taxes[(42, payer.id)] = {
         "master": master.id, "type": "tax", "emoji": "💰",
         "channel_id": None, "activated_at": time.time(),
     }
@@ -178,11 +178,11 @@ async def test_tax_skips_when_target_is_insured(db, cog):
     channel = _Channel()
 
     await _economy.add_balance(payer.id, 5000)
-    _state.insurance[str(payer.id)] = {
+    _state.insurance[(42, payer.id)] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["tax"],
     }
-    _state.active_taxes[payer.id] = {
+    _state.active_taxes[(42, payer.id)] = {
         "master": master.id, "type": "tax", "emoji": "💰",
         "channel_id": None, "activated_at": time.time(),
     }
@@ -195,8 +195,8 @@ async def test_tax_skips_when_target_is_insured(db, cog):
 
 
 async def test_tax_auto_expires_after_duration(db, cog):
-    """When `time.time() - activated_at > SHOP_TAX_DURATION_SECS`, the
-    tax entry is deleted from state (events.py:389-391)."""
+    """When the effect's `expires_at` is in the past, the tax entry is deleted
+    from state on the next message (events.py _handle_tax)."""
     payer = FakeMember(uid=1004)
     master = FakeMember(uid=2004)
     guild = FakeGuild(gid=42)
@@ -204,43 +204,44 @@ async def test_tax_auto_expires_after_duration(db, cog):
     channel = _Channel()
 
     await _economy.add_balance(payer.id, 5000)
-    # Activated 2× the duration ago — already expired.
-    _state.active_taxes[payer.id] = {
+    # Expired an hour ago.
+    _state.active_taxes[(42, payer.id)] = {
         "master": master.id, "type": "tax", "emoji": "💰",
         "channel_id": None,
         "activated_at": time.time() - SHOP_TAX_DURATION_SECS * 2,
+        "expires_at": time.time() - 3600,
     }
 
     msg = _Msg(payer, "hello", guild, channel)
     await cog.on_message(msg)
 
-    assert payer.id not in _state.active_taxes
+    assert (42, payer.id) not in _state.active_taxes
     # No deduction either.
     assert await _economy.get_balance(payer.id) == 5000
 
 
-async def test_tax_channel_scoped_only_fires_in_target_channel(db, cog):
-    """When `channel_id` is set, the tax only deducts in that channel."""
+async def test_tax_fires_server_wide_in_any_channel(db, cog):
+    """Effects are server-scoped, not channel-scoped: a tax fires in every
+    channel of its guild."""
     payer = FakeMember(uid=1005)
     master = FakeMember(uid=2005)
     guild = FakeGuild(gid=42)
-    guild.members = [payer, master]  # so fetch_member resolves master
-    target_channel = _Channel(ch_id=600)
-    other_channel = _Channel(ch_id=601)
+    guild.members = [payer, master]
+    chan_a = _Channel(ch_id=600)
+    chan_b = _Channel(ch_id=601)
 
     await _economy.add_balance(payer.id, 5000)
-    _state.active_taxes[payer.id] = {
+    _state.active_taxes[(42, payer.id)] = {
         "master": master.id, "type": "tax", "emoji": "💰",
-        "channel_id": 600, "activated_at": time.time(),
+        "channel_id": 600, "activated_at": time.time(), "expires_at": None,
     }
 
-    # Message in OTHER channel: no deduction.
-    await cog.on_message(_Msg(payer, "hello", guild, other_channel))
-    assert await _economy.get_balance(payer.id) == 5000
-
-    # Message in target channel: deduction.
-    await cog.on_message(_Msg(payer, "hello", guild, target_channel))
+    # Fires in the non-purchase channel too.
+    await cog.on_message(_Msg(payer, "hello", guild, chan_b))
     assert await _economy.get_balance(payer.id) == 5000 - SHOP_TAX_PER_MESSAGE
+
+    await cog.on_message(_Msg(payer, "hello", guild, chan_a))
+    assert await _economy.get_balance(payer.id) == 5000 - SHOP_TAX_PER_MESSAGE * 2
 
 
 # ── Curse decay ───────────────────────────────────────────────────────────────
@@ -250,12 +251,12 @@ async def test_curse_decrements_and_replays_in_curse_font(db, cog):
     guild = FakeGuild(gid=42)
     channel = _Channel()
 
-    _state.active_curses[target.id] = {"cursed_by": 9, "remaining": 3}
+    _state.active_curses[(42, target.id)] = {"cursed_by": 9, "remaining": 3}
     msg = _Msg(target, "the quick brown fox", guild, channel)
     await cog.on_message(msg)
 
     # Counter decremented but entry still present.
-    assert _state.active_curses[target.id]["remaining"] == 2
+    assert _state.active_curses[(42, target.id)]["remaining"] == 2
     # Channel got a cursed-font replay.
     channel.send.assert_awaited_once()
 
@@ -265,10 +266,10 @@ async def test_curse_deletes_entry_when_remaining_hits_zero(db, cog):
     guild = FakeGuild(gid=42)
     channel = _Channel()
 
-    _state.active_curses[target.id] = {"cursed_by": 9, "remaining": 1}
+    _state.active_curses[(42, target.id)] = {"cursed_by": 9, "remaining": 1}
     await cog.on_message(_Msg(target, "last cursed message", guild, channel))
 
-    assert target.id not in _state.active_curses
+    assert (42, target.id) not in _state.active_curses
     # And it was persisted: the shop_effects row should be gone.
     pool = await _persistence.get_pool()
     async with pool.acquire() as conn:
@@ -288,12 +289,12 @@ async def test_mock_decrements_and_replays_in_mocking_font(db, cog):
     guild = FakeGuild(gid=42)
     channel = _Channel(ch_id=700)
 
-    _state.active_mocks[target.id] = {
+    _state.active_mocks[(42, target.id)] = {
         "remaining": 2, "started_by": 9, "channel_id": 700,
     }
     await cog.on_message(_Msg(target, "MoCkInG", guild, channel))
 
-    assert _state.active_mocks[target.id]["remaining"] == 1
+    assert _state.active_mocks[(42, target.id)]["remaining"] == 1
     channel.send.assert_awaited_once()
 
 
@@ -302,12 +303,12 @@ async def test_mock_deletes_entry_at_zero_and_replaces_db_row(db, cog):
     guild = FakeGuild(gid=42)
     channel = _Channel(ch_id=701)
 
-    _state.active_mocks[target.id] = {
+    _state.active_mocks[(42, target.id)] = {
         "remaining": 1, "started_by": 9, "channel_id": 701,
     }
     await cog.on_message(_Msg(target, "last", guild, channel))
 
-    assert target.id not in _state.active_mocks
+    assert (42, target.id) not in _state.active_mocks
     pool = await _persistence.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
@@ -319,18 +320,21 @@ async def test_mock_deletes_entry_at_zero_and_replaces_db_row(db, cog):
     assert row is None
 
 
-async def test_mock_does_not_fire_in_other_channel(db, cog):
+async def test_mock_fires_server_wide_in_any_channel(db, cog):
+    """Effects are server-scoped: a mock fires in every channel of its guild,
+    not just the purchase channel."""
     target = FakeMember(uid=3005)
     guild = FakeGuild(gid=42)
     other_channel = _Channel(ch_id=703)
 
-    _state.active_mocks[target.id] = {
+    _state.active_mocks[(42, target.id)] = {
         "remaining": 5, "started_by": 9, "channel_id": 702,
     }
     await cog.on_message(_Msg(target, "msg", guild, other_channel))
 
-    # Counter unchanged because we weren't in the target channel.
-    assert _state.active_mocks[target.id]["remaining"] == 5
+    # Fires regardless of channel — counter decremented.
+    assert _state.active_mocks[(42, target.id)]["remaining"] == 4
+    other_channel.send.assert_awaited_once()
 
 
 # ── Ragebait decay ────────────────────────────────────────────────────────────
@@ -340,12 +344,12 @@ async def test_ragebait_decrements_and_appends_history(db, cog):
     guild = FakeGuild(gid=42)
     channel = _Channel()
 
-    _state.active_ragebaits[target.id] = {
+    _state.active_ragebaits[(42, target.id)] = {
         "remaining": 3, "started_by": 9, "history": [], "channel_id": None,
     }
     await cog.on_message(_Msg(target, "what a take", guild, channel))
 
-    rage = _state.active_ragebaits[target.id]
+    rage = _state.active_ragebaits[(42, target.id)]
     assert rage["remaining"] == 2
     assert len(rage["history"]) == 1
     assert "target" in rage["history"][0]
@@ -357,12 +361,12 @@ async def test_ragebait_deletes_at_zero(db, cog):
     guild = FakeGuild(gid=42)
     channel = _Channel()
 
-    _state.active_ragebaits[target.id] = {
+    _state.active_ragebaits[(42, target.id)] = {
         "remaining": 1, "started_by": 9, "history": [], "channel_id": None,
     }
     await cog.on_message(_Msg(target, "last one", guild, channel))
 
-    assert target.id not in _state.active_ragebaits
+    assert (42, target.id) not in _state.active_ragebaits
     pool = await _persistence.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
@@ -386,17 +390,17 @@ async def test_mock_skips_when_target_is_insured(db, cog):
     guild = FakeGuild(gid=42)
     channel = _Channel(ch_id=710)
 
-    _state.insurance[str(target.id)] = {
+    _state.insurance[(42, target.id)] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["mock"],
     }
-    _state.active_mocks[target.id] = {
+    _state.active_mocks[(42, target.id)] = {
         "remaining": 3, "started_by": 9, "channel_id": 710,
     }
     await cog.on_message(_Msg(target, "hello", guild, channel))
 
     # Counter must not decrement and no mocking reply sent.
-    assert _state.active_mocks[target.id]["remaining"] == 3
+    assert _state.active_mocks[(42, target.id)]["remaining"] == 3
     channel.send.assert_not_awaited()
 
 
@@ -405,16 +409,16 @@ async def test_ragebait_skips_when_target_is_insured(db, cog):
     guild = FakeGuild(gid=42)
     channel = _Channel()
 
-    _state.insurance[str(target.id)] = {
+    _state.insurance[(42, target.id)] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["ragebait"],
     }
-    _state.active_ragebaits[target.id] = {
+    _state.active_ragebaits[(42, target.id)] = {
         "remaining": 3, "started_by": 9, "history": [], "channel_id": None,
     }
     await cog.on_message(_Msg(target, "spicy take", guild, channel))
 
-    rage = _state.active_ragebaits[target.id]
+    rage = _state.active_ragebaits[(42, target.id)]
     # Counter and history must be untouched.
     assert rage["remaining"] == 3
     assert rage["history"] == []
@@ -433,7 +437,7 @@ async def test_spellcheck_corrects_message_with_errors(db, cog, monkeypatch):
         return "I went to the store."
     monkeypatch.setattr(_events, "ollama_complete", _correct)
 
-    _state.active_spellchecks[target.id] = {
+    _state.active_spellchecks[(42, target.id)] = {
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "i goed to teh stor", guild, channel))
@@ -451,7 +455,7 @@ async def test_spellcheck_silent_when_ai_says_correct(db, cog, monkeypatch):
         return "CORRECT"
     monkeypatch.setattr(_events, "ollama_complete", _correct)
 
-    _state.active_spellchecks[target.id] = {
+    _state.active_spellchecks[(42, target.id)] = {
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "This sentence is fine.", guild, channel))
@@ -468,7 +472,7 @@ async def test_spellcheck_silent_when_unchanged(db, cog, monkeypatch):
         return "same text"
     monkeypatch.setattr(_events, "ollama_complete", _echo)
 
-    _state.active_spellchecks[target.id] = {
+    _state.active_spellchecks[(42, target.id)] = {
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "same text", guild, channel))
@@ -489,7 +493,7 @@ async def test_spellcheck_does_not_fire_on_command_messages(db, cog, monkeypatch
         return "fixed"
     monkeypatch.setattr(_events, "ollama_complete", _correct)
 
-    _state.active_spellchecks[target.id] = {
+    _state.active_spellchecks[(42, target.id)] = {
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "!balance", guild, channel))
@@ -506,14 +510,15 @@ async def test_spellcheck_expires_and_cleans_up(db, cog, monkeypatch):
         return "fixed"
     monkeypatch.setattr(_events, "ollama_complete", _correct)
 
-    # Activated 2 days ago, only 1 day purchased → expired.
-    _state.active_spellchecks[target.id] = {
+    # Expired an hour ago.
+    _state.active_spellchecks[(42, target.id)] = {
         "started_by": 9, "days": 1, "channel_id": None,
         "activated_at": time.time() - 2 * SHOP_SPELLCHECK_DURATION_SECS,
+        "expires_at": time.time() - 3600,
     }
     await cog.on_message(_Msg(target, "i has errors", guild, channel))
 
-    assert target.id not in _state.active_spellchecks
+    assert (42, target.id) not in _state.active_spellchecks
     channel.send.assert_not_awaited()
 
 
@@ -527,7 +532,7 @@ async def test_spellcheck_skips_blacklisted_channel(db, cog, monkeypatch):
         return "fixed"
     monkeypatch.setattr(_events, "ollama_complete", _correct)
 
-    _state.active_spellchecks[target.id] = {
+    _state.active_spellchecks[(42, target.id)] = {
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "i has errors", guild, channel))
@@ -545,7 +550,7 @@ async def test_spellcheck_skips_channel_not_in_whitelist(db, cog, monkeypatch):
         return "fixed"
     monkeypatch.setattr(_events, "ollama_complete", _correct)
 
-    _state.active_spellchecks[target.id] = {
+    _state.active_spellchecks[(42, target.id)] = {
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "i has errors", guild, channel))
@@ -563,7 +568,7 @@ async def test_spellcheck_fires_in_whitelisted_channel(db, cog, monkeypatch):
         return "I have errors."
     monkeypatch.setattr(_events, "ollama_complete", _correct)
 
-    _state.active_spellchecks[target.id] = {
+    _state.active_spellchecks[(42, target.id)] = {
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "i has errors", guild, channel))
@@ -581,11 +586,11 @@ async def test_spellcheck_skips_insured_target(db, cog, monkeypatch):
         return "fixed"
     monkeypatch.setattr(_events, "ollama_complete", _correct)
 
-    _state.insurance[str(target.id)] = {
+    _state.insurance[(42, target.id)] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["spellcheck"],
     }
-    _state.active_spellchecks[target.id] = {
+    _state.active_spellchecks[(42, target.id)] = {
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "i has errors", guild, channel))

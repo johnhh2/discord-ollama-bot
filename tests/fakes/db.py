@@ -29,7 +29,7 @@ _TABLE_PKS = {
     "godmode_users": ("user_id",),
     "bot_settings": ("key_name",),
     "shop_insurance": ("user_id",),
-    "shop_effects": ("user_id", "effect_type"),
+    "shop_effects": ("guild_id", "user_id", "effect_type"),
     "rigged_slots": ("user_id",),
     "rigged_flips": ("user_id",),
     "rigged_scratch": ("user_id",),

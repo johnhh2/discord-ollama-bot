@@ -282,8 +282,8 @@ async def test_shop_mock_charges_and_writes_state_and_db(db, force_member_conver
     await cog.shop_mock.callback(cog, ctx, "target")
 
     assert await get_balance(buyer.id) == 1000
-    assert target.id in _state.active_mocks
-    entry = _state.active_mocks[target.id]
+    assert (42, target.id) in _state.active_mocks
+    entry = _state.active_mocks[(42, target.id)]
     assert entry["remaining"] == SHOP_MOCK_MESSAGES
     assert entry["started_by"] == buyer.id
 
@@ -310,9 +310,9 @@ async def test_shop_curse_charges_and_persists(db, force_member_converter_fallba
     await cog.shop_curse.callback(cog, ctx, "target")
 
     assert await get_balance(buyer.id) == 1000
-    assert target.id in _state.active_curses
-    assert _state.active_curses[target.id]["remaining"] == SHOP_CURSE_MESSAGES
-    assert _state.active_curses[target.id]["cursed_by"] == buyer.id
+    assert (42, target.id) in _state.active_curses
+    assert _state.active_curses[(42, target.id)]["remaining"] == SHOP_CURSE_MESSAGES
+    assert _state.active_curses[(42, target.id)]["cursed_by"] == buyer.id
 
     row = await _read_shop_effect(target.id, "curse")
     assert row is not None
@@ -334,7 +334,7 @@ async def test_shop_curse_self_target_rejected(db, force_member_converter_fallba
 
     # Not charged.
     assert await get_balance(buyer.id) == SHOP_CURSE_COST + 1000
-    assert buyer.id not in _state.active_curses
+    assert (42, buyer.id) not in _state.active_curses
 
 
 # ── Timed effects: shop_tax ───────────────────────────────────────────────────
@@ -356,8 +356,8 @@ async def test_shop_tax_default_writes_state_with_tax_type_and_emoji(
     await cog.shop_tax.callback(cog, ctx, "target")
 
     assert await get_balance(buyer.id) == 1000
-    assert target.id in _state.active_taxes
-    entry = _state.active_taxes[target.id]
+    assert (42, target.id) in _state.active_taxes
+    entry = _state.active_taxes[(42, target.id)]
     assert entry["master"] == buyer.id
     assert entry["type"] == "tax"
     assert entry["emoji"] == "💰"
@@ -389,7 +389,7 @@ async def test_shop_tax_alias_uses_guild_emoji(db, force_member_converter_fallba
 
     await cog.shop_tax.callback(cog, ctx, "target")
 
-    entry = _state.active_taxes[target.id]
+    entry = _state.active_taxes[(42, target.id)]
     assert entry["type"] == "toll"
     assert entry["emoji"] == "🛣️"
 

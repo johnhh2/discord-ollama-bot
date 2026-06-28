@@ -146,20 +146,26 @@ async def announce_new_lottery(
     await channel.send(embed=embed)
 
 
-async def is_insured(uid: int, against: str) -> bool:
-    if str(uid) not in state.insurance:
+async def is_insured(guild_id: int, uid: int, against: str) -> bool:
+    """True if user `uid` holds active insurance against `against` in `guild_id`.
+
+    Insurance is scoped per (guild, user): a key is (int guild_id, int uid).
+    Expired entries are pruned on read.
+    """
+    key = (int(guild_id), int(uid))
+    if key not in state.insurance:
         return False
-    entry = state.insurance[str(uid)]
+    entry = state.insurance[key]
     if entry.get("expires_at", 0) <= time.time():
-        del state.insurance[str(uid)]
+        del state.insurance[key]
         await save_insurance()
         return False
     return against in entry.get("protected_from", [])
 
 
-def get_insurance_expiry(uid: int) -> int | None:
-    """Return the insurance expiry timestamp for uid, or None if not insured."""
-    entry = state.insurance.get(str(uid))
+def get_insurance_expiry(guild_id: int, uid: int) -> int | None:
+    """Return the insurance expiry timestamp for (guild_id, uid), or None."""
+    entry = state.insurance.get((int(guild_id), int(uid)))
     if entry and entry.get("expires_at", 0) > time.time():
         return int(entry["expires_at"])
     return None

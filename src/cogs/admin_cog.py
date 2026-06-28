@@ -56,6 +56,9 @@ class AdminCog(commands.Cog):
         if target is None:
             await ctx.send(embed=emb("❌ Missing User", "Usage: `!adminragebait @user [n]` or `!adminragebait <userid> [n]`", C_RED))
             return
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
 
         # Parse optional message count (default 5)
         try:
@@ -67,7 +70,7 @@ class AdminCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Count", f"Could not parse `{n}` as a number.", C_RED))
             return
 
-        state.active_ragebaits[target.id] = {"remaining": count, "history": []}
+        state.active_ragebaits[(ctx.guild.id, target.id)] = {"remaining": count, "history": [], "channel_id": ctx.channel.id}
         await save_ragebait()
         await ctx.send(embed=emb(
             "🎭 Ragebait Activated",

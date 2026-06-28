@@ -257,7 +257,7 @@ async def test_steal_blocked_by_insurance_no_money_moves(db, monkeypatch):
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
     _grant_level(victim.id, 9)
-    _state.insurance[str(victim.id)] = {
+    _state.insurance[(42, victim.id)] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["steal"],
     }
@@ -398,7 +398,7 @@ async def test_mug_blocked_by_insurance_no_charge(db, monkeypatch):
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
     _grant_level(victim.id, 12)
-    _state.insurance[str(victim.id)] = {
+    _state.insurance[(42, victim.id)] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["steal"],
     }

@@ -865,28 +865,36 @@ class TestGuildSettings:
 class TestInsurance:
     @pytest.mark.asyncio
     async def test_not_insured_missing_user(self):
-        assert await is_insured(1, "rob") is False
+        assert await is_insured(42, 1, "rob") is False
 
     @pytest.mark.asyncio
     async def test_not_insured_expired(self, monkeypatch):
         monkeypatch.setattr("src.state.insurance", {
-            "1": {"expires_at": time.time() - 10, "protected_from": ["rob"]}
+            (42, 1): {"expires_at": time.time() - 10, "protected_from": ["rob"]}
         })
-        assert await is_insured(1, "rob") is False
+        assert await is_insured(42, 1, "rob") is False
 
     @pytest.mark.asyncio
     async def test_insured_valid(self, monkeypatch):
         monkeypatch.setattr("src.state.insurance", {
-            "1": {"expires_at": time.time() + 3600, "protected_from": ["rob"]}
+            (42, 1): {"expires_at": time.time() + 3600, "protected_from": ["rob"]}
         })
-        assert await is_insured(1, "rob") is True
+        assert await is_insured(42, 1, "rob") is True
+
+    @pytest.mark.asyncio
+    async def test_insured_other_guild_not_covered(self, monkeypatch):
+        """Insurance is per-guild: a grant in guild 42 doesn't protect in 99."""
+        monkeypatch.setattr("src.state.insurance", {
+            (42, 1): {"expires_at": time.time() + 3600, "protected_from": ["rob"]}
+        })
+        assert await is_insured(99, 1, "rob") is False
 
     @pytest.mark.asyncio
     async def test_insured_wrong_protection_type(self, monkeypatch):
         monkeypatch.setattr("src.state.insurance", {
-            "1": {"expires_at": time.time() + 3600, "protected_from": ["mug"]}
+            (42, 1): {"expires_at": time.time() + 3600, "protected_from": ["mug"]}
         })
-        assert await is_insured(1, "rob") is False
+        assert await is_insured(42, 1, "rob") is False
 
 
 # ─────────────────────────────────────────────────────────────────────────────

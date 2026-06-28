@@ -322,8 +322,8 @@ class EconomyCog(commands.Cog):
         if thief_id in self._crime_active:
             return emb("⏳ Already Running", "You already have a crime in progress — wait for it to finish.", C_RED)
 
-        if await is_insured(victim_id, "steal"):
-            _exp = get_insurance_expiry(victim_id)
+        if ctx.guild and await is_insured(ctx.guild.id, victim_id, "steal"):
+            _exp = get_insurance_expiry(ctx.guild.id, victim_id)
             return emb("🛡️ Protected", f"**{target.display_name}** has insurance — you can't rob them! (expires <t:{_exp}:R>)", C_GOLD)
 
         return None
@@ -398,8 +398,8 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb("⏳ Already Running", "You already have a crime in progress — wait for it to finish.", C_RED))
             return
 
-        if await is_insured(victim_id, "steal"):
-            _exp = get_insurance_expiry(victim_id)
+        if ctx.guild and await is_insured(ctx.guild.id, victim_id, "steal"):
+            _exp = get_insurance_expiry(ctx.guild.id, victim_id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance — you can't rob them! (expires <t:{_exp}:R>)", C_GOLD))
             return
 
@@ -752,8 +752,8 @@ class EconomyCog(commands.Cog):
             ))
             return
 
-        if await is_insured(target.id, "steal"):
-            _exp = get_insurance_expiry(target.id)
+        if ctx.guild and await is_insured(ctx.guild.id, target.id, "steal"):
+            _exp = get_insurance_expiry(ctx.guild.id, target.id)
             await ctx.send(embed=emb(
                 "🛡️ Protected",
                 f"**{target.display_name}** has insurance — their savings are off-limits! (expires <t:{_exp}:R>)",
@@ -1107,8 +1107,8 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Amount", "Amount must be positive.", C_RED))
             return
 
-        if await is_insured(target.id, "steal"):
-            _exp = get_insurance_expiry(target.id)
+        if ctx.guild and await is_insured(ctx.guild.id, target.id, "steal"):
+            _exp = get_insurance_expiry(ctx.guild.id, target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be mugged (expires <t:{_exp}:R>).", C_GOLD))
             return
 

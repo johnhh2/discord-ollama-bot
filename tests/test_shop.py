@@ -105,23 +105,25 @@ async def test_shop_insurance_purchase_persists_to_state_and_db(db):
     assert await _read_db_balance(uid) == 1000
 
     # In-memory state populated
-    assert str(uid) in _state.insurance
-    entry = _state.insurance[str(uid)]
+    assert (42, uid) in _state.insurance
+    entry = _state.insurance[(42, uid)]
     assert "nickname" in entry["protected_from"]
     assert "tax" in entry["protected_from"]
 
-    # Persisted to DB — read shop_insurance row directly
+    # Persisted to DB — read the insurance row from shop_effects directly
     pool = await _persistence.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
-                "SELECT user_id, expires_at FROM shop_insurance WHERE user_id=?",
+                "SELECT guild_id, user_id, expires_at FROM shop_effects"
+                " WHERE effect_type='insurance' AND user_id=?",
                 (uid,),
             )
             row = await cur.fetchone()
     assert row is not None
-    assert row[0] == uid
-    assert row[1] > 0
+    assert row[0] == 42
+    assert row[1] == uid
+    assert row[2] > 0
 
 
 async def test_shop_insurance_insufficient_funds(db):
@@ -137,7 +139,7 @@ async def test_shop_insurance_insufficient_funds(db):
 
     # Balance untouched (refunded effectively — or never deducted)
     assert await get_balance(uid) == SHOP_INSURANCE_COST - 1
-    assert str(uid) not in _state.insurance
+    assert (42, uid) not in _state.insurance
 
 
 # ── nickname refund on Forbidden ──────────────────────────────────────────────
@@ -241,7 +243,7 @@ async def test_concurrent_shop_unoreverse_charges_once(monkeypatch):
     _state.economy.setdefault("users", {})[str(uid)] = {
         "balance": SHOP_UNOREVERSE_COST * 3, "savings": [],
     }
-    _state.active_mocks[uid] = {"remaining": 5, "history": []}
+    _state.active_mocks[(42, uid)] = {"remaining": 5, "history": []}
 
     charge_count = [0]
 
@@ -291,8 +293,8 @@ async def test_concurrent_shop_unoreverse_charges_once(monkeypatch):
         f"concurrent invocations (expected 1)"
     )
     # The effect should be on the target, not the original uid.
-    assert target_uid in _state.active_mocks
-    assert uid not in _state.active_mocks
+    assert (42, target_uid) in _state.active_mocks
+    assert (42, uid) not in _state.active_mocks
 
 
 # ── Insurance is honored at purchase time ────────────────────────────────────
@@ -306,9 +308,10 @@ async def test_concurrent_shop_unoreverse_charges_once(monkeypatch):
 # charged and the effect must NOT be applied.
 
 
-def _insure(uid: int, against: list[str]):
-    """Helper: stamp insurance on uid for the given categories."""
-    _state.insurance[str(uid)] = {
+def _insure(uid: int, against: list[str], guild_id: int = 42):
+    """Helper: stamp insurance on (guild_id, uid) for the given categories.
+    All shop tests use gid=42 ctx, so that's the default."""
+    _state.insurance[(guild_id, uid)] = {
         "expires_at": _time.time() + 3600,
         "protected_from": against,
     }
@@ -374,9 +377,9 @@ async def test_shop_spellcheck_purchase_charges_per_day_and_persists(db, monkeyp
     # Charged 3 days' worth.
     assert await get_balance(buyer_uid) == SHOP_SPELLCHECK_COST * 5 - SHOP_SPELLCHECK_COST * 3
     # Effect activated with the day count.
-    assert target_uid in _state.active_spellchecks
-    assert _state.active_spellchecks[target_uid]["days"] == 3
-    assert _state.active_spellchecks[target_uid]["started_by"] == buyer_uid
+    assert (42, target_uid) in _state.active_spellchecks
+    assert _state.active_spellchecks[(42, target_uid)]["days"] == 3
+    assert _state.active_spellchecks[(42, target_uid)]["started_by"] == buyer_uid
 
     # Persisted to shop_effects with remaining == days.
     pool = await _persistence.get_pool()
@@ -414,7 +417,7 @@ async def test_shop_spellcheck_defaults_to_one_day(db, monkeypatch):
     await cog.shop_spellcheck.callback(cog, ctx, f"<@{target_uid}>")
 
     assert await get_balance(buyer_uid) == 500
-    assert _state.active_spellchecks[target_uid]["days"] == 1
+    assert _state.active_spellchecks[(42, target_uid)]["days"] == 1
 
 
 async def test_shop_spellcheck_declined_confirm_no_charge(db, monkeypatch):
@@ -441,7 +444,7 @@ async def test_shop_spellcheck_declined_confirm_no_charge(db, monkeypatch):
     await cog.shop_spellcheck.callback(cog, ctx, f"<@{target_uid}>")
 
     assert await get_balance(buyer_uid) == SHOP_SPELLCHECK_COST + 500
-    assert target_uid not in _state.active_spellchecks
+    assert (42, target_uid) not in _state.active_spellchecks
 
 
 async def test_shop_spellcheck_refuses_against_insured_target(db, monkeypatch):
@@ -466,7 +469,7 @@ async def test_shop_spellcheck_refuses_against_insured_target(db, monkeypatch):
     await cog.shop_spellcheck.callback(cog, ctx, f"<@{target_uid}>")
 
     assert await get_balance(buyer_uid) == SHOP_SPELLCHECK_COST + 500
-    assert target_uid not in _state.active_spellchecks
+    assert (42, target_uid) not in _state.active_spellchecks
     assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
 
 
@@ -527,7 +530,7 @@ async def test_shop_mock_still_works_on_self(db, monkeypatch):
 
     # Charged and mock activated despite own insurance.
     assert await get_balance(uid) == 1000
-    assert uid in _state.active_mocks
+    assert (42, uid) in _state.active_mocks
 
 
 async def test_shop_unassignrole_refuses_against_insured_target(db, monkeypatch):

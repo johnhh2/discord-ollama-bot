@@ -89,12 +89,18 @@ async def save_guild_house(guild_id: int):
 
 
 async def save_insurance():
+    """Persist insurance into the shop_effects table (effect_type='insurance'),
+    scoped per (guild_id, user_id). protected_from is stored as history_json and
+    the expiry as expires_at. The old standalone shop_insurance table was
+    dropped in migration 0032."""
     async with with_cursor() as cur:
-        await cur.execute("DELETE FROM shop_insurance")
-        for uid_str, entry in state.insurance.items():
+        await cur.execute("DELETE FROM shop_effects WHERE effect_type='insurance'")
+        for (guild_id, uid), entry in state.insurance.items():
             await cur.execute(
-                "INSERT INTO shop_insurance (user_id, expires_at, protected_from) VALUES (%s,%s,%s)",
-                (int(uid_str), entry["expires_at"], json.dumps(entry.get("protected_from", []))),
+                "INSERT INTO shop_effects (guild_id, user_id, effect_type, expires_at, history_json)"
+                " VALUES (%s,%s,'insurance',%s,%s)",
+                (int(guild_id), int(uid), entry["expires_at"],
+                 json.dumps(entry.get("protected_from", []))),
             )
 
 

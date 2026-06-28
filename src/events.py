@@ -9,6 +9,7 @@ from discord.ext import commands
 
 from src.helpers import (
     emb, C_GREEN, C_RED, C_BLUE, mocking_font, curse_font, fetch_member, _delete_after,
+    _effect_expired,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, is_insured, _ct_today, _ensure_user,
@@ -29,7 +30,6 @@ from src.ai import (
 )
 from src.config import (
     ACTIVE_CHANNEL_IDS, SHOP_TAX_PER_MESSAGE,
-    SHOP_TAX_DURATION_SECS, SHOP_SPELLCHECK_DURATION_SECS,
     SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
     DAILY_REWARD,
 )
@@ -621,56 +621,56 @@ class EventsCog(commands.Cog):
                 asyncio.create_task(cog._announce_levelup(message.author, message.guild.id))
 
     async def _handle_ragebait(self, message: discord.Message):
-        """Fire passive AI ragebait if the author is targeted in this channel."""
-        uid = message.author.id
-        rage_channel = state.active_ragebaits.get(uid, {}).get("channel_id")
-        if not (uid in state.active_ragebaits
-                and not message.content.startswith("!")
-                and (rage_channel is None or message.channel.id == rage_channel)):
+        """Fire passive AI ragebait if the author is targeted in this server."""
+        if message.guild is None:
             return
-        if await is_insured(uid, "ragebait"):
+        uid = message.author.id
+        key = (message.guild.id, uid)
+        if not (key in state.active_ragebaits and not message.content.startswith("!")):
+            return
+        if await is_insured(message.guild.id, uid, "ragebait"):
             return
         if not await check_ollama_connected():
             return
-        rage = state.active_ragebaits[uid]
+        rage = state.active_ragebaits[key]
         rage["history"].append(f"[{message.author.display_name}]: {message.content[:200]}")
         rage["remaining"] -= 1
         if rage["remaining"] <= 0:
-            del state.active_ragebaits[uid]
+            del state.active_ragebaits[key]
         await save_ragebait()
         asyncio.create_task(_passive_ragebait(message, list(rage["history"])))
 
     async def _handle_mock(self, message: discord.Message):
         """Repeat the message in mocking font if the author is being mocked."""
+        if message.guild is None:
+            return
         uid = message.author.id
-        mock_channel = state.active_mocks.get(uid, {}).get("channel_id")
-        if not (uid in state.active_mocks
-                and not message.content.startswith("!")
-                and (mock_channel is None or message.channel.id == mock_channel)):
+        key = (message.guild.id, uid)
+        if not (key in state.active_mocks and not message.content.startswith("!")):
             return
-        if await is_insured(uid, "mock"):
+        if await is_insured(message.guild.id, uid, "mock"):
             return
-        mock = state.active_mocks[uid]
+        mock = state.active_mocks[key]
         await message.channel.send(mocking_font(message.content))
         mock["remaining"] -= 1
         if mock["remaining"] <= 0:
-            del state.active_mocks[uid]
+            del state.active_mocks[key]
         await save_mock()
 
     async def _handle_tax(self, message: discord.Message):
         """Deduct per-message tax from users with an active tax on them."""
-        uid = message.author.id
-        tax_channel = state.active_taxes.get(uid, {}).get("channel_id")
-        if not (uid in state.active_taxes
-                and not message.content.startswith("!")
-                and (tax_channel is None or message.channel.id == tax_channel)):
+        if message.guild is None:
             return
-        tax_data = state.active_taxes[uid]
-        if "activated_at" in tax_data and time.time() - tax_data["activated_at"] > SHOP_TAX_DURATION_SECS:
-            del state.active_taxes[uid]
+        uid = message.author.id
+        key = (message.guild.id, uid)
+        if not (key in state.active_taxes and not message.content.startswith("!")):
+            return
+        tax_data = state.active_taxes[key]
+        if _effect_expired(tax_data):
+            del state.active_taxes[key]
             await save_tax(state.active_taxes)
             return
-        if await is_insured(uid, "tax"):
+        if await is_insured(message.guild.id, uid, "tax"):
             return
         tax_master_id = tax_data["master"]
         tax_label = tax_data.get("type", "tax").capitalize()
@@ -694,14 +694,17 @@ class EventsCog(commands.Cog):
 
     async def _handle_curse(self, message: discord.Message):
         """Replay cursed users' messages in curse font."""
-        uid = message.author.id
-        if not (uid in state.active_curses and not message.content.startswith("!")):
+        if message.guild is None:
             return
-        curse = state.active_curses[uid]
+        uid = message.author.id
+        key = (message.guild.id, uid)
+        if not (key in state.active_curses and not message.content.startswith("!")):
+            return
+        curse = state.active_curses[key]
         await message.channel.send(curse_font(message.content))
         curse["remaining"] -= 1
         if curse["remaining"] <= 0:
-            del state.active_curses[uid]
+            del state.active_curses[key]
         await save_curse(state.active_curses)
 
     async def _handle_spellcheck(self, message: discord.Message):
@@ -712,31 +715,31 @@ class EventsCog(commands.Cog):
         channels not in it). Posts ``<corrected sentence> *`` only when the AI
         finds spelling/grammar errors; clean messages are left alone.
         """
+        if message.guild is None:
+            return
         uid = message.author.id
-        sc = state.active_spellchecks.get(uid)
+        key = (message.guild.id, uid)
+        sc = state.active_spellchecks.get(key)
         if not (sc and not message.content.startswith("!")):
             return
 
-        # Expire after the purchased number of days.
-        activated_at = sc.get("activated_at", 0)
-        days = sc.get("days", 1) or 1
-        if time.time() - activated_at > days * SHOP_SPELLCHECK_DURATION_SECS:
-            del state.active_spellchecks[uid]
+        # Expire by explicit expires_at (set on purchase / by admin grant).
+        if _effect_expired(sc):
+            del state.active_spellchecks[key]
             await save_spellcheck()
             return
 
-        if await is_insured(uid, "spellcheck"):
+        if await is_insured(message.guild.id, uid, "spellcheck"):
             return
 
         # Channel gating: blacklist denies, a whitelist (if set) allows only
         # its members. Mirrors the global command-channel check.
-        if message.guild:
-            cfg = get_guild_cfg(message.guild.id)
-            if message.channel.id in cfg.get("command_blacklist", []):
-                return
-            whitelist = cfg.get("command_whitelist", [])
-            if whitelist and message.channel.id not in whitelist:
-                return
+        cfg = get_guild_cfg(message.guild.id)
+        if message.channel.id in cfg.get("command_blacklist", []):
+            return
+        whitelist = cfg.get("command_whitelist", [])
+        if whitelist and message.channel.id not in whitelist:
+            return
 
         content = message.content.strip()
         if not content:
@@ -876,14 +879,12 @@ class EventsCog(commands.Cog):
         ai_thread = state.ai_threads.get(message.channel.id)
         in_ai_thread = ai_thread is not None
 
-        # Ragebait/mock take precedence over normal mentions (in their channel)
-        rage_channel = state.active_ragebaits.get(uid, {}).get("channel_id")
-        mock_channel = state.active_mocks.get(uid, {}).get("channel_id")
-        rage_in_channel = uid in state.active_ragebaits and (rage_channel is None or message.channel.id == rage_channel)
-        mock_in_channel = uid in state.active_mocks and (mock_channel is None or message.channel.id == mock_channel)
-        if rage_in_channel or mock_in_channel:
-            await self.bot.process_commands(message)
-            return
+        # Ragebait/mock take precedence over normal mentions (in their server)
+        if message.guild is not None:
+            ekey = (message.guild.id, uid)
+            if ekey in state.active_ragebaits or ekey in state.active_mocks:
+                await self.bot.process_commands(message)
+                return
 
         # Per-guild AI channel restrictions for @mention
         if is_mentioned and not is_dm and message.guild:

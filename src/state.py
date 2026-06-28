@@ -20,14 +20,18 @@ bot_admins: set = set()
 godmode_users: set = set()
 bot_settings: dict = {"vram_text": "16GB"}
 guild_settings: dict = {}
-insurance: dict = {}
+# Shop effects + insurance are scoped per server: every key below is a
+# (guild_id, user_id) int tuple. A user can hold one of each effect per guild,
+# and an effect only fires in the guild it was bought in. Source of truth is
+# the shop_effects table (effect_type column); loaded at boot.
+insurance: dict = {}            # (guild_id, uid) -> {expires_at, protected_from}
 locked_channels: dict = {}
 locked_roles: dict = {}
-active_ragebaits: dict = {}
-active_mocks: dict = {}
-active_taxes: dict = {}
-active_curses: dict = {}
-active_spellchecks: dict = {}
+active_ragebaits: dict = {}     # (guild_id, uid) -> {remaining, started_by, history, channel_id}
+active_mocks: dict = {}         # (guild_id, uid) -> {remaining, started_by, channel_id}
+active_taxes: dict = {}         # (guild_id, uid) -> {master, type, emoji, channel_id, activated_at}
+active_curses: dict = {}        # (guild_id, uid) -> {cursed_by, remaining, channel_id}
+active_spellchecks: dict = {}   # (guild_id, uid) -> {started_by, days, channel_id, activated_at}
 # In-flight bounties (!shop bounty / !bounty), keyed by the bounty embed's
 # message_id. Value is the row dict from src.persistence.bounties (status,
 # author_id, amount, condition, claimant_id, the various *_message_id /

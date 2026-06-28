@@ -373,8 +373,8 @@ class ShopCog(commands.Cog):
         if len(new_name) > 32:
             await ctx.send(embed=emb("❌ Too Long", "Nicknames must be 32 characters or fewer.", C_RED))
             return
-        if target.id != uid and await is_insured(target.id, "nickname"):
-            _exp = get_insurance_expiry(target.id)
+        if target.id != uid and ctx.guild and await is_insured(ctx.guild.id, target.id, "nickname"):
+            _exp = get_insurance_expiry(ctx.guild.id, target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be renamed (expires <t:{_exp}:R>).", C_GOLD))
             return
         if not await shop_charge(ctx, uid, cost, cost_label=cost_label):
@@ -438,8 +438,8 @@ class ShopCog(commands.Cog):
         if "admin" in name.lower():
             await ctx.send(embed=emb("❌ Invalid Name", "Role names cannot contain \"admin\".", C_RED))
             return
-        if target.id != uid and await is_insured(target.id, "role"):
-            _exp = get_insurance_expiry(target.id)
+        if target.id != uid and ctx.guild and await is_insured(ctx.guild.id, target.id, "role"):
+            _exp = get_insurance_expiry(ctx.guild.id, target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_CREATE_COST
@@ -493,8 +493,8 @@ class ShopCog(commands.Cog):
         if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
             await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can manage membership.", C_RED))
             return
-        if target.id != uid and await is_insured(target.id, "role"):
-            _exp = get_insurance_expiry(target.id)
+        if target.id != uid and ctx.guild and await is_insured(ctx.guild.id, target.id, "role"):
+            _exp = get_insurance_expiry(ctx.guild.id, target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_ASSIGN_COST
@@ -549,8 +549,8 @@ class ShopCog(commands.Cog):
         if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
             await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can manage membership.", C_RED))
             return
-        if member.id != uid and await is_insured(member.id, "role"):
-            _exp = get_insurance_expiry(member.id)
+        if member.id != uid and ctx.guild and await is_insured(ctx.guild.id, member.id, "role"):
+            _exp = get_insurance_expiry(ctx.guild.id, member.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{member.display_name}** has insurance and their roles can't be changed (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_REMOVE_COST
@@ -595,11 +595,11 @@ class ShopCog(commands.Cog):
             return
         insured_members = []
         for m in role.members:
-            if await is_insured(m.id, "role"):
+            if ctx.guild and await is_insured(ctx.guild.id, m.id, "role"):
                 insured_members.append(m)
         if insured_members:
             names = ", ".join(f"**{m.display_name}**" for m in insured_members)
-            _earliest = min(get_insurance_expiry(m.id) for m in insured_members)
+            _earliest = min(get_insurance_expiry(ctx.guild.id, m.id) for m in insured_members)
             await ctx.send(embed=emb("🛡️ Protected", f"{names} {'has' if len(insured_members) == 1 else 'have'} insurance — this role can't be deleted (expires <t:{_earliest}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_DELETE_COST
@@ -962,8 +962,12 @@ class ShopCog(commands.Cog):
         except commands.BadArgument:
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop ragebait @user [topic]`", C_PURPLE))
             return
-        if target.id != uid and await is_insured(target.id, "ragebait"):
-            _exp = get_insurance_expiry(target.id)
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
+        gid = ctx.guild.id
+        if target.id != uid and await is_insured(gid, target.id, "ragebait"):
+            _exp = get_insurance_expiry(gid, target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against ragebait (expires <t:{_exp}:R>).", C_GOLD))
             return
         topic = " ".join(args[1:])
@@ -993,7 +997,7 @@ class ShopCog(commands.Cog):
                     {"role": "user", "content": prompt},
                 ], placeholder)
             await finalize(placeholder, ctx.channel, f"{target.mention} {full_response}")
-            state.active_ragebaits[target.id] = {"remaining": SHOP_RAGEBAIT_MESSAGES, "history": [], "channel_id": ctx.channel.id}
+            state.active_ragebaits[(gid, target.id)] = {"remaining": SHOP_RAGEBAIT_MESSAGES, "history": [], "channel_id": ctx.channel.id}
             await save_ragebait()
         except Exception as e:
             if cost > 0:
@@ -1016,14 +1020,18 @@ class ShopCog(commands.Cog):
         except commands.BadArgument:
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mock @user`", C_PURPLE))
             return
-        if target.id != uid and await is_insured(target.id, "mock"):
-            _exp = get_insurance_expiry(target.id)
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
+        gid = ctx.guild.id
+        if target.id != uid and await is_insured(gid, target.id, "mock"):
+            _exp = get_insurance_expiry(gid, target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against mock (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_MOCK_COST
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MOCK_COST:,}"):
             return
-        state.active_mocks[target.id] = {"remaining": SHOP_MOCK_MESSAGES, "started_by": uid, "channel_id": ctx.channel.id}
+        state.active_mocks[(gid, target.id)] = {"remaining": SHOP_MOCK_MESSAGES, "started_by": uid, "channel_id": ctx.channel.id}
         await save_mock()
         await ctx.send(embed=emb(
             "🎭 Mock Activated",
@@ -1050,8 +1058,11 @@ class ShopCog(commands.Cog):
     @_shop_subcommand(None)
     async def shop_insurance(self, ctx: commands.Context):
         uid = ctx.author.id
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
 
-        key = str(uid)
+        key = (ctx.guild.id, uid)
         existing = state.insurance.get(key)
         if existing and uid not in state.godmode_users:
             remaining = existing.get("expires_at", 0) - time.time()
@@ -1194,8 +1205,12 @@ class ShopCog(commands.Cog):
         if target.id == uid:
             await ctx.send(embed=emb("❌ Error", "You can't tax yourself!", C_RED))
             return
-        if await is_insured(target.id, "tax"):
-            _exp = get_insurance_expiry(target.id)
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
+        gid = ctx.guild.id
+        if await is_insured(gid, target.id, "tax"):
+            _exp = get_insurance_expiry(gid, target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against tax (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_TAX_COST
@@ -1203,8 +1218,8 @@ class ShopCog(commands.Cog):
             return
         activated_at = time.time()
         expires_ts = int(activated_at + SHOP_TAX_DURATION_SECS)
-        tax_data = {"master": uid, "type": tax_type, "emoji": tax_emoji, "channel_id": ctx.channel.id, "activated_at": activated_at}
-        state.active_taxes[target.id] = tax_data
+        tax_data = {"master": uid, "type": tax_type, "emoji": tax_emoji, "channel_id": ctx.channel.id, "activated_at": activated_at, "expires_at": expires_ts}
+        state.active_taxes[(gid, target.id)] = tax_data
         await save_tax(state.active_taxes)
         label = tax_type.capitalize()
         await ctx.send(embed=emb(
@@ -1230,10 +1245,14 @@ class ShopCog(commands.Cog):
         if target.id == uid:
             await ctx.send(embed=emb("❌ Self Curse", "You can't curse yourself!", C_RED))
             return
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
+        gid = ctx.guild.id
         cost = 0 if uid in state.godmode_users else SHOP_CURSE_COST
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_CURSE_COST:,}"):
             return
-        state.active_curses[target.id] = {"cursed_by": uid, "remaining": SHOP_CURSE_MESSAGES}
+        state.active_curses[(gid, target.id)] = {"cursed_by": uid, "remaining": SHOP_CURSE_MESSAGES, "channel_id": ctx.channel.id}
         await save_curse(state.active_curses)
         await ctx.send(embed=emb(
             "🔮 Curse Activated",
@@ -1277,8 +1296,12 @@ class ShopCog(commands.Cog):
         if self.bot and self.bot.user and target.id == self.bot.user.id:
             await ctx.send(embed=emb("❌ Invalid Target", "You can't spellcheck the bot.", C_RED))
             return
-        if await is_insured(target.id, "spellcheck"):
-            _exp = get_insurance_expiry(target.id)
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
+        gid = ctx.guild.id
+        if await is_insured(gid, target.id, "spellcheck"):
+            _exp = get_insurance_expiry(gid, target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be spellchecked (expires <t:{_exp}:R>).", C_GOLD))
             return
 
@@ -1300,11 +1323,12 @@ class ShopCog(commands.Cog):
 
         activated_at = time.time()
         expires_ts = int(activated_at + days * SHOP_SPELLCHECK_DURATION_SECS)
-        state.active_spellchecks[target.id] = {
+        state.active_spellchecks[(gid, target.id)] = {
             "started_by": uid,
             "days": days,
             "channel_id": ctx.channel.id,
             "activated_at": activated_at,
+            "expires_at": expires_ts,
         }
         await save_spellcheck()
         await ctx.send(embed=emb(
@@ -1330,27 +1354,33 @@ class ShopCog(commands.Cog):
         if target.id == uid:
             await ctx.send(embed=emb("❌ Self Reverse", "You can't uno reverse yourself!", C_RED))
             return
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
+        gid = ctx.guild.id
+        self_key = (gid, uid)
+        target_key = (gid, target.id)
         # Claim the active effects synchronously up front so a concurrent
         # !shop unoreverse can't both pay the cost AND crash on .pop(KeyError)
         # when it tries to redirect the same effect a second time.
-        mock_data = state.active_mocks.pop(uid, None)
-        rage_data = state.active_ragebaits.pop(uid, None)
-        curse_data = state.active_curses.pop(uid, None)
+        mock_data = state.active_mocks.pop(self_key, None)
+        rage_data = state.active_ragebaits.pop(self_key, None)
+        curse_data = state.active_curses.pop(self_key, None)
         if mock_data is None and rage_data is None and curse_data is None:
             await ctx.send(embed=emb("🔄 Uno Reverse", "You don't have any active mock, ragebait, or curse on you to reverse!", C_GREY))
             return
 
         def _restore_claimed():
             if mock_data is not None:
-                state.active_mocks[uid] = mock_data
+                state.active_mocks[self_key] = mock_data
             if rage_data is not None:
-                state.active_ragebaits[uid] = rage_data
+                state.active_ragebaits[self_key] = rage_data
             if curse_data is not None:
-                state.active_curses[uid] = curse_data
+                state.active_curses[self_key] = curse_data
 
-        if await is_insured(target.id, "mock"):
+        if await is_insured(gid, target.id, "mock"):
             _restore_claimed()
-            _exp = get_insurance_expiry(target.id)
+            _exp = get_insurance_expiry(gid, target.id)
             await ctx.send(embed=emb(
                 "🛡️ Protected",
                 f"**{target.display_name}** has insurance and can't be targeted (expires <t:{_exp}:R>).",
@@ -1364,17 +1394,17 @@ class ShopCog(commands.Cog):
         redirected = []
         if mock_data is not None:
             mock_data["started_by"] = uid
-            state.active_mocks[target.id] = mock_data
+            state.active_mocks[target_key] = mock_data
             await save_mock()
             redirected.append("mock")
         if rage_data is not None:
             rage_data["history"] = []
-            state.active_ragebaits[target.id] = rage_data
+            state.active_ragebaits[target_key] = rage_data
             await save_ragebait()
             redirected.append("ragebait")
         if curse_data is not None:
             curse_data["cursed_by"] = uid
-            state.active_curses[target.id] = curse_data
+            state.active_curses[target_key] = curse_data
             await save_curse(state.active_curses)
             redirected.append("curse")
         await ctx.send(embed=emb(
