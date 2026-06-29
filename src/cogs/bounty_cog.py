@@ -25,7 +25,9 @@ Per claim:
         author & claimant) <50% → claim rejected, bounty stays open; 50%→50%
         payout ramping to ≥66.6%→100% → pay claimant that fraction, bounty
         accepted (voids siblings). No author refund on a partial poll — the
-        unpaid remainder is a house cut.
+        unpaid remainder is a house cut. Every eligible voter (not the author or
+        claimant) is paid a flat BOUNTY_POLL_VOTER_REWARD when the poll closes,
+        regardless of how they voted.
 
 Open bounties with a deadline auto-close when it passes: refund the author 90%,
 bounty → expired, all in-flight claims voided.
@@ -56,7 +58,7 @@ from src.config import (
     BOUNTY_MIN_AMOUNT, BOUNTY_CLAIM_DURATION_SECS,
     BOUNTY_CONTEST_DURATION_SECS, BOUNTY_POLL_DURATION_SECS,
     BOUNTY_POLL_MIN_RATIO, BOUNTY_POLL_FULL_RATIO,
-    BOUNTY_AUTHOR_REFUND_FRACTION,
+    BOUNTY_AUTHOR_REFUND_FRACTION, BOUNTY_POLL_VOTER_REWARD,
 )
 from src import state
 
@@ -497,7 +499,8 @@ class BountyCog(commands.Cog):
                     f"Did they complete it?\n"
                     f"{ACCEPT_EMOJI} = completed   {REJECT_EMOJI} = not completed\n\n"
                     f"Voting closes <t:{int(poll_exp)}:R>. (The author and claimant's votes don't count.)\n"
-                    f"≥50% yes pays out partially, ≥66.6% pays in full.",
+                    f"≥50% yes pays out partially, ≥66.6% pays in full.\n\n"
+                    f"🪙 Vote and you'll get **{BOUNTY_POLL_VOTER_REWARD:,} 🪙** when the poll closes!",
                     C_GOLD),
                 allowed_mentions=discord.AllowedMentions(everyone=True),
             )
@@ -519,9 +522,11 @@ class BountyCog(commands.Cog):
         await self._refresh_embed(bounty)
 
     async def _tally_poll(self, bounty: dict, claim: dict):
-        """Count poll reactions (excluding author & claimant) and settle."""
+        """Count poll reactions (excluding author & claimant), reward each
+        eligible voter, and settle."""
         author_id, claimant_id = bounty["author_id"], claim["claimant_id"]
         yes = no = 0
+        voters: set[int] = set()
         try:
             channel = self.bot.get_channel(claim["poll_channel_id"]) or await self.bot.fetch_channel(claim["poll_channel_id"])
             poll_msg = await channel.fetch_message(claim["poll_message_id"])
@@ -531,12 +536,23 @@ class BountyCog(commands.Cog):
                 async for voter in reaction.users():
                     if voter.bot or voter.id in (author_id, claimant_id):
                         continue
+                    voters.add(voter.id)
                     if str(reaction.emoji) == ACCEPT_EMOJI:
                         yes += 1
                     else:
                         no += 1
         except (discord.NotFound, discord.Forbidden, discord.HTTPException) as ex:
             logging.warning("[bounty] poll tally fetch failed for claim %s: %s", claim["id"], ex)
+
+        # Reward each unique eligible voter once, regardless of how they voted or
+        # the poll's outcome. Freshly minted, capped at one payout per voter even
+        # if they reacted with both emojis.
+        if voters and BOUNTY_POLL_VOTER_REWARD > 0:
+            for voter_id in voters:
+                await add_balance(voter_id, BOUNTY_POLL_VOTER_REWARD)
+            log = list(bounty.get("claim_log") or [])
+            log.append(f"🪙 Paid {BOUNTY_POLL_VOTER_REWARD:,} 🪙 to {len(voters)} voter(s)")
+            await self._persist_bounty(bounty, claim_log=log)
 
         total = yes + no
         ratio = (yes / total) if total else 0.0

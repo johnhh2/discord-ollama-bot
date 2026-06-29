@@ -470,6 +470,39 @@ async def test_poll_excludes_author_and_claimant(db):
     # Only the one neutral 'no' counts → 0% yes → no payout, bounty stays open.
     assert await get_balance(45) == 0
     assert _bounty(mid)["status"] == "open"
+    # Author and claimant get no voter reward even though they reacted.
+    assert await get_balance(20) == 0
+    assert await get_balance(45) == 0
+    # The neutral voter (7) is rewarded.
+    assert await get_balance(7) == 100
+
+
+async def test_poll_voters_each_rewarded_on_pass(db):
+    cog, bot, channel = _make_cog()
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=46)
+    _seed_poll_votes(channel, claim, yes_ids=[1, 2, 3, 4, 5, 6, 7], no_ids=[8])
+    claim["poll_expires_at"] = time.time() - 1
+
+    await cog._expiry_loop.coro(cog)
+    # Every eligible voter (yes and no) got 100 coins, once each.
+    for v in (1, 2, 3, 4, 5, 6, 7, 8):
+        assert await get_balance(v) == 100
+    # Claimant still got the full payout; author and claimant get no voter reward.
+    assert await get_balance(46) == 10_000
+    assert await get_balance(20) == 0
+
+
+async def test_poll_voter_rewarded_once_when_voting_both_ways(db):
+    """A user who reacts both ✅ and ❌ is paid the 100-coin reward only once."""
+    cog, bot, channel = _make_cog()
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=47)
+    # Voter 9 appears in both yes and no lists.
+    _seed_poll_votes(channel, claim, yes_ids=[9], no_ids=[9, 10])
+    claim["poll_expires_at"] = time.time() - 1
+
+    await cog._expiry_loop.coro(cog)
+    assert await get_balance(9) == 100      # paid once, not 200
+    assert await get_balance(10) == 100
 
 
 # ── expiry loop ───────────────────────────────────────────────────────────────

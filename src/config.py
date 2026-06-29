@@ -137,6 +137,10 @@ BOUNTY_POLL_FULL_RATIO   = 2.0 / 3.0      # at/above this, full payout
 # optional expiration. The remaining 10% is a house cut. Claim failures
 # (reject/contest-drop/poll-no) leave the bounty open and refund nothing.
 BOUNTY_AUTHOR_REFUND_FRACTION = 0.9
+# Flat reward minted to each eligible voter on a contest poll (paid once per
+# voter when the poll is tallied, regardless of outcome). Author and claimant
+# are excluded. This is freshly minted, not drawn from the escrow.
+BOUNTY_POLL_VOTER_REWARD = 100
 
 # Ephemeral message auto-delete timeout
 EPHEMERAL_DELETE_AFTER = 60
