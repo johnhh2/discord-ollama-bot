@@ -132,6 +132,11 @@ BOUNTY_POLL_DURATION_SECS    = 3 * 86_400   # @everyone contest poll runs for 3 
 # ≥66.666% yes → 100% payout.
 BOUNTY_POLL_MIN_RATIO    = 0.5            # below this, no payout
 BOUNTY_POLL_FULL_RATIO   = 2.0 / 3.0      # at/above this, full payout
+# Fraction of escrow refunded to the author when THEY walk away — a self-cancel
+# (only allowed on bounties with no deadline) or an open bounty hitting its
+# optional expiration. The remaining 10% is a house cut. Claim failures
+# (reject/contest-drop/poll-no) leave the bounty open and refund nothing.
+BOUNTY_AUTHOR_REFUND_FRACTION = 0.9
 
 # Ephemeral message auto-delete timeout
 EPHEMERAL_DELETE_AFTER = 60

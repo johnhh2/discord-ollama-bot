@@ -32,12 +32,14 @@ active_mocks: dict = {}         # (guild_id, uid) -> {remaining, started_by, cha
 active_taxes: dict = {}         # (guild_id, uid) -> {master, type, emoji, channel_id, activated_at}
 active_curses: dict = {}        # (guild_id, uid) -> {cursed_by, remaining, channel_id}
 active_spellchecks: dict = {}   # (guild_id, uid) -> {started_by, days, channel_id, activated_at}
-# In-flight bounties (!shop bounty / !bounty), keyed by the bounty embed's
-# message_id. Value is the row dict from src.persistence.bounties (status,
-# author_id, amount, condition, claimant_id, the various *_message_id /
-# *_expires_at fields, claim_log). Terminal bounties (accepted/rejected/
-# cancelled) are dropped from this dict but kept in the DB as history.
-# Source of truth is the bounties table; loaded at boot.
+# Open bounties (!shop bounty / !bounty), keyed by the bounty embed's
+# message_id. Value is the bounty row dict from src.persistence.bounties
+# (status, author_id, amount, condition, optional expires_at, claim_log) with a
+# "claims" list of in-flight claim dicts attached — a bounty stays open through
+# many concurrent claims, each carrying its own dm/contest/poll message ids and
+# expiries. Terminal bounties (accepted/cancelled/expired) are dropped from this
+# dict but kept in the DB as history. Source of truth is the bounties +
+# bounty_claims tables; loaded at boot.
 active_bounties: dict = {}
 active_chess_games: dict = {}
 rigged_slots: dict = {}

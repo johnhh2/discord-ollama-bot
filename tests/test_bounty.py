@@ -1,9 +1,10 @@
-"""Bounty feature: escrow, lifecycle transitions, payout math, persistence.
+"""Bounty feature: escrow, optional expiry, concurrent per-claim lifecycle,
+90% author refund, poll payout math, and persistence.
 
 Drives BountyCog's internal handlers directly (not through the gateway) with a
 small fake bot that records embed edits, DMs, and reactions. Uses the real `db`
-fixture so the bounties table round-trips through the SQLite translator exactly
-like production MariaDB.
+fixture so the bounties + bounty_claims tables round-trip through the SQLite
+translator exactly like production MariaDB.
 """
 import time
 from unittest.mock import AsyncMock
@@ -26,12 +27,23 @@ BOUNTY_CHANNEL_ID = 888
 
 
 class _FakeResp:
-    """Minimal stand-in for the aiohttp response object discord.HTTPException
-    subclasses require as their first arg."""
+    """Minimal stand-in for the aiohttp response discord.HTTPException needs."""
 
     def __init__(self, status: int):
         self.status = status
         self.reason = "test"
+
+
+class _FakeReaction:
+    def __init__(self, emoji, voters):
+        self.emoji = emoji
+        self._voters = voters
+
+    def users(self):
+        async def _gen():
+            for v in self._voters:
+                yield v
+        return _gen()
 
 
 class _FakeMsg:
@@ -41,6 +53,7 @@ class _FakeMsg:
         self.edit = AsyncMock(side_effect=self._edit)
         self.add_reaction = AsyncMock()
         self.clear_reaction = AsyncMock()
+        self.clear_reactions = AsyncMock()
         self.remove_reaction = AsyncMock()
         self.reactions = []
 
@@ -52,6 +65,7 @@ class _FakeMsg:
 class _FakeDMUser:
     def __init__(self, uid):
         self.id = uid
+        self.bot = False
         self.sent = []
 
     async def send(self, *, embed=None, **kw):
@@ -112,9 +126,6 @@ def _ctx(author_id, channel):
     ctx = FakeCtx(author=FakeMember(uid=author_id), guild=guild, channel=channel)
     get_guild_cfg(GUILD_ID)["bounty_channel"] = BOUNTY_CHANNEL_ID
 
-    # Route ctx.send through the fake bounty channel so the posted bounty embed
-    # is fetchable later (the cog edits it on every transition). Records embeds
-    # on ctx.sent_embeds too, like the stock FakeCtx.
     async def _send(content=None, *, embed=None, view=None, **kw):
         if embed is not None:
             ctx.sent_embeds.append(embed)
@@ -123,12 +134,19 @@ def _ctx(author_id, channel):
         return await channel._send(content, embed=embed, **kw)
 
     ctx.send = _send
-    # _wrong_channel_reply uses ctx.message.reply; keep it a harmless AsyncMock.
     ctx.message.reply = AsyncMock(return_value=_FakeMsg(1))
     return ctx
 
 
-# ── creation / escrow ─────────────────────────────────────────────────────────
+def _bounty(mid):
+    return _state.active_bounties[mid]
+
+
+def _only_claim(mid):
+    return _bounty(mid)["claims"][0]
+
+
+# ── creation / escrow / duration parse ────────────────────────────────────────
 async def test_create_escrows_and_persists(db):
     cog, bot, channel = _make_cog()
     author = 11
@@ -137,9 +155,7 @@ async def test_create_escrows_and_persists(db):
 
     await cog.create_bounty(ctx, ("10k", "wash", "my", "car"))
 
-    # Escrowed 10k.
     assert await get_balance(author) == 40_000
-    # One bounty cached + persisted.
     assert len(_state.active_bounties) == 1
     mid = next(iter(_state.active_bounties))
     row = await _persistence.get_bounty_by_message(mid)
@@ -147,6 +163,38 @@ async def test_create_escrows_and_persists(db):
     assert row["amount"] == 10_000
     assert row["condition"] == "wash my car"
     assert row["author_id"] == author
+    assert row["expires_at"] is None
+
+
+async def test_create_with_duration_sets_expiry(db):
+    cog, bot, channel = _make_cog()
+    author = 16
+    await add_balance(author, 50_000)
+    ctx = _ctx(author, channel)
+
+    await cog.create_bounty(ctx, ("5k", "7d", "watch", "this", "video"))
+    mid = next(iter(_state.active_bounties))
+    row = await _persistence.get_bounty_by_message(mid)
+    assert row["condition"] == "watch this video"     # duration token consumed
+    assert row["expires_at"] is not None
+    # ~7 days out.
+    assert 6.9 * 86_400 < row["expires_at"] - time.time() < 7.1 * 86_400
+
+
+async def test_duration_token_not_consumed_without_condition(db):
+    """`!bounty 5k 7d` with no trailing condition keeps 7d as the condition and
+    errors (condition required)."""
+    cog, bot, channel = _make_cog()
+    author = 17
+    await add_balance(author, 50_000)
+    ctx = _ctx(author, channel)
+    # Only amount + one token: too few args (need >=2). Add a real condition
+    # that is itself a duration-looking word to prove it's NOT eaten.
+    await cog.create_bounty(ctx, ("5k", "2w"))   # len(args) == 2, "2w" is condition
+    mid = next(iter(_state.active_bounties))
+    row = await _persistence.get_bounty_by_message(mid)
+    assert row["condition"] == "2w"
+    assert row["expires_at"] is None
 
 
 async def test_create_rejects_below_minimum(db):
@@ -154,9 +202,8 @@ async def test_create_rejects_below_minimum(db):
     author = 12
     await add_balance(author, 50_000)
     ctx = _ctx(author, channel)
-
     await cog.create_bounty(ctx, ("500", "too", "cheap"))
-    assert await get_balance(author) == 50_000          # nothing escrowed
+    assert await get_balance(author) == 50_000
     assert not _state.active_bounties
 
 
@@ -165,7 +212,6 @@ async def test_create_insufficient_funds(db):
     author = 13
     await add_balance(author, 1_000)
     ctx = _ctx(author, channel)
-
     await cog.create_bounty(ctx, ("5k", "do", "thing"))
     assert await get_balance(author) == 1_000
     assert not _state.active_bounties
@@ -177,13 +223,10 @@ async def test_create_wrong_channel_blocked(db):
     author = 14
     await add_balance(author, 50_000)
     ctx = _ctx(author, channel)
-    ctx.channel = FakeTextChannel(ch_id=123, name="random")  # not the bounty channel
-    # FakeCtx isn't a real commands.Context, so _wrong_channel_reply uses
-    # ctx.reply directly — stub it.
+    ctx.channel = FakeTextChannel(ch_id=123, name="random")
     ctx.reply = AsyncMock(return_value=_FakeMsg(1))
-
     await cog.create_bounty(ctx, ("5k", "do", "thing"))
-    assert await get_balance(author) == 50_000             # no escrow
+    assert await get_balance(author) == 50_000
     assert not _state.active_bounties
 
 
@@ -193,186 +236,308 @@ async def test_create_disabled_when_no_channel(db):
     await add_balance(author, 50_000)
     ctx = _ctx(author, channel)
     get_guild_cfg(GUILD_ID)["bounty_channel"] = None
-
     await cog.create_bounty(ctx, ("5k", "do", "thing"))
     assert await get_balance(author) == 50_000
     assert any("Not Enabled" in e.title for e in ctx.sent_embeds)
 
 
-# ── claim → accept (happy path) ───────────────────────────────────────────────
-async def _open_bounty(cog, channel, author=20, amount=10_000):
+# ── claim helpers ─────────────────────────────────────────────────────────────
+async def _open_bounty(cog, channel, author=20, amount=10_000, args=None):
     await add_balance(author, amount)
     ctx = _ctx(author, channel)
-    await cog.create_bounty(ctx, (f"{amount}", "do", "the", "task"))
+    await cog.create_bounty(ctx, args or (f"{amount}", "do", "the", "task"))
     mid = next(iter(_state.active_bounties))
     return mid, author
 
 
-async def test_author_self_claim_cancels_and_refunds(db):
+# ── author self-cancel (90% refund, no-deadline only) ─────────────────────────
+async def test_author_self_cancel_refunds_90pct(db):
     cog, bot, channel = _make_cog()
     mid, author = await _open_bounty(cog, channel)
     assert await get_balance(author) == 0
 
-    bounty = _state.active_bounties[mid]
-    await cog._handle_claim_reaction(bounty, author)   # author reacts 🙋
+    await cog._handle_claim_reaction(_bounty(mid), author)   # author reacts 🙋
 
-    assert await get_balance(author) == 10_000          # refunded
+    assert await get_balance(author) == 9_000          # 90% of 10k
     assert mid not in _state.active_bounties            # terminal, dropped
     row = await _persistence.get_bounty_by_message(mid)
     assert row["status"] == "cancelled"
-    # The 🙋 claim reaction is cleared from the channel embed.
     channel._messages[mid].clear_reaction.assert_awaited_with(CLAIM_EMOJI)
 
 
+async def test_author_cannot_cancel_when_deadline_set(db):
+    cog, bot, channel = _make_cog()
+    mid, author = await _open_bounty(cog, channel, args=("10000", "7d", "do", "it"))
+    await cog._handle_claim_reaction(_bounty(mid), author)   # author reacts 🙋
+    # Still open, no refund — a deadline bounty can't be self-cancelled.
+    assert _bounty(mid)["status"] == "open"
+    assert await get_balance(author) == 0
+
+
+# ── claim → accept ────────────────────────────────────────────────────────────
 async def test_claim_then_accept_pays_claimant(db):
     cog, bot, channel = _make_cog()
     mid, author = await _open_bounty(cog, channel)
     claimant = 30
 
-    bounty = _state.active_bounties[mid]
-    await cog._handle_claim_reaction(bounty, claimant)   # claimant reacts 🙋
-    assert _state.active_bounties[mid]["status"] == "pending"
-    assert _state.active_bounties[mid]["claimant_id"] == claimant
-    # Author was DM'd accept/reject.
-    assert bot.get_user(author).sent
-    # Once claimed, the 🙋 reaction is cleared so nobody else can claim.
-    channel._messages[mid].clear_reaction.assert_awaited_with(CLAIM_EMOJI)
+    await cog._handle_claim_reaction(_bounty(mid), claimant)
+    claim = _only_claim(mid)
+    assert claim["status"] == "pending"
+    assert claim["claimant_id"] == claimant
+    assert bot.get_user(author).sent           # author DM'd accept/reject
+    assert _bounty(mid)["status"] == "open"    # bounty stays open during review
 
-    await cog._resolve_claim(_state.active_bounties.get(mid, bounty), accepted=True)
+    await cog._resolve_claim(_bounty(mid), claim, accepted=True)
     assert await get_balance(claimant) == 10_000
     assert mid not in _state.active_bounties
-    row = await _persistence.get_bounty_by_message(mid)
-    assert row["status"] == "accepted"
+    assert (await _persistence.get_bounty_by_message(mid))["status"] == "accepted"
 
 
-async def test_claim_reaction_cleanup_falls_back_when_no_manage_messages(db):
-    """Without Manage Messages, clear_reaction raises Forbidden — the cog
-    should fall back to removing just the bot's own 🙋 reaction."""
-    import discord
+async def test_one_claim_per_user_ever(db):
     cog, bot, channel = _make_cog()
     mid, author = await _open_bounty(cog, channel)
+    claimant = 33
+    await cog._handle_claim_reaction(_bounty(mid), claimant)
+    # Reject the claim, then the same user tries again — blocked.
+    claim = _only_claim(mid)
+    await cog._resolve_claim(_bounty(mid), claim, accepted=False)
+    await cog._resolve_contest(_bounty(mid), claim, contested=False)  # drop
+    # Bounty stays open; the user's claim row exists (rejected).
+    assert _bounty(mid)["status"] == "open"
+    await cog._handle_claim_reaction(_bounty(mid), claimant)   # re-claim attempt
+    # No new pending claim was created (insert blocked by UNIQUE).
+    active = [c for c in _bounty(mid)["claims"] if c["status"] == "pending"]
+    assert active == []
 
-    msg = channel._messages[mid]
-    msg.clear_reaction = AsyncMock(
-        side_effect=discord.Forbidden(_FakeResp(403), "no perms")
-    )
 
-    await cog._handle_claim_reaction(_state.active_bounties[mid], 30)
-
-    msg.clear_reaction.assert_awaited_with(CLAIM_EMOJI)
-    # Fell back to removing the bot's own reaction.
-    msg.remove_reaction.assert_awaited_with(CLAIM_EMOJI, bot.user)
-
-
-async def test_concurrent_claims_only_first_wins(db):
-    """Two users react 🙋 near-simultaneously; only one becomes the claimant."""
+async def test_concurrent_claims_both_tracked(db):
+    """Two different users claim near-simultaneously — both get a claim; the
+    bounty stays open."""
     cog, bot, channel = _make_cog()
     mid, author = await _open_bounty(cog, channel)
-    bounty = _state.active_bounties[mid]
 
     import asyncio
     await asyncio.gather(
-        cog._handle_claim_reaction(bounty, 31),
-        cog._handle_claim_reaction(bounty, 32),
+        cog._handle_claim_reaction(_bounty(mid), 31),
+        cog._handle_claim_reaction(_bounty(mid), 32),
     )
-    # Exactly one claimant latched; status pending (not double-claimed).
-    row = _state.active_bounties[mid]
-    assert row["status"] == "pending"
-    assert row["claimant_id"] in (31, 32)
+    claimants = {c["claimant_id"] for c in _bounty(mid)["claims"]}
+    assert claimants == {31, 32}
+    assert _bounty(mid)["status"] == "open"
 
 
-# ── reject → contest → poll payout ────────────────────────────────────────────
-async def test_reject_then_drop_refunds_author(db):
+async def test_accept_voids_sibling_claims(db):
+    cog, bot, channel = _make_cog()
+    mid, author = await _open_bounty(cog, channel)
+    await cog._handle_claim_reaction(_bounty(mid), 34)
+    await cog._handle_claim_reaction(_bounty(mid), 35)
+    bounty = _bounty(mid)
+    winner = next(c for c in bounty["claims"] if c["claimant_id"] == 34)
+
+    await cog._resolve_claim(bounty, winner, accepted=True)
+    assert await get_balance(34) == 10_000
+    assert mid not in _state.active_bounties
+    # The sibling claim was voided in the DB.
+    found = await _persistence.get_claim_by_dm(
+        next(c for c in bounty["claims"] if c["claimant_id"] == 35)["dm_message_id"]
+    )
+    assert found is not None
+    _b, sib = found
+    assert sib["status"] == "voided"
+
+
+async def test_accept_voids_sibling_live_poll(db):
+    """A sibling claim already in an @everyone poll has its poll cancelled (embed
+    edited, reactions cleared) and the claim voided when another claim is
+    accepted."""
+    cog, bot, channel = _make_cog()
+    mid, author = await _open_bounty(cog, channel)
+    # Claim A goes all the way to a live poll.
+    await cog._handle_claim_reaction(_bounty(mid), 36)
+    claim_a = _only_claim(mid)
+    await cog._resolve_claim(_bounty(mid), claim_a, accepted=False)
+    await cog._resolve_contest(_bounty(mid), claim_a, contested=True)
+    assert claim_a["status"] == "polling"
+    poll_msg = channel._messages[claim_a["poll_message_id"]]
+
+    # Claim B is submitted and accepted.
+    await cog._handle_claim_reaction(_bounty(mid), 37)
+    claim_b = next(c for c in _bounty(mid)["claims"] if c["claimant_id"] == 37)
+    await cog._resolve_claim(_bounty(mid), claim_b, accepted=True)
+
+    assert await get_balance(37) == 10_000
+    # Claim A's poll was edited to a void embed and its reactions cleared.
+    poll_msg.clear_reactions.assert_awaited()
+    assert "void" in poll_msg.embeds[0].title.lower() or "cancel" in poll_msg.embeds[0].title.lower()
+    found = await _persistence.get_claim_by_dm(claim_a["dm_message_id"])
+    assert found is not None and found[1]["status"] == "voided"
+
+
+# ── reject → contest → leaves bounty open ─────────────────────────────────────
+async def test_reject_then_drop_keeps_bounty_open_no_refund(db):
     cog, bot, channel = _make_cog()
     mid, author = await _open_bounty(cog, channel)
     claimant = 40
-    await cog._handle_claim_reaction(_state.active_bounties[mid], claimant)
-    await cog._resolve_claim(_state.active_bounties[mid], accepted=False)
-    assert _state.active_bounties[mid]["status"] == "contesting"
+    await cog._handle_claim_reaction(_bounty(mid), claimant)
+    claim = _only_claim(mid)
+    await cog._resolve_claim(_bounty(mid), claim, accepted=False)
+    assert claim["status"] == "contesting"
 
-    # Claimant declines to contest → author refunded, terminal reject.
-    await cog._resolve_contest(_state.active_bounties[mid], contested=False)
-    assert await get_balance(author) == 10_000
-    assert await get_balance(claimant) == 0
-    row = await _persistence.get_bounty_by_message(mid)
-    assert row["status"] == "rejected"
+    await cog._resolve_contest(_bounty(mid), claim, contested=False)   # drop
+    # Bounty stays open; author NOT refunded (escrow held for future claimers).
+    assert _bounty(mid)["status"] == "open"
+    assert await get_balance(author) == 0
+    assert claim["status"] == "rejected"
 
 
 async def test_contest_starts_poll(db):
     cog, bot, channel = _make_cog()
     mid, author = await _open_bounty(cog, channel)
     claimant = 41
-    await cog._handle_claim_reaction(_state.active_bounties[mid], claimant)
-    await cog._resolve_claim(_state.active_bounties[mid], accepted=False)
-    await cog._resolve_contest(_state.active_bounties[mid], contested=True)
+    await cog._handle_claim_reaction(_bounty(mid), claimant)
+    claim = _only_claim(mid)
+    await cog._resolve_claim(_bounty(mid), claim, accepted=False)
+    await cog._resolve_contest(_bounty(mid), claim, contested=True)
 
-    row = _state.active_bounties[mid]
-    assert row["status"] == "polling"
-    assert row["poll_message_id"] is not None
+    assert claim["status"] == "polling"
+    assert claim["poll_message_id"] is not None
+    assert _bounty(mid)["status"] == "open"
+
+
+# ── poll tally ────────────────────────────────────────────────────────────────
+async def _setup_polling_claim(cog, channel, author, claimant, amount=10_000):
+    mid, _ = await _open_bounty(cog, channel, author=author, amount=amount)
+    await cog._handle_claim_reaction(_bounty(mid), claimant)
+    claim = _only_claim(mid)
+    await cog._resolve_claim(_bounty(mid), claim, accepted=False)
+    await cog._resolve_contest(_bounty(mid), claim, contested=True)
+    return mid, claim
+
+
+def _seed_poll_votes(channel, claim, yes_ids, no_ids):
+    poll_msg = channel._messages[claim["poll_message_id"]]
+    poll_msg.reactions = [
+        _FakeReaction("✅", [_FakeDMUser(u) for u in yes_ids]),
+        _FakeReaction("❌", [_FakeDMUser(u) for u in no_ids]),
+    ]
 
 
 async def test_poll_full_payout(db):
     cog, bot, channel = _make_cog()
-    mid, author = await _open_bounty(cog, channel)
-    claimant = 42
-    bounty = _state.active_bounties[mid]
-    bounty["claimant_id"] = claimant
-    await cog._settle_poll(bounty, yes=7, no=1, payout_frac=1.0)
-    assert await get_balance(claimant) == 10_000
-    assert await get_balance(author) == 0
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=42)
+    _seed_poll_votes(channel, claim, yes_ids=[1, 2, 3, 4, 5, 6, 7], no_ids=[8])
+    claim["poll_expires_at"] = time.time() - 1
+
+    await cog._expiry_loop.coro(cog)
+    assert await get_balance(42) == 10_000          # full payout
+    assert await get_balance(20) == 0               # author keeps nothing back
     assert (await _persistence.get_bounty_by_message(mid))["status"] == "accepted"
 
 
-async def test_poll_partial_payout_splits(db):
+async def test_poll_partial_payout_no_author_refund(db):
     cog, bot, channel = _make_cog()
-    mid, author = await _open_bounty(cog, channel)
-    claimant = 43
-    bounty = _state.active_bounties[mid]
-    bounty["claimant_id"] = claimant
-    await cog._settle_poll(bounty, yes=5, no=5, payout_frac=0.5)
-    assert await get_balance(claimant) == 5_000      # half to claimant
-    assert await get_balance(author) == 5_000        # rest refunded
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=43)
+    _seed_poll_votes(channel, claim, yes_ids=[1, 2, 3, 4, 5], no_ids=[6, 7, 8, 9, 10])  # 50%
+    claim["poll_expires_at"] = time.time() - 1
+
+    await cog._expiry_loop.coro(cog)
+    assert await get_balance(43) == 5_000           # 50% payout
+    assert await get_balance(20) == 0               # remainder is a house cut
     assert (await _persistence.get_bounty_by_message(mid))["status"] == "accepted"
 
 
-async def test_poll_failed_refunds_author(db):
+async def test_poll_failed_keeps_bounty_open(db):
     cog, bot, channel = _make_cog()
-    mid, author = await _open_bounty(cog, channel)
-    claimant = 44
-    bounty = _state.active_bounties[mid]
-    bounty["claimant_id"] = claimant
-    await cog._settle_poll(bounty, yes=1, no=9, payout_frac=0.0)
-    assert await get_balance(claimant) == 0
-    assert await get_balance(author) == 10_000
-    assert (await _persistence.get_bounty_by_message(mid))["status"] == "rejected"
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=44)
+    _seed_poll_votes(channel, claim, yes_ids=[1], no_ids=[2, 3, 4, 5, 6, 7, 8, 9])
+    claim["poll_expires_at"] = time.time() - 1
+
+    await cog._expiry_loop.coro(cog)
+    assert await get_balance(44) == 0
+    assert await get_balance(20) == 0               # author not refunded
+    assert _bounty(mid)["status"] == "open"         # stays open for others
+    assert claim["status"] == "rejected"
+
+
+async def test_poll_excludes_author_and_claimant(db):
+    cog, bot, channel = _make_cog()
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=45)
+    # Author (20) and claimant (45) vote yes but must NOT count; one neutral no.
+    _seed_poll_votes(channel, claim, yes_ids=[20, 45], no_ids=[7])
+    claim["poll_expires_at"] = time.time() - 1
+
+    await cog._expiry_loop.coro(cog)
+    # Only the one neutral 'no' counts → 0% yes → no payout, bounty stays open.
+    assert await get_balance(45) == 0
+    assert _bounty(mid)["status"] == "open"
 
 
 # ── expiry loop ───────────────────────────────────────────────────────────────
-async def test_expired_contest_refunds_author(db):
+async def test_open_bounty_expires_refunds_90pct(db):
     cog, bot, channel = _make_cog()
-    mid, author = await _open_bounty(cog, channel)
-    claimant = 50
-    await cog._handle_claim_reaction(_state.active_bounties[mid], claimant)
-    await cog._resolve_claim(_state.active_bounties[mid], accepted=False)
-    # Force the contest deadline into the past.
-    _state.active_bounties[mid]["contest_expires_at"] = time.time() - 1
+    mid, author = await _open_bounty(cog, channel, args=("10000", "7d", "do", "it"))
+    _bounty(mid)["expires_at"] = time.time() - 1
 
     await cog._expiry_loop.coro(cog)
-    assert await get_balance(author) == 10_000
-    assert (await _persistence.get_bounty_by_message(mid))["status"] == "rejected"
+    assert await get_balance(author) == 9_000       # 90% refund
+    assert mid not in _state.active_bounties
+    assert (await _persistence.get_bounty_by_message(mid))["status"] == "expired"
+
+
+async def test_expired_open_voids_inflight_claims(db):
+    cog, bot, channel = _make_cog()
+    mid, author = await _open_bounty(cog, channel, args=("10000", "7d", "do", "it"))
+    await cog._handle_claim_reaction(_bounty(mid), 60)
+    claim = _only_claim(mid)
+    _bounty(mid)["expires_at"] = time.time() - 1
+
+    await cog._expiry_loop.coro(cog)
+    assert (await _persistence.get_bounty_by_message(mid))["status"] == "expired"
+    # The in-flight claim is voided.
+    found = await _persistence.get_claim_by_dm(claim["dm_message_id"])
+    assert found is not None and found[1]["status"] == "voided"
 
 
 async def test_expired_pending_offers_contest(db):
     cog, bot, channel = _make_cog()
     mid, author = await _open_bounty(cog, channel)
     claimant = 51
-    await cog._handle_claim_reaction(_state.active_bounties[mid], claimant)
-    _state.active_bounties[mid]["claim_expires_at"] = time.time() - 1
+    await cog._handle_claim_reaction(_bounty(mid), claimant)
+    _only_claim(mid)["claim_expires_at"] = time.time() - 1
 
     await cog._expiry_loop.coro(cog)
-    # Author non-response auto-rejects but offers the claimant a contest.
-    assert _state.active_bounties[mid]["status"] == "contesting"
-    assert bot.get_user(claimant).sent      # claimant got the contest DM
+    assert _only_claim(mid)["status"] == "contesting"
+    assert bot.get_user(claimant).sent
+    assert _bounty(mid)["status"] == "open"
+
+
+async def test_expired_contest_keeps_bounty_open(db):
+    cog, bot, channel = _make_cog()
+    mid, author = await _open_bounty(cog, channel)
+    claimant = 52
+    await cog._handle_claim_reaction(_bounty(mid), claimant)
+    claim = _only_claim(mid)
+    await cog._resolve_claim(_bounty(mid), claim, accepted=False)
+    claim["contest_expires_at"] = time.time() - 1
+
+    await cog._expiry_loop.coro(cog)
+    assert claim["status"] == "rejected"
+    assert _bounty(mid)["status"] == "open"
+    assert await get_balance(author) == 0
+
+
+# ── reaction cleanup fallback ─────────────────────────────────────────────────
+async def test_claim_reaction_cleanup_falls_back_when_no_manage_messages(db):
+    import discord
+    cog, bot, channel = _make_cog()
+    mid, author = await _open_bounty(cog, channel)
+    msg = channel._messages[mid]
+    msg.clear_reaction = AsyncMock(side_effect=discord.Forbidden(_FakeResp(403), "no perms"))
+
+    # Author self-cancel clears the reaction → fallback path.
+    await cog._handle_claim_reaction(_bounty(mid), author)
+    msg.clear_reaction.assert_awaited_with(CLAIM_EMOJI)
+    msg.remove_reaction.assert_awaited_with(CLAIM_EMOJI, bot.user)
 
 
 # ── payout fraction math ──────────────────────────────────────────────────────
@@ -382,5 +547,4 @@ async def test_poll_payout_fraction_boundaries():
     assert _poll_payout_fraction(0.5) == 0.5
     assert _poll_payout_fraction(2 / 3) == 1.0
     assert _poll_payout_fraction(1.0) == 1.0
-    mid = _poll_payout_fraction(0.58)
-    assert 0.5 < mid < 1.0
+    assert 0.5 < _poll_payout_fraction(0.58) < 1.0

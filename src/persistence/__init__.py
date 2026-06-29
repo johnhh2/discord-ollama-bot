@@ -135,10 +135,12 @@ from src.persistence.issues import (  # noqa: F401
 from src.persistence.bounties import (  # noqa: F401
     insert_bounty,
     get_bounty_by_message,
-    get_bounty_by_dm,
-    get_bounty_by_contest,
-    get_bounty_by_poll,
     update_bounty,
+    insert_claim,
+    update_claim,
+    get_claim_by_dm,
+    get_claim_by_contest,
+    get_claim_by_poll,
     load_active_bounties,
 )
 from src.persistence.feature_requests import (  # noqa: F401

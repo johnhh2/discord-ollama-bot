@@ -244,18 +244,32 @@ async def _init_db_state_inner(state, run_migrations):
         except Exception as e:
             logging.error(f"[init_db_state] shop_effects.spellcheck failed: {e}", exc_info=True)
 
-        # ── bounties ──────────────────────────────────────────────────────
-        # Load every non-terminal bounty so reactions and the expiry loop keep
-        # working after a reboot. Keyed by the bounty embed's message_id.
+        # ── bounties (+ their in-flight claims) ───────────────────────────
+        # Load every open bounty with its non-terminal claims attached so
+        # reactions and the expiry loop keep working after a reboot. Keyed by
+        # the bounty embed's message_id.
         try:
-            from src.persistence.bounties import _BOUNTY_COLS, _row_to_bounty
-            await cur.execute(
-                f"SELECT {_BOUNTY_COLS} FROM bounties"  # nosec B608 - _BOUNTY_COLS is a literal
-                " WHERE status IN ('open','pending','contesting','polling')"
+            from src.persistence.bounties import (
+                _BOUNTY_COLS, _CLAIM_COLS, _row_to_bounty, _row_to_claim,
             )
+            await cur.execute(
+                f"SELECT {_BOUNTY_COLS} FROM bounties WHERE status='open'"  # nosec B608 - _BOUNTY_COLS is a literal
+            )
+            by_id = {}
             for row in await cur.fetchall():
                 bounty = _row_to_bounty(row)
                 state.active_bounties[bounty["message_id"]] = bounty
+                by_id[bounty["id"]] = bounty
+            if by_id:
+                await cur.execute(
+                    f"SELECT {_CLAIM_COLS} FROM bounty_claims"  # nosec B608 - _CLAIM_COLS is a literal
+                    " WHERE status IN ('pending','contesting','polling')"
+                )
+                for crow in await cur.fetchall():
+                    claim = _row_to_claim(crow)
+                    parent = by_id.get(claim["bounty_id"])
+                    if parent is not None:
+                        parent["claims"].append(claim)
         except Exception as e:
             logging.error(f"[init_db_state] bounties failed: {e}", exc_info=True)
 

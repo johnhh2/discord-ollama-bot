@@ -40,6 +40,7 @@ from src.config import (
     SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_TAX_PER_MESSAGE,
     SHOP_TAX_DURATION_SECS,
     SHOP_SPELLCHECK_COST, SHOP_SPELLCHECK_DURATION_SECS,
+    BOUNTY_MIN_AMOUNT,
 )
 from src import state
 
@@ -314,6 +315,16 @@ class ShopCog(commands.Cog):
         fun_items.append((SHOP_UNOREVERSE_COST, L("unoreverse", f"`!shop unoreverse @user` — Redirect active mock/ragebait/curse onto someone else — **{SHOP_UNOREVERSE_COST:,} 🪙**")))
         fun_items.sort(key=lambda x: x[0])
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
+
+        # Bounties — only surfaced where the feature is enabled (a bounty
+        # channel is configured). The reward is escrowed from the poster, so
+        # there's no fixed price to list; show the minimum and the channel.
+        bounty_channel_id = cfg.get("bounty_channel") if ctx.guild else None
+        if bounty_channel_id:
+            sections["🎯 Bounties"] = [
+                f"`!bounty <coins> [duration] <condition>` — Post an escrowed reward "
+                f"another user can claim in <#{bounty_channel_id}> — **{BOUNTY_MIN_AMOUNT:,} 🪙 min**",
+            ]
 
         if not sections:
             await send_ephemeral(ctx, embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE))

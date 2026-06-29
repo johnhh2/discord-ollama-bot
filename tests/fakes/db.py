@@ -64,6 +64,7 @@ _TABLE_PKS = {
     "schema_migrations": ("version",),
     "error_mutes": ("mute_key",),
     "bounties": ("id",),
+    "bounty_claims": ("id",),
 }
 
 
