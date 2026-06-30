@@ -99,10 +99,10 @@ def render_bounty_embed(bounty: dict) -> discord.Embed:
     e = discord.Embed(title="🎯 Bounty", description=desc, color=_bounty_color(status))
 
     if status == "open":
+        footer = f"React {CLAIM_EMOJI} to claim."
         if expires_at:
-            e.set_footer(text=f"React {CLAIM_EMOJI} to claim. Expires automatically if unclaimed.")
-        else:
-            e.set_footer(text=f"React {CLAIM_EMOJI} to claim. The author can react to cancel & refund.")
+            footer += " Expires automatically if unclaimed."
+        e.set_footer(text=footer)
     elif status == "accepted":
         e.set_footer(text="Bounty paid out. ✅")
     elif status == "cancelled":
