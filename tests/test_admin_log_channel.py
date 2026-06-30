@@ -258,6 +258,33 @@ async def test_error_log_fires_for_everyone_tier(db):
     assert log_chan.send.await_count == 1
 
 
+async def test_error_log_survives_dns_failure_collecting_history(db):
+    """A transient DNS/connection failure while fetching channel history (the
+    `Temporary failure in name resolution` case) must not crash the error
+    report. The history block is simply omitted and the report still posts."""
+    _state.bot_settings["internal_issue_channel"] = "67890"
+    _state.error_mutes.clear()
+    posted = FakeMessage(message_id=560)
+    posted.channel = FakeTextChannel(ch_id=67890)
+    log_chan = FakeTextChannel(ch_id=67890)
+    log_chan.send = AsyncMock(return_value=posted)
+    bot = _FakeBot(channel=log_chan)
+    ctx = _ctx_for_command("adminhelp")
+
+    # socket.gaierror (the actual DNS failure) is an OSError subclass; mimic the
+    # ClientConnectorDNSError that bubbles up through ctx.channel.history(...).
+    def _boom(*a, **kw):
+        raise OSError(-3, "Temporary failure in name resolution")
+    ctx.channel.history = _boom
+
+    # Must not raise, and the report still posts (just without the history block).
+    await _log_command_error(bot, ctx, RuntimeError("kaboom"))
+
+    assert log_chan.send.await_count == 1
+    embed = log_chan.send.call_args.kwargs["embed"]
+    assert "Last 5 messages" not in embed.description
+
+
 async def test_error_log_no_op_when_unconfigured():
     """No `internal_issue_channel` set → no fetch, no send, no raise."""
     _state.bot_settings.pop("internal_issue_channel", None)

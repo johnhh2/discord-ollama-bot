@@ -106,7 +106,7 @@ async def _log_command_error(bot, ctx: commands.Context, error: Exception):
 
     try:
         channel = bot.get_channel(int(chan_id)) or await bot.fetch_channel(int(chan_id))
-    except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError, aiohttp.ClientError, OSError):
         return
     if channel is None:
         return
@@ -149,7 +149,7 @@ async def _log_command_error(bot, ctx: commands.Context, error: Exception):
 
     try:
         report_msg = await channel.send(embed=emb("⚠️ Command Error", "\n".join(desc_lines), C_RED))
-    except (discord.Forbidden, discord.HTTPException):
+    except (discord.Forbidden, discord.HTTPException, aiohttp.ClientError, OSError):
         return
 
     try:
@@ -170,7 +170,7 @@ async def _log_command_error(bot, ctx: commands.Context, error: Exception):
     for emoji in _ERROR_REPORT_REACTIONS:
         try:
             await report_msg.add_reaction(emoji)
-        except (discord.Forbidden, discord.HTTPException):
+        except (discord.Forbidden, discord.HTTPException, aiohttp.ClientError, OSError):
             pass
 
 
@@ -188,7 +188,10 @@ async def _collect_recent_history(ctx: commands.Context) -> list[str]:
             text = _short_msg_text(msg)
             history_lines.append(f"[{msg.author.display_name}]: {text[:200]}")
         history_lines.reverse()
-    except (discord.Forbidden, discord.HTTPException, AttributeError):
+    except (discord.Forbidden, discord.HTTPException, AttributeError, aiohttp.ClientError, OSError):
+        # OSError/aiohttp.ClientError cover transient DNS/connection failures
+        # (e.g. ClientConnectorDNSError during a name-resolution blip) so a
+        # network hiccup while building the report can't crash on_command_error.
         return []
     return history_lines
 
@@ -503,7 +506,14 @@ class EventsCog(commands.Cog):
         if ctx.command is not None:
             from src.metrics import command_invocations
             command_invocations.labels(command=ctx.command.qualified_name, outcome="error").inc()
-        await _log_command_error(self.bot, ctx, error)
+        # Error reporting is best-effort: a transient network failure (DNS,
+        # connection reset) while posting the bug report must not produce a
+        # second, misleading on_command_error traceback that buries the real
+        # error. Swallow anything here; the original `error` is re-raised below.
+        try:
+            await _log_command_error(self.bot, ctx, error)
+        except Exception:
+            logging.warning("[error-report] failed to file command-error report", exc_info=True)
         raise error
 
     @commands.Cog.listener()
