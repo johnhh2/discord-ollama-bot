@@ -581,3 +581,64 @@ async def test_poll_payout_fraction_boundaries():
     assert _poll_payout_fraction(2 / 3) == 1.0
     assert _poll_payout_fraction(1.0) == 1.0
     assert 0.5 < _poll_payout_fraction(0.58) < 1.0
+
+
+# ── !bounties list command ────────────────────────────────────────────────────
+async def test_bounties_list_empty(db):
+    cog, bot, channel = _make_cog()
+    ctx = _ctx(1, channel)
+    await cog.cmd_bounties.callback(cog, ctx)
+    assert any("No open bounties" in e.description for e in ctx.sent_embeds)
+
+
+async def test_bounties_list_not_enabled(db):
+    cog, bot, channel = _make_cog()
+    ctx = _ctx(1, channel)
+    get_guild_cfg(GUILD_ID)["bounty_channel"] = None
+    await cog.cmd_bounties.callback(cog, ctx)
+    assert any("Not Enabled" in e.title for e in ctx.sent_embeds)
+
+
+async def test_bounties_list_shows_open_bounties(db):
+    cog, bot, channel = _make_cog()
+    await _open_bounty(cog, channel, author=70, amount=5_000,
+                       args=("5000", "wash", "the", "dishes"))
+    await _open_bounty(cog, channel, author=71, amount=12_000,
+                       args=("12000", "7d", "mow", "the", "lawn"))
+
+    ctx = _ctx(1, channel)
+    await cog.cmd_bounties.callback(cog, ctx)
+    listing = next(e for e in ctx.sent_embeds if "Open Bounties" in e.title)
+    assert "(2)" in listing.title
+    assert "5,000 🪙" in listing.description
+    assert "wash the dishes" in listing.description
+    assert "12,000 🪙" in listing.description
+    assert "mow the lawn" in listing.description
+    assert "expires <t:" in listing.description       # the 7d bounty shows expiry
+
+
+async def test_bounties_list_annotates_active_claims(db):
+    cog, bot, channel = _make_cog()
+    mid, _ = await _open_bounty(cog, channel, author=72, amount=8_000,
+                                args=("8000", "do", "a", "thing"))
+    await cog._handle_claim_reaction(_bounty(mid), 73)
+
+    ctx = _ctx(1, channel)
+    await cog.cmd_bounties.callback(cog, ctx)
+    listing = next(e for e in ctx.sent_embeds if "Open Bounties" in e.title)
+    assert "1 active claim" in listing.description
+
+
+async def test_bounties_list_excludes_other_guilds(db):
+    cog, bot, channel = _make_cog()
+    await _open_bounty(cog, channel, author=74, amount=5_000,
+                       args=("5000", "task", "here"))
+    # A stray open bounty in a different guild must not appear.
+    other = dict(_bounty(next(iter(_state.active_bounties))))
+    other = {**other, "guild_id": 999999, "message_id": 424242}
+    _state.active_bounties[other["message_id"]] = other
+
+    ctx = _ctx(1, channel)
+    await cog.cmd_bounties.callback(cog, ctx)
+    listing = next(e for e in ctx.sent_embeds if "Open Bounties" in e.title)
+    assert "(1)" in listing.title

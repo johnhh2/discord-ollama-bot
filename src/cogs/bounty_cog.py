@@ -709,6 +709,64 @@ class BountyCog(commands.Cog):
     async def cmd_bounty(self, ctx: commands.Context, *args):
         await self.create_bounty(ctx, args)
 
+    @commands.command(name="bounties", aliases=["allbounties", "bountylist", "quests"])
+    async def cmd_bounties(self, ctx: commands.Context):
+        """List this server's open bounties and their rewards."""
+        if ctx.guild is None:
+            await ctx.send(embed=emb("🎯 Bounties", "Bounties only work in servers.", C_RED))
+            return
+
+        cfg = get_guild_cfg(ctx.guild.id)
+        bounty_channel_id = cfg.get("bounty_channel")
+        if not bounty_channel_id:
+            await ctx.send(embed=emb(
+                "🎯 Bounties Not Enabled",
+                "No bounty channel is configured. A server admin can set one with "
+                "`!settings bounty-channel #channel`.",
+                C_GREY,
+            ))
+            return
+
+        # Open bounties live in memory, keyed by message id. Newest first.
+        bounties = sorted(
+            (b for b in state.active_bounties.values()
+             if b.get("guild_id") == ctx.guild.id and b.get("status") == "open"),
+            key=lambda b: b.get("created_at") or 0,
+            reverse=True,
+        )
+        if not bounties:
+            await ctx.send(embed=emb(
+                "🎯 Open Bounties",
+                f"No open bounties right now. Post one with `!bounty <coins> [duration] <condition>` "
+                f"in <#{bounty_channel_id}>.",
+                C_GOLD,
+            ))
+            return
+
+        lines = []
+        for b in bounties[:25]:
+            cond = b["condition"].replace("\n", " ")
+            if len(cond) > 100:
+                cond = cond[:99] + "…"
+            link = (
+                f"https://discord.com/channels/{b['guild_id']}/{b['channel_id']}/{b['message_id']}"
+            )
+            parts = [f"**{b['amount']:,} 🪙** — {cond} · [jump]({link})"]
+            claims = [c for c in b.get("claims", []) if c["status"] in _CLAIM_ACTIVE]
+            if claims:
+                parts.append(f"🙋 {len(claims)} active claim{'s' if len(claims) != 1 else ''}")
+            if b.get("expires_at"):
+                parts.append(f"⌛ expires <t:{int(b['expires_at'])}:R>")
+            lines.append(" · ".join(parts))
+
+        desc = "\n".join(lines)
+        extra = f"\n\n…and {len(bounties) - 25} more." if len(bounties) > 25 else ""
+        await ctx.send(embed=emb(
+            f"🎯 Open Bounties ({len(bounties)})",
+            desc + extra,
+            C_GOLD,
+        ))
+
 
 def _poll_payout_fraction(ratio: float) -> float:
     """Map a yes-vote ratio to a payout fraction.

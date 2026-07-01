@@ -324,6 +324,7 @@ class ShopCog(commands.Cog):
             sections["🎯 Bounties"] = [
                 f"`!bounty <coins> [duration] <condition>` — Post an escrowed reward "
                 f"another user can claim in <#{bounty_channel_id}> — **{BOUNTY_MIN_AMOUNT:,} 🪙 min**",
+                "`!bounties` — List the server's open bounties and their rewards",
             ]
 
         if not sections:
