@@ -761,9 +761,10 @@ class BountyCog(commands.Cog):
 
         desc = "\n".join(lines)
         extra = f"\n\n…and {len(bounties) - 25} more." if len(bounties) > 25 else ""
+        desc += f"{extra}\n\n📍 Bounty channel: <#{bounty_channel_id}>"
         await ctx.send(embed=emb(
             f"🎯 Open Bounties ({len(bounties)})",
-            desc + extra,
+            desc,
             C_GOLD,
         ))
 

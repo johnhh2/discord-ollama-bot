@@ -615,6 +615,7 @@ async def test_bounties_list_shows_open_bounties(db):
     assert "12,000 🪙" in listing.description
     assert "mow the lawn" in listing.description
     assert "expires <t:" in listing.description       # the 7d bounty shows expiry
+    assert f"<#{BOUNTY_CHANNEL_ID}>" in listing.description   # links the bounty channel
 
 
 async def test_bounties_list_annotates_active_claims(db):
