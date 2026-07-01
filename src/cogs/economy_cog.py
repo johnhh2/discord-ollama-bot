@@ -122,7 +122,7 @@ class _StealTierButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         view: _StealTierView = self.view  # type: ignore[assignment]
         if interaction.user.id != view.ctx.author.id:
-            await interaction.response.send_message("Not your heist.", ephemeral=True)
+            await interaction.response.send_message("Not your robbery.", ephemeral=True)
             return
         view._fired = True
         await interaction.response.edit_message(view=None)
@@ -355,7 +355,7 @@ class EconomyCog(commands.Cog):
             + "\n\n*Higher tiers steal more — but the **jail chance and fine** go up too.*"
         )
         view = _StealTierView(cog=self, ctx=ctx, target=target, victim_bal=victim_bal)
-        view.message = await ctx.send(embed=emb("🦹 Choose Heist Tier", body, C_GOLD), view=view)
+        view.message = await ctx.send(embed=emb("🦹 Choose Robbery Tier", body, C_GOLD), view=view)
 
     async def _run_steal(self, ctx: commands.Context, target, tier_num: int):
         TRACK = 20
@@ -445,7 +445,7 @@ class EconomyCog(commands.Cog):
             for i in range(steps):
                 caught_now = (not success) and (i == steps - 1)
                 frame = build_frame(robber_steps[i], cop_steps[i], done=(i == steps - 1), caught=caught_now)
-                e = emb("🦹 Heist in Progress...", frame, C_ORANGE)
+                e = emb("🦹 Robbery in Progress...", frame, C_ORANGE)
                 if msg is None:
                     msg = await ctx.send(embed=e)
                 else:
@@ -457,7 +457,7 @@ class EconomyCog(commands.Cog):
                 if victim_bal < steal_amount:
                     steal_amount = victim_bal
                 if steal_amount <= 0:
-                    result_embed = emb("🦹 Heist Failed", f"**{target.display_name}** is broke — nothing to steal!", C_RED)
+                    result_embed = emb("🦹 Robbery Failed", f"**{target.display_name}** is broke — nothing to steal!", C_RED)
                 else:
                     await deduct_balance(victim_id, steal_amount)
                     gid = ctx.guild.id if ctx.guild else 0
@@ -465,7 +465,7 @@ class EconomyCog(commands.Cog):
                     await record_crime_event(gid, thief_id, gained=steal_amount)
                     await record_crime_event(gid, victim_id, lost=steal_amount)
                     result_embed = emb(
-                        "🦹 Successful Heist!",
+                        "🦹 Successful Robbery!",
                         f"**{ctx.author.display_name}** stole **{steal_amount:,} 🪙** from **{target.display_name}**!\n"
                         f"Your balance: **{await get_balance(thief_id):,} 🪙**",
                         C_GREEN,
