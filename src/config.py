@@ -15,6 +15,17 @@ NSFW_API_KEY = os.getenv("NSFW_API_KEY")
 NSFW_API_USER_ID = os.getenv("NSFW_API_USER_ID")
 RACE_TRACK_LEN = 20
 
+# Minecraft Bedrock server status (optional; empty host disables the feature).
+# MC_SERVER_HOST must be the server's EXTERNAL address (DDNS name or WAN IP)
+# so !mc latency measures the internet-facing route players actually take,
+# not a ~0ms same-host container hop. Requires router NAT-loopback; fall back
+# to host.docker.internal if yours lacks it (latency is then local-only).
+# The `or` fallbacks matter: docker-compose exports these as empty strings
+# when unset, which os.getenv's default doesn't cover.
+MC_SERVER_HOST = os.getenv("MC_SERVER_HOST", "")
+MC_SERVER_PORT = int(os.getenv("MC_SERVER_PORT") or "19132")
+MC_POLL_SECONDS = int(os.getenv("MC_POLL_SECONDS") or "60")
+
 _raw_channels = os.getenv("ACTIVE_CHANNEL_IDS", "")
 ACTIVE_CHANNEL_IDS = (
     {int(cid.strip()) for cid in _raw_channels.split(",") if cid.strip()}

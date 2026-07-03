@@ -57,5 +57,7 @@
   "subscribe ignore": {"tier": "everyone", "hidden": false},
   "bounty":        {"tier": "everyone",    "hidden": false},
   "shop bounty":   {"tier": "everyone",    "hidden": false},
-  "settings bounty-channel": {"tier": "server_admin", "hidden": false}
+  "settings bounty-channel": {"tier": "server_admin", "hidden": false},
+  "mc":            {"tier": "everyone",    "hidden": false},
+  "settings minecraft-channel": {"tier": "server_admin", "hidden": false}
 }

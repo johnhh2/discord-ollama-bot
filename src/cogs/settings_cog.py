@@ -183,6 +183,34 @@ class SettingsCog(commands.Cog):
                 C_GREY,
             ))
 
+    # ── !settings minecraft-channel ───────────────────────────────────────────
+    @cmd_settings.command(name="minecraft-channel")
+    @requires_perm
+    async def settings_minecraft_channel(self, ctx: commands.Context, *args):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        if args and args[0].lower() == "clear":
+            cfg["minecraft_channel"] = None
+            await save_guild_settings()
+            await ctx.send(embed=emb("⛏️ Minecraft Channel", "Minecraft server notifications disabled.", C_GREEN))
+        elif ctx.message.channel_mentions:
+            channel = ctx.message.channel_mentions[0]
+            cfg["minecraft_channel"] = channel.id
+            await save_guild_settings()
+            await ctx.send(embed=emb(
+                "⛏️ Minecraft Channel",
+                f"Minecraft server up/down alerts and player-count notices will post in {channel.mention}.",
+                C_GREEN,
+            ))
+        else:
+            await ctx.send(embed=emb(
+                "⛏️ Minecraft Channel",
+                "Usage: `!settings minecraft-channel #channel` or `!settings minecraft-channel clear`",
+                C_GREY,
+            ))
+
     # ── !settings nsfw ────────────────────────────────────────────────────────
     @cmd_settings.command(name="nsfw")
     @requires_perm
@@ -601,6 +629,7 @@ class SettingsCog(commands.Cog):
         levelup_channel_id = cfg.get("levelup_channel")
         feature_req_channel_id = cfg.get("feature_request_channel")
         records_channel_id = cfg.get("records_channel")
+        minecraft_channel_id = cfg.get("minecraft_channel")
 
         ai_val = " ".join(f"<#{c}>" for c in ai_channels) if ai_channels else "all channels"
         ai_val += "\n*Subcommand: `ai #ch... / clear`*"
@@ -630,6 +659,10 @@ class SettingsCog(commands.Cog):
         records_val += "\nShows this server's records **plus** every new global-top record from any server."
         records_val += "\n*Subcommand: `records #channel / clear`*"
 
+        minecraft_val = f"<#{minecraft_channel_id}>" if minecraft_channel_id else "❌ disabled"
+        minecraft_val += "\nMinecraft server up/down alerts and player-count notices."
+        minecraft_val += "\n*Set with: `!settings minecraft-channel #channel / clear`*"
+
         embed = discord.Embed(title="⚙️ Server Channel Settings", color=C_BLUE)
         embed.add_field(name="✅ Channel whitelist", value=whitelist_val, inline=False)
         embed.add_field(name="❌ Channel blacklist", value=blacklist_val, inline=False)
@@ -640,6 +673,7 @@ class SettingsCog(commands.Cog):
         embed.add_field(name="🏆 Records channel", value=records_val, inline=False)
         embed.add_field(name="♟️ Chess channels", value=chess_val, inline=False)
         embed.add_field(name="📖 Feature request channel", value=feature_req_val, inline=False)
+        embed.add_field(name="⛏️ Minecraft channel", value=minecraft_val, inline=False)
 
         if is_admin(ctx):
             admin_log_id = state.bot_settings.get("admin_log_channel")

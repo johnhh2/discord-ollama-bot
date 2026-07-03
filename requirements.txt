@@ -7,6 +7,7 @@ aiomysql==0.3.2
 prometheus-client==0.25.0
 chess==1.11.2
 cairosvg==2.9.0
+mcstatus==14.0.0
 
 # Transitive (via yarl); pinned to clear CVE-2026-45409
 idna==3.15

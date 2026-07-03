@@ -1,148 +1,181 @@
-# discord-ollama-bot
+# discord-ollama-bot — a self-hosted AI Discord bot
 
 [![CI](https://github.com/johnhh2/discord-ollama-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/johnhh2/discord-ollama-bot/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![discord.py](https://img.shields.io/badge/discord.py-2.x-5865F2.svg)](https://github.com/Rapptz/discord.py)
+[![Docker](https://img.shields.io/badge/docker-compose-2496ED.svg)](docker-compose.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A feature-rich Discord bot that runs against a self-hosted [Ollama](https://ollama.com) LLM. Beyond chat, it ships with a full economy, gambling games, role/channel shop, lottery, level system, and a permission framework — all backed by MariaDB.
+A Discord bot that runs entirely on your own hardware: chat with a local [Ollama](https://ollama.com) LLM — no API keys, no per-token costs, no data leaving your network — plus a full virtual economy, casino games, a chess engine that plays like a human, a shop that spends coins on real Discord effects, and a tiered permission system. Backed by MariaDB, deployed with Docker.
 
-Async Python on top of `discord.py` and `aiomysql`, with streaming LLM output, a tiered permission system, and a 570+ test suite that runs against an in-memory SQLite double of the production schema. Deployed in production via GitHub Actions → GHCR → Portainer on a Synology NAS.
+**90+ commands · 1,250+ tests · more test code than source code · zero external AI services**
+
+<!-- TODO: demo GIF or screenshot here — a short clip of !ask streaming + a !slots spin sells this better than any text. -->
+
+## Why this exists
+
+Most AI Discord bots are thin wrappers around a paid API. This one talks to an Ollama instance on your LAN, streams responses as they generate, and throttles concurrent generations with a global semaphore so one GPU can serve a whole server. Everything else — the economy, games, and moderation — works even when the LLM is down (the health endpoint reports "degraded", not dead).
+
+## How it runs
+
+```mermaid
+flowchart LR
+    subgraph Discord
+        U[Users] <--> G[Discord Gateway]
+    end
+    subgraph "Your hardware"
+        subgraph "Bot container (read-only, all caps dropped)"
+            B[discord.py bot<br/>90+ commands]
+            H["/healthz + /metrics<br/>(loopback only)"]
+        end
+        O[Ollama<br/>local LLM on GPU]
+        DB[(MariaDB<br/>schema-migrated at boot)]
+        SF[Stockfish + Maia/lc0<br/>chess engines]
+    end
+    G <--> B
+    B -->|streaming completions| O
+    B -->|aiomysql pool| DB
+    B --> SF
+    B -.-> H
+```
 
 ## Features
 
-**LLM-backed chat**
-- `!ask` — conversational Q&A, threaded so each conversation has its own context
-- `!continue` — extend the previous response
-- Per-guild model selection (separate models for different command modes)
-- Channel-scoped passive responses, configurable history depth, per-user rate limiting
-- Streaming output with a global semaphore so a single GPU isn't overloaded
+### 🤖 LLM chat, locally hosted
+- `!ask` — conversational Q&A; each conversation gets its own thread with isolated context
+- `!continue`, `!tldr`, `!story`, `!roleplay` — follow-ups, summarization, and persona modes
+- Per-guild model selection, with separate models per mode (`!model`, `!codingmodel`, `!roleplaymodel`)
+- Custom system prompts per guild (`!setprompt`), channel-scoped passive replies, per-user rate limiting via a token bucket
+- Streaming output with a global semaphore so a single GPU is never oversubscribed
 
-**Economy & gambling**
-- Daily rewards (resets at 5am CT, DST-aware)
-- `!slots` with progressive jackpot, `!flip`, `!blackjack`, `!scratch` (scratchoffs)
-- Weekly `!lottery` with per-ticket purchases and a scheduled draw
-- `!savings` with compounding principal/interest tracking
-- `!steal` / `!mug` / `!jail` / `!jailbreak` PvP economy actions with insurance you can buy in the shop
-- `!leaderboard`, `!records`, `!economy` overview, `!graph` for visualizing balance history
-- `!bounty <coins> [duration] <condition>` — post an escrowed, honor-based reward others can claim (an optional duration auto-expires it, refunding 90%). Multiple users can claim concurrently; the author accepts/rejects each via DM, with a community-vote contest path, and the first accepted claim pays out. `!bounties` (aka `!quests`) lists the server's open bounties. Gated to a channel set by `!settings bounty-channel #channel`
+### ♟️ A chess bot that plays like a human
+`!chess @TheBot 1400` gives you an opponent that actually plays like a 1400 — not a crippled engine that alternates brilliancies and free queens.
 
-**Games**
-- `!hangman` (with a ~7.5k-word list and rarity-weighted payouts)
-- `!ttt` (tic-tac-toe), `!c4` (connect 4), `!race`
-- `!chess` — PvP or vs Stockfish (`@TheBot [elo]`, elo 100-3190); SAN/UCI moves, finished games archived for `!chess view <id>`
-- Multi-player support with channel-scoped sessions
+| Requested Elo | Engine behind the board |
+|---|---|
+| 100–1000 | Maia 1100 blended with calibrated random-move noise |
+| 1100–1900 | [Maia](https://maiachess.com) human-trained neural networks (one per 100-Elo bin) via lc0 |
+| 2000–3190 | Stockfish at native strength |
 
-**Shop**
-- Spend currency on real Discord effects: nicknames, role create/assign/color/move, channel create/rename/lock, mute, mock/curse/ragebait text effects, tax-other-user, insurance, UNO-reverse cards
-- All costs configured centrally in [src/config.py](src/config.py)
+PvP works too, with SAN/UCI move input, board rendering, threat analysis (`!chessthreats`), and archived games (`!chess view <id>`).
 
-**Levels & unlocks**
-- Per-guild XP from messages
-- Commands gated behind level thresholds — see [src/level_unlocks.py](src/level_unlocks.py)
-- `!lvl`, `!levels` leaderboard
+### 🎰 Economy & casino
+- `!daily` rewards with streaks (5am CT reset, DST-aware), `!savings` with compounding interest, `!pay`, `!graph` for balance history
+- `!slots` with a progressive jackpot, `!blackjack`, `!flip`, `!scratchoff`, and a weekly `!lottery` with scheduled draws
+- Crime layer: `!steal`, `!mug`, `!bankheist` co-op heists, `!jail` / `!bail` / `!jailbreak`, and purchasable insurance
+- `!bounty <coins> [duration] <condition>` — escrowed rewards anyone can claim, with author accept/reject via DM and a community-vote contest path
+- `!leaderboard`, `!records`, `!economy` server overview
 
-**Moderation & admin**
-- Three-tier permission system (`everyone`, `server_admin`, `bot_admin`) with optional `hidden` flag for stealth admin commands
-- All command perms in a single JSON file ([src/command_perms.json](src/command_perms.json)); per-guild user overrides via `!setperm @user <tier>`
-- Bot-admin commands: `!restart` (Docker-aware), `!godmode`, `!audit`, `!clear`, `!admingive`, `!adminunlock`
-- Full audit log of admin actions
+### 🛒 Shop with real consequences
+Coins buy actual Discord effects: nicknames, role creation/colors, channel renames and locks, mutes, mock/curse/ragebait text effects, taxing another user, UNO-reverse cards, and insurance against all of the above. Prices are centrally tuned in [src/config.py](src/config.py).
 
-**Other**
-- Riddles, quotes, dog/cat image commands
-- Ephemeral message auto-deletion
-- VRAM/uptime/memory `!stats`
+### 🎮 Games & progression
+- `!hangman` (~7.5k-word list, rarity-weighted payouts), `!ttt`, `!c4`, `!race`, `!puzzle`
+- Per-guild XP and levels (`!lvl`, `!levels`) with commands gated behind level thresholds
 
-## Architecture
+### ⛏️ Minecraft server status
+- `!mc` (alias `!minecraft`) — live Bedrock server status over a RakNet UDP ping: player count, latency, version, MOTD, gamemode, world
+- Background monitor posts up/down alerts and player-count notices ("a player joined — 3/10 online") to a channel set with `!settings minecraft-channel`, and mirrors the count in the bot's presence
+- Works against any reachable Bedrock endpoint (e.g. an [itzg/minecraft-bedrock-server](https://github.com/itzg/docker-minecraft-bedrock-server) container on the same host) — no docker socket required
 
-```
-src/
-├── core.py            # Bot factory, extension loading, level-gate check
-├── config.py          # All env vars and tunable constants
-├── persistence/       # MariaDB-backed save/load layer, split by domain
-├── db.py              # aiomysql connection pool
-├── schema.sql         # MariaDB schema
-├── economy.py         # Balance, daily reset, savings, jail logic
-├── ai.py              # Ollama streaming, cost enforcement, system prompts
-├── permissions.py     # check_command_permission, tier resolution
-├── level_unlocks.py   # Per-command level requirements
-├── helpers.py         # Embed builders, font transforms, shared utilities
-├── events.py          # Message dispatch, XP, ragebait/mock/curse handlers
-├── state.py           # In-memory caches loaded at startup
-├── cogs/              # Command groups (admin, ai, economy, shop, …)
-├── games/             # Blackjack, hangman, chess, ttt/c4, race
-└── gambling/          # Slots, flip, scratchoff
-```
-
-Roughly **12.4k lines of source** and **3.9k lines of tests**.
-
-The persistence layer was [migrated from JSON files to MariaDB](src/persistence/) mid-project — the schema lives in [src/schema.sql](src/schema.sql) and a SQLite-flavored version lives in [tests/fakes/schema_sqlite.sql](tests/fakes/schema_sqlite.sql) so the test suite can run against an in-memory DB with no external dependencies.
+### 🛡️ Moderation & administration
+- Three-tier permission system (`everyone` / `server_admin` / `bot_admin`) declared in one JSON file, with per-guild user overrides via `!setperm`
+- A `hidden` flag makes sensitive admin commands invisible to unauthorized users — denied silently, no error message
+- Full audit log of admin actions; Docker-aware `!restart`; `!settings` for per-guild configuration
+- Built-in issue tracking: users file `!bugreport` / `!featurerequest` from inside Discord
 
 ## Quick start (Docker)
 
-The bot is designed to run in Docker against an Ollama instance running on the host (or another machine on the LAN).
+You need: a [Discord bot token](https://discord.com/developers/applications), a MariaDB database (empty is fine), and [Ollama](https://ollama.com) running on the host or another machine on your LAN.
 
 ```bash
 git clone https://github.com/johnhh2/discord-ollama-bot.git
 cd discord-ollama-bot
-cp .env.example .env       # fill in DISCORD_TOKEN, DB_*, etc.
+cp .env.example .env       # fill in DISCORD_TOKEN and DB_* values
 docker compose up -d
 docker compose logs -f
 ```
 
-You'll need a MariaDB instance reachable from the container. Initialize it once with:
+That's it — there is no manual schema step. The bot applies versioned, checksummed [SQL migrations](migrations/) at boot, so a fresh database is initialized automatically and upgrades ship with the code.
 
-```bash
-mysql -h $DB_HOST -u $DB_USER -p $DB_NAME < src/schema.sql
-```
-
-## Running locally (without Docker)
+### Running locally (without Docker)
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env       # fill in values
+cp .env.example .env
 python main.py
 ```
 
 ## Configuration
 
-All configuration is via environment variables. See [.env.example](.env.example) for the full list. Highlights:
+All configuration is via environment variables — see [.env.example](.env.example) for the full annotated list. Highlights:
 
 | Variable | Default | Description |
 |---|---|---|
 | `DISCORD_TOKEN` | — | **Required.** Bot token from the Discord Developer Portal |
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | — | **Required.** MariaDB connection |
-| `DISCORD_CLIENT_ID` | — | Application client ID; required only for `!botinvitelink` |
-| `BOT_ADMIN_IDS` | — | Comma-separated Discord user IDs who get bot-admin tier |
+| `BOT_ADMIN_IDS` | — | Comma-separated Discord user IDs granted the `bot_admin` tier |
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama API endpoint |
 | `OLLAMA_MODEL` | `dolphin3:8b` | Default model for `!ask` |
 | `SYSTEM_PROMPT` | `You are a helpful assistant.` | Default character prompt |
 | `HISTORY_LIMIT` | `20` | Per-channel history depth fed to the model |
-| `ACTIVE_CHANNEL_IDS` | _(all)_ | Comma-separated channel IDs where the bot responds passively |
+| `ACTIVE_CHANNEL_IDS` | _(all)_ | Channels where the bot replies passively |
+| `DISCORD_CLIENT_ID` | — | Only needed for `!botinvitelink` |
+| `MC_SERVER_HOST` | _(disabled)_ | Minecraft Bedrock server address for `!mc` + monitoring. Any reachable endpoint works; prefer the **external** address (DDNS/WAN) so ping reflects the route players take. For a same-host server, `host.docker.internal` also works (local-only latency) |
+| `MC_SERVER_PORT` | `19132` | Bedrock UDP port |
+| `MC_POLL_SECONDS` | `60` | Monitor poll interval (up/down alerts, player-count notices, presence) |
 
-## Tests
+## Engineering highlights
 
-The test suite uses an in-memory SQLite database and a fake `discord` module — no Discord token, Ollama instance, or MariaDB needed.
+The part of the README for people reading this as a portfolio piece.
+
+**More test code than source code.** ~23k lines of source, ~24k lines of tests, 1,250+ test functions. The suite runs against an in-memory SQLite double that speaks the production MariaDB dialect through a translation layer ([tests/fakes/db.py](tests/fakes/db.py)) and a fake `discord` module — so `pytest` needs no token, no database server, and no Ollama, and finishes fast enough to run on every commit.
+
+**Boot-time schema migrations.** Numbered SQL files with per-file sha256 checksums; the runner refuses to boot on gaps, duplicates, or edited history ([src/migrations.py](src/migrations.py)). The test fake builds its schema from the same migration files, so a migration that only works on MariaDB fails in CI before it ever reaches production. Optional paired `.down.sql` files give operators explicit reverts.
+
+**Concurrency discipline.** Discord users can fire the same command from multiple devices before the first invocation finishes. Every gated command follows a documented claim-synchronously-roll-back-on-failure pattern, and the test suite includes interleaving regression tests that force event-loop yields inside the race window to prove the fix.
+
+**Defense in depth in CI.** Every push runs seven gates: `ruff` lint, `gitleaks` full-history secret scan, `bandit` security lint, `pip-audit --strict` against a hash-pinned lockfile, the full test suite, a container build, and a Trivy image scan ([ci.yml](.github/workflows/ci.yml)).
+
+**Hardened runtime.** The container runs with a read-only filesystem, all capabilities dropped, `no-new-privileges`, and a 512 MB memory cap. A loopback-only `/healthz` distinguishes hard dependencies (Discord, DB → 503) from soft ones (Ollama → 200 "degraded"), and `/metrics` exports Prometheus text format.
+
+**Real production deploys.** Push to `main` → GitHub Actions builds and pushes to GHCR → a Portainer webhook on a Synology NAS pulls and restarts the stack.
+
+```mermaid
+flowchart LR
+    C[git push] --> CI[GitHub Actions<br/>7 CI gates] --> R[(GHCR image)] --> W[Portainer webhook] --> N[Synology NAS<br/>stack restart]
+```
+
+## Project structure
+
+```
+src/
+├── core.py            # Bot factory, extension loading, level-gate check
+├── config.py          # All env vars and tunable constants
+├── migrations.py      # Checksummed schema-migration runner (runs at boot)
+├── persistence/       # MariaDB-backed save/load layer, split by domain
+├── db.py              # aiomysql connection pool
+├── ai.py              # Ollama streaming, rate limiting, system prompts
+├── permissions.py     # Tier resolution, per-guild overrides
+├── economy.py         # Balance, daily reset, savings, jail logic
+├── health.py          # /healthz + /metrics (loopback-only aiohttp server)
+├── events.py          # Message dispatch, XP, text-effect handlers
+├── state.py           # In-memory caches loaded at startup
+├── cogs/              # 14 command groups (admin, ai, economy, shop, …)
+├── games/             # Chess (+ engines), blackjack, hangman, ttt/c4, race
+└── gambling/          # Slots, flip, scratchoff
+migrations/            # Numbered SQL migrations — the schema's source of truth
+tests/                 # 1,250+ tests, in-memory DB fake, fake discord module
+```
+
+## Running the tests
 
 ```bash
 pip install pytest pytest-asyncio
-pytest
+pytest            # no token, DB server, or Ollama required
 ```
 
-Test layout:
-- [tests/test_bot.py](tests/test_bot.py) — game logic, hand evaluation, lottery math
-- [tests/test_economy_flows.py](tests/test_economy_flows.py) — daily reset, savings, transfers
-- [tests/test_persistence.py](tests/test_persistence.py) — DB round-trips
-- [tests/test_shop.py](tests/test_shop.py) — shop charge/refund flows
-- [tests/test_permissions.py](tests/test_permissions.py) — tier resolution and `hidden` flag
-- [tests/test_downtime.py](tests/test_downtime.py) — recovery from missed scheduled events
-
-## Deployment
-
-The bot runs in production on a Synology NAS, deployed via:
-1. GitHub Actions builds and pushes the Docker image to GHCR ([.github/workflows/docker.yml](.github/workflows/docker.yml))
-2. A Portainer webhook on the NAS pulls the new image and restarts the stack
-
-`docker-compose.yml` is configured for this setup (named volume at `/volume1/docker/ollama_discord_bot`, memory cap, log rotation).
+Notable suites: concurrency races ([tests/test_economy_flows.py](tests/test_economy_flows.py), [tests/test_shop.py](tests/test_shop.py)), migration ordering and checksums ([tests/test_migrations.py](tests/test_migrations.py)), downtime recovery for missed scheduled events ([tests/test_downtime.py](tests/test_downtime.py)), and chess engine integration ([tests/test_chess_bot.py](tests/test_chess_bot.py)).
 
 ## License
 

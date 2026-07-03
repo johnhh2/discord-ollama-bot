@@ -22,6 +22,9 @@ Key environment variables (all optional except `DISCORD_TOKEN`):
 | `ACTIVE_CHANNEL_IDS` | _(all channels)_ | Comma-separated channel IDs for passive AI responses |
 | `NSFW_API_URL` | — | Optional; base URL for the NSFW image API (enables `!nsfw`) |
 | `NSFW_API_KEY` / `NSFW_API_USER_ID` | — | Optional; API credentials for the NSFW image endpoint |
+| `MC_SERVER_HOST` | _(disabled)_ | Optional; Minecraft Bedrock server address (enables `!mc` + monitor). Prefer the external/public address so latency is the players' route; `host.docker.internal` works for a same-host server |
+| `MC_SERVER_PORT` | `19132` | Bedrock UDP port |
+| `MC_POLL_SECONDS` | `60` | Minecraft monitor poll interval |
 
 ### Adding a new env var
 
