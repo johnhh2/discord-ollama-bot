@@ -397,19 +397,28 @@ async def snapshot_balances():
     logging.info(f"[snapshot] balances for {today} bucket {bucket}: {len(snapshot)} users")
 
 
-async def snapshot_bot_stats(ai_up: bool):
-    """Write current message/command/AI counts and memory into today's
-    CURRENT 6h bucket. Pruning lives in do_daily_reset."""
+async def snapshot_bot_stats(ai_up: bool, ping_ms: float | None = None):
+    """Write current message/command/AI counts, memory, and gateway ping
+    into today's CURRENT 6h bucket. Pruning lives in do_daily_reset.
+
+    `ping_ms` is None when the caller has no gateway latency to report
+    (daily reset path, or pre-first-heartbeat) — the row keeps NULL and the
+    next 30-minute tick refreshes it.
+    """
     from src.helpers import get_memory_mb
     today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
     history = await load_bot_stats_history()
+    if ping_ms is None:
+        # Keep a ping an earlier tick already recorded for this bucket.
+        ping_ms = history.get(today, {}).get(bucket, {}).get("ping_ms")
     history.setdefault(today, {})[bucket] = {
         "messages": state.stats_messages_today,
         "commands": state.stats_commands_today,
         "ai_responses": state.stats_ai_responses_today,
         "ai_up": ai_up,
         "memory_mb": get_memory_mb(),
+        "ping_ms": ping_ms,
     }
     await save_bot_stats_history(history)
     logging.info(f"[snapshot] bot stats for {today} bucket {bucket}: {history[today][bucket]}")
@@ -472,9 +481,13 @@ async def record_gambling_event(guild_id: int, uid: int, *, gained: int = 0, los
     rec["lost"] += int(lost)
 
 
-async def snapshot_all():
+async def snapshot_all(ping_ms: float | None = None):
     """Run the periodic graph-data snapshots. Called by the GraphCog scheduler
     every 6 hours and once on boot.
+
+    `ping_ms` is the gateway heartbeat latency, passed in by the GraphCog
+    loop (the only caller with a bot reference). The daily-reset path omits
+    it; that bucket's ping refreshes on the next scheduler tick.
 
     Note: crime, gambling, and level-ups are NOT snapshotted here — they're
     written atomically at event time via the `record_*_event` helpers, so the
@@ -484,7 +497,7 @@ async def snapshot_all():
     from src.ai import check_ollama_connected
     await snapshot_balances()
     ai_up = await check_ollama_connected()
-    await snapshot_bot_stats(ai_up)
+    await snapshot_bot_stats(ai_up, ping_ms=ping_ms)
     await snapshot_command_usage()
 
 

@@ -889,3 +889,9 @@ CREATE INDEX IF NOT EXISTS idx_bounty_claims_bounty ON bounty_claims (bounty_id)
 CREATE INDEX IF NOT EXISTS idx_bounty_claims_dm ON bounty_claims (dm_message_id);
 CREATE INDEX IF NOT EXISTS idx_bounty_claims_contest ON bounty_claims (contest_message_id);
 CREATE INDEX IF NOT EXISTS idx_bounty_claims_poll ON bounty_claims (poll_message_id);
+
+-- ── 0034_add_ping_ms.sql ──
+-- 0034: Discord gateway heartbeat latency snapshot for `!graph ping`.
+-- NULL means "not measured" (rows written before this column existed, or
+-- snapshots taken before the first heartbeat ack after a reconnect).
+ALTER TABLE bot_stats_history ADD COLUMN IF NOT EXISTS ping_ms FLOAT NULL;

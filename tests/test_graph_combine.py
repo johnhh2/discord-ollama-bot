@@ -157,7 +157,8 @@ async def _seed_history(monkeypatch):
         today.isoformat(): {2: {"42": {"wallet": 200, "savings": 80}}},
     }
     bot_history = {
-        yest.isoformat(): {0: {"messages": 10, "commands": 3, "ai_responses": 1, "ai_up": True, "memory_mb": 80.0}},
+        yest.isoformat(): {0: {"messages": 10, "commands": 3, "ai_responses": 1, "ai_up": True, "memory_mb": 80.0, "ping_ms": 45.0}},
+        # today's bucket has no ping_ms — pre-migration row / unmeasured.
         today.isoformat(): {2: {"messages": 22, "commands": 7, "ai_responses": 4, "ai_up": True, "memory_mb": 95.0}},
     }
     cmd_history = {
@@ -264,6 +265,45 @@ async def test_render_combined_counts_grouped_stacked(monkeypatch):
     ai = await graph_series.build_series_ai()
     buf = await graph_series.render_combined(
         [cmds, srv, ai], graph_series.GROUP_COUNTS, "Count", "Test Combined Counts",
+    )
+    assert buf.getbuffer().nbytes > 0
+
+
+async def test_build_series_ping_skips_unmeasured_and_appends_live(monkeypatch):
+    """Buckets without a ping_ms value (pre-migration rows) are skipped, and
+    the live now-point comes from bot.latency in ms."""
+    await _seed_history(monkeypatch)
+    bot = SimpleNamespace(latency=0.042)
+    data = await graph_series.build_series_ping(bot)
+    assert [seg.label for seg in data.segments] == ["Gateway Ping"]
+    # yesterday's 45.0 survives, today's unmeasured bucket is skipped, and
+    # the live 42ms point is appended.
+    assert data.segments[0].y_values == [45.0, pytest.approx(42.0)]
+    assert len(data.x_points) == 2
+
+
+async def test_build_series_ping_nan_latency_skips_live_point(monkeypatch):
+    """Before the first heartbeat ack bot.latency is nan — no live point."""
+    await _seed_history(monkeypatch)
+    bot = SimpleNamespace(latency=float("nan"))
+    data = await graph_series.build_series_ping(bot)
+    assert data.segments[0].y_values == [45.0]
+    assert len(data.x_points) == 1
+
+
+async def test_parse_rejects_ping_with_memory(patch_member_converter):
+    ctx = _stub_ctx()
+    parsed = await graph_series.parse_tokens(ctx, ("ping", "memory"))
+    assert parsed.error is not None
+    assert "incompatible" in parsed.error
+
+
+@needs_matplotlib
+async def test_render_single_ping(monkeypatch):
+    await _seed_history(monkeypatch)
+    data = await graph_series.build_series_ping(SimpleNamespace(latency=0.05))
+    buf = await graph_series.render_combined(
+        [data], graph_series.GROUP_MS, "ms", "Test Single Ping",
     )
     assert buf.getbuffer().nbytes > 0
 

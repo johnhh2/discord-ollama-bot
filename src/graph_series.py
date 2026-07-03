@@ -11,7 +11,8 @@ style from (number-of-series, group):
   - N series, group "counts"       → grouped bars per day, each bar internally
                                      stacked from its segments.
 
-`memory` is its own group of size 1; combination with anything else is rejected.
+`memory` and `ping` are each their own group of size 1; combination with
+anything else is rejected.
 
 Adding a new graph series: write a `build_series_xxx()` async function returning
 `SeriesData`, then append a `SeriesSpec(...)` entry to `REGISTRY` below.
@@ -47,12 +48,14 @@ GROUP_COINS = "coins"
 GROUP_COUNTS = "counts"
 GROUP_MB = "mb"
 GROUP_XP = "xp"
+GROUP_MS = "ms"
 
 _GROUP_LABEL = {
     GROUP_COINS: "coins",
     GROUP_COUNTS: "counts",
     GROUP_MB: "MB",
     GROUP_XP: "xp",
+    GROUP_MS: "ms",
 }
 
 
@@ -95,6 +98,7 @@ class SeriesSpec:
     build: BuildFn
     accepts_member: bool = False
     accepts_guild: bool = False   # build needs current guild context (e.g. levels)
+    accepts_bot: bool = False     # build needs the Bot instance (e.g. ping's live point)
     y_unit_label: str = ""        # e.g. "🪙 Coins", "Count", "MB"
 
 
@@ -465,6 +469,38 @@ async def build_series_memory() -> SeriesData:
     )
 
 
+async def build_series_ping(bot) -> SeriesData:
+    """Per-(date, bucket) Discord gateway heartbeat latency in ms.
+
+    Buckets with no measurement (rows predating the ping_ms column, or
+    snapshots taken before the first heartbeat ack) are skipped rather than
+    plotted as 0 — a 0ms ping is a lie, not a data point.
+    """
+    import math
+
+    history = await load_bot_stats_history()
+    x_points: list[datetime.datetime] = []
+    y_ping: list[float] = []
+    for point_dt, snap in _iter_points(history):
+        ping = snap.get("ping_ms")
+        if ping is not None and ping > 0:
+            x_points.append(point_dt)
+            y_ping.append(ping)
+
+    now_point = _live_now_point()
+    latency_s = bot.latency if bot is not None else float("nan")
+    if math.isfinite(latency_s) and (not x_points or x_points[-1] != now_point):
+        x_points.append(now_point)
+        y_ping.append(latency_s * 1000)
+
+    return SeriesData(
+        title="Discord Ping",
+        segments=[Segment(label="Gateway Ping", color="#3498db", y_values=y_ping)],
+        x_points=x_points,
+        native_style="line",
+    )
+
+
 # ── Registry ─────────────────────────────────────────────────────────────────
 
 REGISTRY: list[SeriesSpec] = [
@@ -476,6 +512,7 @@ REGISTRY: list[SeriesSpec] = [
     SeriesSpec("server",   ("server", "srv"),                           GROUP_COUNTS, build_series_server,                           y_unit_label="Count"),
     SeriesSpec("ai",       ("ai",),                                     GROUP_COUNTS, build_series_ai,                               y_unit_label="Count"),
     SeriesSpec("memory",   ("memory", "mem", "ram"),                    GROUP_MB,     build_series_memory,                           y_unit_label="MB"),
+    SeriesSpec("ping",     ("ping", "latency"),                         GROUP_MS,     build_series_ping,     accepts_bot=True,     y_unit_label="ms"),
     SeriesSpec("levels",   ("levels", "level", "lvl"),                  GROUP_XP,     build_series_levels,   accepts_member=True, accepts_guild=True, y_unit_label="Level-ups"),
 ]
 
@@ -893,6 +930,8 @@ def _render_combined_sync(serieses: list[SeriesData], group: str, y_unit_label: 
 
     if y_unit_label == "MB":
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f} MB"))
+    elif y_unit_label == "ms":
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f} ms"))
     else:
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{int(v):,}"))
     ax.tick_params(colors="#dcddde", labelsize=8)

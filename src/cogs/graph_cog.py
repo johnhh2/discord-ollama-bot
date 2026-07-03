@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 
 import discord
 from discord.ext import commands, tasks
@@ -53,6 +54,8 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
             args.append(parsed.member)
         if spec.accepts_guild:
             args.append(parsed.guild_id)
+        if spec.accepts_bot:
+            args.append(ctx.bot)
         data = await spec.build(*args, **kwargs)
         serieses.append(data)
 
@@ -90,6 +93,8 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
         title = "Server Activity — Last 2 Weeks"
     elif len(parsed.specs) == 1 and parsed.specs[0].name == "memory":
         title = "Bot Memory Usage — Last 2 Weeks"
+    elif len(parsed.specs) == 1 and parsed.specs[0].name == "ping":
+        title = "Discord Gateway Ping — Last 2 Weeks"
 
     buf = await render_combined(serieses, group, y_unit, title)
     filename = "_".join(s.name for s in parsed.specs) + ".png"
@@ -120,7 +125,10 @@ class GraphCog(commands.Cog):
         here — they persist per-event and read directly from disk.
         """
         try:
-            await snapshot_all()
+            # Gateway heartbeat latency; nan before the first heartbeat ack.
+            latency_s = self.bot.latency
+            ping_ms = latency_s * 1000 if math.isfinite(latency_s) else None
+            await snapshot_all(ping_ms=ping_ms)
         except Exception:
             logging.exception("[graph] snapshot loop failed")
 
@@ -147,6 +155,7 @@ class GraphCog(commands.Cog):
             "`!graph commands` — Command usage by category over the last 2 weeks",
             "`!graph server` — Daily message and command counts over the last 2 weeks",
             "`!graph memory` — Bot memory usage (MB) over the last 2 weeks",
+            "`!graph ping` — Discord gateway ping (ms) over the last 2 weeks",
             "`!graph ai` — Daily AI response count and uptime over the last 2 weeks",
         ]
         if is_admin(ctx):
@@ -157,7 +166,7 @@ class GraphCog(commands.Cog):
             "**Combine compatible graphs** by listing multiple names:",
             "`!graph balance crime [@user]` — overlay coins-group graphs",
             "`!graph commands server ai` — grouped stacked bars for counts-group graphs",
-            "Coins, counts, and MB graphs cannot be mixed (different y-axes).",
+            "Coins, counts, MB, and ms graphs cannot be mixed (different y-axes).",
         ])
         await ctx.send(embed=emb("📊 Graph", "\n".join(lines), C_GOLD))
 
@@ -221,6 +230,11 @@ class GraphCog(commands.Cog):
     @requires_perm
     async def cmd_graph_memory(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("memory"))
+
+    @cmd_graph.command(name="ping", aliases=["latency"])
+    @requires_perm
+    async def cmd_graph_ping(self, ctx: commands.Context, *tokens: str):
+        await _build_and_render(ctx, tokens, find_spec("ping"))
 
     @cmd_graph.command(name="ai")
     @requires_perm
