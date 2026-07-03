@@ -39,6 +39,7 @@ from src.helpers import get_memory_mb
 from src.persistence import (
     load_balance_history, load_bot_stats_history, load_command_usage_history,
     load_crime_history, load_gambling_history, load_levelup_history,
+    load_mc_ping_samples,
 )
 
 
@@ -504,17 +505,35 @@ async def build_series_ping(bot) -> SeriesData:
 
 
 async def build_series_minecraft() -> SeriesData:
-    """Per-(date, bucket) Minecraft server ping in ms, with downtime plotted
-    at 0 so outages are visible on the chart.
+    """Minecraft server ping in ms, with downtime plotted at 0 so outages
+    are visible on the chart.
 
-    Three states per bucket: up (point at the measured ping), down (point at
-    0 — the downtime signal), and unknown (skipped: feature disabled, bot
-    offline, or rows predating the mc_* snapshot keys).
+    Two resolutions merged into one line: every persisted monitor poll
+    (mc_ping_samples, ~60s cadence, last 7 days) for the recent span, and
+    the coarse per-(date, bucket) snapshots from bot_stats_history for the
+    older tail the sample table has already pruned. Bucket points inside
+    the samples' coverage are dropped — the samples are strictly better.
+
+    Bucket states: up (point at the measured ping), down (point at 0), and
+    unknown (skipped: feature disabled, bot offline, or rows predating the
+    mc_* snapshot keys).
     """
+    samples = await load_mc_ping_samples(int(_time.time() - 7 * 86_400))
+    sample_points = [
+        (
+            datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc),
+            float(latency) if (online and latency) else 0.0,
+        )
+        for ts, online, latency in samples
+    ]
+    first_sample_dt = sample_points[0][0] if sample_points else None
+
     history = await load_bot_stats_history()
     x_points: list[datetime.datetime] = []
     y_ping: list[float] = []
     for point_dt, snap in _iter_points(history):
+        if first_sample_dt is not None and point_dt >= first_sample_dt:
+            continue
         up = snap.get("mc_up")
         ping = snap.get("mc_ping_ms")
         if up and ping is not None and ping > 0:
@@ -524,12 +543,18 @@ async def build_series_minecraft() -> SeriesData:
             x_points.append(point_dt)
             y_ping.append(0.0)
 
-    # Live "now" point from the monitor's latest sample.
-    now_point = _live_now_point()
-    if state.mc_last_online is not None and (not x_points or x_points[-1] != now_point):
-        live_ping = state.mc_last_ping_ms if state.mc_last_online else None
-        x_points.append(now_point)
-        y_ping.append(float(live_ping) if live_ping else 0.0)
+    for point_dt, y in sample_points:
+        x_points.append(point_dt)
+        y_ping.append(y)
+
+    # Live "now" point from the monitor's latest in-memory sample — only
+    # needed when there are no persisted samples ending near now.
+    if not sample_points:
+        now_point = _live_now_point()
+        if state.mc_last_online is not None and (not x_points or x_points[-1] != now_point):
+            live_ping = state.mc_last_ping_ms if state.mc_last_online else None
+            x_points.append(now_point)
+            y_ping.append(float(live_ping) if live_ping else 0.0)
 
     return SeriesData(
         title="Minecraft Ping",

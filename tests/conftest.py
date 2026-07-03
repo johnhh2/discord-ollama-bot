@@ -131,6 +131,7 @@ def reset_bot_state(monkeypatch):
         "prune_crime_history", "prune_gambling_history",
         "log_notable_event", "prune_notable_events",
         "add_ephemeral_msg",
+        "save_mc_ping_sample", "prune_mc_ping_samples",
     ]
     for fn_name in save_fn_names:
         if hasattr(_persistence, fn_name):

@@ -9,6 +9,7 @@ Named join/leave, playtime, and console commands would all need docker-socket
 access (deliberately not mounted).
 """
 import asyncio
+import collections
 import dataclasses
 import logging
 import time
@@ -18,6 +19,9 @@ from discord.ext import commands, tasks
 from mcstatus import BedrockServer
 
 from src import state
+# Accessed as attributes (not `from`-imported) so the test suite's stubs on
+# the persistence package reach the calls here.
+import src.persistence as persistence
 from src.config import (
     MC_SERVER_HOST, MC_SERVER_PORT, MC_POLL_SECONDS, MC_SERVER_SHOW_IP,
 )
@@ -31,6 +35,47 @@ MC_STATUS_TIMEOUT_SECS = 5.0
 # Consecutive failed pings before the monitor declares the server offline.
 # One lost UDP packet must not produce an offline/online alert pair.
 MC_OFFLINE_AFTER_FAILURES = 2
+# Rolling windows for the !mc derived stats. Samples are persisted per poll
+# (mc_ping_samples, migration 0035) and restored on boot, so the windows
+# survive restarts; the uptime field still labels its actual coverage when
+# the table holds less than a full week.
+MC_UPTIME_WINDOW_SECS = 7 * 86_400
+MC_AVG_PING_WINDOW_SECS = 3_600
+# Prune the persisted samples once an hour rather than on every poll.
+MC_PRUNE_EVERY_TICKS = 3_600 // max(MC_POLL_SECONDS, 1)
+
+
+@dataclasses.dataclass
+class McSample:
+    """One monitor poll result: reachable or not, and the measured ping."""
+    ts: float
+    online: bool
+    latency_ms: "float | None"
+
+
+def _uptime_pct(samples, now: float) -> "tuple[float, float] | None":
+    """Fraction of monitor polls that answered over the last week.
+
+    Returns (pct, window_start_ts) or None with no samples. window_start is
+    the older of (now - 7d, first sample) so callers can label short coverage
+    honestly after a reboot.
+    """
+    cutoff = now - MC_UPTIME_WINDOW_SECS
+    window = [s for s in samples if s.ts >= cutoff]
+    if not window:
+        return None
+    up = sum(1 for s in window if s.online)
+    return 100.0 * up / len(window), window[0].ts
+
+
+def _avg_ping_ms(samples, now: float) -> "float | None":
+    """Mean ping of successful polls over the last hour, or None."""
+    cutoff = now - MC_AVG_PING_WINDOW_SECS
+    pings = [s.latency_ms for s in samples
+             if s.ts >= cutoff and s.online and s.latency_ms]
+    if not pings:
+        return None
+    return sum(pings) / len(pings)
 
 
 @dataclasses.dataclass
@@ -117,6 +162,13 @@ class MinecraftCog(commands.Cog):
         self._monitor = MonitorState()
         self._last_seen_online: float | None = None
         self._presence_str: str | None = None
+        # When the current online stretch began: set on the up-transition
+        # (or first sighting after boot), cleared when confirmed offline.
+        self._online_since: float | None = None
+        # Rolling poll results for uptime % / avg ping; pruned to 7 days.
+        # Restored from mc_ping_samples in the monitor's before_loop.
+        self._samples: collections.deque[McSample] = collections.deque()
+        self._ticks_until_prune = 0
         if MC_SERVER_HOST:
             self.mc_monitor.start()
 
@@ -145,7 +197,7 @@ class MinecraftCog(commands.Cog):
             return
 
         self._last_seen_online = time.time()
-        embed = discord.Embed(title="🟢 Minecraft Bedrock Server", color=C_GREEN)
+        embed = discord.Embed(title="🟢 Minecraft Server Status", color=C_GREEN)
         if MC_SERVER_SHOW_IP:
             embed.description = f"**{MC_SERVER_HOST}:{MC_SERVER_PORT}**"
         embed.add_field(name="Players", value=f"{status.players}/{status.max_players}")
@@ -157,6 +209,24 @@ class MinecraftCog(commands.Cog):
             embed.add_field(name="World", value=status.motd, inline=False)
         if status.gamemode:
             embed.add_field(name="Gamemode", value=status.gamemode)
+
+        # Monitor-derived stats; absent until the poll loop has data.
+        now = time.time()
+        if self._online_since:
+            embed.add_field(name="Online since", value=f"<t:{int(self._online_since)}:R>")
+        avg = _avg_ping_ms(self._samples, now)
+        if avg is not None:
+            embed.add_field(name="Avg ping (1h)", value=f"{avg:.0f} ms")
+        uptime = _uptime_pct(self._samples, now)
+        if uptime is not None:
+            pct, window_start = uptime
+            # Label the real coverage when the window is still filling
+            # (samples only live in memory, so a reboot restarts it).
+            if now - window_start < MC_UPTIME_WINDOW_SECS - 6 * 3_600:
+                value = f"{pct:.1f}% since <t:{int(window_start)}:R>"
+            else:
+                value = f"{pct:.1f}% (last 7 days)"
+            embed.add_field(name="Uptime", value=value)
         await ctx.send(embed=embed)
 
     # ── Monitor loop ──────────────────────────────────────────────────────────
@@ -165,8 +235,39 @@ class MinecraftCog(commands.Cog):
         status = await fetch_mc_status()
         prev = self._monitor
         self._monitor, events = _mc_events(prev, status)
+        now = time.time()
         if status is not None:
-            self._last_seen_online = time.time()
+            self._last_seen_online = now
+
+        # Rolling stats window (uptime % / avg ping for !mc).
+        sample = McSample(
+            ts=now, online=status is not None,
+            latency_ms=float(status.latency_ms) if status else None,
+        )
+        self._samples.append(sample)
+        cutoff = now - MC_UPTIME_WINDOW_SECS
+        while self._samples and self._samples[0].ts < cutoff:
+            self._samples.popleft()
+
+        # Persist the sample so the stats window and graph survive restarts.
+        try:
+            await persistence.save_mc_ping_sample(
+                int(sample.ts), sample.online, sample.latency_ms)
+            if self._ticks_until_prune <= 0:
+                self._ticks_until_prune = MC_PRUNE_EVERY_TICKS
+                await persistence.prune_mc_ping_samples(int(cutoff))
+            self._ticks_until_prune -= 1
+        except Exception:
+            logger.exception("[minecraft] failed to persist ping sample")
+
+        # Track when the current online stretch began. `not prev.online`
+        # covers both a real up-transition (False) and first sighting (None);
+        # a value restored from disk in before_loop is kept.
+        if self._monitor.online and not prev.online:
+            if self._online_since is None:
+                self._online_since = now
+        elif self._monitor.online is False:
+            self._online_since = None
 
         # Publish the sample for the graph scheduler's bot-stats snapshot.
         # During the offline debounce window online stays True — that's fine,
@@ -181,8 +282,38 @@ class MinecraftCog(commands.Cog):
     @mc_monitor.before_loop
     async def _before_monitor(self):
         await self.bot.wait_until_ready()
-        import src.persistence as _pkg
-        await _pkg.init_done.wait()
+        await persistence.init_done.wait()
+        try:
+            await self._restore_samples()
+        except Exception:
+            logger.exception("[minecraft] failed to restore persisted samples")
+
+    async def _restore_samples(self):
+        """Reload the 7-day stats window from mc_ping_samples after a boot."""
+        if self._samples:
+            return  # gateway reconnect, not a fresh boot
+        now = time.time()
+        rows = await persistence.load_mc_ping_samples(
+            int(now - MC_UPTIME_WINDOW_SECS))
+        for ts, online, latency in rows:
+            self._samples.append(McSample(
+                ts=float(ts), online=online,
+                latency_ms=float(latency) if latency is not None else None,
+            ))
+        online_ts = [s.ts for s in self._samples if s.online]
+        if online_ts:
+            self._last_seen_online = online_ts[-1]
+        # Resume the "online since" stretch only when the samples run right
+        # up to this boot and end online — after a longer gap we can't know
+        # the server stayed up while the bot was down.
+        if (self._samples and self._samples[-1].online
+                and now - self._samples[-1].ts < 3 * MC_POLL_SECONDS):
+            run_start = None
+            for s in reversed(self._samples):
+                if not s.online:
+                    break
+                run_start = s.ts
+            self._online_since = run_start
 
     def _event_payloads(self, events: list[str], prev: MonitorState,
                         status: "McStatus | None") -> list[dict]:

@@ -65,6 +65,7 @@ _TABLE_PKS = {
     "error_mutes": ("mute_key",),
     "bounties": ("id",),
     "bounty_claims": ("id",),
+    "mc_ping_samples": ("ts",),
 }
 
 

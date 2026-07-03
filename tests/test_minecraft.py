@@ -5,6 +5,7 @@ No network anywhere — fetch_mc_status is monkeypatched at module scope
 awaiting its .coro directly instead of starting the tasks.Loop.
 """
 import json
+import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -311,6 +312,86 @@ async def test_no_monitor_or_presence_when_unconfigured(monkeypatch):
     bot.change_presence.assert_not_called()
 
 
+# ── Derived stats: online since, uptime %, avg ping ──────────────────────────
+
+def _sample(ts, online, ping=None):
+    return mc_mod.McSample(ts=ts, online=online, latency_ms=ping)
+
+
+async def test_uptime_pct_counts_only_last_week():
+    now = 1_000_000.0
+    week = mc_mod.MC_UPTIME_WINDOW_SECS
+    samples = [
+        _sample(now - week - 100, False),          # outside window: ignored
+        _sample(now - 3000, True, 40.0),
+        _sample(now - 2000, False),
+        _sample(now - 1000, True, 50.0),
+        _sample(now, True, 60.0),
+    ]
+    pct, window_start = mc_mod._uptime_pct(samples, now)
+    assert pct == 75.0
+    assert window_start == now - 3000
+    assert mc_mod._uptime_pct([], now) is None
+
+
+async def test_avg_ping_uses_last_hour_of_up_samples():
+    now = 1_000_000.0
+    samples = [
+        _sample(now - 7200, True, 500.0),          # older than an hour: ignored
+        _sample(now - 1800, True, 40.0),
+        _sample(now - 900, False),                 # down sample: ignored
+        _sample(now - 60, True, 60.0),
+    ]
+    assert mc_mod._avg_ping_ms(samples, now) == 50.0
+    assert mc_mod._avg_ping_ms([_sample(now, False)], now) is None
+
+
+async def test_monitor_tracks_online_since_and_samples(monkeypatch):
+    bot = _FakeBot(guilds=[])
+    cog = _make_cog(monkeypatch, bot=bot)
+
+    async def _fake_fetch():
+        return _status(players=1, latency=30)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
+    await _tick(cog)
+    assert cog._online_since is not None
+    assert len(cog._samples) == 1 and cog._samples[0].online
+
+    async def _fake_fetch_down():
+        return None
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch_down)
+
+    await _tick(cog)
+    await _tick(cog)                                # debounce → confirmed offline
+    assert cog._online_since is None
+    assert [s.online for s in cog._samples] == [True, False, False]
+
+
+async def test_mc_embed_shows_derived_stats(monkeypatch):
+    cog = _make_cog(monkeypatch)
+    now = time.time()
+    cog._online_since = now - 5000
+    cog._samples.extend([
+        _sample(now - 120, True, 40.0),
+        _sample(now - 60, True, 60.0),
+    ])
+
+    async def _fake_fetch():
+        return _status()
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
+    ctx = _mc_ctx()
+    await cog.cmd_mc.callback(cog, ctx)
+
+    embed = ctx.sent_embeds[0]
+    assert embed.title == "🟢 Minecraft Server Status"
+    fields = {f.name: f.value for f in embed.fields}
+    assert fields["Online since"] == f"<t:{int(now - 5000)}:R>"
+    assert fields["Avg ping (1h)"] == "50 ms"
+    assert fields["Uptime"] == "100.0% since <t:{}:R>".format(int(now - 120))
+
+
 # ── !help fun section ─────────────────────────────────────────────────────────
 
 async def _help_fun_field(monkeypatch, host: str) -> str:
@@ -364,9 +445,20 @@ async def test_monitor_publishes_state_sample(monkeypatch):
     assert _state.mc_last_ping_ms is None
 
 
-async def test_build_series_minecraft_points(monkeypatch):
+def _patch_graph_loads(monkeypatch, history=None, samples=None):
     from src import graph_series
 
+    async def _fake_history():
+        return history or {}
+
+    async def _fake_samples(since_ts):
+        return samples or []
+    monkeypatch.setattr(graph_series, "load_bot_stats_history", _fake_history)
+    monkeypatch.setattr(graph_series, "load_mc_ping_samples", _fake_samples)
+    return graph_series
+
+
+async def test_build_series_minecraft_points(monkeypatch):
     history = {
         "2026-07-01": {
             0: {"mc_up": True, "mc_ping_ms": 40.0},
@@ -375,10 +467,7 @@ async def test_build_series_minecraft_points(monkeypatch):
             3: {"mc_up": None, "mc_ping_ms": None},    # unknown → skipped
         },
     }
-
-    async def _fake_load():
-        return history
-    monkeypatch.setattr(graph_series, "load_bot_stats_history", _fake_load)
+    graph_series = _patch_graph_loads(monkeypatch, history=history)
     monkeypatch.setattr(_state, "mc_last_online", None)  # no live point
 
     data = await graph_series.build_series_minecraft()
@@ -389,11 +478,7 @@ async def test_build_series_minecraft_points(monkeypatch):
 
 
 async def test_build_series_minecraft_live_point(monkeypatch):
-    from src import graph_series
-
-    async def _fake_load():
-        return {}
-    monkeypatch.setattr(graph_series, "load_bot_stats_history", _fake_load)
+    graph_series = _patch_graph_loads(monkeypatch)
     monkeypatch.setattr(_state, "mc_last_online", True)
     monkeypatch.setattr(_state, "mc_last_ping_ms", 33.0)
 
@@ -404,6 +489,110 @@ async def test_build_series_minecraft_live_point(monkeypatch):
     monkeypatch.setattr(_state, "mc_last_ping_ms", None)
     data = await graph_series.build_series_minecraft()
     assert data.segments[0].y_values == [0.0]
+
+
+async def test_build_series_minecraft_merges_buckets_and_samples(monkeypatch):
+    import datetime as _dt
+    from src.graph_series import _bucket_start_dt
+
+    now = int(time.time())
+    samples = [
+        (now - 180, True, 42.0),
+        (now - 120, False, None),      # down poll → 0
+        (now - 60, True, 44.0),
+    ]
+    first_sample_dt = _dt.datetime.fromtimestamp(now - 180, tz=_dt.timezone.utc)
+    # One bucket safely older than the samples, one inside their coverage.
+    old_day = (first_sample_dt - _dt.timedelta(days=3)).date().isoformat()
+    new_day = (first_sample_dt + _dt.timedelta(days=1)).date().isoformat()
+    history = {
+        old_day: {0: {"mc_up": True, "mc_ping_ms": 40.0}},
+        new_day: {3: {"mc_up": True, "mc_ping_ms": 99.0}},   # covered → dropped
+    }
+    assert _bucket_start_dt(new_day, 3) >= first_sample_dt
+
+    graph_series = _patch_graph_loads(monkeypatch, history=history, samples=samples)
+    data = await graph_series.build_series_minecraft()
+
+    # 1 old bucket point + all 3 per-poll samples; the covered bucket is gone.
+    assert data.segments[0].y_values == [40.0, 42.0, 0.0, 44.0]
+    assert data.x_points == sorted(data.x_points)
+
+
+async def test_mc_ping_samples_roundtrip(db):
+    from src.persistence import (
+        save_mc_ping_sample, load_mc_ping_samples, prune_mc_ping_samples,
+    )
+    await save_mc_ping_sample(1000, True, 40.0)
+    await save_mc_ping_sample(2000, False, None)
+    await save_mc_ping_sample(3000, True, 60.0)
+
+    rows = await load_mc_ping_samples(0)
+    assert rows == [(1000, True, 40.0), (2000, False, None), (3000, True, 60.0)]
+    assert await load_mc_ping_samples(2000) == rows[1:]
+
+    await prune_mc_ping_samples(2000)
+    assert await load_mc_ping_samples(0) == rows[1:]
+
+
+async def test_monitor_persists_each_poll(monkeypatch):
+    saved = []
+
+    async def _spy_save(ts, online, latency_ms):
+        saved.append((online, latency_ms))
+    monkeypatch.setattr(_persistence, "save_mc_ping_sample", _spy_save)
+
+    bot = _FakeBot(guilds=[])
+    cog = _make_cog(monkeypatch, bot=bot)
+
+    async def _fake_fetch():
+        return _status(latency=30)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+    await _tick(cog)
+
+    async def _fake_fetch_down():
+        return None
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch_down)
+    await _tick(cog)
+
+    assert saved == [(True, 30.0), (False, None)]
+
+
+async def test_restore_samples_rebuilds_window(monkeypatch):
+    now = time.time()
+    rows = [
+        (int(now - 400), True, 40.0),
+        (int(now - 300), False, None),
+        (int(now - 120), True, 50.0),
+        (int(now - 60), True, 60.0),
+    ]
+
+    async def _fake_load(since_ts):
+        return rows
+    monkeypatch.setattr(_persistence, "load_mc_ping_samples", _fake_load)
+
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+    await cog._restore_samples()
+
+    assert len(cog._samples) == 4
+    # Trailing online run starts at the sample after the down poll.
+    assert cog._online_since == float(rows[2][0])
+    assert cog._last_seen_online == float(rows[3][0])
+
+
+async def test_restore_samples_stale_gap_leaves_online_since_unset(monkeypatch):
+    now = time.time()
+    rows = [(int(now - 7200), True, 40.0)]   # bot was down for 2h — can't know
+
+    async def _fake_load(since_ts):
+        return rows
+    monkeypatch.setattr(_persistence, "load_mc_ping_samples", _fake_load)
+
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+    await cog._restore_samples()
+
+    assert cog._online_since is None
+    assert cog._last_seen_online == float(rows[0][0])
 
 
 async def test_graph_registry_resolves_minecraft():
