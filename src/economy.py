@@ -412,6 +412,14 @@ async def snapshot_bot_stats(ai_up: bool, ping_ms: float | None = None):
     if ping_ms is None:
         # Keep a ping an earlier tick already recorded for this bucket.
         ping_ms = history.get(today, {}).get(bucket, {}).get("ping_ms")
+    mc_up = state.mc_last_online
+    mc_ping_ms = state.mc_last_ping_ms
+    if mc_up is None:
+        # No monitor sample yet (boot snapshot, or feature disabled) — keep
+        # whatever an earlier tick recorded for this bucket.
+        prev = history.get(today, {}).get(bucket, {})
+        mc_up = prev.get("mc_up")
+        mc_ping_ms = prev.get("mc_ping_ms")
     history.setdefault(today, {})[bucket] = {
         "messages": state.stats_messages_today,
         "commands": state.stats_commands_today,
@@ -419,6 +427,8 @@ async def snapshot_bot_stats(ai_up: bool, ping_ms: float | None = None):
         "ai_up": ai_up,
         "memory_mb": get_memory_mb(),
         "ping_ms": ping_ms,
+        "mc_up": mc_up,
+        "mc_ping_ms": mc_ping_ms,
     }
     await save_bot_stats_history(history)
     logging.info(f"[snapshot] bot stats for {today} bucket {bucket}: {history[today][bucket]}")

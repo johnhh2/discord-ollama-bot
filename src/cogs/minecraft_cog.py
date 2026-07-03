@@ -17,7 +17,10 @@ import discord
 from discord.ext import commands, tasks
 from mcstatus import BedrockServer
 
-from src.config import MC_SERVER_HOST, MC_SERVER_PORT, MC_POLL_SECONDS
+from src import state
+from src.config import (
+    MC_SERVER_HOST, MC_SERVER_PORT, MC_POLL_SECONDS, MC_SERVER_SHOW_IP,
+)
 from src.helpers import emb, C_GREEN, C_RED, C_GREY
 from src.guild_config import get_guild_cfg
 from src.permissions import requires_perm
@@ -48,6 +51,14 @@ class MonitorState:
     online: bool | None = None
     count: int = 0
     fail_streak: int = 0
+
+
+def _server_label() -> str:
+    """How embeds refer to the server. The address is only exposed when the
+    operator opts in via MC_SERVER_SHOW_IP."""
+    if MC_SERVER_SHOW_IP:
+        return f"**{MC_SERVER_HOST}:{MC_SERVER_PORT}**"
+    return "The Minecraft server"
 
 
 async def fetch_mc_status() -> "McStatus | None":
@@ -127,7 +138,7 @@ class MinecraftCog(commands.Cog):
 
         status = await fetch_mc_status()
         if status is None:
-            desc = f"**{MC_SERVER_HOST}:{MC_SERVER_PORT}** didn't respond."
+            desc = f"{_server_label()} didn't respond."
             if self._last_seen_online:
                 desc += f"\nLast seen online <t:{int(self._last_seen_online)}:R>."
             await ctx.send(embed=emb("🔴 Server Offline", desc, C_RED))
@@ -135,7 +146,8 @@ class MinecraftCog(commands.Cog):
 
         self._last_seen_online = time.time()
         embed = discord.Embed(title="🟢 Minecraft Bedrock Server", color=C_GREEN)
-        embed.description = f"**{MC_SERVER_HOST}:{MC_SERVER_PORT}**"
+        if MC_SERVER_SHOW_IP:
+            embed.description = f"**{MC_SERVER_HOST}:{MC_SERVER_PORT}**"
         embed.add_field(name="Players", value=f"{status.players}/{status.max_players}")
         embed.add_field(name="Ping", value=f"{status.latency_ms} ms")
         embed.add_field(name="Version", value=status.version or "?")
@@ -156,6 +168,12 @@ class MinecraftCog(commands.Cog):
         if status is not None:
             self._last_seen_online = time.time()
 
+        # Publish the sample for the graph scheduler's bot-stats snapshot.
+        # During the offline debounce window online stays True — that's fine,
+        # the graph treats "up but no ping this sample" as no data point.
+        state.mc_last_online = self._monitor.online
+        state.mc_last_ping_ms = float(status.latency_ms) if status else None
+
         if events:
             await self._announce(self._event_payloads(events, prev, status))
         await self._update_presence(status)
@@ -168,34 +186,38 @@ class MinecraftCog(commands.Cog):
 
     def _event_payloads(self, events: list[str], prev: MonitorState,
                         status: "McStatus | None") -> list[dict]:
-        """Turn events into channel.send kwargs (content= or embed=)."""
+        """Turn events into channel.send kwargs (colored embeds)."""
         payloads = []
         for ev in events:
             if ev == "came_online":
                 payloads.append({"embed": emb(
                     "🟢 Minecraft Server Online",
-                    f"**{MC_SERVER_HOST}** is back up — "
+                    f"{_server_label()} is back up — "
                     f"**{status.players}/{status.max_players}** online.",
                     C_GREEN,
                 )})
             elif ev == "went_offline":
-                desc = f"**{MC_SERVER_HOST}** stopped responding."
+                desc = f"{_server_label()} stopped responding."
                 if self._last_seen_online:
                     desc += f"\nLast seen online <t:{int(self._last_seen_online)}:R>."
                 payloads.append({"embed": emb("🔴 Minecraft Server Offline", desc, C_RED)})
             elif ev == "count_up":
                 delta = status.players - prev.count
                 who = "A player" if delta == 1 else f"{delta} players"
-                payloads.append({"content": (
-                    f"🟢 {who} joined the Minecraft server — "
-                    f"**{status.players}/{status.max_players}** online"
+                payloads.append({"embed": emb(
+                    "🟢 Player Joined",
+                    f"{who} joined the Minecraft server — "
+                    f"**{status.players}/{status.max_players}** online",
+                    C_GREEN,
                 )})
             elif ev == "count_down":
                 delta = prev.count - status.players
                 who = "A player" if delta == 1 else f"{delta} players"
-                payloads.append({"content": (
-                    f"🔴 {who} left the Minecraft server — "
-                    f"**{status.players}/{status.max_players}** online"
+                payloads.append({"embed": emb(
+                    "🔴 Player Left",
+                    f"{who} left the Minecraft server — "
+                    f"**{status.players}/{status.max_players}** online",
+                    C_RED,
                 )})
         return payloads
 

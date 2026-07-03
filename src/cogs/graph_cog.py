@@ -95,6 +95,8 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
         title = "Bot Memory Usage — Last 2 Weeks"
     elif len(parsed.specs) == 1 and parsed.specs[0].name == "ping":
         title = "Discord Gateway Ping — Last 2 Weeks"
+    elif len(parsed.specs) == 1 and parsed.specs[0].name == "minecraft":
+        title = "Minecraft Server Ping — Last 2 Weeks (0 = offline)"
 
     buf = await render_combined(serieses, group, y_unit, title)
     filename = "_".join(s.name for s in parsed.specs) + ".png"
@@ -156,6 +158,7 @@ class GraphCog(commands.Cog):
             "`!graph server` — Daily message and command counts over the last 2 weeks",
             "`!graph memory` — Bot memory usage (MB) over the last 2 weeks",
             "`!graph ping` — Discord gateway ping (ms) over the last 2 weeks",
+            "`!graph minecraft` — Minecraft server ping (ms); dips to 0 mark downtime",
             "`!graph ai` — Daily AI response count and uptime over the last 2 weeks",
         ]
         if is_admin(ctx):
@@ -235,6 +238,11 @@ class GraphCog(commands.Cog):
     @requires_perm
     async def cmd_graph_ping(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("ping"))
+
+    @cmd_graph.command(name="minecraft", aliases=["mc", "mcping"])
+    @requires_perm
+    async def cmd_graph_minecraft(self, ctx: commands.Context, *tokens: str):
+        await _build_and_render(ctx, tokens, find_spec("minecraft"))
 
     @cmd_graph.command(name="ai")
     @requires_perm

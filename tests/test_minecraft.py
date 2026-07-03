@@ -157,6 +157,44 @@ async def test_mc_offline_embed(monkeypatch):
     assert "didn't respond" in ctx.sent_embeds[0].description
 
 
+async def test_mc_hides_address_by_default(monkeypatch):
+    cog = _make_cog(monkeypatch, host="secret.example.com")
+    monkeypatch.setattr(mc_mod, "MC_SERVER_SHOW_IP", False)
+
+    async def _fake_fetch():
+        return _status()
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
+    ctx = _mc_ctx()
+    await cog.cmd_mc.callback(cog, ctx)
+    online = ctx.sent_embeds[0]
+    assert "secret.example.com" not in (online.description or "")
+
+    async def _fake_fetch_down():
+        return None
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch_down)
+
+    ctx2 = _mc_ctx()
+    await cog.cmd_mc.callback(cog, ctx2)
+    offline = ctx2.sent_embeds[0]
+    assert "secret.example.com" not in offline.description
+    assert "The Minecraft server didn't respond" in offline.description
+
+
+async def test_mc_shows_address_when_opted_in(monkeypatch):
+    cog = _make_cog(monkeypatch, host="secret.example.com")
+    monkeypatch.setattr(mc_mod, "MC_SERVER_SHOW_IP", True)
+    monkeypatch.setattr(mc_mod, "MC_SERVER_PORT", 19132)
+
+    async def _fake_fetch():
+        return _status()
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
+    ctx = _mc_ctx()
+    await cog.cmd_mc.callback(cog, ctx)
+    assert "secret.example.com:19132" in ctx.sent_embeds[0].description
+
+
 # ── Monitor loop: announce + presence ────────────────────────────────────────
 
 async def _tick(cog):
@@ -185,7 +223,7 @@ async def test_monitor_announces_to_configured_guilds_only(monkeypatch):
     assert "2/10" in embed.description
 
 
-async def test_monitor_count_change_message(monkeypatch):
+async def test_monitor_count_change_embeds(monkeypatch):
     channel = FakeTextChannel(ch_id=555)
     bot = _FakeBot(guilds=[FakeGuild(gid=1)], channels={555: channel})
     _state.guild_settings["1"] = {"minecraft_channel": 555}
@@ -193,15 +231,26 @@ async def test_monitor_count_change_message(monkeypatch):
     cog = _make_cog(monkeypatch, bot=bot)
     cog._monitor = MonitorState(online=True, count=2)
 
+    results = iter([_status(players=3), _status(players=1)])
+
     async def _fake_fetch():
-        return _status(players=3)
+        return next(results)
     monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
 
-    await _tick(cog)
+    await _tick(cog)   # 2 -> 3: join
+    await _tick(cog)   # 3 -> 1: leave
 
-    content = channel.send.call_args.kwargs["content"]
-    assert "A player joined" in content
-    assert "3/10" in content
+    join = channel.send.call_args_list[0].kwargs["embed"]
+    assert "Joined" in join.title
+    assert "A player joined" in join.description
+    assert "3/10" in join.description
+    assert join.color.value == mc_mod.C_GREEN
+
+    leave = channel.send.call_args_list[1].kwargs["embed"]
+    assert "Left" in leave.title
+    assert "2 players left" in leave.description
+    assert "1/10" in leave.description
+    assert leave.color.value == mc_mod.C_RED
 
 
 async def test_monitor_offline_alert_only_after_debounce(monkeypatch):
@@ -237,6 +286,81 @@ async def test_presence_updates_only_on_change(monkeypatch):
     bot.change_presence.assert_called_once()
     activity = bot.change_presence.call_args.kwargs["activity"]
     assert "3/10" in activity.name
+
+
+# ── !graph minecraft series ───────────────────────────────────────────────────
+
+async def test_monitor_publishes_state_sample(monkeypatch):
+    bot = _FakeBot(guilds=[])
+    cog = _make_cog(monkeypatch, bot=bot)
+
+    async def _fake_fetch():
+        return _status(players=3, latency=55)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
+    await _tick(cog)
+    assert _state.mc_last_online is True
+    assert _state.mc_last_ping_ms == 55.0
+
+    async def _fake_fetch_down():
+        return None
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch_down)
+
+    await _tick(cog)
+    await _tick(cog)
+    assert _state.mc_last_online is False
+    assert _state.mc_last_ping_ms is None
+
+
+async def test_build_series_minecraft_points(monkeypatch):
+    from src import graph_series
+
+    history = {
+        "2026-07-01": {
+            0: {"mc_up": True, "mc_ping_ms": 40.0},
+            1: {"mc_up": False, "mc_ping_ms": None},   # downtime → 0
+            2: {},                                     # predates mc_* keys → skipped
+            3: {"mc_up": None, "mc_ping_ms": None},    # unknown → skipped
+        },
+    }
+
+    async def _fake_load():
+        return history
+    monkeypatch.setattr(graph_series, "load_bot_stats_history", _fake_load)
+    monkeypatch.setattr(_state, "mc_last_online", None)  # no live point
+
+    data = await graph_series.build_series_minecraft()
+
+    assert len(data.x_points) == 2
+    assert data.segments[0].y_values == [40.0, 0.0]
+    assert data.native_style == "line"
+
+
+async def test_build_series_minecraft_live_point(monkeypatch):
+    from src import graph_series
+
+    async def _fake_load():
+        return {}
+    monkeypatch.setattr(graph_series, "load_bot_stats_history", _fake_load)
+    monkeypatch.setattr(_state, "mc_last_online", True)
+    monkeypatch.setattr(_state, "mc_last_ping_ms", 33.0)
+
+    data = await graph_series.build_series_minecraft()
+    assert data.segments[0].y_values == [33.0]
+
+    monkeypatch.setattr(_state, "mc_last_online", False)
+    monkeypatch.setattr(_state, "mc_last_ping_ms", None)
+    data = await graph_series.build_series_minecraft()
+    assert data.segments[0].y_values == [0.0]
+
+
+async def test_graph_registry_resolves_minecraft():
+    from src.graph_series import find_spec
+    spec = find_spec("minecraft")
+    assert spec is not None and spec.name == "minecraft"
+    assert find_spec("mcping") is spec
+    # own group → cannot combine with the gateway ping series
+    assert spec.group != find_spec("ping").group
 
 
 # ── !settings minecraft-channel ───────────────────────────────────────────────

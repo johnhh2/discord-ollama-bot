@@ -11,8 +11,8 @@ style from (number-of-series, group):
   - N series, group "counts"       → grouped bars per day, each bar internally
                                      stacked from its segments.
 
-`memory` and `ping` are each their own group of size 1; combination with
-anything else is rejected.
+`memory`, `ping`, and `minecraft` are each their own group of size 1;
+combination with anything else is rejected.
 
 Adding a new graph series: write a `build_series_xxx()` async function returning
 `SeriesData`, then append a `SeriesSpec(...)` entry to `REGISTRY` below.
@@ -49,6 +49,7 @@ GROUP_COUNTS = "counts"
 GROUP_MB = "mb"
 GROUP_XP = "xp"
 GROUP_MS = "ms"
+GROUP_MS_MC = "ms_mc"   # Minecraft ping; own group so it stays solo like memory/ping
 
 _GROUP_LABEL = {
     GROUP_COINS: "coins",
@@ -56,6 +57,7 @@ _GROUP_LABEL = {
     GROUP_MB: "MB",
     GROUP_XP: "xp",
     GROUP_MS: "ms",
+    GROUP_MS_MC: "ms",
 }
 
 
@@ -501,6 +503,42 @@ async def build_series_ping(bot) -> SeriesData:
     )
 
 
+async def build_series_minecraft() -> SeriesData:
+    """Per-(date, bucket) Minecraft server ping in ms, with downtime plotted
+    at 0 so outages are visible on the chart.
+
+    Three states per bucket: up (point at the measured ping), down (point at
+    0 — the downtime signal), and unknown (skipped: feature disabled, bot
+    offline, or rows predating the mc_* snapshot keys).
+    """
+    history = await load_bot_stats_history()
+    x_points: list[datetime.datetime] = []
+    y_ping: list[float] = []
+    for point_dt, snap in _iter_points(history):
+        up = snap.get("mc_up")
+        ping = snap.get("mc_ping_ms")
+        if up and ping is not None and ping > 0:
+            x_points.append(point_dt)
+            y_ping.append(float(ping))
+        elif up is False:
+            x_points.append(point_dt)
+            y_ping.append(0.0)
+
+    # Live "now" point from the monitor's latest sample.
+    now_point = _live_now_point()
+    if state.mc_last_online is not None and (not x_points or x_points[-1] != now_point):
+        live_ping = state.mc_last_ping_ms if state.mc_last_online else None
+        x_points.append(now_point)
+        y_ping.append(float(live_ping) if live_ping else 0.0)
+
+    return SeriesData(
+        title="Minecraft Ping",
+        segments=[Segment(label="Server Ping (0 = offline)", color="#2ecc71", y_values=y_ping)],
+        x_points=x_points,
+        native_style="line",
+    )
+
+
 # ── Registry ─────────────────────────────────────────────────────────────────
 
 REGISTRY: list[SeriesSpec] = [
@@ -513,6 +551,7 @@ REGISTRY: list[SeriesSpec] = [
     SeriesSpec("ai",       ("ai",),                                     GROUP_COUNTS, build_series_ai,                               y_unit_label="Count"),
     SeriesSpec("memory",   ("memory", "mem", "ram"),                    GROUP_MB,     build_series_memory,                           y_unit_label="MB"),
     SeriesSpec("ping",     ("ping", "latency"),                         GROUP_MS,     build_series_ping,     accepts_bot=True,     y_unit_label="ms"),
+    SeriesSpec("minecraft", ("minecraft", "mc", "mcping"),              GROUP_MS_MC,  build_series_minecraft,                        y_unit_label="ms"),
     SeriesSpec("levels",   ("levels", "level", "lvl"),                  GROUP_XP,     build_series_levels,   accepts_member=True, accepts_guild=True, y_unit_label="Level-ups"),
 ]
 

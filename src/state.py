@@ -130,6 +130,12 @@ stats_commands_today: int = 0
 stats_ai_responses_today: int = 0
 stats_commands_today_by_cog: dict = {}
 
+# Latest Minecraft monitor sample, published by MinecraftCog's poll loop and
+# snapshotted into bot_stats_history by the graph scheduler. online is
+# tri-state: None = no sample yet (feature disabled or monitor hasn't run).
+mc_last_online: bool | None = None
+mc_last_ping_ms: float | None = None
+
 # Per-user totals for the CURRENT 6h CT bucket. The graph cog reads these
 # for the live-now point; the values get rolled to a fresh row in the disk
 # table whenever a record_* call detects the bucket has advanced.

@@ -25,6 +25,9 @@ RACE_TRACK_LEN = 20
 MC_SERVER_HOST = os.getenv("MC_SERVER_HOST", "")
 MC_SERVER_PORT = int(os.getenv("MC_SERVER_PORT") or "19132")
 MC_POLL_SECONDS = int(os.getenv("MC_POLL_SECONDS") or "60")
+# Show the server address (host:port) in !mc embeds and monitor alerts.
+# Off by default so the public address isn't leaked into Discord channels.
+MC_SERVER_SHOW_IP = (os.getenv("MC_SERVER_SHOW_IP") or "").strip().lower() in ("1", "true", "yes", "on")
 
 _raw_channels = os.getenv("ACTIVE_CHANNEL_IDS", "")
 ACTIVE_CHANNEL_IDS = (

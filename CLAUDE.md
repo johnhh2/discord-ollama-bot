@@ -25,6 +25,7 @@ Key environment variables (all optional except `DISCORD_TOKEN`):
 | `MC_SERVER_HOST` | _(disabled)_ | Optional; Minecraft Bedrock server address (enables `!mc` + monitor). Prefer the external/public address so latency is the players' route; `host.docker.internal` works for a same-host server |
 | `MC_SERVER_PORT` | `19132` | Bedrock UDP port |
 | `MC_POLL_SECONDS` | `60` | Minecraft monitor poll interval |
+| `MC_SERVER_SHOW_IP` | `false` | Show the server address in `!mc` embeds and monitor alerts |
 
 ### Adding a new env var
 
