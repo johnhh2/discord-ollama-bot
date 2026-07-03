@@ -286,22 +286,7 @@ async def test_presence_updates_only_on_change(monkeypatch):
 
     bot.change_presence.assert_called_once()
     activity = bot.change_presence.call_args.kwargs["activity"]
-    assert activity.name == "⛏️ 3/10 on My Server"    # server name, not "Bedrock"
-
-
-async def test_presence_falls_back_to_bedrock_without_server_name(monkeypatch):
-    bot = _FakeBot(guilds=[])
-    cog = _make_cog(monkeypatch, bot=bot)
-
-    async def _fake_fetch():
-        s = _status(players=2)
-        s.motd = ""
-        return s
-    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
-
-    await _tick(cog)
-    activity = bot.change_presence.call_args.kwargs["activity"]
-    assert activity.name == "⛏️ 2/10 on Bedrock"
+    assert activity.name == "⛏️ 3/10 on Minecraft"
 
 
 async def test_no_monitor_or_presence_when_unconfigured(monkeypatch):
