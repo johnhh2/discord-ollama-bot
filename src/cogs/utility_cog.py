@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import math
 import random
 import re
 import time
@@ -209,6 +210,11 @@ class UtilityCog(commands.Cog):
         embed.add_field(name="📨 Messages", value=f"{indent}{state.stats_messages_seen} ({msg_rate:.2f}/min)", inline=True)
         embed.add_field(name="🧠 Memory", value=f"{indent}{get_memory_mb():.2f} MB", inline=True)
         embed.add_field(name="⏱️ Uptime", value=f"{indent}{format_uptime()}", inline=True)
+        # Gateway heartbeat latency to Discord's servers; nan until the first
+        # heartbeat ack after (re)connect.
+        latency_s = self.bot.latency
+        ping_text = f"{latency_s * 1000:.0f} ms" if math.isfinite(latency_s) else "measuring…"
+        embed.add_field(name="📡 Discord Ping", value=f"{indent}{ping_text}", inline=True)
         embed.add_field(name="🌐 Presence", value=(
             f"{indent}{len(self.bot.guilds)} Servers\n"
             f"{indent}{text_channels} Text Channels\n"
