@@ -30,6 +30,12 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "ollama:${OLLAMA_HOST_IP:-host-gateway}"
+    # Public resolvers, bypassing the LAN Pi-hole: its local DNS record for
+    # the DDNS name would resolve MC_SERVER_HOST to the LAN IP, making the
+    # !mc ping measure a same-host hop instead of the external route.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     deploy:
       resources:
         limits:
