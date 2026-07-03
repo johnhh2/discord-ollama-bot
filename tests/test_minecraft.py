@@ -285,7 +285,59 @@ async def test_presence_updates_only_on_change(monkeypatch):
 
     bot.change_presence.assert_called_once()
     activity = bot.change_presence.call_args.kwargs["activity"]
-    assert "3/10" in activity.name
+    assert activity.name == "⛏️ 3/10 on world"    # world name, not "Bedrock"
+
+
+async def test_presence_falls_back_to_bedrock_without_world_name(monkeypatch):
+    bot = _FakeBot(guilds=[])
+    cog = _make_cog(monkeypatch, bot=bot)
+
+    async def _fake_fetch():
+        s = _status(players=2)
+        s.map_name = ""
+        return s
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
+    await _tick(cog)
+    activity = bot.change_presence.call_args.kwargs["activity"]
+    assert activity.name == "⛏️ 2/10 on Bedrock"
+
+
+async def test_no_monitor_or_presence_when_unconfigured(monkeypatch):
+    monkeypatch.setattr(mc_mod, "MC_SERVER_HOST", "")
+    bot = _FakeBot(guilds=[])
+    cog = mc_mod.MinecraftCog(bot)
+    assert not cog.mc_monitor.is_running()
+    bot.change_presence.assert_not_called()
+
+
+# ── !help fun section ─────────────────────────────────────────────────────────
+
+async def _help_fun_field(monkeypatch, host: str) -> str:
+    import src.cogs.utility_cog as util_mod
+    monkeypatch.setattr(util_mod, "MC_SERVER_HOST", host)
+    sent_embeds = []
+
+    async def _fake_ephemeral(ctx, *args, **kwargs):
+        sent_embeds.append(kwargs.get("embed"))
+    monkeypatch.setattr(util_mod, "send_ephemeral", _fake_ephemeral)
+
+    cog = util_mod.UtilityCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=1), guild=FakeGuild(gid=42))
+    ctx.command.qualified_name = "help"
+    await cog.cmd_help.callback(cog, ctx)
+    embed = sent_embeds[0]
+    return next(f.value for f in embed.fields if "Fun" in f.name)
+
+
+async def test_help_hides_minecraft_when_unconfigured(monkeypatch):
+    fun = await _help_fun_field(monkeypatch, host="")
+    assert "!minecraft" not in fun
+
+
+async def test_help_shows_minecraft_when_configured(monkeypatch):
+    fun = await _help_fun_field(monkeypatch, host="mc.example.com")
+    assert "!minecraft" in fun
 
 
 # ── !graph minecraft series ───────────────────────────────────────────────────

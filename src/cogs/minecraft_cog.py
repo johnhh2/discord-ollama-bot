@@ -235,7 +235,8 @@ class MinecraftCog(commands.Cog):
 
     async def _update_presence(self, status: "McStatus | None"):
         if status is not None:
-            name = f"⛏️ {status.players}/{status.max_players} on Bedrock"
+            world = status.map_name or "Bedrock"
+            name = f"⛏️ {status.players}/{status.max_players} on {world}"
         elif self._monitor.online is False:
             name = "⛏️ server offline"
         else:

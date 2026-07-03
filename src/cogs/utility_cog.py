@@ -38,7 +38,7 @@ from src.ai import (
     TOKEN_BUCKET_MAX, TOKEN_BUCKET_REFILL_PER_SEC, _peek_token_budget,
 )
 from src.config import (
-    OLLAMA_MODEL, OLLAMA_BASE_URL, PUZZLE_REWARDS,
+    OLLAMA_MODEL, OLLAMA_BASE_URL, PUZZLE_REWARDS, MC_SERVER_HOST,
 )
 from src.puzzle import (
     PUZZLE_RIDDLE_PROMPT, build_coding_prompt,
@@ -175,14 +175,17 @@ class UtilityCog(commands.Cog):
                 + "\n`!ew` — Delete the last NSFW image you posted in this channel"
             ))
 
-        help_embed.add_field(name="🎉 Fun", inline=False, value=(
-            "`!dog` — Random dog picture\n"
-            "`!cat` — Random cat picture\n"
-            "`!effects [@user]` — View active shop effects (mock, tax, curse, spellcheck, …)\n"
-            "`!quote` — Save a quoted message (reply) or display a random saved quote\n"
-            "`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote\n"
-            "`!tip` — Show a random tip about hidden commands"
-        ))
+        fun_lines = [
+            "`!dog` — Random dog picture",
+            "`!cat` — Random cat picture",
+            "`!effects [@user]` — View active shop effects (mock, tax, curse, spellcheck, …)",
+            "`!quote` — Save a quoted message (reply) or display a random saved quote",
+            "`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote",
+        ]
+        if MC_SERVER_HOST:
+            fun_lines.append("`!minecraft` — Minecraft server status (players, ping)")
+        fun_lines.append("`!tip` — Show a random tip about hidden commands")
+        help_embed.add_field(name="🎉 Fun", inline=False, value="\n".join(fun_lines))
         utility_val = (
             "`!stats` — Show bot statistics\n"
             "`!stop` — Stop roleplay / forfeit active game\n"
