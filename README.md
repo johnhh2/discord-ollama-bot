@@ -31,11 +31,13 @@ flowchart LR
         O[Ollama<br/>local LLM on GPU]
         DB[(MariaDB<br/>schema-migrated at boot)]
         SF[Stockfish + Maia/lc0<br/>chess engines]
+        MC[Minecraft Bedrock server<br/>optional]
     end
     G <--> B
     B -->|streaming completions| O
     B -->|aiomysql pool| DB
     B --> SF
+    B -.->|RakNet UDP ping| MC
     B -.-> H
 ```
 
@@ -74,7 +76,7 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 - Per-guild XP and levels (`!lvl`, `!levels`) with commands gated behind level thresholds
 
 ### ⛏️ Minecraft server status
-- `!mc` (alias `!minecraft`) — live Bedrock server status over a RakNet UDP ping: player count, latency, version, MOTD, gamemode, world
+- `!mc` (aliases `!minecraft`, `!mcstatus`) — live Bedrock server status over a RakNet UDP ping: player count, latency, version, MOTD, gamemode, world
 - Background monitor posts up/down alerts and player-count notices ("a player joined — 3/10 online") to a channel set with `!settings minecraft-channel`, and mirrors the count in the bot's presence
 - Works against any reachable Bedrock endpoint (e.g. an [itzg/minecraft-bedrock-server](https://github.com/itzg/docker-minecraft-bedrock-server) container on the same host) — no docker socket required
 
@@ -124,6 +126,7 @@ All configuration is via environment variables — see [.env.example](.env.examp
 | `MC_SERVER_HOST` | _(disabled)_ | Minecraft Bedrock server address for `!mc` + monitoring. Any reachable endpoint works; prefer the **external** address (DDNS/WAN) so ping reflects the route players take. For a same-host server, `host.docker.internal` also works (local-only latency) |
 | `MC_SERVER_PORT` | `19132` | Bedrock UDP port |
 | `MC_POLL_SECONDS` | `60` | Monitor poll interval (up/down alerts, player-count notices, presence) |
+| `MC_SERVER_SHOW_IP` | `false` | Show the server address in `!mc` embeds and monitor alerts (hidden by default) |
 
 ## Engineering highlights
 
@@ -161,7 +164,7 @@ src/
 ├── health.py          # /healthz + /metrics (loopback-only aiohttp server)
 ├── events.py          # Message dispatch, XP, text-effect handlers
 ├── state.py           # In-memory caches loaded at startup
-├── cogs/              # 14 command groups (admin, ai, economy, shop, …)
+├── cogs/              # 15 command groups (admin, ai, economy, shop, minecraft, …)
 ├── games/             # Chess (+ engines), blackjack, hangman, ttt/c4, race
 └── gambling/          # Slots, flip, scratchoff
 migrations/            # Numbered SQL migrations — the schema's source of truth
@@ -175,7 +178,7 @@ pip install pytest pytest-asyncio
 pytest            # no token, DB server, or Ollama required
 ```
 
-Notable suites: concurrency races ([tests/test_economy_flows.py](tests/test_economy_flows.py), [tests/test_shop.py](tests/test_shop.py)), migration ordering and checksums ([tests/test_migrations.py](tests/test_migrations.py)), downtime recovery for missed scheduled events ([tests/test_downtime.py](tests/test_downtime.py)), and chess engine integration ([tests/test_chess_bot.py](tests/test_chess_bot.py)).
+Notable suites: concurrency races ([tests/test_economy_flows.py](tests/test_economy_flows.py), [tests/test_shop.py](tests/test_shop.py)), migration ordering and checksums ([tests/test_migrations.py](tests/test_migrations.py)), downtime recovery for missed scheduled events ([tests/test_downtime.py](tests/test_downtime.py)), chess engine integration ([tests/test_chess_bot.py](tests/test_chess_bot.py)), and Minecraft monitor flap suppression ([tests/test_minecraft.py](tests/test_minecraft.py)).
 
 ## License
 
