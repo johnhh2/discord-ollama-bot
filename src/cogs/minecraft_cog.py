@@ -151,12 +151,12 @@ class MinecraftCog(commands.Cog):
         embed.add_field(name="Players", value=f"{status.players}/{status.max_players}")
         embed.add_field(name="Ping", value=f"{status.latency_ms} ms")
         embed.add_field(name="Version", value=status.version or "?")
+        # "World" shows the server name (Bedrock's MOTD line) — the level
+        # name in map_name is usually the default "Bedrock level" noise.
         if status.motd:
-            embed.add_field(name="MOTD", value=status.motd, inline=False)
+            embed.add_field(name="World", value=status.motd, inline=False)
         if status.gamemode:
             embed.add_field(name="Gamemode", value=status.gamemode)
-        if status.map_name:
-            embed.add_field(name="World", value=status.map_name)
         await ctx.send(embed=embed)
 
     # ── Monitor loop ──────────────────────────────────────────────────────────
@@ -235,8 +235,8 @@ class MinecraftCog(commands.Cog):
 
     async def _update_presence(self, status: "McStatus | None"):
         if status is not None:
-            world = status.map_name or "Bedrock"
-            name = f"⛏️ {status.players}/{status.max_players} on {world}"
+            server_name = status.motd or "Bedrock"
+            name = f"⛏️ {status.players}/{status.max_players} on {server_name}"
         elif self._monitor.online is False:
             name = "⛏️ server offline"
         else:

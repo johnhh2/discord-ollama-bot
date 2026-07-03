@@ -76,7 +76,7 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 - Per-guild XP and levels (`!lvl`, `!levels`) with commands gated behind level thresholds
 
 ### ⛏️ Minecraft server status
-- `!mc` (aliases `!minecraft`, `!mcstatus`) — live Bedrock server status over a RakNet UDP ping: player count, latency, version, MOTD, gamemode, world
+- `!mc` (aliases `!minecraft`, `!mcstatus`) — live Bedrock server status over a RakNet UDP ping: player count, latency, version, server name, gamemode
 - Background monitor posts up/down alerts and player-count notices ("a player joined — 3/10 online") to a channel set with `!settings minecraft-channel`, and mirrors the count in the bot's presence
 - `!graph minecraft` — server ping over the last 2 weeks, with downtime visible as dips to 0
 - Works against any reachable Bedrock endpoint (e.g. an [itzg/minecraft-bedrock-server](https://github.com/itzg/docker-minecraft-bedrock-server) container on the same host) — no docker socket required

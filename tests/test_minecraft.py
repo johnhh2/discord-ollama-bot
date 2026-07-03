@@ -140,7 +140,7 @@ async def test_mc_online_embed(monkeypatch):
     assert fields["Players"] == "3/10"
     assert fields["Ping"] == "42 ms"
     assert fields["Version"] == "1.21.51"
-    assert fields["MOTD"] == "My Server"
+    assert fields["World"] == "My Server"    # server name, not the level name
     assert cog._last_seen_online is not None
 
 
@@ -285,16 +285,16 @@ async def test_presence_updates_only_on_change(monkeypatch):
 
     bot.change_presence.assert_called_once()
     activity = bot.change_presence.call_args.kwargs["activity"]
-    assert activity.name == "⛏️ 3/10 on world"    # world name, not "Bedrock"
+    assert activity.name == "⛏️ 3/10 on My Server"    # server name, not "Bedrock"
 
 
-async def test_presence_falls_back_to_bedrock_without_world_name(monkeypatch):
+async def test_presence_falls_back_to_bedrock_without_server_name(monkeypatch):
     bot = _FakeBot(guilds=[])
     cog = _make_cog(monkeypatch, bot=bot)
 
     async def _fake_fetch():
         s = _status(players=2)
-        s.map_name = ""
+        s.motd = ""
         return s
     monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
 
