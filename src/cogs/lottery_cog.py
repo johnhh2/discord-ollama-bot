@@ -19,11 +19,32 @@ from src.persistence import (
 )
 from src.guild_config import get_guild_cfg
 from src.confirm_view import confirm_purchase
+from src import state, status_manager
+
+
+def record_tickets_purchased(count: int) -> None:
+    """Bump the gameplay-day ticket counter behind the presence status line."""
+    today = _ct_today()
+    if state.lottery_tickets_today.get("date") != today:
+        state.lottery_tickets_today["date"] = today
+        state.lottery_tickets_today["count"] = 0
+    state.lottery_tickets_today["count"] += count
+
+
+def lottery_status_text() -> "str | None":
+    """Presence line for the status manager; None hides it."""
+    if state.lottery_tickets_today.get("date") != _ct_today():
+        return None
+    count = int(state.lottery_tickets_today.get("count") or 0)
+    if count <= 0:
+        return None
+    return f"{count}x 🎟️ sold today"
 
 
 class LotteryCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        status_manager.register("lottery", lottery_status_text)
         # Per-guild lock serializing every load→mutate→save of the lottery
         # snapshot (purchases and the draw). save_lottery rewrites the whole
         # snapshot, so unserialized concurrent writers erase each other's
@@ -33,6 +54,7 @@ class LotteryCog(commands.Cog):
         self.lottery_scheduler.start()
 
     def cog_unload(self):
+        status_manager.unregister("lottery")
         self.lottery_scheduler.cancel()
 
     def _lock(self, guild_id: int) -> asyncio.Lock:
@@ -313,6 +335,7 @@ class LotteryCog(commands.Cog):
             await add_guild_house(ctx.guild.id, tickets * 3)
 
             await save_lottery(ctx.guild.id, lottery)
+            record_tickets_purchased(tickets)
 
         bonus_msg = "(+1,000 bonus as new player)" if was_new_player else ""
 

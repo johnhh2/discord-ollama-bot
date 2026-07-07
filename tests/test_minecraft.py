@@ -273,28 +273,64 @@ async def test_monitor_offline_alert_only_after_debounce(monkeypatch):
     assert "Offline" in channel.send.call_args.kwargs["embed"].title
 
 
-async def test_presence_updates_only_on_change(monkeypatch):
-    bot = _FakeBot(guilds=[])
-    cog = _make_cog(monkeypatch, bot=bot)
+async def test_status_text_shows_count_when_players_online(monkeypatch):
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
 
     async def _fake_fetch():
         return _status(players=3)
     monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
 
     await _tick(cog)
+    assert cog.status_text() == "⛏️ 3/10 on Minecraft"
+
+
+async def test_status_text_hidden_when_server_empty(monkeypatch):
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+
+    async def _fake_fetch():
+        return _status(players=0)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
     await _tick(cog)
-
-    bot.change_presence.assert_called_once()
-    activity = bot.change_presence.call_args.kwargs["activity"]
-    assert activity.name == "⛏️ 3/10 on Minecraft"
+    assert cog.status_text() is None
 
 
-async def test_no_monitor_or_presence_when_unconfigured(monkeypatch):
+async def test_status_text_hidden_when_offline(monkeypatch):
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+
+    responses = iter([_status(players=3), None, None])
+
+    async def _fake_fetch():
+        return next(responses)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
+    await _tick(cog)
+    assert cog.status_text() == "⛏️ 3/10 on Minecraft"
+    await _tick(cog)                       # first miss: debounced, still shown
+    assert cog.status_text() == "⛏️ 3/10 on Minecraft"
+    await _tick(cog)                       # second miss: confirmed offline
+    assert cog.status_text() is None
+
+
+async def test_status_text_hidden_before_first_poll(monkeypatch):
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+    assert cog.status_text() is None
+
+
+async def test_cog_registers_and_unregisters_status_provider(monkeypatch):
+    import src.status_manager as status_manager
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+    assert status_manager._providers.get("minecraft") == cog.status_text
+    cog.cog_unload()
+    assert "minecraft" not in status_manager._providers
+
+
+async def test_no_monitor_when_unconfigured(monkeypatch):
     monkeypatch.setattr(mc_mod, "MC_SERVER_HOST", "")
     bot = _FakeBot(guilds=[])
     cog = mc_mod.MinecraftCog(bot)
     assert not cog.mc_monitor.is_running()
-    bot.change_presence.assert_not_called()
+    assert cog.status_text() is None
 
 
 # ── Derived stats: online since, uptime %, avg ping ──────────────────────────

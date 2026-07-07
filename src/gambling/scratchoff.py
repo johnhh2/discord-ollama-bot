@@ -26,7 +26,7 @@ from src.guild_config import get_guild_cfg
 from src.config import (
     SCRATCH_SYMBOLS,
 )
-from src import state
+from src import state, status_manager
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -110,6 +110,35 @@ async def maybe_assign_gambler_role(guild: discord.Guild, member: discord.Member
             )
 
 
+# The presence line stays hidden until the server has scratched more than
+# this many cards in the current gameplay-day.
+SCRATCHOFF_STATUS_THRESHOLD = 3
+
+
+def scratchoffs_today() -> int:
+    """Total scratchoff cards played across all users this gameplay-day.
+
+    Derived from the per-user scratch_used/scratch_date fields, so it rolls
+    over at the normal 5am CT reset with no extra bookkeeping: entries whose
+    scratch_date is stale simply stop counting.
+    """
+    today = _ct_today()
+    users = state.economy.get("users") or {}
+    return sum(
+        int(u.get("scratch_used") or 0)
+        for u in users.values()
+        if u.get("scratch_date") == today
+    )
+
+
+def scratchoff_status_text() -> "str | None":
+    """Presence line for the status manager; None hides it."""
+    total = scratchoffs_today()
+    if total <= SCRATCHOFF_STATUS_THRESHOLD:
+        return None
+    return f"{total}x 🎫 scratched today"
+
+
 CACTPOT_PAYOUTS = {
     6: 10000, 7: 36, 8: 720, 9: 360, 10: 80, 11: 252, 12: 108, 13: 72, 14: 54, 15: 180,
     16: 72, 17: 180, 18: 119, 19: 36, 20: 306, 21: 1080, 22: 144, 23: 1800, 24: 3600
@@ -163,9 +192,11 @@ class MiniCactpotGame:
 class ScratchoffCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        status_manager.register("scratchoffs", scratchoff_status_text)
         self._daily_reset_task.start()
 
     def cog_unload(self):
+        status_manager.unregister("scratchoffs")
         self._daily_reset_task.cancel()
 
     @tasks.loop(minutes=1)

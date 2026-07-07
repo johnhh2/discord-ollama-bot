@@ -18,7 +18,7 @@ import discord
 from discord.ext import commands, tasks
 from mcstatus import BedrockServer
 
-from src import state
+from src import state, status_manager
 # Accessed as attributes (not `from`-imported) so the test suite's stubs on
 # the persistence package reach the calls here.
 import src.persistence as persistence
@@ -161,7 +161,9 @@ class MinecraftCog(commands.Cog):
         self.bot = bot
         self._monitor = MonitorState()
         self._last_seen_online: float | None = None
-        self._presence_str: str | None = None
+        # (players, max_players) from the most recent successful poll; feeds
+        # the presence provider between polls.
+        self._last_counts: tuple[int, int] | None = None
         # When the current online stretch began: set on the up-transition
         # (or first sighting after boot), cleared when confirmed offline.
         self._online_since: float | None = None
@@ -169,10 +171,14 @@ class MinecraftCog(commands.Cog):
         # Restored from mc_ping_samples in the monitor's before_loop.
         self._samples: collections.deque[McSample] = collections.deque()
         self._ticks_until_prune = 0
+        # Registered even when unconfigured — status_text() returns None
+        # until the monitor confirms players online, so the line stays hidden.
+        status_manager.register("minecraft", self.status_text)
         if MC_SERVER_HOST:
             self.mc_monitor.start()
 
     def cog_unload(self):
+        status_manager.unregister("minecraft")
         if MC_SERVER_HOST:
             self.mc_monitor.cancel()
 
@@ -238,6 +244,7 @@ class MinecraftCog(commands.Cog):
         now = time.time()
         if status is not None:
             self._last_seen_online = now
+            self._last_counts = (status.players, status.max_players)
 
         # Rolling stats window (uptime % / avg ping for !mc).
         sample = McSample(
@@ -277,7 +284,6 @@ class MinecraftCog(commands.Cog):
 
         if events:
             await self._announce(self._event_payloads(events, prev, status))
-        await self._update_presence(status)
 
     @mc_monitor.before_loop
     async def _before_monitor(self):
@@ -364,22 +370,20 @@ class MinecraftCog(commands.Cog):
             except Exception:
                 logger.exception("[minecraft] announce failed for guild %s", guild.id)
 
-    async def _update_presence(self, status: "McStatus | None"):
-        if status is not None:
-            name = f"⛏️ {status.players}/{status.max_players} on Minecraft"
-        elif self._monitor.online is False:
-            name = "⛏️ server offline"
-        else:
-            return  # no confirmed baseline yet — leave presence alone
-        if name == self._presence_str:
-            return  # presence updates are heavily rate-limited; only send changes
-        try:
-            await self.bot.change_presence(
-                activity=discord.Activity(type=discord.ActivityType.watching, name=name)
-            )
-            self._presence_str = name
-        except Exception:
-            logger.exception("[minecraft] presence update failed")
+    def status_text(self) -> "str | None":
+        """Presence line for the status manager rotation.
+
+        Hidden (None) unless the monitor has the server confirmed online
+        with at least one player. During the offline-debounce window (one
+        dropped ping) the last known counts keep showing — the same grace
+        the announce path gives.
+        """
+        if self._monitor.online is not True or self._last_counts is None:
+            return None
+        players, max_players = self._last_counts
+        if players < 1:
+            return None
+        return f"⛏️ {players}/{max_players} on Minecraft"
 
 
 async def setup(bot):

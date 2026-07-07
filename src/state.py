@@ -130,6 +130,11 @@ stats_commands_today: int = 0
 stats_ai_responses_today: int = 0
 stats_commands_today_by_cog: dict = {}
 
+# Lottery tickets bought this gameplay-day across all guilds, keyed by the
+# 5am-CT day string so it rolls over without a reset task. In-memory only —
+# feeds the presence status line; a reboot restarts the count at 0.
+lottery_tickets_today: dict = {"date": None, "count": 0}
+
 # Latest Minecraft monitor sample, published by MinecraftCog's poll loop and
 # snapshotted into bot_stats_history by the graph scheduler. online is
 # tri-state: None = no sample yet (feature disabled or monitor hasn't run).

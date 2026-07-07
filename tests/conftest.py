@@ -57,7 +57,13 @@ def reset_bot_state(monkeypatch):
     _fresh_event.set()
     monkeypatch.setattr(_persistence, "init_done", _fresh_event)
 
+    # Cogs register presence providers into this module-level registry on
+    # construction; clear it so providers don't leak across tests.
+    import src.status_manager as _status_manager
+    _status_manager._providers.clear()
+
     _reset_dict(_state.economy, {"users": {}, "last_daily_reset": None, "guild_house": {}})
+    _reset_dict(_state.lottery_tickets_today, {"date": None, "count": 0})
     _reset_dict(_state.guild_settings, {})
     _reset_dict(_state.insurance, {})
     _state.quote_log[:] = []
