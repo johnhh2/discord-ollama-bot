@@ -242,7 +242,9 @@ class SettingsCog(commands.Cog):
                     if channel.id not in nsfw_channels:
                         nsfw_channels.append(channel.id)
                 await save_guild_settings()
-                names = " ".join(f"<#{cid}>" for cid in ctx.message.channel_mentions)
+                # channel_mentions holds channel objects, not IDs — f"<#{cid}>"
+                # rendered a literal "<#channel-name>" instead of a mention.
+                names = " ".join(ch.mention for ch in ctx.message.channel_mentions)
                 await ctx.send(embed=emb("⚙️ NSFW Channels", f"Added {names} to whitelist.", C_GREEN))
             elif channel_action == "remove":
                 if not ctx.message.channel_mentions:
@@ -252,7 +254,7 @@ class SettingsCog(commands.Cog):
                     if channel.id in nsfw_channels:
                         nsfw_channels.remove(channel.id)
                 await save_guild_settings()
-                names = " ".join(f"<#{cid}>" for cid in ctx.message.channel_mentions)
+                names = " ".join(ch.mention for ch in ctx.message.channel_mentions)
                 await ctx.send(embed=emb("⚙️ NSFW Channels", f"Removed {names} from whitelist.", C_GREEN))
             elif channel_action == "list":
                 val = " ".join(f"<#{cid}>" for cid in nsfw_channels) if nsfw_channels else "none"
@@ -896,7 +898,9 @@ class SettingsCog(commands.Cog):
             ))
         elif ctx.message.channel_mentions:
             channel = ctx.message.channel_mentions[0]
-            cfg["feature_request_channel"] = str(channel.id)
+            # int, like every other per-guild channel setting (old str rows
+            # still work — consumers compare via str()/int() coercion).
+            cfg["feature_request_channel"] = channel.id
             await save_guild_settings()
             await ctx.send(embed=emb(
                 "📖 Feature Request Channel",

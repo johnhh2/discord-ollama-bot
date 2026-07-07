@@ -525,8 +525,8 @@ class BountyCog(commands.Cog):
         """Count poll reactions (excluding author & claimant), reward each
         eligible voter, and settle."""
         author_id, claimant_id = bounty["author_id"], claim["claimant_id"]
-        yes = no = 0
-        voters: set[int] = set()
+        yes_voters: set[int] = set()
+        no_voters: set[int] = set()
         try:
             channel = self.bot.get_channel(claim["poll_channel_id"]) or await self.bot.fetch_channel(claim["poll_channel_id"])
             poll_msg = await channel.fetch_message(claim["poll_message_id"])
@@ -536,13 +536,20 @@ class BountyCog(commands.Cog):
                 async for voter in reaction.users():
                     if voter.bot or voter.id in (author_id, claimant_id):
                         continue
-                    voters.add(voter.id)
                     if str(reaction.emoji) == ACCEPT_EMOJI:
-                        yes += 1
+                        yes_voters.add(voter.id)
                     else:
-                        no += 1
+                        no_voters.add(voter.id)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException) as ex:
             logging.warning("[bounty] poll tally fetch failed for claim %s: %s", claim["id"], ex)
+
+        voters = yes_voters | no_voters
+        # A both-ways reactor previously added 1 to each side, dragging the
+        # ratio toward 50% — which is a payout threshold. Their votes cancel:
+        # count them for the reward but for neither side of the tally.
+        both_ways = yes_voters & no_voters
+        yes = len(yes_voters - both_ways)
+        no = len(no_voters - both_ways)
 
         # Reward each unique eligible voter once, regardless of how they voted or
         # the poll's outcome. Freshly minted, capped at one payout per voter even

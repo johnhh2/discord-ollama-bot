@@ -27,7 +27,13 @@ def main() -> int:
     migrations_dir = repo_root / "migrations"
     schema_path = repo_root / "src" / "schema.sql"
 
-    files = sorted(p for p in migrations_dir.iterdir() if p.suffix == ".sql")
+    # Exclude reverse migrations: Path("x.down.sql").suffix is still ".sql",
+    # so a bare suffix check would concatenate down files into the snapshot
+    # (sorted before their forward file), corrupting it.
+    files = sorted(
+        p for p in migrations_dir.iterdir()
+        if p.suffix == ".sql" and not p.name.endswith(".down.sql")
+    )
     if not files:
         print(f"no migration files found in {migrations_dir}", file=sys.stderr)
         return 1

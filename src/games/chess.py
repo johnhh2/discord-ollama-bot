@@ -161,6 +161,27 @@ def _movetext_only(pgn_str: str) -> str:
         return pgn_str
 
 
+def _position_key(board: chess.Board) -> str:
+    """Repetition key: piece placement, side to move, castling rights, en
+    passant — the FEN fields that define "same position" for threefold."""
+    return " ".join(board.fen().split(" ")[:4])
+
+
+def _bump_position_count(game: dict, board: chess.Board) -> bool:
+    """Count this position's occurrences in the in-memory game; True when it
+    just occurred for the 3rd time (threefold repetition).
+
+    Boards are rebuilt from FEN each move (empty move stack), so python-chess
+    can never see repetition itself — track it here. The counts dict lives
+    only in memory (not persisted), so a reboot resets it; a repetition then
+    simply needs three more occurrences, which is an acceptable degradation.
+    """
+    counts = game.setdefault("position_counts", {})
+    key = _position_key(board)
+    counts[key] = counts.get(key, 0) + 1
+    return counts[key] >= 3
+
+
 def _append_san_to_pgn(pgn_str: str, san: str) -> str:
     g = chess.pgn.read_game(io.StringIO(pgn_str))
     if g is None:
@@ -863,7 +884,12 @@ class ChessCog(commands.Cog):
 
         # Game-over detection before persistence — if the move ended the game we
         # delete the row and insert a report instead of upserting.
+        repetition = _bump_position_count(game, board)
         result, reason = chess_engine.game_over_info(board)
+        if result is None and repetition:
+            # game_over_info can't see repetition (FEN-only board); the draw
+            # path in _finalize_game handles a None winner correctly.
+            result, reason = "1/2-1/2", "threefold repetition"
         if result is not None:
             await self._finalize_game(channel, cid, game, board, result, reason, mover_name=mover_name, san=san)
             return True, None
@@ -879,6 +905,7 @@ class ChessCog(commands.Cog):
             game["turn_started_at"] = prior_turn_started
             game["white_seconds"] = prior_white_secs
             game["black_seconds"] = prior_black_secs
+            game["position_counts"][_position_key(board)] -= 1
             logging.error(f"chess save_chess_game failed: {e}", exc_info=True)
             err = await channel.send(embed=emb("❌ Save Failed", "Couldn't save the move. Try again.", C_RED))
             asyncio.create_task(_delete_after(err))
@@ -1009,7 +1036,10 @@ class ChessCog(commands.Cog):
         # The bot is black in v1; record the time it just spent thinking.
         _record_turn_time(game, bot_user.id)
 
+        repetition = _bump_position_count(game, board)
         result, reason = chess_engine.game_over_info(board)
+        if result is None and repetition:
+            result, reason = "1/2-1/2", "threefold repetition"
         if result is not None:
             await self._finalize_game(channel, cid, game, board, result, reason, mover_name=bot_name, san=san)
             return

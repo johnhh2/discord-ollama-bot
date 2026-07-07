@@ -1,5 +1,4 @@
 import asyncio
-import time
 
 import discord
 from discord.ext import commands
@@ -28,8 +27,9 @@ class ModerationCog(commands.Cog):
         recent = list(state.audit_log)[-5:]
         lines = []
         for e in reversed(recent):
-            ts = time.strftime("%H:%M:%S", time.localtime(e["time"]))
-            lines.append(f"**{ts}** — {e['user']}\n`{e['command']}`\n_{e['error']}_")
+            # Discord renders <t:...:T> in the viewer's own timezone —
+            # container-local time.strftime was UTC and misleading.
+            lines.append(f"**<t:{int(e['time'])}:T>** — {e['user']}\n`{e['command']}`\n_{e['error']}_")
         await send_ephemeral(ctx, embed=emb("🔍 Audit Log", "\n\n".join(lines), C_GOLD))
 
 
@@ -37,6 +37,11 @@ class ModerationCog(commands.Cog):
     @requires_perm
     async def cmd_clearall(self, ctx: commands.Context, n: str = None):
 
+        if ctx.guild is None:
+            # DMChannel has no purge(); without this a DM invocation raises
+            # AttributeError into the global error handler.
+            await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
         if n is None:
             await ctx.send(embed=emb("❌ Missing Argument", "Usage: `!clear <n>` — Delete last n messages", C_RED))
             return
@@ -63,13 +68,16 @@ class ModerationCog(commands.Cog):
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete messages.", C_RED))
             return
 
-        if not deleted:
+        # purge() always eats the !clear command message itself, so the real
+        # count is len(deleted) - 1 — pluralize and empty-check on that.
+        n_deleted = max(0, len(deleted) - 1)
+        if n_deleted == 0:
             await ctx.send(embed=emb("❌ No Messages", "No messages found to delete.", C_RED))
             return
 
         confirm = await ctx.send(embed=emb(
             "🗑️ Cleared",
-            f"Deleted {len(deleted)-1} message{'s' if len(deleted) != 1 else ''}.",
+            f"Deleted {n_deleted} message{'s' if n_deleted != 1 else ''}.",
             C_GREY,
         ))
         await asyncio.sleep(5)

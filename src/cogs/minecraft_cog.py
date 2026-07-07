@@ -72,7 +72,7 @@ def _avg_ping_ms(samples, now: float) -> "float | None":
     """Mean ping of successful polls over the last hour, or None."""
     cutoff = now - MC_AVG_PING_WINDOW_SECS
     pings = [s.latency_ms for s in samples
-             if s.ts >= cutoff and s.online and s.latency_ms]
+             if s.ts >= cutoff and s.online and s.latency_ms is not None]
     if not pings:
         return None
     return sum(pings) / len(pings)

@@ -47,7 +47,10 @@ async def _maybe_latch_crime_eligible(uid: int) -> bool:
     if user is None or user.get("crime_eligible"):
         return False
     wallet = user.get("balance", 0)
-    savings_total = sum(e["amount"] for e in user.get("savings", []))
+    # Compound value, not raw principal — the doc above and the user-facing
+    # copy both say "current value of savings", and get_savings_value is the
+    # same formula the rest of the economy uses.
+    savings_total = await get_savings_value(uid)
     if wallet + savings_total > CRIME_ELIGIBLE_NET_WORTH:
         user["crime_eligible"] = True
         await save_economy(uid=uid)

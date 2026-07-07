@@ -172,8 +172,12 @@ class AdminCog(commands.Cog):
     async def cmd_restart(self, ctx: commands.Context):
         msg = await ctx.send(embed=emb("🔄 Restarting", "Bot is restarting...", C_GOLD))
         await save_restart_msg(msg.channel.id, msg.id)
-        await self.bot.close()
-        os._exit(0)
+        try:
+            await self.bot.close()
+        finally:
+            # Exit even if close() raises — a half-closed process (gateway
+            # down, container alive) never gets restarted by the supervisor.
+            os._exit(0)
 
 
     @commands.command(name="setperm")

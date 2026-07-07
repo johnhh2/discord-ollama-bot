@@ -653,6 +653,10 @@ class EventsCog(commands.Cog):
 
     async def _handle_msg_xp(self, message: discord.Message):
         """Award XP for non-command messages; announce level-ups."""
+        if message.author.bot:
+            # Consistent with cmd XP (on_command_completion) and voice XP,
+            # which both exclude bots — a companion bot shouldn't level up.
+            return
         if not (message.guild and not message.content.startswith("!")):
             return
         uid = message.author.id
@@ -816,23 +820,35 @@ class EventsCog(commands.Cog):
             "preamble, and change nothing except the actual errors. Otherwise reply "
             "with exactly the single word: CORRECT."
         )
-        corrected = await ollama_complete([
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": content},
-        ])
-        corrected = corrected.strip()
-        # Treat any "CORRECT"-ish no-op signal as "leave it alone" (the model
-        # sometimes adds punctuation, e.g. "CORRECT.").
-        if not corrected or corrected.strip(" .!").upper() == "CORRECT":
-            return
-        # The model occasionally echoes the input instead of "CORRECT" — skip if
-        # nothing meaningful changed (ignore surrounding whitespace).
-        if corrected == content or corrected.strip() == content.strip():
-            return
-        await message.channel.send(f"{corrected} *")
+        async def _run_spellcheck():
+            corrected = (await ollama_complete([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": content},
+            ])).strip()
+            # Treat any "CORRECT"-ish no-op signal as "leave it alone" (the model
+            # sometimes adds punctuation, e.g. "CORRECT.").
+            if not corrected or corrected.strip(" .!").upper() == "CORRECT":
+                return
+            # The model occasionally echoes the input instead of "CORRECT" — skip if
+            # nothing meaningful changed (ignore surrounding whitespace).
+            if corrected == content or corrected.strip() == content.strip():
+                return
+            try:
+                await message.channel.send(f"{corrected} *")
+            except discord.HTTPException:
+                pass
+
+        # Fire-and-forget: awaiting the full Ollama round-trip here would
+        # delay the blackjack/puzzle/hangman interceptors and
+        # process_commands for every message from a spellchecked user.
+        asyncio.create_task(_run_spellcheck())
 
     async def _handle_auto_daily(self, message: discord.Message):
         """Auto-claim daily reward on the first qualifying interaction each day."""
+        if message.author.bot:
+            # No free daily for companion bots (consistent with the XP
+            # exclusions); a bot user can still claim explicitly via !daily.
+            return
         uid = message.author.id
         is_dm = isinstance(message.channel, discord.DMChannel)
         if (not is_dm
@@ -943,7 +959,10 @@ class EventsCog(commands.Cog):
             return
 
         is_dm = isinstance(message.channel, discord.DMChannel)
-        is_mentioned = self.bot.user in message.mentions and message.content.strip().startswith(f"<@{self.bot.user.id}>")
+        # Accept both mention forms: <@id> and the legacy nickname form <@!id>
+        # (some clients/bots still send the latter).
+        _mention_forms = (f"<@{self.bot.user.id}>", f"<@!{self.bot.user.id}>")
+        is_mentioned = self.bot.user in message.mentions and message.content.strip().startswith(_mention_forms)
         ai_thread = state.ai_threads.get(message.channel.id)
         in_ai_thread = ai_thread is not None
 
@@ -983,7 +1002,12 @@ class EventsCog(commands.Cog):
             await self.bot.process_commands(message)
             return
 
-        content = message.content.replace(f"<@{self.bot.user.id}>", "").strip()
+        content = (
+            message.content
+            .replace(f"<@!{self.bot.user.id}>", "")
+            .replace(f"<@{self.bot.user.id}>", "")
+            .strip()
+        )
         if not content:
             await message.reply("Yes?")
             await self.bot.process_commands(message)

@@ -1309,9 +1309,11 @@ class EconomyCog(commands.Cog):
                     e_val = int(e["amount"] * (1.01 ** days))
                     e_principal = int(e["amount"])
                     e_interest = e_val - e_principal
-                    date_str = datetime.datetime.fromtimestamp(e["deposited_at"]).strftime("%Y-%m-%d")
+                    # <t:...:d> renders in the viewer's timezone — naive
+                    # fromtimestamp used the container's (UTC), so dates near
+                    # midnight were off by a day for CT users.
                     deposit_lines.append(
-                        f"`{date_str}` — {e_principal:,} 🪙 (+{e_interest:,})"
+                        f"<t:{int(e['deposited_at'])}:d> — {e_principal:,} 🪙 (+{e_interest:,})"
                     )
                 desc = (
                     f"**{ctx.author.display_name}**'s piggy bank:\n\n"

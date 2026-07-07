@@ -288,11 +288,15 @@ class UtilityCog(commands.Cog):
             inline=False
         )
 
+        # Costs come from the single source of truth so this menu can't go
+        # stale again (it previously showed 10/50 vs the real 200/500).
+        from src.ai import FEATURE_COSTS
+
         embed.add_field(
             name="💬 !ask",
             value=(
                 f"Ask the AI a question\n"
-                f"Cost: **10 🪙**\n"
+                f"Cost: **{FEATURE_COSTS['ask']:,} 🪙**\n"
                 f"Model: `{ask_model}`\n"
                 f"Usage: `!ask <question>`"
             ),
@@ -309,7 +313,7 @@ class UtilityCog(commands.Cog):
             name="📖 !story",
             value=(
                 f"Generate an original short story on any topic\n"
-                f"Cost: **500 🪙** · `!continue` for next chapter (10 🪙) · `!tldr` to summarize\n"
+                f"Cost: **{FEATURE_COSTS['story']:,} 🪙** · `!continue` for next chapter ({FEATURE_COSTS['continue']:,} 🪙) · `!tldr` to summarize\n"
                 f"Model: `{ask_model}`\n"
                 f"Usage: `!story <prompt>`\n"
                 f"{aliases_line}"
@@ -321,7 +325,7 @@ class UtilityCog(commands.Cog):
             name="🎭 !roleplay",
             value=(
                 f"Start an AI roleplay session\n"
-                f"Cost: **50 🪙** · `!tldr` to summarize the last response\n"
+                f"Cost: **{FEATURE_COSTS['roleplay']:,} 🪙** · `!tldr` to summarize the last response\n"
                 f"Model: `{roleplay_model}`\n"
                 f"Usage: `!roleplay <character> [@user1 @user2 ...]`"
             ),
@@ -332,7 +336,7 @@ class UtilityCog(commands.Cog):
             name="🗺️ !rpg",
             value=(
                 f"Start an interactive text adventure game\n"
-                f"Cost: **50 🪙**\n"
+                f"Cost: **{FEATURE_COSTS['rpg']:,} 🪙**\n"
                 f"Model: `{roleplay_model}`\n"
                 f"Usage: `!rpg [@user1 @user2 ...]`\n"
             ),

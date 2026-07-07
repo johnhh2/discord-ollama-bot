@@ -195,7 +195,20 @@ def format_uptime() -> str:
     return f"{days}d {hours}h {minutes}m"
 
 
+_version_cache: "str | None" = None
+
+
 def get_version() -> str:
+    # The commit can't change for the lifetime of the process — don't shell
+    # out to git twice on every call.
+    global _version_cache
+    if _version_cache is not None:
+        return _version_cache
+    _version_cache = _compute_version()
+    return _version_cache
+
+
+def _compute_version() -> str:
     try:
         commit_hash = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -278,7 +291,9 @@ def parse_int_amount(value: str, allow_negative: bool = False) -> "int | None":
         else:
             # Reject decimals for plain integers (e.g. "2.5" is not a count).
             amount = sign * int(s)
-    except ValueError:
+    except (ValueError, OverflowError):
+        # OverflowError: int(float("inf") * mult) from inputs like "infk" —
+        # must be a usage error, not an uncaught-exception bug report.
         return None
 
     if amount < 0 and not allow_negative:
@@ -317,11 +332,12 @@ def parse_duration(value: str) -> "int | None":
                 return None
             try:
                 qty = float(num)
-            except ValueError:
+                if qty <= 0:
+                    return None
+                return int(qty * _DURATION_UNITS[unit])
+            except (ValueError, OverflowError):
+                # OverflowError: "infh" and friends — invalid, not a crash.
                 return None
-            if qty <= 0:
-                return None
-            return int(qty * _DURATION_UNITS[unit])
     return None
 
 

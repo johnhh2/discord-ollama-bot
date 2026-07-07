@@ -189,17 +189,6 @@ async def refund_cost(uid: int, feature: str) -> None:
         )
 
 
-async def insufficient_funds(ctx_or_send, uid: int, *, label: str = "") -> None:
-    """Send a standard Insufficient Funds embed."""
-    from discord.ext import commands
-    desc = f"{label + ' ' if label else ''}Balance: {await get_balance(uid):,} 🪙"
-    e = emb("💸 Insufficient Funds", desc, C_RED)
-    if callable(ctx_or_send) and not isinstance(ctx_or_send, commands.Context):
-        await ctx_or_send(embed=e)
-    else:
-        await ctx_or_send.send(embed=e)
-
-
 async def check_ollama_connected() -> bool:
     try:
         async with aiohttp.ClientSession() as session:

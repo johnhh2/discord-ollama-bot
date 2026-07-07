@@ -339,9 +339,12 @@ class FunCog(commands.Cog):
             if ctx.message.mentions:
                 target_user = ctx.message.mentions[0]
 
-            # Fetch ALL messages from entire history
+            # Scan the most recent 2,000 messages. history() defaults to
+            # limit=100, which starved the 100-spicy/900-regular sampling
+            # below; an unbounded scan would hammer rate limits on old
+            # channels, so cap at 2x the sampling budget.
             all_messages = []
-            async for msg in target_channel.history():
+            async for msg in target_channel.history(limit=2000):
                 # Filter: no bot messages, no commands, reasonable length, no URLs
                 if msg.author == self.bot.user or msg.content.startswith("!") or "http" in msg.content.lower():
                     continue

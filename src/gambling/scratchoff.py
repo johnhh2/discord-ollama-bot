@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import random
 import datetime
@@ -23,8 +24,6 @@ from src.persistence import (
 )
 from src.guild_config import get_guild_cfg
 from src.config import (
-    SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
-    SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
     SCRATCH_SYMBOLS,
 )
 from src import state
@@ -217,8 +216,10 @@ class ScratchoffCog(commands.Cog):
         first_attempt = user["scratch_used"]
         user["scratch_used"] += count
 
-        # Generate daily goal seeded by date (same for everyone)
-        seed_val = hash(today) % (2**31)
+        # Generate daily goal seeded by date (same for everyone). hashlib, not
+        # hash() — str hashing is randomized per process (PYTHONHASHSEED), so
+        # a mid-day redeploy would silently change everyone's goal.
+        seed_val = int(hashlib.sha256(today.encode()).hexdigest(), 16) % (2**31)
         random.seed(seed_val)
         goal = random.choices(SCRATCH_SYMBOLS, k=4)
         random.seed()
@@ -373,38 +374,6 @@ class ScratchoffCog(commands.Cog):
 
         embed.add_field(name="Limit", value="**3 per day**", inline=False)
         await ctx.send(embed=embed)
-
-    def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
-        """Returns (result_label, multiplier). Caller applies multiplier to bet."""
-        a, b, c = reels
-        cherry = "🍒"
-
-        # Priority: evaluate highest payout first
-        if a == b == c:
-            sym = a
-            if sym == "7️⃣":
-                # Jackpot requires minimum bet
-                if bet < SLOT_MIN_BET:
-                    return ("nothing", 0)
-                return ("jackpot", SLOT_MULT_JACKPOT)
-            if sym == "🎰":
-                return ("3bar", SLOT_MULT_3BAR)
-            if sym == "🔔":
-                return ("3bell", SLOT_MULT_3BELL)
-            if sym == "🍋":
-                return ("3lemon", SLOT_MULT_3LEMON)
-            if sym == cherry:
-                return ("3cherry", SLOT_MULT_3CHERRY)
-
-        # Cherry retention (only checked when no 3-of-a-kind)
-        cherry_count = reels.count(cherry)
-        if cherry_count >= 2:
-            return ("2cherry", SLOT_MULT_2CHERRY)
-        if cherry_count == 1:
-            return ("1cherry", SLOT_MULT_1CHERRY)
-
-        return ("nothing", 0)
-
 
 
 async def setup(bot):

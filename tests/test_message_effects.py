@@ -29,6 +29,14 @@ from src.config import SHOP_TAX_PER_MESSAGE, SHOP_TAX_DURATION_SECS, SHOP_SPELLC
 from tests.fakes.discord import FakeMember, FakeGuild
 
 
+async def _drain_tasks():
+    """Yield to the event loop so fire-and-forget handler tasks (e.g. the
+    spellcheck AI call) complete before assertions."""
+    import asyncio
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -441,6 +449,7 @@ async def test_spellcheck_corrects_message_with_errors(db, cog, monkeypatch):
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "i goed to teh stor", guild, channel))
+    await _drain_tasks()
 
     channel.send.assert_awaited()
     assert channel.send.call_args.args[0] == "I went to the store. *"
@@ -459,6 +468,7 @@ async def test_spellcheck_silent_when_ai_says_correct(db, cog, monkeypatch):
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "This sentence is fine.", guild, channel))
+    await _drain_tasks()
 
     channel.send.assert_not_awaited()
 
@@ -476,6 +486,7 @@ async def test_spellcheck_silent_when_unchanged(db, cog, monkeypatch):
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "same text", guild, channel))
+    await _drain_tasks()
 
     channel.send.assert_not_awaited()
 
@@ -495,6 +506,7 @@ async def test_spellcheck_silent_when_correct_has_trailing_punctuation(db, cog, 
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "playing Elden Ring rn", guild, channel))
+    await _drain_tasks()
 
     channel.send.assert_not_awaited()
 
@@ -516,6 +528,7 @@ async def test_spellcheck_does_not_fire_on_command_messages(db, cog, monkeypatch
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "!balance", guild, channel))
+    await _drain_tasks()
 
     assert called is False
 
@@ -536,6 +549,7 @@ async def test_spellcheck_expires_and_cleans_up(db, cog, monkeypatch):
         "expires_at": time.time() - 3600,
     }
     await cog.on_message(_Msg(target, "i has errors", guild, channel))
+    await _drain_tasks()
 
     assert (42, target.id) not in _state.active_spellchecks
     channel.send.assert_not_awaited()
@@ -555,6 +569,7 @@ async def test_spellcheck_skips_blacklisted_channel(db, cog, monkeypatch):
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "i has errors", guild, channel))
+    await _drain_tasks()
 
     channel.send.assert_not_awaited()
 
@@ -573,6 +588,7 @@ async def test_spellcheck_skips_channel_not_in_whitelist(db, cog, monkeypatch):
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "i has errors", guild, channel))
+    await _drain_tasks()
 
     channel.send.assert_not_awaited()
 
@@ -591,6 +607,7 @@ async def test_spellcheck_fires_in_whitelisted_channel(db, cog, monkeypatch):
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "i has errors", guild, channel))
+    await _drain_tasks()
 
     channel.send.assert_awaited()
     assert channel.send.call_args.args[0] == "I have errors. *"
@@ -613,5 +630,6 @@ async def test_spellcheck_skips_insured_target(db, cog, monkeypatch):
         "started_by": 9, "days": 1, "channel_id": None, "activated_at": time.time(),
     }
     await cog.on_message(_Msg(target, "i has errors", guild, channel))
+    await _drain_tasks()
 
     channel.send.assert_not_awaited()

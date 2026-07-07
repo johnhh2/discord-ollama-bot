@@ -1,9 +1,15 @@
 """Reaction-based invite helpers for AI threads and games."""
 import asyncio
+import logging
 
 from discord.ext import commands
 
 from src.helpers import emb, C_BLUE
+
+# How long an open-ended invite (_send_invite) keeps listening for ✅.
+# Without a bound, every invite with a no-show invitee leaked a permanent
+# gateway listener for the life of the process.
+INVITE_LISTEN_SECS = 3600.0
 
 
 async def _wait_for_confirmations(
@@ -80,14 +86,25 @@ async def _send_invite(
 
     async def _listen():
         reacted: set = set()
+        deadline = asyncio.get_running_loop().time() + INVITE_LISTEN_SECS
         while reacted != invited_ids:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
             try:
-                _, user = await ctx.bot.wait_for("reaction_add", check=check)
-                if user.id not in reacted:
-                    reacted.add(user.id)
-                    if on_join:
-                        await on_join(user)
+                _, user = await ctx.bot.wait_for("reaction_add", check=check, timeout=remaining)
+            except asyncio.TimeoutError:
+                break
             except asyncio.CancelledError:
                 break
+            if user.id not in reacted:
+                reacted.add(user.id)
+                if on_join:
+                    try:
+                        await on_join(user)
+                    except Exception:
+                        # One invitee's failed join (deleted thread, missing
+                        # perms) must not stop the remaining invitees.
+                        logging.exception("[invite] on_join failed for user %s", user.id)
 
     asyncio.create_task(_listen())

@@ -111,12 +111,5 @@ class FlipCog(commands.Cog):
             await announce_record(ctx.channel, "highest_balance", ctx.author.display_name, new_bal)
 
 
-    # Mini Cactpot payout table
-    CACTPOT_PAYOUTS = {
-        6: 10000, 7: 36, 8: 720, 9: 360, 10: 80, 11: 252, 12: 108, 13: 72, 14: 54, 15: 180,
-        16: 72, 17: 180, 18: 119, 19: 36, 20: 306, 21: 1080, 22: 144, 23: 1800, 24: 3600
-    }
-
-
 async def setup(bot):
     await bot.add_cog(FlipCog(bot))

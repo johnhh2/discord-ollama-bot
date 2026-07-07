@@ -82,7 +82,7 @@ UNLOCKS: dict[str, dict] = {
     # Level 15 — bankheist (advertised: bankheist)
     "bankheist":   {"level": 15, "enabled": _always,                       "usage": "`!bankheist @user` — open a 4-slot lobby and split a cut of their savings", "reward": True},
 
-    # Level 20 — unoreverse (advertised: unoreverse)
+    # Level 18 — unoreverse (advertised: unoreverse)
     "unoreverse":  {"level": 18, "enabled": _shop_item_enabled("unoreverse"), "usage": "`!unoreverse @user` — redirect mock/ragebait/curse to someone else", "reward": True},
 
     # Level 20 — channel family (advertised: channelcreate). channellock/channelunlock gated separately at 25.

@@ -1,15 +1,15 @@
 """
 Leveling system — domain logic
 ==============================
-XP sources and caps:
-  - Non-command message : 10 XP,  max 1 grant/hour,  max 5 grants/day
-  - Command             :  5 XP,  max 1 grant/hour,  max 5 grants/day
-  - Voice activity      :  5 XP,  max 1 grant/15 min, max 32 grants/day
+XP sources and caps (source of truth: the constants below — keep in sync):
+  - Non-command message : 10 XP,  max 1 grant/hour,   max  5 grants/day
+  - Command             :  5 XP,  max 1 grant/hour,   max  5 grants/day
+  - Voice activity      : 10 XP,  max 1 grant/30 min, max 16 grants/day
+  - Stream              : 15 XP,  max 1 grant/hour,   max  3 grants/day
+  - Scratchoff          :  5 XP per card played (3/day)
 
-Level curve: total XP required for level N = 100 * N * (N+1) / 2
-  Level 1 → 100 XP total
-  Level 2 → 300 XP total
-  Level 3 → 600 XP total  (each level costs 100*(level) more than the last)
+Level curve: advancing from level n to n+1 costs 100 + n^1.9 * 2 XP
+(see _xp_cost below). Daily caps reset at 5am CT with the bot day.
 
 This module contains only pure domain functions. The Discord cog (transport)
 lives in src/cogs/leveling_cog.py.
@@ -30,20 +30,16 @@ MSG_HOURLY_MAX    = 1
 MSG_DAILY_MAX     = 5
 CMD_HOURLY_MAX    = 1
 CMD_DAILY_MAX     = 5
-VOICE_30MIN_MAX   = 1
 VOICE_DAILY_MAX   = 16
 STREAM_HOURLY_MAX = 1
 STREAM_DAILY_MAX  = 3
 
 HOUR_SECS   = 3600
 MINS30_SECS = 1800
-MINS15_SECS =  900
 DAY_SECS    = 86400
 
 
 # ── Level math ────────────────────────────────────────────────────────────────
-# XP cost to go from level n to level n+1: 50 + n^1.9
-# Total XP to reach level n = sum(50 + i^1.9 for i in range(n))
 
 def _xp_cost(n: int) -> int:
     """XP required to advance from level n to level n+1."""
