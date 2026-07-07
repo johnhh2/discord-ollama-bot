@@ -7,9 +7,11 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "").strip()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "dolphin3:8b")
-SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant.")
-HISTORY_LIMIT = int(os.getenv("HISTORY_LIMIT", "20"))
+# `or` fallbacks (not getenv defaults): docker-compose exports these as empty
+# strings when unset in the stack, and int("") would crash-loop the container.
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL") or "dolphin3:8b"
+SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT") or "You are a helpful assistant."
+HISTORY_LIMIT = int(os.getenv("HISTORY_LIMIT") or "20")
 NSFW_API_URL = os.getenv("NSFW_API_URL", "")
 NSFW_API_KEY = os.getenv("NSFW_API_KEY")
 NSFW_API_USER_ID = os.getenv("NSFW_API_USER_ID")

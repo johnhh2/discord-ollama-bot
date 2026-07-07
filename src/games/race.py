@@ -1,11 +1,12 @@
 import asyncio
+import logging
 import random
 
 import discord
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_ORANGE, _render_race,
+    emb, C_GREEN, C_RED, C_ORANGE, _render_race, parse_int_amount,
 )
 from src.economy import (
     add_balance, deduct_balance, record_gambling_event,
@@ -29,7 +30,22 @@ async def _run_race(channel, cid: int, race_msg: discord.Message):
     """Animate and run a race until there's a winner."""
 
     game = state.active_race_games[cid]
+    try:
+        await _run_race_loop(cid, race_msg, game)
+    except Exception:
+        # A deleted board message (or any Discord error) mid-race would
+        # otherwise kill this task silently, leaving the channel locked
+        # forever and every bet unpaid. Release the slot and refund.
+        logging.exception("[race] race in channel %s aborted; refunding bets", cid)
+        if state.active_race_games.get(cid) is game:
+            del state.active_race_games[cid]
+        amount = game.get("amount", 0)
+        if amount > 0:
+            for uid in game["players"]:
+                await add_balance(uid, amount)
 
+
+async def _run_race_loop(cid: int, race_msg: discord.Message, game: dict):
     while cid in state.active_race_games:
         await asyncio.sleep(1.5)
         if cid not in state.active_race_games:
@@ -108,78 +124,93 @@ class RaceCog(commands.Cog):
             await ctx.send("Usage: `!race @user1 [@user2 ...] [amount]`")
             return
 
-        # Parse optional amount (any numeric arg that isn't a mention)
+        # Parse optional amount (any non-mention arg). parse_int_amount
+        # handles the k/m shorthand — raw int() made `!race @user 10k`
+        # silently a free race.
         amount = 0
         for a in args:
             if not a.startswith("<@"):
-                try:
-                    amount = int(a)
-                    if amount <= 0:
-                        await ctx.send(embed=emb("❌ Invalid Amount", "Amount must be positive.", C_RED))
-                        return
-                except ValueError:
-                    pass
+                parsed = parse_int_amount(a)
+                if parsed is None or parsed <= 0:
+                    await ctx.send(embed=emb("❌ Invalid Amount", "Amount must be a positive whole number (e.g. `100`, `2.5k`).", C_RED))
+                    return
+                amount = parsed
 
         all_players = [uid] + [u.id for u in invited_users]
 
-        # Deduct bets from all players upfront
-        paid = []
-        if amount > 0:
-            for player_uid in all_players:
-                if not await deduct_balance(player_uid, amount):
-                    for refund_uid in paid:
-                        await add_balance(refund_uid, amount)
-                    member = ctx.guild.get_member(player_uid) if ctx.guild else None
-                    name = member.display_name if member else str(player_uid)
-                    await ctx.send(embed=emb("💸 Insufficient Funds", f"**{name}** can't cover the **{amount:,} 🪙** bet.", C_RED))
-                    return
-                paid.append(player_uid)
+        # Claim the channel slot synchronously before the bet/confirmation
+        # awaits: two !race invocations could otherwise both pass the gate,
+        # and the second game would clobber the first — whose task then
+        # deletes the second game, eating its bets.
+        placeholder = {"players": [], "names": {}, "positions": {}, "amount": 0}
+        state.active_race_games[cid] = placeholder
 
-        # Skip confirmation if no bet
-        if amount == 0:
-            confirmed_ids = set(u.id for u in invited_users)
-        else:
-            confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="🏇 Race Invite")
-
-        # Refund anyone who didn't confirm
-        declined = set(u.id for u in invited_users) - confirmed_ids
-        if amount > 0:
-            for d_uid in declined:
-                await add_balance(d_uid, amount)
-
-        if not confirmed_ids:
+        try:
+            # Deduct bets from all players upfront
+            paid = []
             if amount > 0:
-                await add_balance(uid, amount)
-                msg = f"Race cancelled — no one accepted the invite. Coins refunded ({amount:,} 🪙)."
+                for player_uid in all_players:
+                    if not await deduct_balance(player_uid, amount):
+                        for refund_uid in paid:
+                            await add_balance(refund_uid, amount)
+                        member = ctx.guild.get_member(player_uid) if ctx.guild else None
+                        name = member.display_name if member else str(player_uid)
+                        await ctx.send(embed=emb("💸 Insufficient Funds", f"**{name}** can't cover the **{amount:,} 🪙** bet.", C_RED))
+                        return
+                    paid.append(player_uid)
+
+            # Skip confirmation if no bet
+            if amount == 0:
+                confirmed_ids = set(u.id for u in invited_users)
             else:
-                msg = "Race cancelled — no one accepted the invite."
-            await ctx.send(embed=emb("❌ No One Joined", msg, C_RED))
-            return
+                confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="🏇 Race Invite")
 
-        # Build final player list (host + confirmed)
-        final_players = [uid] + list(confirmed_ids)
+            # Refund anyone who didn't confirm
+            declined = set(u.id for u in invited_users) - confirmed_ids
+            if amount > 0:
+                for d_uid in declined:
+                    await add_balance(d_uid, amount)
 
-        # Build names map using known member objects where available
-        names = {}
-        # Host is always ctx.author
-        names[uid] = ctx.author.display_name
-        # Confirmed players come from invited_users
-        for player_uid in confirmed_ids:
-            # Find the member from invited_users
-            member = next((u for u in invited_users if u.id == player_uid), None)
-            if member:
-                names[player_uid] = member.display_name
-            else:
-                # Fallback to lookup (shouldn't happen)
-                member = ctx.guild.get_member(player_uid) if ctx.guild else None
-                names[player_uid] = member.display_name if member else str(player_uid)
+            if not confirmed_ids:
+                if amount > 0:
+                    await add_balance(uid, amount)
+                    msg = f"Race cancelled — no one accepted the invite. Coins refunded ({amount:,} 🪙)."
+                else:
+                    msg = "Race cancelled — no one accepted the invite."
+                await ctx.send(embed=emb("❌ No One Joined", msg, C_RED))
+                return
 
-        state.active_race_games[cid] = {
-            "players": final_players,
-            "names": names,
-            "positions": {p: 0 for p in final_players},
-            "amount": amount,
-        }
+            # Build final player list (host + confirmed)
+            final_players = [uid] + list(confirmed_ids)
+
+            # Build names map using known member objects where available
+            names = {}
+            # Host is always ctx.author
+            names[uid] = ctx.author.display_name
+            # Confirmed players come from invited_users
+            for player_uid in confirmed_ids:
+                # Find the member from invited_users
+                member = next((u for u in invited_users if u.id == player_uid), None)
+                if member:
+                    names[player_uid] = member.display_name
+                else:
+                    # Fallback to lookup (shouldn't happen)
+                    member = ctx.guild.get_member(player_uid) if ctx.guild else None
+                    names[player_uid] = member.display_name if member else str(player_uid)
+
+            # Replacing the placeholder with the real game keeps the slot
+            # claimed; the finally below then leaves it in place.
+            state.active_race_games[cid] = {
+                "players": final_players,
+                "names": names,
+                "positions": {p: 0 for p in final_players},
+                "amount": amount,
+            }
+        finally:
+            # Early return or exception anywhere above: release the slot
+            # (identity check — the success path already swapped in the game).
+            if state.active_race_games.get(cid) is placeholder:
+                del state.active_race_games[cid]
 
         board = _render_race(state.active_race_games[cid])
         race_msg = await ctx.send(embed=emb("🏇 Race Starting!", board, C_ORANGE))

@@ -275,6 +275,11 @@ class FakeConn:
         # aiomysql's `conn.cursor()` is itself an async context manager.
         return FakeCursor(self._sqlite.cursor())
 
+    async def begin(self):
+        # isolation_level=None means autocommit; an explicit BEGIN opens a
+        # real transaction so with_transaction()'s commit/rollback work.
+        self._sqlite.execute("BEGIN")
+
     async def commit(self):
         self._sqlite.commit()
 

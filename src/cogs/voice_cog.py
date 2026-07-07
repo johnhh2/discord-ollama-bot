@@ -295,11 +295,18 @@ class VoiceCog(commands.Cog):
             if last is not None and now - last < PING_COOLDOWN_SECS:
                 continue
 
+            # Claim the cooldown synchronously BEFORE the fetch/DM awaits —
+            # a join/leave/rejoin inside the DM round-trip would otherwise
+            # pass the gate twice and double-DM. Rolled back below on send
+            # failure so a failed DM doesn't burn the cooldown.
+            data["last_pinged_at"] = now
+
             user = self.bot.get_user(uid)
             if user is None:
                 try:
                     user = await self.bot.fetch_user(uid)
                 except (discord.NotFound, discord.HTTPException):
+                    data["last_pinged_at"] = last
                     continue
 
             try:
@@ -315,15 +322,16 @@ class VoiceCog(commands.Cog):
                     "voice_ping_dm_forbidden uid=%s channel_id=%s",
                     uid, channel.id,
                 )
+                data["last_pinged_at"] = last
                 continue
             except discord.HTTPException as e:
                 logging.warning(
                     "voice_ping_dm_failed uid=%s channel_id=%s error=%s",
                     uid, channel.id, type(e).__name__,
                 )
+                data["last_pinged_at"] = last
                 continue
 
-            data["last_pinged_at"] = now
             try:
                 await update_voice_ping_last_pinged(channel.id, uid, now)
             except Exception as e:

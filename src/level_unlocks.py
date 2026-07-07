@@ -167,7 +167,7 @@ def unlocks_at_level(level: int, guild_id: int) -> list[tuple[str, dict]]:
 def is_locked_for(cmd: str, user_id: int, guild_id: int) -> Optional[int]:
     """If *cmd* is gated and the user is below the gate, return the required level.
     Returns None if the command is unlocked (or not level-gated)."""
-    info = UNLOCKS.get(cmd)
+    info = lookup(cmd)
     if not info:
         return None
     required = info["level"]

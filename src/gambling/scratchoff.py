@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import random
 import datetime
 
@@ -163,6 +164,31 @@ class MiniCactpotGame:
 class ScratchoffCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._daily_reset_task.start()
+
+    def cog_unload(self):
+        self._daily_reset_task.cancel()
+
+    @tasks.loop(minutes=1)
+    async def _daily_reset_task(self):
+        """Reset daily counters at 5am CT. Guarded — a failed tick must not
+        stop the loop for good."""
+        try:
+            now_ct = _ct_now()
+            if now_ct.hour != 5 or now_ct.minute != 0:
+                return
+            today = now_ct.date().isoformat()
+            if state.economy.get("last_daily_reset") != today:
+                await do_daily_reset()
+        except Exception:
+            logging.exception("[scratchoff] daily reset tick failed")
+
+    @_daily_reset_task.before_loop
+    async def _before_daily_reset_task(self):
+        # State must be loaded before the reset can compare/stamp dates.
+        await self.bot.wait_until_ready()
+        from src.persistence import init_done
+        await init_done.wait()
 
     @commands.command(name="scratchoff", aliases=["scratch"])
     async def cmd_scratchoff(self, ctx: commands.Context, count: int = 1):
@@ -253,7 +279,9 @@ class ScratchoffCog(commands.Cog):
             # Award 10 XP per scratchoff played
             if ctx.guild:
                 _, leveled_up = await grant_xp(uid, "scratch", guild_id=ctx.guild.id)
-                if leveled_up and get_guild_cfg(ctx.guild.id).get("levelup_channel"):
+                # _announce_levelup grants the coin reward and skips the
+                # announcement itself when no channel is configured.
+                if leveled_up:
                     cog = ctx.bot.cogs.get("LevelingCog")
                     if cog and isinstance(ctx.author, discord.Member):
                         asyncio.create_task(cog._announce_levelup(ctx.author, ctx.guild.id))
@@ -381,16 +409,5 @@ class ScratchoffCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(ScratchoffCog(bot))
-
-
-@tasks.loop(minutes=1)
-async def scratchoff_scheduler():
-    """Reset daily scratchoff counts at 5am CT every day."""
-    now_ct = _ct_now()
-    if now_ct.hour != 5 or now_ct.minute != 0:
-        return
-    today = now_ct.date().isoformat()
-    if state.economy.get("last_daily_reset") != today:
-        await do_daily_reset()
 
 

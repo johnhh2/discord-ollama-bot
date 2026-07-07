@@ -1,4 +1,4 @@
-from src.db import with_cursor
+from src.db import with_cursor, with_transaction
 
 
 async def load_lottery(guild_id: int) -> dict:
@@ -24,7 +24,7 @@ async def load_lottery(guild_id: int) -> dict:
 
 
 async def save_lottery(guild_id: int, lottery_data: dict):
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         await cur.execute(
             "INSERT INTO lottery (guild_id, prize_pool, last_posted_week, last_drawn_week)"
             " VALUES (%s,%s,%s,%s)"

@@ -574,6 +574,12 @@ class BountyCog(commands.Cog):
         payout = int(amount * payout_frac)
         log = list(bounty.get("claim_log") or [])
 
+        # Claim terminal status synchronously BEFORE the persist/payout awaits:
+        # an author accepting two pending claims in quick succession (or a poll
+        # tally racing an author-accept) must not both pass the open-status
+        # gate and pay the escrow twice.
+        bounty["status"] = "accepted"
+
         await self._persist_claim(claim, status="accepted")
         if payout > 0:
             await add_balance(claimant_id, payout, guild_id=bounty["guild_id"])
@@ -581,7 +587,6 @@ class BountyCog(commands.Cog):
         prefix = f"{note} — " if note else ""
         log.append(f"✅ {prefix}paid {payout:,} 🪙 ({pct}%) to <@{claimant_id}>")
 
-        bounty["status"] = "accepted"
         await self._void_siblings(bounty, winner_claim_id=claim["id"], log=log)
         await self._persist_bounty(bounty, status="accepted", claim_log=log)
         await self._refresh_embed(bounty)

@@ -1,7 +1,7 @@
 import json
 
 from src import state
-from src.db import with_cursor
+from src.db import with_cursor, with_transaction
 
 
 async def save_guild_settings():
@@ -24,7 +24,7 @@ async def save_bot_roles():
     fire (createrole / deleterole maintain both), but it preserves legacy
     behavior for any caller that mutates bot_roles directly.
     """
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         await cur.execute("DELETE FROM bot_roles")
         seen: set = set()
         for (guild_id, role_id), rank_pos in state.bot_role_ranks.items():
@@ -41,17 +41,28 @@ async def save_bot_roles():
 
 
 async def save_godmode_users():
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         await cur.execute("DELETE FROM godmode_users")
         for uid in state.godmode_users:
             await cur.execute("INSERT IGNORE INTO godmode_users (user_id) VALUES (%s)", (uid,))
 
 
 async def save_bot_settings():
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         for k, v in state.bot_settings.items():
             await cur.execute(
                 "INSERT INTO bot_settings (key_name, value_text) VALUES (%s,%s)"
                 " ON DUPLICATE KEY UPDATE value_text=VALUES(value_text)",
                 (k, str(v)),
             )
+        # Also delete rows for keys popped from state (e.g. `!settings-channel
+        # X clear`) — upsert-only left them in the DB, so cleared channels
+        # silently resurrected on the next reboot.
+        if state.bot_settings:
+            placeholders = ",".join(["%s"] * len(state.bot_settings))
+            await cur.execute(
+                f"DELETE FROM bot_settings WHERE key_name NOT IN ({placeholders})",  # nosec B608 - placeholders is only "%s,%s,...", values are bound
+                tuple(state.bot_settings.keys()),
+            )
+        else:
+            await cur.execute("DELETE FROM bot_settings")

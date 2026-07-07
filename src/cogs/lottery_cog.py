@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import random
 import datetime
 
@@ -22,10 +24,19 @@ from src.confirm_view import confirm_purchase
 class LotteryCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # Per-guild lock serializing every load→mutate→save of the lottery
+        # snapshot (purchases and the draw). save_lottery rewrites the whole
+        # snapshot, so unserialized concurrent writers erase each other's
+        # tickets — and a purchase saved after the draw would restore the
+        # stale "undrawn" pool, making the scheduler pay it out again.
+        self._guild_locks: dict[int, asyncio.Lock] = {}
         self.lottery_scheduler.start()
 
     def cog_unload(self):
         self.lottery_scheduler.cancel()
+
+    def _lock(self, guild_id: int) -> asyncio.Lock:
+        return self._guild_locks.setdefault(guild_id, asyncio.Lock())
 
     @tasks.loop(minutes=1)
     async def lottery_scheduler(self):
@@ -37,62 +48,41 @@ class LotteryCog(commands.Cog):
             return
 
         for guild in self.bot.guilds:
-            cfg = get_guild_cfg(guild.id)
-            lottery_channel_id = cfg.get("lottery_channel")
-            if not lottery_channel_id:
-                continue
-
+            # One guild's Discord/DB hiccup must not kill the loop for good
+            # (tasks.loop stops permanently on unhandled non-retry exceptions)
+            # nor skip the remaining guilds' draws.
             try:
-                channel = await self.bot.fetch_channel(lottery_channel_id)
+                await self._run_guild_schedule(guild, now)
             except Exception:
-                continue
+                logging.exception("[lottery] scheduler failed for guild %s", guild.id)
 
+    async def _run_guild_schedule(self, guild, now):
+        cfg = get_guild_cfg(guild.id)
+        lottery_channel_id = cfg.get("lottery_channel")
+        if not lottery_channel_id:
+            return
+
+        try:
+            channel = await self.bot.fetch_channel(lottery_channel_id)
+        except Exception:
+            return
+
+        current_week = lottery_week_key(now)
+        pool = 0
+        players: dict = {}
+        drew = False
+
+        async with self._lock(guild.id):
             lottery = await load_lottery(guild.id)
-            current_week = lottery_week_key(now)
 
             # 6pm: draw winner and reset lottery
             if now.hour >= 18 and lottery.get("last_drawn_week") != current_week:
                 pool = lottery.get("prize_pool", 0)
                 players = lottery.get("players", {})
-
-                if players and pool > 0:
-                    player_ids = list(players.keys())
-                    weights = [players[pid] for pid in player_ids]
-                    winner_id = random.choices(player_ids, weights=weights, k=1)[0]
-                    winner = await self.bot.fetch_user(int(winner_id))
-                    new_bal_record = await add_balance(int(winner_id), pool, guild_id=guild.id, holder_name=winner.display_name)
-                    await record_gambling_event(guild.id, int(winner_id), gained=pool)
-                    new_lottery_record = await try_set_record(guild.id, "lottery", pool, int(winner_id), winner.display_name)
-                    # Log every lottery win for !recap — a non-record win
-                    # never reaches announce_record, so log it here directly.
-                    try:
-                        await log_notable_event(
-                            guild.id, _ct_today(), "lottery_win", None,
-                            winner.display_name, pool,
-                        )
-                    except Exception:
-                        pass
-
-                    embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
-                    embed.description = (
-                        f"**Winner:** {winner.mention}\n"
-                        f"**Prize:** {pool:,} 🪙\n"
-                        f"**Players:** {len(players)}\n"
-                        f"**Tickets Sold:** {sum(players.values())}"
-                    )
-                    await channel.send(embed=embed, silent=False)
-
-                    # Ping Gamblers role if enabled
-                    if cfg.get("gambler_role_enabled", False):
-                        gamblers_role = discord.utils.get(guild.roles, name="Gamblers")
-                        if gamblers_role:
-                            await channel.send(f"{gamblers_role.mention} 🎰 The lottery was just won!")
-
-                    if new_lottery_record:
-                        await announce_record(channel, "lottery", winner.display_name, pool)
-                    if new_bal_record:
-                        await announce_record(channel, "highest_balance", winner.display_name, await get_balance(int(winner_id)))
-
+                drew = True
+                # Persist the drawn marker + reset BEFORE paying/announcing:
+                # a crash mid-payout must not leave last_drawn_week stale, or
+                # the next tick (or reboot) re-draws and pays the pool again.
                 lottery = {"prize_pool": 2000, "players": {}, "last_drawn_week": current_week, "last_posted_week": 0}
                 await drain_bot_balance_into_lottery(lottery, guild.id)
                 await save_lottery(guild.id, lottery)
@@ -102,6 +92,45 @@ class LotteryCog(commands.Cog):
                 lottery["last_posted_week"] = current_week
                 await save_lottery(guild.id, lottery)
                 await announce_new_lottery(channel, lottery["prize_pool"], now)
+
+        if drew and players and pool > 0:
+            player_ids = list(players.keys())
+            weights = [players[pid] for pid in player_ids]
+            winner_id = random.choices(player_ids, weights=weights, k=1)[0]
+            winner = await self.bot.fetch_user(int(winner_id))
+            new_bal_record = await add_balance(int(winner_id), pool, guild_id=guild.id, holder_name=winner.display_name)
+            await record_gambling_event(guild.id, int(winner_id), gained=pool)
+            new_lottery_record = await try_set_record(guild.id, "lottery", pool, int(winner_id), winner.display_name)
+            # Log every lottery win for !recap — a non-record win
+            # never reaches announce_record, so log it here directly.
+            try:
+                await log_notable_event(
+                    guild.id, _ct_today(), "lottery_win", None,
+                    winner.display_name, pool,
+                )
+            except Exception:
+                pass
+
+            embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
+            embed.description = (
+                f"**Winner:** {winner.mention}\n"
+                f"**Prize:** {pool:,} 🪙\n"
+                f"**Players:** {len(players)}\n"
+                f"**Tickets Sold:** {sum(players.values())}"
+            )
+            await channel.send(embed=embed, silent=False)
+
+            # Ping Gamblers role if enabled
+            cfg = get_guild_cfg(guild.id)
+            if cfg.get("gambler_role_enabled", False):
+                gamblers_role = discord.utils.get(guild.roles, name="Gamblers")
+                if gamblers_role:
+                    await channel.send(f"{gamblers_role.mention} 🎰 The lottery was just won!")
+
+            if new_lottery_record:
+                await announce_record(channel, "lottery", winner.display_name, pool)
+            if new_bal_record:
+                await announce_record(channel, "highest_balance", winner.display_name, await get_balance(int(winner_id)))
 
     @commands.command(name="lottery")
     async def cmd_lottery(self, ctx: commands.Context, n: str = None):
@@ -249,24 +278,41 @@ class LotteryCog(commands.Cog):
 
             cost = tickets * 10
 
-        if not await deduct_balance(uid, cost):
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"Need {cost:,} 🪙. Balance: {await get_balance(uid):,} 🪙", C_RED))
-            return
-        await record_gambling_event(ctx.guild.id, uid, lost=cost)
+        # Serialize with other purchases and the draw: save_lottery rewrites
+        # the whole snapshot, so an unlocked concurrent purchase would erase
+        # this buyer's tickets (while keeping their coins), and a save racing
+        # the Saturday draw would resurrect the paid-out pool.
+        async with self._lock(ctx.guild.id):
+            # Re-load inside the lock — the snapshot from earlier in this
+            # command may be stale by now.
+            lottery = await load_lottery(ctx.guild.id)
+            players = lottery.setdefault("players", {})
+            current_tickets = int(players.get(str(uid), 0))
+            if current_tickets + tickets > TICKET_CAP:
+                await ctx.send(embed=emb(
+                    "🎟️ Ticket Cap Reached",
+                    f"Each player can hold at most **{TICKET_CAP:,}** 🎟️ per lottery.",
+                    C_RED,
+                ))
+                return
 
-        # Add to lottery
-        players = lottery.setdefault("players", {})
-        was_new_player = str(uid) not in players
+            if not await deduct_balance(uid, cost):
+                await ctx.send(embed=emb("💸 Insufficient Funds", f"Need {cost:,} 🪙. Balance: {await get_balance(uid):,} 🪙", C_RED))
+                return
+            await record_gambling_event(ctx.guild.id, uid, lost=cost)
 
-        players[str(uid)] = players.get(str(uid), 0) + tickets
-        lottery.setdefault("prize_pool", 0)
-        lottery["prize_pool"] += tickets * 7
-        if was_new_player:
-            lottery["prize_pool"] += 1000
+            # Add to lottery
+            was_new_player = str(uid) not in players
 
-        await add_guild_house(ctx.guild.id, tickets * 3)
+            players[str(uid)] = players.get(str(uid), 0) + tickets
+            lottery.setdefault("prize_pool", 0)
+            lottery["prize_pool"] += tickets * 7
+            if was_new_player:
+                lottery["prize_pool"] += 1000
 
-        await save_lottery(ctx.guild.id, lottery)
+            await add_guild_house(ctx.guild.id, tickets * 3)
+
+            await save_lottery(ctx.guild.id, lottery)
 
         bonus_msg = "(+1,000 bonus as new player)" if was_new_player else ""
 

@@ -27,7 +27,7 @@ from src.persistence import (
 )
 from src.guild_config import get_guild_cfg
 from src.ai import (
-    enforce_cost, keep_typing,
+    enforce_cost, refund_cost, keep_typing,
     stream_ollama, finalize, respond,
     check_token_budget_or_notify,
     ASK_SYSTEM_PROMPT, STORY_SYSTEM_PROMPT,
@@ -103,10 +103,10 @@ class AICog(commands.Cog):
                 "character_prompt": None,
                 "history": [],
             }
-            await respond(thread, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
+            await respond(thread, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name, refund_feature="ask")
             await thread.send(embed=emb("💬 Ask Thread", "Keep talking — I'll remember the conversation.\n`!invite @user` — let someone else join · `!stop` — end the thread", C_BLUE))
         else:
-            await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name)
+            await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name, refund_feature="ask")
 
 
     @commands.command(name="story")
@@ -191,10 +191,10 @@ class AICog(commands.Cog):
             if invited_users:
                 await _send_invite(ctx, invited_users, title=f"📨 {thread_label} Invite", dest=thread, on_join=_story_join)
 
-            await respond(thread, uid, clean_prompt, ctx.message, system_prompt=system_prompt, guild_id=guild_id)
+            await respond(thread, uid, clean_prompt, ctx.message, system_prompt=system_prompt, guild_id=guild_id, refund_feature="story")
             await thread.send(embed=emb(f"📖 {thread_label} Started", "`!continue` — next chapter · `!reverse` — undo last response · `!invite @user` — add a co-author · `!stop` — end the story", C_BLUE))
         else:
-            await respond(ctx.channel, uid, clean_prompt, ctx.message, system_prompt=system_prompt, guild_id=guild_id)
+            await respond(ctx.channel, uid, clean_prompt, ctx.message, system_prompt=system_prompt, guild_id=guild_id, refund_feature="story")
 
 
     @commands.Cog.listener()
@@ -243,7 +243,7 @@ class AICog(commands.Cog):
             return
 
         sp = t.get("system_prompt") if t else STORY_SYSTEM_PROMPT
-        await respond(ctx.channel, uid, "Continue the story.", ctx.message, system_prompt=sp, guild_id=guild_id)
+        await respond(ctx.channel, uid, "Continue the story.", ctx.message, system_prompt=sp, guild_id=guild_id, refund_feature="continue")
 
 
     @commands.command(name="tldr")
@@ -492,6 +492,7 @@ class AICog(commands.Cog):
                 # Rate limited or AI disabled — placeholder explains why.
                 state.ai_threads.pop(rpg_channel_id, None)
                 await save_ai_threads()
+                await refund_cost(uid, "rpg")
                 return
             # Add to history with a synthetic user turn so the conversation structure is valid
             t = state.ai_threads.get(rpg_channel_id)
@@ -502,9 +503,15 @@ class AICog(commands.Cog):
             await finalize(placeholder, dest, full_response)
             await dest.send(embed=emb("🗺️ RPG Adventure", "`!reverse` — undo last response · `!invite @user` — add a party member · `!stop` — end the adventure", C_BLUE))
         except aiohttp.ClientError as e:
+            state.ai_threads.pop(rpg_channel_id, None)
+            await save_ai_threads()
+            await refund_cost(uid, "rpg")
             _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
             await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
         except Exception as e:
+            state.ai_threads.pop(rpg_channel_id, None)
+            await save_ai_threads()
+            await refund_cost(uid, "rpg")
             _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"{type(e).__name__}: {e}")
             await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
         finally:

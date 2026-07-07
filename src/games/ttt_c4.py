@@ -219,6 +219,8 @@ async def _apply_ttt_move(channel, guild, mover, pos: int | None) -> None:
     if cid not in state.active_ttt_games:
         return
     game = state.active_ttt_games[cid]
+    if game.get("pending"):
+        return  # invite/wager setup still in progress — not playable yet
     if uid != game["current"]:
         err = await channel.send(embed=emb("⏳ Not Your Turn", f"Waiting for {guild.get_member(game['current']).mention if guild else 'opponent'}.", C_GOLD))
         asyncio.create_task(_delete_after(err))
@@ -237,6 +239,10 @@ async def _apply_ttt_move(channel, guild, mover, pos: int | None) -> None:
     bot_user = guild.me if guild else None
     winner = check_ttt_winner(game["board"])
     if winner:
+        # Settle synchronously before any await: a second move arriving during
+        # the payout/board-edit awaits must not find the finished game and
+        # trigger the win payout again.
+        del state.active_ttt_games[cid]
         winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
         amount = game.get("amount", 0)
         winnings = amount * 2
@@ -252,8 +258,8 @@ async def _apply_ttt_move(channel, guild, mover, pos: int | None) -> None:
         winner_mention = guild.get_member(winner_uid).mention if guild else str(winner_uid)
         await _edit_board(channel, game, emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         await _clear_all_reactions(channel, game)
-        del state.active_ttt_games[cid]
     elif all(c is not None for c in game["board"]) or is_ttt_stalemate(game["board"]):
+        del state.active_ttt_games[cid]  # settle before any await (see win branch)
         amount = game.get("amount", 0)
         if amount > 0:
             for player_uid in game["players"]:
@@ -262,7 +268,6 @@ async def _apply_ttt_move(channel, guild, mover, pos: int | None) -> None:
         draw_text = "\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
         await _edit_board(channel, game, emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
         await _clear_all_reactions(channel, game)
-        del state.active_ttt_games[cid]
     else:
         players = game["players"]
         game["current"] = players[1] if uid == players[0] else players[0]
@@ -289,6 +294,8 @@ async def _apply_c4_move(channel, guild, mover, pos: int | None) -> None:
     if cid not in state.active_c4_games:
         return
     game = state.active_c4_games[cid]
+    if game.get("pending"):
+        return  # invite/wager setup still in progress — not playable yet
     if uid != game["current"]:
         err = await channel.send(embed=emb("⏳ Not Your Turn", f"Waiting for {guild.get_member(game['current']).mention if guild else 'opponent'}.", C_GOLD))
         asyncio.create_task(_delete_after(err))
@@ -309,6 +316,8 @@ async def _apply_c4_move(channel, guild, mover, pos: int | None) -> None:
     bot_user = guild.me if guild else None
     winner = check_c4_winner(game["board"])
     if winner:
+        # Settle synchronously before any await (see _apply_ttt_move).
+        del state.active_c4_games[cid]
         winner_uid = [p for p in game["players"] if game["marks"][p] == winner][0]
         amount = game.get("amount", 0)
         winnings = amount * 2
@@ -324,8 +333,8 @@ async def _apply_c4_move(channel, guild, mover, pos: int | None) -> None:
         winner_mention = guild.get_member(winner_uid).mention if guild else str(winner_uid)
         await _edit_board(channel, game, emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         await _clear_all_reactions(channel, game)
-        del state.active_c4_games[cid]
     elif all(game["board"][r][c] is not None for r in range(6) for c in range(7)):
+        del state.active_c4_games[cid]  # settle before any await (see win branch)
         amount = game.get("amount", 0)
         if amount > 0:
             for player_uid in game["players"]:
@@ -334,7 +343,6 @@ async def _apply_c4_move(channel, guild, mover, pos: int | None) -> None:
         draw_text = "\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
         await _edit_board(channel, game, emb("🤝 Connect 4 Draw", build_c4_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
         await _clear_all_reactions(channel, game)
-        del state.active_c4_games[cid]
     else:
         players = game["players"]
         game["current"] = players[1] if uid == players[0] else players[0]
@@ -367,17 +375,26 @@ class TttC4Cog(commands.Cog):
         if amount is None:
             await ctx.send("Amount must be a positive whole number (e.g. `100`, `2.5k`).")
             return
-        if not await _setup_pvp_game(ctx, opponent, amount, "📨 Tic-Tac-Toe Invite"):
-            return
-        state.active_ttt_games[cid] = {
-            "board": [None]*9,
-            "players": [uid, opponent.id],
-            "marks": {uid: "❌", opponent.id: "⭕"},
-            "current": uid,
-            "amount": amount,
-            "board_msg_id": None,
-            "last_move": f"{ctx.author.display_name}'s turn",
-        }
+        # Claim the channel slot synchronously before the invite/wager awaits:
+        # a second !ttt/!c4 during the confirmation window would otherwise
+        # pass the gate and clobber this game (eating its wagers).
+        placeholder = {"pending": True}
+        state.active_ttt_games[cid] = placeholder
+        try:
+            if not await _setup_pvp_game(ctx, opponent, amount, "📨 Tic-Tac-Toe Invite"):
+                return
+            state.active_ttt_games[cid] = {
+                "board": [None]*9,
+                "players": [uid, opponent.id],
+                "marks": {uid: "❌", opponent.id: "⭕"},
+                "current": uid,
+                "amount": amount,
+                "board_msg_id": None,
+                "last_move": f"{ctx.author.display_name}'s turn",
+            }
+        finally:
+            if state.active_ttt_games.get(cid) is placeholder:
+                del state.active_ttt_games[cid]
         await _send_game_board(ctx, state.active_ttt_games[cid], "🎮 Tic-Tac-Toe",
                                build_ttt_display(state.active_ttt_games[cid]),
                                f"{ctx.author.mention} (❌)", f"{opponent.mention} (⭕)",
@@ -397,17 +414,25 @@ class TttC4Cog(commands.Cog):
         if amount is None:
             await ctx.send("Amount must be a positive whole number (e.g. `100`, `2.5k`).")
             return
-        if not await _setup_pvp_game(ctx, opponent, amount, "📨 Connect 4 Invite"):
-            return
-        state.active_c4_games[cid] = {
-            "board": [[None]*7 for _ in range(6)],
-            "players": [uid, opponent.id],
-            "marks": {uid: "🔴", opponent.id: "🟡"},
-            "current": uid,
-            "amount": amount,
-            "board_msg_id": None,
-            "last_move": f"{ctx.author.display_name}'s turn",
-        }
+        # Claim the channel slot synchronously before the invite/wager awaits
+        # (see cmd_ttt).
+        placeholder = {"pending": True}
+        state.active_c4_games[cid] = placeholder
+        try:
+            if not await _setup_pvp_game(ctx, opponent, amount, "📨 Connect 4 Invite"):
+                return
+            state.active_c4_games[cid] = {
+                "board": [[None]*7 for _ in range(6)],
+                "players": [uid, opponent.id],
+                "marks": {uid: "🔴", opponent.id: "🟡"},
+                "current": uid,
+                "amount": amount,
+                "board_msg_id": None,
+                "last_move": f"{ctx.author.display_name}'s turn",
+            }
+        finally:
+            if state.active_c4_games.get(cid) is placeholder:
+                del state.active_c4_games[cid]
         await _send_game_board(ctx, state.active_c4_games[cid], "🟡 Connect 4",
                                build_c4_display(state.active_c4_games[cid]),
                                f"{ctx.author.mention} (🔴)", f"{opponent.mention} (🟡)",

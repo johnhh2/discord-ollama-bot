@@ -6,6 +6,14 @@ from discord.ext import commands
 from src import state
 from src.helpers import emb, C_RED, _delete_after
 from src.guild_config import get_guild_cfg
+
+
+class PermissionDenied(commands.CheckFailure):
+    """Raised by the global permission gate when the author lacks the configured
+    tier. check_command_permission already sent the No Permission embed (or
+    stayed silent for hidden commands); on_command_error must swallow this."""
+
+
 def requires_perm(func):
     """Wrap a cog command so it short-circuits with a No Permission embed
     (or silently, if the command_perms entry has hidden=true) when the author

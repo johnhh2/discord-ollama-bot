@@ -1,7 +1,7 @@
 import json
 
 from src import state
-from src.db import with_cursor
+from src.db import with_cursor, with_transaction
 
 
 def _economy_user_row(uid_str: str, u: dict) -> tuple:
@@ -93,7 +93,7 @@ async def save_insurance():
     scoped per (guild_id, user_id). protected_from is stored as history_json and
     the expiry as expires_at. The old standalone shop_insurance table was
     dropped in migration 0032."""
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='insurance'")
         for (guild_id, uid), entry in state.insurance.items():
             await cur.execute(

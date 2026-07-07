@@ -83,6 +83,7 @@ async def _init_db_state_inner(state, run_migrations):
                 }
         except Exception as e:
             logging.error(f"[init_db_state] economy_users failed: {e}", exc_info=True)
+            raise
 
         # ── economy_meta ──────────────────────────────────────────────────
         try:
@@ -91,6 +92,7 @@ async def _init_db_state_inner(state, run_migrations):
             state.economy["last_daily_reset"] = row[0] if row and row[0] is not None else None
         except Exception as e:
             logging.error(f"[init_db_state] economy_meta failed: {e}", exc_info=True)
+            raise
 
         # ── guild_house_balance ───────────────────────────────────────────
         try:
@@ -99,6 +101,7 @@ async def _init_db_state_inner(state, run_migrations):
                 state.economy["guild_house"][str(guild_id)] = bal
         except Exception as e:
             logging.error(f"[init_db_state] guild_house_balance failed: {e}", exc_info=True)
+            raise
 
         # ── guild_settings ────────────────────────────────────────────────
         try:
@@ -112,6 +115,7 @@ async def _init_db_state_inner(state, run_migrations):
                     state.locked_roles[int(k)] = int(v)
         except Exception as e:
             logging.error(f"[init_db_state] guild_settings failed: {e}", exc_info=True)
+            raise
 
         # ── slots_jackpot ─────────────────────────────────────────────────
         try:
@@ -120,6 +124,7 @@ async def _init_db_state_inner(state, run_migrations):
             state.slot_jackpot = max(SLOT_JACKPOT_SEED, row[0] if row else SLOT_JACKPOT_SEED)
         except Exception as e:
             logging.error(f"[init_db_state] slots_jackpot failed: {e}", exc_info=True)
+            raise
 
         # ── bot_roles ─────────────────────────────────────────────────────
         try:
@@ -129,6 +134,7 @@ async def _init_db_state_inner(state, run_migrations):
             state.bot_role_ranks = {(r[1], r[0]): r[2] for r in rows}
         except Exception as e:
             logging.error(f"[init_db_state] bot_roles failed: {e}", exc_info=True)
+            raise
 
         # ── godmode_users ─────────────────────────────────────────────────
         try:
@@ -136,6 +142,7 @@ async def _init_db_state_inner(state, run_migrations):
             state.godmode_users = {r[0] for r in await cur.fetchall()}
         except Exception as e:
             logging.error(f"[init_db_state] godmode_users failed: {e}", exc_info=True)
+            raise
 
         # ── bot_settings ──────────────────────────────────────────────────
         try:
@@ -144,6 +151,7 @@ async def _init_db_state_inner(state, run_migrations):
                 state.bot_settings[k] = v
         except Exception as e:
             logging.error(f"[init_db_state] bot_settings failed: {e}", exc_info=True)
+            raise
 
         # ── shop_effects: insurance ───────────────────────────────────────
         # Insurance lives in shop_effects (effect_type='insurance') since
@@ -162,6 +170,7 @@ async def _init_db_state_inner(state, run_migrations):
                     }
         except Exception as e:
             logging.error(f"[init_db_state] shop_effects.insurance failed: {e}", exc_info=True)
+            raise
 
         # ── shop_effects: ragebait ────────────────────────────────────────
         try:
@@ -178,6 +187,7 @@ async def _init_db_state_inner(state, run_migrations):
                 }
         except Exception as e:
             logging.error(f"[init_db_state] shop_effects.ragebait failed: {e}", exc_info=True)
+            raise
 
         # ── shop_effects: mock ────────────────────────────────────────────
         try:
@@ -193,6 +203,7 @@ async def _init_db_state_inner(state, run_migrations):
                 }
         except Exception as e:
             logging.error(f"[init_db_state] shop_effects.mock failed: {e}", exc_info=True)
+            raise
 
         # ── shop_effects: curse ───────────────────────────────────────────
         try:
@@ -208,6 +219,7 @@ async def _init_db_state_inner(state, run_migrations):
                 }
         except Exception as e:
             logging.error(f"[init_db_state] shop_effects.curse failed: {e}", exc_info=True)
+            raise
 
         # ── shop_effects: tax ─────────────────────────────────────────────
         try:
@@ -226,6 +238,7 @@ async def _init_db_state_inner(state, run_migrations):
                 }
         except Exception as e:
             logging.error(f"[init_db_state] shop_effects.tax failed: {e}", exc_info=True)
+            raise
 
         # ── shop_effects: spellcheck ──────────────────────────────────────
         try:
@@ -243,6 +256,7 @@ async def _init_db_state_inner(state, run_migrations):
                 }
         except Exception as e:
             logging.error(f"[init_db_state] shop_effects.spellcheck failed: {e}", exc_info=True)
+            raise
 
         # ── bounties (+ their in-flight claims) ───────────────────────────
         # Load every open bounty with its non-terminal claims attached so
@@ -272,13 +286,17 @@ async def _init_db_state_inner(state, run_migrations):
                         parent["claims"].append(claim)
         except Exception as e:
             logging.error(f"[init_db_state] bounties failed: {e}", exc_info=True)
+            raise
 
         # ── rigged_slots ──────────────────────────────────────────────────
         try:
             await cur.execute("SELECT user_id, symbol FROM rigged_slots")
-            state.rigged_slots = {str(r[0]): r[1] for r in await cur.fetchall()}
+            # int keys — runtime lookups use ctx.author.id (int); str keys made
+            # pre-reboot rigs silently never fire and impossible to cancel.
+            state.rigged_slots = {r[0]: r[1] for r in await cur.fetchall()}
         except Exception as e:
             logging.error(f"[init_db_state] rigged_slots failed: {e}", exc_info=True)
+            raise
 
         # ── rigged_flips ──────────────────────────────────────────────────
         try:
@@ -286,6 +304,7 @@ async def _init_db_state_inner(state, run_migrations):
             state.rigged_flips = {r[0]: r[1] for r in await cur.fetchall()}
         except Exception as e:
             logging.error(f"[init_db_state] rigged_flips failed: {e}", exc_info=True)
+            raise
 
         # ── rigged_scratch ────────────────────────────────────────────────
         try:
@@ -293,6 +312,7 @@ async def _init_db_state_inner(state, run_migrations):
             state.rigged_scratch = {r[0]: r[1] for r in await cur.fetchall()}
         except Exception as e:
             logging.error(f"[init_db_state] rigged_scratch failed: {e}", exc_info=True)
+            raise
 
         # ── rigged_steal ──────────────────────────────────────────────────
         try:
@@ -300,6 +320,7 @@ async def _init_db_state_inner(state, run_migrations):
             state.rigged_steal = {r[0]: r[1] for r in await cur.fetchall()}
         except Exception as e:
             logging.error(f"[init_db_state] rigged_steal failed: {e}", exc_info=True)
+            raise
 
         # ── gambler_streak ────────────────────────────────────────────────
         try:
@@ -309,6 +330,7 @@ async def _init_db_state_inner(state, run_migrations):
             }
         except Exception as e:
             logging.error(f"[init_db_state] gambler_streak failed: {e}", exc_info=True)
+            raise
 
         # ── recap_usage ───────────────────────────────────────────────────
         try:
@@ -318,6 +340,7 @@ async def _init_db_state_inner(state, run_migrations):
             }
         except Exception as e:
             logging.error(f"[init_db_state] recap_usage failed: {e}", exc_info=True)
+            raise
 
         # ── voice_pings ───────────────────────────────────────────────────
         try:
@@ -333,6 +356,7 @@ async def _init_db_state_inner(state, run_migrations):
             }
         except Exception as e:
             logging.error(f"[init_db_state] voice_pings failed: {e}", exc_info=True)
+            raise
 
         # ── voice_ping_ignores ────────────────────────────────────────────
         try:
@@ -345,6 +369,7 @@ async def _init_db_state_inner(state, run_migrations):
             state.voice_ping_ignores = ignores
         except Exception as e:
             logging.error(f"[init_db_state] voice_ping_ignores failed: {e}", exc_info=True)
+            raise
 
         # ── chess_games ───────────────────────────────────────────────────
         try:
@@ -378,6 +403,7 @@ async def _init_db_state_inner(state, run_migrations):
                 state.active_chess_games[r[0]] = game
         except Exception as e:
             logging.error(f"[init_db_state] chess_games failed: {e}", exc_info=True)
+            raise
 
         # ── ai_threads (ask, story, roleplay, rpg) ───────────────────────
         try:
@@ -400,6 +426,7 @@ async def _init_db_state_inner(state, run_migrations):
                 }
         except Exception as e:
             logging.error(f"[init_db_state] ai_threads failed: {e}", exc_info=True)
+            raise
 
         # ── quote_log ─────────────────────────────────────────────────────
         try:
@@ -407,6 +434,7 @@ async def _init_db_state_inner(state, run_migrations):
             state.quote_log = [r[0] for r in await cur.fetchall()]
         except Exception as e:
             logging.error(f"[init_db_state] quote_log failed: {e}", exc_info=True)
+            raise
 
         # ── leveling — nested by guild_id ─────────────────────────────────
         try:
@@ -416,6 +444,7 @@ async def _init_db_state_inner(state, run_migrations):
                 state.leveling.setdefault(str(guild_id), {})[str(uid)] = rec
         except Exception as e:
             logging.error(f"[init_db_state] leveling failed: {e}", exc_info=True)
+            raise
 
         # ── channel_prompts ───────────────────────────────────────────────
         try:
@@ -423,6 +452,7 @@ async def _init_db_state_inner(state, run_migrations):
             state.channel_prompts = {r[0]: r[1] for r in await cur.fetchall()}
         except Exception as e:
             logging.error(f"[init_db_state] channel_prompts failed: {e}", exc_info=True)
+            raise
 
         # ── command_perms ─────────────────────────────────────────────────
         # The JSON file is the source of truth: upsert every row from JSON,
@@ -430,21 +460,25 @@ async def _init_db_state_inner(state, run_migrations):
         # !setperm changes are intentionally transient — port them back to
         # command_perms.json to make them permanent.
         try:
-            json_perms = _load_json(COMMAND_PERMS_FILE, {})
+            json_perms = _load_json(COMMAND_PERMS_FILE, None)
+            if not json_perms:
+                # Fail closed: reconciling from a missing/corrupt/empty JSON
+                # would wipe the command_perms table and drop every restricted
+                # command (godmode, restart, …) to the everyone tier.
+                raise RuntimeError(
+                    f"command_perms file missing, corrupt, or empty: {COMMAND_PERMS_FILE}"
+                )
             for cmd, data in json_perms.items():
                 await cur.execute(
                     "INSERT INTO command_perms (command_name, tier, hidden) VALUES (%s,%s,%s)"
                     " ON DUPLICATE KEY UPDATE tier=VALUES(tier), hidden=VALUES(hidden)",
                     (cmd, data.get("tier", "everyone"), bool(data.get("hidden", False))),
                 )
-            if json_perms:
-                placeholders = ",".join(["%s"] * len(json_perms))
-                await cur.execute(
-                    f"DELETE FROM command_perms WHERE command_name NOT IN ({placeholders})",  # nosec B608 - placeholders is only "%s,%s,...", values are bound
-                    tuple(json_perms.keys()),
-                )
-            else:
-                await cur.execute("DELETE FROM command_perms")
+            placeholders = ",".join(["%s"] * len(json_perms))
+            await cur.execute(
+                f"DELETE FROM command_perms WHERE command_name NOT IN ({placeholders})",  # nosec B608 - placeholders is only "%s,%s,...", values are bound
+                tuple(json_perms.keys()),
+            )
             await cur.execute("SELECT command_name, tier, hidden FROM command_perms")
             state.command_perms = {
                 r[0]: {"tier": r[1], "hidden": bool(r[2])}
@@ -452,6 +486,7 @@ async def _init_db_state_inner(state, run_migrations):
             }
         except Exception as e:
             logging.error(f"[init_db_state] command_perms failed: {e}", exc_info=True)
+            raise
 
         # ── user_perm_overrides ──────────────────────────────────────────
         try:
@@ -461,6 +496,7 @@ async def _init_db_state_inner(state, run_migrations):
             }
         except Exception as e:
             logging.error(f"[init_db_state] user_perm_overrides failed: {e}", exc_info=True)
+            raise
 
         # ── blocklist (per-guild) ────────────────────────────────────────
         try:
@@ -475,6 +511,7 @@ async def _init_db_state_inner(state, run_migrations):
             }
         except Exception as e:
             logging.error(f"[init_db_state] blocklist failed: {e}", exc_info=True)
+            raise
 
         # ── global_blocklist ─────────────────────────────────────────────
         try:
@@ -489,6 +526,7 @@ async def _init_db_state_inner(state, run_migrations):
             }
         except Exception as e:
             logging.error(f"[init_db_state] global_blocklist failed: {e}", exc_info=True)
+            raise
 
         # ── error_mutes ──────────────────────────────────────────────────
         try:
@@ -496,6 +534,7 @@ async def _init_db_state_inner(state, run_migrations):
             state.error_mutes = {r[0] for r in await cur.fetchall()}
         except Exception as e:
             logging.error(f"[init_db_state] error_mutes failed: {e}", exc_info=True)
+            raise
 
         # ── activity caches (crime / gambling / levelups) ─────────────────
         # Each *_history table is the source of truth (atomic UPSERT on every
@@ -516,6 +555,7 @@ async def _init_db_state_inner(state, run_migrations):
             state._levelups_bucket = bucket
         except Exception as e:
             logging.error(f"[init_db_state] activity hydration failed: {e}", exc_info=True)
+            raise
 
     # bot_admins: always from env, never DB
     state.bot_admins = set(INITIAL_BOT_ADMIN_IDS)

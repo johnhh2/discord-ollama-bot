@@ -117,11 +117,22 @@ def _ensure_lvl_record(guild_id: int, uid: int) -> dict:
 
 
 def _day_reset(rec: dict, key_today: str, key_day_ts: str):
-    """Reset daily counter if it's a new calendar day (UTC)."""
+    """Reset daily counter when the 5am-CT bot day rolls over.
+
+    Uses the economy's `_ct_today` day key (day boundary = 5am CT) so XP caps
+    reset at the same moment as everything else. The old UTC-midnight logic
+    reset at 6/7pm CT while !lvl displayed the 5am reset time.
+    """
+    from zoneinfo import ZoneInfo
+    import datetime
+
+    def _day_key(ts: float) -> str:
+        dt = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).astimezone(ZoneInfo("America/Chicago"))
+        return (dt - datetime.timedelta(hours=5)).date().isoformat()
+
     now = time.time()
     last = rec.get(key_day_ts, 0.0)
-    import datetime
-    if datetime.datetime.utcfromtimestamp(now).date() > datetime.datetime.utcfromtimestamp(last).date():
+    if _day_key(now) > _day_key(last):
         rec[key_today] = 0
         rec[key_day_ts] = now
 

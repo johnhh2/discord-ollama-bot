@@ -138,6 +138,11 @@ def create_bot() -> commands.Bot:
     intents = discord.Intents.default()
     intents.message_content = True
     intents.voice_states = True  # needed by !ping voice-subscription listener
+    # Privileged: must also be enabled in the Discord Developer Portal
+    # (Bot → Server Members Intent) or login fails. Needed so name-based
+    # member lookup (!pay <name>, !steal <name>) sees the full member cache,
+    # not just voice-channel occupants.
+    intents.members = True
     allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=True)
     bot = Bot(
         command_prefix="!",
@@ -163,6 +168,19 @@ def create_bot() -> commands.Bot:
         command_latency.labels(command=ctx.command.qualified_name).observe(
             time.monotonic() - t0,
         )
+
+    @bot.check
+    async def _command_perm_gate(ctx: commands.Context) -> bool:
+        """Enforce command_perms.json for every command. get_command_perm walks
+        prefixes ("rig slots" → "rig") and defaults unlisted commands to
+        everyone, so this is the single authoritative enforcement point —
+        commands do not need a per-command decorator to be covered."""
+        if ctx.command is None:
+            return True
+        from src.permissions import check_command_permission, PermissionDenied
+        if not await check_command_permission(ctx):
+            raise PermissionDenied()
+        return True
 
     @bot.check
     async def _level_gate(ctx: commands.Context) -> bool:

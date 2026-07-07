@@ -59,10 +59,12 @@ HANGMAN_ART = [
 def build_hangman_display(game: dict) -> str:
     word = game["word"]
     guessed = game["guessed_letters"]
-    wrong = game["wrong_guesses"]
+    # Clamp: a guess racing the terminal edit can push wrong_guesses past the
+    # art range; rendering must never IndexError (it would jam the channel).
+    wrong = min(game["wrong_guesses"], len(HANGMAN_ART) - 1)
     blanks = " ".join(c if c in guessed else "_" for c in word)
     guessed_str = ", ".join(sorted(guessed)) if guessed else "none"
-    lives_left = 6 - wrong
+    lives_left = max(0, 6 - wrong)
     return (
         f"{HANGMAN_ART[wrong]}\n"
         f"Word: `{blanks}`\n"
@@ -193,11 +195,15 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             game["guessed_words"].add(guess)
             game["wrong_guesses"] += 1
             if game["wrong_guesses"] >= HANGMAN_MAX_WRONG:
+                # Settle synchronously before the board edit: a concurrent
+                # guess during the await must find the game already gone —
+                # and if the edit raises, the game must not stay stuck at
+                # max wrong guesses forever (win path already does this).
+                del state.active_hangman_games[cid]
                 word = game["word"]
                 game["last_move"] = f"{name} guessed `{guess}` — Game over! The word was `{word}`"
                 pot_msg = hangman_pot_msg(word, len(game["active_players"]))
                 await _edit_board(channel, game, emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n{pot_msg}\n\n**Last move:** {game['last_move']}", C_RED))
-                del state.active_hangman_games[cid]
             else:
                 game["last_move"] = f"{name} guessed `{guess}` ❌"
                 await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_RED))
@@ -222,11 +228,12 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
     else:
         game["wrong_guesses"] += 1
         if game["wrong_guesses"] >= HANGMAN_MAX_WRONG:
+            # Settle synchronously before the board edit (see word-guess branch).
+            del state.active_hangman_games[cid]
             word = game["word"]
             game["last_move"] = f"{name} guessed `{guess}` — Game over! The word was `{word}`"
             pot_msg = hangman_pot_msg(word, len(game["active_players"]))
             await _edit_board(channel, game, emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n{pot_msg}\n\n**Last move:** {game['last_move']}", C_RED))
-            del state.active_hangman_games[cid]
         else:
             game["last_move"] = f"{name} guessed `{guess}` ❌"
             await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))

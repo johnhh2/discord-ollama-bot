@@ -10,6 +10,8 @@ cp .env.example .env   # fill in DISCORD_TOKEN and any optional vars
 python bot.py
 ```
 
+The bot enables the privileged **Server Members Intent** (`intents.members`, needed for name-based member lookup in `!pay <name>` etc.). It must also be toggled on in the Discord Developer Portal (Bot → Privileged Gateway Intents) or login fails with `PrivilegedIntentsRequired`.
+
 Key environment variables (all optional except `DISCORD_TOKEN`):
 
 | Variable | Default | Description |
@@ -149,16 +151,9 @@ When `hidden: true`, a denied command silently does nothing instead of sending `
 1. **New command** — add an entry to `src/command_perms.json`. If you don't add one, it defaults to `everyone`.
 2. **Renamed command** — update the key in the JSON to match the new `name=` in `@commands.command(...)`. Aliases do **not** need their own entries; the check uses `ctx.command.qualified_name` (the canonical name, with subgroup space-prefixed for `!settings X`-style subcommands).
 3. **Changing a permission** — edit `src/command_perms.json` directly and commit the change. `!setperm` does **not** change command tiers; it only promotes individual users within a single guild via the override system above.
-4. **Each command body** must use the `@requires_perm` decorator (from `src.permissions`):
-   ```python
-   from src.permissions import requires_perm
-
-   @commands.command(name="mycommand")
-   @requires_perm
-   async def cmd_mycommand(self, ctx):
-       ...
-   ```
-   Decorator order matters: `@commands.command` outermost, `@requires_perm` directly above the def. Do **not** use bare `is_admin` / `can_manage_settings` guards for new commands.
+4. **Enforcement is global.** A bot-wide check (`_command_perm_gate` in `src/core.py`) calls `check_command_permission` for **every** command — including group subcommands, via the prefix walk in `get_command_perm` (`"rig slots"` → `"rig"`). New commands need only their JSON entry; do **not** add per-command permission decorators or bare `is_admin` / `can_manage_settings` guards. The legacy `@requires_perm` decorator still exists on older commands and is harmless (the global gate denies first), but don't add it to new ones.
+   Cautionary note: `@commands.check(...)` on a command *group* does NOT protect its subcommands when `invoke_without_command=True` — discord.py skips the group's checks when a subcommand matches. This is exactly how `!rig`'s subcommands were once publicly runnable. The global gate closes that hole class.
+5. **Denial UX** — the gate raises `PermissionDenied` (a `CheckFailure` subclass in `src/permissions.py`) after `check_command_permission` has already sent the ❌ embed (or stayed silent for `hidden` commands); `on_command_error` swallows it. Any *other* bare `CheckFailure` is treated as a command-channel violation and gets the wrong-channel reply.
 
 ### Relevant files
 

@@ -147,8 +147,9 @@ class BlackjackCog(commands.Cog):
         if uid in state.active_blackjack_games:
             await ctx.send(embed=emb("🃏 Already Playing", "Just type `hit` or `stand`.", C_GOLD))
             return
-        if not await shop_charge(ctx, uid, amount):
-            return
+        # Claim the slot synchronously before the charge: shop_charge yields,
+        # so two rapid !bj would otherwise both pass the gate, both get
+        # charged, and the second game would overwrite (orphan) the first bet.
         deck = new_deck()
         player = [draw_card(deck), draw_card(deck)]
         dealer = [draw_card(deck), draw_card(deck)]
@@ -161,7 +162,12 @@ class BlackjackCog(commands.Cog):
             "dealer_hand": dealer,
             "deck": deck,
             "channel_id": ctx.channel.id,
+            "pending": True,  # not yet paid — hit/stand interceptor ignores it
         }
+        if not await shop_charge(ctx, uid, amount):
+            state.active_blackjack_games.pop(uid, None)
+            return
+        state.active_blackjack_games[uid].pop("pending", None)
 
         username = ctx.author.display_name
         display = build_blackjack_display(player, dealer, pval, hide_dealer=True, username=username)

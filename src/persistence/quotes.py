@@ -1,13 +1,13 @@
 import json
 
 from src import state
-from src.db import with_cursor
+from src.db import with_cursor, with_transaction
 
 
 async def save_quote_log(log: list):
     trimmed = log[-10:]
     state.quote_log = trimmed
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         await cur.execute("DELETE FROM quote_log")
         for entry in trimmed:
             await cur.execute(
@@ -16,7 +16,7 @@ async def save_quote_log(log: list):
 
 
 async def save_saved_quotes(quotes: dict):
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         await cur.execute("DELETE FROM saved_quotes")
         for guild_id_str, guild_quotes in quotes.items():
             for q in guild_quotes:

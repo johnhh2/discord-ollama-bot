@@ -397,28 +397,29 @@ class EconomyCog(commands.Cog):
         if thief_id in self._crime_active:
             await ctx.send(embed=emb("⏳ Already Running", "You already have a crime in progress — wait for it to finish.", C_RED))
             return
-
-        if ctx.guild and await is_insured(ctx.guild.id, victim_id, "steal"):
-            _exp = get_insurance_expiry(ctx.guild.id, victim_id)
-            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance — you can't rob them! (expires <t:{_exp}:R>)", C_GOLD))
-            return
-
-        steal_chance, steal_pct, jail_chance, fee, jail_days = STEAL_TIERS[tier_num - 1]
-        victim_bal = await get_balance(victim_id)
-        steal_amount = max(1, int(victim_bal * steal_pct))
-
-        if thief_id in state.rigged_steal:
-            state.rigged_steal[thief_id] -= 1
-            if state.rigged_steal[thief_id] <= 0:
-                del state.rigged_steal[thief_id]
-            await save_rigged_steal()
-            success = True
-        else:
-            roll = random.random()
-            success = roll < steal_chance
-
+        # Claim synchronously at the gate: the insurance/balance lookups below
+        # yield, so two rapid invocations could otherwise both pass the check.
         self._crime_active.add(thief_id)
         try:
+            if ctx.guild and await is_insured(ctx.guild.id, victim_id, "steal"):
+                _exp = get_insurance_expiry(ctx.guild.id, victim_id)
+                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance — you can't rob them! (expires <t:{_exp}:R>)", C_GOLD))
+                return
+
+            steal_chance, steal_pct, jail_chance, fee, jail_days = STEAL_TIERS[tier_num - 1]
+            victim_bal = await get_balance(victim_id)
+            steal_amount = max(1, int(victim_bal * steal_pct))
+
+            if thief_id in state.rigged_steal:
+                state.rigged_steal[thief_id] -= 1
+                if state.rigged_steal[thief_id] <= 0:
+                    del state.rigged_steal[thief_id]
+                await save_rigged_steal()
+                success = True
+            else:
+                roll = random.random()
+                success = roll < steal_chance
+
             # Animate the chase
             msg = None
 
@@ -454,12 +455,16 @@ class EconomyCog(commands.Cog):
 
             # Resolve outcome
             if success:
+                # Re-read the victim's balance: the ~5s chase animation yielded,
+                # so it may have dropped (gambling, another steal). Crediting the
+                # thief against the stale pre-animation balance minted coins when
+                # the deduct silently failed.
+                victim_bal = await get_balance(victim_id)
                 if victim_bal < steal_amount:
                     steal_amount = victim_bal
-                if steal_amount <= 0:
+                if steal_amount <= 0 or not await deduct_balance(victim_id, steal_amount):
                     result_embed = emb("🦹 Robbery Failed", f"**{target.display_name}** is broke — nothing to steal!", C_RED)
                 else:
-                    await deduct_balance(victim_id, steal_amount)
                     gid = ctx.guild.id if ctx.guild else 0
                     await add_balance(thief_id, steal_amount, guild_id=gid or None, holder_name=ctx.author.display_name)
                     await record_crime_event(gid, thief_id, gained=steal_amount)
@@ -1082,56 +1087,58 @@ class EconomyCog(commands.Cog):
         if uid in self._crime_active:
             await ctx.send(embed=emb("⏳ Already Running", "You already have a crime in progress — wait for it to finish.", C_RED))
             return
-
-        if target.id == uid:
-            await ctx.send(embed=emb("❌ Self Mug", "You can't mug yourself!", C_RED))
-            return
-        if self.bot.user and target.id == self.bot.user.id:
-            await ctx.send(embed=emb("❌ Invalid Target", "You can't mug the house.", C_RED))
-            return
-
-        await _ensure_user(target.id)
-        await _maybe_latch_crime_eligible(target.id)
-        if not state.economy["users"][str(target.id)].get("crime_eligible"):
-            await ctx.send(embed=emb(
-                "🛡️ Off-Limits",
-                f"**{target.display_name}** isn't in the crime system yet — they're below Level 10 and have never held more than {CRIME_ELIGIBLE_NET_WORTH:,} 🪙 across wallet + savings.",
-                C_GOLD,
-            ))
-            return
-
-        parsed = await parse_amount(ctx, amount)
-        if parsed is None:
-            return
-        if parsed <= 0:
-            await ctx.send(embed=emb("❌ Invalid Amount", "Amount must be positive.", C_RED))
-            return
-
-        if ctx.guild and await is_insured(ctx.guild.id, target.id, "steal"):
-            _exp = get_insurance_expiry(ctx.guild.id, target.id)
-            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be mugged (expires <t:{_exp}:R>).", C_GOLD))
-            return
-
-        target_bal = await get_balance(target.id)
-        if target_bal <= 0:
-            await ctx.send(embed=emb("❌ Broke Target", f"**{target.display_name}** has no coins for the muggers to take.", C_RED))
-            return
-
-        your_bal = await get_balance(uid)
-        if target_bal < your_bal * 0.2:
-            await ctx.send(embed=emb("❌ Too Easy", f"**{target.display_name}** has less than 20% of your balance — find someone your own size.", C_RED))
-            return
-
-        cost = 0 if uid in state.godmode_users else parsed
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{parsed:,}"):
-            return
-
-        jailed = uid not in state.godmode_users and random.random() < 0.5
-
-        TRACK = 20
-        steps = 8
+        # Claim synchronously at the gate: the eligibility/insurance/charge
+        # awaits below yield, so two rapid invocations could otherwise both
+        # pass the check (and both get charged).
         self._crime_active.add(uid)
         try:
+            if target.id == uid:
+                await ctx.send(embed=emb("❌ Self Mug", "You can't mug yourself!", C_RED))
+                return
+            if self.bot.user and target.id == self.bot.user.id:
+                await ctx.send(embed=emb("❌ Invalid Target", "You can't mug the house.", C_RED))
+                return
+
+            await _ensure_user(target.id)
+            await _maybe_latch_crime_eligible(target.id)
+            if not state.economy["users"][str(target.id)].get("crime_eligible"):
+                await ctx.send(embed=emb(
+                    "🛡️ Off-Limits",
+                    f"**{target.display_name}** isn't in the crime system yet — they're below Level 10 and have never held more than {CRIME_ELIGIBLE_NET_WORTH:,} 🪙 across wallet + savings.",
+                    C_GOLD,
+                ))
+                return
+
+            parsed = await parse_amount(ctx, amount)
+            if parsed is None:
+                return
+            if parsed <= 0:
+                await ctx.send(embed=emb("❌ Invalid Amount", "Amount must be positive.", C_RED))
+                return
+
+            if ctx.guild and await is_insured(ctx.guild.id, target.id, "steal"):
+                _exp = get_insurance_expiry(ctx.guild.id, target.id)
+                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be mugged (expires <t:{_exp}:R>).", C_GOLD))
+                return
+
+            target_bal = await get_balance(target.id)
+            if target_bal <= 0:
+                await ctx.send(embed=emb("❌ Broke Target", f"**{target.display_name}** has no coins for the muggers to take.", C_RED))
+                return
+
+            your_bal = await get_balance(uid)
+            if target_bal < your_bal * 0.2:
+                await ctx.send(embed=emb("❌ Too Easy", f"**{target.display_name}** has less than 20% of your balance — find someone your own size.", C_RED))
+                return
+
+            cost = 0 if uid in state.godmode_users else parsed
+            if not await shop_charge(ctx, uid, cost, cost_label=f"{parsed:,}"):
+                return
+
+            jailed = uid not in state.godmode_users and random.random() < 0.5
+
+            TRACK = 20
+            steps = 8
             def build_mug_frame(robber_p, cop_p, done=False, caught=False):
                 robber_icon = "🏃" if not caught else "🤜"
                 r_track = "░" * robber_p + robber_icon + "░" * (TRACK - robber_p)
@@ -1162,8 +1169,11 @@ class EconomyCog(commands.Cog):
                     await msg.edit(embed=e)
                 await asyncio.sleep(0.6)
 
-            actual_steal = min(parsed, target_bal)
-            await deduct_balance(target.id, actual_steal)
+            # Re-read the target's balance post-animation; only report a loss
+            # the deduct actually took.
+            actual_steal = min(parsed, await get_balance(target.id))
+            if actual_steal > 0 and not await deduct_balance(target.id, actual_steal):
+                actual_steal = 0
             # Attacker paid `parsed` upfront (muggers' fee, charged via shop_charge);
             # victim loses `actual_steal`. Neither gains.
             gid = ctx.guild.id if ctx.guild else 0

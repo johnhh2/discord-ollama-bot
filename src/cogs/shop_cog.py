@@ -280,11 +280,13 @@ class ShopCog(commands.Cog):
         _uid = ctx.author.id
         sections = {}
 
+        from src.level_unlocks import fmt_line
+
+        def L(cmd, text):  # shorthand for level-aware line
+            return fmt_line(cmd, text, _uid, _gid)
+
         # Nicknames (sorted by cost)
         if _si.get("nickname", True):
-            from src.level_unlocks import fmt_line
-            def L(cmd, text):  # shorthand for level-aware line
-                return fmt_line(cmd, text, _uid, _gid)
             nickname_items = [
                 (SHOP_NICKNAME_SELF_COST,   L("nickname", f"`!shop nickname <new_name>` — Change your own nickname — **{SHOP_NICKNAME_SELF_COST:,} 🪙**")),
                 (SHOP_NICKNAME_REMOVE_COST, L("removenickname", f"`!shop removenickname` — Remove your own nickname — **{SHOP_NICKNAME_REMOVE_COST:,} 🪙**")),
@@ -1007,7 +1009,14 @@ class ShopCog(commands.Cog):
                 full_response = await stream_ollama(session, [
                     {"role": "system", "content": ragebait_system},
                     {"role": "user", "content": prompt},
-                ], placeholder)
+                ], placeholder, user_id=uid)
+            if not full_response:
+                # AI disabled or token budget denied — stream_ollama already
+                # edited the placeholder with the reason. Refund; don't
+                # activate the effect or post a bare mention.
+                if cost > 0:
+                    await add_balance(uid, cost)
+                return
             await finalize(placeholder, ctx.channel, f"{target.mention} {full_response}")
             state.active_ragebaits[(gid, target.id)] = {"remaining": SHOP_RAGEBAIT_MESSAGES, "history": [], "channel_id": ctx.channel.id}
             await save_ragebait()
@@ -1143,9 +1152,13 @@ class ShopCog(commands.Cog):
             await role.edit(color=color)
             await ctx.send(embed=emb("🎨 Role Color Changed", f"**{role.name}** color set to `{color_str}`.", C_PURPLE))
         except discord.Forbidden:
+            if cost > 0:
+                await add_balance(uid, cost)
             log_bot_permission_error(ctx, "edit roles")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to edit roles.", C_RED))
         except Exception as e:
+            if cost > 0:
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Error", f"Failed to change role color: {str(e)}", C_RED))
 
     # ── !shop mute ────────────────────────────────────────────────────────────
@@ -1162,15 +1175,17 @@ class ShopCog(commands.Cog):
         except commands.BadArgument:
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mute @user`", C_PURPLE))
             return
-        cost = 0 if uid in state.godmode_users else SHOP_MUTE_COST
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MUTE_COST:,}"):
-            return
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
+        cost = 0 if uid in state.godmode_users else SHOP_MUTE_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MUTE_COST:,}"):
             return
         try:
             member = await fetch_member(ctx.guild, target.id)
             if not member:
+                if cost > 0:
+                    await add_balance(uid, cost)
                 await ctx.send(embed=emb("❌ User Not Found", f"Could not find **{target.display_name}** in this server.", C_RED))
                 return
             await member.edit(timed_out_until=discord.utils.utcnow() + datetime.timedelta(minutes=SHOP_MUTE_MINUTES))
@@ -1180,9 +1195,13 @@ class ShopCog(commands.Cog):
                 C_PURPLE,
             ))
         except discord.Forbidden:
+            if cost > 0:
+                await add_balance(uid, cost)
             log_bot_permission_error(ctx, "timeout members")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to timeout members.", C_RED))
         except Exception as e:
+            if cost > 0:
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Error", f"Failed to mute: {str(e)}", C_RED))
 
     # ── !shop tax (+ guild-configured aliases) ───────────────────────────────
@@ -1457,8 +1476,18 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can move it.", C_RED))
             return
 
+        cost = 0 if uid in state.godmode_users else SHOP_ROLE_MOVE_COST
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_MOVE_COST:,}"):
+            return
+
+        # Compute the ranks AFTER the charge await: a concurrent roleup on the
+        # same role could otherwise change them mid-charge, and applying a
+        # stale swap means paying twice for one move. Validation failures
+        # past this point refund the charge.
         my_rank = state.bot_role_ranks.get((ctx.guild.id, role.id))
         if my_rank is None:
+            if cost > 0:
+                await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Unranked", f"**{role.name}** has no rank yet. Ask an admin to seed it.", C_RED))
             return
 
@@ -1471,19 +1500,19 @@ class ShopCog(commands.Cog):
             # The role *above* this one has the next-lower rank number.
             candidates = [(r, rid) for r, rid in guild_ranks if r < my_rank]
             if not candidates:
+                if cost > 0:
+                    await add_balance(uid, cost)
                 await ctx.send(embed=emb("❌ Already Highest", f"**{role.name}** is already the highest bot-created role.", C_RED))
                 return
             neighbor_rank, neighbor_id = max(candidates, key=lambda x: x[0])
         else:
             candidates = [(r, rid) for r, rid in guild_ranks if r > my_rank]
             if not candidates:
+                if cost > 0:
+                    await add_balance(uid, cost)
                 await ctx.send(embed=emb("❌ Already Lowest", f"**{role.name}** is already the lowest bot-created role.", C_RED))
                 return
             neighbor_rank, neighbor_id = min(candidates, key=lambda x: x[0])
-
-        cost = 0 if uid in state.godmode_users else SHOP_ROLE_MOVE_COST
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_MOVE_COST:,}"):
-            return
 
         # Swap the two ranks synchronously before any await — sibling
         # invocations either see the new state and act on it or were

@@ -410,37 +410,49 @@ class ChessCog(commands.Cog):
             await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
             return
 
-        bot_user = self.bot.user if self.bot is not None else None
-        is_bot_game = (
-            opponent is not None
-            and bot_user is not None
-            and opponent.id == bot_user.id
-        )
+        # Claim the channel slot synchronously before any await: a second
+        # !chess during the invite/confirmation window would otherwise pass
+        # the gate above and clobber this game (eating its wagers). The move
+        # handlers see current_id=None, so the placeholder is inert.
+        placeholder = {"pending": True, "current_id": None, "fen": chess_engine.STARTING_FEN, "amount": 0}
+        state.active_chess_games[cid] = placeholder
+        try:
+            bot_user = self.bot.user if self.bot is not None else None
+            is_bot_game = (
+                opponent is not None
+                and bot_user is not None
+                and opponent.id == bot_user.id
+            )
 
-        if is_bot_game:
-            raw_elo = trailing_int if trailing_int is not None else chess_bot.ELO_DEFAULT
-            if not (chess_bot.ELO_MIN <= raw_elo <= chess_bot.ELO_MAX):
-                await ctx.send(embed=emb(
-                    "❌ Invalid Elo",
-                    f"Elo must be between {chess_bot.ELO_MIN} and {chess_bot.ELO_MAX}.",
-                    C_RED,
-                ))
+            if is_bot_game:
+                raw_elo = trailing_int if trailing_int is not None else chess_bot.ELO_DEFAULT
+                if not (chess_bot.ELO_MIN <= raw_elo <= chess_bot.ELO_MAX):
+                    await ctx.send(embed=emb(
+                        "❌ Invalid Elo",
+                        f"Elo must be between {chess_bot.ELO_MIN} and {chess_bot.ELO_MAX}.",
+                        C_RED,
+                    ))
+                    return
+                elo = chess_bot.round_elo_to_bin(raw_elo)
+                if elo != raw_elo:
+                    await ctx.send(f"✍️ Rounded Elo to **{elo}**.")
+                await self._start_bot_chess(ctx, elo)
                 return
-            elo = chess_bot.round_elo_to_bin(raw_elo)
-            if elo != raw_elo:
-                await ctx.send(f"✍️ Rounded Elo to **{elo}**.")
-            await self._start_bot_chess(ctx, elo)
-            return
 
-        # PvP wager: re-parse the trailing token with `k`/`m` shorthand support
-        # (bot-game Elo above stays a plain int). Default to 0 when the only
-        # arg is the opponent mention.
-        wager_token = args[-1] if args and not args[-1].startswith("<@") else "0"
-        amount = parse_int_amount(wager_token)
-        if amount is None:
-            await ctx.send("Wager must be a positive whole number (e.g. `100`, `2.5k`).")
-            return
-        await self._start_pvp_chess(ctx, opponent, amount)
+            # PvP wager: re-parse the trailing token with `k`/`m` shorthand support
+            # (bot-game Elo above stays a plain int). Default to 0 when the only
+            # arg is the opponent mention.
+            wager_token = args[-1] if args and not args[-1].startswith("<@") else "0"
+            amount = parse_int_amount(wager_token)
+            if amount is None:
+                await ctx.send("Wager must be a positive whole number (e.g. `100`, `2.5k`).")
+                return
+            await self._start_pvp_chess(ctx, opponent, amount)
+        finally:
+            # Early return or exception: release the slot. The success paths
+            # replaced the placeholder with the real game (identity check).
+            if state.active_chess_games.get(cid) is placeholder:
+                del state.active_chess_games[cid]
 
     async def _start_pvp_chess(self, ctx: commands.Context, opponent, amount: int):
         cid = ctx.channel.id
@@ -545,34 +557,41 @@ class ChessCog(commands.Cog):
             await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
             return
 
-        bot_user = self.bot.user if self.bot is not None else None
-        if bot_user is None:
-            await ctx.send(embed=emb("❌ Bot Not Ready", "Bot user not initialized; try again in a moment.", C_RED))
-            return
+        # Claim the channel slot synchronously before any await (see cmd_chess).
+        placeholder = {"pending": True, "current_id": None, "fen": chess_engine.STARTING_FEN, "amount": 0}
+        state.active_chess_games[cid] = placeholder
+        try:
+            bot_user = self.bot.user if self.bot is not None else None
+            if bot_user is None:
+                await ctx.send(embed=emb("❌ Bot Not Ready", "Bot user not initialized; try again in a moment.", C_RED))
+                return
 
-        raw_elo = chess_bot.ELO_DEFAULT
-        if args:
-            try:
-                raw_elo = int(args[0])
-            except ValueError:
+            raw_elo = chess_bot.ELO_DEFAULT
+            if args:
+                try:
+                    raw_elo = int(args[0])
+                except ValueError:
+                    await ctx.send(embed=emb(
+                        "❌ Invalid Elo",
+                        f"Usage: `!chessbot [elo]` where elo is {chess_bot.ELO_MIN}-{chess_bot.ELO_MAX}.",
+                        C_RED,
+                    ))
+                    return
+            if not (chess_bot.ELO_MIN <= raw_elo <= chess_bot.ELO_MAX):
                 await ctx.send(embed=emb(
                     "❌ Invalid Elo",
-                    f"Usage: `!chessbot [elo]` where elo is {chess_bot.ELO_MIN}-{chess_bot.ELO_MAX}.",
+                    f"Elo must be between {chess_bot.ELO_MIN} and {chess_bot.ELO_MAX}.",
                     C_RED,
                 ))
                 return
-        if not (chess_bot.ELO_MIN <= raw_elo <= chess_bot.ELO_MAX):
-            await ctx.send(embed=emb(
-                "❌ Invalid Elo",
-                f"Elo must be between {chess_bot.ELO_MIN} and {chess_bot.ELO_MAX}.",
-                C_RED,
-            ))
-            return
-        elo = chess_bot.round_elo_to_bin(raw_elo)
-        if elo != raw_elo:
-            await ctx.send(f"✍️ Rounded Elo to **{elo}**.")
+            elo = chess_bot.round_elo_to_bin(raw_elo)
+            if elo != raw_elo:
+                await ctx.send(f"✍️ Rounded Elo to **{elo}**.")
 
-        await self._start_bot_chess(ctx, elo)
+            await self._start_bot_chess(ctx, elo)
+        finally:
+            if state.active_chess_games.get(cid) is placeholder:
+                del state.active_chess_games[cid]
 
     # ── !chessthreats: admin debug view of all hanging pieces ───────────────
     @commands.command(name="chessthreats")

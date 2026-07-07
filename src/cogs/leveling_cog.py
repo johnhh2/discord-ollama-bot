@@ -1,5 +1,6 @@
 """Discord transport for the leveling system. Domain logic is in src/leveling.py."""
 import asyncio
+import logging
 import time
 
 import discord
@@ -28,7 +29,6 @@ class LevelingCog(commands.Cog):
     async def _do_voice_tick(self):
         """Award voice/stream XP to every eligible member currently in a voice channel."""
         for guild in self.bot.guilds:
-            cfg_cache = get_guild_cfg(guild.id)
             for vc in guild.voice_channels:
                 # Skip private channels (any permission overrides that deny view access to @everyone)
                 everyone = guild.default_role
@@ -45,26 +45,37 @@ class LevelingCog(commands.Cog):
                     if vs is None:
                         continue
 
-                    # Voice XP: must not be muted/deafened
+                    # Voice XP: must not be muted/deafened. The coin reward is
+                    # granted inside _announce_levelup regardless of whether a
+                    # level-up channel is configured — don't gate the call on it.
                     if not (vs.self_mute or vs.self_deaf or vs.mute or vs.deaf):
                         _, leveled_up = await grant_xp(member.id, "voice", guild_id=guild.id)
-                        if leveled_up and cfg_cache.get("levelup_channel"):
+                        if leveled_up:
                             await self._announce_levelup(member, guild.id)
 
                     # Stream XP: must currently be streaming; hourly rate-limit handled inside grant_xp
                     if vs.self_stream:
                         _, leveled_up = await grant_xp(member.id, "stream", guild_id=guild.id)
-                        if leveled_up and cfg_cache.get("levelup_channel"):
+                        if leveled_up:
                             await self._announce_levelup(member, guild.id)
 
     @tasks.loop(seconds=300)  # tick every 5 min; rate-limits inside grant_xp control actual XP frequency
     async def _voice_task(self):
-        await self._do_voice_tick()
+        # tasks.loop stops permanently on an unhandled exception — one Discord
+        # or DB hiccup must not end voice/stream XP until the next reboot.
+        try:
+            await self._do_voice_tick()
+        except Exception:
+            logging.exception("[leveling] voice XP tick failed")
 
     @_voice_task.before_loop
     async def _before_voice_task(self):
         await self.bot.wait_until_ready()
-        await self._do_voice_tick()  # fire immediately on startup, don't wait 5 min
+        try:
+            await self._do_voice_tick()  # fire immediately on startup, don't wait 5 min
+        except Exception:
+            # An exception here would prevent the loop from ever starting.
+            logging.exception("[leveling] startup voice XP tick failed")
 
     # ── Level-up announcement ─────────────────────────────────────────────────
     async def _announce_levelup(self, member: discord.Member, guild_id: int):
@@ -87,7 +98,12 @@ class LevelingCog(commands.Cog):
         if unlocked:
             desc += "\n\n**🔓 Unlocked**\n" + "\n".join(info["usage"] for _cmd, info in unlocked)
 
-        await channel.send(embed=emb("🎉 Level Up!", desc, C_GOLD))
+        try:
+            await channel.send(embed=emb("🎉 Level Up!", desc, C_GOLD))
+        except (discord.Forbidden, discord.HTTPException) as e:
+            # Missing send permission in the configured channel must not
+            # propagate into the voice-XP loop or message handlers.
+            logging.warning("[leveling] level-up announce failed in channel %s: %s", channel_id, type(e).__name__)
 
     # ── !level / !xp command ──────────────────────────────────────────────────
     @commands.command(name="lvl", aliases=["level", "xp"])

@@ -705,29 +705,29 @@ async def test_godmode_users_roundtrip(db):
 
 async def test_rigged_slots_roundtrip(db):
     _state.rigged_slots.clear()
-    _state.rigged_slots["100"] = "🍒"
-    _state.rigged_slots["200"] = "7️⃣"
+    _state.rigged_slots[100] = "🍒"
+    _state.rigged_slots[200] = "7️⃣"
     await _persistence.save_rigged_slots()
 
     _state.rigged_slots.clear()
     await _persistence.init_db_state()
-    # init_db_state keys rigged_slots by str(uid).
-    assert _state.rigged_slots == {"100": "🍒", "200": "7️⃣"}
+    # int keys — runtime lookups use ctx.author.id (int).
+    assert _state.rigged_slots == {100: "🍒", 200: "7️⃣"}
 
 
 async def test_rigged_slots_save_replaces_full_table(db):
     _state.rigged_slots.clear()
-    _state.rigged_slots["1"] = "🍒"
-    _state.rigged_slots["2"] = "🍋"
+    _state.rigged_slots[1] = "🍒"
+    _state.rigged_slots[2] = "🍋"
     await _persistence.save_rigged_slots()
 
-    del _state.rigged_slots["2"]
+    del _state.rigged_slots[2]
     await _persistence.save_rigged_slots()
 
     _state.rigged_slots.clear()
     await _persistence.init_db_state()
-    assert "1" in _state.rigged_slots
-    assert "2" not in _state.rigged_slots
+    assert 1 in _state.rigged_slots
+    assert 2 not in _state.rigged_slots
 
 
 async def test_rigged_flips_roundtrip(db):

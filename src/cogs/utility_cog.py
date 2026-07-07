@@ -47,6 +47,15 @@ from src.puzzle import (
 from src import state
 
 
+def _pop_puzzle_if_mine(cid: int, entry: dict) -> None:
+    """Release the channel's active-puzzle slot only if it still holds `entry`.
+
+    After `!stop` + a fresh `!puzzle`, the slot belongs to the newer puzzle —
+    an unconditional pop from a stale generation would cancel it."""
+    if state.active_puzzles.get(cid) is entry:
+        del state.active_puzzles[cid]
+
+
 def _msg_text(msg: discord.Message) -> str:
     """Best-effort plain text from a Message, including embed title/description/fields."""
     parts: list[str] = []
@@ -554,20 +563,25 @@ class UtilityCog(commands.Cog):
             ]
             guild_id = ctx.guild.id if ctx.guild else None
             coding_model = get_guild_coding_model(guild_id) if guild_id else OLLAMA_MODEL
+            # Claim the channel slot synchronously BEFORE the first await —
+            # two spam-fired !puzzle both pass the gates otherwise, and the
+            # loser's generation clobbers the winner's answer. Also lets
+            # !stop cancel during generation.
+            gen_entry = {"generating": True, "user_id": uid, "reward": reward, "invited_ids": invited_ids}
+            state.active_puzzles[cid] = gen_entry
             thinking_msg = await ctx.send(embed=emb("🧩 Generating riddle...", f"Reward: **{reward:,} 🪙**", C_BLUE))
 
             if not state.bot_settings.get("ai_enabled", True):
+                _pop_puzzle_if_mine(cid, gen_entry)
                 await thinking_msg.edit(embed=emb("🤖 AI Offline", "Passive AI responses are currently disabled.", C_RED))
                 return
-
-            state.active_puzzles[cid] = {"generating": True, "user_id": uid, "reward": reward, "invited_ids": invited_ids}
 
             try:
                 async with aiohttp.ClientSession() as session:
                     if ollama_semaphore.locked():
                         await thinking_msg.edit(embed=emb("⏳ Queued", "Another AI request is running. Your riddle will generate next...", C_BLUE))
                     async with ollama_semaphore:
-                        if cid not in state.active_puzzles:
+                        if state.active_puzzles.get(cid) is not gen_entry:
                             await thinking_msg.edit(embed=emb("🚫 Cancelled", "Puzzle generation was cancelled.", C_RED))
                             return
                         await thinking_msg.edit(embed=emb("🧩 Generating riddle...", f"Reward: **{reward:,} 🪙**", C_BLUE))
@@ -590,23 +604,23 @@ class UtilityCog(commands.Cog):
                         finally:
                             typing_task.cancel()
             except aiohttp.ClientError as e:
-                state.active_puzzles.pop(cid, None)
+                _pop_puzzle_if_mine(cid, gen_entry)
                 _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
                 await thinking_msg.edit(embed=emb("❌ AI Offline", "Could not connect to the AI.", C_RED))
                 return
             except asyncio.TimeoutError:
-                state.active_puzzles.pop(cid, None)
+                _pop_puzzle_if_mine(cid, gen_entry)
                 _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], "Ollama riddle generation timed out (>120s)")
                 await thinking_msg.edit(embed=emb("⏱️ Timed Out", "The AI took too long to generate a riddle. Try again.", C_RED))
                 return
 
-            if cid not in state.active_puzzles:
+            if state.active_puzzles.get(cid) is not gen_entry:
                 await thinking_msg.edit(embed=emb("🚫 Cancelled", "Puzzle generation was cancelled.", C_RED))
                 return
 
             json_match = re.search(r'\{.*\}', raw, re.DOTALL)
             if not json_match:
-                state.active_puzzles.pop(cid, None)
+                _pop_puzzle_if_mine(cid, gen_entry)
                 _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI malformed response (no JSON): {raw[:200]}")
                 await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
                 return
@@ -615,13 +629,13 @@ class UtilityCog(commands.Cog):
                 riddle_text = str(puzzle_data["riddle"])
                 answer = str(puzzle_data["answer"]).lower().strip()
             except (json.JSONDecodeError, KeyError) as e:
-                state.active_puzzles.pop(cid, None)
+                _pop_puzzle_if_mine(cid, gen_entry)
                 _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI malformed response ({type(e).__name__}): {raw[:200]}")
                 await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
                 return
 
             if " " in answer or not answer.isalpha():
-                state.active_puzzles.pop(cid, None)
+                _pop_puzzle_if_mine(cid, gen_entry)
                 _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI generated non-single-word answer: {answer[:200]}")
                 await thinking_msg.edit(embed=emb("❌ Bad Riddle", "The AI generated a multi-word answer. Try again.", C_RED))
                 return
@@ -676,21 +690,23 @@ class UtilityCog(commands.Cog):
 
         guild_id = ctx.guild.id if ctx.guild else None
         coding_model = get_guild_coding_model(guild_id) if guild_id else OLLAMA_MODEL
+        # Claim the channel slot synchronously BEFORE the first await (see the
+        # riddleai branch) — also lets !stop cancel during generation.
+        gen_entry = {"generating": True, "user_id": uid, "reward": reward, "invited_ids": invited_ids}
+        state.active_puzzles[cid] = gen_entry
         thinking_msg = await ctx.send(embed=emb("🧩 Generating puzzle...", f"Difficulty: **{difficulty}** · Reward: **{reward:,} 🪙**", C_BLUE))
 
         if not state.bot_settings.get("ai_enabled", True):
+            _pop_puzzle_if_mine(cid, gen_entry)
             await thinking_msg.edit(embed=emb("🤖 AI Offline", "Passive AI responses are currently disabled.", C_RED))
             return
-
-        # Register immediately so !stop can cancel during generation
-        state.active_puzzles[cid] = {"generating": True, "user_id": uid, "reward": reward, "invited_ids": invited_ids}
 
         try:
             async with aiohttp.ClientSession() as session:
                 if ollama_semaphore.locked():
                     await thinking_msg.edit(embed=emb("⏳ Queued", "Another AI request is running. Your puzzle will generate next...", C_BLUE))
                 async with ollama_semaphore:
-                    if cid not in state.active_puzzles:
+                    if state.active_puzzles.get(cid) is not gen_entry:
                         # Cancelled while waiting in queue
                         await thinking_msg.edit(embed=emb("🚫 Cancelled", "Puzzle generation was cancelled.", C_RED))
                         return
@@ -714,24 +730,24 @@ class UtilityCog(commands.Cog):
                     finally:
                         typing_task.cancel()
         except aiohttp.ClientError as e:
-            state.active_puzzles.pop(cid, None)
+            _pop_puzzle_if_mine(cid, gen_entry)
             _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
             await thinking_msg.edit(embed=emb("❌ AI Offline", "Could not connect to the AI.", C_RED))
             return
         except asyncio.TimeoutError:
-            state.active_puzzles.pop(cid, None)
+            _pop_puzzle_if_mine(cid, gen_entry)
             _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], "Ollama puzzle generation timed out (>120s)")
             await thinking_msg.edit(embed=emb("⏱️ Timed Out", "The AI took too long to generate a puzzle. Try again.", C_RED))
             return
 
-        if cid not in state.active_puzzles:
+        if state.active_puzzles.get(cid) is not gen_entry:
             # Cancelled after generation completed but before we parsed
             await thinking_msg.edit(embed=emb("🚫 Cancelled", "Puzzle generation was cancelled.", C_RED))
             return
 
         puzzle_data = extract_puzzle_fields(raw)
         if puzzle_data is None:
-            state.active_puzzles.pop(cid, None)
+            _pop_puzzle_if_mine(cid, gen_entry)
             _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI malformed response (no JSON): {raw[:200]}")
             await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
             return
@@ -740,13 +756,13 @@ class UtilityCog(commands.Cog):
             answer = str(puzzle_data["answer"])
             language = puzzle_data.get("language", "Unknown")
         except KeyError as e:
-            state.active_puzzles.pop(cid, None)
+            _pop_puzzle_if_mine(cid, gen_entry)
             _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI malformed response ({type(e).__name__}): {raw[:200]}")
             await thinking_msg.edit(embed=emb("❌ Parse Error", "The AI returned an unexpected format. Try again.", C_RED))
             return
 
         if "\n" in answer:
-            state.active_puzzles.pop(cid, None)
+            _pop_puzzle_if_mine(cid, gen_entry)
             _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"AI generated multi-line answer: {answer[:200]}")
             await thinking_msg.edit(embed=emb("❌ Bad Puzzle", "The AI generated a multi-line answer. Try again.", C_RED))
             return

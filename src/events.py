@@ -320,10 +320,17 @@ async def _auto_daily(message: discord.Message):
     if stored == today:
         return
     is_new = user_data.get("last_daily", 0.0) == 0.0
-    await add_balance(uid, DAILY_REWARD)
+    # Claim the day synchronously BEFORE the awaits (same fix as cmd_daily):
+    # add_balance yields, so two qualifying messages in quick succession
+    # would otherwise both pass the gate and double-award.
     user_data["daily_date"] = today
     if is_new:
         user_data["last_daily"] = time.time()
+    try:
+        await add_balance(uid, DAILY_REWARD)
+    except Exception:
+        user_data["daily_date"] = stored  # roll back the claim on failure
+        raise
     await save_economy(uid=uid)
     greeting = f"Welcome, **{message.author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
     await message.channel.send(embed=emb(
@@ -432,8 +439,16 @@ class EventsCog(commands.Cog):
         except (discord.Forbidden, discord.HTTPException):
             pass
 
-    @commands.Cog.listener()
-    async def global_command_channel_check(self, ctx: commands.Context) -> bool:
+    async def bot_check(self, ctx: commands.Context) -> bool:
+        """Global command-channel whitelist/blacklist gate.
+
+        `bot_check` is a discord.py Cog special method registered as a
+        bot-wide check for every command. (This was previously declared as a
+        @Cog.listener(), which never fires — listeners are dispatched by
+        gateway event name — so the whitelist/blacklist was silently
+        unenforced.) Returning False raises CheckFailure; on_command_error
+        formats the wrong-channel reply.
+        """
         if ctx.guild is None:
             return True
         if ctx.command and ctx.command.name in ("settings", "clear"):
@@ -474,8 +489,9 @@ class EventsCog(commands.Cog):
         if getattr(error, "handled", False):
             return
         from src.level_unlocks import LevelLocked
-        if isinstance(error, LevelLocked):
-            return  # gate already sent its own message
+        from src.permissions import PermissionDenied
+        if isinstance(error, (LevelLocked, PermissionDenied)):
+            return  # gate already sent its own message (or is hidden-silent)
         if isinstance(error, commands.CheckFailure):
             cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
             command_whitelist = cfg.get("command_whitelist", [])
@@ -530,7 +546,10 @@ class EventsCog(commands.Cog):
         command_invocations.labels(command=ctx.command.qualified_name, outcome="ok").inc()
         if ctx.guild and not ctx.author.bot:
             xp, leveled_up = await _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
-            if leveled_up and get_guild_cfg(ctx.guild.id).get("levelup_channel"):
+            # _announce_levelup grants the coin reward and itself skips the
+            # announcement when no level-up channel is configured — gating the
+            # call on the channel here silently withheld the reward.
+            if leveled_up:
                 cog = self.bot.cogs.get("LevelingCog")
                 if cog and isinstance(ctx.author, discord.Member):
                     asyncio.create_task(cog._announce_levelup(ctx.author, ctx.guild.id))
@@ -596,23 +615,36 @@ class EventsCog(commands.Cog):
         # Side-effect handlers — each runs unconditionally on every non-command
         # message, mutating its own state slice. Order matters for things like
         # the tax/curse/mock/ragebait quartet: they're independent but run in
-        # the canonical order to keep ordering stable.
-        await self._handle_msg_xp(message)
-        await self._handle_ragebait(message)
-        await self._handle_mock(message)
-        await self._handle_tax(message)
-        await self._handle_curse(message)
-        await self._handle_spellcheck(message)
-        await self._handle_auto_daily(message)
+        # the canonical order to keep ordering stable. Each is isolated: one
+        # handler blowing up (DB hiccup, Discord 500) must not silently abort
+        # the rest of the chain — including process_commands at the end.
+        for handler in (
+            self._handle_msg_xp,
+            self._handle_ragebait,
+            self._handle_mock,
+            self._handle_tax,
+            self._handle_curse,
+            self._handle_spellcheck,
+            self._handle_auto_daily,
+        ):
+            try:
+                await handler(message)
+            except Exception:
+                logging.exception("[on_message] %s failed", handler.__name__)
 
         # Interceptors — return True if they consumed the message and the rest
-        # of the chain (including AI routing) should be skipped.
-        if await self._handle_blackjack_input(message):
-            return
-        if await self._handle_puzzle_answer(message):
-            return
-        if await self._handle_hangman_guess(message):
-            return
+        # of the chain (including AI routing) should be skipped. An interceptor
+        # exception counts as "not consumed" so the command chain still runs.
+        for interceptor in (
+            self._handle_blackjack_input,
+            self._handle_puzzle_answer,
+            self._handle_hangman_guess,
+        ):
+            try:
+                if await interceptor(message):
+                    return
+            except Exception:
+                logging.exception("[on_message] %s failed", interceptor.__name__)
 
         # Final stage: AI routing. Always ends with self.bot.process_commands.
         await self._handle_ai_routing(message)
@@ -625,7 +657,8 @@ class EventsCog(commands.Cog):
             return
         uid = message.author.id
         _, leveled_up = await _grant_xp(uid, "msg", guild_id=message.guild.id)
-        if leveled_up and isinstance(message.author, discord.Member) and get_guild_cfg(message.guild.id).get("levelup_channel"):
+        # See on_command_completion: the call must not be gated on the channel.
+        if leveled_up and isinstance(message.author, discord.Member):
             cog = self.bot.cogs.get("LevelingCog")
             if cog:
                 asyncio.create_task(cog._announce_levelup(message.author, message.guild.id))
@@ -642,7 +675,11 @@ class EventsCog(commands.Cog):
             return
         if not await check_ollama_connected():
             return
-        rage = state.active_ragebaits[key]
+        # Re-fetch after the awaits above: a concurrent message may have
+        # consumed the last charge and deleted the key while we yielded.
+        rage = state.active_ragebaits.get(key)
+        if rage is None:
+            return
         rage["history"].append(f"[{message.author.display_name}]: {message.content[:200]}")
         rage["remaining"] -= 1
         if rage["remaining"] <= 0:
@@ -660,12 +697,17 @@ class EventsCog(commands.Cog):
             return
         if await is_insured(message.guild.id, uid, "mock"):
             return
-        mock = state.active_mocks[key]
-        await message.channel.send(mocking_font(message.content))
+        # Consume the charge synchronously BEFORE the send: the send yields,
+        # so two concurrent messages on the last charge would otherwise both
+        # decrement and the second del would KeyError (killing the chain).
+        mock = state.active_mocks.get(key)
+        if mock is None:
+            return
         mock["remaining"] -= 1
         if mock["remaining"] <= 0:
             del state.active_mocks[key]
         await save_mock()
+        await message.channel.send(mocking_font(message.content))
 
     async def _handle_tax(self, message: discord.Message):
         """Deduct per-message tax from users with an active tax on them."""
@@ -710,12 +752,13 @@ class EventsCog(commands.Cog):
         key = (message.guild.id, uid)
         if not (key in state.active_curses and not message.content.startswith("!")):
             return
+        # Consume the charge synchronously before the send (see _handle_mock).
         curse = state.active_curses[key]
-        await message.channel.send(curse_font(message.content))
         curse["remaining"] -= 1
         if curse["remaining"] <= 0:
             del state.active_curses[key]
         await save_curse(state.active_curses)
+        await message.channel.send(curse_font(message.content))
 
     async def _handle_spellcheck(self, message: discord.Message):
         """Reply with an AI-corrected version of a spellchecked user's message.
@@ -819,6 +862,8 @@ class EventsCog(commands.Cog):
         game = state.active_blackjack_games[uid]
         if game.get("channel_id") != message.channel.id:
             return False
+        if game.get("pending"):
+            return False  # claimed but bet not charged yet — not playable
         if content_lower in ("!hit", "hit"):
             card = draw_card(game["deck"])
             game["player_hand"].append(card)

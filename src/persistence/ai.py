@@ -1,11 +1,11 @@
 import json
 
 from src import state
-from src.db import with_cursor
+from src.db import with_transaction
 
 
 async def save_ai_threads():
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         await cur.execute("DELETE FROM ai_threads")
         for tid, t in state.ai_threads.items():
             await cur.execute(
@@ -27,7 +27,7 @@ async def save_ai_threads():
 
 async def save_channel_prompts(prompts: dict):
     state.channel_prompts = prompts
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         await cur.execute("DELETE FROM channel_prompts")
         for ch_id, prompt in prompts.items():
             await cur.execute(

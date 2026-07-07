@@ -11,7 +11,7 @@ from src import state
 from src.config import OLLAMA_BASE_URL, OLLAMA_MODEL
 from src.helpers import emb, C_RED, _log_audit
 from src.economy import (
-    deduct_balance, get_balance,
+    add_balance, deduct_balance, get_balance,
     get_guild_ask_model, get_guild_roleplay_model,
 )
 from src.persistence import save_ai_threads
@@ -177,6 +177,18 @@ async def enforce_cost(ctx, feature: str) -> bool:
     return True
 
 
+async def refund_cost(uid: int, feature: str) -> None:
+    """Refund a charge made by enforce_cost — for requests that produced
+    nothing (AI disabled, token budget denied, Ollama offline/errored)."""
+    cost = 0 if uid in state.godmode_users else FEATURE_COSTS.get(feature, 0)
+    if cost > 0:
+        await add_balance(uid, cost)
+        log.info(
+            "ai_cost_refunded",
+            extra={"user_id": uid, "feature": feature, "cost": cost},
+        )
+
+
 async def insufficient_funds(ctx_or_send, uid: int, *, label: str = "") -> None:
     """Send a standard Insufficient Funds embed."""
     from discord.ext import commands
@@ -236,7 +248,10 @@ async def ollama_complete(messages: list, model: str = None) -> str:
 async def keep_typing(channel: discord.abc.Messageable):
     try:
         while True:
-            await channel.trigger_typing()
+            # channel.typing() is the discord.py 2.x one-shot form;
+            # trigger_typing() was removed in 2.0 and raised AttributeError,
+            # silently killing this task on its first iteration.
+            await channel.typing()
             await asyncio.sleep(5)
     except asyncio.CancelledError:
         pass
@@ -393,8 +408,11 @@ async def finalize(placeholder: discord.Message, channel: discord.abc.Messageabl
 async def _execute_ollama_stream(
     channel, reply_to, messages, history,
     guild_id=None, model=None, placeholder=None, user_id=None,
-    request_id=None,
+    request_id=None, refund_feature=None,
 ):
+    """refund_feature: FEATURE_COSTS key the caller charged via enforce_cost —
+    refunded when the request produces nothing (AI disabled, budget denied,
+    offline, error). Leave None for uncharged calls (thread follow-ups)."""
     if request_id is None:
         request_id = new_request_id()
     if placeholder is None:
@@ -402,6 +420,11 @@ async def _execute_ollama_stream(
     typing_task = asyncio.create_task(keep_typing(channel))
     author = f"{reply_to.author.display_name} ({reply_to.author.id})"
     command = reply_to.content[:100]
+
+    async def _refund():
+        if refund_feature and user_id:
+            await refund_cost(user_id, refund_feature)
+
     try:
         async with aiohttp.ClientSession() as session:
             full_response = await stream_ollama(
@@ -414,12 +437,14 @@ async def _execute_ollama_stream(
             # already shows the explanation. Drop the unanswered user turn.
             if history and history[-1].get("role") == "user":
                 history.pop()
+            await _refund()
             return
         history.append({"role": "assistant", "content": full_response})
         state.stats_ai_responses_today += 1
         await finalize(placeholder, channel, full_response)
     except aiohttp.ClientError as e:
         history.pop()
+        await _refund()
         _log_audit(author, command, f"Ollama offline: {e}")
         log.warning(
             "ai_request_failed",
@@ -428,6 +453,7 @@ async def _execute_ollama_stream(
         await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
     except Exception as e:
         history.pop()
+        await _refund()
         _log_audit(author, command, f"{type(e).__name__}: {e}")
         log.exception(
             "ai_request_failed",
@@ -446,6 +472,7 @@ async def respond(
     system_prompt: str = None,
     guild_id: int = None,
     author_name: str = None,
+    refund_feature: str = None,
 ):
     from src.helpers import get_system_prompt
     channel_id = channel.id
@@ -482,7 +509,7 @@ async def respond(
     await _execute_ollama_stream(
         channel, reply_to, messages, history,
         model=model, guild_id=guild_id, placeholder=placeholder,
-        user_id=user_id, request_id=request_id,
+        user_id=user_id, request_id=request_id, refund_feature=refund_feature,
     )
     if ai_thread is not None:
         await save_ai_threads()

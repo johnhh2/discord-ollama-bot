@@ -1,7 +1,7 @@
 import json
 
 from src import state
-from src.db import with_cursor
+from src.db import with_transaction
 
 
 # All shop effects are scoped per server: state dicts are keyed by a
@@ -11,7 +11,7 @@ from src.db import with_cursor
 
 
 async def save_ragebait():
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='ragebait'")
         for (guild_id, uid), data in state.active_ragebaits.items():
             await cur.execute(
@@ -23,7 +23,7 @@ async def save_ragebait():
 
 
 async def save_mock():
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='mock'")
         for (guild_id, uid), data in state.active_mocks.items():
             await cur.execute(
@@ -35,7 +35,7 @@ async def save_mock():
 
 async def save_curse(curse_data: dict):
     state.active_curses = curse_data
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='curse'")
         for (guild_id, uid), data in curse_data.items():
             await cur.execute(
@@ -47,7 +47,7 @@ async def save_curse(curse_data: dict):
 
 async def save_tax(tax_data: dict):
     state.active_taxes = tax_data
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='tax'")
         for (guild_id, uid), data in tax_data.items():
             await cur.execute(
@@ -62,7 +62,7 @@ async def save_tax(tax_data: dict):
 async def save_spellcheck():
     """Persist active spellchecks. `remaining` holds the number of purchased
     days; expiry is stored in expires_at (also recomputable from activated_at)."""
-    async with with_cursor() as cur:
+    async with with_transaction() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='spellcheck'")
         for (guild_id, uid), data in state.active_spellchecks.items():
             await cur.execute(
