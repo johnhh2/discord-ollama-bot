@@ -179,6 +179,14 @@ async def prune_gambling_history(*, before_date: str):
         )
 
 
+async def prune_levelup_history(*, before_date: str):
+    async with with_cursor() as cur:
+        await cur.execute(
+            "DELETE FROM levelup_history WHERE snapshot_date < %s",
+            (before_date,),
+        )
+
+
 async def upsert_crime_delta(date_str: str, bucket: int, guild_id: int, uid: int, *, gained: int = 0, lost: int = 0):
     """Atomically add `gained` and `lost` deltas to the
     (date, bucket, guild, user) row in crime_history. Caller passes the

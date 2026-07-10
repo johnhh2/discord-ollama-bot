@@ -332,6 +332,22 @@ async def _init_db_state_inner(state, run_migrations):
             logging.error(f"[init_db_state] gambler_streak failed: {e}", exc_info=True)
             raise
 
+        # ── daily_counters: lottery tickets presence line ─────────────────
+        try:
+            # Local import — src.economy imports src.persistence at module scope.
+            from src.economy import _ct_today
+            today = _ct_today()
+            await cur.execute(
+                "SELECT value FROM daily_counters WHERE day=%s AND counter=%s",
+                (today, "lottery_tickets"),
+            )
+            row = await cur.fetchone()
+            state.lottery_tickets_today["date"] = today
+            state.lottery_tickets_today["count"] = int(row[0]) if row else 0
+        except Exception as e:
+            logging.error(f"[init_db_state] daily_counters failed: {e}", exc_info=True)
+            raise
+
         # ── recap_usage ───────────────────────────────────────────────────
         try:
             await cur.execute("SELECT guild_id, user_id, last_date FROM recap_usage")

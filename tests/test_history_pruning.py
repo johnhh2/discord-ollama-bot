@@ -2,15 +2,13 @@
 
 The graph cog only renders the last 14 days, but the *_history tables
 keep `GRAPH_HISTORY_RETENTION_DAYS` (10y) of data — headroom for future
-"show me a year" features. levelup_history is never pruned (it grows
-slowly enough that an unbounded table is fine).
+"show me a year" features.
 
 These tests pin:
   - do_daily_reset DELETEs rows past the retention window from each of
-    the 5 pruned tables (balance, bot_stats, bot_command_usage, crime,
-    gambling).
-  - do_daily_reset does NOT touch levelup_history.
-  - The 5 prune helpers individually use a strict-less-than cutoff (rows
+    the 6 pruned tables (balance, bot_stats, bot_command_usage, crime,
+    gambling, levelup).
+  - The prune helpers individually use a strict-less-than cutoff (rows
     ON the cutoff date are kept).
 
 Snapshot helpers (snapshot_balances etc.) no longer prune in-line —
@@ -33,12 +31,12 @@ def _ancient_date_iso(years_back: int) -> str:
     return (_economy._ct_now().date() - datetime.timedelta(days=365 * years_back)).isoformat()
 
 
-# ── do_daily_reset prunes all 5 pruned tables ────────────────────────────────
+# ── do_daily_reset prunes all 6 pruned tables ────────────────────────────────
 
 
 async def test_do_daily_reset_prunes_all_pruned_tables(db, monkeypatch):
     """One pass of do_daily_reset deletes rows past retention from
-    balance, bot_stats, bot_command_usage, crime, and gambling."""
+    balance, bot_stats, bot_command_usage, crime, gambling, and levelup."""
     very_old = _ancient_date_iso(11)
     recent = _economy._ct_now().date().isoformat()
 
@@ -55,6 +53,7 @@ async def test_do_daily_reset_prunes_all_pruned_tables(db, monkeypatch):
     })
     await _persistence.upsert_crime_delta(very_old, 0, 1, 42, gained=999)
     await _persistence.upsert_gambling_delta(very_old, 0, 1, 42, gained=999)
+    await _persistence.upsert_levelup_delta(very_old, 0, 100, 42, count=5)
     # Also a recent row to confirm it's untouched.
     await _persistence.upsert_crime_delta(recent, 0, 1, 42, gained=10)
 
@@ -69,6 +68,7 @@ async def test_do_daily_reset_prunes_all_pruned_tables(db, monkeypatch):
     assert very_old not in crime
     assert recent in crime  # recent row untouched
     assert very_old not in await _persistence.load_gambling_history()
+    assert very_old not in await _persistence.load_levelup_history()
 
 
 async def test_do_daily_reset_keeps_rows_within_retention(db, monkeypatch):
@@ -84,19 +84,18 @@ async def test_do_daily_reset_keeps_rows_within_retention(db, monkeypatch):
     assert five_years_back in loaded
 
 
-async def test_do_daily_reset_leaves_levelup_history_alone(db, monkeypatch):
-    """levelup_history is intentionally NOT pruned. Even very old rows
-    must survive the daily reset."""
-    very_old = _ancient_date_iso(15)  # well past any reasonable retention
-    await _persistence.upsert_levelup_delta(very_old, 0, 100, 42, count=5)
+async def test_prune_levelup_history_strictly_before_cutoff(db):
+    cutoff = "2026-01-01"
+    older = "2025-12-31"
 
-    async def _ai_up(): return True
-    monkeypatch.setattr("src.ai.check_ollama_connected", _ai_up)
-    await _economy.do_daily_reset()
+    await _persistence.upsert_levelup_delta(older, 0, 100, 1, count=1)
+    await _persistence.upsert_levelup_delta(cutoff, 0, 100, 2, count=1)
+
+    await _persistence.prune_levelup_history(before_date=cutoff)
 
     loaded = await _persistence.load_levelup_history()
-    assert very_old in loaded
-    assert loaded[very_old][0][(100, "42")] == 5
+    assert older not in loaded
+    assert cutoff in loaded
 
 
 # ── Direct prune helpers: strict-less-than cutoff ────────────────────────────

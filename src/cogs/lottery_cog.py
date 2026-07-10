@@ -17,18 +17,30 @@ from src.persistence import (
     save_lottery,
     load_lottery, try_set_record, log_notable_event,
 )
+# Attribute access (not `from`-imported) so the conftest stubs on the
+# persistence package reach the calls here.
+import src.persistence as persistence
 from src.guild_config import get_guild_cfg
 from src.confirm_view import confirm_purchase
 from src import state, status_manager
 
 
-def record_tickets_purchased(count: int) -> None:
-    """Bump the gameplay-day ticket counter behind the presence status line."""
+async def record_tickets_purchased(count: int) -> None:
+    """Bump the gameplay-day ticket counter behind the presence status line.
+
+    The in-memory bump is synchronous (no await before it), so concurrent
+    purchases can't interleave mid-update; the DB write is an atomic
+    per-delta increment, restored into state at boot by init_db_state.
+    """
     today = _ct_today()
     if state.lottery_tickets_today.get("date") != today:
         state.lottery_tickets_today["date"] = today
         state.lottery_tickets_today["count"] = 0
     state.lottery_tickets_today["count"] += count
+    try:
+        await persistence.bump_daily_counter(today, "lottery_tickets", count)
+    except Exception:
+        logging.exception("[lottery] failed to persist daily ticket counter")
 
 
 def lottery_status_text() -> "str | None":
@@ -335,7 +347,7 @@ class LotteryCog(commands.Cog):
             await add_guild_house(ctx.guild.id, tickets * 3)
 
             await save_lottery(ctx.guild.id, lottery)
-            record_tickets_purchased(tickets)
+            await record_tickets_purchased(tickets)
 
         bonus_msg = "(+1,000 bonus as new player)" if was_new_player else ""
 

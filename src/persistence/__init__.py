@@ -95,6 +95,7 @@ from src.persistence.history import (  # noqa: F401
     prune_command_usage_history,
     prune_crime_history,
     prune_gambling_history,
+    prune_levelup_history,
     upsert_crime_delta,
     upsert_gambling_delta,
     upsert_levelup_delta,
@@ -108,6 +109,11 @@ from src.persistence.mc_ping import (  # noqa: F401
     save_mc_ping_sample,
     load_mc_ping_samples,
     prune_mc_ping_samples,
+)
+from src.persistence.daily_counters import (  # noqa: F401
+    bump_daily_counter,
+    load_daily_counter,
+    prune_daily_counters,
 )
 from src.persistence.user_perm_overrides import (  # noqa: F401
     save_user_perm_override,

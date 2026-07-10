@@ -135,9 +135,11 @@ def reset_bot_state(monkeypatch):
         "prune_balance_history", "prune_bot_stats_history",
         "prune_command_usage_history",
         "prune_crime_history", "prune_gambling_history",
+        "prune_levelup_history",
         "log_notable_event", "prune_notable_events",
         "add_ephemeral_msg",
         "save_mc_ping_sample", "prune_mc_ping_samples",
+        "bump_daily_counter", "prune_daily_counters",
     ]
     for fn_name in save_fn_names:
         if hasattr(_persistence, fn_name):
@@ -161,7 +163,9 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_economy, "prune_command_usage_history", _noop, raising=False)
     monkeypatch.setattr(_economy, "prune_crime_history", _noop, raising=False)
     monkeypatch.setattr(_economy, "prune_gambling_history", _noop, raising=False)
+    monkeypatch.setattr(_economy, "prune_levelup_history", _noop, raising=False)
     monkeypatch.setattr(_economy, "prune_notable_events", _noop, raising=False)
+    monkeypatch.setattr(_economy, "prune_daily_counters", _noop, raising=False)
     import src.leveling as _leveling
     monkeypatch.setattr(_leveling, "upsert_levelup_delta", _noop, raising=False)
 

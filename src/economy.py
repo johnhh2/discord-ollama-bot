@@ -14,7 +14,8 @@ from src.persistence import (
     load_command_usage_history, save_command_usage_history,
     upsert_crime_delta, upsert_gambling_delta,
     prune_balance_history, prune_bot_stats_history, prune_command_usage_history,
-    prune_crime_history, prune_gambling_history, prune_notable_events,
+    prune_crime_history, prune_gambling_history, prune_levelup_history,
+    prune_notable_events, prune_daily_counters,
 )
 from src.guild_config import get_guild_cfg
 
@@ -543,14 +544,15 @@ async def do_daily_reset():
 
     # Prune all graph-history tables once per gameplay-day via a single
     # DB-level DELETE per table — cheap, correct, and uniform across the
-    # snapshot-style and atomic-write tables. levelup_history is left
-    # unbounded; it grows slowly enough that a pruner isn't worth it.
+    # snapshot-style and atomic-write tables.
     cutoff = (_ct_now().date() - datetime.timedelta(days=GRAPH_HISTORY_RETENTION_DAYS)).isoformat()
     await prune_balance_history(before_date=cutoff)
     await prune_bot_stats_history(before_date=cutoff)
     await prune_command_usage_history(before_date=cutoff)
     await prune_crime_history(before_date=cutoff)
     await prune_gambling_history(before_date=cutoff)
+    await prune_levelup_history(before_date=cutoff)
     await prune_notable_events(before_date=cutoff)
+    await prune_daily_counters(before_date=cutoff)
 
     logging.info(f"[DAILY] Reset daily reward and scratchoff counts for {today}")

@@ -66,6 +66,7 @@ _TABLE_PKS = {
     "bounties": ("id",),
     "bounty_claims": ("id",),
     "mc_ping_samples": ("ts",),
+    "daily_counters": ("day", "counter"),
 }
 
 

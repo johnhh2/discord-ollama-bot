@@ -152,9 +152,9 @@ async def test_lottery_status_hidden_at_zero():
 
 
 async def test_lottery_status_visible_after_purchase():
-    record_tickets_purchased(1)
+    await record_tickets_purchased(1)
     assert lottery_status_text() == "1x 🎟️ sold today"
-    record_tickets_purchased(24)
+    await record_tickets_purchased(24)
     assert lottery_status_text() == "25x 🎟️ sold today"
 
 
@@ -162,5 +162,35 @@ async def test_lottery_status_hidden_when_count_is_stale():
     _state.lottery_tickets_today.update({"date": "2020-01-01", "count": 40})
     assert lottery_status_text() is None
     # A purchase on the new day resets the stale count instead of adding to it.
-    record_tickets_purchased(2)
+    await record_tickets_purchased(2)
     assert lottery_status_text() == "2x 🎟️ sold today"
+
+
+async def test_lottery_counter_persists_and_restores(db):
+    """Purchases accumulate in daily_counters and survive a 'reboot'
+    (init_db_state restoring the count into fresh state)."""
+    from src.persistence import bump_daily_counter, load_daily_counter, init_db_state
+
+    await record_tickets_purchased(3)
+    await record_tickets_purchased(7)
+    today = _ct_today()
+    assert await load_daily_counter(today, "lottery_tickets") == 10
+    # Yesterday's row is a separate key and doesn't bleed into today.
+    await bump_daily_counter("2020-01-01", "lottery_tickets", 99)
+    assert await load_daily_counter(today, "lottery_tickets") == 10
+
+    _state.lottery_tickets_today.update({"date": None, "count": 0})  # "reboot"
+    await init_db_state()
+    assert _state.lottery_tickets_today == {"date": today, "count": 10}
+    assert lottery_status_text() == "10x 🎟️ sold today"
+
+
+async def test_prune_daily_counters_drops_old_rows_only(db):
+    from src.persistence import bump_daily_counter, load_daily_counter, prune_daily_counters
+
+    today = _ct_today()
+    await bump_daily_counter(today, "lottery_tickets", 5)
+    await bump_daily_counter("2020-01-01", "lottery_tickets", 8)
+    await prune_daily_counters(before_date="2021-01-01")
+    assert await load_daily_counter("2020-01-01", "lottery_tickets") == 0
+    assert await load_daily_counter(today, "lottery_tickets") == 5
