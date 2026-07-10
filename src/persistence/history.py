@@ -40,15 +40,19 @@ async def load_bot_stats_history() -> dict:
     """Return {date_str: {bucket: {"messages": …, "commands": …, ...}}}."""
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT snapshot_date, bucket, messages, commands, ai_responses, ai_up, memory_mb, ping_ms"
-            " FROM bot_stats_history"
+            "SELECT snapshot_date, bucket, messages, commands, ai_responses, ai_up, memory_mb, ping_ms,"
+            " mc_up, mc_ping_ms FROM bot_stats_history"
         )
         rows = await cur.fetchall()
     result: dict = {}
-    for date_str, bucket, msgs, cmds, ai_resp, ai_up, mem, ping in rows:
+    for date_str, bucket, msgs, cmds, ai_resp, ai_up, mem, ping, mc_up, mc_ping in rows:
         result.setdefault(date_str, {})[int(bucket)] = {
             "messages": msgs, "commands": cmds, "ai_responses": ai_resp,
             "ai_up": bool(ai_up), "memory_mb": mem, "ping_ms": ping,
+            # Tri-state: True/False = monitor verdict, None = unknown
+            # (monitor disabled, or a pre-0037 row).
+            "mc_up": bool(mc_up) if mc_up is not None else None,
+            "mc_ping_ms": mc_ping,
         }
     return result
 
@@ -58,16 +62,19 @@ async def save_bot_stats_history(history: dict):
     async with with_cursor() as cur:
         for date_str, by_bucket in history.items():
             for bucket, vals in by_bucket.items():
+                mc_up = vals.get("mc_up")
                 await cur.execute(
                     "INSERT INTO bot_stats_history"
-                    " (snapshot_date, bucket, messages, commands, ai_responses, ai_up, memory_mb, ping_ms)"
-                    " VALUES (%s,%s,%s,%s,%s,%s,%s,%s)"
+                    " (snapshot_date, bucket, messages, commands, ai_responses, ai_up, memory_mb, ping_ms,"
+                    " mc_up, mc_ping_ms)"
+                    " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
                     " ON DUPLICATE KEY UPDATE messages=VALUES(messages), commands=VALUES(commands),"
                     " ai_responses=VALUES(ai_responses), ai_up=VALUES(ai_up), memory_mb=VALUES(memory_mb),"
-                    " ping_ms=VALUES(ping_ms)",
+                    " ping_ms=VALUES(ping_ms), mc_up=VALUES(mc_up), mc_ping_ms=VALUES(mc_ping_ms)",
                     (date_str, int(bucket), vals.get("messages", 0), vals.get("commands", 0),
                      vals.get("ai_responses", 0), vals.get("ai_up", False), vals.get("memory_mb", 0.0),
-                     vals.get("ping_ms")),
+                     vals.get("ping_ms"),
+                     int(mc_up) if mc_up is not None else None, vals.get("mc_ping_ms")),
                 )
 
 

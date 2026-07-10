@@ -556,6 +556,34 @@ async def test_mc_ping_samples_roundtrip(db):
     assert await load_mc_ping_samples(0) == rows[1:]
 
 
+async def test_bot_stats_history_persists_mc_fields(db):
+    """mc_up / mc_ping_ms survive a save/load round-trip (migration 0037).
+
+    Before 0037 these keys were written into the in-memory dict but
+    silently dropped by save_bot_stats_history, so the older-than-7-days
+    tail of !graph minecraft was always empty. Pins the tri-state: True
+    (up, with ping), False (down), None (unknown — monitor disabled)."""
+    from src.persistence import save_bot_stats_history, load_bot_stats_history
+
+    base = {"messages": 1, "commands": 0, "ai_responses": 0,
+            "ai_up": True, "memory_mb": 10.0, "ping_ms": 25.0}
+    await save_bot_stats_history({
+        "2026-07-01": {
+            0: {**base, "mc_up": True, "mc_ping_ms": 41.5},
+            1: {**base, "mc_up": False, "mc_ping_ms": None},
+            2: {**base},  # mc keys absent → stored as NULL/unknown
+        },
+    })
+
+    loaded = await load_bot_stats_history()
+    assert loaded["2026-07-01"][0]["mc_up"] is True
+    assert loaded["2026-07-01"][0]["mc_ping_ms"] == 41.5
+    assert loaded["2026-07-01"][1]["mc_up"] is False
+    assert loaded["2026-07-01"][1]["mc_ping_ms"] is None
+    assert loaded["2026-07-01"][2]["mc_up"] is None
+    assert loaded["2026-07-01"][2]["mc_ping_ms"] is None
+
+
 async def test_monitor_persists_each_poll(monkeypatch):
     saved = []
 
