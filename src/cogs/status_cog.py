@@ -15,7 +15,9 @@ from src import status_manager
 
 logger = logging.getLogger(__name__)
 
-STATUS_ROTATE_SECONDS = 30
+# Discord allows roughly 5 presence updates per minute per session; 15s
+# keeps the worst case (a change every tick) at 4/min with headroom.
+STATUS_ROTATE_SECONDS = 15
 
 
 class StatusCog(commands.Cog):
