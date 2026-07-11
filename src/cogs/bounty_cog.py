@@ -21,13 +21,18 @@ Per claim:
   • author ❌ (or 1-week no-answer) → the claimant is DM'd a contest offer
     (✅ contest / ❌ drop, 3-day deadline).
       – drop / 3-day timeout → claim rejected; the BOUNTY STAYS OPEN.
-      – contest → an @everyone poll is posted (3-day). yes-ratio (excluding
-        author & claimant) <50% → claim rejected, bounty stays open; 50%→50%
-        payout ramping to ≥66.6%→100% → pay claimant that fraction, bounty
-        accepted (voids siblings). No author refund on a partial poll — the
-        unpaid remainder is a house cut. Every eligible voter (not the author or
-        claimant) is paid a flat BOUNTY_POLL_VOTER_REWARD when the poll closes,
-        regardless of how they voted.
+      – contest → an @everyone poll is posted (3-day). Votes are recorded in
+        bounty_claims.poll_votes as ✅/❌ reactions come and go, and the poll
+        embed shows that live tally — the tracked set (not the reactions still
+        on the message at close, which can be cleared or lost) is what gets
+        counted; a close-time reaction scan only backfills votes cast while the
+        bot was offline. yes-ratio (excluding author & claimant) <50% → claim
+        rejected, bounty stays open; 50%→50% payout ramping to ≥66.6%→100% →
+        pay claimant that fraction, bounty accepted (voids siblings). No author
+        refund on a partial poll — the unpaid remainder is a house cut. Every
+        eligible voter (not the author or claimant) is paid a flat
+        BOUNTY_POLL_VOTER_REWARD when the poll closes, regardless of how they
+        voted.
 
 Open bounties with a deadline auto-close when it passes: refund the author 90%,
 bounty → expired, all in-flight claims voided.
@@ -114,6 +119,35 @@ def render_bounty_embed(bounty: dict) -> discord.Embed:
     if log:
         e.add_field(name="Activity", value="\n".join(log[-10:]), inline=False)
     return e
+
+
+def _poll_vote_counts(votes: "dict | None") -> tuple[int, int]:
+    """(yes, no) from a tracked-vote dict. A both-ways voter previously added
+    1 to each side, dragging the ratio toward 50% — which is a payout
+    threshold. Their votes cancel: they count for neither side."""
+    yes_set = set((votes or {}).get("yes", []))
+    no_set = set((votes or {}).get("no", []))
+    both = yes_set & no_set
+    return len(yes_set - both), len(no_set - both)
+
+
+def render_poll_embed(bounty: dict, claimant_id: int, poll_expires_at: float,
+                      yes: int, no: int) -> discord.Embed:
+    """Build the contest-poll embed, including the bot-computed live tally.
+    The tally line is the authoritative count (eligible voters only, both-ways
+    votes cancelled) — the raw reaction counts include the bot's seed
+    reactions and ineligible voters, so they always read wrong."""
+    return emb(
+        "🎯 Bounty Dispute — Community Vote",
+        f"<@{claimant_id}> contests the rejection of this **{bounty['amount']:,} 🪙** bounty:\n\n"
+        f"**{bounty['condition']}**\n\n"
+        f"Did they complete it?\n"
+        f"{ACCEPT_EMOJI} = completed   {REJECT_EMOJI} = not completed\n\n"
+        f"**Current tally: {yes} {ACCEPT_EMOJI} · {no} {REJECT_EMOJI}**\n\n"
+        f"Voting closes <t:{int(poll_expires_at)}:R>. (The author and claimant's votes don't count.)\n"
+        f"≥50% yes pays out partially, ≥66.6% pays in full.\n\n"
+        f"🪙 Vote and you'll get **{BOUNTY_POLL_VOTER_REWARD:,} 🪙** when the poll closes!",
+        C_GOLD)
 
 
 class BountyCog(commands.Cog):
@@ -329,7 +363,15 @@ class BountyCog(commands.Cog):
                 await self._handle_claim_reaction(bounty, payload.user_id)
             return
 
-        # 2) ✅/❌ in a DM (no guild_id). Resolve to a claim by its DM id, then
+        # 2) ✅/❌ on a live contest poll in a guild channel — record the vote.
+        if payload.guild_id is not None and emoji in (ACCEPT_EMOJI, REJECT_EMOJI):
+            member = getattr(payload, "member", None)
+            if member is not None and member.bot:
+                return
+            await self._handle_poll_vote(payload.message_id, payload.user_id, emoji, added=True)
+            return
+
+        # 3) ✅/❌ in a DM (no guild_id). Resolve to a claim by its DM id, then
         #    by its contest-offer id.
         if payload.guild_id is None and emoji in (ACCEPT_EMOJI, REJECT_EMOJI):
             found = await get_claim_by_dm(payload.message_id)
@@ -344,6 +386,63 @@ class BountyCog(commands.Cog):
                 if claim["status"] == "contesting" and payload.user_id == claim["claimant_id"]:
                     await self._resolve_contest(bounty, claim, contested=(emoji == ACCEPT_EMOJI))
                 return
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
+        """Un-reacting on a live contest poll retracts the tracked vote."""
+        if self.bot.user and payload.user_id == self.bot.user.id:
+            return
+        emoji = str(payload.emoji)
+        if payload.guild_id is not None and emoji in (ACCEPT_EMOJI, REJECT_EMOJI):
+            await self._handle_poll_vote(payload.message_id, payload.user_id, emoji, added=False)
+
+    def _find_polling_claim(self, message_id: int) -> "tuple[dict, dict] | None":
+        """(bounty, claim) whose live poll message is `message_id`, or None.
+
+        Memory-only on purpose: every open bounty (and its polling claims) is
+        rehydrated into state.active_bounties at boot, and most guild ✅/❌
+        reactions have nothing to do with polls — a DB fallback here would
+        cost a query per stray checkmark anywhere in the server.
+        """
+        for bounty in state.active_bounties.values():
+            for claim in bounty.get("claims", []):
+                if claim.get("poll_message_id") == message_id and claim["status"] == "polling":
+                    return bounty, claim
+        return None
+
+    async def _handle_poll_vote(self, message_id: int, user_id: int, emoji: str, added: bool):
+        """Track a ✅/❌ vote on a live poll and refresh the embed's tally.
+        The tracked set — not the message's reactions — is what the close-time
+        tally counts, so a vote can't be erased later by clearing reactions or
+        deleting the message. Author/claimant votes are ignored, matching the
+        tally's eligibility rules."""
+        found = self._find_polling_claim(message_id)
+        if found is None:
+            return
+        bounty, claim = found
+        if user_id in (bounty["author_id"], claim["claimant_id"]):
+            return
+        votes = claim.get("poll_votes") or {"yes": [], "no": []}
+        side = "yes" if emoji == ACCEPT_EMOJI else "no"
+        ids = set(votes.get(side, []))
+        if added == (user_id in ids):
+            return          # duplicate add or removal of an untracked vote
+        (ids.add if added else ids.discard)(user_id)
+        votes[side] = sorted(ids)
+        await self._persist_claim(claim, poll_votes=votes)
+        await self._refresh_poll_embed(bounty, claim)
+
+    async def _refresh_poll_embed(self, bounty: dict, claim: dict):
+        """Re-render a live poll's embed with the current tracked tally."""
+        yes, no = _poll_vote_counts(claim.get("poll_votes"))
+        try:
+            channel = self.bot.get_channel(claim["poll_channel_id"]) or await self.bot.fetch_channel(claim["poll_channel_id"])
+            poll_msg = await channel.fetch_message(claim["poll_message_id"])
+            await poll_msg.edit(embed=render_poll_embed(
+                bounty, claim["claimant_id"], claim["poll_expires_at"], yes, no))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as ex:
+            logging.warning("[bounty] failed to refresh poll embed %s: %s",
+                            claim.get("poll_message_id"), ex)
 
     def _sync_bounty_into_cache(self, bounty: dict) -> dict:
         """Return the cached bounty for this message id, preferring the live
@@ -492,16 +591,7 @@ class BountyCog(commands.Cog):
             channel = self.bot.get_channel(bounty["channel_id"]) or await self.bot.fetch_channel(bounty["channel_id"])
             poll_msg = await channel.send(
                 content="@everyone",
-                embed=emb(
-                    "🎯 Bounty Dispute — Community Vote",
-                    f"<@{claimant_id}> contests the rejection of this **{bounty['amount']:,} 🪙** bounty:\n\n"
-                    f"**{bounty['condition']}**\n\n"
-                    f"Did they complete it?\n"
-                    f"{ACCEPT_EMOJI} = completed   {REJECT_EMOJI} = not completed\n\n"
-                    f"Voting closes <t:{int(poll_exp)}:R>. (The author and claimant's votes don't count.)\n"
-                    f"≥50% yes pays out partially, ≥66.6% pays in full.\n\n"
-                    f"🪙 Vote and you'll get **{BOUNTY_POLL_VOTER_REWARD:,} 🪙** when the poll closes!",
-                    C_GOLD),
+                embed=render_poll_embed(bounty, claimant_id, poll_exp, yes=0, no=0),
                 allowed_mentions=discord.AllowedMentions(everyone=True),
             )
             await poll_msg.add_reaction(ACCEPT_EMOJI)
@@ -517,16 +607,24 @@ class BountyCog(commands.Cog):
         await self._persist_claim(
             claim, status="polling",
             poll_message_id=poll_msg.id, poll_channel_id=channel.id, poll_expires_at=poll_exp,
+            poll_votes={"yes": [], "no": []},
         )
         await self._persist_bounty(bounty, claim_log=log)
         await self._refresh_embed(bounty)
 
     async def _tally_poll(self, bounty: dict, claim: dict):
-        """Count poll reactions (excluding author & claimant), reward each
-        eligible voter, and settle."""
+        """Settle a closed poll from the tracked votes (recorded reaction by
+        reaction while the poll ran), reward each eligible voter, and pay out.
+
+        The tracked set is authoritative — the message's reactions aren't
+        trusted to still be accurate at close (a moderator can clear them, the
+        message can be deleted). A best-effort reaction scan is unioned in only
+        to catch votes cast while the bot was offline; a vote retracted while
+        the bot was online was already removed from the tracked set."""
         author_id, claimant_id = bounty["author_id"], claim["claimant_id"]
-        yes_voters: set[int] = set()
-        no_voters: set[int] = set()
+        votes = claim.get("poll_votes") or {}
+        yes_voters: set[int] = set(votes.get("yes", []))
+        no_voters: set[int] = set(votes.get("no", []))
         try:
             channel = self.bot.get_channel(claim["poll_channel_id"]) or await self.bot.fetch_channel(claim["poll_channel_id"])
             poll_msg = await channel.fetch_message(claim["poll_message_id"])

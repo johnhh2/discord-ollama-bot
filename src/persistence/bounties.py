@@ -51,7 +51,7 @@ def _row_to_bounty(row) -> dict:
 _CLAIM_COLS = (
     "id, bounty_id, claimant_id, status, dm_message_id, contest_message_id,"
     " poll_message_id, poll_channel_id, claim_expires_at, contest_expires_at,"
-    " poll_expires_at, created_at"
+    " poll_expires_at, created_at, poll_votes"
 )
 
 
@@ -69,6 +69,7 @@ def _row_to_claim(row) -> dict:
         "contest_expires_at": row[9],
         "poll_expires_at": row[10],
         "created_at": row[11],
+        "poll_votes": json.loads(row[12]) if row[12] else None,
     }
 
 
@@ -140,11 +141,17 @@ async def insert_claim(*, bounty_id: int, claimant_id: int) -> int:
 
 
 async def update_claim(claim_id: int, **fields) -> None:
-    """Patch columns on the claim row keyed by its primary-key id."""
+    """Patch columns on the claim row keyed by its primary-key id.
+
+    `poll_votes` is JSON-encoded automatically if passed as a dict.
+    """
     if not fields:
         return
     cols = [f"{k}=%s" for k in fields]
-    params = list(fields.values())
+    params = [
+        json.dumps(v) if k == "poll_votes" and not isinstance(v, (str, type(None))) else v
+        for k, v in fields.items()
+    ]
     params.append(claim_id)
     sql = f"UPDATE bounty_claims SET {', '.join(cols)} WHERE id=%s"  # nosec B608 - cols are literal "name=%s"
     async with with_cursor() as cur:

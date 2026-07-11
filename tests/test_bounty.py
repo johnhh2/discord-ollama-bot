@@ -505,6 +505,112 @@ async def test_poll_voter_rewarded_once_when_voting_both_ways(db):
     assert await get_balance(10) == 100
 
 
+# ── live poll vote tracking ───────────────────────────────────────────────────
+async def test_poll_starts_with_zero_tally_in_embed(db):
+    cog, bot, channel = _make_cog()
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=80)
+    poll_msg = channel._messages[claim["poll_message_id"]]
+    assert "Current tally: 0 ✅ · 0 ❌" in poll_msg.embeds[0].description
+    assert claim["poll_votes"] == {"yes": [], "no": []}
+
+
+async def test_poll_vote_updates_embed_and_persists(db):
+    cog, bot, channel = _make_cog()
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=81)
+    pmid = claim["poll_message_id"]
+
+    await cog._handle_poll_vote(pmid, 101, "✅", added=True)
+    await cog._handle_poll_vote(pmid, 102, "✅", added=True)
+    await cog._handle_poll_vote(pmid, 103, "❌", added=True)
+    await cog._handle_poll_vote(pmid, 101, "✅", added=True)   # duplicate — no-op
+
+    poll_msg = channel._messages[pmid]
+    assert "Current tally: 2 ✅ · 1 ❌" in poll_msg.embeds[0].description
+    # Votes round-trip through the DB (survive a reboot).
+    found = await _persistence.get_claim_by_poll(pmid)
+    assert found is not None
+    assert found[1]["poll_votes"] == {"yes": [101, 102], "no": [103]}
+
+
+async def test_poll_vote_removal_retracts(db):
+    cog, bot, channel = _make_cog()
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=82)
+    pmid = claim["poll_message_id"]
+
+    await cog._handle_poll_vote(pmid, 101, "✅", added=True)
+    await cog._handle_poll_vote(pmid, 101, "✅", added=False)
+
+    poll_msg = channel._messages[pmid]
+    assert "Current tally: 0 ✅ · 0 ❌" in poll_msg.embeds[0].description
+    assert claim["poll_votes"] == {"yes": [], "no": []}
+
+
+async def test_poll_vote_ignores_author_claimant_and_other_messages(db):
+    cog, bot, channel = _make_cog()
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=83)
+    pmid = claim["poll_message_id"]
+
+    await cog._handle_poll_vote(pmid, 20, "✅", added=True)    # author
+    await cog._handle_poll_vote(pmid, 83, "✅", added=True)    # claimant
+    await cog._handle_poll_vote(424242, 101, "✅", added=True)  # not a poll message
+
+    assert claim["poll_votes"] == {"yes": [], "no": []}
+    poll_msg = channel._messages[pmid]
+    assert "Current tally: 0 ✅ · 0 ❌" in poll_msg.embeds[0].description
+
+
+async def test_poll_vote_both_ways_cancels_in_tally_line(db):
+    cog, bot, channel = _make_cog()
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=84)
+    pmid = claim["poll_message_id"]
+
+    await cog._handle_poll_vote(pmid, 101, "✅", added=True)
+    await cog._handle_poll_vote(pmid, 101, "❌", added=True)   # same voter, both ways
+    await cog._handle_poll_vote(pmid, 102, "✅", added=True)
+
+    poll_msg = channel._messages[pmid]
+    assert "Current tally: 1 ✅ · 0 ❌" in poll_msg.embeds[0].description
+
+
+async def test_tally_counts_tracked_votes_when_reactions_are_gone(db):
+    """Votes recorded while the poll ran settle it even if every reaction was
+    cleared (or the message deleted) before close — the tracked set is
+    authoritative, not the reactions left on the message."""
+    cog, bot, channel = _make_cog()
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=85)
+    pmid = claim["poll_message_id"]
+    for uid in (1, 2, 3, 4, 5, 6, 7):
+        await cog._handle_poll_vote(pmid, uid, "✅", added=True)
+    await cog._handle_poll_vote(pmid, 8, "❌", added=True)
+    # Reactions vanish before close; tracked votes remain.
+    channel._messages[pmid].reactions = []
+    claim["poll_expires_at"] = time.time() - 1
+
+    await cog._expiry_loop.coro(cog)
+    assert await get_balance(85) == 10_000          # 7/8 yes → full payout
+    for v in (1, 2, 3, 4, 5, 6, 7, 8):
+        assert await get_balance(v) == 100          # voters still rewarded
+    assert (await _persistence.get_bounty_by_message(mid))["status"] == "accepted"
+
+
+async def test_tally_unions_reactions_missed_while_offline(db):
+    """A vote present only as a reaction (cast while the bot was down, so never
+    tracked) is still picked up by the close-time scan."""
+    cog, bot, channel = _make_cog()
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=86)
+    pmid = claim["poll_message_id"]
+    for uid in (1, 2, 3):
+        await cog._handle_poll_vote(pmid, uid, "✅", added=True)
+    _seed_poll_votes(channel, claim, yes_ids=[4, 5], no_ids=[6])   # untracked reactions
+    claim["poll_expires_at"] = time.time() - 1
+
+    await cog._expiry_loop.coro(cog)
+    # 5 yes / 1 no → ≥66.6% → full payout; all six voters rewarded.
+    assert await get_balance(86) == 10_000
+    for v in (1, 2, 3, 4, 5, 6):
+        assert await get_balance(v) == 100
+
+
 # ── expiry loop ───────────────────────────────────────────────────────────────
 async def test_open_bounty_expires_refunds_90pct(db):
     cog, bot, channel = _make_cog()
