@@ -495,6 +495,9 @@ async def test_build_series_minecraft_points(monkeypatch):
 
     assert len(data.x_points) == 2
     assert data.segments[0].y_values == [40.0, 0.0]
+    # Bucket snapshots are single measurements → collapsed band.
+    assert data.segments[0].band_lower == [40.0, 0.0]
+    assert data.segments[0].band_upper == [40.0, 0.0]
     assert data.native_style == "line"
 
 
@@ -514,15 +517,18 @@ async def test_build_series_minecraft_live_point(monkeypatch):
 
 async def test_build_series_minecraft_merges_buckets_and_samples(monkeypatch):
     import datetime as _dt
-    from src.graph_series import _bucket_start_dt
+    from src.graph_series import MC_BIN_SECONDS, _bucket_start_dt
 
     now = int(time.time())
+    # Pin all three polls inside a single hourly bin so aggregation is
+    # deterministic regardless of when the test runs.
+    bin_start = (now // MC_BIN_SECONDS) * MC_BIN_SECONDS
     samples = [
-        (now - 180, True, 42.0),
-        (now - 120, False, None),      # down poll → 0
-        (now - 60, True, 44.0),
+        (bin_start + 60, True, 42.0),
+        (bin_start + 120, False, None),      # down poll → 0
+        (bin_start + 180, True, 44.0),
     ]
-    first_sample_dt = _dt.datetime.fromtimestamp(now - 180, tz=_dt.timezone.utc)
+    first_sample_dt = _dt.datetime.fromtimestamp(bin_start + 60, tz=_dt.timezone.utc)
     # One bucket safely older than the samples, one inside their coverage.
     old_day = (first_sample_dt - _dt.timedelta(days=3)).date().isoformat()
     new_day = (first_sample_dt + _dt.timedelta(days=1)).date().isoformat()
@@ -535,9 +541,36 @@ async def test_build_series_minecraft_merges_buckets_and_samples(monkeypatch):
     graph_series = _patch_graph_loads(monkeypatch, history=history, samples=samples)
     data = await graph_series.build_series_minecraft()
 
-    # 1 old bucket point + all 3 per-poll samples; the covered bucket is gone.
-    assert data.segments[0].y_values == [40.0, 42.0, 0.0, 44.0]
+    # 1 old bucket point + the 3 polls aggregated into 1 hourly bin;
+    # the covered bucket is gone.
+    seg = data.segments[0]
+    assert seg.y_values == [40.0, pytest.approx((42.0 + 0.0 + 44.0) / 3)]
+    assert seg.band_lower == [40.0, 0.0]
+    assert seg.band_upper == [40.0, 44.0]
+    # Aggregated point sits at the bin's mean sample timestamp.
+    assert data.x_points[1] == _dt.datetime.fromtimestamp(
+        bin_start + 120, tz=_dt.timezone.utc
+    )
     assert data.x_points == sorted(data.x_points)
+
+
+async def test_build_series_minecraft_bins_hourly(monkeypatch):
+    from src.graph_series import MC_BIN_SECONDS
+
+    now = int(time.time())
+    bin_start = (now // MC_BIN_SECONDS) * MC_BIN_SECONDS
+    samples = [
+        (bin_start - MC_BIN_SECONDS + 60, True, 30.0),   # previous hour
+        (bin_start - MC_BIN_SECONDS + 120, True, 50.0),
+        (bin_start + 60, True, 44.0),                    # current hour
+    ]
+    graph_series = _patch_graph_loads(monkeypatch, samples=samples)
+    data = await graph_series.build_series_minecraft()
+
+    seg = data.segments[0]
+    assert seg.y_values == [40.0, 44.0]
+    assert seg.band_lower == [30.0, 44.0]
+    assert seg.band_upper == [50.0, 44.0]
 
 
 async def test_mc_ping_samples_roundtrip(db):

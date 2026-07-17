@@ -67,10 +67,17 @@ _GROUP_LABEL = {
 
 @dataclass
 class Segment:
-    """One coloured slice within a series (a single bar segment, or one line)."""
+    """One coloured slice within a series (a single bar segment, or one line).
+
+    `band_lower`/`band_upper` optionally carry a per-point min/max envelope
+    (same length as `y_values`); line renders draw it as a faded band around
+    the line instead of the usual fill-to-zero.
+    """
     label: str
     color: str
     y_values: list[float]
+    band_lower: Optional[list[float]] = None
+    band_upper: Optional[list[float]] = None
 
 
 @dataclass
@@ -504,48 +511,76 @@ async def build_series_ping(bot) -> SeriesData:
     )
 
 
-async def build_series_minecraft() -> SeriesData:
-    """Minecraft server ping in ms, with downtime plotted at 0 so outages
-    are visible on the chart.
+MC_BIN_SECONDS = 3600  # aggregation window for per-poll samples: 1 hour
 
-    Two resolutions merged into one line: every persisted monitor poll
-    (mc_ping_samples, ~60s cadence, last 7 days) for the recent span, and
-    the coarse per-(date, bucket) snapshots from bot_stats_history for the
-    older tail the sample table has already pruned. Bucket points inside
-    the samples' coverage are dropped — the samples are strictly better.
+
+async def build_series_minecraft() -> SeriesData:
+    """Minecraft server ping in ms: hourly average line with a faded
+    min/max band, downtime counted as 0 so outages drag the band (and
+    average) visibly toward the floor.
+
+    Two resolutions merged into one line: persisted monitor polls
+    (mc_ping_samples, ~60s cadence, last 7 days) aggregated into
+    MC_BIN_SECONDS bins for the recent span, and the coarse per-(date,
+    bucket) snapshots from bot_stats_history for the older tail the sample
+    table has already pruned. Bucket points inside the samples' coverage
+    are dropped — the samples are strictly better. Single-snapshot points
+    (buckets, live) get a collapsed band (min = max = avg).
 
     Bucket states: up (point at the measured ping), down (point at 0), and
     unknown (skipped: feature disabled, bot offline, or rows predating the
     mc_* snapshot keys).
     """
     samples = await load_mc_ping_samples(int(_time.time() - 7 * 86_400))
-    sample_points = [
-        (
-            datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc),
-            float(latency) if (online and latency) else 0.0,
-        )
+    raw = [
+        (ts, float(latency) if (online and latency) else 0.0)
         for ts, online, latency in samples
     ]
-    first_sample_dt = sample_points[0][0] if sample_points else None
+    first_sample_dt = (
+        datetime.datetime.fromtimestamp(raw[0][0], tz=datetime.timezone.utc)
+        if raw else None
+    )
+
+    # Aggregate polls into fixed bins: avg/min/max per bin, plotted at the
+    # mean timestamp of the bin's samples (keeps the newest partial bin's
+    # point inside its actual data span instead of at the bin edge).
+    bins: dict[int, list[tuple[int, float]]] = {}
+    for ts, y in raw:
+        bins.setdefault(ts // MC_BIN_SECONDS, []).append((ts, y))
+    sample_points: list[tuple[datetime.datetime, float, float, float]] = []
+    for b in sorted(bins):
+        pairs = bins[b]
+        ys = [y for _, y in pairs]
+        mid_ts = sum(ts for ts, _ in pairs) / len(pairs)
+        sample_points.append((
+            datetime.datetime.fromtimestamp(mid_ts, tz=datetime.timezone.utc),
+            sum(ys) / len(ys), min(ys), max(ys),
+        ))
 
     history = await load_bot_stats_history()
     x_points: list[datetime.datetime] = []
-    y_ping: list[float] = []
+    y_avg: list[float] = []
+    y_min: list[float] = []
+    y_max: list[float] = []
+
+    def _append(point_dt: datetime.datetime, avg: float, lo: float, hi: float):
+        x_points.append(point_dt)
+        y_avg.append(avg)
+        y_min.append(lo)
+        y_max.append(hi)
+
     for point_dt, snap in _iter_points(history):
         if first_sample_dt is not None and point_dt >= first_sample_dt:
             continue
         up = snap.get("mc_up")
         ping = snap.get("mc_ping_ms")
         if up and ping is not None and ping > 0:
-            x_points.append(point_dt)
-            y_ping.append(float(ping))
+            _append(point_dt, float(ping), float(ping), float(ping))
         elif up is False:
-            x_points.append(point_dt)
-            y_ping.append(0.0)
+            _append(point_dt, 0.0, 0.0, 0.0)
 
-    for point_dt, y in sample_points:
-        x_points.append(point_dt)
-        y_ping.append(y)
+    for point_dt, avg, lo, hi in sample_points:
+        _append(point_dt, avg, lo, hi)
 
     # Live "now" point from the monitor's latest in-memory sample — only
     # needed when there are no persisted samples ending near now.
@@ -553,12 +588,15 @@ async def build_series_minecraft() -> SeriesData:
         now_point = _live_now_point()
         if state.mc_last_online is not None and (not x_points or x_points[-1] != now_point):
             live_ping = state.mc_last_ping_ms if state.mc_last_online else None
-            x_points.append(now_point)
-            y_ping.append(float(live_ping) if live_ping else 0.0)
+            y = float(live_ping) if live_ping else 0.0
+            _append(now_point, y, y, y)
 
     return SeriesData(
         title="Minecraft Ping",
-        segments=[Segment(label="Server Ping (0 = offline)", color="#2ecc71", y_values=y_ping)],
+        segments=[Segment(
+            label="Avg Ping (0 = offline)", color="#2ecc71",
+            y_values=y_avg, band_lower=y_min, band_upper=y_max,
+        )],
         x_points=x_points,
         native_style="line",
     )
@@ -892,10 +930,15 @@ def _common_axes(history_list: list[SeriesData]) -> list[datetime.datetime]:
     return sorted(seen)
 
 
+def _aligned_values(values: list[float], src_x: list[datetime.datetime], target_x: list[datetime.datetime]) -> list[float]:
+    """Re-index a value list onto target_x. Missing points → 0."""
+    by_point = dict(zip(src_x, values))
+    return [by_point.get(p, 0.0) for p in target_x]
+
+
 def _aligned_y(seg: Segment, src_x: list[datetime.datetime], target_x: list[datetime.datetime]) -> list[float]:
     """Re-index a segment's y_values onto target_x. Missing points → 0."""
-    by_point = dict(zip(src_x, seg.y_values))
-    return [by_point.get(p, 0.0) for p in target_x]
+    return _aligned_values(seg.y_values, src_x, target_x)
 
 
 async def render_combined(serieses: list[SeriesData], group: str, y_unit_label: str, title: str):
@@ -945,9 +988,15 @@ def _render_combined_sync(serieses: list[SeriesData], group: str, y_unit_label: 
                 is_summary = seg.label in ("Total", "Net")
                 style = "--" if is_summary else "-"
                 marker = "s" if is_summary else "o"
+                has_band = seg.band_lower is not None and seg.band_upper is not None
                 ax.plot(x_points, y, color=seg.color, linewidth=2, marker=marker,
-                        markersize=4, linestyle=style, label=seg.label)
-                if not is_summary:
+                        markersize=3 if has_band else 4, linestyle=style, label=seg.label)
+                if has_band:
+                    lo = _aligned_values(seg.band_lower, s.x_points, x_points)
+                    hi = _aligned_values(seg.band_upper, s.x_points, x_points)
+                    ax.fill_between(x_points, lo, hi, alpha=0.22, color=seg.color,
+                                    linewidth=0, label="min–max")
+                elif not is_summary:
                     ax.fill_between(x_points, y, alpha=0.10, color=seg.color)
             ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: _fmt_point(mdates.num2date(v))))
             ax.xaxis.set_major_locator(mdates.AutoDateLocator())
