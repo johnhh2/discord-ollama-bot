@@ -10,6 +10,7 @@ from src.permissions import requires_perm, is_admin
 from src.economy import snapshot_all
 from src.graph_series import (
     find_spec, parse_tokens, render_combined, render_ai_uptime_strip,
+    render_mc_daily_overlay,
     parse_admin_tokens, build_admin_series, SeriesSpec,
 )
 
@@ -76,6 +77,13 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
         await placeholder.edit(embed=None, attachments=[discord.File(buf, filename="ai_activity.png")])
         return
 
+    # Special case: `minecraft` is always solo (own group) and renders the
+    # ping line with the daily player bars overlaid on a secondary axis.
+    if len(parsed.specs) == 1 and parsed.specs[0].name == "minecraft":
+        buf = await asyncio.to_thread(render_mc_daily_overlay, serieses[0])
+        await placeholder.edit(embed=None, attachments=[discord.File(buf, filename="minecraft.png")])
+        return
+
     title = _combined_title(parsed.specs, group)
     if len(parsed.specs) == 1 and parsed.specs[0].name == "balance":
         title = f"{parsed.member.display_name}'s Balance — Last 2 Weeks"
@@ -95,9 +103,6 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
         title = "Bot Memory Usage — Last 2 Weeks"
     elif len(parsed.specs) == 1 and parsed.specs[0].name == "ping":
         title = "Discord Gateway Ping — Last 2 Weeks"
-    elif len(parsed.specs) == 1 and parsed.specs[0].name == "minecraft":
-        title = "Minecraft Server Ping — Last 2 Weeks (0 = offline)"
-
     buf = await render_combined(serieses, group, y_unit, title)
     filename = "_".join(s.name for s in parsed.specs) + ".png"
     await placeholder.edit(embed=None, attachments=[discord.File(buf, filename=filename)])
@@ -158,7 +163,7 @@ class GraphCog(commands.Cog):
             "`!graph server` — Daily message and command counts over the last 2 weeks",
             "`!graph memory` — Bot memory usage (MB) over the last 2 weeks",
             "`!graph ping` — Discord gateway ping (ms) over the last 2 weeks",
-            "`!graph minecraft` — Minecraft server ping (ms), hourly average with a faded min/max band for the last 7 days; dips to 0 mark downtime",
+            "`!graph minecraft` — Minecraft ping (hourly avg + min/max band, 0 = downtime) with daily bars for peak players, joins, and player-hours",
             "`!graph ai` — Daily AI response count and uptime over the last 2 weeks",
         ]
         if is_admin(ctx):

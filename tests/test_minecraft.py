@@ -466,7 +466,7 @@ async def test_monitor_publishes_state_sample(monkeypatch):
     assert _state.mc_last_ping_ms is None
 
 
-def _patch_graph_loads(monkeypatch, history=None, samples=None):
+def _patch_graph_loads(monkeypatch, history=None, samples=None, daily=None):
     from src import graph_series
 
     async def _fake_history():
@@ -474,8 +474,12 @@ def _patch_graph_loads(monkeypatch, history=None, samples=None):
 
     async def _fake_samples(since_ts):
         return samples or []
+
+    async def _fake_daily(since_date_iso):
+        return daily or []
     monkeypatch.setattr(graph_series, "load_bot_stats_history", _fake_history)
     monkeypatch.setattr(graph_series, "load_mc_ping_samples", _fake_samples)
+    monkeypatch.setattr(graph_series, "load_mc_daily_player_stats", _fake_daily)
     return graph_series
 
 
@@ -675,6 +679,200 @@ async def test_restore_samples_stale_gap_leaves_online_since_unset(monkeypatch):
 
     assert cog._online_since is None
     assert cog._last_seen_online == float(rows[0][0])
+
+
+# ── Player tracking: events + daily rollup (migration 0041) ──────────────────
+
+async def test_mc_player_events_roundtrip(db):
+    from src.persistence import (
+        record_mc_player_event, load_mc_player_events, prune_mc_player_events,
+    )
+    await record_mc_player_event(1000, 2, 2)
+    await record_mc_player_event(2000, -1, 1)
+
+    rows = await load_mc_player_events(0)
+    assert rows == [(1000, 2, 2), (2000, -1, 1)]
+    assert await load_mc_player_events(1500) == rows[1:]
+
+    await prune_mc_player_events(1500)
+    assert await load_mc_player_events(0) == rows[1:]
+
+
+async def test_mc_daily_player_stats_accumulate(db):
+    """The rollup accumulates SQL-side: peak concurrent is a running
+    GREATEST, joins and player-seconds sum across polls."""
+    from src.persistence import (
+        upsert_mc_daily_player_stats, load_mc_daily_player_stats,
+        prune_mc_daily_player_stats,
+    )
+    await upsert_mc_daily_player_stats("2026-07-19", 2, 2, 120.0)
+    await upsert_mc_daily_player_stats("2026-07-19", 4, 2, 240.0)  # new peak
+    await upsert_mc_daily_player_stats("2026-07-19", 1, 0, 60.0)   # peak stays 4
+    await upsert_mc_daily_player_stats("2026-07-20", 1, 1, 60.0)
+
+    rows = await load_mc_daily_player_stats("2026-07-01")
+    assert rows == [("2026-07-19", 4, 4, 420.0), ("2026-07-20", 1, 1, 60.0)]
+    assert await load_mc_daily_player_stats("2026-07-20") == rows[1:]
+
+    await prune_mc_daily_player_stats("2026-07-20")
+    assert await load_mc_daily_player_stats("2026-07-01") == rows[1:]
+
+
+async def test_monitor_tracks_player_events_and_daily(monkeypatch):
+    events, dailies = [], []
+
+    async def _spy_event(ts, delta, players):
+        events.append((delta, players))
+
+    async def _spy_daily(date_iso, players, joins, player_seconds):
+        dailies.append((players, joins))
+    monkeypatch.setattr(_persistence, "record_mc_player_event", _spy_event)
+    monkeypatch.setattr(_persistence, "upsert_mc_daily_player_stats", _spy_daily)
+
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+    results = iter([_status(players=2), _status(players=3),
+                    _status(players=1), _status(players=1)])
+
+    async def _fake_fetch():
+        return next(results)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
+    await _tick(cog)   # baseline: mid-session players are not "joins"
+    await _tick(cog)   # 2 → 3: one join
+    await _tick(cog)   # 3 → 1: two leaves
+    await _tick(cog)   # 1 → 1: no event
+
+    assert events == [(1, 3), (-2, 1)]
+    # Daily rollup upserts every successful poll; joins only on count-up.
+    assert dailies == [(2, 0), (3, 1), (1, 0), (1, 0)]
+
+
+async def test_monitor_counts_joins_on_server_up_transition(monkeypatch):
+    """Server comes back with players on it — they all count as joins
+    (prev.count is 0 while offline)."""
+    events = []
+
+    async def _spy_event(ts, delta, players):
+        events.append((delta, players))
+    monkeypatch.setattr(_persistence, "record_mc_player_event", _spy_event)
+
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+    cog._monitor = MonitorState(online=False, fail_streak=3)
+
+    async def _fake_fetch():
+        return _status(players=2)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
+    await _tick(cog)
+    assert events == [(2, 2)]
+
+
+async def test_monitor_playtime_accrual_and_gap_cap(monkeypatch):
+    dailies = []
+
+    async def _spy_daily(date_iso, players, joins, player_seconds):
+        dailies.append(player_seconds)
+    monkeypatch.setattr(_persistence, "upsert_mc_daily_player_stats", _spy_daily)
+
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+
+    async def _fake_fetch():
+        return _status(players=2)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
+    await _tick(cog)                              # first poll: nothing to accrue
+    assert dailies[0] == 0.0
+
+    cog._last_poll_ts = time.time() - 60          # normal 60s poll gap
+    await _tick(cog)
+    assert dailies[1] == pytest.approx(120.0, rel=0.05)   # 2 players × 60s
+
+    cog._last_poll_ts = time.time() - 100_000     # bot outage: gap is capped
+    await _tick(cog)
+    assert dailies[2] == pytest.approx(
+        2 * mc_mod.MC_PLAYTIME_MAX_GAP_SECS, rel=0.05)
+
+
+async def test_monitor_offline_poll_accrues_nothing(monkeypatch):
+    dailies = []
+
+    async def _spy_daily(date_iso, players, joins, player_seconds):
+        dailies.append(player_seconds)
+    monkeypatch.setattr(_persistence, "upsert_mc_daily_player_stats", _spy_daily)
+
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+    cog._monitor = MonitorState(online=True, count=2)
+    cog._last_poll_ts = time.time() - 60
+
+    async def _fake_fetch_down():
+        return None
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch_down)
+
+    await _tick(cog)
+    assert dailies == []          # no daily upsert while unreachable
+
+    async def _fake_fetch():
+        return _status(players=2)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+    await _tick(cog)
+    # The offline tick reset the accrual window, so recovery credits only
+    # the time since that tick — not the whole outage.
+    assert dailies[0] == pytest.approx(0.0, abs=2 * 2.0)
+
+
+async def test_build_series_minecraft_daily_extras(monkeypatch):
+    from src.graph_series import _bucket_start_dt
+
+    daily = [
+        ("2026-07-18", 4, 6, 7200.0),
+        ("2026-07-19", 2, 3, 1800.0),
+    ]
+    graph_series = _patch_graph_loads(monkeypatch, daily=daily)
+    monkeypatch.setattr(_state, "mc_last_online", True)
+    monkeypatch.setattr(_state, "mc_last_ping_ms", 33.0)
+
+    data = await graph_series.build_series_minecraft()
+
+    mc_daily = data.extras["mc_daily"]
+    assert mc_daily["max_concurrent"] == [4.0, 2.0]
+    assert mc_daily["joins"] == [6.0, 3.0]
+    assert mc_daily["hours"] == [2.0, 0.5]
+    # Bars sit at CT noon (bucket 2's start) of their calendar day.
+    assert mc_daily["x"] == [
+        _bucket_start_dt("2026-07-18", 2), _bucket_start_dt("2026-07-19", 2),
+    ]
+
+
+async def test_build_series_minecraft_no_daily_rows_no_extras(monkeypatch):
+    graph_series = _patch_graph_loads(monkeypatch)
+    monkeypatch.setattr(_state, "mc_last_online", True)
+    monkeypatch.setattr(_state, "mc_last_ping_ms", 33.0)
+
+    data = await graph_series.build_series_minecraft()
+    assert "mc_daily" not in data.extras
+
+
+async def test_render_mc_daily_overlay_smoke(monkeypatch):
+    """The overlay renderer produces a PNG both with and without daily bars."""
+    from src.graph_series import MC_BIN_SECONDS, render_mc_daily_overlay
+
+    now = int(time.time())
+    bin_start = (now // MC_BIN_SECONDS) * MC_BIN_SECONDS
+    samples = [
+        (bin_start - MC_BIN_SECONDS + 60, True, 30.0),
+        (bin_start + 60, True, 44.0),
+    ]
+    daily = [("2026-07-18", 4, 6, 7200.0), ("2026-07-19", 2, 3, 1800.0)]
+
+    graph_series = _patch_graph_loads(monkeypatch, samples=samples, daily=daily)
+    data = await graph_series.build_series_minecraft()
+    buf = render_mc_daily_overlay(data)
+    assert buf.getvalue()[:8] == b"\x89PNG\r\n\x1a\n"
+
+    graph_series = _patch_graph_loads(monkeypatch, samples=samples)
+    data = await graph_series.build_series_minecraft()
+    buf = render_mc_daily_overlay(data)
+    assert buf.getvalue()[:8] == b"\x89PNG\r\n\x1a\n"
 
 
 async def test_graph_registry_resolves_minecraft():

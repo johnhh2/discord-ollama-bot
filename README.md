@@ -79,7 +79,7 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 - `!mc` (aliases `!minecraft`, `!mcstatus`) — live Bedrock server status over a RakNet UDP ping: player count, latency, version, server name, gamemode
 - Background monitor posts up/down alerts and player-count notices ("a player joined — 3/10 online") to a channel set with `!settings minecraft-channel`
 - The bot's presence rotates through active status lines: the Minecraft player count (shown while at least one player is online), today's scratchoff total (shown once more than 3 cards have been scratched since the 5am CT reset), and today's lottery ticket sales (shown once at least one ticket has been bought)
-- `!graph minecraft` — server ping over the last 2 weeks: every ~60s poll for the last 7 days (persisted across restarts), 6-hour snapshots beyond that; downtime shows as dips to 0
+- `!graph minecraft` — server ping over the last 2 weeks: every ~60s poll for the last 7 days (persisted across restarts), 6-hour snapshots beyond that; downtime shows as dips to 0. Daily bars overlay the line with each day's peak concurrent players, join count, and total player-hours (count-based — the Bedrock pong never carries names; kept for ~10 years)
 - Works against any reachable Bedrock endpoint (e.g. an [itzg/minecraft-bedrock-server](https://github.com/itzg/docker-minecraft-bedrock-server) container on the same host) — no docker socket required
 
 ### 🛡️ Moderation & administration

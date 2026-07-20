@@ -5,8 +5,11 @@ port players use (RakNet "unconnected ping" via mcstatus). MC_SERVER_HOST is
 the server's EXTERNAL address so latency reflects the internet-facing route.
 The Bedrock pong carries player *counts* only, never names — so the monitor
 posts anonymous "a player joined — 3/10" notices, not per-gamertag events.
-Named join/leave, playtime, and console commands would all need docker-socket
-access (deliberately not mounted).
+Count deltas also feed the persistent player stats (mc_player_events +
+mc_daily_player_stats, migration 0041): joins/leaves, daily peak concurrent,
+and accumulated player-seconds, all count-based approximations. Named
+join/leave and console commands would need docker-socket access
+(deliberately not mounted).
 """
 import asyncio
 import collections
@@ -43,6 +46,13 @@ MC_UPTIME_WINDOW_SECS = 7 * 86_400
 MC_AVG_PING_WINDOW_SECS = 3_600
 # Prune the persisted samples once an hour rather than on every poll.
 MC_PRUNE_EVERY_TICKS = 3_600 // max(MC_POLL_SECONDS, 1)
+# Retention for the player-tracking tables (mc_player_events /
+# mc_daily_player_stats, migration 0041) — ~10 years, matching
+# GRAPH_HISTORY_RETENTION_DAYS in src/economy.py.
+MC_PLAYER_STATS_RETENTION_DAYS = 3650
+# Cap the per-poll playtime accrual so a long bot outage doesn't credit the
+# whole gap to whoever happens to be online at the next poll.
+MC_PLAYTIME_MAX_GAP_SECS = 3 * MC_POLL_SECONDS
 
 
 @dataclasses.dataclass
@@ -96,6 +106,16 @@ class MonitorState:
     online: bool | None = None
     count: int = 0
     fail_streak: int = 0
+
+
+def _ct_date_iso(ts: float) -> str:
+    """CT calendar date (midnight rollover, not the 5am gameplay boundary)
+    for a Unix timestamp — the day key for mc_daily_player_stats."""
+    import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.datetime.fromtimestamp(
+        ts, tz=datetime.timezone.utc
+    ).astimezone(ZoneInfo("America/Chicago")).date().isoformat()
 
 
 def _server_label() -> str:
@@ -171,6 +191,9 @@ class MinecraftCog(commands.Cog):
         # Restored from mc_ping_samples in the monitor's before_loop.
         self._samples: collections.deque[McSample] = collections.deque()
         self._ticks_until_prune = 0
+        # Timestamp of the previous poll — the playtime accrual window for
+        # mc_daily_player_stats (players × elapsed each successful poll).
+        self._last_poll_ts: float | None = None
         # Registered even when unconfigured — status_text() returns None
         # until the monitor confirms players online, so the line stays hidden.
         status_manager.register("minecraft", self.status_text)
@@ -263,9 +286,19 @@ class MinecraftCog(commands.Cog):
             if self._ticks_until_prune <= 0:
                 self._ticks_until_prune = MC_PRUNE_EVERY_TICKS
                 await persistence.prune_mc_ping_samples(int(cutoff))
+                retention_cutoff = now - MC_PLAYER_STATS_RETENTION_DAYS * 86_400
+                await persistence.prune_mc_player_events(int(retention_cutoff))
+                await persistence.prune_mc_daily_player_stats(
+                    _ct_date_iso(retention_cutoff))
             self._ticks_until_prune -= 1
         except Exception:
             logger.exception("[minecraft] failed to persist ping sample")
+
+        # Player join/leave events + the daily rollup (migration 0041).
+        try:
+            await self._track_player_stats(prev, status, now)
+        except Exception:
+            logger.exception("[minecraft] failed to persist player stats")
 
         # Track when the current online stretch began. `not prev.online`
         # covers both a real up-transition (False) and first sighting (None);
@@ -284,6 +317,40 @@ class MinecraftCog(commands.Cog):
 
         if events:
             await self._announce(self._event_payloads(events, prev, status))
+
+    async def _track_player_stats(self, prev: MonitorState,
+                                  status: "McStatus | None", now: float):
+        """Fold one poll into the persistent player stats (migration 0041).
+
+        Joins/leaves are count deltas between consecutive successful polls
+        (the Bedrock pong is anonymous). A baseline poll (prev.online None —
+        bot just booted) records no event: players already on mid-session
+        aren't "joins", and we can't know when they arrived. A server
+        up-transition counts everyone present as joining (prev.count is 0).
+
+        Playtime accrues as players × elapsed-since-last-poll on every
+        successful poll, capped at MC_PLAYTIME_MAX_GAP_SECS so bot downtime
+        isn't credited. The daily row upserts SQL-side (GREATEST/+=), so no
+        state needs restoring on boot.
+        """
+        if status is None:
+            # Down (or debouncing): no playtime accrues over this gap.
+            self._last_poll_ts = now
+            return
+        joins = 0
+        if prev.online is not None:
+            delta = status.players - prev.count
+            joins = max(0, delta)
+            if delta != 0:
+                await persistence.record_mc_player_event(
+                    int(now), delta, status.players)
+        elapsed = 0.0
+        if self._last_poll_ts is not None:
+            elapsed = min(max(now - self._last_poll_ts, 0.0),
+                          MC_PLAYTIME_MAX_GAP_SECS)
+        self._last_poll_ts = now
+        await persistence.upsert_mc_daily_player_stats(
+            _ct_date_iso(now), status.players, joins, status.players * elapsed)
 
     @mc_monitor.before_loop
     async def _before_monitor(self):

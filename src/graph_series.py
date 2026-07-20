@@ -39,7 +39,7 @@ from src.helpers import get_memory_mb
 from src.persistence import (
     load_balance_history, load_bot_stats_history, load_command_usage_history,
     load_crime_history, load_gambling_history, load_levelup_history,
-    load_mc_ping_samples,
+    load_mc_ping_samples, load_mc_daily_player_stats,
 )
 
 
@@ -591,6 +591,22 @@ async def build_series_minecraft() -> SeriesData:
             y = float(live_ping) if live_ping else 0.0
             _append(now_point, y, y, y)
 
+    # Daily player rollup (migration 0041) for the bar overlay: peak
+    # concurrent players, cumulative joins, and player-hours per CT calendar
+    # day, spanning the same ~2-week window as the ping data. Today's row is
+    # already live — the monitor upserts it every poll. Bars sit at CT noon
+    # (bucket 2's start) so each one is centred in its day.
+    since = (_calendar_today_date() - datetime.timedelta(days=13)).isoformat()
+    daily_rows = await load_mc_daily_player_stats(since)
+    extras = {}
+    if daily_rows:
+        extras["mc_daily"] = {
+            "x": [_bucket_start_dt(d, 2) for d, _mc, _j, _s in daily_rows],
+            "max_concurrent": [float(mc) for _d, mc, _j, _s in daily_rows],
+            "joins": [float(j) for _d, _mc, j, _s in daily_rows],
+            "hours": [s / 3600.0 for _d, _mc, _j, s in daily_rows],
+        }
+
     return SeriesData(
         title="Minecraft Ping",
         segments=[Segment(
@@ -599,6 +615,7 @@ async def build_series_minecraft() -> SeriesData:
         )],
         x_points=x_points,
         native_style="line",
+        extras=extras,
     )
 
 
@@ -1055,6 +1072,83 @@ def _render_combined_sync(serieses: list[SeriesData], group: str, y_unit_label: 
     ax.set_title(title, color="#ffffff", fontsize=12, pad=10)
     ax.set_ylabel(y_unit_label, color="#b9bbbe", fontsize=9)
     ax.legend(facecolor="#2f3136", edgecolor="#4f545c", labelcolor="#dcddde",
+              fontsize=8, loc="upper left")
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight", dpi=110)
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+
+def render_mc_daily_overlay(series: SeriesData):
+    """Solo-minecraft render: the hourly ping line/band plus a per-day bar
+    group (peak concurrent players, joins, player-hours) on a secondary
+    axis behind it. Only used when `minecraft` is the sole series — its
+    group is size 1, so this is the only render path for `!graph mc`.
+
+    Falls back to a plain ping chart when no daily rows exist yet (feature
+    just deployed, or the monitor is disabled).
+    """
+    import io
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+
+    fig, ax = plt.subplots(figsize=(9, 4.4))
+    fig.patch.set_facecolor("#2f3136")
+    ax.set_facecolor("#36393f")
+
+    seg = series.segments[0]
+    ax.plot(series.x_points, seg.y_values, color=seg.color, linewidth=2,
+            marker="o", markersize=3, label=seg.label, zorder=3)
+    if seg.band_lower is not None and seg.band_upper is not None:
+        ax.fill_between(series.x_points, seg.band_lower, seg.band_upper,
+                        alpha=0.22, color=seg.color, linewidth=0,
+                        label="min–max", zorder=2)
+
+    bar_handles, bar_labels = [], []
+    daily = series.extras.get("mc_daily")
+    if daily and daily["x"]:
+        ax2 = ax.twinx()
+        # twinx draws its axes on top of the original; flip the order (and
+        # clear ax's canvas patch) so the ping line stays above the bars.
+        ax.set_zorder(ax2.get_zorder() + 1)
+        ax.patch.set_visible(False)
+        bar_w = 0.26  # matplotlib date units: fractions of a day
+        groups = [
+            ("Peak players", "#3498db", daily["max_concurrent"], -bar_w),
+            ("Joins",        "#9b59b6", daily["joins"],          0.0),
+            ("Player-hours", "#f1c40f", daily["hours"],          bar_w),
+        ]
+        for label, color, values, offset in groups:
+            xs = [mdates.date2num(x) + offset for x in daily["x"]]
+            ax2.bar(xs, values, width=bar_w * 0.92, color=color, alpha=0.45,
+                    label=label, zorder=1)
+        ax2.set_ylabel("players / hours", color="#b9bbbe", fontsize=9)
+        ax2.set_ylim(bottom=0)
+        ax2.tick_params(colors="#dcddde", labelsize=8)
+        ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}"))
+        for spine in ax2.spines.values():
+            spine.set_edgecolor("#4f545c")
+        bar_handles, bar_labels = ax2.get_legend_handles_labels()
+
+    ax.xaxis.set_major_formatter(
+        plt.FuncFormatter(lambda v, _: _fmt_point(mdates.num2date(v))))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+    fig.autofmt_xdate(rotation=35, ha="right")
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0f} ms"))
+    ax.tick_params(colors="#dcddde", labelsize=8)
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#4f545c")
+    ax.grid(axis="y", color="#4f545c", linestyle="--", linewidth=0.5, alpha=0.7)
+    ax.set_title("Minecraft — Ping + Daily Players — Last 2 Weeks",
+                 color="#ffffff", fontsize=12, pad=10)
+    ax.set_ylabel("ms", color="#b9bbbe", fontsize=9)
+    line_handles, line_labels = ax.get_legend_handles_labels()
+    ax.legend(line_handles + bar_handles, line_labels + bar_labels,
+              facecolor="#2f3136", edgecolor="#4f545c", labelcolor="#dcddde",
               fontsize=8, loc="upper left")
 
     buf = io.BytesIO()

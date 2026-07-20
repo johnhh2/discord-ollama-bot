@@ -68,6 +68,8 @@ _TABLE_PKS = {
     "bounties": ("id",),
     "bounty_claims": ("id",),
     "mc_ping_samples": ("ts",),
+    "mc_player_events": ("ts",),
+    "mc_daily_player_stats": ("stat_date",),
     "daily_counters": ("day", "counter"),
 }
 
@@ -90,6 +92,10 @@ def _translate(sql: str) -> str:
 
     # INSERT IGNORE -> INSERT OR IGNORE
     out = re.sub(r"\bINSERT\s+IGNORE\b", "INSERT OR IGNORE", out, flags=re.IGNORECASE)
+
+    # GREATEST(a, b) -> MAX(a, b): SQLite's MAX doubles as the scalar
+    # greatest-of when given more than one argument.
+    out = re.sub(r"\bGREATEST\s*\(", "MAX(", out, flags=re.IGNORECASE)
 
     # Strip MariaDB-only table options at the end of CREATE TABLE statements.
     # SQLite rejects ENGINE=InnoDB / DEFAULT CHARSET=utf8mb4.
