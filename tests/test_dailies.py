@@ -19,7 +19,6 @@ import src.economy as _economy
 from src.config import DAILY_REWARD
 from src.cogs.dailies_cog import (
     DailiesCog, refresh_dailies_channel, DAILIES_EMOJI, DAILIES_TITLE,
-    DAILIES_MESSAGE_TTL,
 )
 from src.cogs.settings_cog import SettingsCog
 
@@ -298,35 +297,64 @@ async def test_reset_tick_reposts_when_day_rolls_over(db, monkeypatch):
 
 # ── 5-minute message sweeper ──────────────────────────────────────────────────
 
+def _sweeper_msg(mid, ch_id=500, guild_id=42):
+    return SimpleNamespace(
+        id=mid,
+        guild=SimpleNamespace(id=guild_id) if guild_id else None,
+        channel=SimpleNamespace(id=ch_id),
+        delete=AsyncMock(),
+    )
+
+
 @pytest.mark.asyncio
-async def test_on_message_schedules_deletion_for_non_claim_messages(monkeypatch):
+async def test_on_message_deletes_non_claim_messages_only(monkeypatch):
     _pin_today(monkeypatch)
     _state.guild_settings["42"] = {
         "dailies_channel": 500, "dailies_message_id": 777,
         "dailies_reset_day": TODAY,
     }
-    deleted: list = []
-
-    async def _record_delete(message, delay=5.0):
-        deleted.append((message.id, delay))
-
-    monkeypatch.setattr("src.cogs.dailies_cog._delete_after", _record_delete)
+    monkeypatch.setattr("src.cogs.dailies_cog.DAILIES_MESSAGE_TTL", 0.0)
     cog = _make_cog(_StubBot())
 
-    def _msg(mid, ch_id=500, guild_id=42):
-        return SimpleNamespace(
-            id=mid,
-            guild=SimpleNamespace(id=guild_id) if guild_id else None,
-            channel=SimpleNamespace(id=ch_id),
-        )
+    chatter = _sweeper_msg(1001)
+    claim = _sweeper_msg(777)
+    other_channel = _sweeper_msg(1002, ch_id=501)
+    dm = _sweeper_msg(1003, guild_id=None)
+    for m in (chatter, claim, other_channel, dm):
+        await cog.on_message(m)
+    await asyncio.sleep(0.01)  # let the created deletion tasks run
 
-    await cog.on_message(_msg(1001))                 # chatter → deleted
-    await cog.on_message(_msg(777))                  # the claim embed → kept
-    await cog.on_message(_msg(1002, ch_id=501))      # other channel → kept
-    await cog.on_message(_msg(1003, guild_id=None))  # DM → kept
-    await asyncio.sleep(0)  # let the created deletion tasks run
+    chatter.delete.assert_awaited_once()
+    claim.delete.assert_not_awaited()
+    other_channel.delete.assert_not_awaited()
+    dm.delete.assert_not_awaited()
 
-    assert deleted == [(1001, DAILIES_MESSAGE_TTL)]
+
+@pytest.mark.asyncio
+async def test_claim_embed_survives_race_with_id_recording(monkeypatch):
+    """Race regression: the gateway delivers MESSAGE_CREATE for a freshly
+    reposted claim embed while refresh_dailies_channel is still awaiting
+    send/add_reaction — before it records the new id. The exemption must be
+    evaluated at deletion time (config settled by then), not at schedule
+    time, or every reposted claim embed self-deletes after the TTL.
+    """
+    _pin_today(monkeypatch)
+    cfg = {
+        "dailies_channel": 500, "dailies_message_id": 777,  # OLD claim id
+        "dailies_reset_day": TODAY,
+    }
+    _state.guild_settings["42"] = cfg
+    monkeypatch.setattr("src.cogs.dailies_cog.DAILIES_MESSAGE_TTL", 0.0)
+    cog = _make_cog(_StubBot())
+
+    fresh_claim = _sweeper_msg(9001)
+    # MESSAGE_CREATE dispatches while cfg still points at the old embed …
+    await cog.on_message(fresh_claim)
+    # … and the refresh records the new id a beat later.
+    cfg["dailies_message_id"] = fresh_claim.id
+    await asyncio.sleep(0.01)
+
+    fresh_claim.delete.assert_not_awaited()
 
 
 # ── !settings dailies-channel ─────────────────────────────────────────────────

@@ -20,7 +20,7 @@ import logging
 import discord
 from discord.ext import commands, tasks
 
-from src.helpers import emb, C_GOLD, fetch_member, _delete_after
+from src.helpers import emb, C_GOLD, fetch_member
 from src.economy import _ct_today, next_daily_reset_ts
 from src.persistence import save_guild_settings
 from src.guild_config import get_guild_cfg
@@ -34,6 +34,27 @@ DAILIES_EMOJI = "🪙"
 DAILIES_TITLE = "🪙 Claim your dailies"
 # How long non-claim messages (results, user chatter) survive in the channel.
 DAILIES_MESSAGE_TTL = 300.0
+
+
+async def _delete_unless_claim(message: discord.Message, delay: float):
+    """Delete `message` after `delay` — unless it turns out to be the claim
+    embed.
+
+    The claim check runs at deletion time, not schedule time: the gateway can
+    deliver MESSAGE_CREATE for a freshly posted claim embed before
+    refresh_dailies_channel has recorded its id (the send/add_reaction HTTP
+    round-trips interleave with the dispatch), so an up-front id check races
+    and schedules the embed itself for deletion. By the time the TTL expires
+    the config has long settled, so re-checking here is authoritative.
+    """
+    await asyncio.sleep(delay)
+    cfg = state.guild_settings.get(str(message.guild.id))
+    if cfg and message.id == cfg.get("dailies_message_id"):
+        return
+    try:
+        await message.delete()
+    except (discord.NotFound, discord.Forbidden):
+        pass
 
 
 def _dailies_body() -> str:
@@ -198,7 +219,9 @@ class DailiesCog(commands.Cog):
     async def on_message(self, message: discord.Message):
         """Schedule deletion of every non-claim message in a dailies channel —
         claim results, normal user chatter, command replies, and this bot's
-        own sends alike."""
+        own sends alike. The claim embed is exempted inside
+        _delete_unless_claim at deletion time; the id check here is only a
+        fast path and can be stale for a just-reposted embed."""
         if message.guild is None:
             return
         cfg = state.guild_settings.get(str(message.guild.id))
@@ -206,7 +229,7 @@ class DailiesCog(commands.Cog):
             return
         if message.id == cfg.get("dailies_message_id"):
             return
-        asyncio.create_task(_delete_after(message, DAILIES_MESSAGE_TTL))
+        asyncio.create_task(_delete_unless_claim(message, DAILIES_MESSAGE_TTL))
 
 
 async def setup(bot):
