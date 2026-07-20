@@ -51,7 +51,7 @@ ARTIFACTS: list[dict] = [
         "id": "bail_discount",
         "level": 15,
         "cost": ARTIFACT_BAIL_DISCOUNT_COST,
-        "effect": "Bail you pay costs 50% less",
+        "effect": "Any bail you pay costs 50% less",
         "max": 1,
         "bail_discount_pct": 50,
     },
