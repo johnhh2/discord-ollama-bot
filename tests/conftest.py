@@ -85,6 +85,7 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "active_bounties", {})
     monkeypatch.setattr(_state, "active_ragebaits", {})
     monkeypatch.setattr(_state, "active_events", {})
+    monkeypatch.setattr(_state, "user_artifacts", {})
     monkeypatch.setattr(_state, "rigged_slots", {})
     monkeypatch.setattr(_state, "rigged_steal", {})
     monkeypatch.setattr(_state, "active_chess_games", {})
@@ -124,6 +125,7 @@ def reset_bot_state(monkeypatch):
         "save_chess_games", "save_chess_game", "delete_chess_game", "save_chess_report",
         "save_ragebait", "save_mock", "save_curse", "save_tax",
         "save_rigged_slots", "save_rigged_flips", "save_rigged_scratch", "save_rigged_steal",
+        "save_user_artifact",
         "save_gambler_streak", "save_ai_threads",
         "save_quote_log", "save_saved_quotes", "save_lottery", "save_records",
         "save_leveling", "save_command_perms", "save_channel_prompts",

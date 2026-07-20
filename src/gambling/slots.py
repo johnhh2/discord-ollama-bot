@@ -18,6 +18,7 @@ from src.persistence import (
     save_jackpot, try_set_record
 )
 from src.guild_config import get_guild_cfg
+from src.artifacts import get_slot_reel
 from src.config import (
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
@@ -146,8 +147,9 @@ class SlotsCog(commands.Cog):
             if random.random() < SLOT_HOUSE_CHANCE: # 5% back to house
                 symbol_types = [s for s in dict.fromkeys(SLOT_REEL) if s != "⬛"]  # unique non-blank symbols
                 reels = random.sample(symbol_types, 3)
-            else: # normal
-                reels = [random.choice(SLOT_REEL) for _ in range(3)]
+            else: # normal (reel adjusted by owned artifacts)
+                reel = get_slot_reel(uid)
+                reels = [random.choice(reel) for _ in range(3)]
         display = " | ".join(reels)
         label, mult = eval_slots(reels, amount)
 

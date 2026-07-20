@@ -30,6 +30,7 @@ from src.config import (
     DAILY_REWARD, DAILY_RESET_HOUR,
 )
 from src.jail_reasons import format_steal_reason, format_mug_reason, format_bankheist_reason
+from src.artifacts import bail_cost, steal_success_chance, crime_catch_chance
 from src.confirm_view import confirm_purchase
 from src import state
 
@@ -344,9 +345,12 @@ class EconomyCog(commands.Cog):
         victim_bal = await get_balance(target.id)
         rows = []
         for i, (escape, _pct, jail, fine, _days) in enumerate(STEAL_TIERS, start=1):
+            # Show the thief's artifact-adjusted odds, not the base tier odds.
+            esc = steal_success_chance(ctx.author.id, escape)
+            jl = crime_catch_chance(ctx.author.id, jail)
             rows.append(
-                f"**Tier {i}** — {int(escape*100)}% escape · "
-                f"{int(jail*100)}% jail if caught · fine **{fine:,}**"
+                f"**Tier {i}** — {esc * 100:g}% escape · "
+                f"{jl * 100:g}% jail if caught · fine **{fine:,}**"
             )
         body = (
             f"Pick a tier to steal from **{target.display_name}** "
@@ -407,6 +411,8 @@ class EconomyCog(commands.Cog):
                 return
 
             steal_chance, steal_pct, jail_chance, fee, jail_days = STEAL_TIERS[tier_num - 1]
+            steal_chance = steal_success_chance(thief_id, steal_chance)
+            jail_chance = crime_catch_chance(thief_id, jail_chance)
             victim_bal = await get_balance(victim_id)
             steal_amount = max(1, int(victim_bal * steal_pct))
 
@@ -994,7 +1000,7 @@ class EconomyCog(commands.Cog):
             return
 
         bail_amount = int(jdata.get("bail_amount", 0) or 0)
-        cost = 10_000 + (bail_amount // 2)
+        cost = bail_cost(payer.id, 10_000 + (bail_amount // 2))
 
         payer_bal = await get_balance(payer.id)
         if payer_bal < cost:
@@ -1135,7 +1141,7 @@ class EconomyCog(commands.Cog):
             if not await shop_charge(ctx, uid, cost, cost_label=f"{parsed:,}"):
                 return
 
-            jailed = uid not in state.godmode_users and random.random() < 0.5
+            jailed = uid not in state.godmode_users and random.random() < crime_catch_chance(uid, 0.5)
 
             TRACK = 20
             steps = 8

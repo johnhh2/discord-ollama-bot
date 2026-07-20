@@ -19,7 +19,8 @@ from src.helpers import (
 from src.economy import (
     add_balance, record_gambling_event,
 )
-from src.permissions import check_chess_channel, requires_perm
+from src.permissions import check_chess_channel, requires_perm, is_admin
+from src.artifacts import has_chessthreats_unlock
 from src.guild_config import get_guild_cfg
 from src.persistence import (
     save_chess_game, delete_chess_game, save_chess_report, load_chess_report,
@@ -614,13 +615,21 @@ class ChessCog(commands.Cog):
             if state.active_chess_games.get(cid) is placeholder:
                 del state.active_chess_games[cid]
 
-    # ── !chessthreats: admin debug view of all hanging pieces ───────────────
+    # ── !chessthreats: view of all hanging pieces ────────────────────────────
+    # Free for bot admins (debug tool); everyone else unlocks it permanently
+    # by buying the chessthreats artifact (!artifacts).
     @commands.command(name="chessthreats")
     @requires_perm
     async def cmd_chessthreats(self, ctx: commands.Context):
         """Render the active game's board with a red glow on every square
-        whose piece is SEE-hanging (either color). Debugging tool for the
-        threat-awareness check."""
+        whose piece is SEE-hanging (either color)."""
+        if not (is_admin(ctx) or has_chessthreats_unlock(ctx.author.id)):
+            await ctx.send(embed=emb(
+                "🏺 Locked",
+                "`!chessthreats` is unlocked by an artifact — browse `!artifacts` to buy it.",
+                C_GOLD,
+            ))
+            return
         cid = ctx.channel.id
         if cid not in state.active_chess_games:
             await ctx.send(embed=emb(

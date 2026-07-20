@@ -34,6 +34,7 @@ from src.persistence.shop_effects import (  # noqa: F401
     save_tax,
     save_spellcheck,
 )
+from src.persistence.artifacts import save_user_artifact  # noqa: F401
 from src.persistence.rigged import (  # noqa: F401
     save_rigged_slots,
     save_rigged_flips,

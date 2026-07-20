@@ -30,6 +30,7 @@ _TABLE_PKS = {
     "bot_settings": ("key_name",),
     "shop_insurance": ("user_id",),
     "shop_effects": ("guild_id", "user_id", "effect_type"),
+    "user_artifacts": ("user_id", "artifact_id"),
     "rigged_slots": ("user_id",),
     "rigged_flips": ("user_id",),
     "rigged_scratch": ("user_id",),

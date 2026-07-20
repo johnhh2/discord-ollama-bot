@@ -24,8 +24,9 @@ from src.persistence import (
 )
 from src.guild_config import get_guild_cfg
 from src.config import (
-    SCRATCH_SYMBOLS,
+    SCRATCH_SYMBOLS, SCRATCHOFF_MAX_DAILY,
 )
+from src.artifacts import scratchoff_daily_cap
 from src import state, status_manager
 
 
@@ -47,21 +48,22 @@ async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | No
 GAMBLER_ROLE_STREAK_REQUIRED = 3
 
 
-def scratchoff_attempts_remaining(user: dict, today: str) -> int:
+def scratchoff_attempts_remaining(user: dict, today: str, cap: int = SCRATCHOFF_MAX_DAILY) -> int:
     """Return how many scratchoff attempts the user has left today.
 
     Mutates `user` to roll the daily counter to `today` if the stored
     `scratch_date` is stale (or missing), and normalizes `scratch_used`
     to an int so the caller can safely do `user["scratch_used"] += 1`.
     Mirrors the pre-condition logic at the top of cmd_scratchoff so the
-    rollover + cap behavior can be tested in isolation.
+    rollover + cap behavior can be tested in isolation. Pass the user's
+    artifact-adjusted cap (scratchoff_daily_cap) for the real limit.
     """
     if user.get("scratch_date") != today:
         user["scratch_date"] = today
         user["scratch_used"] = 0
     elif "scratch_used" not in user:
         user["scratch_used"] = 0
-    return max(0, 3 - user["scratch_used"])
+    return max(0, cap - user["scratch_used"])
 
 
 def _get_streak_entry(uid_key: str) -> dict:
@@ -225,17 +227,18 @@ class ScratchoffCog(commands.Cog):
         if await check_game_channel(ctx, "Gambling"):
             return
 
-        count = max(1, min(3, count))
-
         uid = ctx.author.id
         await _ensure_user(uid)
 
+        cap = scratchoff_daily_cap(uid)
+        count = max(1, min(cap, count))
+
         today = _ct_today()
         user = state.economy["users"][str(uid)]
-        remaining = scratchoff_attempts_remaining(user, today)
+        remaining = scratchoff_attempts_remaining(user, today, cap)
         if remaining <= 0:
             await save_economy(uid=uid)
-            await ctx.send(embed=emb("🎰 Daily Limit", f"**{ctx.author.display_name}** has used all **3** daily scratchoffs.\nCome back tomorrow!", C_GOLD))
+            await ctx.send(embed=emb("🎰 Daily Limit", f"**{ctx.author.display_name}** has used all **{cap}** daily scratchoffs.\nCome back tomorrow!", C_GOLD))
             return
 
         count = min(count, remaining)
@@ -319,10 +322,10 @@ class ScratchoffCog(commands.Cog):
                         asyncio.create_task(cog._announce_levelup(ctx.author, ctx.guild.id))
 
             card_str = " ".join(card)
-            attempts_left = 3 - (attempt_idx + 1)
+            attempts_left = cap - (attempt_idx + 1)
 
             embed = discord.Embed(title="🎫 Scratchoff", color=C_GREEN if payout > 0 else C_RED)
-            embed.description = f"Daily Goal: {goal_str}\nYour Card:  {card_str}\n\n{match_text}\n\nAttempts left: {attempts_left}/3"
+            embed.description = f"Daily Goal: {goal_str}\nYour Card:  {card_str}\n\n{match_text}\n\nAttempts left: {attempts_left}/{cap}"
 
             if show_hint:
                 embed.add_field(name="📊 Payout Info", value="Use `!scratchoffrewards` to see all payouts!", inline=False)
@@ -339,7 +342,7 @@ class ScratchoffCog(commands.Cog):
 
     @commands.command(name="scratches", aliases=["scratchoffs"])
     async def cmd_scratches(self, ctx: commands.Context):
-        await ctx.invoke(self.cmd_scratchoff, count=3)
+        await ctx.invoke(self.cmd_scratchoff, count=scratchoff_daily_cap(ctx.author.id))
 
     @commands.command(name="streak")
     async def cmd_streak(self, ctx: commands.Context):
@@ -351,6 +354,7 @@ class ScratchoffCog(commands.Cog):
 
         user = state.economy["users"][str(uid)]
         scratch_used = user.get("scratch_used", 0) if user.get("scratch_date") == today_ct else 0
+        cap = scratchoff_daily_cap(uid)
         entry = _get_streak_entry(str(uid))
         last_full_day = entry["date"]
         count = entry["count"]
@@ -362,15 +366,15 @@ class ScratchoffCog(commands.Cog):
             color = C_GREEN
         elif last_full_day == yesterday:
             effective = count
-            streak_text = f"⏳ **{effective}-day streak** — fill all 3 today to extend it! ({scratch_used}/3 used today)"
+            streak_text = f"⏳ **{effective}-day streak** — fill all 3 today to extend it! ({scratch_used}/{cap} used today)"
             color = C_GOLD
         elif last_full_day:
             effective = 0
-            streak_text = f"❌ **Streak broken** — last full day was `{last_full_day}` ({count}-day streak). Use all 3 today to start a new streak! ({scratch_used}/3 used today)"
+            streak_text = f"❌ **Streak broken** — last full day was `{last_full_day}` ({count}-day streak). Use all 3 today to start a new streak! ({scratch_used}/{cap} used today)"
             color = C_RED
         else:
             effective = 0
-            streak_text = f"❌ **No streak yet** — use all 3 scratchoffs in a day to start one! ({scratch_used}/3 used today)"
+            streak_text = f"❌ **No streak yet** — use all 3 scratchoffs in a day to start one! ({scratch_used}/{cap} used today)"
             color = C_GREY
 
         cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}

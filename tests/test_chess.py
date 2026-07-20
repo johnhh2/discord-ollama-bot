@@ -1141,7 +1141,9 @@ async def test_chess_view_invalid_number(db):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# !chessthreats — admin debug view
+# !chessthreats — admin debug view / artifact unlock
+# (access requires bot_admin or the chessthreats artifact; these tests use
+# bot_admins — the artifact path is covered in tests/test_artifacts.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1150,6 +1152,7 @@ async def test_chessthreats_no_active_game(db, _stub_chess_edit_board):
     """!chessthreats sends an error embed when there's no game in the channel."""
     cog = ChessCog(bot=None)
     admin = FakeMember(uid=1500)
+    _state.bot_admins.add(admin.id)
     ctx = _ctx_for(admin, channel_id=950)
 
     await cog.cmd_chessthreats.callback(cog, ctx)
@@ -1170,6 +1173,7 @@ async def test_chessthreats_with_hanging_pieces_sends_image(db, _stub_chess_edit
     )
     cog = ChessCog(bot=None)
     admin = FakeMember(uid=1501)
+    _state.bot_admins.add(admin.id)
     other = FakeMember(uid=1502)
     # White queen on d1 hanging to black rook on d8 (no white defenders).
     _seed_chess_game(951, admin.id, other.id, fen="3rk3/8/8/8/8/8/8/3QK3 w - - 0 1")
@@ -1196,6 +1200,7 @@ async def test_chessthreats_no_hanging_pieces_shows_zero(db, _stub_chess_edit_bo
     )
     cog = ChessCog(bot=None)
     admin = FakeMember(uid=1503)
+    _state.bot_admins.add(admin.id)
     other = FakeMember(uid=1504)
     _seed_chess_game(952, admin.id, other.id)  # default starting position
     ctx = _ctx_for(admin, channel_id=952)

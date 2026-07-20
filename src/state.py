@@ -42,6 +42,10 @@ active_spellchecks: dict = {}   # (guild_id, uid) -> {started_by, days, channel_
 # bounty_claims tables; loaded at boot.
 active_bounties: dict = {}
 active_chess_games: dict = {}
+# Permanent artifacts bought via !artifacts: {uid: {artifact_id: quantity}}.
+# Global (not guild-scoped), like the economy. Source of truth is the
+# user_artifacts table; loaded at boot. Catalog lives in src/artifacts.py.
+user_artifacts: dict = {}
 rigged_slots: dict = {}
 rigged_flips: dict = {}
 rigged_scratch: dict = {}

@@ -23,8 +23,10 @@ from src.permissions import (
 from src.persistence import (
     save_insurance, save_guild_settings,
     save_bot_roles,
-    save_ragebait, save_mock, save_tax, save_curse, save_spellcheck
+    save_ragebait, save_mock, save_tax, save_curse, save_spellcheck,
+    save_user_artifact,
 )
+from src.artifacts import ARTIFACTS, owned_qty
 from src.confirm_view import confirm_purchase
 from src.guild_config import get_guild_cfg
 from src.ai import (
@@ -118,6 +120,7 @@ _SHOP_TOP_ALIASES: list[tuple[str, str, list[str]]] = [
     ("curse",          "shop_curse",         []),
     ("spellcheck",     "shop_spellcheck",    []),
     ("unoreverse",     "shop_unoreverse",    []),
+    ("artifacts",      "shop_artifacts",     ["artifact"]),
     # roleup and roledown both dispatch via shop_roleup (it reads
     # ctx.invoked_with to pick direction).
     ("roleup",         "shop_roleup",        []),
@@ -318,6 +321,11 @@ class ShopCog(commands.Cog):
         fun_items.sort(key=lambda x: x[0])
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
+        # Artifacts — permanent per-user upgrades, listed in their own menu.
+        sections["🏺 Artifacts"] = [
+            "`!artifacts` — Permanent artifacts with passive effects (buy with `!artifacts buy <#>`)"
+        ]
+
         # Bounties — only surfaced where the feature is enabled (a bounty
         # channel is configured). The reward is escrowed from the poster, so
         # there's no fixed price to list; show the minimum and the channel.
@@ -359,6 +367,67 @@ class ShopCog(commands.Cog):
             await send_ephemeral(ctx, embed=emb("📢 Channel Shop", "No channel shop items are currently available.", C_PURPLE))
             return
         await send_ephemeral(ctx, embed=emb("📢 Channel Shop", "\n".join(lines), C_PURPLE))
+
+    # ── !shop artifacts ───────────────────────────────────────────────────────
+    @cmd_shop.command(name="artifacts")
+    @_shop_subcommand(None)
+    async def shop_artifacts(self, ctx: commands.Context, *args):
+        from src.level_unlocks import user_display_level
+
+        uid = ctx.author.id
+        gid = ctx.guild.id if ctx.guild else 0
+        lvl = user_display_level(uid, gid)
+
+        if not args:
+            lines = []
+            for i, art in enumerate(ARTIFACTS, start=1):
+                req = art.get("level", 1)
+                if owned_qty(uid, art["id"]) >= art["max"]:
+                    lines.append(f"**{i}.** {art['effect']} — ✅ **Owned**")
+                elif lvl < req:
+                    lines.append(f"~~**{i}.** {art['effect']} — **{art['cost']:,} 🪙**~~ 🔒 **Lvl {req}**")
+                else:
+                    lines.append(f"**{i}.** {art['effect']} — **{art['cost']:,} 🪙**")
+            lines.append("")
+            lines.append("Artifacts are permanent and yours forever. Buy one with `!artifacts buy <number>`.")
+            await send_ephemeral(ctx, embed=emb("🏺 Artifacts", "\n".join(lines), C_PURPLE))
+            return
+
+        if args[0].lower() != "buy" or len(args) < 2:
+            await ctx.send(embed=emb("🏺 Artifacts", "Usage: `!artifacts` to browse, `!artifacts buy <number>` to buy.", C_PURPLE))
+            return
+        try:
+            idx = int(args[1])
+        except ValueError:
+            idx = 0
+        if not 1 <= idx <= len(ARTIFACTS):
+            await ctx.send(embed=emb("❌ Invalid Artifact", f"Pick a number between 1 and {len(ARTIFACTS)} (see `!artifacts`).", C_RED))
+            return
+        art = ARTIFACTS[idx - 1]
+
+        req = art.get("level", 1)
+        if lvl < req:
+            await ctx.send(embed=emb("🔒 Level Locked", f"That artifact unlocks at **Level {req}** — you're Level {lvl}.", C_RED))
+            return
+
+        # Gate-and-claim runs synchronously before the charge await so a
+        # second concurrent !artifacts buy sees the claim and bails instead
+        # of double-charging (see CLAUDE.md on per-user command races).
+        owned = state.user_artifacts.setdefault(uid, {})
+        prior = owned.get(art["id"], 0)
+        if prior >= art["max"]:
+            await ctx.send(embed=emb("🏺 Already Owned", "You already own that artifact.", C_PURPLE))
+            return
+        owned[art["id"]] = prior + 1
+        cost = 0 if uid in state.godmode_users else art["cost"]
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{art['cost']:,}"):
+            if prior:
+                owned[art["id"]] = prior
+            else:
+                owned.pop(art["id"], None)
+            return
+        await save_user_artifact(uid, art["id"], prior + 1)
+        await ctx.send(embed=emb("🏺 Artifact Acquired", f"Its power is now yours: {art['effect'].lower()}.", C_GREEN))
 
     # ── !shop nickname ────────────────────────────────────────────────────────
     @cmd_shop.command(name="nickname")

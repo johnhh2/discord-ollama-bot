@@ -288,6 +288,16 @@ async def _init_db_state_inner(state, run_migrations):
             logging.error(f"[init_db_state] bounties failed: {e}", exc_info=True)
             raise
 
+        # ── user_artifacts ────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT user_id, artifact_id, quantity FROM user_artifacts")
+            state.user_artifacts = {}
+            for r in await cur.fetchall():
+                state.user_artifacts.setdefault(int(r[0]), {})[r[1]] = int(r[2])
+        except Exception as e:
+            logging.error(f"[init_db_state] user_artifacts failed: {e}", exc_info=True)
+            raise
+
         # ── rigged_slots ──────────────────────────────────────────────────
         try:
             await cur.execute("SELECT user_id, symbol FROM rigged_slots")
