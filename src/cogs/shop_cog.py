@@ -323,7 +323,7 @@ class ShopCog(commands.Cog):
 
         # Artifacts — permanent per-user upgrades, listed in their own menu.
         sections["🏺 Artifacts"] = [
-            "`!artifacts` — Permanent artifacts with passive effects (buy with `!artifacts buy <#>`)"
+            "`!artifacts` — Permanent artifacts with passive effects"
         ]
 
         # Bounties — only surfaced where the feature is enabled (a bounty
