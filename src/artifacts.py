@@ -18,11 +18,14 @@ Effect payload keys (all optional) are read by the systems they modify:
     steal_boost_pct           — relative % increase to !steal success chance
     crime_catch_reduction_pct — relative % cut to being jailed after a crime
                                 (steal/mug; bank heists excluded)
+    scratchoffs_per_50_streak — extra daily scratchoffs per 50 days of the
+                                owner's live command streak (src/streaks.py)
 """
 from src.config import (
     ARTIFACT_SLOTS_BLANK_COST, ARTIFACT_CHESSTHREATS_COST,
     ARTIFACT_BAIL_DISCOUNT_COST, ARTIFACT_EXTRA_SCRATCH_COST,
     ARTIFACT_STEAL_BOOST_COST, ARTIFACT_CRIME_CATCH_COST,
+    ARTIFACT_STREAK_SCRATCH_COST,
     SLOT_REEL, SCRATCHOFF_MAX_DAILY,
 )
 from src import state
@@ -76,6 +79,14 @@ ARTIFACTS: list[dict] = [
         "max": 1,
         "crime_catch_reduction_pct": 20,
     },
+    {
+        "id": "streak_scratchoffs",
+        "level": 35,
+        "cost": ARTIFACT_STREAK_SCRATCH_COST,
+        "effect": "Grants +1 daily scratchoff for every 50 days in your daily command streak",
+        "max": 1,
+        "scratchoffs_per_50_streak": 1,
+    },
 ]
 
 
@@ -114,7 +125,16 @@ def bail_cost(uid: int, base_cost: int) -> int:
 
 def scratchoff_daily_cap(uid: int) -> int:
     """Daily scratchoff ticket cap for this user (base + artifact extras)."""
-    return SCRATCHOFF_MAX_DAILY + _owned_total(uid, "extra_scratchoffs")
+    cap = SCRATCHOFF_MAX_DAILY + _owned_total(uid, "extra_scratchoffs")
+    per_50 = _owned_total(uid, "scratchoffs_per_50_streak")
+    if per_50:
+        # Local imports: src.streaks/src.economy pull in the persistence
+        # layer, which this module must not require at import time.
+        from src.streaks import get_command_streak_entry, effective_streak
+        from src.economy import _ct_today
+        streak = effective_streak(get_command_streak_entry(str(uid)), _ct_today())
+        cap += per_50 * (streak // 50)
+    return cap
 
 
 def steal_success_chance(uid: int, base: float) -> float:

@@ -237,6 +237,35 @@ async def test_crime_catch_reduction():
     assert crime_catch_chance(uid, 0.25) == pytest.approx(0.2)  # steal tier 1
 
 
+async def test_streak_scratchoffs_scale_with_command_streak():
+    from src.artifacts import scratchoff_daily_cap
+    from src.economy import _ct_today
+
+    uid = 8010
+    today = _ct_today()
+    # A monster streak without the artifact grants nothing.
+    _state.command_streak[str(uid)] = {"date": today, "count": 120}
+    assert scratchoff_daily_cap(uid) == 3
+
+    _state.user_artifacts[uid] = {"streak_scratchoffs": 1}
+    assert scratchoff_daily_cap(uid) == 5  # 120 // 50 = +2
+
+    # Below 50 days the artifact grants nothing yet.
+    _state.command_streak[str(uid)] = {"date": today, "count": 49}
+    assert scratchoff_daily_cap(uid) == 3
+    _state.command_streak[str(uid)] = {"date": today, "count": 50}
+    assert scratchoff_daily_cap(uid) == 4
+
+    # A dead streak (last bump before yesterday) counts as 0.
+    _state.command_streak[str(uid)] = {"date": "2020-01-01", "count": 200}
+    assert scratchoff_daily_cap(uid) == 3
+
+    # Stacks with the flat 4th-ticket artifact.
+    _state.command_streak[str(uid)] = {"date": today, "count": 55}
+    _state.user_artifacts[uid]["extra_scratchoff"] = 1
+    assert scratchoff_daily_cap(uid) == 5
+
+
 # ── chessthreats unlock ───────────────────────────────────────────────────────
 
 async def test_chessthreats_locked_without_artifact():
