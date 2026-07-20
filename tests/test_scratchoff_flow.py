@@ -102,9 +102,10 @@ async def test_scratches_role_grant_announced_after_third_card(db, monkeypatch):
     _state.economy["users"]["1"]["scratch_date"] = today
     _state.economy["users"]["1"]["scratch_used"] = 0
 
-    # Build a ctx whose ctx.send and ctx.channel.send share a single ordered
-    # event log. The role announcement uses `channel.send`; the card embeds
-    # use `ctx.send`. Interleaving them in one list is what proves ordering.
+    # Everything (card embeds and the role announcement) posts via
+    # ctx.channel.send since the play_scratchoffs extraction; classify by
+    # payload shape — cards are embeds, the announcement is plain content.
+    # One ordered list is what proves ordering.
     author = FakeMember(uid=1, display_name="player")
     guild = FakeGuild(gid=guild_id)
     channel = FakeChannel(ch_id=100)
@@ -113,16 +114,13 @@ async def test_scratches_role_grant_announced_after_third_card(db, monkeypatch):
 
     events: list[tuple[str, str]] = []
 
-    async def record_ctx_send(content=None, *, embed=None, **kwargs):
-        # Card embeds post via ctx.send(embed=...).
-        events.append(("card", embed.title if embed is not None else str(content)))
-        return None
-
     async def record_channel_send(content=None, *, embed=None, **kwargs):
-        events.append(("role_announce", content or ""))
+        if embed is not None:
+            events.append(("card", embed.title))
+        else:
+            events.append(("role_announce", content or ""))
         return None
 
-    ctx.send = record_ctx_send
     ctx.channel.send = record_channel_send
 
     # Stub out the role-acquisition machinery: real toggle_member_role would
@@ -221,7 +219,7 @@ async def test_concurrent_scratchoff_invocations_cap_at_three(monkeypatch):
             cards_drawn.append(embed)
         return None
 
-    ctx.send = record_send
+    ctx.channel.send = record_send
 
     cog = ScratchoffCog(bot=_StubBot())
 

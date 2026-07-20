@@ -191,6 +191,128 @@ class MiniCactpotGame:
 
 
 
+async def play_scratchoffs(bot, author, channel, guild, count: int = 1):
+    """Play up to `count` of the user's remaining daily scratchoffs.
+
+    Extracted from cmd_scratchoff so the dailies-channel reaction handler can
+    run a player's scratchoffs without a commands.Context. `author` must be a
+    discord.Member for XP level-up announcements and the Gamblers role grant;
+    results are sent to `channel`.
+    """
+    uid = author.id
+    await _ensure_user(uid)
+
+    cap = scratchoff_daily_cap(uid)
+    count = max(1, min(cap, count))
+
+    today = _ct_today()
+    user = state.economy["users"][str(uid)]
+    remaining = scratchoff_attempts_remaining(user, today, cap)
+    if remaining <= 0:
+        await save_economy(uid=uid)
+        await channel.send(embed=emb("🎰 Daily Limit", f"**{author.display_name}** has used all **{cap}** daily scratchoffs.\nCome back tomorrow!", C_GOLD))
+        return
+
+    count = min(count, remaining)
+
+    # Reserve attempts up front (sync) so concurrent invocations see the
+    # updated counter before they pass the remaining > 0 gate. Without
+    # this, a user spamming !scratchoff can cross the await boundaries
+    # below and run more than 3 cards in a single day.
+    first_attempt = user["scratch_used"]
+    user["scratch_used"] += count
+
+    # Generate daily goal seeded by date (same for everyone). hashlib, not
+    # hash() — str hashing is randomized per process (PYTHONHASHSEED), so
+    # a mid-day redeploy would silently change everyone's goal.
+    seed_val = int(hashlib.sha256(today.encode()).hexdigest(), 16) % (2**31)
+    random.seed(seed_val)
+    goal = random.choices(SCRATCH_SYMBOLS, k=4)
+    random.seed()
+
+    goal_str = " ".join(goal)
+
+    show_hint = not user.get("scratchoff_seen_rewards", False)
+    if show_hint:
+        user["scratchoff_seen_rewards"] = True
+
+    for i in range(count):
+        attempt_idx = first_attempt + i
+        is_third = attempt_idx == 2
+        rig_matches = state.rigged_scratch.get(uid) if is_third else None
+
+        if rig_matches is not None:
+            # Build a card with exactly rig_matches positions matching the goal
+            positions = list(range(4))
+            random.shuffle(positions)
+            match_positions = set(positions[:rig_matches])
+            card = []
+            for pos in range(4):
+                if pos in match_positions:
+                    card.append(goal[pos])
+                else:
+                    # Pick a symbol that doesn't match the goal at this position
+                    non_matches = [s for s in SCRATCH_SYMBOLS if s != goal[pos]]
+                    card.append(random.choice(non_matches) if non_matches else random.choice(SCRATCH_SYMBOLS))
+            del state.rigged_scratch[uid]
+            await save_rigged_scratch()
+        else:
+            card = random.choices(SCRATCH_SYMBOLS, k=4)
+
+        matches = sum(c == g for c, g in zip(card, goal))
+
+        payout = 0
+        match_text = ""
+        if matches == 0:
+            match_text = "❌ No matches."
+        elif matches == 1:
+            payout = 100
+            match_text = f"⭐ 1 Match! **{author.display_name}** won 100 🪙!"
+        elif matches == 2:
+            payout = 1000
+            match_text = f"🎉 2 Matches! **{author.display_name}** won 1,000 🪙!"
+        elif matches == 3:
+            payout = 10000
+            match_text = f"🏆 3 Matches! **{author.display_name}** won 10,000 🪙!"
+        elif matches == 4:
+            payout = 100000
+            match_text = f"💎 4 Matches! **{author.display_name}** won 100,000 🪙!"
+
+        await add_balance(uid, payout)
+        if payout > 0:
+            await record_gambling_event(guild.id if guild else None, uid, gained=payout)
+        await save_economy(uid=uid)
+
+        # Award 10 XP per scratchoff played
+        if guild:
+            _, leveled_up = await grant_xp(uid, "scratch", guild_id=guild.id)
+            # _announce_levelup grants the coin reward and skips the
+            # announcement itself when no channel is configured.
+            if leveled_up:
+                cog = bot.cogs.get("LevelingCog")
+                if cog and isinstance(author, discord.Member):
+                    asyncio.create_task(cog._announce_levelup(author, guild.id))
+
+        card_str = " ".join(card)
+        attempts_left = cap - (attempt_idx + 1)
+
+        embed = discord.Embed(title="🎫 Scratchoff", color=C_GREEN if payout > 0 else C_RED)
+        embed.description = f"Daily Goal: {goal_str}\nYour Card:  {card_str}\n\n{match_text}\n\nAttempts left: {attempts_left}/{cap}"
+
+        if show_hint:
+            embed.add_field(name="📊 Payout Info", value="Use `!scratchoffrewards` to see all payouts!", inline=False)
+            show_hint = False
+
+        await channel.send(embed=embed)
+
+        # Track full-day scratchoff streak for Gamblers role.
+        # Done after the card embed so the role-grant announcement
+        # appears after the third scratch, not between cards.
+        if (attempt_idx + 1) >= 3 and guild:
+            new_streak = await update_gambler_streak(uid, today)
+            await maybe_assign_gambler_role(guild, author, channel, new_streak)
+
+
 class ScratchoffCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -226,119 +348,7 @@ class ScratchoffCog(commands.Cog):
     async def cmd_scratchoff(self, ctx: commands.Context, count: int = 1):
         if await check_game_channel(ctx, "Gambling"):
             return
-
-        uid = ctx.author.id
-        await _ensure_user(uid)
-
-        cap = scratchoff_daily_cap(uid)
-        count = max(1, min(cap, count))
-
-        today = _ct_today()
-        user = state.economy["users"][str(uid)]
-        remaining = scratchoff_attempts_remaining(user, today, cap)
-        if remaining <= 0:
-            await save_economy(uid=uid)
-            await ctx.send(embed=emb("🎰 Daily Limit", f"**{ctx.author.display_name}** has used all **{cap}** daily scratchoffs.\nCome back tomorrow!", C_GOLD))
-            return
-
-        count = min(count, remaining)
-
-        # Reserve attempts up front (sync) so concurrent invocations see the
-        # updated counter before they pass the remaining > 0 gate. Without
-        # this, a user spamming !scratchoff can cross the await boundaries
-        # below and run more than 3 cards in a single day.
-        first_attempt = user["scratch_used"]
-        user["scratch_used"] += count
-
-        # Generate daily goal seeded by date (same for everyone). hashlib, not
-        # hash() — str hashing is randomized per process (PYTHONHASHSEED), so
-        # a mid-day redeploy would silently change everyone's goal.
-        seed_val = int(hashlib.sha256(today.encode()).hexdigest(), 16) % (2**31)
-        random.seed(seed_val)
-        goal = random.choices(SCRATCH_SYMBOLS, k=4)
-        random.seed()
-
-        goal_str = " ".join(goal)
-
-        show_hint = not user.get("scratchoff_seen_rewards", False)
-        if show_hint:
-            user["scratchoff_seen_rewards"] = True
-
-        for i in range(count):
-            attempt_idx = first_attempt + i
-            is_third = attempt_idx == 2
-            rig_matches = state.rigged_scratch.get(uid) if is_third else None
-
-            if rig_matches is not None:
-                # Build a card with exactly rig_matches positions matching the goal
-                positions = list(range(4))
-                random.shuffle(positions)
-                match_positions = set(positions[:rig_matches])
-                card = []
-                for pos in range(4):
-                    if pos in match_positions:
-                        card.append(goal[pos])
-                    else:
-                        # Pick a symbol that doesn't match the goal at this position
-                        non_matches = [s for s in SCRATCH_SYMBOLS if s != goal[pos]]
-                        card.append(random.choice(non_matches) if non_matches else random.choice(SCRATCH_SYMBOLS))
-                del state.rigged_scratch[uid]
-                await save_rigged_scratch()
-            else:
-                card = random.choices(SCRATCH_SYMBOLS, k=4)
-
-            matches = sum(c == g for c, g in zip(card, goal))
-
-            payout = 0
-            match_text = ""
-            if matches == 0:
-                match_text = "❌ No matches."
-            elif matches == 1:
-                payout = 100
-                match_text = f"⭐ 1 Match! **{ctx.author.display_name}** won 100 🪙!"
-            elif matches == 2:
-                payout = 1000
-                match_text = f"🎉 2 Matches! **{ctx.author.display_name}** won 1,000 🪙!"
-            elif matches == 3:
-                payout = 10000
-                match_text = f"🏆 3 Matches! **{ctx.author.display_name}** won 10,000 🪙!"
-            elif matches == 4:
-                payout = 100000
-                match_text = f"💎 4 Matches! **{ctx.author.display_name}** won 100,000 🪙!"
-
-            await add_balance(uid, payout)
-            if payout > 0:
-                await record_gambling_event(ctx.guild.id if ctx.guild else None, uid, gained=payout)
-            await save_economy(uid=uid)
-
-            # Award 10 XP per scratchoff played
-            if ctx.guild:
-                _, leveled_up = await grant_xp(uid, "scratch", guild_id=ctx.guild.id)
-                # _announce_levelup grants the coin reward and skips the
-                # announcement itself when no channel is configured.
-                if leveled_up:
-                    cog = ctx.bot.cogs.get("LevelingCog")
-                    if cog and isinstance(ctx.author, discord.Member):
-                        asyncio.create_task(cog._announce_levelup(ctx.author, ctx.guild.id))
-
-            card_str = " ".join(card)
-            attempts_left = cap - (attempt_idx + 1)
-
-            embed = discord.Embed(title="🎫 Scratchoff", color=C_GREEN if payout > 0 else C_RED)
-            embed.description = f"Daily Goal: {goal_str}\nYour Card:  {card_str}\n\n{match_text}\n\nAttempts left: {attempts_left}/{cap}"
-
-            if show_hint:
-                embed.add_field(name="📊 Payout Info", value="Use `!scratchoffrewards` to see all payouts!", inline=False)
-                show_hint = False
-
-            await ctx.send(embed=embed)
-
-            # Track full-day scratchoff streak for Gamblers role.
-            # Done after the card embed so the role-grant announcement
-            # appears after the third scratch, not between cards.
-            if (attempt_idx + 1) >= 3 and ctx.guild:
-                new_streak = await update_gambler_streak(uid, today)
-                await maybe_assign_gambler_role(ctx.guild, ctx.author, ctx.channel, new_streak)
+        await play_scratchoffs(ctx.bot, ctx.author, ctx.channel, ctx.guild, count)
 
     @commands.command(name="scratches", aliases=["scratchoffs"])
     async def cmd_scratches(self, ctx: commands.Context):

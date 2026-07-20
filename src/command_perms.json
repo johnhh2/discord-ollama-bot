@@ -61,5 +61,6 @@
   "settings bounty-channel": {"tier": "server_admin", "hidden": false},
   "artifacts":     {"tier": "everyone",    "hidden": false},
   "mc":            {"tier": "everyone",    "hidden": false},
-  "settings minecraft-channel": {"tier": "server_admin", "hidden": false}
+  "settings minecraft-channel": {"tier": "server_admin", "hidden": false},
+  "settings dailies-channel": {"tier": "server_admin", "hidden": false}
 }

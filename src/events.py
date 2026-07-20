@@ -306,9 +306,13 @@ async def _handle_soundboard_ratelimit(bot, guild_id: int, user_id: int):
         return
 
 
-async def _auto_daily(message: discord.Message):
-    """Award daily coins on first interaction of the day. Sends a short message if awarded."""
-    uid = message.author.id
+async def _auto_daily(author, channel):
+    """Award daily coins on first interaction of the day. Sends a short message if awarded.
+
+    Takes (author, channel) rather than a Message so the dailies-channel
+    reaction claim (src/cogs/dailies_cog.py) can reuse it.
+    """
+    uid = author.id
     await _ensure_user(uid)
     today = _ct_today()
     user_data = state.economy["users"][str(uid)]
@@ -333,8 +337,8 @@ async def _auto_daily(message: discord.Message):
         user_data["daily_date"] = stored  # roll back the claim on failure
         raise
     await save_economy(uid=uid)
-    greeting = f"Welcome, **{message.author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
-    await message.channel.send(embed=emb(
+    greeting = f"Welcome, **{author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
+    await channel.send(embed=emb(
         "🪙 Daily Reward",
         f"{greeting} **{DAILY_REWARD:,} 🪙** added. Balance: {await get_balance(uid):,} 🪙",
         C_GREEN,
@@ -868,7 +872,7 @@ class EventsCog(commands.Cog):
             or uid in state.active_blackjack_games
         )
         if triggers:
-            await _auto_daily(message)
+            await _auto_daily(message.author, message.channel)
 
     # ── Interceptors (return True if message consumed) ────────────────────────
 

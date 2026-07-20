@@ -33,6 +33,7 @@ EXTENSIONS = [
     "src.cogs.effects_cog",
     "src.cogs.bounty_cog",
     "src.cogs.settings_cog",
+    "src.cogs.dailies_cog",
     "src.cogs.moderation_cog",
     "src.cogs.admin_cog",
     "src.cogs.ai_cog",

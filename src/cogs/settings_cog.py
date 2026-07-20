@@ -211,6 +211,54 @@ class SettingsCog(commands.Cog):
                 C_GREY,
             ))
 
+    # ── !settings dailies-channel ─────────────────────────────────────────────
+    @cmd_settings.command(name="dailies-channel")
+    @requires_perm
+    async def settings_dailies_channel(self, ctx: commands.Context, *args):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        if args and args[0].lower() == "clear":
+            old_ch_id = cfg.get("dailies_channel")
+            old_msg_id = cfg.get("dailies_message_id")
+            cfg["dailies_channel"] = None
+            cfg.pop("dailies_message_id", None)
+            cfg.pop("dailies_reset_day", None)
+            await save_guild_settings()
+            # Best-effort: remove the claim embed we left behind.
+            if old_ch_id and old_msg_id:
+                try:
+                    channel = self.bot.get_channel(old_ch_id) or await self.bot.fetch_channel(old_ch_id)
+                    msg = await channel.fetch_message(old_msg_id)
+                    await msg.delete()
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    pass
+            await ctx.send(embed=emb("🪙 Dailies Channel", "Dailies channel disabled.", C_GREEN))
+        elif ctx.message.channel_mentions:
+            from src.cogs.dailies_cog import refresh_dailies_channel
+            channel = ctx.message.channel_mentions[0]
+            cfg["dailies_channel"] = channel.id
+            # New channel — the old claim message (if any) no longer counts.
+            cfg.pop("dailies_message_id", None)
+            cfg.pop("dailies_reset_day", None)
+            await save_guild_settings()
+            await refresh_dailies_channel(self.bot, ctx.guild.id)
+            await ctx.send(embed=emb(
+                "🪙 Dailies Channel",
+                f"{channel.mention} is now the dailies channel. I'll keep it cleared except for the "
+                f"**Claim your dailies** embed — reacting 🪙 there instantly claims the daily reward and "
+                f"uses all daily scratchoffs. Claims reset at the 5am CT daily reset; everything else "
+                f"posted there is deleted after 5 minutes.",
+                C_GREEN,
+            ))
+        else:
+            await ctx.send(embed=emb(
+                "🪙 Dailies Channel",
+                "Usage: `!settings dailies-channel #channel` or `!settings dailies-channel clear`",
+                C_GREY,
+            ))
+
     # ── !settings nsfw ────────────────────────────────────────────────────────
     @cmd_settings.command(name="nsfw")
     @requires_perm
@@ -632,6 +680,7 @@ class SettingsCog(commands.Cog):
         feature_req_channel_id = cfg.get("feature_request_channel")
         records_channel_id = cfg.get("records_channel")
         minecraft_channel_id = cfg.get("minecraft_channel")
+        dailies_channel_id = cfg.get("dailies_channel")
 
         ai_val = " ".join(f"<#{c}>" for c in ai_channels) if ai_channels else "all channels"
         ai_val += "\n*Subcommand: `ai #ch... / clear`*"
@@ -665,6 +714,10 @@ class SettingsCog(commands.Cog):
         minecraft_val += "\nMinecraft server up/down alerts and player-count notices."
         minecraft_val += "\n*Set with: `!settings minecraft-channel #channel / clear`*"
 
+        dailies_val = f"<#{dailies_channel_id}>" if dailies_channel_id else "❌ disabled"
+        dailies_val += "\nSelf-cleaning channel with a react-to-claim dailies embed (daily reward + scratchoffs)."
+        dailies_val += "\n*Set with: `!settings dailies-channel #channel / clear`*"
+
         embed = discord.Embed(title="⚙️ Server Channel Settings", color=C_BLUE)
         embed.add_field(name="✅ Channel whitelist", value=whitelist_val, inline=False)
         embed.add_field(name="❌ Channel blacklist", value=blacklist_val, inline=False)
@@ -676,6 +729,7 @@ class SettingsCog(commands.Cog):
         embed.add_field(name="♟️ Chess channels", value=chess_val, inline=False)
         embed.add_field(name="📖 Feature request channel", value=feature_req_val, inline=False)
         embed.add_field(name="⛏️ Minecraft channel", value=minecraft_val, inline=False)
+        embed.add_field(name="🪙 Dailies channel", value=dailies_val, inline=False)
 
         if is_admin(ctx):
             admin_log_id = state.bot_settings.get("admin_log_channel")

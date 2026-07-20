@@ -112,7 +112,7 @@ async def test_auto_daily_first_call_grants_daily_reward(db):
     channel = _Channel()
     msg = _Msg(user, channel)
 
-    await _auto_daily(msg)
+    await _auto_daily(msg.author, msg.channel)
 
     # Balance bumped by DAILY_REWARD; daily_date set to today.
     assert await _economy.get_balance(user.id) == DAILY_REWARD
@@ -126,12 +126,12 @@ async def test_auto_daily_second_call_same_day_is_noop(db):
     channel = _Channel()
     msg = _Msg(user, channel)
 
-    await _auto_daily(msg)
+    await _auto_daily(msg.author, msg.channel)
     bal_after_first = await _economy.get_balance(user.id)
     assert bal_after_first == DAILY_REWARD
 
     # Second call same day: no additional grant.
-    await _auto_daily(msg)
+    await _auto_daily(msg.author, msg.channel)
     assert await _economy.get_balance(user.id) == bal_after_first
     # Only the first call sent a message.
     assert channel.send.await_count == 1
@@ -147,7 +147,7 @@ async def test_auto_daily_after_day_rollover_grants_again(db):
     await _economy._ensure_user(user.id)
     _state.economy["users"][str(user.id)]["daily_date"] = "1999-01-01"
 
-    await _auto_daily(msg)
+    await _auto_daily(msg.author, msg.channel)
     assert await _economy.get_balance(user.id) == DAILY_REWARD
     assert _state.economy["users"][str(user.id)]["daily_date"] == _economy._ct_today()
 
@@ -160,7 +160,7 @@ async def test_auto_daily_first_ever_claim_sets_last_daily_timestamp(db):
     channel = _Channel()
 
     before = time.time()
-    await _auto_daily(_Msg(new_user, channel))
+    await _auto_daily(new_user, channel)
     after = time.time()
 
     rec = _state.economy["users"][str(new_user.id)]
@@ -179,7 +179,7 @@ async def test_auto_daily_returning_user_does_not_overwrite_last_daily(db):
     _state.economy["users"][str(user.id)]["daily_date"] = "1999-01-01"
     _state.economy["users"][str(user.id)]["last_daily"] = 123.0
 
-    await _auto_daily(_Msg(user, channel))
+    await _auto_daily(user, channel)
 
     # last_daily NOT overwritten (the `if is_new` branch was skipped).
     assert _state.economy["users"][str(user.id)]["last_daily"] == 123.0
