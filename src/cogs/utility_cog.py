@@ -16,8 +16,9 @@ from src.helpers import (
 )
 from src.economy import (
     get_guild_ask_model, get_guild_roleplay_model,
-    get_guild_coding_model,
+    get_guild_coding_model, _ct_today,
 )
+from src.streaks import effective_streak
 from src.permissions import (
     is_admin, check_puzzle_channel,
     requires_perm,
@@ -801,6 +802,51 @@ class UtilityCog(commands.Cog):
             await thinking_msg.edit(embed=emb("❌ Discord Error", "Failed to send the puzzle. Please try again.", C_RED))
 
 
+    @commands.command(name="streaks")
+    async def cmd_streaks(self, ctx: commands.Context):
+        """Server-admin: list all active streaks held by members of this server."""
+        if not ctx.guild:
+            await ctx.send(embed=emb("❌ Error", "This command only works in a server.", C_RED))
+            return
+        today = _ct_today()
+
+        def _active_rows(store: dict) -> list[tuple[discord.Member, int]]:
+            rows = []
+            for uid_key, entry in store.items():
+                member = ctx.guild.get_member(int(uid_key))
+                if member is None:
+                    continue
+                if isinstance(entry, str):   # legacy gambler_streak format
+                    entry = {"date": entry, "count": 1}
+                count = effective_streak(entry, today)
+                if count > 0:
+                    rows.append((member, count))
+            rows.sort(key=lambda r: (-r[1], r[0].display_name.lower()))
+            return rows
+
+        def _fmt(rows: list[tuple[discord.Member, int]], limit: int = 15) -> str:
+            if not rows:
+                return "*None*"
+            lines = [
+                f"{i}. **{member.display_name}** — {count} day{'s' if count != 1 else ''}"
+                for i, (member, count) in enumerate(rows[:limit], 1)
+            ]
+            if len(rows) > limit:
+                lines.append(f"…and {len(rows) - limit} more")
+            return "\n".join(lines)
+
+        embed = discord.Embed(title=f"🔥 Streaks — {ctx.guild.name}", color=C_GOLD)
+        embed.add_field(
+            name="⌨️ Command streaks (any command, daily)",
+            value=_fmt(_active_rows(state.command_streak)), inline=False,
+        )
+        embed.add_field(
+            name="🎰 Gambler streaks (all 3 scratchoffs, daily)",
+            value=_fmt(_active_rows(state.gambler_streak)), inline=False,
+        )
+        embed.set_footer(text="Days roll over at 5am CT. Only unbroken streaks (today or yesterday) are shown.")
+        await ctx.send(embed=embed)
+
     @commands.command(name="adminhelp", aliases=["helpadmin"])
     @requires_perm
     async def cmd_adminhelp(self, ctx: commands.Context):
@@ -811,7 +857,8 @@ class UtilityCog(commands.Cog):
         admin_embed.add_field(name="🔍 Moderation", inline=False, value=(
             "`!audit` — Last 5 failed command attempts\n"
             "`!clear <n>` — Delete last n messages (any author)\n"
-            "`!saved` — Show saved data (admin-only)"
+            "`!saved` — Show saved data (admin-only)\n"
+            "`!streaks` — All active daily-use streaks in this server"
         ))
         admin_embed.add_field(name="✨ Effects", inline=False, value=(
             "`!effects list` — List every available effect type\n"

@@ -37,6 +37,7 @@ from src import state
 from src.games.blackjack import draw_card, hand_value, build_blackjack_display, _blackjack_stand
 from src.games.hangman import _process_hangman_guess
 from src.leveling import grant_xp as _grant_xp
+from src.streaks import update_command_streak
 
 
 async def _log_admin_command(bot, ctx: commands.Context):
@@ -544,6 +545,10 @@ class EventsCog(commands.Cog):
         )
         from src.metrics import command_invocations
         command_invocations.labels(command=ctx.command.qualified_name, outcome="ok").inc()
+        if not ctx.author.bot:
+            # Any successful command (gambling included) extends the daily
+            # command-usage streak; no-op after the first command of the day.
+            await update_command_streak(ctx.author.id, _ct_today())
         if ctx.guild and not ctx.author.bot:
             xp, leveled_up = await _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
             # _announce_levelup grants the coin reward and itself skips the

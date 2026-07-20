@@ -45,6 +45,7 @@ _TABLE_PKS = {
     "ai_threads": ("thread_id",),
     "leveling": ("guild_id", "user_id"),
     "gambler_streak": ("user_id",),
+    "command_streak": ("user_id",),
     "recap_usage": ("guild_id", "user_id"),
     "voice_pings": ("channel_id", "user_id"),
     "voice_ping_ignores": ("guild_id", "user_id", "ignored_user_id"),

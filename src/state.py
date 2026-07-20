@@ -51,6 +51,10 @@ rigged_flips: dict = {}
 rigged_scratch: dict = {}
 rigged_steal: dict = {}
 gambler_streak: dict = {}
+# {uid_str: {"date": "YYYY-MM-DD", "count": int}} — sequential-day streak of
+# using any command (bumped in on_command_completion). Source of truth is the
+# command_streak table; loaded at boot. Update logic lives in src/streaks.py.
+command_streak: dict = {}
 recap_usage: dict = {}   # {(guild_id, user_id): last_recap_date_str} — !recap daily cap
 
 # !ping voice-channel subscriptions:

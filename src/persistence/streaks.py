@@ -2,6 +2,19 @@ from src import state
 from src.db import with_transaction
 
 
+async def save_command_streak(user_id: int):
+    """Upsert one user's daily command-usage streak row (src/streaks.py)."""
+    entry = state.command_streak.get(str(user_id))
+    if not isinstance(entry, dict) or not entry.get("date"):
+        return
+    async with with_transaction() as cur:
+        await cur.execute(
+            "INSERT INTO command_streak (user_id, last_date, streak_count) VALUES (%s,%s,%s)"
+            " ON DUPLICATE KEY UPDATE last_date=VALUES(last_date), streak_count=VALUES(streak_count)",
+            (int(user_id), entry["date"], int(entry.get("count", 1))),
+        )
+
+
 async def save_gambler_streak():
     async with with_transaction() as cur:
         await cur.execute("DELETE FROM gambler_streak")

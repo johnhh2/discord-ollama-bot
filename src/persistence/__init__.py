@@ -41,7 +41,7 @@ from src.persistence.rigged import (  # noqa: F401
     save_rigged_scratch,
     save_rigged_steal,
 )
-from src.persistence.streaks import save_gambler_streak  # noqa: F401
+from src.persistence.streaks import save_command_streak, save_gambler_streak  # noqa: F401
 from src.persistence.recap_usage import save_recap_usage  # noqa: F401
 from src.persistence.voice_pings import (  # noqa: F401
     save_voice_ping,

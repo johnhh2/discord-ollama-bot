@@ -342,6 +342,16 @@ async def _init_db_state_inner(state, run_migrations):
             logging.error(f"[init_db_state] gambler_streak failed: {e}", exc_info=True)
             raise
 
+        # ── command_streak ────────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT user_id, last_date, streak_count FROM command_streak")
+            state.command_streak = {
+                str(r[0]): {"date": r[1], "count": int(r[2])} for r in await cur.fetchall()
+            }
+        except Exception as e:
+            logging.error(f"[init_db_state] command_streak failed: {e}", exc_info=True)
+            raise
+
         # ── daily_counters: lottery tickets presence line ─────────────────
         try:
             # Local import — src.economy imports src.persistence at module scope.

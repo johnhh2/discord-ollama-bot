@@ -97,6 +97,7 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "active_puzzles", {})
     monkeypatch.setattr(_state, "ai_threads", {})
     monkeypatch.setattr(_state, "channel_prompts", {})
+    monkeypatch.setattr(_state, "command_streak", {})
     monkeypatch.setattr(_state, "crime_today_by_user", {})
     monkeypatch.setattr(_state, "gambling_today_by_user", {})
     monkeypatch.setattr(_state, "levelups_today", {})
@@ -126,7 +127,7 @@ def reset_bot_state(monkeypatch):
         "save_ragebait", "save_mock", "save_curse", "save_tax",
         "save_rigged_slots", "save_rigged_flips", "save_rigged_scratch", "save_rigged_steal",
         "save_user_artifact",
-        "save_gambler_streak", "save_ai_threads",
+        "save_gambler_streak", "save_command_streak", "save_ai_threads",
         "save_quote_log", "save_saved_quotes", "save_lottery", "save_records",
         "save_leveling", "save_command_perms", "save_channel_prompts",
         "save_balance_history", "save_bot_stats_history",
