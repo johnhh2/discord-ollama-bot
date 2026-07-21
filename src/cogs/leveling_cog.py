@@ -93,10 +93,16 @@ class LevelingCog(commands.Cog):
         desc = f"{member.mention} reached **Level {lvl}**! +**{reward:,} 🪙**"
 
         # List any commands unlocked at this exact level (server-enabled only)
+        # plus artifacts that just became purchasable.
         from src.level_unlocks import unlocks_at_level
-        unlocked = unlocks_at_level(lvl, guild_id)
-        if unlocked:
-            desc += "\n\n**🔓 Unlocked**\n" + "\n".join(info["usage"] for _cmd, info in unlocked)
+        from src.artifacts import artifacts_at_level
+        lines = [info["usage"] for _cmd, info in unlocks_at_level(lvl, guild_id)]
+        lines += [
+            f"🏺 New artifact for sale: {art['effect']} — **{art['cost']:,} 🪙** (`!artifacts`)"
+            for art in artifacts_at_level(lvl)
+        ]
+        if lines:
+            desc += "\n\n**🔓 Unlocked**\n" + "\n".join(lines)
 
         try:
             await channel.send(embed=emb("🎉 Level Up!", desc, C_GOLD))

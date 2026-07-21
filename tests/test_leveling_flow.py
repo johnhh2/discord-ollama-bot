@@ -21,7 +21,7 @@ from src.leveling import (
 )
 from src.cogs.leveling_cog import LevelingCog
 
-from tests.fakes.discord import FakeMember, FakeGuild
+from tests.fakes.discord import FakeMember, FakeGuild, FakeChannel
 
 
 pytestmark = pytest.mark.asyncio
@@ -226,6 +226,29 @@ async def test_announce_levelup_awards_coin_reward_even_without_channel(db):
 
     expected = levelup_coin_reward(display_level(5))
     assert await _economy.get_balance(7) == expected
+
+
+async def test_announce_levelup_lists_newly_purchasable_artifacts(db):
+    """Hitting a level with an artifact gate (5 → slots blank remover) lists
+    the artifact in the Unlocked section of the announcement."""
+    from src.config import ARTIFACT_SLOTS_BLANK_COST
+
+    cog = LevelingCog.__new__(LevelingCog)
+    channel = FakeChannel(ch_id=555)
+    cog.bot = _BotWithChannel({555: channel})
+    _state.guild_settings["42"] = {"levelup_channel": 555}
+
+    rec = _ensure_lvl_user(42, 9)
+    rec["level"] = 4  # display level 5
+
+    await cog._announce_levelup(FakeMember(uid=9), guild_id=42)
+
+    channel.send.assert_awaited_once()
+    desc = channel.send.await_args.kwargs["embed"].description
+    assert "🔓 Unlocked" in desc
+    assert "🏺 New artifact for sale" in desc
+    assert "⬛" in desc
+    assert f"{ARTIFACT_SLOTS_BLANK_COST:,}" in desc
 
 
 async def test_announce_levelup_silent_when_no_channel_configured(db):

@@ -90,6 +90,12 @@ ARTIFACTS: list[dict] = [
 ]
 
 
+def artifacts_at_level(level: int) -> list[dict]:
+    """Catalog entries that become purchasable exactly at *level* (display
+    level). Used by the level-up announcement."""
+    return [a for a in ARTIFACTS if a.get("level", 1) == level]
+
+
 def owned_qty(uid: int, artifact_id: str) -> int:
     return state.user_artifacts.get(uid, {}).get(artifact_id, 0)
 
