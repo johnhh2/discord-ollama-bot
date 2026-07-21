@@ -249,9 +249,10 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb(
                 "🪙 Dailies Channel",
                 f"{channel.mention} is now the dailies channel. I'll keep it cleared except for the "
-                f"**Claim your dailies** embed — reacting 🪙 there instantly claims the daily reward and "
-                f"uses all daily scratchoffs. Claims reset at the 5am CT daily reset; everything else "
-                f"posted there is deleted after 5 minutes.",
+                f"**Claim your dailies** embed — reacting 🗓️ there instantly claims the daily reward and "
+                f"uses all daily scratchoffs (🪙 also coin-flips the winnings, 🎰 bets them on slots). "
+                f"Claims reset at the 5am CT daily reset; everything else posted there is deleted "
+                f"after 5 minutes.",
                 C_GREEN,
             ))
         else:

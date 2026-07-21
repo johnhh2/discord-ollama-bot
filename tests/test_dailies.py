@@ -18,8 +18,9 @@ import src.state as _state
 import src.economy as _economy
 from src.config import DAILY_REWARD
 from src.cogs.dailies_cog import (
-    DailiesCog, refresh_dailies_channel, DAILIES_EMOJI, DAILIES_TITLE,
-    _delete_unless_kept,
+    DailiesCog, refresh_dailies_channel, DAILIES_TITLE,
+    DAILIES_CLAIM_EMOJI, DAILIES_FLIP_EMOJI, DAILIES_SLOTS_EMOJI,
+    DAILIES_ALL_EMOJIS, _delete_unless_kept,
 )
 from src.cogs.settings_cog import SettingsCog
 
@@ -108,7 +109,7 @@ def _pin_today(monkeypatch, today=TODAY):
 
 
 def _payload(uid=1, guild_id=42, message_id=None, channel_id=500,
-             emoji=DAILIES_EMOJI, member=None):
+             emoji=DAILIES_CLAIM_EMOJI, member=None):
     return SimpleNamespace(
         user_id=uid, guild_id=guild_id, message_id=message_id,
         channel_id=channel_id, emoji=emoji, member=member,
@@ -130,8 +131,14 @@ async def test_refresh_posts_claim_embed_and_reaction(db, monkeypatch):
     assert len(channel.sent) == 1
     claim = channel.sent[0]
     assert claim.embed.title == DAILIES_TITLE
-    claim.add_reaction.assert_awaited_once_with(DAILIES_EMOJI)
-    assert "10,000 🪙 or more" in claim.embed.description  # big-win notice
+    assert claim.add_reaction.await_count == 3
+    for emoji in DAILIES_ALL_EMOJIS:
+        claim.add_reaction.assert_any_await(emoji)
+    assert "10,000 🪙 or more" in claim.embed.description  # big-result notice
+    # The emoji legend sits at the bottom of the claim embed.
+    assert f"{DAILIES_CLAIM_EMOJI} claim dailies" in claim.embed.description
+    assert f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip" in claim.embed.description
+    assert f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet" in claim.embed.description
     assert cfg["dailies_message_id"] == claim.id
     assert cfg["dailies_reset_day"] == TODAY
     assert len(channel.purge_calls) == 1
@@ -304,6 +311,74 @@ async def test_reaction_claim_ordinary_wins_not_kept(db, monkeypatch):
 
     await cog.on_raw_reaction_add(_payload(message_id=777, member=member))
 
+    assert "dailies_keep_ids" not in _state.guild_settings["42"]
+
+
+@pytest.mark.asyncio
+async def test_reaction_flip_gambles_scratch_winnings_and_keeps_big_results(db, monkeypatch):
+    """🪙 claims dailies, then coin-flips the total scratchoff winnings. A
+    ±10k flip result joins the keep list alongside the 10k scratch card."""
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _pin_no_natural_matches(monkeypatch)
+    _state.rigged_scratch[1] = 3   # third card → 10,000 🪙 total winnings
+    _state.rigged_flips[1] = 1     # the follow-up flip wins
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_FLIP_EMOJI))
+
+    user = _state.economy["users"]["1"]
+    assert user["scratch_used"] == 3
+    # daily + 10k scratch − 10k flip stake + 20k flip payout
+    assert user["balance"] == DAILY_REWARD + 20_000
+    flip_msgs = [m for m in channel.sent if m.embed is not None and m.embed.title == "🪙 Heads!"]
+    assert len(flip_msgs) == 1
+    scratch_msgs = [m for m in channel.sent if m.embed is not None and m.embed.title == "🎫 Scratchoff"]
+    assert _state.guild_settings["42"]["dailies_keep_ids"] == [
+        scratch_msgs[2].id, flip_msgs[0].id,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reaction_slots_gambles_scratch_winnings_and_keeps_big_results(db, monkeypatch):
+    """🎰 claims dailies, then bets the total scratchoff winnings on slots.
+    The +20k slots win joins the keep list alongside the 10k scratch card."""
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _pin_no_natural_matches(monkeypatch)
+    _state.rigged_scratch[1] = 3   # third card → 10,000 🪙 total winnings
+    _state.rigged_slots[1] = "🍒"  # three cherries → 3x payout
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_SLOTS_EMOJI))
+
+    user = _state.economy["users"]["1"]
+    assert user["scratch_used"] == 3
+    # daily + 10k scratch − 10k slots stake + 30k slots payout
+    assert user["balance"] == DAILY_REWARD + 30_000
+    slots_msgs = [m for m in channel.sent if m.embed is not None and m.embed.title == "🎰 Winner!"]
+    assert len(slots_msgs) == 1
+    scratch_msgs = [m for m in channel.sent if m.embed is not None and m.embed.title == "🎫 Scratchoff"]
+    assert _state.guild_settings["42"]["dailies_keep_ids"] == [
+        scratch_msgs[2].id, slots_msgs[0].id,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reaction_gamble_skipped_when_no_scratch_winnings(db, monkeypatch):
+    """🪙 with zero scratchoff winnings claims the dailies but flips nothing."""
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _pin_no_natural_matches(monkeypatch)   # all three cards miss
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_FLIP_EMOJI))
+
+    user = _state.economy["users"]["1"]
+    assert user["scratch_used"] == 3
+    assert user["balance"] == DAILY_REWARD  # nothing won, nothing flipped
+    titles = [m.embed.title for m in channel.sent if m.embed is not None]
+    assert not any(t.startswith("🪙 Heads") or t.startswith("🪙 Tails") for t in titles)
     assert "dailies_keep_ids" not in _state.guild_settings["42"]
 
 

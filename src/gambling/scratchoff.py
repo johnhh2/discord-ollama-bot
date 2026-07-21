@@ -20,8 +20,9 @@ from src.permissions import (
 from src.leveling import grant_xp
 from src.persistence import (
     save_economy, save_gambler_streak,
-    save_rigged_scratch, save_guild_settings
+    save_rigged_scratch
 )
+from src.dailies import keep_in_dailies_channel
 from src.guild_config import get_guild_cfg
 from src.config import (
     SCRATCH_SYMBOLS, SCRATCHOFF_MAX_DAILY,
@@ -46,11 +47,6 @@ async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | No
 
 
 GAMBLER_ROLE_STREAK_REQUIRED = 3
-
-# Scratchoff results at/above this payout (3+ matches: 10k and 100k) that land
-# in a guild's dailies channel are exempt from the 5-minute sweep — they stay
-# up until the 5am CT reset repost clears the channel (src/cogs/dailies_cog.py).
-DAILIES_KEEP_WIN_MIN = 10_000
 
 
 def scratchoff_attempts_remaining(user: dict, today: str, cap: int = SCRATCHOFF_MAX_DAILY) -> int:
@@ -196,13 +192,15 @@ class MiniCactpotGame:
 
 
 
-async def play_scratchoffs(bot, author, channel, guild, count: int = 1):
+async def play_scratchoffs(bot, author, channel, guild, count: int = 1) -> int:
     """Play up to `count` of the user's remaining daily scratchoffs.
 
     Extracted from cmd_scratchoff so the dailies-channel reaction handler can
     run a player's scratchoffs without a commands.Context. `author` must be a
     discord.Member for XP level-up announcements and the Gamblers role grant;
-    results are sent to `channel`.
+    results are sent to `channel`. Returns the total coins won across the
+    cards played (0 if the daily cap was already spent) — the dailies claim
+    uses this as the stake for its flip/slots gamble reactions.
     """
     uid = author.id
     await _ensure_user(uid)
@@ -216,7 +214,7 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1):
     if remaining <= 0:
         await save_economy(uid=uid)
         await channel.send(embed=emb("🎰 Daily Limit", f"**{author.display_name}** has used all **{cap}** daily scratchoffs.\nCome back tomorrow!", C_GOLD))
-        return
+        return 0
 
     count = min(count, remaining)
 
@@ -241,6 +239,7 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1):
     if show_hint:
         user["scratchoff_seen_rewards"] = True
 
+    total_won = 0
     for i in range(count):
         attempt_idx = first_attempt + i
         is_third = attempt_idx == 2
@@ -308,16 +307,12 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1):
             embed.add_field(name="📊 Payout Info", value="Use `!scratchoffrewards` to see all payouts!", inline=False)
             show_hint = False
 
+        total_won += payout
         msg = await channel.send(embed=embed)
 
         # Big wins posted in the guild's dailies channel are pinned until the
-        # 5am reset: register the message id so the dailies sweeper skips it.
-        # (The reset repost purges the channel and clears the list.)
-        if payout >= DAILIES_KEEP_WIN_MIN and guild is not None and msg is not None:
-            dailies_cfg = state.guild_settings.get(str(guild.id))
-            if dailies_cfg and channel.id == dailies_cfg.get("dailies_channel"):
-                dailies_cfg.setdefault("dailies_keep_ids", []).append(msg.id)
-                await save_guild_settings()
+        # 5am reset (the reset repost purges the channel and clears the list).
+        await keep_in_dailies_channel(guild, channel, msg, payout)
 
         # Track full-day scratchoff streak for Gamblers role.
         # Done after the card embed so the role-grant announcement
@@ -325,6 +320,8 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1):
         if (attempt_idx + 1) >= 3 and guild:
             new_streak = await update_gambler_streak(uid, today)
             await maybe_assign_gambler_role(guild, author, channel, new_streak)
+
+    return total_won
 
 
 class ScratchoffCog(commands.Cog):

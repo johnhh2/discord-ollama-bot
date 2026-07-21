@@ -19,6 +19,7 @@ from src.persistence import (
 )
 from src.guild_config import get_guild_cfg
 from src.artifacts import get_slot_reel
+from src.dailies import keep_in_dailies_channel
 from src.config import (
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
@@ -78,6 +79,138 @@ def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
 
 
 
+async def play_slots(author, channel, guild, amount: int):
+    """Spin the slots for `author` betting `amount`, announcing in `channel`.
+
+    Extracted from cmd_slots so the dailies-channel reaction claim can bet a
+    player's scratchoff winnings without a commands.Context. `amount` is
+    assumed validated (>= SLOT_MIN_BET).
+    """
+    uid = author.id
+    await _ensure_user(uid)
+
+    # Track first-time usage (payout-table hint on the first real spin).
+    user = state.economy["users"][str(uid)]
+    first_time_slots = not user.get("slots_seen_rewards", False)
+    if first_time_slots:
+        user["slots_seen_rewards"] = True
+        await save_economy(uid=uid)
+
+    # shop_charge only uses ctx.send, so the channel satisfies it.
+    if not await shop_charge(channel, uid, amount):
+        return
+
+    # Jackpot contribution (2% of every bet, rounded up)
+    contrib = max(1, int(amount * SLOT_JACKPOT_CONTRIB))
+    state.slot_jackpot += contrib
+    await save_jackpot(state.slot_jackpot)
+
+    # Spin (or use rigged result)
+    if uid in state.rigged_slots:
+        sym = state.rigged_slots.pop(uid)
+        await save_rigged_slots()
+        reels = [sym, sym, sym]
+    else:
+        if random.random() < SLOT_HOUSE_CHANCE: # 5% back to house
+            symbol_types = [s for s in dict.fromkeys(SLOT_REEL) if s != "⬛"]  # unique non-blank symbols
+            reels = random.sample(symbol_types, 3)
+        else: # normal (reel adjusted by owned artifacts)
+            reel = get_slot_reel(uid)
+            reels = [random.choice(reel) for _ in range(3)]
+    display = " | ".join(reels)
+    label, mult = eval_slots(reels, amount)
+
+    # Progressive jackpot: hit 3 sevens
+    if label == "jackpot":
+        prize = apply_jackpot_bonus(state.slot_jackpot, amount)
+        bet_bonus = prize / state.slot_jackpot if state.slot_jackpot else 1.0
+        state.slot_jackpot = SLOT_JACKPOT_SEED
+        await save_jackpot(state.slot_jackpot)
+        gid = guild.id if guild else None
+        new_bal_record = await add_balance(uid, prize, guild_id=gid, holder_name=author.display_name)
+        if uid not in state.godmode_users:
+            await record_gambling_event(gid, uid, gained=max(0, prize - amount))
+        new_jackpot_record = await try_set_record(gid, "slots_jackpot", prize, uid, author.display_name,
+                       bet=amount, symbols=display)
+        new_bal = await get_balance(uid)
+        desc = (f"{display}\n\n🏆 **{author.display_name} hit the Progressive Jackpot!**\n"
+                f"**Won: {prize:,} 🪙** (Bet: {amount:,} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {new_bal:,} 🪙\n"
+                f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*")
+        if first_time_slots:
+            desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
+        msg = await channel.send(embed=emb("🎰 PROGRESSIVE JACKPOT!", desc, C_GOLD))
+        try:
+            await msg.pin()
+        except Exception:
+            pass
+        await keep_in_dailies_channel(guild, channel, msg, prize - amount)
+        # Ping Gamblers role if enabled
+        if guild:
+            cfg = get_guild_cfg(guild.id)
+            if cfg.get("gambler_role_enabled", False):
+                role = discord.utils.get(guild.roles, name="Gamblers")
+                if role:
+                    await channel.send(f"{role.mention} 🎰 A progressive jackpot was just won!")
+        if new_jackpot_record:
+            await announce_record(channel, "slots_jackpot", author.display_name, prize)
+        if new_bal_record:
+            await announce_record(channel, "highest_balance", author.display_name, new_bal)
+        return
+
+    # Money Back (cherry retention)
+    if label == "1cherry":
+        await add_balance(uid, amount)
+        desc = (f"{display}\n\n🍒 **One Cherry — Money Back!**\n"
+                f"**{author.display_name}** got **{amount:,} 🪙** back | Balance: {await get_balance(uid):,} 🪙\n"
+                f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
+        if first_time_slots:
+            desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
+        await channel.send(embed=emb("🎰 Money Back!", desc, C_GOLD))
+        return
+
+    if mult == 0:
+        if uid not in state.godmode_users:
+            await record_gambling_event(guild.id if guild else None, uid, lost=amount)
+        desc = (f"{display}\n\n**{author.display_name}** lost **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙\n"
+                f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
+        if first_time_slots:
+            desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
+        msg = await channel.send(embed=emb("🎰 No Win", desc, C_RED))
+        await keep_in_dailies_channel(guild, channel, msg, -amount)
+        return
+
+    winnings = amount * mult
+    gid = guild.id if guild else None
+    new_bal_record = await add_balance(uid, winnings, guild_id=gid, holder_name=author.display_name)
+    if uid not in state.godmode_users:
+        await record_gambling_event(gid, uid, gained=max(0, winnings - amount))
+    new_slots_record = await try_set_record(gid, "slots_non_jackpot", winnings, uid, author.display_name,
+                   bet=amount, symbols=display, label=label)
+
+    result_labels = {
+        "jackpot": f"7️⃣7️⃣7️⃣ — **{mult}x** (min bet 25, bonus scales to 4x at bet 1000+)",
+        "3bar":    f"🎰🎰🎰 — **{mult}x**",
+        "3bell":   f"🔔🔔🔔 — **{mult}x**",
+        "3lemon":  f"🍋🍋🍋 — **{mult}x**",
+        "3cherry": f"🍒🍒🍒 — **{mult}x**",
+        "2cherry": f"Two Cherries — **{mult}x**",
+    }
+    desc_line = result_labels.get(label, f"**{mult}x**")
+
+    new_bal = await get_balance(uid)
+    desc = (f"{display}\n\n{desc_line}\n"
+            f"**{author.display_name}** won **{winnings:,} 🪙** | Balance: {new_bal:,} 🪙\n"
+            f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
+    if first_time_slots:
+        desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
+    msg = await channel.send(embed=emb("🎰 Winner!", desc, C_GREEN))
+    await keep_in_dailies_channel(guild, channel, msg, winnings - amount)
+    if new_slots_record:
+        await announce_record(channel, "slots_non_jackpot", author.display_name, winnings)
+    if new_bal_record:
+        await announce_record(channel, "highest_balance", author.display_name, new_bal)
+
+
 class SlotsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -86,15 +219,6 @@ class SlotsCog(commands.Cog):
     async def cmd_slots(self, ctx: commands.Context, amount: str = None):
         if await check_game_channel(ctx, "Gambling"):
             return
-        uid = ctx.author.id
-        await _ensure_user(uid)
-
-        # Track first-time usage
-        user = state.economy["users"][str(uid)]
-        first_time_slots = not user.get("slots_seen_rewards", False)
-        if first_time_slots:
-            user["slots_seen_rewards"] = True
-            await save_economy(uid=uid)
 
         if amount is None:
             embed = discord.Embed(title="🎰 Slots", color=C_GOLD)
@@ -130,115 +254,7 @@ class SlotsCog(commands.Cog):
             await ctx.send(embed=emb("❌ Minimum Bet", f"Minimum bet is **{SLOT_MIN_BET:,} 🪙**.", C_RED))
             return
 
-        if not await shop_charge(ctx, uid, amount):
-            return
-
-        # Jackpot contribution (2% of every bet, rounded up)
-        contrib = max(1, int(amount * SLOT_JACKPOT_CONTRIB))
-        state.slot_jackpot += contrib
-        await save_jackpot(state.slot_jackpot)
-
-        # Spin (or use rigged result)
-        if uid in state.rigged_slots:
-            sym = state.rigged_slots.pop(uid)
-            await save_rigged_slots()
-            reels = [sym, sym, sym]
-        else:
-            if random.random() < SLOT_HOUSE_CHANCE: # 5% back to house
-                symbol_types = [s for s in dict.fromkeys(SLOT_REEL) if s != "⬛"]  # unique non-blank symbols
-                reels = random.sample(symbol_types, 3)
-            else: # normal (reel adjusted by owned artifacts)
-                reel = get_slot_reel(uid)
-                reels = [random.choice(reel) for _ in range(3)]
-        display = " | ".join(reels)
-        label, mult = eval_slots(reels, amount)
-
-        # Progressive jackpot: hit 3 sevens
-        if label == "jackpot":
-            prize = apply_jackpot_bonus(state.slot_jackpot, amount)
-            bet_bonus = prize / state.slot_jackpot if state.slot_jackpot else 1.0
-            state.slot_jackpot = SLOT_JACKPOT_SEED
-            await save_jackpot(state.slot_jackpot)
-            gid = ctx.guild.id if ctx.guild else None
-            new_bal_record = await add_balance(uid, prize, guild_id=gid, holder_name=ctx.author.display_name)
-            if uid not in state.godmode_users:
-                await record_gambling_event(gid, uid, gained=max(0, prize - amount))
-            new_jackpot_record = await try_set_record(gid, "slots_jackpot", prize, uid, ctx.author.display_name,
-                           bet=amount, symbols=display)
-            new_bal = await get_balance(uid)
-            desc = (f"{display}\n\n🏆 **{ctx.author.display_name} hit the Progressive Jackpot!**\n"
-                    f"**Won: {prize:,} 🪙** (Bet: {amount:,} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {new_bal:,} 🪙\n"
-                    f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*")
-            if first_time_slots:
-                desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
-            msg = await ctx.send(embed=emb("🎰 PROGRESSIVE JACKPOT!", desc, C_GOLD))
-            try:
-                await msg.pin()
-            except Exception:
-                pass
-            # Ping Gamblers role if enabled
-            if ctx.guild:
-                cfg = get_guild_cfg(ctx.guild.id)
-                if cfg.get("gambler_role_enabled", False):
-                    role = discord.utils.get(ctx.guild.roles, name="Gamblers")
-                    if role:
-                        await ctx.send(f"{role.mention} 🎰 A progressive jackpot was just won!")
-            if new_jackpot_record:
-                await announce_record(ctx.channel, "slots_jackpot", ctx.author.display_name, prize)
-            if new_bal_record:
-                await announce_record(ctx.channel, "highest_balance", ctx.author.display_name, new_bal)
-            return
-
-        # Money Back (cherry retention)
-        if label == "1cherry":
-            await add_balance(uid, amount)
-            desc = (f"{display}\n\n🍒 **One Cherry — Money Back!**\n"
-                    f"**{ctx.author.display_name}** got **{amount:,} 🪙** back | Balance: {await get_balance(uid):,} 🪙\n"
-                    f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
-            if first_time_slots:
-                desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
-            await ctx.send(embed=emb("🎰 Money Back!", desc, C_GOLD))
-            return
-
-        if mult == 0:
-            if uid not in state.godmode_users:
-                await record_gambling_event(ctx.guild.id if ctx.guild else None, uid, lost=amount)
-            desc = (f"{display}\n\n**{ctx.author.display_name}** lost **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙\n"
-                    f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
-            if first_time_slots:
-                desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
-            await ctx.send(embed=emb("🎰 No Win", desc, C_RED))
-            return
-
-        winnings = amount * mult
-        gid = ctx.guild.id if ctx.guild else None
-        new_bal_record = await add_balance(uid, winnings, guild_id=gid, holder_name=ctx.author.display_name)
-        if uid not in state.godmode_users:
-            await record_gambling_event(gid, uid, gained=max(0, winnings - amount))
-        new_slots_record = await try_set_record(gid, "slots_non_jackpot", winnings, uid, ctx.author.display_name,
-                       bet=amount, symbols=display, label=label)
-
-        result_labels = {
-            "jackpot": f"7️⃣7️⃣7️⃣ — **{mult}x** (min bet 25, bonus scales to 4x at bet 1000+)",
-            "3bar":    f"🎰🎰🎰 — **{mult}x**",
-            "3bell":   f"🔔🔔🔔 — **{mult}x**",
-            "3lemon":  f"🍋🍋🍋 — **{mult}x**",
-            "3cherry": f"🍒🍒🍒 — **{mult}x**",
-            "2cherry": f"Two Cherries — **{mult}x**",
-        }
-        desc_line = result_labels.get(label, f"**{mult}x**")
-
-        new_bal = await get_balance(uid)
-        desc = (f"{display}\n\n{desc_line}\n"
-                f"**{ctx.author.display_name}** won **{winnings:,} 🪙** | Balance: {new_bal:,} 🪙\n"
-                f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
-        if first_time_slots:
-            desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
-        await ctx.send(embed=emb("🎰 Winner!", desc, C_GREEN))
-        if new_slots_record:
-            await announce_record(ctx.channel, "slots_non_jackpot", ctx.author.display_name, winnings)
-        if new_bal_record:
-            await announce_record(ctx.channel, "highest_balance", ctx.author.display_name, new_bal)
+        await play_slots(ctx.author, ctx.channel, ctx.guild, amount)
 
 
     @commands.command(name="slotsrewards", aliases=["slotrewards", "slotreward"])

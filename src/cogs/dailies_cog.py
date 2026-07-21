@@ -1,6 +1,8 @@
 """Dailies channel: a self-cleaning channel with a single 'Claim your dailies'
-embed. Reacting 🪙 to the embed immediately runs the player's dailies (daily
-coin reward + all remaining scratchoffs) right there in the channel.
+embed. Reacting to the embed immediately runs the player's dailies (daily
+coin reward + all remaining scratchoffs) right there in the channel:
+🗓️ just claims; 🪙 also coin-flips the scratchoff winnings; 🎰 also bets
+them on slots.
 
 Configured per-guild with `!settings dailies-channel #channel` — the channel id,
 claim-message id, and last-reset day all live in the guild_settings JSON blob
@@ -11,8 +13,8 @@ Cleanliness rules:
   everything except the claim embed.
 - Any other message posted in the channel — user chatter, command invocations,
   claim results, this bot's own sends — is deleted after 5 minutes. Exception:
-  scratchoff wins of 10k+ (tracked in cfg["dailies_keep_ids"] by
-  play_scratchoffs) stay up until the reset.
+  scratchoff/flip/slots results where 10k+ was won or lost (tracked in
+  cfg["dailies_keep_ids"] via src/dailies.py) stay up until the reset.
 - At the 5am CT daily reset the claim embed is reposted, which clears all
   claim reactions so players can click again. The repost doubles as a purge
   and drops the kept big wins along with everything else.
@@ -27,14 +29,21 @@ from src.helpers import emb, C_GOLD, fetch_member
 from src.economy import _ct_today, next_daily_reset_ts
 from src.persistence import save_guild_settings
 from src.guild_config import get_guild_cfg
-from src.gambling.scratchoff import play_scratchoffs, DAILIES_KEEP_WIN_MIN
+from src.gambling.scratchoff import play_scratchoffs
+from src.gambling.flip import play_flip
+from src.gambling.slots import play_slots
 from src.artifacts import scratchoff_daily_cap
+from src.config import SLOT_MIN_BET
+from src.dailies import DAILIES_KEEP_MIN
 from src.events import _auto_daily
 from src import state
 
 
-DAILIES_EMOJI = "🪙"
-DAILIES_TITLE = "🪙 Claim your dailies"
+DAILIES_CLAIM_EMOJI = "🗓️"   # :calendar_spiral: — claim dailies
+DAILIES_FLIP_EMOJI = "🪙"    # :coin: — claim, then coin-flip the scratchoff winnings
+DAILIES_SLOTS_EMOJI = "🎰"   # :slot_machine: — claim, then bet the winnings on slots
+DAILIES_ALL_EMOJIS = (DAILIES_CLAIM_EMOJI, DAILIES_FLIP_EMOJI, DAILIES_SLOTS_EMOJI)
+DAILIES_TITLE = "🗓️ Claim your dailies"
 # How long non-claim messages (results, user chatter) survive in the channel.
 DAILIES_MESSAGE_TTL = 300.0
 
@@ -66,12 +75,15 @@ async def _delete_unless_kept(message: discord.Message, delay: float):
 
 def _dailies_body() -> str:
     return (
-        f"React with {DAILIES_EMOJI} below to claim your daily reward and "
-        "instantly use all of your daily scratchoffs.\n\n"
+        "React below to claim your daily reward and instantly use all of "
+        "your daily scratchoffs.\n\n"
         "Results (and any other messages here) are cleared after 5 minutes — "
-        f"except scratchoff wins of {DAILIES_KEEP_WIN_MIN:,} 🪙 or more, "
-        "which are kept until the dailies reset.\n"
-        f"Dailies reset <t:{next_daily_reset_ts()}:R>."
+        f"except results where {DAILIES_KEEP_MIN:,} 🪙 or more was won or "
+        "lost, which are kept until the dailies reset.\n"
+        f"Dailies reset <t:{next_daily_reset_ts()}:R>.\n\n"
+        f"{DAILIES_CLAIM_EMOJI} claim dailies\n"
+        f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip all scratchoff winnings\n"
+        f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet all scratchoff winnings on slots"
     )
 
 
@@ -121,7 +133,8 @@ async def refresh_dailies_channel(bot, guild_id: int):
     if claim_msg is None:
         try:
             claim_msg = await channel.send(embed=emb(DAILIES_TITLE, _dailies_body(), C_GOLD))
-            await claim_msg.add_reaction(DAILIES_EMOJI)
+            for emoji in DAILIES_ALL_EMOJIS:
+                await claim_msg.add_reaction(emoji)
         except (discord.Forbidden, discord.HTTPException):
             logging.warning("[dailies] guild=%s failed to post claim embed", guild_id)
             return
@@ -199,7 +212,8 @@ class DailiesCog(commands.Cog):
         cfg = state.guild_settings.get(str(payload.guild_id))
         if not cfg or payload.message_id != cfg.get("dailies_message_id"):
             return
-        if str(payload.emoji) != DAILIES_EMOJI:
+        emoji = str(payload.emoji)
+        if emoji not in DAILIES_ALL_EMOJIS:
             return
         # Mirror the on_message blocklist silence for banned users.
         if payload.user_id in state.global_blocklist:
@@ -216,19 +230,29 @@ class DailiesCog(commands.Cog):
             channel = self.bot.get_channel(payload.channel_id) or await self.bot.fetch_channel(payload.channel_id)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             return
-        await self._run_dailies(member, channel, guild)
+        await self._run_dailies(member, channel, guild, gamble=emoji)
 
-    async def _run_dailies(self, member, channel, guild):
-        """Run all of the member's dailies in `channel`.
+    async def _run_dailies(self, member, channel, guild, gamble: str | None = None):
+        """Run all of the member's dailies in `channel`, then optionally bet
+        the scratchoff winnings (🪙 → coin flip, 🎰 → slots).
 
         Extension point: future daily claims go here. Every step is already
         idempotent per gameplay-day (each has its own daily gate), so a second
-        click just reports the daily limit. Result messages need no explicit
-        cleanup — on_message below schedules deletion for everything posted in
-        the dailies channel.
+        click just reports the daily limit — and yields no winnings, so the
+        gamble is skipped too. Result messages need no explicit cleanup —
+        on_message below schedules deletion for everything posted in the
+        dailies channel.
         """
         await _auto_daily(member, channel)
-        await play_scratchoffs(self.bot, member, channel, guild, count=scratchoff_daily_cap(member.id))
+        winnings = await play_scratchoffs(
+            self.bot, member, channel, guild, count=scratchoff_daily_cap(member.id)
+        )
+        if not winnings:
+            return
+        if gamble == DAILIES_FLIP_EMOJI:
+            await play_flip(member, channel, guild, winnings)
+        elif gamble == DAILIES_SLOTS_EMOJI and winnings >= SLOT_MIN_BET:
+            await play_slots(member, channel, guild, winnings)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
