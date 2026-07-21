@@ -19,6 +19,7 @@ import src.economy as _economy
 from src.config import DAILY_REWARD
 from src.cogs.dailies_cog import (
     DailiesCog, refresh_dailies_channel, DAILIES_EMOJI, DAILIES_TITLE,
+    _delete_unless_kept,
 )
 from src.cogs.settings_cog import SettingsCog
 
@@ -130,6 +131,7 @@ async def test_refresh_posts_claim_embed_and_reaction(db, monkeypatch):
     claim = channel.sent[0]
     assert claim.embed.title == DAILIES_TITLE
     claim.add_reaction.assert_awaited_once_with(DAILIES_EMOJI)
+    assert "10,000 🪙 or more" in claim.embed.description  # big-win notice
     assert cfg["dailies_message_id"] == claim.id
     assert cfg["dailies_reset_day"] == TODAY
     assert len(channel.purge_calls) == 1
@@ -160,16 +162,17 @@ async def test_refresh_same_day_keeps_claim_message(db, monkeypatch):
 @pytest.mark.asyncio
 async def test_refresh_new_day_reposts_and_purges_old(db, monkeypatch):
     """Once the 5am CT gameplay-day rolls over, the claim embed is reposted so
-    all claim reactions reset."""
+    all claim reactions reset — and yesterday's kept big wins go with it."""
     _pin_today(monkeypatch)
     channel = FakeDailiesChannel(500)
     bot = _StubBot(channel=channel)
     old_claim = await channel.send(embed=SimpleNamespace(title=DAILIES_TITLE))
     stray = await channel.send(content="chatter from overnight")
+    big_win = await channel.send(embed=SimpleNamespace(title="🎫 Scratchoff"))
     channel.sent.clear()
     _state.guild_settings["42"] = {
         "dailies_channel": 500, "dailies_message_id": old_claim.id,
-        "dailies_reset_day": YESTERDAY,
+        "dailies_reset_day": YESTERDAY, "dailies_keep_ids": [big_win.id],
     }
 
     await refresh_dailies_channel(bot, 42)
@@ -179,9 +182,35 @@ async def test_refresh_new_day_reposts_and_purges_old(db, monkeypatch):
     new_claim = channel.sent[0]
     assert cfg["dailies_message_id"] == new_claim.id != old_claim.id
     assert cfg["dailies_reset_day"] == TODAY
-    # Old claim + stray chatter purged; only the fresh embed remains.
+    # Old claim, stray chatter, AND yesterday's big win purged; only the
+    # fresh embed remains and the keep list is reset.
     assert set(channel.messages) == {new_claim.id}
     assert stray.id not in channel.messages
+    assert "dailies_keep_ids" not in cfg
+
+
+@pytest.mark.asyncio
+async def test_refresh_same_day_keeps_big_win_messages(db, monkeypatch):
+    """A same-day sweep (boot, reconnect) must preserve kept big-win results
+    alongside the claim embed."""
+    _pin_today(monkeypatch)
+    channel = FakeDailiesChannel(500)
+    bot = _StubBot(channel=channel)
+    claim = await channel.send(embed=SimpleNamespace(title=DAILIES_TITLE))
+    big_win = await channel.send(embed=SimpleNamespace(title="🎫 Scratchoff"))
+    chatter = await channel.send(content="gg")
+    channel.sent.clear()
+    _state.guild_settings["42"] = {
+        "dailies_channel": 500, "dailies_message_id": claim.id,
+        "dailies_reset_day": TODAY, "dailies_keep_ids": [big_win.id],
+    }
+
+    await refresh_dailies_channel(bot, 42)
+
+    assert channel.sent == []  # no repost
+    assert set(channel.messages) == {claim.id, big_win.id}
+    assert chatter.id not in channel.messages
+    assert _state.guild_settings["42"]["dailies_keep_ids"] == [big_win.id]
 
 
 # ── reaction claim ────────────────────────────────────────────────────────────
@@ -221,6 +250,61 @@ async def test_reaction_claim_runs_daily_and_all_scratchoffs(db, monkeypatch):
     titles = [m.embed.title for m in channel.sent if m.embed is not None]
     assert titles.count("🪙 Daily Reward") == 1
     assert titles.count("🎫 Scratchoff") == 3
+
+
+def _pin_no_natural_matches(monkeypatch):
+    """Make unrigged cards deterministic zero-match: the first random.choices
+    call in play_scratchoffs draws the daily goal (all symbol #0), every later
+    call draws a card (all symbol #1). Rigged cards bypass random.choices, so
+    a state.rigged_scratch entry still controls the third card's matches."""
+    calls = {"n": 0}
+
+    def _fake_choices(pop, k):
+        calls["n"] += 1
+        return [pop[0] if calls["n"] == 1 else pop[1]] * k
+
+    monkeypatch.setattr("src.gambling.scratchoff.random.choices", _fake_choices)
+
+
+@pytest.mark.asyncio
+async def test_reaction_claim_big_win_registered_for_keeping(db, monkeypatch):
+    """A 10k+ scratchoff result in the dailies channel is registered in
+    dailies_keep_ids and exempted from the 5-minute sweep — it stays until the
+    reset repost purges the channel."""
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _pin_no_natural_matches(monkeypatch)
+    # Rig the third card to 3 matches → 10,000 🪙, exactly at the keep threshold.
+    _state.rigged_scratch[1] = 3
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(_payload(message_id=777, member=member))
+
+    cfg = _state.guild_settings["42"]
+    scratch_msgs = [m for m in channel.sent if m.embed is not None and m.embed.title == "🎫 Scratchoff"]
+    big_win = scratch_msgs[2]  # the rigged third card
+    assert cfg["dailies_keep_ids"] == [big_win.id]
+
+    # The sweeper skips the kept win but still deletes ordinary results.
+    keep_probe = _sweeper_msg(big_win.id)
+    normal_probe = _sweeper_msg(scratch_msgs[0].id)
+    await _delete_unless_kept(keep_probe, 0)
+    await _delete_unless_kept(normal_probe, 0)
+    keep_probe.delete.assert_not_awaited()
+    normal_probe.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reaction_claim_ordinary_wins_not_kept(db, monkeypatch):
+    """Sub-10k results (0–2 matches) must not accumulate in dailies_keep_ids."""
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _pin_no_natural_matches(monkeypatch)
+    # Rig the third card to 2 matches → 1,000 🪙, below the keep threshold.
+    _state.rigged_scratch[1] = 2
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(_payload(message_id=777, member=member))
+
+    assert "dailies_keep_ids" not in _state.guild_settings["42"]
 
 
 @pytest.mark.asyncio

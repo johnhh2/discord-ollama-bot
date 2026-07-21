@@ -20,7 +20,7 @@ from src.permissions import (
 from src.leveling import grant_xp
 from src.persistence import (
     save_economy, save_gambler_streak,
-    save_rigged_scratch
+    save_rigged_scratch, save_guild_settings
 )
 from src.guild_config import get_guild_cfg
 from src.config import (
@@ -46,6 +46,11 @@ async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | No
 
 
 GAMBLER_ROLE_STREAK_REQUIRED = 3
+
+# Scratchoff results at/above this payout (3+ matches: 10k and 100k) that land
+# in a guild's dailies channel are exempt from the 5-minute sweep — they stay
+# up until the 5am CT reset repost clears the channel (src/cogs/dailies_cog.py).
+DAILIES_KEEP_WIN_MIN = 10_000
 
 
 def scratchoff_attempts_remaining(user: dict, today: str, cap: int = SCRATCHOFF_MAX_DAILY) -> int:
@@ -303,7 +308,16 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1):
             embed.add_field(name="📊 Payout Info", value="Use `!scratchoffrewards` to see all payouts!", inline=False)
             show_hint = False
 
-        await channel.send(embed=embed)
+        msg = await channel.send(embed=embed)
+
+        # Big wins posted in the guild's dailies channel are pinned until the
+        # 5am reset: register the message id so the dailies sweeper skips it.
+        # (The reset repost purges the channel and clears the list.)
+        if payout >= DAILIES_KEEP_WIN_MIN and guild is not None and msg is not None:
+            dailies_cfg = state.guild_settings.get(str(guild.id))
+            if dailies_cfg and channel.id == dailies_cfg.get("dailies_channel"):
+                dailies_cfg.setdefault("dailies_keep_ids", []).append(msg.id)
+                await save_guild_settings()
 
         # Track full-day scratchoff streak for Gamblers role.
         # Done after the card embed so the role-grant announcement

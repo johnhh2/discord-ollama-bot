@@ -225,6 +225,7 @@ class SettingsCog(commands.Cog):
             cfg["dailies_channel"] = None
             cfg.pop("dailies_message_id", None)
             cfg.pop("dailies_reset_day", None)
+            cfg.pop("dailies_keep_ids", None)
             await save_guild_settings()
             # Best-effort: remove the claim embed we left behind.
             if old_ch_id and old_msg_id:
@@ -242,6 +243,7 @@ class SettingsCog(commands.Cog):
             # New channel — the old claim message (if any) no longer counts.
             cfg.pop("dailies_message_id", None)
             cfg.pop("dailies_reset_day", None)
+            cfg.pop("dailies_keep_ids", None)
             await save_guild_settings()
             await refresh_dailies_channel(self.bot, ctx.guild.id)
             await ctx.send(embed=emb(

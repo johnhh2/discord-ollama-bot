@@ -10,9 +10,12 @@ Cleanliness rules:
 - On boot (and whenever the setting is applied) the channel is purged of
   everything except the claim embed.
 - Any other message posted in the channel — user chatter, command invocations,
-  claim results, this bot's own sends — is deleted after 5 minutes.
+  claim results, this bot's own sends — is deleted after 5 minutes. Exception:
+  scratchoff wins of 10k+ (tracked in cfg["dailies_keep_ids"] by
+  play_scratchoffs) stay up until the reset.
 - At the 5am CT daily reset the claim embed is reposted, which clears all
-  claim reactions so players can click again. The repost doubles as a purge.
+  claim reactions so players can click again. The repost doubles as a purge
+  and drops the kept big wins along with everything else.
 """
 import asyncio
 import logging
@@ -24,7 +27,7 @@ from src.helpers import emb, C_GOLD, fetch_member
 from src.economy import _ct_today, next_daily_reset_ts
 from src.persistence import save_guild_settings
 from src.guild_config import get_guild_cfg
-from src.gambling.scratchoff import play_scratchoffs
+from src.gambling.scratchoff import play_scratchoffs, DAILIES_KEEP_WIN_MIN
 from src.artifacts import scratchoff_daily_cap
 from src.events import _auto_daily
 from src import state
@@ -36,21 +39,25 @@ DAILIES_TITLE = "🪙 Claim your dailies"
 DAILIES_MESSAGE_TTL = 300.0
 
 
-async def _delete_unless_claim(message: discord.Message, delay: float):
+async def _delete_unless_kept(message: discord.Message, delay: float):
     """Delete `message` after `delay` — unless it turns out to be the claim
-    embed.
+    embed or a kept big-win scratchoff result (dailies_keep_ids).
 
-    The claim check runs at deletion time, not schedule time: the gateway can
-    deliver MESSAGE_CREATE for a freshly posted claim embed before
-    refresh_dailies_channel has recorded its id (the send/add_reaction HTTP
-    round-trips interleave with the dispatch), so an up-front id check races
-    and schedules the embed itself for deletion. By the time the TTL expires
-    the config has long settled, so re-checking here is authoritative.
+    The exemption checks run at deletion time, not schedule time: the gateway
+    can deliver MESSAGE_CREATE for a freshly posted claim embed (or a big-win
+    result) before refresh_dailies_channel / play_scratchoffs has recorded its
+    id (the send HTTP round-trips interleave with the dispatch), so an
+    up-front id check races and schedules the message itself for deletion. By
+    the time the TTL expires the config has long settled, so re-checking here
+    is authoritative.
     """
     await asyncio.sleep(delay)
     cfg = state.guild_settings.get(str(message.guild.id))
-    if cfg and message.id == cfg.get("dailies_message_id"):
-        return
+    if cfg:
+        if message.id == cfg.get("dailies_message_id"):
+            return
+        if message.id in cfg.get("dailies_keep_ids", []):
+            return
     try:
         await message.delete()
     except (discord.NotFound, discord.Forbidden):
@@ -61,7 +68,9 @@ def _dailies_body() -> str:
     return (
         f"React with {DAILIES_EMOJI} below to claim your daily reward and "
         "instantly use all of your daily scratchoffs.\n\n"
-        "Results (and any other messages here) are cleared after 5 minutes.\n"
+        "Results (and any other messages here) are cleared after 5 minutes — "
+        f"except scratchoff wins of {DAILIES_KEEP_WIN_MIN:,} 🪙 or more, "
+        "which are kept until the dailies reset.\n"
         f"Dailies reset <t:{next_daily_reset_ts()}:R>."
     )
 
@@ -95,11 +104,17 @@ async def refresh_dailies_channel(bot, guild_id: int):
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             claim_msg = None
 
-    # Purge everything except the claim embed we're keeping. A stale/missing
-    # claim embed (keep_id None) means the whole channel is cleared.
-    keep_id = claim_msg.id if claim_msg is not None else None
+    # Purge everything except the claim embed we're keeping and any big-win
+    # results pinned until the reset. A stale/missing claim embed means a new
+    # gameplay-day (or a lost embed): clear the whole channel, kept wins
+    # included, and drop their ids.
+    if claim_msg is not None:
+        keep_ids = {claim_msg.id, *cfg.get("dailies_keep_ids", [])}
+    else:
+        keep_ids = set()
+        cfg.pop("dailies_keep_ids", None)
     try:
-        await channel.purge(limit=None, check=lambda m: m.id != keep_id, bulk=True)
+        await channel.purge(limit=None, check=lambda m: m.id not in keep_ids, bulk=True)
     except (discord.Forbidden, discord.HTTPException):
         logging.warning("[dailies] guild=%s purge failed (missing Manage Messages?)", guild_id)
 
@@ -219,9 +234,9 @@ class DailiesCog(commands.Cog):
     async def on_message(self, message: discord.Message):
         """Schedule deletion of every non-claim message in a dailies channel —
         claim results, normal user chatter, command replies, and this bot's
-        own sends alike. The claim embed is exempted inside
-        _delete_unless_claim at deletion time; the id check here is only a
-        fast path and can be stale for a just-reposted embed."""
+        own sends alike. The claim embed and kept big-win results are exempted
+        inside _delete_unless_kept at deletion time; the id check here is only
+        a fast path and can be stale for a just-reposted embed."""
         if message.guild is None:
             return
         cfg = state.guild_settings.get(str(message.guild.id))
@@ -229,7 +244,7 @@ class DailiesCog(commands.Cog):
             return
         if message.id == cfg.get("dailies_message_id"):
             return
-        asyncio.create_task(_delete_unless_claim(message, DAILIES_MESSAGE_TTL))
+        asyncio.create_task(_delete_unless_kept(message, DAILIES_MESSAGE_TTL))
 
 
 async def setup(bot):
