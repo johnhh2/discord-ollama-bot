@@ -106,3 +106,44 @@ async def prune_mc_daily_player_stats(before_date_iso: str):
             "DELETE FROM mc_daily_player_stats WHERE stat_date < %s",
             (before_date_iso,),
         )
+
+
+# ── Daily ping rollup (migration 0042) ───────────────────────────────────────
+# One row per completed CT day: avg/min/max over that day's monitor polls,
+# downtime counted as 0. Written by the monitor's hourly rollup; kept ~10
+# years so the ping history outlives the 7-day sample table.
+
+
+async def save_mc_daily_ping_stats(
+    date_iso: str, avg_ping: float, min_ping: float, max_ping: float,
+):
+    async with with_cursor() as cur:
+        await cur.execute(
+            "INSERT INTO mc_daily_ping_stats"
+            " (stat_date, avg_ping, min_ping, max_ping) VALUES (%s,%s,%s,%s)"
+            " ON DUPLICATE KEY UPDATE avg_ping=VALUES(avg_ping),"
+            " min_ping=VALUES(min_ping), max_ping=VALUES(max_ping)",
+            (date_iso, avg_ping, min_ping, max_ping),
+        )
+
+
+async def load_mc_daily_ping_stats(
+    since_date_iso: str,
+) -> "list[tuple[str, float, float, float]]":
+    """Rows of (date_iso, avg_ping, min_ping, max_ping), oldest first."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT stat_date, avg_ping, min_ping, max_ping"
+            " FROM mc_daily_ping_stats WHERE stat_date >= %s ORDER BY stat_date",
+            (since_date_iso,),
+        )
+        rows = await cur.fetchall()
+    return [(row[0], row[1], row[2], row[3]) for row in rows]
+
+
+async def prune_mc_daily_ping_stats(before_date_iso: str):
+    async with with_cursor() as cur:
+        await cur.execute(
+            "DELETE FROM mc_daily_ping_stats WHERE stat_date < %s",
+            (before_date_iso,),
+        )

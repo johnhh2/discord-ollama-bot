@@ -70,6 +70,7 @@ _TABLE_PKS = {
     "mc_ping_samples": ("ts",),
     "mc_player_events": ("ts",),
     "mc_daily_player_stats": ("stat_date",),
+    "mc_daily_ping_stats": ("stat_date",),
     "daily_counters": ("day", "counter"),
 }
 

@@ -144,6 +144,7 @@ def reset_bot_state(monkeypatch):
         "save_mc_ping_sample", "prune_mc_ping_samples",
         "record_mc_player_event", "prune_mc_player_events",
         "upsert_mc_daily_player_stats", "prune_mc_daily_player_stats",
+        "save_mc_daily_ping_stats", "prune_mc_daily_ping_stats",
         "bump_daily_counter", "prune_daily_counters",
     ]
     for fn_name in save_fn_names:
@@ -151,6 +152,14 @@ def reset_bot_state(monkeypatch):
             monkeypatch.setattr(_persistence, fn_name, _noop)
 
     monkeypatch.setattr(_persistence, "try_set_record", _noop_bool)
+
+    # Loads the Minecraft monitor's hourly rollup reads inside the poll loop —
+    # stubbed to empty rows so ticking the monitor in non-db tests never
+    # touches a real pool. Restored by the `db` fixture via originals.
+    async def _empty_rows(*args, **kwargs):
+        return []
+    monkeypatch.setattr(_persistence, "load_mc_ping_samples", _empty_rows)
+    monkeypatch.setattr(_persistence, "load_mc_daily_ping_stats", _empty_rows)
 
     # Also stub save_economy and save_insurance in src.economy (which imports them directly)
     monkeypatch.setattr(_economy, "save_economy", _noop)

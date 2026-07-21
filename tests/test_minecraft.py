@@ -466,7 +466,8 @@ async def test_monitor_publishes_state_sample(monkeypatch):
     assert _state.mc_last_ping_ms is None
 
 
-def _patch_graph_loads(monkeypatch, history=None, samples=None, daily=None):
+def _patch_graph_loads(monkeypatch, history=None, samples=None, daily=None,
+                       daily_ping=None):
     from src import graph_series
 
     async def _fake_history():
@@ -477,19 +478,25 @@ def _patch_graph_loads(monkeypatch, history=None, samples=None, daily=None):
 
     async def _fake_daily(since_date_iso):
         return daily or []
+
+    async def _fake_daily_ping(since_date_iso):
+        return daily_ping or []
     monkeypatch.setattr(graph_series, "load_bot_stats_history", _fake_history)
     monkeypatch.setattr(graph_series, "load_mc_ping_samples", _fake_samples)
     monkeypatch.setattr(graph_series, "load_mc_daily_player_stats", _fake_daily)
+    monkeypatch.setattr(graph_series, "load_mc_daily_ping_stats", _fake_daily_ping)
     return graph_series
 
 
-async def test_build_series_minecraft_points(monkeypatch):
+async def test_build_series_minecraft_ignores_bucket_history(monkeypatch):
+    """The coarse 6h bot_stats_history snapshots are single instantaneous
+    pings, not averages — they made the older end of the chart look wrong,
+    so they're excluded from the line entirely. With no samples and no live
+    state, the line is empty even when bucket rows exist."""
     history = {
         "2026-07-01": {
             0: {"mc_up": True, "mc_ping_ms": 40.0},
-            1: {"mc_up": False, "mc_ping_ms": None},   # downtime → 0
-            2: {},                                     # predates mc_* keys → skipped
-            3: {"mc_up": None, "mc_ping_ms": None},    # unknown → skipped
+            1: {"mc_up": False, "mc_ping_ms": None},
         },
     }
     graph_series = _patch_graph_loads(monkeypatch, history=history)
@@ -497,11 +504,8 @@ async def test_build_series_minecraft_points(monkeypatch):
 
     data = await graph_series.build_series_minecraft()
 
-    assert len(data.x_points) == 2
-    assert data.segments[0].y_values == [40.0, 0.0]
-    # Bucket snapshots are single measurements → collapsed band.
-    assert data.segments[0].band_lower == [40.0, 0.0]
-    assert data.segments[0].band_upper == [40.0, 0.0]
+    assert data.x_points == []
+    assert data.segments[0].y_values == []
     assert data.native_style == "line"
 
 
@@ -519,9 +523,9 @@ async def test_build_series_minecraft_live_point(monkeypatch):
     assert data.segments[0].y_values == [0.0]
 
 
-async def test_build_series_minecraft_merges_buckets_and_samples(monkeypatch):
+async def test_build_series_minecraft_samples_only_despite_history(monkeypatch):
     import datetime as _dt
-    from src.graph_series import MC_BIN_SECONDS, _bucket_start_dt
+    from src.graph_series import MC_BIN_SECONDS
 
     now = int(time.time())
     # Pin all three polls inside a single hourly bin so aggregation is
@@ -532,30 +536,27 @@ async def test_build_series_minecraft_merges_buckets_and_samples(monkeypatch):
         (bin_start + 120, False, None),      # down poll → 0
         (bin_start + 180, True, 44.0),
     ]
+    # Bucket rows both older and newer than the samples — neither may plot.
     first_sample_dt = _dt.datetime.fromtimestamp(bin_start + 60, tz=_dt.timezone.utc)
-    # One bucket safely older than the samples, one inside their coverage.
     old_day = (first_sample_dt - _dt.timedelta(days=3)).date().isoformat()
     new_day = (first_sample_dt + _dt.timedelta(days=1)).date().isoformat()
     history = {
         old_day: {0: {"mc_up": True, "mc_ping_ms": 40.0}},
-        new_day: {3: {"mc_up": True, "mc_ping_ms": 99.0}},   # covered → dropped
+        new_day: {3: {"mc_up": True, "mc_ping_ms": 99.0}},
     }
-    assert _bucket_start_dt(new_day, 3) >= first_sample_dt
 
     graph_series = _patch_graph_loads(monkeypatch, history=history, samples=samples)
     data = await graph_series.build_series_minecraft()
 
-    # 1 old bucket point + the 3 polls aggregated into 1 hourly bin;
-    # the covered bucket is gone.
+    # Just the 3 polls aggregated into 1 hourly bin — no bucket points.
     seg = data.segments[0]
-    assert seg.y_values == [40.0, pytest.approx((42.0 + 0.0 + 44.0) / 3)]
-    assert seg.band_lower == [40.0, 0.0]
-    assert seg.band_upper == [40.0, 44.0]
+    assert seg.y_values == [pytest.approx((42.0 + 0.0 + 44.0) / 3)]
+    assert seg.band_lower == [0.0]
+    assert seg.band_upper == [44.0]
     # Aggregated point sits at the bin's mean sample timestamp.
-    assert data.x_points[1] == _dt.datetime.fromtimestamp(
+    assert data.x_points == [_dt.datetime.fromtimestamp(
         bin_start + 120, tz=_dt.timezone.utc
-    )
-    assert data.x_points == sorted(data.x_points)
+    )]
 
 
 async def test_build_series_minecraft_bins_hourly(monkeypatch):
@@ -818,6 +819,126 @@ async def test_monitor_offline_poll_accrues_nothing(monkeypatch):
     # The offline tick reset the accrual window, so recovery credits only
     # the time since that tick — not the whole outage.
     assert dailies[0] == pytest.approx(0.0, abs=2 * 2.0)
+
+
+async def test_mc_daily_ping_stats_roundtrip(db):
+    from src.persistence import (
+        save_mc_daily_ping_stats, load_mc_daily_ping_stats,
+        prune_mc_daily_ping_stats,
+    )
+    await save_mc_daily_ping_stats("2026-07-18", 45.0, 30.0, 80.0)
+    await save_mc_daily_ping_stats("2026-07-19", 50.0, 0.0, 90.0)
+    await save_mc_daily_ping_stats("2026-07-18", 46.0, 31.0, 81.0)  # overwrite
+
+    rows = await load_mc_daily_ping_stats("2026-07-01")
+    assert rows == [("2026-07-18", 46.0, 31.0, 81.0),
+                    ("2026-07-19", 50.0, 0.0, 90.0)]
+    assert await load_mc_daily_ping_stats("2026-07-19") == rows[1:]
+
+    await prune_mc_daily_ping_stats("2026-07-19")
+    assert await load_mc_daily_ping_stats("2026-07-01") == rows[1:]
+
+
+async def test_rollup_daily_ping_backfills_completed_days(monkeypatch):
+    """Completed CT days get one avg/min/max row each (downtime polls count
+    as 0); the ongoing day and already-rolled-up days are skipped."""
+    now = time.time()
+    day_a_ts = now - 50 * 3600      # two CT days back (day length ≤ 25h)
+    day_b_ts = now - 26 * 3600      # previous CT day
+    day_a = mc_mod._ct_date_iso(day_a_ts)
+    day_b = mc_mod._ct_date_iso(day_b_ts)
+    today = mc_mod._ct_date_iso(now)
+    assert len({day_a, day_b, today}) == 3
+
+    rows = [
+        (int(day_a_ts), True, 40.0),
+        (int(day_b_ts), True, 40.0),
+        (int(day_b_ts) + 60, False, None),   # downtime → 0
+        (int(day_b_ts) + 120, True, 80.0),
+        (int(now), True, 999.0),             # ongoing day → skipped
+    ]
+
+    async def _fake_load_samples(since_ts):
+        return rows
+
+    async def _fake_load_daily(since_date_iso):
+        return [(day_a, 40.0, 40.0, 40.0)]   # day_a already rolled up
+
+    saved = []
+
+    async def _spy_save(date_iso, avg, lo, hi):
+        saved.append((date_iso, avg, lo, hi))
+    monkeypatch.setattr(_persistence, "load_mc_ping_samples", _fake_load_samples)
+    monkeypatch.setattr(_persistence, "load_mc_daily_ping_stats", _fake_load_daily)
+    monkeypatch.setattr(_persistence, "save_mc_daily_ping_stats", _spy_save)
+
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+    await cog._rollup_daily_ping(now)
+
+    assert saved == [(day_b, pytest.approx((40.0 + 0.0 + 80.0) / 3), 0.0, 80.0)]
+
+
+async def test_prune_tick_runs_ping_rollup(monkeypatch):
+    """The hourly prune tick drives the rollup (first tick after boot too)."""
+    calls = []
+
+    async def _spy_rollup(now):
+        calls.append(now)
+
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+    monkeypatch.setattr(cog, "_rollup_daily_ping", _spy_rollup)
+
+    async def _fake_fetch():
+        return _status()
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
+    await _tick(cog)          # _ticks_until_prune starts at 0 → prune branch
+    assert len(calls) == 1
+    await _tick(cog)          # within the hour → no rollup
+    assert len(calls) == 1
+
+
+async def test_build_series_minecraft_daily_ping_tail_no_intersection(monkeypatch):
+    """Rollup days strictly before the first sample's CT day extend the
+    line; rollup rows on/after that day are dropped — the fine-grained
+    samples own that span."""
+    import datetime as _dt
+    from src.graph_series import MC_BIN_SECONDS, _bucket_start_dt, _ct_date_of_ts
+
+    now = int(time.time())
+    bin_start = (now // MC_BIN_SECONDS) * MC_BIN_SECONDS
+    samples = [(bin_start + 60, True, 42.0), (bin_start + 120, True, 44.0)]
+    first_day = _ct_date_of_ts(bin_start + 60)
+    old_day = (_dt.date.fromisoformat(first_day) - _dt.timedelta(days=3)).isoformat()
+    daily_ping = [
+        (old_day, 45.0, 0.0, 90.0),      # before the sample window → plotted
+        (first_day, 50.0, 40.0, 60.0),   # intersects the samples → dropped
+    ]
+
+    graph_series = _patch_graph_loads(monkeypatch, samples=samples,
+                                      daily_ping=daily_ping)
+    data = await graph_series.build_series_minecraft()
+
+    seg = data.segments[0]
+    assert data.x_points[0] == _bucket_start_dt(old_day, 2)
+    assert seg.y_values == [45.0, 43.0]
+    assert seg.band_lower == [0.0, 42.0]
+    assert seg.band_upper == [90.0, 44.0]
+    assert data.x_points == sorted(data.x_points)
+
+
+async def test_build_series_minecraft_daily_ping_only(monkeypatch):
+    """With no samples at all (fresh boot after long downtime), the rollup
+    days still draw the line."""
+    daily_ping = [("2026-07-10", 45.0, 30.0, 60.0), ("2026-07-11", 50.0, 0.0, 90.0)]
+    graph_series = _patch_graph_loads(monkeypatch, daily_ping=daily_ping)
+    monkeypatch.setattr(_state, "mc_last_online", None)
+
+    data = await graph_series.build_series_minecraft()
+
+    assert data.segments[0].y_values == [45.0, 50.0]
+    assert data.segments[0].band_lower == [30.0, 0.0]
+    assert data.segments[0].band_upper == [60.0, 90.0]
 
 
 async def test_build_series_minecraft_daily_extras(monkeypatch):

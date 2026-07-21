@@ -46,10 +46,11 @@ MC_UPTIME_WINDOW_SECS = 7 * 86_400
 MC_AVG_PING_WINDOW_SECS = 3_600
 # Prune the persisted samples once an hour rather than on every poll.
 MC_PRUNE_EVERY_TICKS = 3_600 // max(MC_POLL_SECONDS, 1)
-# Retention for the player-tracking tables (mc_player_events /
-# mc_daily_player_stats, migration 0041) — ~10 years, matching
-# GRAPH_HISTORY_RETENTION_DAYS in src/economy.py.
-MC_PLAYER_STATS_RETENTION_DAYS = 3650
+# Retention for the long-term stats tables (mc_player_events /
+# mc_daily_player_stats, migration 0041; mc_daily_ping_stats, migration
+# 0042) — ~10 years, matching GRAPH_HISTORY_RETENTION_DAYS in
+# src/economy.py.
+MC_STATS_RETENTION_DAYS = 3650
 # Cap the per-poll playtime accrual so a long bot outage doesn't credit the
 # whole gap to whoever happens to be online at the next poll.
 MC_PLAYTIME_MAX_GAP_SECS = 3 * MC_POLL_SECONDS
@@ -285,10 +286,13 @@ class MinecraftCog(commands.Cog):
                 int(sample.ts), sample.online, sample.latency_ms)
             if self._ticks_until_prune <= 0:
                 self._ticks_until_prune = MC_PRUNE_EVERY_TICKS
+                await self._rollup_daily_ping(now)
                 await persistence.prune_mc_ping_samples(int(cutoff))
-                retention_cutoff = now - MC_PLAYER_STATS_RETENTION_DAYS * 86_400
+                retention_cutoff = now - MC_STATS_RETENTION_DAYS * 86_400
                 await persistence.prune_mc_player_events(int(retention_cutoff))
                 await persistence.prune_mc_daily_player_stats(
+                    _ct_date_iso(retention_cutoff))
+                await persistence.prune_mc_daily_ping_stats(
                     _ct_date_iso(retention_cutoff))
             self._ticks_until_prune -= 1
         except Exception:
@@ -317,6 +321,40 @@ class MinecraftCog(commands.Cog):
 
         if events:
             await self._announce(self._event_payloads(events, prev, status))
+
+    async def _rollup_daily_ping(self, now: float):
+        """Fold completed CT days of mc_ping_samples into mc_daily_ping_stats
+        (avg/min/max, downtime counted as 0 — the graph line's semantics).
+
+        Runs on the hourly prune tick, before samples are pruned. Skips the
+        ongoing day (still accumulating) and days that already have a row —
+        a finished row is never recomputed, so later sample pruning can't
+        degrade it. Because every completed day still inside the 7-day
+        sample window is (re)considered, days missed during bot downtime
+        backfill automatically.
+        """
+        today = _ct_date_iso(now)
+        samples = await persistence.load_mc_ping_samples(
+            int(now - MC_UPTIME_WINDOW_SECS))
+        by_day: dict[str, list[float]] = {}
+        for ts, online, latency in samples:
+            day = _ct_date_iso(ts)
+            if day >= today:
+                continue
+            by_day.setdefault(day, []).append(
+                float(latency) if (online and latency) else 0.0)
+        if not by_day:
+            return
+        done = {
+            row[0]
+            for row in await persistence.load_mc_daily_ping_stats(min(by_day))
+        }
+        for day in sorted(by_day):
+            if day in done:
+                continue
+            ys = by_day[day]
+            await persistence.save_mc_daily_ping_stats(
+                day, sum(ys) / len(ys), min(ys), max(ys))
 
     async def _track_player_stats(self, prev: MonitorState,
                                   status: "McStatus | None", now: float):

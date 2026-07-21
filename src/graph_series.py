@@ -39,7 +39,7 @@ from src.helpers import get_memory_mb
 from src.persistence import (
     load_balance_history, load_bot_stats_history, load_command_usage_history,
     load_crime_history, load_gambling_history, load_levelup_history,
-    load_mc_ping_samples, load_mc_daily_player_stats,
+    load_mc_ping_samples, load_mc_daily_player_stats, load_mc_daily_ping_stats,
 )
 
 
@@ -148,6 +148,15 @@ def _ct_now_iso_date() -> str:
     """
     from src.economy import _ct_now
     return _ct_now().date().isoformat()
+
+
+def _ct_date_of_ts(ts: float) -> str:
+    """CT calendar date (ISO) of a Unix timestamp — the day key used by the
+    Minecraft daily rollup tables."""
+    from zoneinfo import ZoneInfo
+    return datetime.datetime.fromtimestamp(
+        ts, tz=datetime.timezone.utc
+    ).astimezone(ZoneInfo("America/Chicago")).date().isoformat()
 
 
 # ── build_series for each registered command ─────────────────────────────────
@@ -515,31 +524,26 @@ MC_BIN_SECONDS = 3600  # aggregation window for per-poll samples: 1 hour
 
 
 async def build_series_minecraft() -> SeriesData:
-    """Minecraft server ping in ms: hourly average line with a faded
-    min/max band, downtime counted as 0 so outages drag the band (and
-    average) visibly toward the floor.
+    """Minecraft server ping in ms: averaged line with a faded min/max
+    band, downtime counted as 0 so outages drag the band (and average)
+    visibly toward the floor.
 
-    Two resolutions merged into one line: persisted monitor polls
-    (mc_ping_samples, ~60s cadence, last 7 days) aggregated into
-    MC_BIN_SECONDS bins for the recent span, and the coarse per-(date,
-    bucket) snapshots from bot_stats_history for the older tail the sample
-    table has already pruned. Bucket points inside the samples' coverage
-    are dropped — the samples are strictly better. Single-snapshot points
-    (buckets, live) get a collapsed band (min = max = avg).
-
-    Bucket states: up (point at the measured ping), down (point at 0), and
-    unknown (skipped: feature disabled, bot offline, or rows predating the
-    mc_* snapshot keys).
+    Two properly-aggregated resolutions, never overlapping: the persisted
+    monitor polls (mc_ping_samples, ~60s cadence, last 7 days) binned
+    hourly for the recent span, and the daily avg/min/max rollup
+    (mc_daily_ping_stats, migration 0042) for completed days strictly
+    before the sample window's first CT day. Where both tables cover a
+    day, the fine-grained samples win. The coarse per-(date, bucket)
+    mc_up/mc_ping_ms snapshots in bot_stats_history are deliberately NOT
+    plotted: each is a single instantaneous ping, not an average, and made
+    the older tail read as wrong next to aggregated data.
     """
     samples = await load_mc_ping_samples(int(_time.time() - 7 * 86_400))
     raw = [
         (ts, float(latency) if (online and latency) else 0.0)
         for ts, online, latency in samples
     ]
-    first_sample_dt = (
-        datetime.datetime.fromtimestamp(raw[0][0], tz=datetime.timezone.utc)
-        if raw else None
-    )
+    first_sample_day = _ct_date_of_ts(raw[0][0]) if raw else None
 
     # Aggregate polls into fixed bins: avg/min/max per bin, plotted at the
     # mean timestamp of the bin's samples (keeps the newest partial bin's
@@ -557,7 +561,6 @@ async def build_series_minecraft() -> SeriesData:
             sum(ys) / len(ys), min(ys), max(ys),
         ))
 
-    history = await load_bot_stats_history()
     x_points: list[datetime.datetime] = []
     y_avg: list[float] = []
     y_min: list[float] = []
@@ -569,15 +572,15 @@ async def build_series_minecraft() -> SeriesData:
         y_min.append(lo)
         y_max.append(hi)
 
-    for point_dt, snap in _iter_points(history):
-        if first_sample_dt is not None and point_dt >= first_sample_dt:
+    # Older tail from the daily rollup, one point per completed day at CT
+    # noon. Days on/after the first sample's CT day are excluded so the two
+    # resolutions never intersect — the samples cover those (even partially,
+    # e.g. after bot downtime truncated the window).
+    since = (_calendar_today_date() - datetime.timedelta(days=13)).isoformat()
+    for day, avg, lo, hi in await load_mc_daily_ping_stats(since):
+        if first_sample_day is not None and day >= first_sample_day:
             continue
-        up = snap.get("mc_up")
-        ping = snap.get("mc_ping_ms")
-        if up and ping is not None and ping > 0:
-            _append(point_dt, float(ping), float(ping), float(ping))
-        elif up is False:
-            _append(point_dt, 0.0, 0.0, 0.0)
+        _append(_bucket_start_dt(day, 2), float(avg), float(lo), float(hi))
 
     for point_dt, avg, lo, hi in sample_points:
         _append(point_dt, avg, lo, hi)
@@ -593,10 +596,9 @@ async def build_series_minecraft() -> SeriesData:
 
     # Daily player rollup (migration 0041) for the bar overlay: peak
     # concurrent players, cumulative joins, and player-hours per CT calendar
-    # day, spanning the same ~2-week window as the ping data. Today's row is
-    # already live — the monitor upserts it every poll. Bars sit at CT noon
-    # (bucket 2's start) so each one is centred in its day.
-    since = (_calendar_today_date() - datetime.timedelta(days=13)).isoformat()
+    # day, over the same 2-week window as the line. Today's row is already
+    # live — the monitor upserts it every poll. Bars sit at CT noon (bucket
+    # 2's start) so each one is centred in its day.
     daily_rows = await load_mc_daily_player_stats(since)
     extras = {}
     if daily_rows:

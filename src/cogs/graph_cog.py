@@ -163,7 +163,7 @@ class GraphCog(commands.Cog):
             "`!graph server` — Daily message and command counts over the last 2 weeks",
             "`!graph memory` — Bot memory usage (MB) over the last 2 weeks",
             "`!graph ping` — Discord gateway ping (ms) over the last 2 weeks",
-            "`!graph minecraft` — Minecraft ping (hourly avg + min/max band, 0 = downtime) with daily bars for peak players, joins, and player-hours",
+            "`!graph minecraft` — Minecraft ping over 2 weeks (hourly avg for the last 7 days, daily avg beyond, min/max band, 0 = downtime) with daily bars for peak players, joins, and player-hours",
             "`!graph ai` — Daily AI response count and uptime over the last 2 weeks",
         ]
         if is_admin(ctx):
