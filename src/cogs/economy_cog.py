@@ -1436,7 +1436,7 @@ class EconomyCog(commands.Cog):
         )
         await send_ephemeral(ctx, embed=emb("📊 Economy", stats, C_GOLD))
 
-    @commands.command(name="pay", aliases=["give", "gift", "donate"])
+    @commands.command(name="pay", aliases=["give", "gift", "donate", "tip", "send"])
     async def cmd_pay(self, ctx: commands.Context, recipient: OptionalMember = None, amount: str = None):
         if recipient is None or amount is None:
             await ctx.send("Usage: `!pay @user <amount>`")

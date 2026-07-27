@@ -492,7 +492,7 @@ class FunCog(commands.Cog):
             await ctx.send(embed=emb("🐱 Cat", f"Failed to fetch: {e}", C_RED))
 
 
-    @commands.command(name="tip", aliases=["tips"])
+    @commands.command(name="tips")
     async def cmd_tip(self, ctx: commands.Context):
         tip = _next_tip()
         if tip is None:

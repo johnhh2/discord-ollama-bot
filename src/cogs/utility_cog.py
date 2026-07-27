@@ -194,7 +194,7 @@ class UtilityCog(commands.Cog):
         ]
         if MC_SERVER_HOST:
             fun_lines.append("`!minecraft` — Minecraft server status (players, ping)")
-        fun_lines.append("`!tip` — Show a random tip about hidden commands")
+        fun_lines.append("`!tips` — Show a random tip about hidden commands")
         help_embed.add_field(name="🎉 Fun", inline=False, value="\n".join(fun_lines))
         utility_val = (
             "`!stats` — Show bot statistics\n"

@@ -52,7 +52,7 @@
   "mug":           {"tier": "everyone",    "hidden": false},
   "jailbreak":     {"tier": "everyone",    "hidden": false},
   "bail":          {"tier": "everyone",    "hidden": false},
-  "tip":           {"tier": "everyone",    "hidden": false},
+  "tips":          {"tier": "everyone",    "hidden": false},
   "recap":         {"tier": "everyone",    "hidden": false},
   "subscribe":     {"tier": "everyone",    "hidden": false},
   "subscribe ignore": {"tier": "everyone", "hidden": false},
