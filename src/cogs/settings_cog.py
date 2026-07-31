@@ -8,7 +8,7 @@ from src.helpers import (
 )
 from src.economy import (
     drain_bot_balance_into_lottery, announce_new_lottery,
-    _ct_now, lottery_week_key,
+    _ct_now, lottery_month_key,
 )
 from src.permissions import (
     requires_perm, is_admin,
@@ -869,10 +869,10 @@ class SettingsCog(commands.Cog):
             cfg["lottery_channel"] = channel.id
             await save_guild_settings()
 
-            current_week = lottery_week_key(_ct_now())
+            current_month = lottery_month_key(_ct_now())
             lottery = await load_lottery(ctx.guild.id)
-            if lottery.get("last_posted_week", 0) != current_week:
-                lottery = {"prize_pool": 2000, "players": {}, "last_posted_week": current_week}
+            if lottery.get("last_posted_week", 0) != current_month:
+                lottery = {"prize_pool": 5000, "players": {}, "last_posted_week": current_month}
                 await drain_bot_balance_into_lottery(lottery, ctx.guild.id)
                 await save_lottery(ctx.guild.id, lottery)
                 try:

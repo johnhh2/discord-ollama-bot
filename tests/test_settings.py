@@ -10,7 +10,7 @@ shape: parse args → mutate cfg dict → save_guild_settings() → embed):
 - shop on/off (toggles dict entry)
 - ai (list mutation, accepts mentions or `clear`) — under !settings-channel
 - blacklist (list mutation read by on_message) — under !settings-channel
-- lottery (sets/clears, plus the new-week reset side effect) — under !settings-channel
+- lottery (sets/clears, plus the new-month reset side effect) — under !settings-channel
 - nsfw on/off (flag toggle)
 """
 import json
@@ -182,7 +182,7 @@ async def test_lottery_channel_set_persists_and_seeds_lottery(db, monkeypatch):
 
     # And a lottery row was seeded for this guild.
     lot = await _persistence.load_lottery(99)
-    assert lot["prize_pool"] == 2000
+    assert lot["prize_pool"] == 5000
 
 
 async def test_lottery_channel_clear_disables(db):

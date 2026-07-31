@@ -63,7 +63,7 @@ PvP works too, with SAN/UCI move input, board rendering, threat analysis (`!ches
 
 ### 🎰 Economy & casino
 - `!daily` rewards with streaks (5am CT reset, DST-aware), `!savings` with compounding interest, `!pay`, `!graph` for balance history
-- `!slots` with a progressive jackpot, `!blackjack`, `!flip`, `!scratchoff`, and a weekly `!lottery` with scheduled draws
+- `!slots` with a progressive jackpot, `!blackjack`, `!flip`, `!scratchoff`, and a monthly `!lottery` drawn on the 1st of each month at 6pm CT
 - Crime layer: `!steal`, `!mug`, `!bankheist` co-op heists, `!jail` / `!bail` / `!jailbreak`, and purchasable insurance
 - `!bounty <coins> [duration] <condition>` — escrowed rewards anyone can claim, with author accept/reject via DM and a community-vote contest path
 - `!leaderboard`, `!records`, `!economy` server overview

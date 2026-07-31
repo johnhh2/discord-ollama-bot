@@ -373,12 +373,12 @@ def _ct(year, month, day, hour, minute=0):
 
 
 def _should_draw(lottery: dict, now_ct: datetime.datetime) -> bool:
-    """Mirror the gate logic in lottery_scheduler / on_ready."""
-    from src.economy import lottery_week_key
-    is_saturday = now_ct.weekday() == 5
-    is_6pm = now_ct.hour == 18 and now_ct.minute == 0
-    current_week = lottery_week_key(now_ct)
-    return is_saturday and is_6pm and current_week != lottery.get("last_posted_week", 0)
+    """Mirror the draw gate logic in lottery_scheduler."""
+    from src.economy import lottery_month_key
+    if now_ct.day != 1:
+        return False
+    current_month = lottery_month_key(now_ct)
+    return now_ct.hour >= 18 and current_month != lottery.get("last_drawn_week", 0)
 
 
 GUILD_ID = 111222333
@@ -490,58 +490,68 @@ class TestLotteryTicketPurchase:
         assert lottery["prize_pool"] == 1070
 
 
-class TestLotteryWeekTiming:
+class TestLotteryMonthTiming:
     """Test the draw-trigger gate logic using _should_draw."""
 
-    def _lottery(self, last_posted_week=0):
-        return {"prize_pool": 5000, "players": {"9": 3}, "last_posted_week": last_posted_week}
+    def _lottery(self, last_drawn_week=0):
+        return {"prize_pool": 5000, "players": {"9": 3}, "last_drawn_week": last_drawn_week}
 
-    def test_saturday_6pm_cdt_triggers(self):
-        # June 7 2025 is a Saturday; Chicago is in CDT (UTC-5)
-        now = _ct(2025, 6, 7, 18, 0)
+    def test_first_of_month_6pm_cdt_triggers(self):
+        # Jun 1 2025; Chicago is in CDT (UTC-5)
+        now = _ct(2025, 6, 1, 18, 0)
         assert _should_draw(self._lottery(), now) is True
 
-    def test_saturday_6pm_cst_triggers(self):
-        # Jan 4 2025 is a Saturday; Chicago is in CST (UTC-6)
-        now = _ct(2025, 1, 4, 18, 0)
+    def test_first_of_month_6pm_cst_triggers(self):
+        # Feb 1 2025; Chicago is in CST (UTC-6)
+        now = _ct(2025, 2, 1, 18, 0)
         assert _should_draw(self._lottery(), now) is True
 
-    def test_saturday_before_6pm_does_not_trigger(self):
-        now = _ct(2025, 6, 7, 17, 59)
+    def test_first_of_month_before_6pm_does_not_trigger(self):
+        now = _ct(2025, 6, 1, 17, 59)
         assert _should_draw(self._lottery(), now) is False
 
-    def test_saturday_after_6pm_does_not_trigger(self):
-        now = _ct(2025, 6, 7, 18, 1)
+    def test_late_tick_on_the_first_still_triggers(self):
+        # Bot hiccup at 6:00 sharp — a 6:01pm (or 11pm) tick on the 1st
+        # must still draw as long as this month hasn't been drawn yet.
+        now = _ct(2025, 6, 1, 18, 1)
+        assert _should_draw(self._lottery(), now) is True
+        assert _should_draw(self._lottery(), _ct(2025, 6, 1, 23, 0)) is True
+
+    def test_mid_month_does_not_trigger(self):
+        now = _ct(2025, 6, 15, 18, 0)
         assert _should_draw(self._lottery(), now) is False
 
-    def test_non_saturday_does_not_trigger(self):
-        # June 6 2025 is a Friday
-        now = _ct(2025, 6, 6, 18, 0)
-        assert _should_draw(self._lottery(), now) is False
+    def test_already_drawn_this_month_does_not_retrigger(self):
+        from src.economy import lottery_month_key
+        now = _ct(2025, 6, 1, 18, 0)
+        month = lottery_month_key(now)
+        assert _should_draw(self._lottery(last_drawn_week=month), now) is False
 
-    def test_already_posted_this_week_does_not_retrigger(self):
-        from src.economy import lottery_week_key
-        now = _ct(2025, 6, 7, 18, 0)
-        week = lottery_week_key(now)
-        assert _should_draw(self._lottery(last_posted_week=week), now) is False
-
-    def test_different_week_triggers_again(self):
-        # Last week's encoded key differs from this week's → should draw
-        from src.economy import lottery_week_key
-        now = _ct(2025, 6, 7, 18, 0)               # ISO week 23 of 2025
-        last_week_key = lottery_week_key(_ct(2025, 5, 31, 18, 0))  # week 22
-        assert _should_draw(self._lottery(last_posted_week=last_week_key), now) is True
+    def test_different_month_triggers_again(self):
+        from src.economy import lottery_month_key
+        now = _ct(2025, 6, 1, 18, 0)
+        last_month_key = lottery_month_key(_ct(2025, 5, 1, 18, 0))
+        assert _should_draw(self._lottery(last_drawn_week=last_month_key), now) is True
 
     def test_year_boundary_does_not_silently_skip(self):
-        """A year-old week 1 must not collide with the new year's week 1.
-        Previously last_drawn_week was a bare int 1..52 with no year, so a
-        year of uptime could suppress the draw. Encoding as YYYYWW fixes it.
+        """A year-old month key must not collide with the same month a year
+        later — the YYYYMM encoding qualifies the month with its year.
         """
-        from src.economy import lottery_week_key
-        # Saturday in ISO week 1 of 2027 is Jan 9 (Jan 2 is week 53 of 2026).
-        now = _ct(2027, 1, 9, 18, 0)
-        last_year_key = lottery_week_key(_ct(2026, 1, 3, 18, 0))  # week 1 of 2026
-        assert _should_draw(self._lottery(last_posted_week=last_year_key), now) is True
+        from src.economy import lottery_month_key
+        now = _ct(2027, 1, 1, 18, 0)
+        last_year_key = lottery_month_key(_ct(2026, 1, 1, 18, 0))
+        assert last_year_key != lottery_month_key(now)
+        assert _should_draw(self._lottery(last_drawn_week=last_year_key), now) is True
+
+    def test_legacy_weekly_key_does_not_suppress_first_monthly_draw(self):
+        """Migration transition (deployed 2026-07-31): the DB still holds a
+        YYYYWW week key from the weekly lottery. It must not equal the
+        YYYYMM key for Aug 2026, so the Aug 1 draw fires and pays out the
+        final weekly pot.
+        """
+        legacy_week_key = 202631  # ISO week 31 of 2026 (late July)
+        now = _ct(2026, 8, 1, 18, 0)
+        assert _should_draw(self._lottery(last_drawn_week=legacy_week_key), now) is True
 
 
 class TestLotteryWinnerPayout:
@@ -595,15 +605,15 @@ class TestAnnounceNewLotteryTimestamp:
 
     async def test_embed_title(self):
         embed = await self._send_and_capture(5000, _ct(2025, 6, 7, 18))
-        assert embed.title == "🎰 New Lottery Week"
+        assert embed.title == "🎰 New Monthly Lottery"
 
     async def test_prize_pool_in_description(self):
         embed = await self._send_and_capture(12345, _ct(2025, 6, 7, 18))
         assert "12,345" in embed.description
 
-    async def test_timestamp_points_to_next_saturday_cdt(self):
-        # Called on a Tuesday in June (CDT); next Saturday is Jun 14
-        now = _ct(2025, 6, 10, 12)  # Tuesday
+    async def test_timestamp_points_to_next_first_of_month_cdt(self):
+        # Called mid-June (CDT); next draw is Jul 1 at 6pm CT
+        now = _ct(2025, 6, 10, 12)
         embed = await self._send_and_capture(2000, now)
         # Extract Unix timestamp from <t:XXXXXX:R>
         import re
@@ -611,38 +621,46 @@ class TestAnnounceNewLotteryTimestamp:
         assert match, "No Discord timestamp found in description"
         ts = int(match.group(1))
         dt = datetime.datetime.fromtimestamp(ts, tz=_CT)
-        assert dt.weekday() == 5       # Saturday
+        assert dt.day == 1
         assert dt.hour == 18
         assert dt.minute == 0
         assert dt.year == 2025
-        assert dt.month == 6
-        assert dt.day == 14
+        assert dt.month == 7
 
-    async def test_timestamp_points_to_next_saturday_cst(self):
-        # Called on a Tuesday in January (CST); next Saturday is Jan 11
-        now = _ct(2025, 1, 7, 12)  # Tuesday
+    async def test_timestamp_points_to_next_first_of_month_cst(self):
+        # Called mid-January (CST); next draw is Feb 1 at 6pm CT
+        now = _ct(2025, 1, 7, 12)
         embed = await self._send_and_capture(2000, now)
         import re
         match = re.search(r"<t:(\d+):R>", embed.description)
         assert match
         ts = int(match.group(1))
         dt = datetime.datetime.fromtimestamp(ts, tz=_CT)
-        assert dt.weekday() == 5
+        assert dt.day == 1
         assert dt.hour == 18
-        assert dt.month == 1
-        assert dt.day == 11
+        assert dt.month == 2
 
-    async def test_called_on_saturday_points_to_following_saturday(self):
-        # If called exactly on Saturday, next draw is 7 days later
-        now = _ct(2025, 6, 7, 18)  # Saturday
+    async def test_called_at_announce_time_points_to_next_month(self):
+        # The scheduler announces at 7pm on the 1st, after that month's
+        # draw — the advertised end must be the FOLLOWING month's 1st.
+        now = _ct(2025, 6, 1, 19)
         embed = await self._send_and_capture(2000, now)
         import re
         match = re.search(r"<t:(\d+):R>", embed.description)
         assert match
         ts = int(match.group(1))
         dt = datetime.datetime.fromtimestamp(ts, tz=_CT)
-        assert dt.weekday() == 5
-        assert dt.day == 14  # one week later
+        assert (dt.year, dt.month, dt.day, dt.hour) == (2025, 7, 1, 18)
+
+    async def test_december_rolls_to_january(self):
+        now = _ct(2025, 12, 15, 12)
+        embed = await self._send_and_capture(2000, now)
+        import re
+        match = re.search(r"<t:(\d+):R>", embed.description)
+        assert match
+        ts = int(match.group(1))
+        dt = datetime.datetime.fromtimestamp(ts, tz=_CT)
+        assert (dt.year, dt.month, dt.day, dt.hour) == (2026, 1, 1, 18)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

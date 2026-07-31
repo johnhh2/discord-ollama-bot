@@ -121,10 +121,10 @@ async def drain_bot_balance_into_lottery(lottery: dict, guild_id: int) -> int:
 
 
 async def announce_new_lottery(
-    channel: discord.TextChannel, prize_pool: int = 2000,
+    channel: discord.TextChannel, prize_pool: int = 5000,
     now: datetime.datetime = None
 ):
-    """Announce a new lottery week to the specified channel."""
+    """Announce a new monthly lottery to the specified channel."""
     from src.helpers import C_PURPLE
     if now is None:
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -133,14 +133,9 @@ async def announce_new_lottery(
 
     ct = ZoneInfo("America/Chicago")
     now_cst = now.astimezone(ct)
-    days_until_saturday = (5 - now_cst.weekday()) % 7
-    next_saturday = now_cst + datetime.timedelta(days=days_until_saturday)
-    next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
-    if next_saturday <= now_cst:
-        next_saturday += datetime.timedelta(weeks=1)
-    timestamp = int(next_saturday.timestamp())
+    timestamp = int(next_lottery_draw_dt(now_cst).timestamp())
 
-    embed = discord.Embed(title="🎰 New Lottery Week", color=C_PURPLE)
+    embed = discord.Embed(title="🎰 New Monthly Lottery", color=C_PURPLE)
     embed.description = (
         "A new lottery has started! Buy tickets with `!lottery <n>`\n\n"
         f"**Prize Pool:** {prize_pool:,} 🪙 (+1,000 🪙 per player)\n"
@@ -256,20 +251,35 @@ def _bucket_start_dt(date_iso: str, bucket: int) -> datetime.datetime:
     ).astimezone(datetime.timezone.utc)
 
 
-def lottery_week_key(now_ct: datetime.datetime) -> int:
-    """Year-qualified ISO week key: iso_year * 100 + iso_week.
+def lottery_month_key(now_ct: datetime.datetime) -> int:
+    """Year-qualified month key: year * 100 + month (YYYYMM, e.g. 202608).
 
-    Bare ISO week numbers wrap 1..52 every year, so a year-old
-    last_drawn_week=1 would collide with next year's week 1 and silently
-    suppress the draw. Encoding as YYYYWW (e.g. 202601 for 2026 week 1)
-    avoids the collision while staying an INT.
+    The year qualifier keeps a stale last_drawn key from colliding with
+    the same month a year later, mirroring the old YYYYWW week scheme.
 
-    Pre-fix saved values (bare week 0..53) can't collide with new values
-    (>= 100000), so the first post-deploy Saturday draw triggers a
-    natural migration via the normal save path.
+    Transition from the weekly lottery (deployed 2026-07-31): the DB's
+    last_drawn_week/last_posted_week columns still hold YYYYWW week keys
+    from July 2026 (weeks 27-31, i.e. last two digits >= 27). Those can
+    never equal a YYYYMM key (last two digits 01-12), so the first
+    1st-of-month draw fires normally and overwrites them with month keys
+    via the normal save path.
     """
-    iso_year, iso_week, _ = now_ct.isocalendar()
-    return iso_year * 100 + iso_week
+    return now_ct.year * 100 + now_ct.month
+
+
+def next_lottery_draw_dt(now_ct: datetime.datetime) -> datetime.datetime:
+    """Next lottery draw: the upcoming 1st of the month at 6pm CT.
+
+    Returns today 6pm if called on the 1st before the draw, otherwise
+    the 1st of the following month.
+    """
+    ct = ZoneInfo("America/Chicago")
+    this_month_draw = datetime.datetime(now_ct.year, now_ct.month, 1, 18, 0, tzinfo=ct)
+    if now_ct < this_month_draw:
+        return this_month_draw
+    if now_ct.month == 12:
+        return datetime.datetime(now_ct.year + 1, 1, 1, 18, 0, tzinfo=ct)
+    return datetime.datetime(now_ct.year, now_ct.month + 1, 1, 18, 0, tzinfo=ct)
 
 
 def next_daily_reset_ts() -> int:

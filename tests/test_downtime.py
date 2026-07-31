@@ -144,40 +144,39 @@ async def test_cmd_daily_across_multi_day_gap_grants_once(db):
 
 # ── lottery scheduler ─────────────────────────────────────────────────────────
 
-def _scheduler_should_draw(now_weekday: int, now_hour: int,
-                           last_drawn_week: int, current_week: int) -> bool:
-    """Replicates the conditions in src/cogs/lottery_cog.py:106 exactly."""
-    is_saturday = now_weekday == 5
-    if not is_saturday:
+def _scheduler_should_draw(now_day: int, now_hour: int,
+                           last_drawn_month: int, current_month: int) -> bool:
+    """Replicates the draw conditions in src/cogs/lottery_cog.py exactly."""
+    if now_day != 1:
         return False
-    return now_hour >= 18 and last_drawn_week != current_week
+    return now_hour >= 18 and last_drawn_month != current_month
 
 
-async def test_lottery_skips_draw_on_non_saturday_after_missed_week(db):
-    """Bot was down all of Saturday. Sunday-Friday: scheduler doesn't draw.
-    Pool stays untouched; no winner picked from stale week-N players.
+async def test_lottery_skips_draw_mid_month_after_missed_first(db):
+    """Bot was down all of the 1st. The rest of the month: scheduler doesn't
+    draw. Pool stays untouched; no winner picked from the stale players.
     """
-    # Saved state from the missed Saturday.
+    # Saved state from the missed 1st (keys are YYYYMM month keys).
     abandoned = {
         "prize_pool": 50000,  # grew with player buys
         "players": {"100": 10, "200": 5},
-        "last_posted_week": 17,
-        "last_drawn_week": 16,  # week 17 was never drawn
+        "last_posted_week": 202504,
+        "last_drawn_week": 202503,  # April 2025 was never drawn
     }
     await _persistence.save_lottery(1, abandoned)
 
-    # Sunday after the missed draw.
+    # The 2nd, every hour of the day.
     for hour in range(24):
         assert _scheduler_should_draw(
-            now_weekday=6,  # Sunday
+            now_day=2,
             now_hour=hour,
-            last_drawn_week=16,
-            current_week=17,
+            last_drawn_month=202503,
+            current_month=202504,
         ) is False
 
-    # Friday of the FOLLOWING week — still skipped (not Saturday).
+    # The 28th, late in the month — still skipped (not the 1st).
     assert _scheduler_should_draw(
-        now_weekday=4, now_hour=23, last_drawn_week=16, current_week=18,
+        now_day=28, now_hour=23, last_drawn_month=202503, current_month=202504,
     ) is False
 
     # Loaded state is untouched: original players and full pool still there.
@@ -185,31 +184,31 @@ async def test_lottery_skips_draw_on_non_saturday_after_missed_week(db):
     assert loaded == {
         "prize_pool": 50000,
         "players": {"100": 10, "200": 5},
-        "last_posted_week": 17,
-        "last_drawn_week": 16,
+        "last_posted_week": 202504,
+        "last_drawn_week": 202503,
     }
 
 
-async def test_lottery_redraws_on_next_saturday_after_missed_week(db):
-    """Saturday after the bot missed last Saturday: scheduler WILL draw,
-    using whoever bought tickets in the missed week. This is the current
-    behavior — pool keeps accumulating, old players win.
+async def test_lottery_redraws_on_next_first_after_missed_month(db):
+    """1st of the next month after the bot missed a draw: scheduler WILL
+    draw, using whoever bought tickets in the missed month. This is the
+    current behavior — pool keeps accumulating, old players win.
 
     This test pins the behavior so a future fix that changes it (e.g.
     "expire pool if missed", "refund tickets on missed draw") fails this
     test loudly.
     """
-    # Last Saturday was week 17, never drawn.
+    # April 2025's draw (May 1) was missed entirely.
     await _persistence.save_lottery(1, {
         "prize_pool": 50000,
         "players": {"100": 10, "200": 5},
-        "last_posted_week": 17,
-        "last_drawn_week": 16,
+        "last_posted_week": 202504,
+        "last_drawn_week": 202503,
     })
 
-    # This Saturday at 6pm = week 18, current_week != last_drawn_week.
+    # June 1 at 6pm = month 202506, current_month != last_drawn_month.
     assert _scheduler_should_draw(
-        now_weekday=5, now_hour=18, last_drawn_week=16, current_week=18,
+        now_day=1, now_hour=18, last_drawn_month=202503, current_month=202506,
     ) is True
 
     # The scheduler would now pay out the full 50000 to one of {100, 200}.
@@ -220,42 +219,55 @@ async def test_lottery_redraws_on_next_saturday_after_missed_week(db):
     assert loaded["prize_pool"] == 50000
 
 
-async def test_lottery_year_boundary_no_longer_silently_skips(db):
-    """Regression test for the year-boundary bug: with the YYYYWW encoding
-    (src/economy.py:lottery_week_key), a year-old week 1 no longer collides
-    with the next year's week 1.
+async def test_lottery_year_boundary_does_not_silently_skip(db):
+    """A year-old January key must not collide with the next January —
+    the YYYYMM encoding (src/economy.py:lottery_month_key) qualifies the
+    month with its year.
     """
-    from src.economy import lottery_week_key
+    from src.economy import lottery_month_key
     from zoneinfo import ZoneInfo
     ct = ZoneInfo("America/Chicago")
 
-    # Saturday Jan 3 2026 — ISO week 1 of 2026.
-    this_year_key = lottery_week_key(datetime.datetime(2026, 1, 3, 18, 0, tzinfo=ct))
-    # Saturday Jan 9 2027 — ISO week 1 of 2027 (the *next* week-1 Saturday).
-    # Note Jan 2 2027 is ISO week 53 of 2026, not week 1 of 2027 — ISO weeks
-    # belong to the year containing their Thursday.
-    next_year_key = lottery_week_key(datetime.datetime(2027, 1, 9, 18, 0, tzinfo=ct))
+    this_year_key = lottery_month_key(datetime.datetime(2026, 1, 1, 18, 0, tzinfo=ct))
+    next_year_key = lottery_month_key(datetime.datetime(2027, 1, 1, 18, 0, tzinfo=ct))
 
-    # The keys differ even though both are "week 1".
     assert this_year_key != next_year_key, (
         "Year-qualified keys must differ across years to keep "
         "last_drawn_week from suppressing the draw a year later."
     )
-    # Sanity on the encoding: YYYYWW.
+    # Sanity on the encoding: YYYYMM.
     assert this_year_key == 202601
     assert next_year_key == 202701
 
 
-async def test_lottery_iso_week_dec_to_jan_still_draws(db):
-    """Dec week 52 → Jan week 1 (or week 53 → 1) must still trigger a draw.
-    Both bare-int and YYYYWW handle this; pin it as a regression guard."""
-    from src.economy import lottery_week_key
+async def test_lottery_dec_to_jan_still_draws(db):
+    """Dec → Jan must still trigger a draw across the year boundary."""
+    from src.economy import lottery_month_key
     from zoneinfo import ZoneInfo
     ct = ZoneInfo("America/Chicago")
 
-    last_year_end = lottery_week_key(datetime.datetime(2025, 12, 27, 18, 0, tzinfo=ct))
-    new_year_start = lottery_week_key(datetime.datetime(2026, 1, 3, 18, 0, tzinfo=ct))
+    last_year_end = lottery_month_key(datetime.datetime(2025, 12, 1, 18, 0, tzinfo=ct))
+    new_year_start = lottery_month_key(datetime.datetime(2026, 1, 1, 18, 0, tzinfo=ct))
     assert last_year_end != new_year_start
+
+
+async def test_lottery_legacy_week_key_transitions_to_monthly(db):
+    """Weekly→monthly migration (deployed 2026-07-31): persisted YYYYWW
+    week keys from July 2026 (weeks 27-31) must never equal a YYYYMM month
+    key, so the first 1st-of-month draw (Aug 1 2026, key 202608) fires
+    instead of being suppressed by the stale weekly value.
+    """
+    from src.economy import lottery_month_key
+    from zoneinfo import ZoneInfo
+    ct = ZoneInfo("America/Chicago")
+
+    aug_2026 = lottery_month_key(datetime.datetime(2026, 8, 1, 18, 0, tzinfo=ct))
+    assert aug_2026 == 202608
+    for legacy_week_key in range(202627, 202632):  # July 2026 ISO weeks
+        assert _scheduler_should_draw(
+            now_day=1, now_hour=18,
+            last_drawn_month=legacy_week_key, current_month=aug_2026,
+        ) is True
 
 
 # ── insurance ─────────────────────────────────────────────────────────────────

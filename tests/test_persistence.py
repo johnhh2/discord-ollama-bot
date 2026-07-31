@@ -140,21 +140,21 @@ async def test_lottery_roundtrip(db):
 
 
 async def test_lottery_no_players_round_trip_and_redraw_guard(db):
-    """Edge case: a week ends with prize pool but zero ticket-buyers.
+    """Edge case: a month ends with prize pool but zero ticket-buyers.
 
     Two things must hold for the scheduler in src/cogs/lottery_cog.py to behave:
     1. An empty `players` dict must round-trip cleanly (not become None or
        crash load_lottery — the scheduler keys off `if players and pool > 0`).
-    2. After a no-player week, saving lottery with the new `last_drawn_week`
+    2. After a no-player month, saving lottery with the new `last_drawn_week`
        must persist; otherwise the scheduler would re-trigger the draw branch
        every minute for the rest of the day.
     """
-    # Week 17 ended with 5000 in the pool and no buyers.
+    # April 2025 ended with 5000 in the pool and no buyers.
     abandoned = {
         "prize_pool": 5000,
         "players": {},
-        "last_posted_week": 16,
-        "last_drawn_week": 16,  # NOT yet drawn for week 17
+        "last_posted_week": 202504,
+        "last_drawn_week": 202504,  # NOT yet drawn for May 1
     }
     await _persistence.save_lottery(7, abandoned)
 
@@ -164,22 +164,22 @@ async def test_lottery_no_players_round_trip_and_redraw_guard(db):
     # Scheduler's guard: skips payout when this is False.
     assert not (loaded["players"] and loaded["prize_pool"] > 0)
 
-    # Scheduler now resets the week. The seed (2000) replaces the pool because
-    # no one won, last_drawn_week advances to 17, players cleared.
-    reset = {"prize_pool": 2000, "players": {}, "last_drawn_week": 17, "last_posted_week": 0}
+    # Scheduler now resets the month. The seed (5000) replaces the pool because
+    # no one won, last_drawn_week advances to 202505, players cleared.
+    reset = {"prize_pool": 5000, "players": {}, "last_drawn_week": 202505, "last_posted_week": 0}
     await _persistence.save_lottery(7, reset)
 
     reloaded = await _persistence.load_lottery(7)
     assert reloaded["players"] == {}
-    assert reloaded["prize_pool"] == 2000
-    assert reloaded["last_drawn_week"] == 17  # redraw guard is now armed
+    assert reloaded["prize_pool"] == 5000
+    assert reloaded["last_drawn_week"] == 202505  # redraw guard is now armed
 
     # Sanity: hand the loaded lottery back to drain_bot_balance_into_lottery
     # the way the scheduler does — empty house, pool unchanged.
     from src.economy import drain_bot_balance_into_lottery
     transferred = await drain_bot_balance_into_lottery(reloaded, 7)
     assert transferred == 0
-    assert reloaded["prize_pool"] == 2000
+    assert reloaded["prize_pool"] == 5000
 
 
 async def test_lottery_save_replaces_players(db):

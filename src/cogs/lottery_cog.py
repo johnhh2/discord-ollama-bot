@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import random
-import datetime
 
 import discord
 from discord.ext import commands, tasks
@@ -11,7 +10,8 @@ from src.helpers import (
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, drain_bot_balance_into_lottery, announce_new_lottery,
-    _ensure_user, _ct_now, _ct_today, lottery_week_key, record_gambling_event, add_guild_house,
+    _ensure_user, _ct_now, _ct_today, lottery_month_key, next_lottery_draw_dt,
+    record_gambling_event, add_guild_house,
 )
 from src.persistence import (
     save_lottery,
@@ -74,11 +74,9 @@ class LotteryCog(commands.Cog):
 
     @tasks.loop(minutes=1)
     async def lottery_scheduler(self):
-        """Check every minute if it's Saturday 6pm CST for lottery tasks."""
+        """Check every minute if it's the 1st of the month, 6pm CT, for lottery tasks."""
         now = _ct_now()
-        is_saturday = now.weekday() == 5
-
-        if not is_saturday:
+        if now.day != 1:
             return
 
         for guild in self.bot.guilds:
@@ -101,7 +99,9 @@ class LotteryCog(commands.Cog):
         except Exception:
             return
 
-        current_week = lottery_week_key(now)
+        # The last_drawn_week/last_posted_week keys (and DB columns) now hold
+        # YYYYMM month keys; the names are kept to avoid a schema migration.
+        current_month = lottery_month_key(now)
         pool = 0
         players: dict = {}
         drew = False
@@ -110,20 +110,20 @@ class LotteryCog(commands.Cog):
             lottery = await load_lottery(guild.id)
 
             # 6pm: draw winner and reset lottery
-            if now.hour >= 18 and lottery.get("last_drawn_week") != current_week:
+            if now.hour >= 18 and lottery.get("last_drawn_week") != current_month:
                 pool = lottery.get("prize_pool", 0)
                 players = lottery.get("players", {})
                 drew = True
                 # Persist the drawn marker + reset BEFORE paying/announcing:
                 # a crash mid-payout must not leave last_drawn_week stale, or
                 # the next tick (or reboot) re-draws and pays the pool again.
-                lottery = {"prize_pool": 2000, "players": {}, "last_drawn_week": current_week, "last_posted_week": 0}
+                lottery = {"prize_pool": 5000, "players": {}, "last_drawn_week": current_month, "last_posted_week": 0}
                 await drain_bot_balance_into_lottery(lottery, guild.id)
                 await save_lottery(guild.id, lottery)
 
             # 7pm: announce new lottery
-            if now.hour >= 19 and lottery.get("last_posted_week") != current_week:
-                lottery["last_posted_week"] = current_week
+            if now.hour >= 19 and lottery.get("last_posted_week") != current_month:
+                lottery["last_posted_week"] = current_month
                 await save_lottery(guild.id, lottery)
                 await announce_new_lottery(channel, lottery["prize_pool"], now)
 
@@ -186,12 +186,12 @@ class LotteryCog(commands.Cog):
 
         # Check if we're in the 6-7pm window (draw done, new lottery not yet announced)
         now_cst = _ct_now()
-        current_week = lottery_week_key(now_cst)
+        current_month = lottery_month_key(now_cst)
         in_transition = (
-            now_cst.weekday() == 5
+            now_cst.day == 1
             and now_cst.hour >= 18
             and now_cst.hour < 19
-            and lottery.get("last_posted_week") != current_week
+            and lottery.get("last_posted_week") != current_month
         )
 
         if in_transition:
@@ -207,13 +207,8 @@ class LotteryCog(commands.Cog):
             players_dict = lottery.get("players", {})
             user_tickets = int(players_dict.get(str(uid), 0))
 
-            # Calculate next Saturday 6pm CT (handles CST/CDT automatically)
-            days_until_saturday = (5 - now_cst.weekday()) % 7
-            next_saturday = now_cst + datetime.timedelta(days=days_until_saturday)
-            next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
-            if next_saturday <= now_cst:
-                next_saturday += datetime.timedelta(weeks=1)
-            timestamp = int(next_saturday.timestamp())
+            # Next 1st-of-month 6pm CT draw (handles CST/CDT automatically)
+            timestamp = int(next_lottery_draw_dt(now_cst).timestamp())
 
             total_tickets = sum(players_dict.values())
             info = f"**Prize Pool:** {pool:,} 🪙 (+1,000 🪙 per player)\n"
@@ -225,8 +220,8 @@ class LotteryCog(commands.Cog):
             await ctx.send(embed=emb(f"🎰 Current Lottery • ends <t:{timestamp}:R>", info, C_PURPLE))
             return
 
-        # Block purchases in the 1-hour window before the draw (5-6pm CT Saturday)
-        if now_cst.weekday() == 5 and now_cst.hour == 17:
+        # Block purchases in the 1-hour window before the draw (5-6pm CT on the 1st)
+        if now_cst.day == 1 and now_cst.hour == 17:
             await ctx.send(embed=emb("🔒 Lottery Locked", "Ticket sales are closed for the final hour before the draw. Check back after 6pm CT!", C_RED))
             return
 
@@ -281,7 +276,7 @@ class LotteryCog(commands.Cog):
             # Re-validate after the confirm window — leader may have bought more,
             # the lock window may have opened, or balance may have dropped.
             now_cst = _ct_now()
-            if now_cst.weekday() == 5 and now_cst.hour == 17:
+            if now_cst.day == 1 and now_cst.hour == 17:
                 await ctx.send(embed=emb("🔒 Lottery Locked", "Ticket sales closed during confirmation.", C_RED))
                 return
             lottery = await load_lottery(ctx.guild.id)
@@ -315,7 +310,7 @@ class LotteryCog(commands.Cog):
         # Serialize with other purchases and the draw: save_lottery rewrites
         # the whole snapshot, so an unlocked concurrent purchase would erase
         # this buyer's tickets (while keeping their coins), and a save racing
-        # the Saturday draw would resurrect the paid-out pool.
+        # the 1st-of-month draw would resurrect the paid-out pool.
         async with self._lock(ctx.guild.id):
             # Re-load inside the lock — the snapshot from earlier in this
             # command may be stale by now.
@@ -352,12 +347,7 @@ class LotteryCog(commands.Cog):
         bonus_msg = "(+1,000 bonus as new player)" if was_new_player else ""
 
         # Calculate when lottery ends
-        days_until_saturday = (5 - now_cst.weekday()) % 7
-        next_saturday = now_cst + datetime.timedelta(days=days_until_saturday)
-        next_saturday = next_saturday.replace(hour=18, minute=0, second=0, microsecond=0)
-        if next_saturday <= now_cst:
-            next_saturday += datetime.timedelta(weeks=1)
-        timestamp = int(next_saturday.timestamp())
+        timestamp = int(next_lottery_draw_dt(now_cst).timestamp())
 
         total_tickets = sum(players.values())
         embed_msg = emb(
