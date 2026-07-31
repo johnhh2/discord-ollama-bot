@@ -1009,3 +1009,11 @@ CREATE TABLE IF NOT EXISTS mc_daily_ping_stats (
     max_ping DOUBLE NOT NULL,
     PRIMARY KEY (stat_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ── 0043_add_lottery_discount_columns.sql ──
+-- 0043: per-user daily lottery ticket discount. The first 10 tickets a user
+-- buys each gameplay-day (5am CT rollover) cost half price; these columns
+-- track how many discounted tickets were used and for which day, mirroring
+-- the scratch_used/scratch_date pattern.
+ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS lottery_disc_used INT NOT NULL DEFAULT 0;
+ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS lottery_disc_date VARCHAR(10) NULL;

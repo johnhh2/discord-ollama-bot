@@ -139,7 +139,7 @@ async def announce_new_lottery(
     embed.description = (
         "A new lottery has started! Buy tickets with `!lottery <n>`\n\n"
         f"**Prize Pool:** {prize_pool:,} 🪙 (+1,000 🪙 per player)\n"
-        f"**Ticket Cost:** 10 🪙 for 1 🎟️\n"
+        f"**Ticket Cost:** 10 🪙 for 1 🎟️ — your first 10 each day are half price\n"
         f"**Ends:** <t:{timestamp}:R>"
     )
     await channel.send(embed=embed)
@@ -546,6 +546,8 @@ async def do_daily_reset():
         user["daily_date"] = None
         user["scratch_used"] = 0
         user["scratch_date"] = today
+        user["lottery_disc_used"] = 0
+        user["lottery_disc_date"] = today
         user["jailbreak_used"] = False
         user["bot_chess_elo_max_today"] = 0
         user["bot_chess_elo_max_date"] = today

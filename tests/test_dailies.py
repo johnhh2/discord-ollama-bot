@@ -20,9 +20,11 @@ from src.config import DAILY_REWARD
 from src.cogs.dailies_cog import (
     DailiesCog, refresh_dailies_channel, DAILIES_TITLE,
     DAILIES_CLAIM_EMOJI, DAILIES_FLIP_EMOJI, DAILIES_SLOTS_EMOJI,
-    DAILIES_ALL_EMOJIS, _delete_unless_kept,
+    DAILIES_TICKETS_EMOJI, DAILIES_ALL_EMOJIS, _delete_unless_kept,
 )
+from src.cogs.lottery_cog import LotteryCog, DISCOUNT_DAILY_CAP
 from src.cogs.settings_cog import SettingsCog
+import src.persistence as _persistence
 
 from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild
 
@@ -82,6 +84,9 @@ class _StubBot:
             return self._channel
         return None
 
+    def get_cog(self, name):
+        return self.cogs.get(name)
+
     def get_guild(self, gid):
         if self._guild is not None and self._guild.id == gid:
             return self._guild
@@ -131,14 +136,18 @@ async def test_refresh_posts_claim_embed_and_reaction(db, monkeypatch):
     assert len(channel.sent) == 1
     claim = channel.sent[0]
     assert claim.embed.title == DAILIES_TITLE
-    assert claim.add_reaction.await_count == 3
+    assert claim.add_reaction.await_count == 4
     for emoji in DAILIES_ALL_EMOJIS:
         claim.add_reaction.assert_any_await(emoji)
+    # The 🎟️ ticket reaction must be added (and thus displayed) last.
+    assert claim.add_reaction.await_args_list[-1].args == (DAILIES_TICKETS_EMOJI,)
+    assert DAILIES_ALL_EMOJIS[-1] == DAILIES_TICKETS_EMOJI
     assert "10,000 🪙 or more" in claim.embed.description  # big-result notice
     # The emoji legend sits at the bottom of the claim embed.
     assert f"{DAILIES_CLAIM_EMOJI} claim dailies" in claim.embed.description
     assert f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip" in claim.embed.description
     assert f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet" in claim.embed.description
+    assert f"{DAILIES_TICKETS_EMOJI} claim dailies, then buy" in claim.embed.description
     assert cfg["dailies_message_id"] == claim.id
     assert cfg["dailies_reset_day"] == TODAY
     assert len(channel.purge_calls) == 1
@@ -362,6 +371,74 @@ async def test_reaction_slots_gambles_scratch_winnings_and_keeps_big_results(db,
     assert _state.guild_settings["42"]["dailies_keep_ids"] == [
         scratch_msgs[2].id, slots_msgs[0].id,
     ]
+
+
+def _add_lottery_cog(bot, monkeypatch, today=TODAY):
+    """Register a LotteryCog on the stub bot for the 🎟️ reaction path."""
+    monkeypatch.setattr("src.cogs.lottery_cog._ct_today", lambda: today)
+    cog = LotteryCog(bot)
+    cog.lottery_scheduler.cancel()
+    bot.cogs["LotteryCog"] = cog
+    return cog
+
+
+@pytest.mark.asyncio
+async def test_reaction_tickets_claims_then_buys_all_half_price_tickets(db, monkeypatch):
+    """🎟️ claims dailies, then buys the full daily half-price allotment."""
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _state.guild_settings["42"]["lottery_channel"] = 600
+    _state.economy["users"]["1"]["balance"] = 1_000
+    _add_lottery_cog(bot, monkeypatch)
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_TICKETS_EMOJI))
+
+    user = _state.economy["users"]["1"]
+    assert user["daily_date"] == TODAY               # dailies claimed first
+    assert user["scratch_used"] == 3
+    assert user["lottery_disc_used"] == DISCOUNT_DAILY_CAP
+    lot = await _persistence.load_lottery(42)
+    assert lot["players"]["1"] == DISCOUNT_DAILY_CAP
+    # 10 half-price tickets: pool +4 each, +1,000 new-player bonus.
+    assert lot["prize_pool"] == DISCOUNT_DAILY_CAP * 4 + 1_000
+    titles = [m.embed.title for m in channel.sent if m.embed is not None]
+    assert "🎰 Tickets Purchased" in titles
+
+
+@pytest.mark.asyncio
+async def test_reaction_tickets_second_click_reports_no_discounts_left(db, monkeypatch):
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _state.guild_settings["42"]["lottery_channel"] = 600
+    _state.economy["users"]["1"]["balance"] = 1_000
+    _add_lottery_cog(bot, monkeypatch)
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_TICKETS_EMOJI))
+    channel.sent.clear()
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_TICKETS_EMOJI))
+
+    titles = [m.embed.title for m in channel.sent if m.embed is not None]
+    assert "🎟️ No Half-Price Tickets Left" in titles
+    lot = await _persistence.load_lottery(42)
+    assert lot["players"]["1"] == DISCOUNT_DAILY_CAP  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_reaction_tickets_without_lottery_channel_reports_disabled(db, monkeypatch):
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _state.economy["users"]["1"]["balance"] = 1_000
+    _add_lottery_cog(bot, monkeypatch)
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_TICKETS_EMOJI))
+
+    titles = [m.embed.title for m in channel.sent if m.embed is not None]
+    assert "🎰 Lottery Disabled" in titles
+    assert _state.economy["users"]["1"].get("lottery_disc_used", 0) == 0
 
 
 @pytest.mark.asyncio
