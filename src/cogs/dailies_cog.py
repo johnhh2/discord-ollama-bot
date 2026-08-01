@@ -2,8 +2,8 @@
 embed. Reacting to the embed immediately runs the player's dailies (daily
 coin reward + all remaining scratchoffs) right there in the channel:
 🗓️ just claims; 🪙 also coin-flips the scratchoff winnings; 🎰 also bets
-them on slots; 🎟️ also buys all of the player's remaining half-price
-lottery tickets for the day.
+them on slots. 🎟️ is the exception: it only buys the player's remaining
+half-price lottery tickets for the day, without claiming anything.
 
 Configured per-guild with `!settings dailies-channel #channel` — the channel id,
 claim-message id, and last-reset day all live in the guild_settings JSON blob
@@ -43,7 +43,7 @@ from src import state
 DAILIES_CLAIM_EMOJI = "🗓️"   # :calendar_spiral: — claim dailies
 DAILIES_FLIP_EMOJI = "🪙"    # :coin: — claim, then coin-flip the scratchoff winnings
 DAILIES_SLOTS_EMOJI = "🎰"   # :slot_machine: — claim, then bet the winnings on slots
-DAILIES_TICKETS_EMOJI = "🎟️"  # :tickets: — claim, then buy today's half-price lottery tickets
+DAILIES_TICKETS_EMOJI = "🎟️"  # :tickets: — only buy today's half-price lottery tickets
 # Tuple order is the order reactions are added to (and shown on) the claim
 # embed — 🎟️ stays last.
 DAILIES_ALL_EMOJIS = (DAILIES_CLAIM_EMOJI, DAILIES_FLIP_EMOJI, DAILIES_SLOTS_EMOJI, DAILIES_TICKETS_EMOJI)
@@ -88,7 +88,7 @@ def _dailies_body() -> str:
         f"{DAILIES_CLAIM_EMOJI} claim dailies\n"
         f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip all scratchoff winnings\n"
         f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet all scratchoff winnings on slots\n"
-        f"{DAILIES_TICKETS_EMOJI} claim dailies, then buy today's half-price lottery tickets"
+        f"{DAILIES_TICKETS_EMOJI} buy today's half-price lottery tickets (no claim)"
     )
 
 
@@ -239,8 +239,9 @@ class DailiesCog(commands.Cog):
 
     async def _run_dailies(self, member, channel, guild, gamble: str | None = None):
         """Run all of the member's dailies in `channel`, then optionally bet
-        the scratchoff winnings (🪙 → coin flip, 🎰 → slots) or buy the day's
-        half-price lottery tickets (🎟️).
+        the scratchoff winnings (🪙 → coin flip, 🎰 → slots). 🎟️ instead
+        skips the dailies entirely and just buys the day's half-price
+        lottery tickets.
 
         Extension point: future daily claims go here. Every step is already
         idempotent per gameplay-day (each has its own daily gate), so a second
@@ -249,17 +250,18 @@ class DailiesCog(commands.Cog):
         on_message below schedules deletion for everything posted in the
         dailies channel.
         """
-        await _auto_daily(member, channel)
-        winnings = await play_scratchoffs(
-            self.bot, member, channel, guild, count=scratchoff_daily_cap(member.id)
-        )
         if gamble == DAILIES_TICKETS_EMOJI:
-            # Ticket buying doesn't ride on the winnings — it spends wallet
-            # balance, so it runs even when every card missed.
+            # 🎟️ only buys the half-price tickets — it must NOT claim the
+            # daily reward or burn scratchoffs, so players can grab their
+            # discount without touching the rest of their dailies.
             lottery_cog = self.bot.get_cog("LotteryCog")
             if lottery_cog is not None:
                 await lottery_cog.buy_discounted_tickets(member, channel, guild)
             return
+        await _auto_daily(member, channel)
+        winnings = await play_scratchoffs(
+            self.bot, member, channel, guild, count=scratchoff_daily_cap(member.id)
+        )
         if not winnings:
             return
         if gamble == DAILIES_FLIP_EMOJI:

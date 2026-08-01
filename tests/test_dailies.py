@@ -147,7 +147,7 @@ async def test_refresh_posts_claim_embed_and_reaction(db, monkeypatch):
     assert f"{DAILIES_CLAIM_EMOJI} claim dailies" in claim.embed.description
     assert f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip" in claim.embed.description
     assert f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet" in claim.embed.description
-    assert f"{DAILIES_TICKETS_EMOJI} claim dailies, then buy" in claim.embed.description
+    assert f"{DAILIES_TICKETS_EMOJI} buy today's half-price lottery tickets" in claim.embed.description
     assert cfg["dailies_message_id"] == claim.id
     assert cfg["dailies_reset_day"] == TODAY
     assert len(channel.purge_calls) == 1
@@ -383,8 +383,9 @@ def _add_lottery_cog(bot, monkeypatch, today=TODAY):
 
 
 @pytest.mark.asyncio
-async def test_reaction_tickets_claims_then_buys_all_half_price_tickets(db, monkeypatch):
-    """🎟️ claims dailies, then buys the full daily half-price allotment."""
+async def test_reaction_tickets_buys_half_price_tickets_without_claiming(db, monkeypatch):
+    """🎟️ buys the full daily half-price allotment and nothing else — the
+    daily reward stays unclaimed and no scratchoffs are burned."""
     bot, guild, channel, member = await _claim_setup(monkeypatch)
     _state.guild_settings["42"]["lottery_channel"] = 600
     _state.economy["users"]["1"]["balance"] = 1_000
@@ -395,15 +396,19 @@ async def test_reaction_tickets_claims_then_buys_all_half_price_tickets(db, monk
         _payload(message_id=777, member=member, emoji=DAILIES_TICKETS_EMOJI))
 
     user = _state.economy["users"]["1"]
-    assert user["daily_date"] == TODAY               # dailies claimed first
-    assert user["scratch_used"] == 3
+    assert user["daily_date"] is None                # daily reward untouched
+    assert user["scratch_used"] == 0                 # no scratchoffs burned
     assert user["lottery_disc_used"] == DISCOUNT_DAILY_CAP
+    # Only the ticket purchase moved money: 10 tickets at 5 🪙.
+    assert user["balance"] == 1_000 - DISCOUNT_DAILY_CAP * 5
     lot = await _persistence.load_lottery(42)
     assert lot["players"]["1"] == DISCOUNT_DAILY_CAP
     # 10 half-price tickets: pool +4 each, +1,000 new-player bonus.
     assert lot["prize_pool"] == DISCOUNT_DAILY_CAP * 4 + 1_000
     titles = [m.embed.title for m in channel.sent if m.embed is not None]
     assert "🎰 Tickets Purchased" in titles
+    assert "🪙 Daily Reward" not in titles
+    assert "🎫 Scratchoff" not in titles
 
 
 @pytest.mark.asyncio
