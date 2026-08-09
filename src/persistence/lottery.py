@@ -23,6 +23,43 @@ async def load_lottery(guild_id: int) -> dict:
     }
 
 
+async def load_lottery_automatch(guild_id: int) -> dict:
+    """Return {user_id_str: max_tickets} for every automatch opt-in in the guild."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT user_id, max_tickets FROM lottery_automatch WHERE guild_id=%s",
+            (guild_id,),
+        )
+        return {str(r[0]): int(r[1]) for r in await cur.fetchall()}
+
+
+async def save_lottery_automatch(guild_id: int, user_id: int, max_tickets: int):
+    async with with_cursor() as cur:
+        await cur.execute(
+            "INSERT INTO lottery_automatch (guild_id, user_id, max_tickets)"
+            " VALUES (%s,%s,%s)"
+            " ON DUPLICATE KEY UPDATE max_tickets=VALUES(max_tickets)",
+            (guild_id, user_id, max_tickets),
+        )
+
+
+async def delete_lottery_automatch(guild_id: int, user_id: int):
+    async with with_cursor() as cur:
+        await cur.execute(
+            "DELETE FROM lottery_automatch WHERE guild_id=%s AND user_id=%s",
+            (guild_id, user_id),
+        )
+
+
+async def clear_lottery_automatch(guild_id: int):
+    """Drop every automatch opt-in in the guild — called when the draw resets the lottery."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "DELETE FROM lottery_automatch WHERE guild_id=%s",
+            (guild_id,),
+        )
+
+
 async def save_lottery(guild_id: int, lottery_data: dict):
     async with with_transaction() as cur:
         await cur.execute(

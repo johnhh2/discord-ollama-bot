@@ -74,7 +74,14 @@ from src.persistence.quotes import (  # noqa: F401
     load_saved_quotes,
 )
 from src.persistence.leveling import save_leveling  # noqa: F401
-from src.persistence.lottery import load_lottery, save_lottery  # noqa: F401
+from src.persistence.lottery import (  # noqa: F401
+    load_lottery,
+    save_lottery,
+    load_lottery_automatch,
+    save_lottery_automatch,
+    delete_lottery_automatch,
+    clear_lottery_automatch,
+)
 from src.persistence.records import (  # noqa: F401
     load_global_records,
     load_records,

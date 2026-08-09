@@ -27,6 +27,7 @@ _PERSISTENCE_SAVE_NAMES = [
     "save_user_artifact",
     "save_gambler_streak", "save_command_streak", "save_ai_threads",
     "save_quote_log", "save_saved_quotes", "save_lottery", "save_records",
+    "save_lottery_automatch", "delete_lottery_automatch", "clear_lottery_automatch",
     "save_leveling", "save_command_perms", "save_channel_prompts",
     "save_balance_history", "save_bot_stats_history",
     "save_command_usage_history",

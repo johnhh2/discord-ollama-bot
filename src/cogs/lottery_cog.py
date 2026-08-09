@@ -52,6 +52,15 @@ def ticket_cost(tickets: int, discount_remaining: int) -> "tuple[int, int]":
     return discounted * DISCOUNT_TICKET_PRICE + (tickets - discounted) * TICKET_PRICE, discounted
 
 
+def max_affordable_tickets(balance: int, discount_remaining: int) -> int:
+    """How many tickets `balance` buys when the first `discount_remaining` are half price."""
+    disc = max(0, discount_remaining)
+    disc_cost = disc * DISCOUNT_TICKET_PRICE
+    if balance < disc_cost:
+        return balance // DISCOUNT_TICKET_PRICE
+    return disc + (balance - disc_cost) // TICKET_PRICE
+
+
 async def record_tickets_purchased(count: int) -> None:
     """Bump the gameplay-day ticket counter behind the presence status line.
 
@@ -147,6 +156,12 @@ class LotteryCog(commands.Cog):
                 lottery = {"prize_pool": 5000, "players": {}, "last_drawn_week": current_month, "last_posted_week": 0}
                 await drain_bot_balance_into_lottery(lottery, guild.id)
                 await save_lottery(guild.id, lottery)
+                # Automatch opt-ins last one lottery — the fresh pool starts
+                # with no auto-buyers until players re-arm.
+                try:
+                    await persistence.clear_lottery_automatch(guild.id)
+                except Exception:
+                    logging.exception("[lottery] failed to clear automatch for guild %s", guild.id)
 
             # 7pm: announce new lottery
             if now.hour >= 19 and lottery.get("last_posted_week") != current_month:
@@ -250,6 +265,111 @@ class LotteryCog(commands.Cog):
             "total_tickets": sum(players.values()),
         }
 
+    async def _process_automatch(self, guild, channel, buyer_uid: int, buyer_total: int) -> None:
+        """Auto-buy tickets for automatch opt-ins the buyer just passed.
+
+        Runs after a successful purchase, outside the guild lock — every
+        auto-buy goes through _execute_purchase, which re-validates the cap
+        and cost under the lock. Automatch only ever raises a user to the
+        buyer's total, never past it, so one pass can't trigger another
+        (and _execute_purchase never calls back into this method).
+        """
+        try:
+            automatch = await persistence.load_lottery_automatch(guild.id)
+        except Exception:
+            logging.exception("[lottery] failed to load automatch opt-ins for guild %s", guild.id)
+            return
+        if not automatch:
+            return
+
+        lottery = await load_lottery(guild.id)
+        players = lottery.get("players", {})
+        lines = []
+        for uid_str, max_tickets in automatch.items():
+            if uid_str == str(buyer_uid):
+                continue
+            current = int(players.get(uid_str, 0))
+            target = min(buyer_total, max_tickets, TICKET_CAP)
+            needed = target - current
+            if needed <= 0:
+                continue
+            uid = int(uid_str)
+            await _ensure_user(uid)
+            user = state.economy["users"][uid_str]
+            remaining = discount_tickets_remaining(user, _ct_today())
+            affordable = max_affordable_tickets(await get_balance(uid), remaining)
+            tickets = min(needed, affordable)
+            if tickets <= 0:
+                lines.append(f"<@{uid}> couldn't afford to match ({needed:,} 🎟️ needed)")
+                continue
+            result = await self._execute_purchase(guild.id, uid, tickets)
+            if result.get("error"):
+                continue
+            short = target - result["user_tickets"]
+            suffix = f" ({short:,} short — balance ran out)" if short > 0 else ""
+            lines.append(
+                f"<@{uid}> auto-bought **{result['tickets']:,}** 🎟️ for "
+                f"**{result['cost']:,} 🪙** — now at **{result['user_tickets']:,}**{suffix}"
+            )
+        if lines:
+            await channel.send(embed=emb("🎯 Automatch", "\n".join(lines), C_PURPLE))
+
+    async def _cmd_automatch(self, ctx: commands.Context, amount: "str | None") -> None:
+        """`!lottery automatch [<max>|off]` — view, arm, or disarm automatch."""
+        uid = ctx.author.id
+        guild_id = ctx.guild.id
+        automatch = await persistence.load_lottery_automatch(guild_id)
+        current = automatch.get(str(uid))
+
+        if amount is None:
+            if current:
+                desc = (
+                    f"Automatch is **on** — when another player buys past your ticket "
+                    f"total, you auto-buy 🎟️ to tie them, up to **{current:,}** 🎟️ held.\n"
+                    "Lasts until this lottery is drawn. `!lottery automatch off` to disable."
+                )
+            else:
+                desc = (
+                    "Automatch is **off**.\n"
+                    "`!lottery automatch <max tickets>` — whenever another player buys "
+                    "past your ticket total, automatically buy 🎟️ to tie them, never "
+                    "holding more than `<max tickets>`."
+                )
+            await ctx.send(embed=emb("🎯 Lottery Automatch", desc, C_PURPLE))
+            return
+
+        if amount.lower() in ("off", "stop", "0"):
+            if current is None:
+                await ctx.send(embed=emb("🎯 Lottery Automatch", "Automatch is already off.", C_GREY))
+                return
+            await persistence.delete_lottery_automatch(guild_id, uid)
+            await ctx.send(embed=emb(
+                "🎯 Automatch Disabled",
+                "You'll no longer auto-buy 🎟️ to match other players.",
+                C_GREY,
+            ))
+            return
+
+        max_tickets = parse_int_amount(amount)
+        if max_tickets is None or max_tickets <= 0:
+            await ctx.send(embed=emb(
+                "❌ Invalid Amount",
+                "Usage: `!lottery automatch <max tickets>` or `!lottery automatch off`.",
+                C_RED,
+            ))
+            return
+        max_tickets = min(max_tickets, TICKET_CAP)
+        await persistence.save_lottery_automatch(guild_id, uid, max_tickets)
+        await ctx.send(embed=emb(
+            "🎯 Automatch Enabled",
+            f"When another player buys past your ticket total, you'll automatically "
+            f"buy 🎟️ to tie them — holding up to **{max_tickets:,}** 🎟️.\n"
+            "Tickets are billed from your balance at the normal (or half-price) rate, "
+            "starting with the next purchase anyone makes.\n"
+            "Lasts until this lottery is drawn. `!lottery automatch off` to disable.",
+            C_GREEN,
+        ))
+
     async def buy_discounted_tickets(self, member, channel, guild) -> None:
         """Buy all of `member`'s remaining half-price tickets for the day.
 
@@ -320,8 +440,10 @@ class LotteryCog(commands.Cog):
             C_GREEN,
         ))
 
+        await self._process_automatch(guild, channel, uid, result["user_tickets"])
+
     @commands.command(name="lottery")
-    async def cmd_lottery(self, ctx: commands.Context, n: str = None):
+    async def cmd_lottery(self, ctx: commands.Context, n: str = None, amount: str = None):
         uid = ctx.author.id
         await _ensure_user(uid)
 
@@ -334,6 +456,10 @@ class LotteryCog(commands.Cog):
         lottery_channel_id = cfg.get("lottery_channel")
         if not lottery_channel_id:
             await ctx.send(embed=emb("🎰 Lottery Disabled", "Lottery channel not configured.", C_GREY))
+            return
+
+        if n is not None and n.lower() == "automatch":
+            await self._cmd_automatch(ctx, amount)
             return
 
         lottery = await load_lottery(ctx.guild.id)
@@ -375,6 +501,14 @@ class LotteryCog(commands.Cog):
             info += f"(**{remaining_disc}** left today)\n\n"
             info += f"**Your Tickets:** {user_tickets:,} / {total_tickets:,} total\n"
             info += "Use `!lottery <n>` to buy more tickets"
+            try:
+                my_automatch = (await persistence.load_lottery_automatch(ctx.guild.id)).get(str(uid))
+            except Exception:
+                my_automatch = None
+            if my_automatch:
+                info += f"\n**Automatch:** on — auto-buys to tie other buyers, up to {my_automatch:,} 🎟️"
+            else:
+                info += "\nUse `!lottery automatch <max>` to auto-match other buyers"
 
             await ctx.send(embed=emb(f"🎰 Current Lottery • ends <t:{timestamp}:R>", info, C_PURPLE))
             return
@@ -495,6 +629,8 @@ class LotteryCog(commands.Cog):
             C_GREEN
         )
         await ctx.send(embed=embed_msg)
+
+        await self._process_automatch(ctx.guild, ctx.channel, uid, result["user_tickets"])
 
 
 

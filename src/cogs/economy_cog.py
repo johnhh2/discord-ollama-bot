@@ -1431,7 +1431,7 @@ class EconomyCog(commands.Cog):
             "`!pay @user <amount>` — Send coins\n"
             f"{fmt_line('savings', '`!savings` — Piggy bank (1% daily interest)', uid_help, gid_help)}\n"
             "`!crime` — Steal, mug, jailbreak\n"
-            "`!lottery` — Weekly lottery info\n"
+            "`!lottery` — Monthly lottery info\n"
             "`!shop` — Spend coins"
         )
         await send_ephemeral(ctx, embed=emb("📊 Economy", stats, C_GOLD))
