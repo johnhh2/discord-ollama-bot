@@ -324,9 +324,10 @@ async def test_reaction_claim_ordinary_wins_not_kept(db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reaction_flip_gambles_scratch_winnings_and_keeps_big_results(db, monkeypatch):
-    """🪙 claims dailies, then coin-flips the total scratchoff winnings. A
-    ±10k flip result joins the keep list alongside the 10k scratch card."""
+async def test_reaction_flip_gambles_whole_claim_and_keeps_big_results(db, monkeypatch):
+    """🪙 claims dailies, then coin-flips the whole claim — daily reward plus
+    the total scratchoff winnings. A ±10k flip result joins the keep list
+    alongside the 10k scratch card."""
     bot, guild, channel, member = await _claim_setup(monkeypatch)
     _pin_no_natural_matches(monkeypatch)
     _state.rigged_scratch[1] = 3   # third card → 10,000 🪙 total winnings
@@ -338,8 +339,8 @@ async def test_reaction_flip_gambles_scratch_winnings_and_keeps_big_results(db, 
 
     user = _state.economy["users"]["1"]
     assert user["scratch_used"] == 3
-    # daily + 10k scratch − 10k flip stake + 20k flip payout
-    assert user["balance"] == DAILY_REWARD + 20_000
+    # daily + 10k scratch − (daily + 10k) flip stake + 2x flip payout
+    assert user["balance"] == (DAILY_REWARD + 10_000) * 2
     flip_msgs = [m for m in channel.sent if m.embed is not None and m.embed.title == "🪙 Heads!"]
     assert len(flip_msgs) == 1
     scratch_msgs = [m for m in channel.sent if m.embed is not None and m.embed.title == "🎫 Scratchoff"]
@@ -349,9 +350,10 @@ async def test_reaction_flip_gambles_scratch_winnings_and_keeps_big_results(db, 
 
 
 @pytest.mark.asyncio
-async def test_reaction_slots_gambles_scratch_winnings_and_keeps_big_results(db, monkeypatch):
-    """🎰 claims dailies, then bets the total scratchoff winnings on slots.
-    The +20k slots win joins the keep list alongside the 10k scratch card."""
+async def test_reaction_slots_gambles_whole_claim_and_keeps_big_results(db, monkeypatch):
+    """🎰 claims dailies, then bets the whole claim — daily reward plus the
+    total scratchoff winnings — on slots. The slots win joins the keep list
+    alongside the 10k scratch card."""
     bot, guild, channel, member = await _claim_setup(monkeypatch)
     _pin_no_natural_matches(monkeypatch)
     _state.rigged_scratch[1] = 3   # third card → 10,000 🪙 total winnings
@@ -363,8 +365,8 @@ async def test_reaction_slots_gambles_scratch_winnings_and_keeps_big_results(db,
 
     user = _state.economy["users"]["1"]
     assert user["scratch_used"] == 3
-    # daily + 10k scratch − 10k slots stake + 30k slots payout
-    assert user["balance"] == DAILY_REWARD + 30_000
+    # daily + 10k scratch − (daily + 10k) slots stake + 3x slots payout
+    assert user["balance"] == (DAILY_REWARD + 10_000) * 3
     slots_msgs = [m for m in channel.sent if m.embed is not None and m.embed.title == "🎰 Winner!"]
     assert len(slots_msgs) == 1
     scratch_msgs = [m for m in channel.sent if m.embed is not None and m.embed.title == "🎫 Scratchoff"]
@@ -447,10 +449,12 @@ async def test_reaction_tickets_without_lottery_channel_reports_disabled(db, mon
 
 
 @pytest.mark.asyncio
-async def test_reaction_gamble_skipped_when_no_scratch_winnings(db, monkeypatch):
-    """🪙 with zero scratchoff winnings claims the dailies but flips nothing."""
+async def test_reaction_flip_stakes_daily_reward_when_no_scratch_winnings(db, monkeypatch):
+    """🪙 with zero scratchoff winnings still flips the daily reward — the
+    claim always pays out at least DAILY_REWARD, so there is always a stake."""
     bot, guild, channel, member = await _claim_setup(monkeypatch)
     _pin_no_natural_matches(monkeypatch)   # all three cards miss
+    _state.rigged_flips[1] = 1             # the follow-up flip wins
     cog = _make_cog(bot)
 
     await cog.on_raw_reaction_add(
@@ -458,10 +462,50 @@ async def test_reaction_gamble_skipped_when_no_scratch_winnings(db, monkeypatch)
 
     user = _state.economy["users"]["1"]
     assert user["scratch_used"] == 3
-    assert user["balance"] == DAILY_REWARD  # nothing won, nothing flipped
+    # daily − daily flip stake + 2x flip payout
+    assert user["balance"] == DAILY_REWARD * 2
+    titles = [m.embed.title for m in channel.sent if m.embed is not None]
+    assert "🪙 Heads!" in titles
+    # Well under the 10k keep threshold — nothing pinned.
+    assert "dailies_keep_ids" not in _state.guild_settings["42"]
+
+
+@pytest.mark.asyncio
+async def test_reaction_slots_stakes_daily_reward_when_no_scratch_winnings(db, monkeypatch):
+    """🎰 with zero scratchoff winnings bets the daily reward on slots
+    (DAILY_REWARD clears SLOT_MIN_BET)."""
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _pin_no_natural_matches(monkeypatch)   # all three cards miss
+    _state.rigged_slots[1] = "🍒"          # three cherries → 3x payout
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_SLOTS_EMOJI))
+
+    user = _state.economy["users"]["1"]
+    assert user["scratch_used"] == 3
+    # daily − daily slots stake + 3x slots payout
+    assert user["balance"] == DAILY_REWARD * 3
+    titles = [m.embed.title for m in channel.sent if m.embed is not None]
+    assert "🎰 Winner!" in titles
+
+
+@pytest.mark.asyncio
+async def test_reaction_gamble_skipped_on_second_click(db, monkeypatch):
+    """A second 🪙 click claims nothing — daily already taken, scratchoffs
+    spent — so there is no stake and no flip."""
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _pin_no_natural_matches(monkeypatch)   # all three cards miss
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_FLIP_EMOJI))
+    channel.sent.clear()
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_FLIP_EMOJI))
+
     titles = [m.embed.title for m in channel.sent if m.embed is not None]
     assert not any(t.startswith("🪙 Heads") or t.startswith("🪙 Tails") for t in titles)
-    assert "dailies_keep_ids" not in _state.guild_settings["42"]
 
 
 @pytest.mark.asyncio

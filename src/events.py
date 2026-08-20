@@ -306,11 +306,15 @@ async def _handle_soundboard_ratelimit(bot, guild_id: int, user_id: int):
         return
 
 
-async def _auto_daily(author, channel):
+async def _auto_daily(author, channel) -> int:
     """Award daily coins on first interaction of the day. Sends a short message if awarded.
 
     Takes (author, channel) rather than a Message so the dailies-channel
     reaction claim (src/cogs/dailies_cog.py) can reuse it.
+
+    Returns the number of coins awarded (0 when the daily was already claimed
+    today) — the dailies reaction claim adds it to the scratchoff winnings to
+    size its flip/slots gamble.
     """
     uid = author.id
     await _ensure_user(uid)
@@ -323,7 +327,7 @@ async def _auto_daily(author, channel):
             uid, stored, type(stored).__name__, today, type(today).__name__,
         )
     if stored == today:
-        return
+        return 0
     is_new = user_data.get("last_daily", 0.0) == 0.0
     # Claim the day synchronously BEFORE the awaits (same fix as cmd_daily):
     # add_balance yields, so two qualifying messages in quick succession
@@ -343,6 +347,7 @@ async def _auto_daily(author, channel):
         f"{greeting} **{DAILY_REWARD:,} 🪙** added. Balance: {await get_balance(uid):,} 🪙",
         C_GREEN,
     ))
+    return DAILY_REWARD
 
 
 async def _passive_ragebait(message: discord.Message, history: list[str]):

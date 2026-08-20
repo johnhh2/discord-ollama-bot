@@ -112,9 +112,12 @@ async def test_auto_daily_first_call_grants_daily_reward(db):
     channel = _Channel()
     msg = _Msg(user, channel)
 
-    await _auto_daily(msg.author, msg.channel)
+    granted = await _auto_daily(msg.author, msg.channel)
 
-    # Balance bumped by DAILY_REWARD; daily_date set to today.
+    # Balance bumped by DAILY_REWARD; daily_date set to today. The return
+    # value is what the dailies reaction claim stakes on its flip/slots
+    # gamble, so it must be the amount actually awarded.
+    assert granted == DAILY_REWARD
     assert await _economy.get_balance(user.id) == DAILY_REWARD
     assert _state.economy["users"][str(user.id)]["daily_date"] == _economy._ct_today()
     channel.send.assert_awaited_once()
@@ -126,12 +129,13 @@ async def test_auto_daily_second_call_same_day_is_noop(db):
     channel = _Channel()
     msg = _Msg(user, channel)
 
-    await _auto_daily(msg.author, msg.channel)
+    granted = await _auto_daily(msg.author, msg.channel)
     bal_after_first = await _economy.get_balance(user.id)
+    assert granted == DAILY_REWARD
     assert bal_after_first == DAILY_REWARD
 
-    # Second call same day: no additional grant.
-    await _auto_daily(msg.author, msg.channel)
+    # Second call same day: no additional grant, and nothing to stake.
+    assert await _auto_daily(msg.author, msg.channel) == 0
     assert await _economy.get_balance(user.id) == bal_after_first
     # Only the first call sent a message.
     assert channel.send.await_count == 1

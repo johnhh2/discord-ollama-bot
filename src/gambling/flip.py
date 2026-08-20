@@ -23,7 +23,8 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
     """Charge amount×n and flip n coins on `side`, announcing in `channel`.
 
     Extracted from cmd_flip so the dailies-channel reaction claim can flip a
-    player's scratchoff winnings without a commands.Context. Inputs are
+    player's claim (daily reward + scratchoff winnings) without a
+    commands.Context. Inputs are
     assumed validated (amount >= 1, n >= 1, side in heads/tails).
     """
     uid = author.id

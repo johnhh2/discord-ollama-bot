@@ -83,7 +83,8 @@ async def play_slots(author, channel, guild, amount: int):
     """Spin the slots for `author` betting `amount`, announcing in `channel`.
 
     Extracted from cmd_slots so the dailies-channel reaction claim can bet a
-    player's scratchoff winnings without a commands.Context. `amount` is
+    player's claim (daily reward + scratchoff winnings) without a
+    commands.Context. `amount` is
     assumed validated (>= SLOT_MIN_BET).
     """
     uid = author.id
