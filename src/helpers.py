@@ -38,6 +38,7 @@ RECORD_LABELS = {
     "total_artifacts": "most artifacts owned",
     "command_streak": "longest daily command streak",
     "scratchoff_day": "best scratchoff day",
+    "crime": "biggest crime score",
 }
 
 
@@ -62,8 +63,12 @@ def _resolve_channel_via(source_channel, target_id: int):
         return None
 
 
-async def announce_record(channel, category: str, holder_name: str, value: int) -> None:
+async def announce_record(channel, category: str, holder_name: str, value: int, *, detail: str | None = None) -> None:
     """Send a record-broken announcement embed to `channel`. Best-effort; swallows errors.
+
+    `detail` is an optional italicized second line for categories whose value
+    alone is ambiguous — the shared `crime` record uses it to say which crime
+    set the score (and, for a bank heist, who split the cut).
 
     Also logs the break to `notable_events` so !recap can mention records
     set today. This is the single hook point for every record category —
@@ -93,6 +98,8 @@ async def announce_record(channel, category: str, holder_name: str, value: int) 
     else:
         suffix = f"**{value:,} 🪙**"
     desc = f"**{holder_name}** just set a new {label} record: {suffix}"
+    if detail:
+        desc += f"\n*{detail}*"
     embed = emb("🏆 New Record!", desc, C_GOLD)
     try:
         await channel.send(embed=embed, silent=True)

@@ -10,6 +10,7 @@ from discord.ext import commands
 
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_ORANGE, C_GREY, C_BLUE, parse_amount, parse_int_amount, send_ephemeral, fetch_member, shop_charge, OptionalMember,
+    announce_record,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
@@ -24,7 +25,7 @@ from src.permissions import (
 from src.guild_config import get_guild_cfg
 from src.persistence import (
     save_economy, save_rigged_steal,
-    load_lottery, load_records, load_global_records,
+    load_lottery, load_records, load_global_records, try_set_record,
 )
 from src.config import (
     DAILY_REWARD, DAILY_RESET_HOUR,
@@ -42,6 +43,81 @@ STEAL_TIERS = [
     (0.09, 0.15, 0.30, 1350, 1),
     (0.08, 0.20, 0.35, 3250, 1),
 ]
+
+
+# ── Shared crime-score record ─────────────────────────────────────────────────
+# !steal, !mug and !bankheist all compete for ONE record rather than three:
+# the biggest single haul taken off another player, whichever crime produced
+# it. The crime that set it rides along in extra_json as `crime_type` so
+# !records and the record-broken announcement can name it.
+CRIME_RECORD_CATEGORY = "crime"
+
+CRIME_TYPE_LABELS = {
+    "steal": "Steal",
+    "mug": "Mug",
+    "bankheist": "Bank Heist",
+}
+
+
+def format_crime_record_detail(rec: dict) -> str:
+    """Render the 'which crime, on whom, split how' line for a crime record.
+
+    Shared by the !records entry and the announce_record detail line so the
+    two can't drift. `rec` is a record dict (or the meta kwargs about to be
+    stored) — everything past `crime_type` is optional, so an older row
+    written before a field existed still renders.
+
+    A bankheist row carries `crew`: every participant and their cut. Cuts are
+    equal except for the integer-division remainder the host pockets, so the
+    common case collapses to a single "N 🪙 each"; when the remainder makes
+    them differ, each cut is spelled out instead.
+    """
+    parts = [CRIME_TYPE_LABELS.get(rec.get("crime_type"), "Crime")]
+
+    victim = rec.get("victim")
+    if victim:
+        parts.append(f"robbed {victim}")
+
+    crew = rec.get("crew") or []
+    if crew:
+        cuts = [int(c.get("cut", 0)) for c in crew]
+        names = [str(c.get("name", "?")) for c in crew]
+        if len(set(cuts)) == 1:
+            parts.append(f"crew: {', '.join(names)} — {cuts[0]:,} 🪙 each")
+        else:
+            parts.append(
+                "crew: " + ", ".join(f"{n} {c:,} 🪙" for n, c in zip(names, cuts))
+            )
+
+    return " • ".join(parts)
+
+
+async def try_set_crime_record(
+    channel, guild, amount: int, holder_id: int, holder_name: str,
+    crime_type: str, victim_name: str, **meta,
+) -> bool:
+    """Offer `amount` to the shared crime-score record, announcing on a break.
+
+    `holder_name` is the display string the record is attributed to — a single
+    thief for !steal / !mug, the whole crew for a !bankheist (the user-visible
+    holder of a group score is the group). `holder_id` stays a real user id
+    either way so the tie-break and any future per-user lookup still work.
+
+    Returns whether the record was taken. Crimes that took nothing (`amount`
+    <= 0) and crimes outside a guild never compete.
+    """
+    if guild is None or amount <= 0:
+        return False
+    meta = {"crime_type": crime_type, "victim": victim_name, **meta}
+    if not await try_set_record(
+        guild.id, CRIME_RECORD_CATEGORY, amount, holder_id, holder_name, **meta,
+    ):
+        return False
+    await announce_record(
+        channel, CRIME_RECORD_CATEGORY, holder_name, amount,
+        detail=format_crime_record_detail(meta),
+    )
+    return True
 
 
 def _is_public_channel(channel) -> bool:
@@ -460,6 +536,7 @@ class EconomyCog(commands.Cog):
                 await asyncio.sleep(0.6)
 
             # Resolve outcome
+            stolen = 0
             if success:
                 # Re-read the victim's balance: the ~5s chase animation yielded,
                 # so it may have dropped (gambling, another steal). Crediting the
@@ -472,6 +549,7 @@ class EconomyCog(commands.Cog):
                     result_embed = emb("🦹 Robbery Failed", f"**{target.display_name}** is broke — nothing to steal!", C_RED)
                 else:
                     gid = ctx.guild.id if ctx.guild else 0
+                    stolen = steal_amount
                     await add_balance(thief_id, steal_amount, guild_id=gid or None, holder_name=ctx.author.display_name)
                     await record_crime_event(gid, thief_id, gained=steal_amount)
                     await record_crime_event(gid, victim_id, lost=steal_amount)
@@ -514,6 +592,11 @@ class EconomyCog(commands.Cog):
                     )
 
             await msg.edit(embed=result_embed)
+
+            await try_set_crime_record(
+                ctx.channel, ctx.guild, stolen, thief_id, ctx.author.display_name,
+                "steal", target.display_name,
+            )
         finally:
             self._crime_active.discard(thief_id)
 
@@ -717,6 +800,18 @@ class EconomyCog(commands.Cog):
         cut_lines = "\n".join(
             f"  • {p.display_name}: **{cut:,} 🪙**" for p, cut in cuts
         )
+
+        # The crew shares one score, so the record is attributed to all of
+        # them; holder_id stays the host's. The value is `seized` — the whole
+        # pot — which is the same "taken off the victim" measure !steal and
+        # !mug compete on, rather than any one player's cut.
+        await try_set_crime_record(
+            ctx.channel, ctx.guild, seized, host.id,
+            ", ".join(p.display_name for p, _ in cuts),
+            "bankheist", target.display_name,
+            crew=[{"id": p.id, "name": p.display_name, "cut": cut} for p, cut in cuts],
+        )
+
         return emb(
             "🏦 Heist Successful!",
             header + "\n\n"
@@ -1209,6 +1304,13 @@ class EconomyCog(commands.Cog):
                     C_ORANGE,
                 )
             await msg.edit(embed=result_embed)
+
+            # Getting caught doesn't undo the take — the victim is out the
+            # coins either way — so a jailed mug still competes for the record.
+            await try_set_crime_record(
+                ctx.channel, ctx.guild, actual_steal, uid, ctx.author.display_name,
+                "mug", target.display_name,
+            )
         finally:
             self._crime_active.discard(uid)
 
@@ -1271,6 +1373,8 @@ class EconomyCog(commands.Cog):
                 lambda rec: f"\n  ↳ Word: `{rec.get('word', '?')}`"),
             hm_wins_str,
             fmt("scratchoff_day", "Scratchoff Day"),
+            fmt(CRIME_RECORD_CATEGORY, "Crime Score",
+                lambda rec: f"\n  ↳ {format_crime_record_detail(rec)}"),
             fmt("total_artifacts", "Artifacts Owned", unit=""),
             fmt("command_streak", "Command Streak",
                 unit="day" if (r.get("command_streak") or {}).get("value") == 1 else "days"),
