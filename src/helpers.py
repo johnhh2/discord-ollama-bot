@@ -71,6 +71,10 @@ async def announce_record(channel, category: str, holder_name: str, value: int) 
     (a) every record set in its own guild, and (b) every new GLOBAL-top record
     from any guild (a value that beats every other guild's value for the
     category). Cross-guild global tops are tagged with the source guild name.
+
+    Every send here is `silent=True`. Records fire unprompted off other
+    people's gambling — nobody opted into a push for them, and a records
+    channel mirroring every guild would be a notification firehose.
     """
     if channel is None:
         return
@@ -84,7 +88,7 @@ async def announce_record(channel, category: str, holder_name: str, value: int) 
     desc = f"**{holder_name}** just set a new {label} record: {suffix}"
     embed = emb("🏆 New Record!", desc, C_GOLD)
     try:
-        await channel.send(embed=embed)
+        await channel.send(embed=embed, silent=True)
     except Exception:
         pass
 
@@ -108,7 +112,7 @@ async def announce_record(channel, category: str, holder_name: str, value: int) 
             own_chan = _resolve_channel_via(channel, own_chan_id)
             if own_chan is not None:
                 try:
-                    await own_chan.send(embed=embed)
+                    await own_chan.send(embed=embed, silent=True)
                 except Exception:
                     pass
 
@@ -132,7 +136,7 @@ async def announce_record(channel, category: str, holder_name: str, value: int) 
                 other_chan = _resolve_channel_via(channel, other_chan_id)
                 if other_chan is not None:
                     try:
-                        await other_chan.send(embed=global_embed)
+                        await other_chan.send(embed=global_embed, silent=True)
                     except Exception:
                         pass
 
