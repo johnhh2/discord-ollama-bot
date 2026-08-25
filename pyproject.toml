@@ -16,7 +16,7 @@ dependencies = [
     "prometheus-client==0.25.0",
     "chess==1.11.2",
     "cairosvg==2.9.0",
-    "mcstatus==14.0.0",
+    "mcstatus==14.1.0",
 ]
 
 [project.optional-dependencies]
