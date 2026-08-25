@@ -4,7 +4,7 @@ python-dotenv==1.2.2
 tzdata==2026.2
 matplotlib==3.10.9
 aiomysql==0.3.2
-prometheus-client==0.25.0
+prometheus-client==0.26.0
 chess==1.11.2
 cairosvg==2.9.0
 mcstatus==14.0.0
