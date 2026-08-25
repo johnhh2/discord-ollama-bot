@@ -57,13 +57,14 @@ def _automatch_embeds(ctx):
 # ── max_affordable_tickets ────────────────────────────────────────────────────
 
 def test_affordable_all_half_price():
-    # 40 coins, 10 discounts left: 8 half-price tickets, can't start full price.
+    # 40 coins, discounts to spare: 8 half-price tickets, can't start full price.
     assert max_affordable_tickets(40, DISCOUNT_DAILY_CAP) == 8
 
 
 def test_affordable_spans_discount_boundary():
-    # 10 half price (50) + 7 full price (70) = 120 coins.
-    assert max_affordable_tickets(120, DISCOUNT_DAILY_CAP) == 17
+    # The full daily allotment at half price + 7 full price.
+    balance = DISCOUNT_DAILY_CAP * DISCOUNT_TICKET_PRICE + 7 * TICKET_PRICE
+    assert max_affordable_tickets(balance, DISCOUNT_DAILY_CAP) == DISCOUNT_DAILY_CAP + 7
 
 
 def test_affordable_no_discount_left():
@@ -153,12 +154,13 @@ async def test_purchase_triggers_automatch_to_tie_buyer(db, monkeypatch):
     await _economy.add_balance(ctx.author.id, 10_000)
     cog = _make_cog()
 
-    await cog.cmd_lottery.callback(cog, ctx, "30")
+    tickets = DISCOUNT_DAILY_CAP + 20
+    await cog.cmd_lottery.callback(cog, ctx, str(tickets))
 
     lot = await _persistence.load_lottery(GUILD_ID)
-    assert lot["players"][str(ctx.author.id)] == 30
-    assert lot["players"][str(matcher_uid)] == 30
-    # 10 half price + 20 full price = 250 coins.
+    assert lot["players"][str(ctx.author.id)] == tickets
+    assert lot["players"][str(matcher_uid)] == tickets
+    # The full daily allotment at half price + 20 full price.
     assert await _economy.get_balance(matcher_uid) == 10_000 - (
         DISCOUNT_DAILY_CAP * DISCOUNT_TICKET_PRICE + 20 * TICKET_PRICE
     )
@@ -188,18 +190,21 @@ async def test_automatch_capped_at_users_max(db, monkeypatch):
 async def test_automatch_partial_when_balance_runs_out(db, monkeypatch):
     _pin_clock(monkeypatch)
     matcher_uid = 9330
-    # 10 half price (50) + 5 full price (50) = 100 coins → 15 tickets max.
-    await _economy.add_balance(matcher_uid, 100)
-    await _persistence.save_lottery_automatch(GUILD_ID, matcher_uid, 500)
+    # The full daily allotment at half price + 5 full price, and not a coin more.
+    affordable = DISCOUNT_DAILY_CAP + 5
+    await _economy.add_balance(
+        matcher_uid, DISCOUNT_DAILY_CAP * DISCOUNT_TICKET_PRICE + 5 * TICKET_PRICE
+    )
+    await _persistence.save_lottery_automatch(GUILD_ID, matcher_uid, 5_000)
 
     ctx = _lottery_ctx(uid=9331)
-    await _economy.add_balance(ctx.author.id, 10_000)
+    await _economy.add_balance(ctx.author.id, 100_000)
     cog = _make_cog()
 
-    await cog.cmd_lottery.callback(cog, ctx, "100")
+    await cog.cmd_lottery.callback(cog, ctx, str(affordable + 50))
 
     lot = await _persistence.load_lottery(GUILD_ID)
-    assert lot["players"][str(matcher_uid)] == 15
+    assert lot["players"][str(matcher_uid)] == affordable
     assert await _economy.get_balance(matcher_uid) == 0
     assert "short" in _automatch_embeds(ctx)[0].description
 

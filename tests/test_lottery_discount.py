@@ -65,7 +65,7 @@ def test_ticket_cost_all_discounted():
 
 
 def test_ticket_cost_split_across_the_cap():
-    cost, discounted = ticket_cost(12, DISCOUNT_DAILY_CAP)
+    cost, discounted = ticket_cost(DISCOUNT_DAILY_CAP + 2, DISCOUNT_DAILY_CAP)
     assert discounted == DISCOUNT_DAILY_CAP
     assert cost == DISCOUNT_DAILY_CAP * DISCOUNT_TICKET_PRICE + 2 * TICKET_PRICE
 
@@ -81,24 +81,26 @@ def test_ticket_cost_no_discount_left():
 async def test_purchase_applies_discount_and_splits_pool(db, monkeypatch):
     _pin_clock(monkeypatch)
     uid = 9101
-    await _economy.add_balance(uid, 1_000)
+    await _economy.add_balance(uid, 10_000)
     cog = _make_cog()
 
-    result = await cog._execute_purchase(1, uid, 12)
+    tickets = DISCOUNT_DAILY_CAP + 2
+    result = await cog._execute_purchase(1, uid, tickets)
 
-    # 10 half price + 2 full price.
+    # The whole daily allotment at half price + 2 full price.
+    expected_cost = DISCOUNT_DAILY_CAP * DISCOUNT_TICKET_PRICE + 2 * TICKET_PRICE
     assert result["discounted"] == DISCOUNT_DAILY_CAP
-    assert result["cost"] == 10 * 5 + 2 * 10
-    assert await _economy.get_balance(uid) == 1_000 - 70
+    assert result["cost"] == expected_cost
+    assert await _economy.get_balance(uid) == 10_000 - expected_cost
     user = _state.economy["users"][str(uid)]
     assert user["lottery_disc_used"] == DISCOUNT_DAILY_CAP
     assert user["lottery_disc_date"] == TODAY
     # Pool: half-price tickets +4, full-price +7, +1,000 new-player bonus.
     lot = await _persistence.load_lottery(1)
-    assert lot["prize_pool"] == 10 * 4 + 2 * 7 + 1_000
-    assert lot["players"][str(uid)] == 12
+    assert lot["prize_pool"] == DISCOUNT_DAILY_CAP * 4 + 2 * 7 + 1_000
+    assert lot["players"][str(uid)] == tickets
     # House: half-price tickets +1, full-price +3.
-    assert _economy.get_guild_house_balance(1) == 10 * 1 + 2 * 3
+    assert _economy.get_guild_house_balance(1) == DISCOUNT_DAILY_CAP * 1 + 2 * 3
 
 
 @pytest.mark.asyncio
@@ -188,8 +190,10 @@ async def test_concurrent_cross_guild_purchases_share_one_discount_pool(db, monk
 
     assert sorted([r1["discounted"], r2["discounted"]]) == [0, DISCOUNT_DAILY_CAP]
     assert _state.economy["users"][str(uid)]["lottery_disc_used"] == DISCOUNT_DAILY_CAP
-    # One order at 50, the other at full 100.
-    assert await _economy.get_balance(uid) == 10_000 - 50 - 100
+    # One order at the half-price rate, the other at full price.
+    assert await _economy.get_balance(uid) == 10_000 - DISCOUNT_DAILY_CAP * (
+        DISCOUNT_TICKET_PRICE + TICKET_PRICE
+    )
 
 
 # ── !lottery command integration ──────────────────────────────────────────────

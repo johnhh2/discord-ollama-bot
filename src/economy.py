@@ -139,7 +139,7 @@ async def announce_new_lottery(
     embed.description = (
         "A new lottery has started! Buy tickets with `!lottery <n>`\n\n"
         f"**Prize Pool:** {prize_pool:,} 🪙 (+1,000 🪙 per player)\n"
-        f"**Ticket Cost:** 10 🪙 for 1 🎟️ — your first 10 each day are half price\n"
+        f"**Ticket Cost:** 10 🪙 for 1 🎟️ — your first 100 each day are half price\n"
         f"**Ends:** <t:{timestamp}:R>"
     )
     await channel.send(embed=embed)

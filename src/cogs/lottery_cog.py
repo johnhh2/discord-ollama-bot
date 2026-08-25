@@ -27,7 +27,7 @@ from src import state, status_manager
 
 TICKET_PRICE = 10
 DISCOUNT_TICKET_PRICE = 5   # 50% off
-DISCOUNT_DAILY_CAP = 10     # first N tickets per user per gameplay-day
+DISCOUNT_DAILY_CAP = 100    # first N tickets per user per gameplay-day
 TICKET_CAP = 5000           # max tickets one player can hold per lottery
 
 
@@ -396,7 +396,7 @@ class LotteryCog(commands.Cog):
             await channel.send(embed=emb(
                 "🎟️ No Half-Price Tickets Left",
                 f"**{member.display_name}**, you've already bought all "
-                f"**{DISCOUNT_DAILY_CAP}** of today's half-price tickets.\n"
+                f"**{DISCOUNT_DAILY_CAP:,}** of today's half-price tickets.\n"
                 "`!lottery <n>` still works at full price.",
                 C_GREY,
             ))
@@ -497,8 +497,8 @@ class LotteryCog(commands.Cog):
             info = f"**Prize Pool:** {pool:,} 🪙 (+1,000 🪙 per player)\n"
             info += f"**Players:** {len(players_dict)}\n"
             info += f"**Ticket Cost:** {TICKET_PRICE} 🪙 for 1 🎟️ — your first "
-            info += f"{DISCOUNT_DAILY_CAP} each day cost {DISCOUNT_TICKET_PRICE} 🪙 "
-            info += f"(**{remaining_disc}** left today)\n\n"
+            info += f"{DISCOUNT_DAILY_CAP:,} each day cost {DISCOUNT_TICKET_PRICE} 🪙 "
+            info += f"(**{remaining_disc:,}** left today)\n\n"
             info += f"**Your Tickets:** {user_tickets:,} / {total_tickets:,} total\n"
             info += "Use `!lottery <n>` to buy more tickets"
             try:
