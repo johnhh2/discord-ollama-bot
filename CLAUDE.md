@@ -198,6 +198,22 @@ If you ever clone the prod DB to dev and want a fresh migrations history, drop b
 - [tests/test_migrations.py](tests/test_migrations.py) — covers ordering, checksum, baseline-detection, and that real migrations apply against a fresh DB.
 - [tests/fakes/db.py](tests/fakes/db.py) — the MariaDB→SQLite translator. Extend `_translate()` when migrations introduce new MariaDB syntax tests can't yet handle.
 
+## Records: per-guild events vs. global per-user stats
+
+`records` rows are keyed `(guild_id, category)`, so every record is per-guild. That is correct for **events** — a slots jackpot, a lottery prize, a `crime` score — which happened in one server and belong to it.
+
+It is wrong for a **global per-user stat**: one number that reads the same from every server. Your artifact count, balance, command streak and best Stockfish Elo defeated are properties of *you*, not of a server. Buying an artifact in server A raises the number server B sees, so B's "most artifacts owned" record has to move too. Writing it only into the guild the command ran in leaves every other server stale.
+
+`try_set_record` handles this: for a category in `GLOBAL_STAT_CATEGORIES` (`src/persistence/records.py`) it mirrors the write into every other guild the holder is active in. The return value still reports **only** the passed guild, so the caller's `announce_record` fires where the action happened and the other servers update silently.
+
+### Rules
+
+1. **Adding a record category** — decide which kind it is. If the value is derived from a per-user table with no `guild_id` (`economy_users`, `user_artifacts`, `command_streak`), it's global: add it to `GLOBAL_STAT_CATEGORIES`. If it's a single event or a per-guild count, leave it out.
+2. **Correctly per-guild already**: `chess_pvp_wins` (counted by `count_pvp_wins_in_guild`) and `hangman_wins_<uid>` (a per-guild tally kept in these very rows). Don't "fix" those.
+3. **Membership proxy** — `_mirror_guilds` treats a `leveling` row as "this user is active in this guild"; `grant_xp` writes one on the user's first command or message there, before any rate-limit early-return. Preferred over `bot.guilds` because many call sites have no bot reference (`add_balance`), and because the backfill migrations have only SQL and must agree on who counts.
+4. **Backfilling an existing category** — a migration can't see Discord membership, so it joins `leveling` the same way. Keep it raise-only (guard every write on the new value being strictly greater) so a re-run is a no-op and no record is ever lowered. See [migrations/0046_sync_artifact_record_across_guilds.sql](migrations/0046_sync_artifact_record_across_guilds.sql) for the shape: a `ROW_NUMBER()` pick of one candidate per guild, then an `ON DUPLICATE KEY UPDATE` that only takes the row if it beats what's there.
+5. **Ties** — categories in `UID_TIEBREAK_CATEGORIES` (currently `command_streak`) break ties on the lower user id. A backfill for one of those needs the same rule in SQL, or the migration and `_beats` will disagree about who holds a tied record.
+
 ## Concurrency: per-user command races
 
 Discord users can fire several invocations of the same command before the first finishes (spam-typing, multi-device, scripted clients). Because asyncio is cooperative, a coroutine only loses control at an `await` — so a sequence like *check counter → await network/DB → mutate counter* is racey: two invocations both pass the check before either mutates, and the user gets the resource twice. This bot has had four of these bugs in one month (`!scratchoff`, `!daily`, `!bail`, `!shop insurance`, `!shop unoreverse`). The pattern is easy to introduce and easy to miss in code review.
