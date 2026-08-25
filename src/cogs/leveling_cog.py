@@ -105,7 +105,10 @@ class LevelingCog(commands.Cog):
             desc += "\n\n**🔓 Unlocked**\n" + "\n".join(lines)
 
         try:
-            await channel.send(embed=emb("🎉 Level Up!", desc, C_GOLD))
+            # Mention lives in content, not just the embed — embed mentions
+            # never notify. Pings only the leveller (plus anyone who opted
+            # into All Messages for the channel).
+            await channel.send(content=member.mention, embed=emb("🎉 Level Up!", desc, C_GOLD))
         except (discord.Forbidden, discord.HTTPException) as e:
             # Missing send permission in the configured channel must not
             # propagate into the voice-XP loop or message handlers.

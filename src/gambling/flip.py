@@ -90,9 +90,9 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
     await keep_in_dailies_channel(guild, channel, msg, net)
 
     if new_flip_record:
-        await announce_record(channel, "flip", author.display_name, winnings_per)
+        await announce_record(channel, "flip", author.display_name, winnings_per, holder_id=author.id)
     if new_bal_record:
-        await announce_record(channel, "highest_balance", author.display_name, new_bal)
+        await announce_record(channel, "highest_balance", author.display_name, new_bal, holder_id=author.id)
 
 
 class FlipCog(commands.Cog):

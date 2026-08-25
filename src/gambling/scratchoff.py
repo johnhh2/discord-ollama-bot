@@ -335,7 +335,7 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1) -> int:
     day_total = int(user.get("scratch_won_today", 0) or 0)
     if guild is not None and day_total > 0:
         if await try_set_record(guild.id, "scratchoff_day", day_total, uid, author.display_name):
-            await announce_record(channel, "scratchoff_day", author.display_name, day_total)
+            await announce_record(channel, "scratchoff_day", author.display_name, day_total, holder_id=uid)
 
     return total_won
 

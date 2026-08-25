@@ -123,9 +123,9 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
 
     await message.channel.send(embed=emb("🃏 Blackjack", display + f"\n\n{result}", color))
     if new_bj_record:
-        await announce_record(message.channel, "blackjack", uid_name, bj_winnings)
+        await announce_record(message.channel, "blackjack", uid_name, bj_winnings, holder_id=uid)
     if new_bal_record:
-        await announce_record(message.channel, "highest_balance", uid_name, await get_balance(uid))
+        await announce_record(message.channel, "highest_balance", uid_name, await get_balance(uid), holder_id=uid)
 
 
 
@@ -191,9 +191,9 @@ class BlackjackCog(commands.Cog):
                 new_bal = await get_balance(uid)
                 await ctx.send(embed=emb("🃏 Blackjack!", full_display + f"\n\n**{ctx.author.display_name}** wins **{winnings:,} 🪙**! Balance: {new_bal:,} 🪙", C_GREEN))
                 if new_bj_record:
-                    await announce_record(ctx.channel, "blackjack", username, winnings)
+                    await announce_record(ctx.channel, "blackjack", username, winnings, holder_id=uid)
                 if new_bal_record:
-                    await announce_record(ctx.channel, "highest_balance", username, new_bal)
+                    await announce_record(ctx.channel, "highest_balance", username, new_bal, holder_id=uid)
             return
 
         await ctx.send(embed=emb("🃏 Blackjack", display + "\n\nType `hit` to draw a card or `stand` to hold.", C_BLUE))

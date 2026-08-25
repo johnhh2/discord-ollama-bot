@@ -111,7 +111,7 @@ class VoiceCog(commands.Cog):
         await ctx.send(embed=emb(
             "🔔 Subscribed",
             f"I'll DM you when **{channel.name}** goes from empty to active "
-            f"(at most once every {PING_COOLDOWN_SECS // 60} minutes).\n"
+            f"(at most one voice ping every {PING_COOLDOWN_SECS // 60} minutes across all your subscriptions).\n"
             "Run `!subscribe` to see your subscriptions, or `!subscribe #channel` again to unsubscribe.",
             C_GREEN,
         ))
@@ -162,7 +162,7 @@ class VoiceCog(commands.Cog):
                     "You aren't ignoring anyone for voice pings in this server.\n"
                     "Use `!subscribe ignore @user` to ignore someone — you won't be "
                     "pinged when *they* fill up a channel you're subscribed to, and it "
-                    "won't burn your per-channel cooldown.",
+                    "won't burn your ping cooldown.",
                     C_GREY,
                 ))
                 return
@@ -213,7 +213,7 @@ class VoiceCog(commands.Cog):
         await ctx.send(embed=emb(
             "🙈 Ignoring Triggers",
             f"You won't be pinged when **{member.display_name}** fills up a channel "
-            "you're subscribed to, and it won't use up your per-channel cooldown.\n"
+            "you're subscribed to, and it won't use up your ping cooldown.\n"
             "Run `!subscribe ignore @user` again to undo, or `!subscribe ignore` to see your list.",
             C_GREEN,
         ))
@@ -291,14 +291,24 @@ class VoiceCog(commands.Cog):
             # them; don't ping again for every subsequent joiner.
             if not _is_first_relevant_arrival(channel, member, ignored):
                 continue
-            last = data.get("last_pinged_at")
-            if last is not None and now - last < PING_COOLDOWN_SECS:
+            # One DM per cooldown period per subscriber, across ALL their
+            # subscriptions — two channels filling up back-to-back must not
+            # double-DM, so take the most recent ping over every channel
+            # this user is subscribed to (any guild).
+            last_any = max(
+                (d.get("last_pinged_at") or 0
+                 for (_cid, _uid), d in state.voice_pings.items() if _uid == uid),
+                default=0,
+            )
+            if last_any and now - last_any < PING_COOLDOWN_SECS:
                 continue
 
             # Claim the cooldown synchronously BEFORE the fetch/DM awaits —
             # a join/leave/rejoin inside the DM round-trip would otherwise
             # pass the gate twice and double-DM. Rolled back below on send
-            # failure so a failed DM doesn't burn the cooldown.
+            # failure so a failed DM doesn't burn the cooldown. `last` is
+            # this subscription's own prior stamp, for the rollback.
+            last = data.get("last_pinged_at")
             data["last_pinged_at"] = now
 
             user = self.bot.get_user(uid)

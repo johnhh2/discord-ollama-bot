@@ -21,7 +21,7 @@ Per claim:
   • author ❌ (or 1-week no-answer) → the claimant is DM'd a contest offer
     (✅ contest / ❌ drop, 3-day deadline).
       – drop / 3-day timeout → claim rejected; the BOUNTY STAYS OPEN.
-      – contest → an @everyone poll is posted (3-day). Votes are recorded in
+      – contest → a community poll is posted (3-day). Votes are recorded in
         bounty_claims.poll_votes as ✅/❌ reactions come and go, and the poll
         embed shows that live tally — the tracked set (not the reactions still
         on the message at close, which can be cleared or lost) is what gets
@@ -584,15 +584,13 @@ class BountyCog(commands.Cog):
         await self._start_poll(live, claim)
 
     async def _start_poll(self, bounty: dict, claim: dict):
-        """Post an @everyone poll for this claim and move it to `polling`."""
+        """Post a community poll for this claim and move it to `polling`."""
         claimant_id = claim["claimant_id"]
         poll_exp = time.time() + BOUNTY_POLL_DURATION_SECS
         try:
             channel = self.bot.get_channel(bounty["channel_id"]) or await self.bot.fetch_channel(bounty["channel_id"])
             poll_msg = await channel.send(
-                content="@everyone",
                 embed=render_poll_embed(bounty, claimant_id, poll_exp, yes=0, no=0),
-                allowed_mentions=discord.AllowedMentions(everyone=True),
             )
             await poll_msg.add_reaction(ACCEPT_EMOJI)
             await poll_msg.add_reaction(REJECT_EMOJI)

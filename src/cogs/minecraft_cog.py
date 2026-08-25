@@ -471,7 +471,7 @@ class MinecraftCog(commands.Cog):
             try:
                 channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
                 for payload in payloads:
-                    await channel.send(**payload)
+                    await channel.send(silent=True, **payload)
             except Exception:
                 logger.exception("[minecraft] announce failed for guild %s", guild.id)
 

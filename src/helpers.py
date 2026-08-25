@@ -63,7 +63,8 @@ def _resolve_channel_via(source_channel, target_id: int):
         return None
 
 
-async def announce_record(channel, category: str, holder_name: str, value: int, *, detail: str | None = None) -> None:
+async def announce_record(channel, category: str, holder_name: str, value: int, *,
+                          detail: str | None = None, holder_id: int | None = None) -> None:
     """Send a record-broken announcement embed to `channel`. Best-effort; swallows errors.
 
     `detail` is an optional italicized second line for categories whose value
@@ -80,9 +81,13 @@ async def announce_record(channel, category: str, holder_name: str, value: int, 
     from any guild (a value that beats every other guild's value for the
     category). Cross-guild global tops are tagged with the source guild name.
 
-    Every send here is `silent=True`. Records fire unprompted off other
-    people's gambling — nobody opted into a push for them, and a records
-    channel mirroring every guild would be a notification firehose.
+    Notification policy: when `holder_id` is given, the source-channel post
+    carries a content mention of the holder — embed mentions never notify, so
+    the mention must live in content for the achiever's ping to be real.
+    Everyone else on default notification settings hears nothing. The
+    records-channel copy and the cross-guild mirrors are always `silent=True`:
+    they fire unprompted off other people's gambling, and a records channel
+    mirroring every guild would be a notification firehose.
     """
     if channel is None:
         return
@@ -102,7 +107,10 @@ async def announce_record(channel, category: str, holder_name: str, value: int, 
         desc += f"\n*{detail}*"
     embed = emb("🏆 New Record!", desc, C_GOLD)
     try:
-        await channel.send(embed=embed, silent=True)
+        if holder_id is not None:
+            await channel.send(content=f"<@{holder_id}>", embed=embed)
+        else:
+            await channel.send(embed=embed, silent=True)
     except Exception:
         pass
 

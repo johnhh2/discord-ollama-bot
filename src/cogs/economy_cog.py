@@ -115,7 +115,7 @@ async def try_set_crime_record(
         return False
     await announce_record(
         channel, CRIME_RECORD_CATEGORY, holder_name, amount,
-        detail=format_crime_record_detail(meta),
+        detail=format_crime_record_detail(meta), holder_id=holder_id,
     )
     return True
 

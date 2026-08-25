@@ -1163,7 +1163,7 @@ class ChessCog(commands.Cog):
                         payout_line += f" **+{bounty:,} 🪙** for defeating a {bot_elo}-Elo bot today."
                     if record_broken:
                         asyncio.create_task(
-                            announce_record(channel, _BOT_CHESS_RECORD, winner_name, bot_elo)
+                            announce_record(channel, _BOT_CHESS_RECORD, winner_name, bot_elo, holder_id=winner_id)
                         )
                 except Exception as e:
                     logging.error(f"bot_chess_rewards.award_bot_defeat failed: {e}", exc_info=True)
@@ -1202,7 +1202,7 @@ class ChessCog(commands.Cog):
                     )
                     if set_new:
                         asyncio.create_task(
-                            announce_record(channel, "chess_pvp_wins", winner_name, wins)
+                            announce_record(channel, "chess_pvp_wins", winner_name, wins, holder_id=winner_id)
                         )
                 except Exception as e:
                     logging.error(f"chess_pvp_wins record update failed: {e}", exc_info=True)

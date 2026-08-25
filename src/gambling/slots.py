@@ -151,11 +151,14 @@ async def play_slots(author, channel, guild, amount: int):
             if cfg.get("gambler_role_enabled", False):
                 role = discord.utils.get(guild.roles, name="Gamblers")
                 if role:
-                    await channel.send(f"{role.mention} 🎰 A progressive jackpot was just won!")
+                    await channel.send(
+                        f"{role.mention} 🎰 A progressive jackpot was just won!",
+                        allowed_mentions=discord.AllowedMentions(roles=[role]),
+                    )
         if new_jackpot_record:
-            await announce_record(channel, "slots_jackpot", author.display_name, prize)
+            await announce_record(channel, "slots_jackpot", author.display_name, prize, holder_id=uid)
         if new_bal_record:
-            await announce_record(channel, "highest_balance", author.display_name, new_bal)
+            await announce_record(channel, "highest_balance", author.display_name, new_bal, holder_id=uid)
         return
 
     # Money Back (cherry retention)
@@ -207,9 +210,9 @@ async def play_slots(author, channel, guild, amount: int):
     msg = await channel.send(embed=emb("🎰 Winner!", desc, C_GREEN))
     await keep_in_dailies_channel(guild, channel, msg, winnings - amount)
     if new_slots_record:
-        await announce_record(channel, "slots_non_jackpot", author.display_name, winnings)
+        await announce_record(channel, "slots_non_jackpot", author.display_name, winnings, holder_id=uid)
     if new_bal_record:
-        await announce_record(channel, "highest_balance", author.display_name, new_bal)
+        await announce_record(channel, "highest_balance", author.display_name, new_bal, holder_id=uid)
 
 
 class SlotsCog(commands.Cog):

@@ -346,7 +346,7 @@ async def _auto_daily(author, channel) -> int:
         "🪙 Daily Reward",
         f"{greeting} **{DAILY_REWARD:,} 🪙** added. Balance: {await get_balance(uid):,} 🪙",
         C_GREEN,
-    ))
+    ), silent=True)
     return DAILY_REWARD
 
 
@@ -366,7 +366,7 @@ async def _passive_ragebait(message: discord.Message, history: list[str]):
         f"Their recent messages for context:\n{context}\n"
         "Make it personal, pointed, and reactive to what they actually wrote. Do not use @ symbols."
     )
-    placeholder = await message.reply("...")
+    placeholder = await message.reply("...", silent=True)
     typing_task = asyncio.create_task(keep_typing(message.channel))
     try:
         async with aiohttp.ClientSession() as session:
@@ -445,7 +445,7 @@ class EventsCog(commands.Cog):
                 "👋 Hello!",
                 f"Thanks for adding me to **{guild.name}**! Run `!help` to see what I can do.",
                 C_BLUE,
-            ))
+            ), silent=True)
         except (discord.Forbidden, discord.HTTPException):
             pass
 
@@ -569,6 +569,7 @@ class EventsCog(commands.Cog):
                 ):
                     await announce_record(
                         ctx.channel, "command_streak", ctx.author.display_name, streak,
+                        holder_id=ctx.author.id,
                     )
         if ctx.guild and not ctx.author.bot:
             xp, leveled_up = await _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
@@ -771,7 +772,8 @@ class EventsCog(commands.Cog):
                 master_name = str(tax_master_id)
         await message.channel.send(
             f"{tax_emoji} **{message.author.display_name}** paid a "
-            f"**{SHOP_TAX_PER_MESSAGE:,} 🪙** {tax_label} tax to **{master_name}**"
+            f"**{SHOP_TAX_PER_MESSAGE:,} 🪙** {tax_label} tax to **{master_name}**",
+            silent=True,
         )
 
     async def _handle_curse(self, message: discord.Message):

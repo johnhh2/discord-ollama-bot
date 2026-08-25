@@ -440,6 +440,7 @@ class ShopCog(commands.Cog):
             ):
                 await announce_record(
                     ctx.channel, "total_artifacts", ctx.author.display_name, total,
+                    holder_id=uid,
                 )
 
     # ── !shop nickname ────────────────────────────────────────────────────────

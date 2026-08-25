@@ -112,9 +112,9 @@ def calculate_hangman_reward(word: str) -> int:
     return total
 
 
-async def _distribute_hangman_rewards(cid: int, game: dict) -> tuple[str, list[tuple[str, str, int]]]:
+async def _distribute_hangman_rewards(cid: int, game: dict) -> tuple[str, list[tuple[str, str, int, int]]]:
     """Distributes win rewards, deletes the game, and returns (reward_message, pending_records)
-    where pending_records is a list of (category, holder_name, value) for records that should be
+    where pending_records is a list of (category, holder_name, value, holder_id) for records that should be
     announced AFTER the caller sends the result embed."""
     word = game["word"]
     gid = game.get("guild_id")
@@ -128,7 +128,7 @@ async def _distribute_hangman_rewards(cid: int, game: dict) -> tuple[str, list[t
     else:
         msg = f"The word was `{word}`!\n\n**Total: {total_reward:,} 🪙** split among {len(active_players)} players\n"
     names = game.get("player_names", {})
-    pending: list[tuple[str, str, int]] = []
+    pending: list[tuple[str, str, int, int]] = []
     for i, pid in enumerate(active_players):
         bonus = 1 if i < remainder else 0
         reward = per_player + bonus
@@ -139,7 +139,7 @@ async def _distribute_hangman_rewards(cid: int, game: dict) -> tuple[str, list[t
         new_bal = await get_balance(pid)
         msg += f"**{name}**: +{reward:,} 🪙 | Balance: {new_bal:,} 🪙\n"
         if new_bal_record:
-            pending.append(("highest_balance", name, new_bal))
+            pending.append(("highest_balance", name, new_bal, pid))
         # Per-player wins row, but announce only when it beats the guild leader's
         # row — otherwise each win trivially beats the player's own prior count.
         if gid:
@@ -153,13 +153,13 @@ async def _distribute_hangman_rewards(cid: int, game: dict) -> tuple[str, list[t
             )
             updated = await try_set_record(gid, wins_key, new_wins, pid, name)
             if updated and new_wins > guild_leader_wins:
-                pending.append((wins_key, name, new_wins))
+                pending.append((wins_key, name, new_wins, pid))
     # Track biggest hangman payout (use total for multiplayer, per-player for solo)
     payout_value = total_reward if len(active_players) == 1 else per_player
     first_pid = active_players[0]
     first_name = names.get(first_pid, str(first_pid))
     if await try_set_record(gid, "hangman_payout", payout_value, first_pid, first_name, word=word):
-        pending.append(("hangman_payout", first_name, payout_value))
+        pending.append(("hangman_payout", first_name, payout_value, first_pid))
     return msg.strip(), pending
 
 
@@ -186,8 +186,8 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             game["guessed_letters"].update(game["word"])  # reveal full word for display
             reward_msg, pending_records = await _distribute_hangman_rewards(cid, game)
             await _edit_board(channel, game, emb("🎉 Correct!", build_hangman_display(game) + "\n\n" + reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
-            for cat, holder, val in pending_records:
-                await announce_record(channel, cat, holder, val)
+            for cat, holder, val, hid in pending_records:
+                await announce_record(channel, cat, holder, val, holder_id=hid)
         elif guess in game["guessed_words"]:
             game["last_move"] = f"{name} guessed `{guess}` ❌ (already tried)"
             await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
@@ -220,8 +220,8 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
             game["last_move"] = f"{name} guessed `{guess}` ✅ — word complete! 🎉"
             reward_msg, pending_records = await _distribute_hangman_rewards(cid, game)
             await _edit_board(channel, game, emb("🎉 You Got It!", build_hangman_display(game) + "\n\n" + reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
-            for cat, holder, val in pending_records:
-                await announce_record(channel, cat, holder, val)
+            for cat, holder, val, hid in pending_records:
+                await announce_record(channel, cat, holder, val, holder_id=hid)
         else:
             game["last_move"] = f"{name} guessed `{guess}` ✅"
             await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_GREEN))

@@ -201,12 +201,15 @@ class LotteryCog(commands.Cog):
             if cfg.get("gambler_role_enabled", False):
                 gamblers_role = discord.utils.get(guild.roles, name="Gamblers")
                 if gamblers_role:
-                    await channel.send(f"{gamblers_role.mention} 🎰 The lottery was just won!")
+                    await channel.send(
+                        f"{gamblers_role.mention} 🎰 The lottery was just won!",
+                        allowed_mentions=discord.AllowedMentions(roles=[gamblers_role]),
+                    )
 
             if new_lottery_record:
-                await announce_record(channel, "lottery", winner.display_name, pool)
+                await announce_record(channel, "lottery", winner.display_name, pool, holder_id=int(winner_id))
             if new_bal_record:
-                await announce_record(channel, "highest_balance", winner.display_name, await get_balance(int(winner_id)))
+                await announce_record(channel, "highest_balance", winner.display_name, await get_balance(int(winner_id)), holder_id=int(winner_id))
 
     async def _execute_purchase(self, guild_id: int, uid: int, tickets: int) -> dict:
         """Charge `uid` for `tickets` and add them to the guild's lottery.
