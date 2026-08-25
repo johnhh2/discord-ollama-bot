@@ -12,6 +12,7 @@ from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, C_GREY,
     send_ephemeral,
     fetch_member, shop_charge, log_bot_permission_error, MemberConverter,
+    announce_record,
 )
 
 from src.economy import (
@@ -24,9 +25,9 @@ from src.persistence import (
     save_insurance, save_guild_settings,
     save_bot_roles,
     save_ragebait, save_mock, save_tax, save_curse, save_spellcheck,
-    save_user_artifact,
+    save_user_artifact, try_set_record,
 )
-from src.artifacts import ARTIFACTS, owned_qty
+from src.artifacts import ARTIFACTS, owned_qty, owned_artifact_count
 from src.confirm_view import confirm_purchase
 from src.guild_config import get_guild_cfg
 from src.ai import (
@@ -428,6 +429,18 @@ class ShopCog(commands.Cog):
             return
         await save_user_artifact(uid, art["id"], prior + 1)
         await ctx.send(embed=emb("🏺 Artifact Acquired", f"Its power is now yours: {art['effect'].lower()}.", C_GREEN))
+
+        # Artifacts are global but records are per-guild: the "most artifacts
+        # owned" record lands in whichever guild the purchase happened in,
+        # same as every other category.
+        if ctx.guild is not None:
+            total = owned_artifact_count(uid)
+            if await try_set_record(
+                ctx.guild.id, "total_artifacts", total, uid, ctx.author.display_name,
+            ):
+                await announce_record(
+                    ctx.channel, "total_artifacts", ctx.author.display_name, total,
+                )
 
     # ── !shop nickname ────────────────────────────────────────────────────────
     @cmd_shop.command(name="nickname")

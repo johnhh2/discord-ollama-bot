@@ -116,7 +116,10 @@ async def test_scratches_role_grant_announced_after_third_card(db, monkeypatch):
 
     async def record_channel_send(content=None, *, embed=None, **kwargs):
         if embed is not None:
-            events.append(("card", embed.title))
+            # The batch also posts a "🏆 New Record!" embed for the best
+            # scratchoff day; classify on title so it isn't counted as a card.
+            kind = "card" if embed.title == "🎫 Scratchoff" else "record"
+            events.append((kind, embed.title))
         else:
             events.append(("role_announce", content or ""))
         return None

@@ -546,6 +546,7 @@ async def do_daily_reset():
         user["daily_date"] = None
         user["scratch_used"] = 0
         user["scratch_date"] = today
+        user["scratch_won_today"] = 0
         user["lottery_disc_used"] = 0
         user["lottery_disc_date"] = today
         user["jailbreak_used"] = False

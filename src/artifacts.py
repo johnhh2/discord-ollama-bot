@@ -100,6 +100,16 @@ def owned_qty(uid: int, artifact_id: str) -> int:
     return state.user_artifacts.get(uid, {}).get(artifact_id, 0)
 
 
+def owned_artifact_count(uid: int) -> int:
+    """Total artifacts the user owns, summing quantities across the catalog.
+
+    Quantity-aware rather than a plain len() of the ownership dict so a
+    future stackable artifact counts once per copy. Feeds the
+    "most artifacts owned" record.
+    """
+    return sum(int(q or 0) for q in state.user_artifacts.get(uid, {}).values())
+
+
 def _owned_total(uid: int, key: str) -> int:
     """Sum a payload key across every artifact the user owns."""
     owned = state.user_artifacts.get(uid, {})

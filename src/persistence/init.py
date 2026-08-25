@@ -59,7 +59,8 @@ async def _init_db_state_inner(state, run_migrations):
                 "SELECT user_id, balance, last_daily, daily_date, scratch_used,"
                 " scratch_date, jailbreak_used, jail_until, savings, jail_reason,"
                 " crime_eligible, bail_amount, bot_chess_elo_max_today,"
-                " bot_chess_elo_max_date, lottery_disc_used, lottery_disc_date"
+                " bot_chess_elo_max_date, lottery_disc_used, lottery_disc_date,"
+                " scratch_won_today"
                 " FROM economy_users"
             )
             for row in await cur.fetchall():
@@ -67,7 +68,7 @@ async def _init_db_state_inner(state, run_migrations):
                  jb_used, jail_until, savings_json, jail_reason,
                  crime_eligible, bail_amount,
                  bot_chess_elo_max_today, bot_chess_elo_max_date,
-                 lottery_disc_used, lottery_disc_date) = row
+                 lottery_disc_used, lottery_disc_date, scratch_won_today) = row
                 state.economy["users"][str(uid)] = {
                     "balance": bal,
                     "last_daily": last_daily,
@@ -84,6 +85,7 @@ async def _init_db_state_inner(state, run_migrations):
                     "bot_chess_elo_max_date": bot_chess_elo_max_date,
                     "lottery_disc_used": int(lottery_disc_used or 0),
                     "lottery_disc_date": lottery_disc_date,
+                    "scratch_won_today": int(scratch_won_today or 0),
                 }
         except Exception as e:
             logging.error(f"[init_db_state] economy_users failed: {e}", exc_info=True)

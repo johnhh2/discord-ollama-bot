@@ -9,7 +9,7 @@ from discord.ext import commands
 
 from src.helpers import (
     emb, C_GREEN, C_RED, C_BLUE, mocking_font, curse_font, fetch_member, _delete_after,
-    _effect_expired,
+    _effect_expired, announce_record,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, is_insured, _ct_today, _ensure_user,
@@ -20,7 +20,7 @@ from src.permissions import (
 )
 from src.persistence import (
     init_db_state, save_economy, save_ragebait, save_mock, save_tax, save_curse, save_spellcheck, load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs,
-    insert_issue,
+    insert_issue, try_set_record,
 )
 from src.guild_config import get_guild_cfg
 from src.ai import (
@@ -37,7 +37,7 @@ from src import state
 from src.games.blackjack import draw_card, hand_value, build_blackjack_display, _blackjack_stand
 from src.games.hangman import _process_hangman_guess
 from src.leveling import grant_xp as _grant_xp
-from src.streaks import update_command_streak
+from src.streaks import update_command_streak, get_command_streak_entry
 
 
 async def _log_admin_command(bot, ctx: commands.Context):
@@ -557,7 +557,19 @@ class EventsCog(commands.Cog):
         if not ctx.author.bot:
             # Any successful command (gambling included) extends the daily
             # command-usage streak; no-op after the first command of the day.
-            await update_command_streak(ctx.author.id, _ct_today())
+            today_ct = _ct_today()
+            # Read the stored date BEFORE the bump so we can tell an actual
+            # extension from the no-op path, and only hit the records table
+            # on the day's first command rather than on every invocation.
+            bumped = get_command_streak_entry(str(ctx.author.id)).get("date") != today_ct
+            streak = await update_command_streak(ctx.author.id, today_ct)
+            if bumped and ctx.guild:
+                if await try_set_record(
+                    ctx.guild.id, "command_streak", streak, ctx.author.id, ctx.author.display_name,
+                ):
+                    await announce_record(
+                        ctx.channel, "command_streak", ctx.author.display_name, streak,
+                    )
         if ctx.guild and not ctx.author.bot:
             xp, leveled_up = await _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
             # _announce_levelup grants the coin reward and itself skips the

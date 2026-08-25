@@ -9,7 +9,7 @@ from discord.ext import commands, tasks
 
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, C_GREY,
-    toggle_member_role,
+    toggle_member_role, announce_record,
 )
 from src.economy import (
     add_balance, _ct_now, _ct_today, do_daily_reset, _ensure_user, record_gambling_event,
@@ -20,7 +20,7 @@ from src.permissions import (
 from src.leveling import grant_xp
 from src.persistence import (
     save_economy, save_gambler_streak,
-    save_rigged_scratch
+    save_rigged_scratch, try_set_record
 )
 from src.dailies import keep_in_dailies_channel
 from src.guild_config import get_guild_cfg
@@ -52,8 +52,9 @@ GAMBLER_ROLE_STREAK_REQUIRED = 3
 def scratchoff_attempts_remaining(user: dict, today: str, cap: int = SCRATCHOFF_MAX_DAILY) -> int:
     """Return how many scratchoff attempts the user has left today.
 
-    Mutates `user` to roll the daily counter to `today` if the stored
-    `scratch_date` is stale (or missing), and normalizes `scratch_used`
+    Mutates `user` to roll the daily counters to `today` if the stored
+    `scratch_date` is stale (or missing) — zeroing both `scratch_used` and
+    the day's `scratch_won_today` total — and normalizes `scratch_used`
     to an int so the caller can safely do `user["scratch_used"] += 1`.
     Mirrors the pre-condition logic at the top of cmd_scratchoff so the
     rollover + cap behavior can be tested in isolation. Pass the user's
@@ -62,6 +63,7 @@ def scratchoff_attempts_remaining(user: dict, today: str, cap: int = SCRATCHOFF_
     if user.get("scratch_date") != today:
         user["scratch_date"] = today
         user["scratch_used"] = 0
+        user["scratch_won_today"] = 0
     elif "scratch_used" not in user:
         user["scratch_used"] = 0
     return max(0, cap - user["scratch_used"])
@@ -283,6 +285,10 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1) -> int:
             match_text = f"💎 4 Matches! **{author.display_name}** won 100,000 🪙!"
 
         await add_balance(uid, payout)
+        # Running total for the "best scratchoff day" record. Bumped per card
+        # (not once per batch) so it lands in the same save_economy write as
+        # the payout and a concurrent invocation sees it immediately.
+        user["scratch_won_today"] = int(user.get("scratch_won_today", 0) or 0) + payout
         if payout > 0:
             await record_gambling_event(guild.id if guild else None, uid, gained=payout)
         await save_economy(uid=uid)
@@ -320,6 +326,16 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1) -> int:
         if (attempt_idx + 1) >= 3 and guild:
             new_streak = await update_gambler_streak(uid, today)
             await maybe_assign_gambler_role(guild, author, channel, new_streak)
+
+    # "Best scratchoff day" record: the combined payout of every card the user
+    # has scratched this gameplay-day. Attempted once per batch rather than per
+    # card so !scratches / the dailies 🎟️ button announce a single embed for
+    # the whole run, and so three separate !scratchoff calls still add up to
+    # the same number the batch path would produce.
+    day_total = int(user.get("scratch_won_today", 0) or 0)
+    if guild is not None and day_total > 0:
+        if await try_set_record(guild.id, "scratchoff_day", day_total, uid, author.display_name):
+            await announce_record(channel, "scratchoff_day", author.display_name, day_total)
 
     return total_won
 

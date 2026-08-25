@@ -1234,13 +1234,14 @@ class EconomyCog(commands.Cog):
             r = await load_records(ctx.guild.id)
             title = "🏆 All-Time Records"
 
-        def fmt(cat: str, label: str, extra_fn=None) -> str:
+        def fmt(cat: str, label: str, extra_fn=None, unit: str = "🪙") -> str:
             rec = r.get(cat)
             if not rec:
                 return f"**{label}:** *none yet*"
             name = rec.get("holder_name", "?")
             val = rec["value"]
-            base = f"**{label}:** {val:,} 🪙 — **{name}**"
+            suffix = f" {unit}" if unit else ""
+            base = f"**{label}:** {val:,}{suffix} — **{name}**"
             if extra_fn:
                 base += extra_fn(rec)
             return base
@@ -1269,6 +1270,10 @@ class EconomyCog(commands.Cog):
             fmt("hangman_payout", "Hangman Payout",
                 lambda rec: f"\n  ↳ Word: `{rec.get('word', '?')}`"),
             hm_wins_str,
+            fmt("scratchoff_day", "Scratchoff Day"),
+            fmt("total_artifacts", "Artifacts Owned", unit=""),
+            fmt("command_streak", "Command Streak",
+                unit="day" if (r.get("command_streak") or {}).get("value") == 1 else "days"),
         ]
 
         embed = discord.Embed(title=title, color=C_GOLD)
