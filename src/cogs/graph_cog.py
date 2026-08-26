@@ -89,6 +89,8 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
         title = f"{parsed.member.display_name}'s Balance — Last 2 Weeks"
     elif len(parsed.specs) == 1 and parsed.specs[0].name == "economy":
         title = "Total Economy Balance — Last 2 Weeks"
+    elif len(parsed.specs) == 1 and parsed.specs[0].name == "assets":
+        title = f"{parsed.member.display_name}'s Property — Last 2 Weeks"
     elif len(parsed.specs) == 1 and parsed.specs[0].name == "crime":
         title = f"{parsed.member.display_name}'s Crime — Last 2 Weeks"
     elif len(parsed.specs) == 1 and parsed.specs[0].name == "gambling":
@@ -155,7 +157,8 @@ class GraphCog(commands.Cog):
         lines = [
             "**Subcommands:**",
             "`!graph balance [@user]` — Wallet balance over the last 2 weeks",
-            "`!graph economy` — Total economy (wallet + savings) over the last 2 weeks",
+            "`!graph economy` — Total economy (wallet + savings + property) over the last 2 weeks",
+            "`!graph assets [@user]` — Property portfolio value and lifetime revenue",
             "`!graph crime [@user]` — Coins gained/lost via !steal and !mug",
             "`!graph gambling [@user]` — Net P/L from games and gambling",
             "`!graph levels [@user]` — Level-ups per day in this server",
@@ -208,6 +211,13 @@ class GraphCog(commands.Cog):
     @requires_perm
     async def cmd_graph_total(self, ctx: commands.Context, *tokens: str):
         await _admin_handler(ctx, _strip_all(tokens), field="total")
+
+    @cmd_graph.command(name="assets", aliases=["asset", "property", "properties", "realestate"])
+    async def cmd_graph_assets(self, ctx: commands.Context, *tokens: str):
+        if tokens and tokens[0].lower() == "all":
+            await _admin_route(ctx, tokens[1:], field="assets")
+            return
+        await _build_and_render(ctx, tokens, find_spec("assets"))
 
     @cmd_graph.command(name="crime")
     @requires_perm
@@ -268,7 +278,8 @@ class GraphCog(commands.Cog):
             "`!graph admin wallet [N|@users…]` — per-user wallet, top N (default 10) "
             "or specific users\n"
             "`!graph admin savings [N|@users…]` — per-user savings, same shape\n"
-            "`!graph admin total [N|@users…]` — per-user wallet + savings, same shape",
+            "`!graph admin assets [N|@users…]` — per-user property value, same shape\n"
+            "`!graph admin total [N|@users…]` — per-user wallet + savings + property, same shape",
             C_GOLD,
         ))
 
@@ -281,6 +292,10 @@ class GraphCog(commands.Cog):
     @requires_perm
     async def cmd_graph_admin_savings(self, ctx: commands.Context, *tokens: str):
         await _admin_handler(ctx, tokens, field="savings")
+
+    @cmd_graph_admin.command(name="assets", aliases=["asset", "property", "properties"])
+    async def cmd_graph_admin_assets(self, ctx: commands.Context, *tokens: str):
+        await _admin_handler(ctx, tokens, field="assets")
 
     @cmd_graph_admin.command(name="total")
     @requires_perm

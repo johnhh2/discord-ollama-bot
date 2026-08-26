@@ -1,5 +1,6 @@
 {
   "chessthreats":  {"tier": "everyone", "hidden": false},
+  "assets":        {"tier": "everyone", "hidden": false},
   "godmode":       {"tier": "global_admin", "hidden": true},
   "adminragebait": {"tier": "bot_admin", "hidden": true},
   "adminjailbreak": {"tier": "bot_admin",  "hidden": true},

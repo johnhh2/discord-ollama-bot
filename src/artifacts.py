@@ -20,12 +20,17 @@ Effect payload keys (all optional) are read by the systems they modify:
                                 (steal/mug; bank heists excluded)
     scratchoffs_per_50_streak — extra daily scratchoffs per 50 days of the
                                 owner's live command streak (src/streaks.py)
+    property_accrual_cap_bonus        — flat increase to the unredeemed
+                                property-revenue cap (src/properties.py)
+    property_revenue_pct_per_property — % property-revenue boost per
+                                property the owner holds
 """
 from src.config import (
     ARTIFACT_SLOTS_BLANK_COST, ARTIFACT_CHESSTHREATS_COST,
     ARTIFACT_BAIL_DISCOUNT_COST, ARTIFACT_EXTRA_SCRATCH_COST,
     ARTIFACT_STEAL_BOOST_COST, ARTIFACT_CRIME_CATCH_COST,
     ARTIFACT_STREAK_SCRATCH_COST,
+    ARTIFACT_PROPERTY_CAP_COST, ARTIFACT_PROPERTY_BOOST_COST,
     SLOT_REEL, SCRATCHOFF_MAX_DAILY,
 )
 from src import state
@@ -86,6 +91,22 @@ ARTIFACTS: list[dict] = [
         "effect": "Grants +1 daily scratchoff for every 50 days in your daily command streak",
         "max": 1,
         "scratchoffs_per_50_streak": 1,
+    },
+    {
+        "id": "property_cap_deed",
+        "level": 40,
+        "cost": ARTIFACT_PROPERTY_CAP_COST,
+        "effect": "Your unredeemed property revenue cap is 5,000 🪙 higher",
+        "max": 1,
+        "property_accrual_cap_bonus": 5_000,
+    },
+    {
+        "id": "property_mogul",
+        "level": 50,
+        "cost": ARTIFACT_PROPERTY_BOOST_COST,
+        "effect": "Your property revenue is 10% higher for every property you own",
+        "max": 1,
+        "property_revenue_pct_per_property": 10,
     },
 ]
 
@@ -163,3 +184,15 @@ def crime_catch_chance(uid: int, base: float) -> float:
     reductions. Bank heists deliberately don't call this."""
     pct = min(_owned_total(uid, "crime_catch_reduction_pct"), 100)
     return base * (1 - pct / 100)
+
+
+def property_accrual_cap_bonus(uid: int) -> int:
+    """Flat coins added to the unredeemed property-revenue cap."""
+    return _owned_total(uid, "property_accrual_cap_bonus")
+
+
+def property_revenue_boosted(uid: int, base: int, owned_count: int) -> int:
+    """Property revenue after artifact boosts. The per-property bonus scales
+    with holdings: +10%/property × 5 properties = +50% at the ownership cap."""
+    pct = _owned_total(uid, "property_revenue_pct_per_property") * owned_count
+    return int(base * (1 + pct / 100))

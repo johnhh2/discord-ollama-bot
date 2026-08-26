@@ -29,6 +29,7 @@ EXTENSIONS = [
     "src.gambling.scratchoff",
     "src.gambling.slots",
     "src.cogs.economy_cog",
+    "src.cogs.assets_cog",
     "src.cogs.shop_cog",
     "src.cogs.effects_cog",
     "src.cogs.bounty_cog",

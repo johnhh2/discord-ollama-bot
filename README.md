@@ -63,6 +63,7 @@ PvP works too, with SAN/UCI move input, board rendering, threat analysis (`!ches
 
 ### 🎰 Economy & casino
 - `!daily` rewards with streaks (5am CT reset, DST-aware), `!savings` with compounding interest, `!pay`, `!graph` for balance history
+- `!assets` real estate — 36 unique bot-wide properties (10k–2m 🪙) paying 2× their price per year, banked automatically with your daily claim, with a cross-server player marketplace (`!assets sell <name> <price>`)
 - `!slots` with a progressive jackpot, `!blackjack`, `!flip`, `!scratchoff`, and a monthly `!lottery` drawn on the 1st of each month at 6pm CT (each user's first 100 tickets per day are half price; `!lottery automatch <max>` auto-buys tickets to tie anyone who passes your total, up to your chosen cap, until the draw)
 - Crime layer: `!steal`, `!mug`, `!bankheist` co-op heists, `!jail` / `!bail` / `!jailbreak`, and purchasable insurance
 - `!bounty <coins> [duration] <condition>` — escrowed rewards anyone can claim, with author accept/reject via DM and a community-vote contest path

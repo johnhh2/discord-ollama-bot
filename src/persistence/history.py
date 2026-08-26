@@ -4,35 +4,43 @@ from src.db import with_cursor
 # ── Balance / bot stats history ───────────────────────────────────────────────
 
 async def load_balance_history() -> dict:
-    """Return {date_str: {bucket: {uid_str: {"wallet": int, "savings": int}}}}.
+    """Return {date_str: {bucket: {uid_str: {"wallet": int, "savings": int,
+    "assets": int, "asset_revenue": int}}}}.
     The bucket layer (0..3) splits each calendar day into 6h CT windows.
+    `assets` is property book value; `asset_revenue` is the lifetime property
+    revenue banked as of the snapshot.
     """
     async with with_cursor() as cur:
         await cur.execute(
-            "SELECT snapshot_date, bucket, user_id, wallet, savings FROM balance_history"
+            "SELECT snapshot_date, bucket, user_id, wallet, savings, assets, asset_revenue"
+            " FROM balance_history"
         )
         rows = await cur.fetchall()
     result: dict = {}
-    for date_str, bucket, uid, wallet, savings in rows:
+    for date_str, bucket, uid, wallet, savings, assets, asset_revenue in rows:
         result.setdefault(date_str, {}).setdefault(int(bucket), {})[str(uid)] = {
             "wallet": wallet, "savings": savings,
+            "assets": assets or 0, "asset_revenue": asset_revenue or 0,
         }
     return result
 
 
 async def save_balance_history(history: dict):
-    """Accepts {date_str: {bucket: {uid_str: {"wallet": …, "savings": …}}}}."""
+    """Accepts {date_str: {bucket: {uid_str: {"wallet": …, "savings": …,
+    "assets": …, "asset_revenue": …}}}}."""
     async with with_cursor() as cur:
         for date_str, by_bucket in history.items():
             for bucket, users in by_bucket.items():
                 for uid_str, vals in users.items():
                     await cur.execute(
                         "INSERT INTO balance_history"
-                        " (snapshot_date, bucket, user_id, wallet, savings)"
-                        " VALUES (%s,%s,%s,%s,%s)"
-                        " ON DUPLICATE KEY UPDATE wallet=VALUES(wallet), savings=VALUES(savings)",
+                        " (snapshot_date, bucket, user_id, wallet, savings, assets, asset_revenue)"
+                        " VALUES (%s,%s,%s,%s,%s,%s,%s)"
+                        " ON DUPLICATE KEY UPDATE wallet=VALUES(wallet), savings=VALUES(savings),"
+                        " assets=VALUES(assets), asset_revenue=VALUES(asset_revenue)",
                         (date_str, int(bucket), int(uid_str),
-                         vals.get("wallet", 0), vals.get("savings", 0)),
+                         vals.get("wallet", 0), vals.get("savings", 0),
+                         vals.get("assets", 0), vals.get("asset_revenue", 0)),
                     )
 
 

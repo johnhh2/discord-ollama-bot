@@ -36,6 +36,8 @@ RECORD_LABELS = {
     "highest_bot_chess_elo_defeated": "highest Stockfish Elo defeated",
     "chess_pvp_wins": "most PvP chess wins",
     "total_artifacts": "most artifacts owned",
+    "total_assets": "most properties owned",
+    "highest_property_value": "highest property portfolio value",
     "command_streak": "longest daily command streak",
     "scratchoff_day": "best scratchoff day",
     "crime": "biggest crime score",
@@ -98,6 +100,8 @@ async def announce_record(channel, category: str, holder_name: str, value: int, 
         suffix = f"**{value:,} Elo**"
     elif category == "total_artifacts":
         suffix = f"**{value:,}** artifact{'' if value == 1 else 's'}"
+    elif category == "total_assets":
+        suffix = f"**{value:,}** propert{'y' if value == 1 else 'ies'}"
     elif category == "command_streak":
         suffix = f"**{value:,}** day{'' if value == 1 else 's'}"
     else:

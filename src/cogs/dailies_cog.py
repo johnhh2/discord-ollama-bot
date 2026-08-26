@@ -87,8 +87,8 @@ def _dailies_body() -> str:
         "lost, which are kept until the dailies reset.\n"
         f"Dailies reset <t:{next_daily_reset_ts()}:R>.\n\n"
         f"{DAILIES_CLAIM_EMOJI} claim dailies\n"
-        f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip the daily reward + all scratchoff winnings\n"
-        f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet the daily reward + all scratchoff winnings on slots\n"
+        f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip the daily reward + property revenue + all scratchoff winnings\n"
+        f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet the daily reward + property revenue + all scratchoff winnings on slots\n"
         f"{DAILIES_TICKETS_EMOJI} buy today's half-price lottery tickets (no claim)"
     )
 
@@ -261,17 +261,20 @@ class DailiesCog(commands.Cog):
             if lottery_cog is not None:
                 await lottery_cog.buy_discounted_tickets(member, channel, guild)
             return
-        claimed = await _auto_daily(member, channel)
+        claimed, prop_rev = await _auto_daily(member, channel)
         winnings = await play_scratchoffs(
             self.bot, member, channel, guild, count=scratchoff_daily_cap(member.id)
         )
+        # Property revenue is part of the stake (owners gamble their full
+        # claim) but excluded from the flip/slots record math — auto-staked
+        # property income mustn't hand property owners the gambling records.
         stake = claimed + winnings
         if not stake:
             return
         if gamble == DAILIES_FLIP_EMOJI:
-            await play_flip(member, channel, guild, stake)
+            await play_flip(member, channel, guild, stake, record_exclude=prop_rev)
         elif gamble == DAILIES_SLOTS_EMOJI and stake >= SLOT_MIN_BET:
-            await play_slots(member, channel, guild, stake)
+            await play_slots(member, channel, guild, stake, record_exclude=prop_rev)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):

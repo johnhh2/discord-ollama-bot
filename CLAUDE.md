@@ -250,6 +250,45 @@ It is wrong for a **global per-user stat**: one number that reads the same from 
 4. **Backfilling an existing category** — a migration can't see Discord membership, so it joins `leveling` the same way. Keep it raise-only (guard every write on the new value being strictly greater) so a re-run is a no-op and no record is ever lowered. See [migrations/0046_sync_artifact_record_across_guilds.sql](migrations/0046_sync_artifact_record_across_guilds.sql) for the shape: a `ROW_NUMBER()` pick of one candidate per guild, then an `ON DUPLICATE KEY UPDATE` that only takes the row if it beats what's there.
 5. **Ties** — categories in `UID_TIEBREAK_CATEGORIES` (currently `command_streak`) break ties on the lower user id. A backfill for one of those needs the same rule in SQL, or the migration and `_beats` will disagree about who holds a tied record.
 
+## Real estate (!assets): unique global deeds
+
+Every property in `src/properties.py` is a **unique bot-wide deed** — at most
+one owner across all servers, enforced by the `property_owners` PK
+(`property_id`). Ownership, listings, and the marketplace are all guild-free,
+like the economy itself. `state.property_owners` mirrors the table.
+
+Rules when touching this system:
+
+1. **Revenue is derived, never hand-typed.** `daily_revenue(cost) = cost * 2
+   // 365` (2× purchase price per year) is the single invariant; catalog
+   entries carry only `cost`. Don't add a per-property revenue field.
+2. **Revenue pays out with the daily claim only.** `bank_property_revenue`
+   is called from `cmd_daily` and `events._auto_daily` — both inside the
+   synchronously-claimed `daily_date` window, which is what makes it
+   once-per-gameplay-day and race-safe. Don't add a payout loop or a
+   standalone collect command without moving that gate with it.
+3. **Accrual is capped** at `max(10k + cap artifacts, one day's boosted
+   portfolio revenue)` — a daily claimer never loses coins to the cap; a
+   lapsed claimer accrues at most the cap. Per-property accrual starts at
+   `max(property_paid_at, acquired_at)` so purchases never pay backdated rent.
+4. **Property revenue is excluded from gambling records.** The dailies
+   buttons stake the full claim (daily + property revenue + scratchoffs) but
+   pass the property portion as `record_exclude` to `play_flip`/`play_slots`,
+   which shrink the record *offer* (never the payout). A hand-typed
+   `!flip`/`!slots` keeps `record_exclude=0`. Preserve this split if you add
+   another auto-staked income source.
+5. **Both property records are global per-user stats** (`total_assets`,
+   `highest_property_value` in `GLOBAL_STAT_CATEGORIES`) — deeds are bot-wide,
+   so a purchase in one guild moves every guild's record.
+6. **Buying is the racey path.** The deed claim (and the
+   `PROPERTY_MAX_OWNED` check) runs synchronously before `shop_charge`, with
+   rollback on failure — same pattern for bank and marketplace buys. Two
+   racing buyers of one deed must resolve to exactly one owner, one charge
+   (covered in `tests/test_properties.py`).
+7. **Catalog changes**: never rename a shipped `id`; keep display names
+   unique (`find_property` matches on either). New properties just get
+   appended — there's no supply migration, unowned means bank-owned.
+
 ## Concurrency: per-user command races
 
 Discord users can fire several invocations of the same command before the first finishes (spam-typing, multi-device, scripted clients). Because asyncio is cooperative, a coroutine only loses control at an `await` — so a sequence like *check counter → await network/DB → mutate counter* is racey: two invocations both pass the check before either mutates, and the user gets the resource twice. This bot has had four of these bugs in one month (`!scratchoff`, `!daily`, `!bail`, `!shop insurance`, `!shop unoreverse`). The pattern is easy to introduce and easy to miss in code review.

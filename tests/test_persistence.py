@@ -256,14 +256,22 @@ async def test_try_set_record_only_updates_when_higher(db):
 
 async def test_balance_history_roundtrip(db):
     """History is keyed {date: {bucket: {uid: payload}}} — bucket 0..3
-    splits each calendar day into 6h CT windows."""
+    splits each calendar day into 6h CT windows. The loader materializes
+    the property columns (assets / asset_revenue) with 0 defaults for rows
+    saved without them."""
     history = {
-        "2026-04-30": {0: {"1": {"wallet": 100, "savings": 50}}},
-        "2026-05-01": {1: {"1": {"wallet": 110, "savings": 55}, "2": {"wallet": 0, "savings": 0}}},
+        "2026-04-30": {0: {"1": {"wallet": 100, "savings": 50, "assets": 20_000, "asset_revenue": 109}}},
+        "2026-05-01": {1: {"1": {"wallet": 110, "savings": 55, "assets": 20_000, "asset_revenue": 218},
+                           "2": {"wallet": 0, "savings": 0, "assets": 0, "asset_revenue": 0}}},
     }
     await _persistence.save_balance_history(history)
     loaded = await _persistence.load_balance_history()
     assert loaded == history
+
+    # Pre-0048-shaped payloads (no property keys) load back with 0 defaults.
+    await _persistence.save_balance_history({"2026-05-02": {0: {"3": {"wallet": 7, "savings": 3}}}})
+    loaded = await _persistence.load_balance_history()
+    assert loaded["2026-05-02"][0]["3"] == {"wallet": 7, "savings": 3, "assets": 0, "asset_revenue": 0}
 
 
 # ── command perms ─────────────────────────────────────────────────────────────

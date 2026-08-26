@@ -307,16 +307,20 @@ async def _handle_soundboard_ratelimit(bot, guild_id: int, user_id: int):
         return
 
 
-async def _auto_daily(author, channel) -> int:
-    """Award daily coins on first interaction of the day. Sends a short message if awarded.
+async def _auto_daily(author, channel) -> tuple[int, int]:
+    """Award daily coins (plus any pending property revenue) on first
+    interaction of the day. Sends a short message if awarded.
 
     Takes (author, channel) rather than a Message so the dailies-channel
     reaction claim (src/cogs/dailies_cog.py) can reuse it.
 
-    Returns the number of coins awarded (0 when the daily was already claimed
-    today) — the dailies reaction claim adds it to the scratchoff winnings to
-    size its flip/slots gamble.
+    Returns (total_awarded, property_portion) — (0, 0) when the daily was
+    already claimed today. The dailies reaction claim adds the total to the
+    scratchoff winnings to size its flip/slots gamble, and passes the
+    property portion through as the gamble's record_exclude so property
+    income can't inflate the flip/slots records.
     """
+    from src.properties import bank_property_revenue
     uid = author.id
     await _ensure_user(uid)
     today = _ct_today()
@@ -328,7 +332,7 @@ async def _auto_daily(author, channel) -> int:
             uid, stored, type(stored).__name__, today, type(today).__name__,
         )
     if stored == today:
-        return 0
+        return 0, 0
     is_new = user_data.get("last_daily", 0.0) == 0.0
     # Claim the day synchronously BEFORE the awaits (same fix as cmd_daily):
     # add_balance yields, so two qualifying messages in quick succession
@@ -341,14 +345,19 @@ async def _auto_daily(author, channel) -> int:
     except Exception:
         user_data["daily_date"] = stored  # roll back the claim on failure
         raise
+    # Property revenue rides the daily claim — inside the same claimed day,
+    # so it pays at most once per gameplay-day. Banks and stamps atomically;
+    # rolls itself back if the balance write fails.
+    prop_rev = await bank_property_revenue(uid)
     await save_economy(uid=uid)
     greeting = f"Welcome, **{author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
+    prop_str = f" + **{prop_rev:,} 🪙** property revenue" if prop_rev else ""
     await channel.send(embed=emb(
         "🪙 Daily Reward",
-        f"{greeting} **{DAILY_REWARD:,} 🪙** added. Balance: {await get_balance(uid):,} 🪙",
+        f"{greeting} **{DAILY_REWARD:,} 🪙**{prop_str} added. Balance: {await get_balance(uid):,} 🪙",
         C_GREEN,
     ), silent=True)
-    return DAILY_REWARD
+    return DAILY_REWARD + prop_rev, prop_rev
 
 
 async def _passive_ragebait(message: discord.Message, history: list[str]):

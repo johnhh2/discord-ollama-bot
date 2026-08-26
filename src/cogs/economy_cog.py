@@ -33,6 +33,7 @@ from src.config import (
 )
 from src.jail_reasons import format_steal_reason, format_mug_reason, format_bankheist_reason
 from src.artifacts import bail_cost, steal_success_chance, crime_catch_chance
+from src.properties import bank_property_revenue
 from src.confirm_view import confirm_purchase
 from src import state
 
@@ -241,9 +242,14 @@ class EconomyCog(commands.Cog):
         user_data["daily_date"] = today
         user_data["last_daily"] = time.time()
         gid = ctx.guild.id if ctx.guild else None
+        # Property revenue rides the daily claim (banks + stamps atomically;
+        # see src/properties.py). Banked BEFORE the reward's add_balance so
+        # the highest_balance record offer below sees the full new balance.
+        prop_rev = await bank_property_revenue(uid)
         await add_balance(uid, DAILY_REWARD, guild_id=gid, holder_name=ctx.author.display_name)
         await save_economy(uid=uid)
-        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**! Balance: **{await get_balance(uid):,} 🪙**", C_GREEN))
+        prop_str = f" + **{prop_rev:,} 🪙** property revenue" if prop_rev else ""
+        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**{prop_str}! Balance: **{await get_balance(uid):,} 🪙**", C_GREEN))
 
 
     @commands.command(name="balance", aliases=["bal", "b", "!", "$"])
@@ -1377,6 +1383,8 @@ class EconomyCog(commands.Cog):
             fmt(CRIME_RECORD_CATEGORY, "Crime Score",
                 lambda rec: f"\n  ↳ {format_crime_record_detail(rec)}"),
             fmt("total_artifacts", "Artifacts Owned", unit=""),
+            fmt("total_assets", "Properties Owned", unit=""),
+            fmt("highest_property_value", "Property Portfolio"),
             fmt("command_streak", "Command Streak",
                 unit="day" if (r.get("command_streak") or {}).get("value") == 1 else "days"),
         ]
@@ -1527,10 +1535,26 @@ class EconomyCog(commands.Cog):
         house_bal = get_guild_house_balance(ctx.guild.id) if ctx.guild else 0
         total_users = len(users)
 
+        # Property stats: book value isn't "circulation" (the purchase coins
+        # were burned), so it gets its own lines and a combined net worth.
+        from src.properties import PROPERTIES, PROPERTIES_BY_ID, daily_revenue
+        owned_count = sum(1 for pid in state.property_owners if pid in PROPERTIES_BY_ID)
+        total_property = sum(
+            PROPERTIES_BY_ID[pid]["cost"]
+            for pid in state.property_owners if pid in PROPERTIES_BY_ID
+        )
+        total_property_daily = sum(
+            daily_revenue(PROPERTIES_BY_ID[pid]["cost"])
+            for pid in state.property_owners if pid in PROPERTIES_BY_ID
+        )
+
         stats = (
             f"**Total in wallets:** {total_wallets:,} 🪙\n"
             f"**Total in savings:** {total_savings:,} 🪙\n"
             f"**Total in circulation:** {total_circulation:,} 🪙\n"
+            f"**Total in property:** {total_property:,} 🪙 ({owned_count}/{len(PROPERTIES)} owned)\n"
+            f"**Daily property revenue:** {total_property_daily:,} 🪙/day\n"
+            f"**Net worth (circulation + property):** {total_circulation + total_property:,} 🪙\n"
             f"**Lottery pool:** {lottery_pool:,} 🪙\n"
             f"**House pot:** {house_bal:,} 🪙\n\n"
             f"**Users tracked:** {total_users:,}\n"
@@ -1540,6 +1564,7 @@ class EconomyCog(commands.Cog):
             "`!balance [@user]` — Check wallet\n"
             "`!pay @user <amount>` — Send coins\n"
             f"{fmt_line('savings', '`!savings` — Piggy bank (1% daily interest)', uid_help, gid_help)}\n"
+            "`!assets` — Real estate (revenue with your daily)\n"
             "`!crime` — Steal, mug, jailbreak\n"
             "`!lottery` — Monthly lottery info\n"
             "`!shop` — Spend coins"

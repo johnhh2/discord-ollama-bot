@@ -396,6 +396,7 @@ async def snapshot_balances():
     Pruning lives in `do_daily_reset` (DB-level DELETE), not here — the
     snapshot loop runs every 30min and shouldn't churn through old rows."""
     import time as _time
+    from src.properties import portfolio_value
     today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
     history = await load_balance_history()
@@ -405,7 +406,13 @@ async def snapshot_balances():
         wallet = user.get("balance", 0)
         deps = user.get("savings", [])
         savings = int(sum(e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0)) for e in deps))
-        snapshot[uid_str] = {"wallet": wallet, "savings": savings}
+        snapshot[uid_str] = {
+            "wallet": wallet, "savings": savings,
+            # Property book value + lifetime revenue banked — feeds
+            # !graph assets and the economy graph's Property segment.
+            "assets": portfolio_value(int(uid_str)),
+            "asset_revenue": int(user.get("property_revenue_total", 0) or 0),
+        }
     history.setdefault(today, {})[bucket] = snapshot
     await save_balance_history(history)
     logging.info(f"[snapshot] balances for {today} bucket {bucket}: {len(snapshot)} users")

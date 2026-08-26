@@ -19,13 +19,20 @@ from src.dailies import keep_in_dailies_channel
 from src import state
 
 
-async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str = "heads"):
+async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str = "heads",
+                    record_exclude: int = 0):
     """Charge amount×n and flip n coins on `side`, announcing in `channel`.
 
     Extracted from cmd_flip so the dailies-channel reaction claim can flip a
     player's claim (daily reward + scratchoff winnings) without a
     commands.Context. Inputs are
     assumed validated (amount >= 1, n >= 1, side in heads/tails).
+
+    `record_exclude` shrinks the stake considered for the "biggest flip win"
+    record (payouts are untouched). The dailies claim passes its property
+    revenue portion here so property owners' auto-staked income can't
+    trivialize the record; a hand-typed !flip wagers real coins knowingly and
+    keeps the default 0.
     """
     uid = author.id
     total_cost = amount * n
@@ -66,8 +73,9 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
         else:
             await record_gambling_event(gid, uid, lost=-net)
     new_flip_record = False
-    if wins:
-        new_flip_record = await try_set_record(gid, "flip", winnings_per, uid, author.display_name)
+    record_winnings_per = max(0, amount - record_exclude) * 2
+    if wins and record_winnings_per > 0:
+        new_flip_record = await try_set_record(gid, "flip", record_winnings_per, uid, author.display_name)
     new_bal = await get_balance(uid)
 
     if n == 1:
@@ -90,7 +98,7 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
     await keep_in_dailies_channel(guild, channel, msg, net)
 
     if new_flip_record:
-        await announce_record(channel, "flip", author.display_name, winnings_per, holder_id=author.id)
+        await announce_record(channel, "flip", author.display_name, record_winnings_per, holder_id=author.id)
     if new_bal_record:
         await announce_record(channel, "highest_balance", author.display_name, new_bal, holder_id=author.id)
 

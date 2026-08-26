@@ -46,6 +46,12 @@ active_chess_games: dict = {}
 # Global (not guild-scoped), like the economy. Source of truth is the
 # user_artifacts table; loaded at boot. Catalog lives in src/artifacts.py.
 user_artifacts: dict = {}
+# Real-estate ownership (!assets): {property_id: {owner_id, acquired_at,
+# list_price, listed_at}}. Bot-wide and guild-free — every property is a
+# unique deed with at most one owner across all servers; list_price is None
+# unless the owner has a live marketplace listing. Source of truth is the
+# property_owners table; loaded at boot. Catalog lives in src/properties.py.
+property_owners: dict = {}
 rigged_slots: dict = {}
 rigged_flips: dict = {}
 rigged_scratch: dict = {}

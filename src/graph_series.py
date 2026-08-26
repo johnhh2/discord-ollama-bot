@@ -330,15 +330,19 @@ async def build_series_levels(member: discord.Member, guild_id: int) -> SeriesDa
 
 
 async def build_series_economy() -> SeriesData:
+    from src.properties import PROPERTIES_BY_ID
+
     history = await load_balance_history()
 
     x_points: list[datetime.datetime] = []
     y_wallet: list[float] = []
     y_savings: list[float] = []
+    y_assets: list[float] = []
     for point_dt, snap_by_user in _iter_points(history):
         x_points.append(point_dt)
         y_wallet.append(sum(u["wallet"] for u in snap_by_user.values()))
         y_savings.append(sum(u["savings"] for u in snap_by_user.values()))
+        y_assets.append(sum(u.get("assets", 0) or 0 for u in snap_by_user.values()))
 
     now_point = _live_now_point()
     now = _time.time()
@@ -348,18 +352,73 @@ async def build_series_economy() -> SeriesData:
         for u in state.economy["users"].values()
         for e in u.get("savings", [])
     ))
+    # Every owned deed's book value, regardless of owner — the sum over
+    # users of portfolio_value without the per-user loop.
+    live_assets = sum(
+        PROPERTIES_BY_ID[pid]["cost"]
+        for pid in state.property_owners
+        if pid in PROPERTIES_BY_ID
+    )
     if not x_points or x_points[-1] != now_point:
         x_points.append(now_point)
         y_wallet.append(live_wallet)
         y_savings.append(live_savings)
+        y_assets.append(live_assets)
 
-    y_total = [w + s for w, s in zip(y_wallet, y_savings)]
+    y_total = [w + s + a for w, s, a in zip(y_wallet, y_savings, y_assets)]
     return SeriesData(
         title="Total Economy",
         segments=[
-            Segment(label="Wallets", color="#2ecc71", y_values=y_wallet),
-            Segment(label="Savings", color="#9b59b6", y_values=y_savings),
-            Segment(label="Total",   color="#f1c40f", y_values=y_total),
+            Segment(label="Wallets",  color="#2ecc71", y_values=y_wallet),
+            Segment(label="Savings",  color="#9b59b6", y_values=y_savings),
+            Segment(label="Property", color="#e67e22", y_values=y_assets),
+            Segment(label="Total",    color="#f1c40f", y_values=y_total),
+        ],
+        x_points=x_points,
+        native_style="line",
+    )
+
+
+async def build_series_assets(member: discord.Member) -> SeriesData:
+    """Per-(date, bucket) property book value and lifetime property revenue
+    for `member`. Points where both are zero are skipped (mirroring crime's
+    no-noisy-zero-line rule for users without property).
+    """
+    from src.properties import portfolio_value
+
+    history = await load_balance_history()
+    uid_str = str(member.id)
+
+    x_points: list[datetime.datetime] = []
+    y_value: list[float] = []
+    y_revenue: list[float] = []
+    for point_dt, snap_by_user in _iter_points(history):
+        snap = snap_by_user.get(uid_str)
+        if snap is None:
+            continue
+        assets = snap.get("assets", 0) or 0
+        revenue = snap.get("asset_revenue", 0) or 0
+        if not assets and not revenue:
+            continue
+        x_points.append(point_dt)
+        y_value.append(assets)
+        y_revenue.append(revenue)
+
+    now_point = _live_now_point()
+    live_value = portfolio_value(member.id)
+    live_revenue = int(
+        state.economy["users"].get(uid_str, {}).get("property_revenue_total", 0) or 0
+    )
+    if (live_value or live_revenue) and (not x_points or x_points[-1] != now_point):
+        x_points.append(now_point)
+        y_value.append(live_value)
+        y_revenue.append(live_revenue)
+
+    return SeriesData(
+        title=f"{member.display_name}'s Property",
+        segments=[
+            Segment(label="Portfolio Value",  color="#e67e22", y_values=y_value),
+            Segment(label="Revenue (lifetime)", color="#2ecc71", y_values=y_revenue),
         ],
         x_points=x_points,
         native_style="line",
@@ -626,6 +685,7 @@ async def build_series_minecraft() -> SeriesData:
 REGISTRY: list[SeriesSpec] = [
     SeriesSpec("balance",  ("balance", "bal"),                          GROUP_COINS,  build_series_balance,  accepts_member=True,  y_unit_label="🪙 Coins"),
     SeriesSpec("economy",  ("economy", "eco", "total", "totalbalance"), GROUP_COINS,  build_series_economy,                          y_unit_label="🪙 Coins"),
+    SeriesSpec("assets",   ("assets", "asset", "property", "properties", "realestate"), GROUP_COINS, build_series_assets, accepts_member=True, y_unit_label="🪙 Coins"),
     SeriesSpec("crime",    ("crime",),                                  GROUP_COINS,  build_series_crime,    accepts_member=True,  y_unit_label="🪙 Coins"),
     SeriesSpec("gambling", ("gambling", "gamble", "games", "game"),     GROUP_COINS,  build_series_gambling, accepts_member=True,  y_unit_label="🪙 Coins"),
     SeriesSpec("commands", ("commands", "cmd", "cmds"),                 GROUP_COUNTS, build_series_commands,                         y_unit_label="Count"),
@@ -829,22 +889,22 @@ async def build_admin_series(
 ) -> SeriesData:
     """Build a multi-line SeriesData with one line per user.
 
-    `field` is "wallet", "savings", or "total" (wallet + savings) — the
-    column from balance_history to plot. Either `top_n` (selects users
-    with the highest current value) or `members` (explicit list) must be
-    provided, not both.
+    `field` is "wallet", "savings", "assets" (property book value), or
+    "total" (wallet + savings + assets) — the column from balance_history to
+    plot. Either `top_n` (selects users with the highest current value) or
+    `members` (explicit list) must be provided, not both.
 
     `bot` is the discord.py Bot instance, used to resolve uids to display
     names in top-N mode (we don't have member objects there). Optional
     for tests; falls back to `<@uid>` mention strings when absent.
     """
-    assert field in ("wallet", "savings", "total"), f"unknown field {field!r}"
+    assert field in ("wallet", "savings", "assets", "total"), f"unknown field {field!r}"
     assert (top_n is None) != (members is None), "exactly one of top_n/members"
 
     def _row_value(snap: dict) -> float:
         if field == "total":
-            return snap.get("wallet", 0) + snap.get("savings", 0)
-        return snap.get(field, 0)
+            return snap.get("wallet", 0) + snap.get("savings", 0) + (snap.get("assets", 0) or 0)
+        return snap.get(field, 0) or 0
 
     history = await load_balance_history()
 
@@ -864,6 +924,7 @@ async def build_admin_series(
     if not all_points or all_points[-1] != now_point:
         all_points.append(now_point)
         import time as _time
+        from src.properties import portfolio_value
         now = _time.time()
         for uid_str, user in state.economy["users"].items():
             wallet = user.get("balance", 0)
@@ -875,8 +936,10 @@ async def build_admin_series(
                 value = wallet
             elif field == "savings":
                 value = savings
+            elif field == "assets":
+                value = portfolio_value(int(uid_str))
             else:  # total
-                value = wallet + savings
+                value = wallet + savings + portfolio_value(int(uid_str))
             if value > 0 or uid_str in by_user:
                 by_user.setdefault(uid_str, []).append((now_point, value))
 

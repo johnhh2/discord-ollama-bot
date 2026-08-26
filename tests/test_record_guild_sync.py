@@ -100,10 +100,14 @@ async def _row(gid: int, category: str) -> dict | None:
 async def test_only_global_per_user_stats_are_mirrored():
     """A guard on the classification itself. Gambling wins, the crime score,
     per-guild chess wins and per-guild hangman tallies are events or counts
-    scoped to one server; the four in the set are properties of the user."""
+    scoped to one server; the entries in the set are properties of the user
+    (real-estate holdings are bot-wide deeds, so both property records are
+    global per-user stats too)."""
     assert GLOBAL_STAT_CATEGORIES == {
         "highest_balance",
         "total_artifacts",
+        "total_assets",
+        "highest_property_value",
         "command_streak",
         "highest_bot_chess_elo_defeated",
     }

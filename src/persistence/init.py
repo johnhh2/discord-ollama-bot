@@ -60,7 +60,7 @@ async def _init_db_state_inner(state, run_migrations):
                 " scratch_date, jailbreak_used, jail_until, savings, jail_reason,"
                 " crime_eligible, bail_amount, bot_chess_elo_max_today,"
                 " bot_chess_elo_max_date, lottery_disc_used, lottery_disc_date,"
-                " scratch_won_today"
+                " scratch_won_today, property_paid_at, property_revenue_total"
                 " FROM economy_users"
             )
             for row in await cur.fetchall():
@@ -68,7 +68,8 @@ async def _init_db_state_inner(state, run_migrations):
                  jb_used, jail_until, savings_json, jail_reason,
                  crime_eligible, bail_amount,
                  bot_chess_elo_max_today, bot_chess_elo_max_date,
-                 lottery_disc_used, lottery_disc_date, scratch_won_today) = row
+                 lottery_disc_used, lottery_disc_date, scratch_won_today,
+                 property_paid_at, property_revenue_total) = row
                 state.economy["users"][str(uid)] = {
                     "balance": bal,
                     "last_daily": last_daily,
@@ -86,6 +87,8 @@ async def _init_db_state_inner(state, run_migrations):
                     "lottery_disc_used": int(lottery_disc_used or 0),
                     "lottery_disc_date": lottery_disc_date,
                     "scratch_won_today": int(scratch_won_today or 0),
+                    "property_paid_at": float(property_paid_at or 0.0),
+                    "property_revenue_total": int(property_revenue_total or 0),
                 }
         except Exception as e:
             logging.error(f"[init_db_state] economy_users failed: {e}", exc_info=True)
@@ -302,6 +305,24 @@ async def _init_db_state_inner(state, run_migrations):
                 state.user_artifacts.setdefault(int(r[0]), {})[r[1]] = int(r[2])
         except Exception as e:
             logging.error(f"[init_db_state] user_artifacts failed: {e}", exc_info=True)
+            raise
+
+        # ── property_owners ───────────────────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT property_id, owner_id, acquired_at, list_price, listed_at"
+                " FROM property_owners"
+            )
+            state.property_owners = {}
+            for pid, owner_id, acquired_at, list_price, listed_at in await cur.fetchall():
+                state.property_owners[pid] = {
+                    "owner_id": int(owner_id),
+                    "acquired_at": float(acquired_at),
+                    "list_price": int(list_price) if list_price is not None else None,
+                    "listed_at": float(listed_at) if listed_at is not None else None,
+                }
+        except Exception as e:
+            logging.error(f"[init_db_state] property_owners failed: {e}", exc_info=True)
             raise
 
         # ── rigged_slots ──────────────────────────────────────────────────

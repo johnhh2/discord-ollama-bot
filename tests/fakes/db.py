@@ -73,6 +73,7 @@ _TABLE_PKS = {
     "mc_daily_ping_stats": ("stat_date",),
     "daily_counters": ("day", "counter"),
     "lottery_automatch": ("guild_id", "user_id"),
+    "property_owners": ("property_id",),
 }
 
 

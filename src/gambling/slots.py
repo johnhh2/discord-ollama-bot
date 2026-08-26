@@ -79,13 +79,21 @@ def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
 
 
 
-async def play_slots(author, channel, guild, amount: int):
+async def play_slots(author, channel, guild, amount: int, record_exclude: int = 0):
     """Spin the slots for `author` betting `amount`, announcing in `channel`.
 
     Extracted from cmd_slots so the dailies-channel reaction claim can bet a
     player's claim (daily reward + scratchoff winnings) without a
     commands.Context. `amount` is
     assumed validated (>= SLOT_MIN_BET).
+
+    `record_exclude` shrinks the bet considered for the slots records
+    (payouts are untouched): non-jackpot record offers use
+    (amount - record_exclude) × mult, and the jackpot record offer recomputes
+    the prize with the reduced bet's bonus multiplier. The dailies claim
+    passes its property revenue portion here so property owners'
+    auto-staked income can't trivialize the records; a hand-typed !slots
+    wagers real coins knowingly and keeps the default 0.
     """
     uid = author.id
     await _ensure_user(uid)
@@ -123,16 +131,22 @@ async def play_slots(author, channel, guild, amount: int):
 
     # Progressive jackpot: hit 3 sevens
     if label == "jackpot":
-        prize = apply_jackpot_bonus(state.slot_jackpot, amount)
-        bet_bonus = prize / state.slot_jackpot if state.slot_jackpot else 1.0
+        pool = state.slot_jackpot
+        prize = apply_jackpot_bonus(pool, amount)
+        bet_bonus = prize / pool if pool else 1.0
         state.slot_jackpot = SLOT_JACKPOT_SEED
         await save_jackpot(state.slot_jackpot)
         gid = guild.id if guild else None
         new_bal_record = await shop_payout(uid, prize, guild_id=gid, holder_name=author.display_name)
         if uid not in state.godmode_users:
             await record_gambling_event(gid, uid, gained=max(0, prize - amount))
-        new_jackpot_record = await try_set_record(gid, "slots_jackpot", prize, uid, author.display_name,
-                       bet=amount, symbols=display)
+        # Record offer uses the record-eligible bet's bonus multiplier — the
+        # player is still PAID `prize`, but an auto-staked property-revenue
+        # bet can't buy the 4x bonus its way into the record books.
+        record_bet = max(0, amount - record_exclude)
+        record_prize = apply_jackpot_bonus(pool, record_bet)
+        new_jackpot_record = await try_set_record(gid, "slots_jackpot", record_prize, uid, author.display_name,
+                       bet=record_bet, symbols=display)
         new_bal = await get_balance(uid)
         desc = (f"{display}\n\n🏆 **{author.display_name} hit the Progressive Jackpot!**\n"
                 f"**Won: {prize:,} 🪙** (Bet: {amount:,} 🪙 • Multiplier: {bet_bonus:.2f}x) | Balance: {new_bal:,} 🪙\n"
@@ -156,7 +170,7 @@ async def play_slots(author, channel, guild, amount: int):
                         allowed_mentions=discord.AllowedMentions(roles=[role]),
                     )
         if new_jackpot_record:
-            await announce_record(channel, "slots_jackpot", author.display_name, prize, holder_id=uid)
+            await announce_record(channel, "slots_jackpot", author.display_name, record_prize, holder_id=uid)
         if new_bal_record:
             await announce_record(channel, "highest_balance", author.display_name, new_bal, holder_id=uid)
         return
@@ -188,8 +202,13 @@ async def play_slots(author, channel, guild, amount: int):
     new_bal_record = await shop_payout(uid, winnings, guild_id=gid, holder_name=author.display_name)
     if uid not in state.godmode_users:
         await record_gambling_event(gid, uid, gained=max(0, winnings - amount))
-    new_slots_record = await try_set_record(gid, "slots_non_jackpot", winnings, uid, author.display_name,
-                   bet=amount, symbols=display, label=label)
+    # Record offer excludes any auto-staked property revenue from the bet
+    # (payout above is untouched — see the record_exclude docstring note).
+    record_winnings = max(0, amount - record_exclude) * mult
+    new_slots_record = False
+    if record_winnings > 0:
+        new_slots_record = await try_set_record(gid, "slots_non_jackpot", record_winnings, uid, author.display_name,
+                       bet=max(0, amount - record_exclude), symbols=display, label=label)
 
     result_labels = {
         "jackpot": f"7️⃣7️⃣7️⃣ — **{mult}x** (min bet 25, bonus scales to 4x at bet 1000+)",
@@ -210,7 +229,7 @@ async def play_slots(author, channel, guild, amount: int):
     msg = await channel.send(embed=emb("🎰 Winner!", desc, C_GREEN))
     await keep_in_dailies_channel(guild, channel, msg, winnings - amount)
     if new_slots_record:
-        await announce_record(channel, "slots_non_jackpot", author.display_name, winnings, holder_id=uid)
+        await announce_record(channel, "slots_non_jackpot", author.display_name, record_winnings, holder_id=uid)
     if new_bal_record:
         await announce_record(channel, "highest_balance", author.display_name, new_bal, holder_id=uid)
 

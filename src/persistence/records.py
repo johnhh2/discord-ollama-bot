@@ -27,6 +27,8 @@ UID_TIEBREAK_CATEGORIES = {"command_streak"}
 GLOBAL_STAT_CATEGORIES = {
     "highest_balance",
     "total_artifacts",
+    "total_assets",
+    "highest_property_value",
     "command_streak",
     "highest_bot_chess_elo_defeated",
 }
