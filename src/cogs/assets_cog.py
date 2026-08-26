@@ -40,6 +40,18 @@ def _fmt_prop(p: dict) -> str:
     return f"{p['emoji']} **{p['name']}**"
 
 
+# Shown on both !assets portfolio states so the subcommands are always
+# discoverable from the bare command.
+_SUBCOMMANDS_HELP = (
+    "**Subcommands:**\n"
+    "`!assets browse [tier]` — full catalog + player listings (cross-server)\n"
+    "`!assets buy <name>` — buy from the bank or a player listing\n"
+    "`!assets sell <name> <price>` — list on the cross-server market\n"
+    "`!assets unlist <name>` — remove your listing\n"
+    "`!assets @user` — someone else's portfolio"
+)
+
+
 class AssetsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -62,9 +74,7 @@ class AssetsCog(commands.Cog):
         if not props:
             desc = (
                 f"**{member.display_name}** doesn't own any properties yet.\n\n"
-                "**Usage:**\n"
-                "`!assets browse` — full catalog + player listings (cross-server)\n"
-                "`!assets buy <name>` — buy a property\n\n"
+                f"{_SUBCOMMANDS_HELP}\n\n"
                 f"*Properties pay **2× their price per year**, banked automatically "
                 f"with your daily claim. Own up to **{PROPERTY_MAX_OWNED}**.*"
             )
@@ -86,6 +96,8 @@ class AssetsCog(commands.Cog):
         lines.append(f"**Daily revenue:** {portfolio_daily_revenue(uid):,} 🪙/day")
         lines.append(f"**Unredeemed revenue:** {pending:,} / {cap:,} 🪙 — banked with your daily claim")
         lines.append(f"**Revenue banked (lifetime):** {banked:,} 🪙")
+        lines.append("")
+        lines.append(_SUBCOMMANDS_HELP)
         await send_ephemeral(ctx, embed=emb(f"🏘️ {member.display_name}'s Real Estate", "\n".join(lines), C_PURPLE))
 
     # ── !assets browse / market (combined catalog + listings view) ────────
