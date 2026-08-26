@@ -546,6 +546,26 @@ async def shop_charge(
     return True
 
 
+async def shop_payout(
+    uid: int, amount: int, *, guild_id: int = None, holder_name: str = None
+) -> bool:
+    """Credit a gambling win/refund. The mirror image of `shop_charge`.
+
+    `shop_charge` lets a godmode user play without paying. Crediting the win
+    anyway made godmode an unbounded money printer into the shared economy —
+    balances have no guild dimension, so `!flip 1m 100000` under godmode costs
+    nothing, pays out billions, and those coins spend in every server. Free
+    play means no money in *and* no money out, so this is a no-op for godmode
+    users (refunds and pushes included: they never paid the bet).
+
+    Returns True if the credit set a new highest_balance record.
+    """
+    from src.economy import add_balance
+    if uid in state.godmode_users or amount <= 0:
+        return False
+    return await add_balance(uid, amount, guild_id=guild_id, holder_name=holder_name)
+
+
 def _render_race(game: dict) -> str:
     """Render the race board with each player's lane."""
     lines = []

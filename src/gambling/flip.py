@@ -3,10 +3,10 @@ import random
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, parse_amount, shop_charge, announce_record,
+    emb, C_GREEN, C_RED, parse_amount, shop_charge, shop_payout, announce_record,
 )
 from src.economy import (
-    add_balance, get_balance, record_gambling_event,
+    get_balance, record_gambling_event,
 )
 from src.permissions import (
     check_game_channel,
@@ -59,7 +59,7 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
     gid = guild.id if guild else None
     new_bal_record = False
     if total_winnings:
-        new_bal_record = await add_balance(uid, total_winnings, guild_id=gid, holder_name=author.display_name)
+        new_bal_record = await shop_payout(uid, total_winnings, guild_id=gid, holder_name=author.display_name)
     if uid not in state.godmode_users:
         if net >= 0:
             await record_gambling_event(gid, uid, gained=net)

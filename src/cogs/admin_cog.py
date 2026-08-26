@@ -11,7 +11,7 @@ from src.helpers import (
     log_bot_permission_error, OptionalMember,
 )
 from src.permissions import (
-    is_admin, is_bannable, requires_perm,
+    is_admin, is_bannable, is_server_admin, requires_perm,
 )
 from src.persistence import (
     save_guild_settings,
@@ -23,7 +23,7 @@ from src.persistence import (
 )
 from src.guild_config import get_guild_cfg
 from src.config import (
-    DISCORD_CLIENT_ID,
+    DISCORD_CLIENT_ID, SERVER_INVITE_MAX_AGE_SECS,
 )
 from src import state
 
@@ -141,12 +141,37 @@ class AdminCog(commands.Cog):
             if ctx.guild.vanity_url:
                 invite_url = str(ctx.guild.vanity_url)
             else:
-                # Create an invite link
-                invite = await ctx.channel.create_invite(max_age=0, max_uses=0)
+                # Bounded lifetime: max_age=0 minted a permanent, unlimited-use
+                # invite on every invocation, and nothing ever revoked them.
+                invite = await ctx.channel.create_invite(
+                    max_age=SERVER_INVITE_MAX_AGE_SECS, max_uses=0,
+                    reason=f"!invitelink by {ctx.author} ({ctx.author.id})",
+                )
                 invite_url = invite.url
 
             # Create a view with a button
+            _bot = self.bot
+            _requester_id = ctx.author.id
+
             class ServerInviteView(ui.View):
+                async def interaction_check(self, interaction: discord.Interaction) -> bool:
+                    """Only the admin who ran the command may reveal the URL.
+
+                    The command is gated at server_admin, but the button it
+                    posts is visible to the whole channel — without this any
+                    member could click it and walk off with a server invite.
+                    """
+                    if interaction.user.id == _requester_id:
+                        return True
+                    user_ctx = await _bot.get_context(interaction.message)
+                    user_ctx.author = interaction.user
+                    if is_server_admin(user_ctx) or is_admin(user_ctx):
+                        return True
+                    await interaction.response.send_message(
+                        "❌ You don't have permission to view this link.", ephemeral=True,
+                    )
+                    return False
+
                 @ui.button(label="Get Server Invitation Link", style=discord.ButtonStyle.primary)
                 async def copy_button(self, interaction: discord.Interaction, button: ui.Button):
                     await interaction.response.send_message(f"```\n{invite_url}\n```", ephemeral=True)

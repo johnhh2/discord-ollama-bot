@@ -3,6 +3,7 @@ import random
 import logging
 import re
 from pathlib import Path
+from urllib.parse import urlencode
 
 import aiohttp
 import discord
@@ -80,12 +81,25 @@ async def _nsfw_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[
         return []
 
     async def _fetch_pid(pid: int) -> list[dict]:
-        url = (
-            f"{NSFW_API_URL}"
-            f"?page=dapi&s=post&q=index&json=1&limit=100&pid={pid}&tags={search_tags}"
-        )
+        # urlencode, not f-string interpolation: `search_tags` is raw user
+        # input, so a tag containing & or # used to inject extra query
+        # parameters into the upstream call (or truncate the credentials).
+        # Booru-style APIs take the key as a query param, not a header, so it
+        # has to live here — which is exactly why no code path may ever put
+        # this URL in front of a user (see the caller's except block).
+        # `search_tags` arrives "+"-joined, which is the wire form of a
+        # space-separated tag list. Hand urlencode the spaces and let it emit
+        # the "+" itself — encoding a literal "+" would become %2B and the API
+        # would read the whole thing as one tag named "a+b".
+        params = {
+            "page": "dapi", "s": "post", "q": "index",
+            "json": "1", "limit": "100", "pid": str(pid),
+            "tags": search_tags.replace("+", " "),
+        }
         if NSFW_API_KEY and NSFW_API_USER_ID:
-            url += f"&api_key={NSFW_API_KEY}&user_id={NSFW_API_USER_ID}"
+            params["api_key"] = NSFW_API_KEY
+            params["user_id"] = NSFW_API_USER_ID
+        url = f"{NSFW_API_URL}?{urlencode(params)}"
         headers = {"User-Agent": "Mozilla/5.0"}
         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status != 200:
@@ -181,8 +195,13 @@ class FunCog(commands.Cog):
                 logging.info(f"[nsfw] fetch returned {len(raw_posts)} posts pre-filter")
                 posts = _filter_banned(raw_posts)
         except Exception as e:
-            logging.exception(f"[nsfw] fetch raised: {e}")
-            err_embed = emb("❌ NSFW", f"Request failed: {e}", C_RED)
+            # Type name only — never the exception text. The request URL
+            # carries api_key/user_id, and five aiohttp exception classes
+            # (TooManyRedirects, InvalidURL, InvalidUrlClientError and the two
+            # redirect errors) embed the full URL in str(e). Interpolating it
+            # posted the credentials into the channel and the log.
+            logging.exception("[nsfw] fetch raised: %s", type(e).__name__)
+            err_embed = emb("❌ NSFW", "Couldn't reach the image API. Try again in a moment.", C_RED)
             if loading_msg is not None:
                 try:
                     await loading_msg.edit(embed=err_embed)

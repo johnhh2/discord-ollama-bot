@@ -22,6 +22,7 @@ from src.streaks import effective_streak
 from src.permissions import (
     is_admin, check_puzzle_channel,
     requires_perm,
+    is_bot_admin_id,
 )
 from src.persistence import (
     save_bot_settings, load_saved_quotes,
@@ -1266,7 +1267,10 @@ class UtilityCog(commands.Cog):
         """
         if self.bot.user and payload.user_id == self.bot.user.id:
             return
-        if payload.user_id not in state.bot_admins:
+        # is_bot_admin_id, not a bare state.bot_admins lookup: a user granted
+        # bot_admin via !setperm can run every other bot-admin command, and
+        # was silently excluded from triage only.
+        if not is_bot_admin_id(payload.user_id, payload.guild_id):
             return
 
         emoji = str(payload.emoji)
@@ -1358,7 +1362,10 @@ class UtilityCog(commands.Cog):
             return
         if self.bot.user and payload.user_id == self.bot.user.id:
             return
-        if payload.user_id not in state.bot_admins:
+        # is_bot_admin_id, not a bare state.bot_admins lookup: a user granted
+        # bot_admin via !setperm can run every other bot-admin command, and
+        # was silently excluded from triage only.
+        if not is_bot_admin_id(payload.user_id, payload.guild_id):
             return
 
         chan_id = state.bot_settings.get("internal_issue_channel")

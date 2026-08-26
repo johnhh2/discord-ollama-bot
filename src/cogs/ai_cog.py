@@ -51,6 +51,26 @@ from src.games.chess import BOARD_IMG_FILENAME, _bump_board as _bump_chess_board
 log = logging.getLogger(__name__)
 
 
+async def _try_create_thread(ctx, name: str):
+    """Open a thread on the invoking message, or None to fall back to the channel.
+
+    Every caller runs `enforce_cost` first, so an unguarded raise here charged
+    the user and delivered nothing — `create_thread` fails routinely (no
+    Create Public Threads permission, the message already has a thread, the
+    channel hit its active-thread cap). Degrading to an in-channel session
+    keeps the purchase honoured.
+    """
+    if not (ctx.guild and isinstance(ctx.channel, discord.TextChannel)):
+        return None
+    try:
+        return await ctx.message.create_thread(name=name)
+    except discord.HTTPException as e:
+        logging.warning(
+            "[ai] create_thread failed (%s); continuing in channel", type(e).__name__,
+        )
+        return None
+
+
 class AICog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -92,8 +112,8 @@ class AICog(commands.Cog):
             system_prompt = ASK_SYSTEM_PROMPT
 
         guild_id = ctx.guild.id if ctx.guild else None
-        if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
-            thread = await ctx.message.create_thread(name=f"ask: {question[:80]}")
+        thread = await _try_create_thread(ctx, f"ask: {question[:80]}")
+        if thread is not None:
             state.ai_threads[thread.id] = {
                 "kind": "ask",
                 "owner_id": ctx.author.id,
@@ -163,8 +183,8 @@ class AICog(commands.Cog):
 
         thread_label = alias_name.capitalize() if alias_name else "Story"
         guild_id = ctx.guild.id if ctx.guild else None
-        if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
-            thread = await ctx.message.create_thread(name=f"{thread_label}: {clean_prompt[:75]}")
+        thread = await _try_create_thread(ctx, f"{thread_label}: {clean_prompt[:75]}")
+        if thread is not None:
             state.ai_threads[thread.id] = {
                 "kind": "story",
                 "owner_id": uid,
@@ -318,12 +338,8 @@ class AICog(commands.Cog):
 
         # Create a thread to contain the roleplay
         guild_id = ctx.guild.id if ctx.guild else None
-        if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
-            thread = await ctx.message.create_thread(name=f"roleplay: {clean_prompt[:70]}")
-            rp_channel_id = thread.id
-        else:
-            thread = None
-            rp_channel_id = ctx.channel.id
+        thread = await _try_create_thread(ctx, f"roleplay: {clean_prompt[:70]}")
+        rp_channel_id = thread.id if thread is not None else ctx.channel.id
 
         rp_system_prompt = (
             f"You are roleplaying as the following character and must stay in character "
@@ -450,12 +466,8 @@ class AICog(commands.Cog):
 
         # Create a thread to contain the RPG session
         guild_id = ctx.guild.id if ctx.guild else None
-        if ctx.guild and isinstance(ctx.channel, discord.TextChannel):
-            thread = await ctx.message.create_thread(name=f"rpg: {ctx.author.display_name}'s adventure")
-            rpg_channel_id = thread.id
-        else:
-            thread = None
-            rpg_channel_id = ctx.channel.id
+        thread = await _try_create_thread(ctx, f"rpg: {ctx.author.display_name}'s adventure")
+        rpg_channel_id = thread.id if thread is not None else ctx.channel.id
 
         state.ai_threads[rpg_channel_id] = {
             "kind": "rpg",

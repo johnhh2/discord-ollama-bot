@@ -17,6 +17,7 @@ from src.economy import (
 from src.permissions import (
     _wrong_channel_reply,
     get_command_perm,
+    is_silenced,
 )
 from src.persistence import (
     init_db_state, save_economy, save_ragebait, save_mock, save_tax, save_curse, save_spellcheck, load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs,
@@ -631,21 +632,31 @@ class EventsCog(commands.Cog):
         # Bot-side blocklist: silently drop everything from banned users —
         # no AI, no commands, no XP/economy/tax/curse side effects, no
         # stats counted. Mirrors the hidden-permission denial pattern.
-        if message.author.id in state.global_blocklist:
-            return
-        if message.guild is not None and (message.guild.id, message.author.id) in state.blocklist:
+        #
+        # is_silenced (not an inline dict lookup) so DMs are covered: a DM has
+        # no guild to scope the per-guild blocklist to, and the economy has no
+        # guild dimension, so a banned user could otherwise farm coins in a DM
+        # and spend them in the server that banned them.
+        if is_silenced(message.author.id, message.guild.id if message.guild else None):
             return
 
         state.stats_messages_seen += 1
         state.stats_messages_today += 1
 
-        # Side-effect handlers — each runs unconditionally on every non-command
-        # message, mutating its own state slice. Order matters for things like
+        # Side-effect handlers — each runs on every non-command message from a
+        # human, mutating its own state slice. Order matters for things like
         # the tax/curse/mock/ragebait quartet: they're independent but run in
         # the canonical order to keep ordering stable. Each is isolated: one
         # handler blowing up (DB hiccup, Discord 500) must not silently abort
         # the rest of the chain — including process_commands at the end.
-        for handler in (
+        #
+        # Bots are excluded from the whole chain, not just from XP. This bot's
+        # own messages already returned above, but process_commands is
+        # deliberately open to *other* bots, so their messages reach here: a
+        # mocked bot and this bot would echo each other indefinitely, and
+        # `!shop tax @somebot` billed an account that can't notice or object.
+        # The interceptors and AI routing below stay open to bots as before.
+        for handler in () if message.author.bot else (
             self._handle_msg_xp,
             self._handle_ragebait,
             self._handle_mock,

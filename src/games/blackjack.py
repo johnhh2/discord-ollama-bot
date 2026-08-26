@@ -4,10 +4,10 @@ import discord
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_GOLD, C_BLUE, parse_amount, shop_charge, announce_record,
+    emb, C_GREEN, C_RED, C_GOLD, C_BLUE, parse_amount, shop_charge, shop_payout, announce_record,
 )
 from src.economy import (
-    add_balance, get_balance, record_gambling_event,
+    get_balance, record_gambling_event,
 )
 from src.permissions import (
     check_game_channel,
@@ -106,7 +106,7 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
     if dval > 21 or pval > dval:
         gid = message.guild.id if message.guild else None
         bj_winnings = amount * 2
-        new_bal_record = await add_balance(uid, bj_winnings, guild_id=gid, holder_name=uid_name)
+        new_bal_record = await shop_payout(uid, bj_winnings, guild_id=gid, holder_name=uid_name)
         if uid not in state.godmode_users:
             await record_gambling_event(gid, uid, gained=amount)  # net: paid `amount` via shop_charge, received 2x
         new_bj_record = await try_set_record(gid, "blackjack", bj_winnings, uid, uid_name,
@@ -114,7 +114,7 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
                        dealer_score=dval)
         color, result = C_GREEN, f"✅ **{uid_name}** wins **{amount:,} 🪙**! Balance: {await get_balance(uid):,} 🪙"
     elif pval == dval:
-        await add_balance(uid, amount)  # push: bet refunded, no P/L recorded
+        await shop_payout(uid, amount)  # push: bet refunded, no P/L recorded
         color, result = C_GOLD, f"🤝 Push! Bet returned. Balance: {await get_balance(uid):,} 🪙"
     else:
         if uid not in state.godmode_users:
@@ -177,12 +177,12 @@ class BlackjackCog(commands.Cog):
             del state.active_blackjack_games[uid]
             full_display = build_blackjack_display(player, dealer, pval, hide_dealer=False, dval=dval, username=username)
             if dval == 21:
-                await add_balance(uid, amount)  # push: bet refunded, no P/L recorded
+                await shop_payout(uid, amount)  # push: bet refunded, no P/L recorded
                 await ctx.send(embed=emb("🃏 Blackjack — Push", full_display + "\n\nBoth have Blackjack! Bet returned.", C_GOLD))
             else:
                 winnings = int(amount * BLACKJACK_NATURAL_MULT)
                 gid = ctx.guild.id if ctx.guild else None
-                new_bal_record = await add_balance(uid, winnings, guild_id=gid, holder_name=username)
+                new_bal_record = await shop_payout(uid, winnings, guild_id=gid, holder_name=username)
                 if uid not in state.godmode_users:
                     await record_gambling_event(gid, uid, gained=max(0, winnings - amount))
                 new_bj_record = await try_set_record(gid, "blackjack", winnings, uid, username,

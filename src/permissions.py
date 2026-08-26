@@ -8,6 +8,12 @@ from src.helpers import emb, C_RED, _delete_after
 from src.guild_config import get_guild_cfg
 
 
+# Every tier `check_command_permission` knows how to evaluate. Anything else in
+# command_perms.json is a typo — init_db_state refuses to boot on one rather
+# than letting the gate fall through to its (now fail-closed) else branch.
+VALID_TIERS = ("everyone", "server_admin", "bot_admin", "global_admin")
+
+
 class PermissionDenied(commands.CheckFailure):
     """Raised by the global permission gate when the author lacks the configured
     tier. check_command_permission already sent the No Permission embed (or
@@ -91,6 +97,53 @@ def is_admin(ctx: commands.Context) -> bool:
     return _override_tier(ctx) == "bot_admin"
 
 
+def is_bot_admin_id(user_id: int, guild_id: "int | None" = None) -> bool:
+    """ctx-free form of `is_admin`, for raw-event handlers that only have ids.
+
+    Raw reaction payloads carry no Context, so handlers were checking
+    `state.bot_admins` directly and silently ignoring `!setperm` overrides —
+    a user who could run every other bot-admin command couldn't run those.
+    """
+    if user_id in state.bot_admins:
+        return True
+    if guild_id is None:
+        return False
+    return state.user_perm_overrides.get((int(guild_id), int(user_id))) == "bot_admin"
+
+
+def is_global_admin(ctx: commands.Context) -> bool:
+    """True only for env-driven bot admins (`BOT_ADMIN_IDS`).
+
+    Deliberately ignores `!setperm` overrides. Those are guild-scoped, but a
+    handful of commands (`godmode`, `rig`, `globalban`, `admingive`, `setperm`)
+    mutate state that has no guild dimension at all — balances, godmode, the
+    rig dicts and the global blocklist are keyed by user id alone. Letting a
+    guild-scoped grant reach them would make the scoping fictional, so those
+    commands use the `global_admin` tier instead of `bot_admin`.
+    """
+    return ctx.author.id in state.bot_admins
+
+
+def is_silenced(user_id: int, guild_id: "int | None") -> bool:
+    """True if the bot must ignore `user_id` in `guild_id` (None = DM).
+
+    Single source of truth for the `!ban` / `!globalban` blocklists. Every
+    entry point that can act on a user's behalf must consult this — not just
+    `on_message`. Reaction handlers count: they can claim coin drops, file
+    bounty claims and play wagered games without ever sending a message.
+
+    DMs have no guild to scope to, and the economy has no guild dimension, so
+    a user banned in *any* guild is silenced in DMs. Otherwise `!ban` is
+    trivially bypassed by farming coins in a DM and spending them in the
+    server that issued the ban.
+    """
+    if user_id in state.global_blocklist:
+        return True
+    if guild_id is not None:
+        return (int(guild_id), int(user_id)) in state.blocklist
+    return any(banned_uid == user_id for _gid, banned_uid in state.blocklist)
+
+
 def is_server_admin(ctx: commands.Context) -> bool:
     if ctx.guild is None:
         return False
@@ -146,8 +199,14 @@ async def check_command_permission(ctx: commands.Context) -> bool:
         allowed = can_manage_settings(ctx)
     elif tier == "bot_admin":
         allowed = is_admin(ctx)
+    elif tier == "global_admin":
+        allowed = is_global_admin(ctx)
     else:
-        allowed = True
+        # Fail closed. An unrecognized tier is a typo in command_perms.json
+        # ("bot-admin", "admin", …); defaulting it to allowed silently made
+        # the command public. init_db_state validates tiers at boot so this
+        # branch should be unreachable in practice.
+        allowed = False
 
     if not allowed:
         if not hidden:

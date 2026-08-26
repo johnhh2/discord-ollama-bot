@@ -21,6 +21,7 @@ from src.economy import (
 )
 from src.permissions import (
     requires_perm,
+    is_silenced,
 )
 from src.guild_config import get_guild_cfg
 from src.persistence import (
@@ -1647,6 +1648,11 @@ class EconomyCog(commands.Cog):
         if reaction.message.id not in state.active_events:
             return
         if str(reaction.emoji) != "🪙":
+            return
+        if getattr(user, "bot", False):
+            return
+        guild = getattr(reaction.message, "guild", None)
+        if is_silenced(user.id, guild.id if guild else None):
             return
         event = state.active_events[reaction.message.id]
         if user.id in event["rewarded"]:

@@ -53,7 +53,7 @@ from src.helpers import (
 )
 from src.economy import add_balance, deduct_balance, get_balance
 from src.guild_config import get_guild_cfg
-from src.permissions import _wrong_channel_reply
+from src.permissions import _wrong_channel_reply, is_silenced
 from src.persistence import (
     insert_bounty, get_bounty_by_message, update_bounty,
     insert_claim, update_claim,
@@ -348,6 +348,11 @@ class BountyCog(commands.Cog):
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         if self.bot.user and payload.user_id == self.bot.user.id:
+            return
+        # Mirror the on_message blocklist silence. Without this a banned user
+        # still files claims and collects the poll-voter reward — reactions
+        # never pass through on_message.
+        if is_silenced(payload.user_id, payload.guild_id):
             return
         emoji = str(payload.emoji)
 

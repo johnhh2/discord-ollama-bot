@@ -12,6 +12,7 @@ from src.economy import (
 )
 from src.permissions import (
     check_game_channel,
+    is_silenced,
 )
 from src.invites import _wait_for_confirmations
 from src import state
@@ -186,7 +187,34 @@ async def _setup_pvp_game(ctx, opponent, amount, invite_title):
     if amount < 0:
         await ctx.send("Amount must be positive.")
         return False
+
+    # Affordability is checked up front but NOT charged. Escrowing before the
+    # opponent agrees let anyone freeze an arbitrary player's balance for the
+    # length of the invite window, from as many channels at once as they liked.
+    # The charge happens after the ✅, re-reading balances at that point —
+    # the ordering confirm_view.py's module docstring argues for.
     if amount > 0:
+        for player in (ctx.author, opponent):
+            if await get_balance(player.id) < amount:
+                await ctx.send(embed=emb(
+                    "💸 Insufficient Funds",
+                    f"**{player.display_name}** needs {amount:,} 🪙. "
+                    f"Balance: {await get_balance(player.id):,} 🪙",
+                    C_RED,
+                ))
+                return False
+
+    wager_text = f" for {amount:,} 🪙" if amount > 0 else ""
+    confirmed = await _wait_for_confirmations(ctx, [opponent], title=f"{invite_title}{wager_text}")
+    if not confirmed:
+        await ctx.send(embed=emb(
+            "❌ Invite Declined", f"{opponent.display_name} didn't accept.", C_RED,
+        ))
+        return False
+
+    if amount > 0:
+        # Balances can have moved during the invite window — charge now and
+        # unwind cleanly if the second debit fails.
         if not await deduct_balance(uid, amount):
             await ctx.send(embed=emb("💸 Insufficient Funds", f"**{ctx.author.display_name}** needs {amount:,} 🪙. Balance: {await get_balance(uid):,} 🪙", C_RED))
             return False
@@ -194,17 +222,6 @@ async def _setup_pvp_game(ctx, opponent, amount, invite_title):
             await add_balance(uid, amount)  # refund challenger
             await ctx.send(embed=emb("💸 Insufficient Funds", f"{opponent.display_name} needs {amount:,} 🪙. Balance: {await get_balance(opponent.id):,} 🪙", C_RED))
             return False
-    wager_text = f" for {amount:,} 🪙" if amount > 0 else ""
-    confirmed = await _wait_for_confirmations(ctx, [opponent], title=f"{invite_title}{wager_text}")
-    if not confirmed:
-        if amount > 0:
-            await add_balance(uid, amount)
-            await add_balance(opponent.id, amount)
-            msg = f"{opponent.display_name} didn't accept. Coins refunded ({amount:,} 🪙 each)."
-        else:
-            msg = f"{opponent.display_name} didn't accept."
-        await ctx.send(embed=emb("❌ Invite Declined", msg, C_RED))
-        return False
     return True
 
 
@@ -459,6 +476,10 @@ class TttC4Cog(commands.Cog):
         if user.bot:
             return
         msg = reaction.message
+        # Mirror the on_message blocklist silence — a banned user must not be
+        # able to play (and win coins in) a wagered game via reactions.
+        if is_silenced(user.id, msg.guild.id if msg.guild else None):
+            return
         cid = msg.channel.id
         emoji = str(reaction.emoji)
 

@@ -74,6 +74,11 @@ SCRATCHOFF_PAYOUTS = {1: 100, 2: 1000, 3: 10000, 4: 100000}
 
 # Soundboard rate-limiting
 SOUNDBOARD_WINDOW_SECS = 10.0
+
+# Lifetime of an invite minted by !invitelink. Previously max_age=0 —
+# permanent, unlimited-use, one more created on every invocation and never
+# revoked. A vanity URL, where the guild has one, is used unchanged.
+SERVER_INVITE_MAX_AGE_SECS = 86_400  # 24 hours
 SOUNDBOARD_MAX_SOUNDS  = 5
 
 # Economy

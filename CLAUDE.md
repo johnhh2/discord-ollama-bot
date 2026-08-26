@@ -124,7 +124,9 @@ Every command's access tier is controlled by `src/command_perms.json` (committed
 
 `!setperm @user <server_admin|bot_admin|clear>` writes a row into `user_perm_overrides` (PK `(guild_id, user_id)`) that grants the user the named tier inside that guild. `is_admin(ctx)` returns true if the user's env-driven `bot_admins` membership matches **or** they have a `bot_admin` override for the current guild; `is_server_admin(ctx)` similarly accepts a `server_admin` or `bot_admin` override. Overrides persist across reboots — they live in the DB, **not** in `command_perms.json`. `clear` deletes the row.
 
-**Override semantics are additive only.** A row never *revokes* permission a user already has via Discord server-admin role or `BOT_ADMIN_IDS`. Clearing an override never demotes those users. Bot users cannot be targeted. `!setperm` is gated at `bot_admin`, so server admins cannot grant themselves `bot_admin` — only env-driven bot admins can. Overrides are scoped per-guild, so granting a user `bot_admin` in guild A does NOT make them `bot_admin` in guild B.
+**Override semantics are additive only.** A row never *revokes* permission a user already has via Discord server-admin role or `BOT_ADMIN_IDS`. Clearing an override never demotes those users. Bot users cannot be targeted. `!setperm` is gated at `global_admin`, so neither server admins nor guild-scoped bot admins can grant themselves `bot_admin` — only env-driven bot admins can. Overrides are scoped per-guild, so granting a user `bot_admin` in guild A does NOT make them `bot_admin` in guild B.
+
+**An override can never reach global state.** The override is guild-scoped, but a handful of commands mutate state with no guild dimension at all: `state.godmode_users`, the `rigged_*` dicts, `state.global_blocklist` and every balance in `state.economy["users"]` are keyed by user id alone. Those commands (`godmode`, `rig`, `globalban`, `globalunban`, `admingive`, `setperm`) therefore sit at the `global_admin` tier, which consults `BOT_ADMIN_IDS` only. Put a new command there whenever its effect outlives the guild it was run in — otherwise a grant in one server silently becomes bot-wide authority.
 
 **Persistence-of-elevation caveat.** A user removed from `BOT_ADMIN_IDS` who previously received a `bot_admin` override via `!setperm` retains that level inside the granting guild until another bot_admin clears it. Audit `user_perm_overrides` when revoking env-level bot_admin access.
 
@@ -134,7 +136,8 @@ Every command's access tier is controlled by `src/command_perms.json` (committed
 |------|----------------|
 | `everyone` | All users |
 | `server_admin` | Discord server administrators **or** bot admins |
-| `bot_admin` | Bot admins only — user IDs come from the `BOT_ADMIN_IDS` env var (comma-separated), seeded into `state.bot_admins` at startup |
+| `bot_admin` | Bot admins — the `BOT_ADMIN_IDS` env var (comma-separated, seeded into `state.bot_admins` at startup) **or** a `bot_admin` `!setperm` override in the current guild |
+| `global_admin` | `BOT_ADMIN_IDS` only. Ignores `!setperm` overrides — for commands whose effect has no guild dimension (see above) |
 
 ### `hidden` flag
 
@@ -150,18 +153,51 @@ When `hidden: true`, a denied command silently does nothing instead of sending `
 
 1. **New command** — add an entry to `src/command_perms.json`. If you don't add one, it defaults to `everyone`.
 2. **Renamed command** — update the key in the JSON to match the new `name=` in `@commands.command(...)`. Aliases do **not** need their own entries; the check uses `ctx.command.qualified_name` (the canonical name, with subgroup space-prefixed for `!settings X`-style subcommands).
-3. **Changing a permission** — edit `src/command_perms.json` directly and commit the change. `!setperm` does **not** change command tiers; it only promotes individual users within a single guild via the override system above.
-4. **Enforcement is global.** A bot-wide check (`_command_perm_gate` in `src/core.py`) calls `check_command_permission` for **every** command — including group subcommands, via the prefix walk in `get_command_perm` (`"rig slots"` → `"rig"`). New commands need only their JSON entry; do **not** add per-command permission decorators or bare `is_admin` / `can_manage_settings` guards. The legacy `@requires_perm` decorator still exists on older commands and is harmless (the global gate denies first), but don't add it to new ones.
+3. **Unknown tiers are rejected at boot.** `init_db_state` validates every tier against `VALID_TIERS` in `src/permissions.py` and refuses to start on a typo; the runtime gate also fails *closed* on one. Add any new tier to `VALID_TIERS` and to `check_command_permission`'s dispatch together.
+4. **Changing a permission** — edit `src/command_perms.json` directly and commit the change. `!setperm` does **not** change command tiers; it only promotes individual users within a single guild via the override system above.
+5. **Enforcement is global.** A bot-wide check (`_command_perm_gate` in `src/core.py`) calls `check_command_permission` for **every** command — including group subcommands, via the prefix walk in `get_command_perm` (`"rig slots"` → `"rig"`). New commands need only their JSON entry; do **not** add per-command permission decorators or bare `is_admin` / `can_manage_settings` guards. The legacy `@requires_perm` decorator still exists on older commands and is harmless (the global gate denies first), but don't add it to new ones.
    Cautionary note: `@commands.check(...)` on a command *group* does NOT protect its subcommands when `invoke_without_command=True` — discord.py skips the group's checks when a subcommand matches. This is exactly how `!rig`'s subcommands were once publicly runnable. The global gate closes that hole class.
-5. **Denial UX** — the gate raises `PermissionDenied` (a `CheckFailure` subclass in `src/permissions.py`) after `check_command_permission` has already sent the ❌ embed (or stayed silent for `hidden` commands); `on_command_error` swallows it. Any *other* bare `CheckFailure` is treated as a command-channel violation and gets the wrong-channel reply.
+6. **Denial UX** — the gate raises `PermissionDenied` (a `CheckFailure` subclass in `src/permissions.py`) after `check_command_permission` has already sent the ❌ embed (or stayed silent for `hidden` commands); `on_command_error` swallows it. Any *other* bare `CheckFailure` is treated as a command-channel violation and gets the wrong-channel reply.
 
 ### Relevant files
 
 - `src/command_perms.json` — the permission config (committed to the repo, not in `data/`)
-- `src/permissions.py` — `check_command_permission`, `get_command_perm`, `is_admin`, `is_server_admin` (the latter two consult `state.user_perm_overrides`)
+- `src/permissions.py` — `check_command_permission`, `get_command_perm`, `VALID_TIERS`, `is_admin`, `is_server_admin` (the latter two consult `state.user_perm_overrides`), `is_global_admin` (env-only), `is_bot_admin_id` (ctx-free, for raw-event handlers) and `is_silenced` (the single blocklist gate — see Blocklist below)
 - `src/persistence/command_perms.py` — `save_command_perms` (read path lives in `src/persistence/init.py`)
 - `src/persistence/user_perm_overrides.py` — `save_user_perm_override`, `delete_user_perm_override`
 - `src/state.py` — `command_perms` dict and `user_perm_overrides` dict (both loaded at startup)
+
+## Blocklist: every entry point, not just on_message
+
+`!ban` (per-guild) and `!globalban` (bot-wide) mean "the bot ignores this user".
+Enforcement is `is_silenced(user_id, guild_id)` in `src/permissions.py` — the
+**only** place that reads `state.blocklist` / `state.global_blocklist` for a gate.
+
+The check used to live inline in `events.on_message`, which left two holes:
+
+- **DMs.** The per-guild branch was conditional on `message.guild is not None`, so
+  a DM skipped it. Balances have no guild dimension, so a banned user farmed
+  `!daily` / `!scratchoff` / `!slots` in a DM and spent the coins in the server
+  that banned them. `is_silenced` now treats a ban in *any* guild as a DM silence.
+  (Guild traffic stays strictly per-guild — a ban in A doesn't mute you in B.)
+- **Reactions.** Six listeners act on reactions; only `dailies_cog` mirrored the
+  check. A banned user could still claim `!event` coin drops, file bounty claims
+  and collect the poll-voter reward, and play wagered TTT/C4 by clicking numbers.
+
+### Rule
+
+Any handler that can act on a user's behalf must call `is_silenced` before it
+mutates anything — **including** handlers that never see a `Message`. If a new
+`on_raw_reaction_add` / `on_interaction` / button callback can move coins, grant
+XP, or change a game's state, it needs the gate. `on_message` is not a chokepoint;
+`process_commands` is deliberately reachable by other bots, and reactions bypass
+it entirely.
+
+Bots are separately excluded from the `on_message` side-effect chain (xp, mock,
+tax, curse, ragebait, spellcheck) — a mocked bot and this bot would otherwise echo
+each other forever. Interceptors and AI routing stay open to bots as before.
+
+Regression coverage: [tests/test_blocklist_enforcement.py](tests/test_blocklist_enforcement.py).
 
 ## Schema migrations
 

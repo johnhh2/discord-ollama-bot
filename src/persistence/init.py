@@ -510,6 +510,21 @@ async def _init_db_state_inner(state, run_migrations):
                 raise RuntimeError(
                     f"command_perms file missing, corrupt, or empty: {COMMAND_PERMS_FILE}"
                 )
+            # Reject unknown tiers here rather than at check time. The gate
+            # fails closed on one, so a typo would silently lock a command
+            # instead of unlocking it — still wrong, and much harder to spot
+            # than a refusal to boot.
+            from src.permissions import VALID_TIERS
+            bad_tiers = {
+                cmd: data.get("tier")
+                for cmd, data in json_perms.items()
+                if data.get("tier", "everyone") not in VALID_TIERS
+            }
+            if bad_tiers:
+                raise RuntimeError(
+                    f"command_perms has unknown tier(s) {bad_tiers}; "
+                    f"valid tiers are {VALID_TIERS}"
+                )
             for cmd, data in json_perms.items():
                 await cur.execute(
                     "INSERT INTO command_perms (command_name, tier, hidden) VALUES (%s,%s,%s)"

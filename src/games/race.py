@@ -9,7 +9,7 @@ from src.helpers import (
     emb, C_GREEN, C_RED, C_ORANGE, _render_race, parse_int_amount,
 )
 from src.economy import (
-    add_balance, deduct_balance, record_gambling_event,
+    add_balance, deduct_balance, get_balance, record_gambling_event,
 )
 from src.permissions import (
     check_game_channel,
@@ -146,10 +146,39 @@ class RaceCog(commands.Cog):
         state.active_race_games[cid] = placeholder
 
         try:
-            # Deduct bets from all players upfront
-            paid = []
+            # Check affordability without charging. Debiting every invitee
+            # before they agreed let one !race freeze several players' balances
+            # for the invite window — and nothing stopped the same victims
+            # being named from several channels at once.
             if amount > 0:
                 for player_uid in all_players:
+                    if await get_balance(player_uid) < amount:
+                        member = ctx.guild.get_member(player_uid) if ctx.guild else None
+                        name = member.display_name if member else str(player_uid)
+                        await ctx.send(embed=emb("💸 Insufficient Funds", f"**{name}** can't cover the **{amount:,} 🪙** bet.", C_RED))
+                        return
+
+            # Skip confirmation if no bet
+            if amount == 0:
+                confirmed_ids = set(u.id for u in invited_users)
+            else:
+                confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="🏇 Race Invite")
+
+            if not confirmed_ids:
+                await ctx.send(embed=emb(
+                    "❌ No One Joined", "Race cancelled — no one accepted the invite.", C_RED,
+                ))
+                return
+
+            # Build final player list (host + confirmed)
+            final_players = [uid] + list(confirmed_ids)
+
+            # Charge only the players who are actually racing, now that the
+            # roster is final. Balances may have moved during the invite
+            # window, so unwind everyone already debited if one can't pay.
+            if amount > 0:
+                paid = []
+                for player_uid in final_players:
                     if not await deduct_balance(player_uid, amount):
                         for refund_uid in paid:
                             await add_balance(refund_uid, amount)
@@ -158,30 +187,6 @@ class RaceCog(commands.Cog):
                         await ctx.send(embed=emb("💸 Insufficient Funds", f"**{name}** can't cover the **{amount:,} 🪙** bet.", C_RED))
                         return
                     paid.append(player_uid)
-
-            # Skip confirmation if no bet
-            if amount == 0:
-                confirmed_ids = set(u.id for u in invited_users)
-            else:
-                confirmed_ids = await _wait_for_confirmations(ctx, invited_users, title="🏇 Race Invite")
-
-            # Refund anyone who didn't confirm
-            declined = set(u.id for u in invited_users) - confirmed_ids
-            if amount > 0:
-                for d_uid in declined:
-                    await add_balance(d_uid, amount)
-
-            if not confirmed_ids:
-                if amount > 0:
-                    await add_balance(uid, amount)
-                    msg = f"Race cancelled — no one accepted the invite. Coins refunded ({amount:,} 🪙)."
-                else:
-                    msg = "Race cancelled — no one accepted the invite."
-                await ctx.send(embed=emb("❌ No One Joined", msg, C_RED))
-                return
-
-            # Build final player list (host + confirmed)
-            final_players = [uid] + list(confirmed_ids)
 
             # Build names map using known member objects where available
             names = {}

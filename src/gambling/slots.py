@@ -4,11 +4,11 @@ import discord
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, parse_amount, send_ephemeral, fetch_member, shop_charge, OptionalMember,
+    emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, parse_amount, send_ephemeral, fetch_member, shop_charge, shop_payout, OptionalMember,
     announce_record,
 )
 from src.economy import (
-    add_balance, get_balance, _ensure_user, record_gambling_event,
+    get_balance, _ensure_user, record_gambling_event,
 )
 from src.permissions import (
     is_admin, check_game_channel,
@@ -128,7 +128,7 @@ async def play_slots(author, channel, guild, amount: int):
         state.slot_jackpot = SLOT_JACKPOT_SEED
         await save_jackpot(state.slot_jackpot)
         gid = guild.id if guild else None
-        new_bal_record = await add_balance(uid, prize, guild_id=gid, holder_name=author.display_name)
+        new_bal_record = await shop_payout(uid, prize, guild_id=gid, holder_name=author.display_name)
         if uid not in state.godmode_users:
             await record_gambling_event(gid, uid, gained=max(0, prize - amount))
         new_jackpot_record = await try_set_record(gid, "slots_jackpot", prize, uid, author.display_name,
@@ -163,7 +163,7 @@ async def play_slots(author, channel, guild, amount: int):
 
     # Money Back (cherry retention)
     if label == "1cherry":
-        await add_balance(uid, amount)
+        await shop_payout(uid, amount)
         desc = (f"{display}\n\n🍒 **One Cherry — Money Back!**\n"
                 f"**{author.display_name}** got **{amount:,} 🪙** back | Balance: {await get_balance(uid):,} 🪙\n"
                 f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
@@ -185,7 +185,7 @@ async def play_slots(author, channel, guild, amount: int):
 
     winnings = amount * mult
     gid = guild.id if guild else None
-    new_bal_record = await add_balance(uid, winnings, guild_id=gid, holder_name=author.display_name)
+    new_bal_record = await shop_payout(uid, winnings, guild_id=gid, holder_name=author.display_name)
     if uid not in state.godmode_users:
         await record_gambling_event(gid, uid, gained=max(0, winnings - amount))
     new_slots_record = await try_set_record(gid, "slots_non_jackpot", winnings, uid, author.display_name,
