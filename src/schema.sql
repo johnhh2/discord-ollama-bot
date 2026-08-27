@@ -1210,3 +1210,15 @@ ALTER TABLE balance_history ADD COLUMN IF NOT EXISTS asset_revenue BIGINT NOT NU
 ALTER TABLE command_perms
     MODIFY COLUMN tier ENUM('everyone','server_admin','bot_admin','global_admin')
     NOT NULL DEFAULT 'everyone';
+
+-- ── 0050_add_property_upgrades_and_names.sql ──
+-- 0050: property upgrades + custom business names (!assets upgrade / rename).
+--
+-- `upgraded` marks that the owner bought the property's one predefined
+-- upgrade (name/cost/boost are hardcoded per property in src/properties.py);
+-- the upgrade's cost folds into the property's value and its boost into the
+-- property's daily revenue. `custom_name` is an owner-chosen display name
+-- for the business (NULL = catalog name); it travels with the deed on a
+-- marketplace sale and is cleared when the bank buys the property back.
+ALTER TABLE property_owners ADD COLUMN IF NOT EXISTS upgraded    BOOLEAN     NOT NULL DEFAULT FALSE;
+ALTER TABLE property_owners ADD COLUMN IF NOT EXISTS custom_name VARCHAR(64) NULL;

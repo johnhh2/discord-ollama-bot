@@ -286,8 +286,27 @@ Rules when touching this system:
    racing buyers of one deed must resolve to exactly one owner, one charge
    (covered in `tests/test_properties.py`).
 7. **Catalog changes**: never rename a shipped `id`; keep display names
-   unique (`find_property` matches on either). New properties just get
-   appended — there's no supply migration, unowned means bank-owned.
+   unique (`find_property` matches on either, plus owners' custom names).
+   New properties just get appended — there's no supply migration, unowned
+   means bank-owned — but every property needs a `PROPERTY_UPGRADES` entry
+   (a module-load assert enforces it).
+8. **Upgrade values are shipped constants.** Each property has exactly one
+   upgrade in `PROPERTY_UPGRADES` — (name, cost, boost%), rolled once at
+   75–125% of cost / 35–75% boost and hardcoded. Never re-roll a shipped
+   value: owners have paid for them. A bought upgrade folds its cost into
+   `property_value` (records, snapshots, bank buyback) and its boost into
+   that deed's `property_daily_revenue`; both travel with the deed on a
+   market sale, as does the owner's custom name (`!assets rename`).
+9. **The bank buyback is the guaranteed exit.** Listing at ≤75% of value
+   triggers a confirm-gated instant bank purchase at 75% of value
+   (`PROPERTY_BANK_BUYBACK_PCT`), deleting the row (deed reverts to
+   bank-owned, upgrade and custom name gone). The confirm wait is a long
+   await — the accept path re-validates ownership and then claims (pops the
+   row) synchronously before paying.
+10. **Persistence takes the whole row.** `save_property_owner(pid, row)`
+    mirrors `state.property_owners[pid]` in one shot so a call site can't
+    silently drop a column (listing, upgrade, custom name). Keep it that
+    way when adding fields.
 
 ## Concurrency: per-user command races
 

@@ -38,19 +38,20 @@ class _ConfirmView(ui.View):
         self.stop()
 
 
-async def confirm_purchase(
+async def confirm_prompt(
     ctx,
     *,
     title: str,
     description: str,
-    cost: int,
     payer: discord.Member,
     timeout: float = 30.0,
 ) -> bool:
-    """Show a Confirm/Cancel embed. Returns True only if `payer` clicks Confirm."""
+    """Show a Confirm/Cancel embed with a free-form body. Returns True only
+    if `payer` clicks Confirm (False on Cancel or timeout). The generic core
+    behind confirm_purchase — use directly when the "Cost:" framing doesn't
+    fit (e.g. an offer paying the user)."""
     body = (
         f"{description}\n\n"
-        f"**Cost:** {cost:,} 🪙\n"
         f"Click **Confirm** within {int(timeout)}s to proceed."
     )
     view = _ConfirmView(payer_id=payer.id, timeout=timeout)
@@ -70,3 +71,23 @@ async def confirm_purchase(
     except discord.HTTPException:
         pass
     return result
+
+
+async def confirm_purchase(
+    ctx,
+    *,
+    title: str,
+    description: str,
+    cost: int,
+    payer: discord.Member,
+    timeout: float = 30.0,
+) -> bool:
+    """Show a Confirm/Cancel embed with a Cost line. Returns True only if
+    `payer` clicks Confirm."""
+    return await confirm_prompt(
+        ctx,
+        title=title,
+        description=f"{description}\n\n**Cost:** {cost:,} 🪙",
+        payer=payer,
+        timeout=timeout,
+    )

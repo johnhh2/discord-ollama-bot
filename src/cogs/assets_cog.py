@@ -24,11 +24,14 @@ from src.helpers import (
 from src.economy import add_balance, add_guild_house, _ensure_user
 from src.properties import (
     PROPERTIES, PROPERTY_MAX_OWNED, PROPERTY_SALE_FEE_PCT,
-    find_property, daily_revenue, owned_properties, owned_property_count,
+    PROPERTY_UPGRADES, PROPERTY_BANK_BUYBACK_PCT,
+    find_property, owned_properties, owned_property_count,
     portfolio_value, portfolio_daily_revenue, accrual_cap, PROPERTY_DAILY_REVENUE_PCT,
-    pending_property_revenue,
+    pending_property_revenue, property_value, property_daily_revenue,
+    bank_buyback_offer,
 )
-from src.persistence import save_property_owner, try_set_record
+from src.confirm_view import confirm_prompt
+from src.persistence import save_property_owner, delete_property_owner, try_set_record
 from src import state
 
 
@@ -36,7 +39,14 @@ def _owner_row(pid: str) -> dict | None:
     return state.property_owners.get(pid)
 
 
-def _fmt_prop(p: dict) -> str:
+def _fmt_prop(p: dict, row: dict = None) -> str:
+    """Display label for a property. A renamed business shows its custom
+    name with the catalog name in parentheses so it stays recognizable."""
+    if row is None:
+        row = state.property_owners.get(p["id"])
+    custom = row.get("custom_name") if row else None
+    if custom:
+        return f"{p['emoji']} **{custom}** ({p['name']})"
     return f"{p['emoji']} **{p['name']}**"
 
 
@@ -46,8 +56,11 @@ _SUBCOMMANDS_HELP = (
     "**Subcommands:**\n"
     "`!assets browse [tier]` — full catalog + player listings (cross-server)\n"
     "`!assets buy <name>` — buy from the bank or a player listing\n"
-    "`!assets sell <name> <price>` — list on the cross-server market\n"
+    "`!assets upgrade [name]` — buy a property's one-time upgrade\n"
+    "`!assets sell <name> <price>` — list on the cross-server market "
+    f"(at ≤{PROPERTY_BANK_BUYBACK_PCT}% of value, the bank offers an instant buyback)\n"
     "`!assets unlist <name>` — remove your listing\n"
+    "`!assets rename <name> <new name>` — rename your business\n"
     "`!assets @user` — someone else's portfolio"
 )
 
@@ -83,10 +96,17 @@ class AssetsCog(commands.Cog):
 
         lines = []
         for p in props:
-            row = _owner_row(p["id"])
+            pid = p["id"]
+            row = _owner_row(pid)
             listed = f" • 🏷️ listed at **{row['list_price']:,} 🪙**" if row.get("list_price") else ""
+            up_name, up_cost, up_boost = PROPERTY_UPGRADES[pid]
+            if row.get("upgraded"):
+                upgrade = f"\n  ↳ ⭐ {up_name} (+{up_boost}% revenue)"
+            else:
+                upgrade = f"\n  ↳ upgrade: {up_name} — {up_cost:,} 🪙 for +{up_boost}% revenue"
             lines.append(
-                f"{_fmt_prop(p)} — {p['cost']:,} 🪙 • {daily_revenue(p['cost']):,} 🪙/day{listed}"
+                f"{_fmt_prop(p, row)} — {property_value(pid, row):,} 🪙 • "
+                f"{property_daily_revenue(pid, row):,} 🪙/day{listed}{upgrade}"
             )
         pending = pending_property_revenue(uid)
         cap = accrual_cap(uid)
@@ -119,20 +139,21 @@ class AssetsCog(commands.Cog):
                     lines.append("")
                 lines.append(f"**Tier {cur_tier}** *(level {p['level']}+)*")
             row = _owner_row(p["id"])
-            rev = daily_revenue(p["cost"])
+            rev = property_daily_revenue(p["id"], row)
+            star = " ⭐" if row and row.get("upgraded") else ""
             if row is None:
                 entry = f"{_fmt_prop(p)} — **{p['cost']:,} 🪙** • {rev:,} 🪙/day"
                 if lvl < p["level"]:
                     entry = f"~~{entry}~~ 🔒"
             elif row["owner_id"] == uid:
-                entry = f"{_fmt_prop(p)} — ✅ **Yours** • {rev:,} 🪙/day"
+                entry = f"{_fmt_prop(p, row)} — ✅ **Yours**{star} • {rev:,} 🪙/day"
             elif row.get("list_price"):
                 entry = (
-                    f"{_fmt_prop(p)} — 🏷️ **{row['list_price']:,} 🪙** • {rev:,} 🪙/day"
+                    f"{_fmt_prop(p, row)} — 🏷️ **{row['list_price']:,} 🪙**{star} • {rev:,} 🪙/day"
                     f" • seller: <@{row['owner_id']}>"
                 )
             else:
-                entry = f"{_fmt_prop(p)} — 🔒 owned"
+                entry = f"{_fmt_prop(p, row)} — 🔒 owned{star}"
             lines.append(entry)
         if not lines:
             await ctx.send(embed=emb("🏘️ Real Estate", f"No tier `{tier}` — tiers are 1–5.", C_RED))
@@ -197,17 +218,19 @@ class AssetsCog(commands.Cog):
         pid = prop["id"]
         cost = prop["cost"]
         # Claim the deed synchronously, then charge; roll back on failure.
-        state.property_owners[pid] = {
+        row = {
             "owner_id": uid, "acquired_at": now, "list_price": None, "listed_at": None,
+            "upgraded": False, "custom_name": None,
         }
+        state.property_owners[pid] = row
         if not await shop_charge(ctx, uid, cost):
             state.property_owners.pop(pid, None)
             return
-        await save_property_owner(pid, uid, now)
+        await save_property_owner(pid, row)
         await ctx.send(embed=emb(
             "🏘️ Property Acquired",
             f"**{ctx.author.display_name}** bought {_fmt_prop(prop)} for **{cost:,} 🪙**!\n"
-            f"It earns **{daily_revenue(cost):,} 🪙/day**, banked with your daily claim.",
+            f"It earns **{property_daily_revenue(pid, row):,} 🪙/day**, banked with your daily claim.",
             C_GREEN,
         ))
         await self._offer_records(ctx)
@@ -218,8 +241,9 @@ class AssetsCog(commands.Cog):
         price = int(row["list_price"])
         seller_id = int(row["owner_id"])
         prior = dict(row)
-        # Claim the deed synchronously (transfer + delist), then charge the
-        # buyer; restore the seller's row if the charge fails.
+        # Claim the deed synchronously (transfer + delist; the upgrade and
+        # custom name travel with the business), then charge the buyer;
+        # restore the seller's row if the charge fails.
         row.update(owner_id=uid, acquired_at=now, list_price=None, listed_at=None)
         if not await shop_charge(ctx, uid, price, cost_label=f"{price:,}"):
             row.update(prior)
@@ -229,12 +253,13 @@ class AssetsCog(commands.Cog):
         await add_balance(seller_id, payout)
         if ctx.guild and fee:
             await add_guild_house(ctx.guild.id, fee)
-        await save_property_owner(pid, uid, now)
+        await save_property_owner(pid, row)
+        upgraded_note = " (⭐ upgraded)" if row.get("upgraded") else ""
         await ctx.send(embed=emb(
             "🏘️ Property Acquired",
-            f"**{ctx.author.display_name}** bought {_fmt_prop(prop)} from <@{seller_id}> "
-            f"for **{price:,} 🪙**!\n"
-            f"It earns **{daily_revenue(prop['cost']):,} 🪙/day**, banked with your daily claim.",
+            f"**{ctx.author.display_name}** bought {_fmt_prop(prop, row)}{upgraded_note} "
+            f"from <@{seller_id}> for **{price:,} 🪙**!\n"
+            f"It earns **{property_daily_revenue(pid, row):,} 🪙/day**, banked with your daily claim.",
             C_GREEN,
         ))
         # Cross-server sale: the seller may not be in this guild, so tell
@@ -286,23 +311,66 @@ class AssetsCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Price", "Price must be positive.", C_RED))
             return
         uid = ctx.author.id
-        row = _owner_row(prop["id"])
+        pid = prop["id"]
+        row = _owner_row(pid)
         if row is None or row["owner_id"] != uid:
             await ctx.send(embed=emb("❌ Not Yours", f"You don't own {_fmt_prop(prop)}.", C_RED))
             return
+
+        # A lowball listing (≤75% of the property's value, upgrade included)
+        # triggers an instant bank buyback offer at 75% of value — a
+        # guaranteed exit with no market fee. Declining lists as normal.
+        value = property_value(pid, row)
+        offer = bank_buyback_offer(pid, row)
+        if int(price) <= value * PROPERTY_BANK_BUYBACK_PCT // 100:
+            accepted = await confirm_prompt(
+                ctx,
+                title="🏦 Bank Offer",
+                description=(
+                    f"You're listing {_fmt_prop(prop, row)} at **{price:,} 🪙** — at or below "
+                    f"**{PROPERTY_BANK_BUYBACK_PCT}%** of its **{value:,} 🪙** value.\n"
+                    f"The bank offers **{offer:,} 🪙** ({PROPERTY_BANK_BUYBACK_PCT}% of value) "
+                    "to buy it back instantly, no market fee.\n\n"
+                    "**Confirm** to sell to the bank now • **Cancel** to list on the market instead."
+                ),
+                payer=ctx.author,
+            )
+            if accepted:
+                # The confirm wait is a long await — re-validate the deed is
+                # still ours and unsold, then claim synchronously.
+                row = _owner_row(pid)
+                if row is None or row["owner_id"] != uid:
+                    await ctx.send(embed=emb("❌ Sale Failed", f"You no longer own {_fmt_prop(prop)}.", C_RED))
+                    return
+                state.property_owners.pop(pid, None)     # claim, sync
+                try:
+                    await add_balance(uid, offer)
+                    await delete_property_owner(pid)
+                except Exception:
+                    state.property_owners[pid] = row     # roll back on failure
+                    raise
+                await ctx.send(embed=emb(
+                    "🏦 Sold to the Bank",
+                    f"The bank bought {_fmt_prop(prop, row)} for **{offer:,} 🪙**. "
+                    "It's back on the open market (`!assets browse`).",
+                    C_GREEN,
+                ))
+                return
+            # Declined/timed out — fall through to the normal listing.
+
         now = time.time()
         prior = dict(row)
         row["list_price"] = int(price)
         row["listed_at"] = now
         try:
-            await save_property_owner(prop["id"], uid, row["acquired_at"], list_price=int(price), listed_at=now)
+            await save_property_owner(pid, row)
         except Exception:
             row.update(prior)
             raise
         fee = int(price) * PROPERTY_SALE_FEE_PCT // 100
         await ctx.send(embed=emb(
             "🏷️ Listed For Sale",
-            f"{_fmt_prop(prop)} is now listed at **{price:,} 🪙** on the cross-server market.\n"
+            f"{_fmt_prop(prop, row)} is now listed at **{price:,} 🪙** on the cross-server market.\n"
             f"You'll receive **{price - fee:,} 🪙** after the {PROPERTY_SALE_FEE_PCT}% market fee. "
             "It keeps earning revenue for you until it sells.",
             C_GREEN,
@@ -329,11 +397,129 @@ class AssetsCog(commands.Cog):
         row["list_price"] = None
         row["listed_at"] = None
         try:
-            await save_property_owner(prop["id"], uid, row["acquired_at"])
+            await save_property_owner(prop["id"], row)
         except Exception:
             row.update(prior)
             raise
-        await ctx.send(embed=emb("🏷️ Unlisted", f"{_fmt_prop(prop)} is no longer for sale.", C_GREEN))
+        await ctx.send(embed=emb("🏷️ Unlisted", f"{_fmt_prop(prop, row)} is no longer for sale.", C_GREEN))
+
+    # ── !assets upgrade ───────────────────────────────────────────────────
+    @cmd_assets.command(name="upgrade", aliases=["upgrades"])
+    async def assets_upgrade(self, ctx: commands.Context, *, name: str = None):
+        uid = ctx.author.id
+        if not name:
+            props = owned_properties(uid)
+            if not props:
+                await ctx.send(embed=emb(
+                    "⭐ Property Upgrades",
+                    "You don't own any properties yet — see `!assets browse`.\n"
+                    "Usage: `!assets upgrade <property name>`",
+                    C_PURPLE,
+                ))
+                return
+            lines = []
+            for p in props:
+                row = _owner_row(p["id"])
+                up_name, up_cost, up_boost = PROPERTY_UPGRADES[p["id"]]
+                if row.get("upgraded"):
+                    lines.append(f"{_fmt_prop(p, row)} — ⭐ **{up_name}** owned (+{up_boost}% revenue)")
+                else:
+                    lines.append(f"{_fmt_prop(p, row)} — **{up_name}**: {up_cost:,} 🪙 for +{up_boost}% revenue")
+            lines.append("")
+            lines.append("Each property has one upgrade; its cost adds to the property's value. `!assets upgrade <name>` to buy.")
+            await send_ephemeral(ctx, embed=emb("⭐ Property Upgrades", "\n".join(lines), C_PURPLE))
+            return
+
+        prop = find_property(name)
+        if prop is None:
+            await ctx.send(embed=emb("❌ Unknown Property", f"No property called `{name}` — see `!assets browse`.", C_RED))
+            return
+        pid = prop["id"]
+        row = _owner_row(pid)
+        if row is None or row["owner_id"] != uid:
+            await ctx.send(embed=emb("❌ Not Yours", f"You don't own {_fmt_prop(prop)}.", C_RED))
+            return
+        up_name, up_cost, up_boost = PROPERTY_UPGRADES[pid]
+        if row.get("upgraded"):
+            await ctx.send(embed=emb("⭐ Already Upgraded", f"{_fmt_prop(prop, row)} already has its **{up_name}**.", C_PURPLE))
+            return
+        # Gate-and-claim: mark upgraded synchronously before the charge so a
+        # concurrent second !assets upgrade sees the claim and bails instead
+        # of double-charging.
+        row["upgraded"] = True
+        if not await shop_charge(ctx, uid, up_cost):
+            row["upgraded"] = False
+            return
+        await save_property_owner(pid, row)
+        await ctx.send(embed=emb(
+            "⭐ Upgrade Built",
+            f"{_fmt_prop(prop, row)} now has a **{up_name}**!\n"
+            f"Revenue: **{property_daily_revenue(pid, row):,} 🪙/day** (+{up_boost}%) • "
+            f"Value: **{property_value(pid, row):,} 🪙**",
+            C_GREEN,
+        ))
+        # The upgrade cost folds into portfolio value — offer the records.
+        await self._offer_records(ctx)
+
+    # ── !assets rename ────────────────────────────────────────────────────
+    @cmd_assets.command(name="rename")
+    async def assets_rename(self, ctx: commands.Context, *args):
+        if len(args) < 2:
+            await ctx.send(embed=emb(
+                "✏️ Rename a Business",
+                "Usage: `!assets rename <property name> <new name>` — e.g. "
+                "`!assets rename Tattoo Parlor Inkwell Studio`.",
+                C_PURPLE,
+            ))
+            return
+        uid = ctx.author.id
+        # Greedy prefix match: the longest leading token span that resolves
+        # to a property the caller owns; the rest is the new name. Longest
+        # first so a new name that echoes the old one can't split too early.
+        prop = row = None
+        new_name = ""
+        for split in range(len(args) - 1, 0, -1):
+            cand = find_property(" ".join(args[:split]))
+            if cand is None:
+                continue
+            cand_row = _owner_row(cand["id"])
+            if cand_row is not None and cand_row["owner_id"] == uid:
+                prop, row = cand, cand_row
+                new_name = " ".join(args[split:]).strip()
+                break
+        if prop is None:
+            await ctx.send(embed=emb(
+                "❌ Unknown Property",
+                "Couldn't match a property you own at the start of that — "
+                "usage: `!assets rename <property name> <new name>`.",
+                C_RED,
+            ))
+            return
+        if not 1 <= len(new_name) <= 48:
+            await ctx.send(embed=emb("❌ Invalid Name", "The new name must be 1–48 characters.", C_RED))
+            return
+        # Keep names resolvable: a custom name may not collide with a catalog
+        # name/id or another business's custom name (case-insensitive).
+        t = new_name.lower()
+        taken = {p["name"].lower() for p in PROPERTIES} | {p["id"].replace("_", " ") for p in PROPERTIES}
+        for other_pid, other_row in state.property_owners.items():
+            if other_pid != prop["id"] and other_row.get("custom_name"):
+                taken.add(other_row["custom_name"].lower())
+        if t in taken:
+            await ctx.send(embed=emb("❌ Name Taken", f"`{new_name}` already names another business or property.", C_RED))
+            return
+        prior = row.get("custom_name")
+        row["custom_name"] = new_name
+        try:
+            await save_property_owner(prop["id"], row)
+        except Exception:
+            row["custom_name"] = prior
+            raise
+        await ctx.send(embed=emb(
+            "✏️ Business Renamed",
+            f"{prop['emoji']} **{prior or prop['name']}** is now {_fmt_prop(prop, row)}.",
+            C_GREEN,
+        ))
 
 
 async def setup(bot):

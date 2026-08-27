@@ -1537,14 +1537,14 @@ class EconomyCog(commands.Cog):
 
         # Property stats: book value isn't "circulation" (the purchase coins
         # were burned), so it gets its own lines and a combined net worth.
-        from src.properties import PROPERTIES, PROPERTIES_BY_ID, daily_revenue
-        owned_count = sum(1 for pid in state.property_owners if pid in PROPERTIES_BY_ID)
-        total_property = sum(
-            PROPERTIES_BY_ID[pid]["cost"]
-            for pid in state.property_owners if pid in PROPERTIES_BY_ID
+        from src.properties import (
+            PROPERTIES, PROPERTIES_BY_ID, property_daily_revenue,
+            total_owned_property_value,
         )
+        owned_count = sum(1 for pid in state.property_owners if pid in PROPERTIES_BY_ID)
+        total_property = total_owned_property_value()
         total_property_daily = sum(
-            daily_revenue(PROPERTIES_BY_ID[pid]["cost"])
+            property_daily_revenue(pid)
             for pid in state.property_owners if pid in PROPERTIES_BY_ID
         )
 

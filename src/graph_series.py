@@ -330,7 +330,7 @@ async def build_series_levels(member: discord.Member, guild_id: int) -> SeriesDa
 
 
 async def build_series_economy() -> SeriesData:
-    from src.properties import PROPERTIES_BY_ID
+    from src.properties import total_owned_property_value
 
     history = await load_balance_history()
 
@@ -352,13 +352,8 @@ async def build_series_economy() -> SeriesData:
         for u in state.economy["users"].values()
         for e in u.get("savings", [])
     ))
-    # Every owned deed's book value, regardless of owner — the sum over
-    # users of portfolio_value without the per-user loop.
-    live_assets = sum(
-        PROPERTIES_BY_ID[pid]["cost"]
-        for pid in state.property_owners
-        if pid in PROPERTIES_BY_ID
-    )
+    # Every owned deed's book value (upgrades included), regardless of owner.
+    live_assets = total_owned_property_value()
     if not x_points or x_points[-1] != now_point:
         x_points.append(now_point)
         y_wallet.append(live_wallet)

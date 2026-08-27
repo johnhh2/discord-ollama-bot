@@ -41,11 +41,13 @@ async def _give_property(uid: int, pid: str, acquired_days_ago: float = 10.0):
     """Directly install ownership (bypassing the shop) for revenue tests."""
     await _economy._ensure_user(uid)
     now = time.time()
-    _state.property_owners[pid] = {
+    row = {
         "owner_id": uid, "acquired_at": now - acquired_days_ago * DAY,
         "list_price": None, "listed_at": None,
+        "upgraded": False, "custom_name": None,
     }
-    await _persistence.save_property_owner(pid, uid, now - acquired_days_ago * DAY)
+    _state.property_owners[pid] = row
+    await _persistence.save_property_owner(pid, row)
 
 
 def _give_artifact(uid: int, artifact_id: str):
@@ -480,3 +482,193 @@ async def test_portfolio_shows_daily_and_banked_revenue(db):
     assert f"**Daily revenue:** {rev:,} 🪙/day" in desc
     assert f"**Revenue banked (lifetime):** {rev:,} 🪙" in desc
     assert "**Unredeemed revenue:**" in desc
+
+
+# ── upgrades ─────────────────────────────────────────────────────────────────
+
+async def test_upgrade_catalog_complete_and_in_range():
+    from src.properties import PROPERTY_UPGRADES, PROPERTIES_BY_ID
+    assert set(PROPERTY_UPGRADES) == set(PROPERTIES_BY_ID)
+    for pid, (name, cost, boost) in PROPERTY_UPGRADES.items():
+        base = PROPERTIES_BY_ID[pid]["cost"]
+        assert name
+        # Hardcoded costs were rolled at 75-125% of property cost (then
+        # rounded), boosts at 35-75%.
+        assert base * 70 // 100 <= cost <= base * 130 // 100, pid
+        assert 35 <= boost <= 75, pid
+
+
+async def test_upgrade_boosts_revenue_and_value(db):
+    from src.properties import PROPERTY_UPGRADES, property_value, property_daily_revenue
+    uid = 9070
+    await _give_property(uid, "tattoo_parlor")   # 68k
+    row = _state.property_owners["tattoo_parlor"]
+    base_rev = daily_revenue(68_000)
+    assert property_daily_revenue("tattoo_parlor", row) == base_rev
+    assert property_value("tattoo_parlor", row) == 68_000
+
+    row["upgraded"] = True
+    up_name, up_cost, up_boost = PROPERTY_UPGRADES["tattoo_parlor"]
+    assert up_name == "Piercing Booth"
+    assert property_daily_revenue("tattoo_parlor", row) == base_rev * (100 + up_boost) // 100
+    assert property_value("tattoo_parlor", row) == 68_000 + up_cost
+    # Pending accrual uses the boosted rate.
+    user = _state.economy["users"][str(uid)]
+    now = time.time()
+    user["property_paid_at"] = now - DAY
+    assert pending_property_revenue(uid, now) == base_rev * (100 + up_boost) // 100
+
+
+async def test_upgrade_command_charges_and_persists(db):
+    from src.properties import PROPERTY_UPGRADES
+    uid = 9071
+    _set_level(uid, 50)
+    await _give_property(uid, "tattoo_parlor")
+    _, up_cost, _ = PROPERTY_UPGRADES["tattoo_parlor"]
+    await add_balance(uid, up_cost + 1_000)
+    cog = AssetsCog(bot=None)
+    ctx = _ctx(uid)
+    await AssetsCog.assets_upgrade.callback(cog, ctx, name="Tattoo Parlor")
+    assert _state.property_owners["tattoo_parlor"]["upgraded"] is True
+    assert await get_balance(uid) == 1_000
+    # Second attempt is a no-op with a friendly message.
+    await AssetsCog.assets_upgrade.callback(cog, ctx, name="Tattoo Parlor")
+    assert await get_balance(uid) == 1_000
+    assert "Already Upgraded" in ctx.sent_embeds[-1].title
+
+
+async def test_upgrade_rolls_back_on_insufficient_funds(db):
+    uid = 9072
+    await _give_property(uid, "tattoo_parlor")
+    await add_balance(uid, 10)
+    cog = AssetsCog(bot=None)
+    await AssetsCog.assets_upgrade.callback(cog, _ctx(uid), name="Tattoo Parlor")
+    assert _state.property_owners["tattoo_parlor"]["upgraded"] is False
+    assert await get_balance(uid) == 10
+
+
+async def test_upgrade_value_feeds_property_record(db):
+    from src.properties import PROPERTY_UPGRADES
+    from src.persistence.records import load_records
+    uid = 9073
+    _set_level(uid, 50)
+    _, up_cost, _ = PROPERTY_UPGRADES["car_wash"]
+    await add_balance(uid, 20_000 + up_cost)
+    cog = AssetsCog(bot=None)
+    await AssetsCog.assets_buy.callback(cog, _ctx(uid), name="Car Wash")
+    await AssetsCog.assets_upgrade.callback(cog, _ctx(uid), name="Car Wash")
+    recs = await load_records(GID)
+    assert recs["highest_property_value"]["value"] == 20_000 + up_cost
+
+
+# ── bank buyback offer ───────────────────────────────────────────────────────
+
+async def test_lowball_listing_accepted_sells_to_bank(db, monkeypatch):
+    uid = 9080
+    await _give_property(uid, "car_wash")      # value 20k -> offer 15k
+
+    async def _accept(*a, **kw):
+        return True
+    monkeypatch.setattr("src.cogs.assets_cog.confirm_prompt", _accept)
+
+    cog = AssetsCog(bot=None)
+    ctx = _ctx(uid)
+    await AssetsCog.assets_sell.callback(cog, ctx, "Car", "Wash", "15000")
+    assert "car_wash" not in _state.property_owners
+    assert await _read_db_owner("car_wash") is None
+    assert await get_balance(uid) == 15_000    # 75% of 20k, no market fee
+    assert "Bank" in ctx.sent_embeds[-1].title
+
+
+async def test_lowball_listing_declined_lists_normally(db, monkeypatch):
+    uid = 9081
+    await _give_property(uid, "car_wash")
+
+    async def _decline(*a, **kw):
+        return False
+    monkeypatch.setattr("src.cogs.assets_cog.confirm_prompt", _decline)
+
+    cog = AssetsCog(bot=None)
+    await AssetsCog.assets_sell.callback(cog, _ctx(uid), "Car", "Wash", "15000")
+    row = _state.property_owners["car_wash"]
+    assert row["owner_id"] == uid and row["list_price"] == 15_000
+
+
+async def test_above_threshold_listing_skips_bank_offer(db, monkeypatch):
+    uid = 9082
+    await _give_property(uid, "car_wash")
+
+    async def _boom(*a, **kw):
+        raise AssertionError("bank offer should not fire above 75% of value")
+    monkeypatch.setattr("src.cogs.assets_cog.confirm_prompt", _boom)
+
+    cog = AssetsCog(bot=None)
+    await AssetsCog.assets_sell.callback(cog, _ctx(uid), "Car", "Wash", "15001")
+    assert _state.property_owners["car_wash"]["list_price"] == 15_001
+
+
+async def test_bank_offer_includes_upgrade_in_value(db, monkeypatch):
+    from src.properties import PROPERTY_UPGRADES
+    uid = 9083
+    await _give_property(uid, "car_wash")
+    _state.property_owners["car_wash"]["upgraded"] = True
+    _, up_cost, _ = PROPERTY_UPGRADES["car_wash"]
+    value = 20_000 + up_cost
+
+    async def _accept(*a, **kw):
+        return True
+    monkeypatch.setattr("src.cogs.assets_cog.confirm_prompt", _accept)
+
+    cog = AssetsCog(bot=None)
+    # 75% of the upgraded value still triggers the offer and pays on it.
+    await AssetsCog.assets_sell.callback(cog, _ctx(uid), "Car", "Wash", str(value * 75 // 100))
+    assert await get_balance(uid) == value * 75 // 100
+    assert "car_wash" not in _state.property_owners
+
+
+# ── rename ───────────────────────────────────────────────────────────────────
+
+async def test_rename_sets_custom_name_and_resolves(db):
+    uid = 9090
+    await _give_property(uid, "tattoo_parlor")
+    cog = AssetsCog(bot=None)
+    await AssetsCog.assets_rename.callback(cog, _ctx(uid), "Tattoo", "Parlor", "Inkwell", "Studio")
+    assert _state.property_owners["tattoo_parlor"]["custom_name"] == "Inkwell Studio"
+    # The custom name now resolves in find_property (sell/upgrade/buy input).
+    assert find_property("inkwell studio")["id"] == "tattoo_parlor"
+
+
+async def test_rename_rejects_collisions_and_non_owner(db):
+    uid, other = 9091, 9092
+    await _give_property(uid, "tattoo_parlor")
+    await _give_property(other, "car_wash")
+    _state.property_owners["car_wash"]["custom_name"] = "Sudsy Suds"
+    cog = AssetsCog(bot=None)
+    # Catalog-name collision.
+    ctx = _ctx(uid)
+    await AssetsCog.assets_rename.callback(cog, ctx, "Tattoo", "Parlor", "Car", "Wash")
+    assert _state.property_owners["tattoo_parlor"]["custom_name"] is None
+    assert "Name Taken" in ctx.sent_embeds[-1].title
+    # Another business's custom-name collision.
+    await AssetsCog.assets_rename.callback(cog, _ctx(uid), "Tattoo", "Parlor", "Sudsy", "Suds")
+    assert _state.property_owners["tattoo_parlor"]["custom_name"] is None
+    # Renaming someone else's property fails.
+    ctx2 = _ctx(uid)
+    await AssetsCog.assets_rename.callback(cog, ctx2, "Car", "Wash", "Mine", "Now")
+    assert _state.property_owners["car_wash"]["custom_name"] == "Sudsy Suds"
+
+
+async def test_custom_name_and_upgrade_travel_on_market_sale(db):
+    seller, buyer = 9093, 9094
+    _set_level(buyer, 50, gid=77)
+    await _give_property(seller, "car_wash")
+    row = _state.property_owners["car_wash"]
+    row["custom_name"] = "Sudsy Suds"
+    row["upgraded"] = True
+    await add_balance(buyer, 100_000)
+    cog = AssetsCog(bot=None)
+    await AssetsCog.assets_sell.callback(cog, _ctx(seller), "Sudsy", "Suds", "50000")
+    await AssetsCog.assets_buy.callback(cog, _ctx(buyer, gid=77), name="Sudsy Suds")
+    row = _state.property_owners["car_wash"]
+    assert row["owner_id"] == buyer
+    assert row["custom_name"] == "Sudsy Suds" and row["upgraded"] is True

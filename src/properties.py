@@ -34,6 +34,10 @@ PROPERTY_ACCRUAL_CAP_BASE = 10_000
 # Marketplace fee on player-to-player sales, paid by the seller out of the
 # sale price into the buyer's guild's house pot (burned in DMs).
 PROPERTY_SALE_FEE_PCT = 5
+# Listing a property at or below this % of its value triggers a bank offer:
+# the bank buys it back instantly at this % of value (upgrade included), no
+# market fee. Declining the offer proceeds with the normal listing.
+PROPERTY_BANK_BUYBACK_PCT = 75
 # Revenue rate: every property pays out this ‰ (per mille) of its purchase
 # price per day — 11‰ = 1.1%/day, ≈4× purchase price per year.
 PROPERTY_DAILY_REVENUE_PERMILLE = 11
@@ -94,15 +98,71 @@ PROPERTIES: list[dict] = [
 
 PROPERTIES_BY_ID: dict[str, dict] = {p["id"]: p for p in PROPERTIES}
 
+# ── Upgrades ─────────────────────────────────────────────────────────────────
+# Exactly one predefined upgrade per property: (name, cost, revenue_boost_pct).
+# Costs were rolled once at 75–125% of the property's cost and boosts at
+# 35–75%, then hardcoded (seed "discord-ollama-bot-upgrades-0050") — don't
+# re-roll shipped values; owners have paid for them. The upgrade's cost folds
+# into the property's VALUE (records, snapshots, bank buyback) and its boost
+# into that property's daily revenue.
+
+PROPERTY_UPGRADES: dict[str, tuple[str, int, int]] = {
+    "lemonade_stand": ("Fresh-Squeeze Press", 8_500, 52),
+    "hot_dog_cart": ("Chili Dog Station", 13_000, 52),
+    "newspaper_kiosk": ("Magazine Rack", 17_000, 56),
+    "vending_route": ("Cold-Drink Machines", 19_000, 35),
+    "laundromat": ("Dry-Cleaning Service", 22_000, 64),
+    "car_wash": ("Wax & Detail Bay", 21_000, 48),
+    "barber_shop": ("Hot Towel Service", 21_000, 67),
+    "coffee_cart": ("Espresso Machine", 24_000, 36),
+    "food_truck": ("Fusion Menu", 28_000, 46),
+    "nail_salon": ("Pedicure Spa Chairs", 22_000, 49),
+    "bait_shop": ("Live Bait Tanks", 33_000, 57),
+    "flower_shop": ("Wedding Arrangements", 27_000, 47),
+    "corner_store": ("Lottery Counter", 47_000, 41),
+    "pizza_parlor": ("Wood-Fired Oven", 57_000, 70),
+    "dive_bar": ("Karaoke Night", 64_000, 50),
+    "arcade": ("Prize Counter", 73_000, 40),
+    "tattoo_parlor": ("Piercing Booth", 78_000, 44),
+    "bowling_alley": ("Cosmic Bowling", 62_000, 64),
+    "gas_station": ("Convenience Mart", 67_000, 57),
+    "pawn_shop": ("Jewelry Case", 72_000, 44),
+    "motel": ("Heated Pool", 93_000, 43),
+    "auto_shop": ("Performance Garage", 115_000, 43),
+    "movie_theater": ("IMAX Screen", 145_000, 35),
+    "nightclub": ("VIP Lounge", 140_000, 41),
+    "gym": ("Personal Training Studio", 147_000, 44),
+    "apartment_block": ("Rooftop Terrace", 190_000, 52),
+    "recording_studio": ("Mastering Suite", 189_000, 39),
+    "marina": ("Yacht Charters", 255_000, 37),
+    "vineyard": ("Tasting Room", 309_000, 74),
+    "ski_lodge": ("Heli-Ski Pad", 396_000, 51),
+    "shopping_mall": ("Food Court", 708_000, 45),
+    "server_farm": ("GPU Cluster", 968_000, 56),
+    "private_island": ("Beach Resort", 1_100_000, 60),
+    "casino_resort": ("High-Roller Suite", 1_534_000, 68),
+    "skyscraper": ("Observation Deck", 1_360_000, 42),
+    "space_port": ("Orbital Hotel", 1_840_000, 40),
+}
+
+assert set(PROPERTY_UPGRADES) == set(PROPERTIES_BY_ID), \
+    "every property needs exactly one entry in PROPERTY_UPGRADES"
+
 
 def find_property(token: str) -> dict | None:
-    """Resolve user input to a catalog entry: exact id, or case-insensitive
-    name match (spaces/underscores interchangeable)."""
+    """Resolve user input to a catalog entry: exact id, case-insensitive
+    catalog-name match (spaces/underscores interchangeable), or an owner's
+    custom business name (!assets rename)."""
     t = token.strip().lower().replace("_", " ")
     for p in PROPERTIES:
         if p["id"].replace("_", " ") == t or p["name"].lower() == t:
             return p
+    for pid, row in state.property_owners.items():
+        custom = row.get("custom_name")
+        if custom and custom.lower() == t and pid in PROPERTIES_BY_ID:
+            return PROPERTIES_BY_ID[pid]
     return None
+
 
 
 # ── Revenue math ─────────────────────────────────────────────────────────────
@@ -111,6 +171,35 @@ def find_property(token: str) -> dict | None:
 def daily_revenue(cost: int) -> int:
     """Daily revenue for a property: 1.1% of its purchase price per day."""
     return cost * PROPERTY_DAILY_REVENUE_PERMILLE // 1000
+
+
+def property_daily_revenue(pid: str, row: dict = None) -> int:
+    """One deed's daily revenue including its upgrade boost (if bought).
+    Artifact bonuses are NOT applied here — they're portfolio-wide and live
+    in portfolio_daily_revenue / pending_property_revenue."""
+    base = daily_revenue(PROPERTIES_BY_ID[pid]["cost"])
+    if row is None:
+        row = state.property_owners.get(pid)
+    if row and row.get("upgraded"):
+        boost = PROPERTY_UPGRADES[pid][2]
+        base = base * (100 + boost) // 100
+    return base
+
+
+def property_value(pid: str, row: dict = None) -> int:
+    """One deed's book value: catalog cost, plus the upgrade's cost once
+    bought — an upgraded property is worth what went into it."""
+    value = PROPERTIES_BY_ID[pid]["cost"]
+    if row is None:
+        row = state.property_owners.get(pid)
+    if row and row.get("upgraded"):
+        value += PROPERTY_UPGRADES[pid][1]
+    return value
+
+
+def bank_buyback_offer(pid: str, row: dict = None) -> int:
+    """What the bank pays to buy this deed back (75% of its value)."""
+    return property_value(pid, row) * PROPERTY_BANK_BUYBACK_PCT // 100
 
 
 def owned_properties(uid: int) -> list[dict]:
@@ -126,14 +215,25 @@ def owned_property_count(uid: int) -> int:
 
 
 def portfolio_value(uid: int) -> int:
-    """Book value (sum of catalog costs) of everything the user owns."""
-    return sum(p["cost"] for p in owned_properties(uid))
+    """Book value (catalog costs + bought upgrades) of everything the user
+    owns."""
+    return sum(property_value(p["id"]) for p in owned_properties(uid))
+
+
+def total_owned_property_value() -> int:
+    """Book value of every owned deed bot-wide (upgrades included) — the
+    economy graph / !economy aggregate."""
+    return sum(
+        property_value(pid)
+        for pid in state.property_owners if pid in PROPERTIES_BY_ID
+    )
 
 
 def portfolio_daily_revenue(uid: int, *, boosted: bool = True) -> int:
-    """The user's total property revenue per day. With `boosted`, applies
-    artifact percentage bonuses (the number the accrual actually pays)."""
-    base = sum(daily_revenue(p["cost"]) for p in owned_properties(uid))
+    """The user's total property revenue per day, upgrades included. With
+    `boosted`, applies artifact percentage bonuses (the number the accrual
+    actually pays)."""
+    base = sum(property_daily_revenue(p["id"]) for p in owned_properties(uid))
     if not boosted:
         return base
     from src.artifacts import property_revenue_boosted
@@ -170,7 +270,7 @@ def pending_property_revenue(uid: int, now: float = None) -> int:
         row = state.property_owners[p["id"]]
         since = max(paid_at, float(row["acquired_at"]))
         days = max(0.0, (now - since) / 86400.0)
-        base += daily_revenue(p["cost"]) * days
+        base += property_daily_revenue(p["id"], row) * days
     from src.artifacts import property_revenue_boosted
     boosted = property_revenue_boosted(uid, int(base), len(props))
     return min(boosted, accrual_cap(uid))
