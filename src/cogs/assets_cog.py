@@ -56,7 +56,7 @@ _SUBCOMMANDS_HELP = (
     "**Subcommands:**\n"
     "`!assets browse [tier]` — full catalog + player listings (cross-server)\n"
     "`!assets buy <name>` — buy from the bank or a player listing\n"
-    "`!assets upgrade [name]` — buy a property's one-time upgrade\n"
+    "`!assets upgrade [name]` — see your properties' upgrades, or buy one\n"
     "`!assets sell <name> <price>` — list on the cross-server market "
     f"(at ≤{PROPERTY_BANK_BUYBACK_PCT}% of value, the bank offers an instant buyback)\n"
     "`!assets unlist <name>` — remove your listing\n"
@@ -99,16 +99,12 @@ class AssetsCog(commands.Cog):
             pid = p["id"]
             row = _owner_row(pid)
             listed = f" • 🏷️ listed at **{row['list_price']:,} 🪙**" if row.get("list_price") else ""
-            up_name, up_cost, up_boost = PROPERTY_UPGRADES[pid]
-            if row.get("upgraded"):
-                upgrade = f"\n  ↳ ⭐ {up_name} (+{up_boost}% revenue)"
-            else:
-                upgrade = f"\n  ↳ upgrade: {up_name} — {up_cost:,} 🪙 for +{up_boost}% revenue"
             # Every property has exactly one upgrade — (1/1) means bought.
+            # Upgrade names/costs live in `!assets upgrade`, not here.
             up_count = f"({1 if row.get('upgraded') else 0}/1)"
             lines.append(
                 f"{_fmt_prop(p, row)} {up_count} — {property_value(pid, row):,} 🪙 • "
-                f"{property_daily_revenue(pid, row):,} 🪙/day{listed}{upgrade}"
+                f"{property_daily_revenue(pid, row):,} 🪙/day{listed}"
             )
         pending = pending_property_revenue(uid)
         cap = accrual_cap(uid)
