@@ -104,8 +104,10 @@ class AssetsCog(commands.Cog):
                 upgrade = f"\n  ↳ ⭐ {up_name} (+{up_boost}% revenue)"
             else:
                 upgrade = f"\n  ↳ upgrade: {up_name} — {up_cost:,} 🪙 for +{up_boost}% revenue"
+            # Every property has exactly one upgrade — (1/1) means bought.
+            up_count = f"({1 if row.get('upgraded') else 0}/1)"
             lines.append(
-                f"{_fmt_prop(p, row)} — {property_value(pid, row):,} 🪙 • "
+                f"{_fmt_prop(p, row)} {up_count} — {property_value(pid, row):,} 🪙 • "
                 f"{property_daily_revenue(pid, row):,} 🪙/day{listed}{upgrade}"
             )
         pending = pending_property_revenue(uid)

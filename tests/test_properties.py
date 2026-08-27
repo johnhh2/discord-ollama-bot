@@ -479,6 +479,8 @@ async def test_portfolio_shows_daily_and_banked_revenue(db):
     ctx = _ctx(uid)
     await AssetsCog.cmd_assets.callback(cog, ctx, None)
     desc = ctx.sent_embeds[-1].description
+    # Upgrade counter renders after the name: (0/1) unbought, (1/1) bought.
+    assert "**Car Wash** (0/1)" in desc
     assert f"**Daily revenue:** {rev:,} 🪙/day" in desc
     assert f"**Revenue banked (lifetime):** {rev:,} 🪙" in desc
     assert "**Unredeemed revenue:**" in desc
