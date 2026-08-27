@@ -18,6 +18,7 @@ from typing import Callable, Optional
 from discord.ext import commands
 
 from src.guild_config import get_guild_cfg
+from src.economy import SAVINGS_DAILY_PCT
 from src import state
 
 
@@ -54,7 +55,7 @@ def _always(_: int) -> bool:
 
 UNLOCKS: dict[str, dict] = {
     # Level 3 — savings (advertised: savings)
-    "savings":     {"level": 3, "enabled": _always,                       "usage": "`!savings add|remove <amount>` — piggy bank with 1% daily interest", "reward": True},
+    "savings":     {"level": 3, "enabled": _always,                       "usage": f"`!savings add|remove <amount>` — piggy bank with {SAVINGS_DAILY_PCT} daily interest", "reward": True},
 
     # Level 5 — role family (advertised: rolecreate). rolelock/roleunlock gated separately at 8.
     # !roles is the role leaderboard — never gated.

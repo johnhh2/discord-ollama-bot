@@ -34,6 +34,9 @@ PROPERTY_ACCRUAL_CAP_BASE = 10_000
 # Marketplace fee on player-to-player sales, paid by the seller out of the
 # sale price into the buyer's guild's house pot (burned in DMs).
 PROPERTY_SALE_FEE_PCT = 5
+# Revenue multiple: every property pays out this × its purchase price per
+# year (2/365 of cost per day).
+PROPERTY_REVENUE_YEARLY_MULT = 2
 
 # ── Catalog ──────────────────────────────────────────────────────────────────
 # id      — stable key stored in the DB; never rename once shipped
@@ -105,7 +108,7 @@ def find_property(token: str) -> dict | None:
 
 def daily_revenue(cost: int) -> int:
     """Daily revenue for a property: 2× its purchase price per year."""
-    return cost * 2 // 365
+    return cost * PROPERTY_REVENUE_YEARLY_MULT // 365
 
 
 def owned_properties(uid: int) -> list[dict]:

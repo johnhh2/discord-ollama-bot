@@ -16,7 +16,7 @@ from src.helpers import (
 )
 from src.economy import (
     get_guild_ask_model, get_guild_roleplay_model,
-    get_guild_coding_model, _ct_today,
+    get_guild_coding_model, _ct_today, SAVINGS_DAILY_PCT,
 )
 from src.streaks import effective_streak
 from src.permissions import (
@@ -152,7 +152,7 @@ class UtilityCog(commands.Cog):
         help_embed = discord.Embed(title="📖 Commands", color=0x3498db)
         eco_lines = [
             "`!economy` — Economy overview and command list",
-            fmt_line("savings", "`!savings` — 🐷 Piggy bank with 1% daily interest", uid, gid),
+            fmt_line("savings", "`!savings` — 🐷 Piggy bank with " + SAVINGS_DAILY_PCT + " daily interest", uid, gid),
             "`!crime` — Steal, mug, and jailbreak commands",
         ]
         help_embed.add_field(name="💰 Economy", inline=False, value="\n".join(eco_lines))

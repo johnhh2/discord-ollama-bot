@@ -25,8 +25,10 @@ async def test_savings_compound_interest_30_days(db, monkeypatch):
     uid = 8001
     await _economy.add_balance(uid, 1000)
 
-    # Freeze "now" for the deposit at t=0.
-    times = [0.0]
+    # Freeze "now" for the deposit, after the rate changeover so the whole
+    # window accrues at the current rate.
+    t0 = _economy.SAVINGS_RATE_CHANGE_TS + 86400.0
+    times = [t0]
     def fake_time():
         return times[0]
     monkeypatch.setattr(_economy.time, "time", fake_time)
@@ -35,10 +37,28 @@ async def test_savings_compound_interest_30_days(db, monkeypatch):
     assert ok is True
     assert await _economy.get_balance(uid) == 900  # deducted
 
-    # Advance 30 days.
-    times[0] = 30 * 86400.0
+    # Advance 30 days at the current 0.3%/day rate.
+    times[0] = t0 + 30 * 86400.0
     value = await _economy.get_savings_value(uid)
-    expected = 100 * (1.01 ** 30)
+    expected = 100 * (1.003 ** 30)
+    assert abs(value - expected) < 0.01
+
+
+async def test_savings_rate_change_grandfathers_old_interest(db, monkeypatch):
+    """A deposit made before the rate cut accrues 1%/day up to the changeover,
+    then continues at the new rate — earned interest is never clawed back."""
+    uid = 8006
+    await _economy.add_balance(uid, 1000)
+
+    change = _economy.SAVINGS_RATE_CHANGE_TS
+    times = [change - 10 * 86400.0]
+    monkeypatch.setattr(_economy.time, "time", lambda: times[0])
+    await _economy.add_savings(uid, 100)
+
+    # 10 days at the legacy 1% rate, then 5 days at the current 0.3% rate.
+    times[0] = change + 5 * 86400.0
+    value = await _economy.get_savings_value(uid)
+    expected = 100 * (1.01 ** 10) * (1.003 ** 5)
     assert abs(value - expected) < 0.01
 
 

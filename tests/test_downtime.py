@@ -326,12 +326,13 @@ async def test_insurance_is_insured_returns_false_after_expiry(db):
 # ── savings ───────────────────────────────────────────────────────────────────
 
 async def test_savings_interest_compounds_correctly_across_long_gap(db, monkeypatch):
-    """Savings is purely time-based: 1% compound per day, computed from
+    """Savings is purely time-based: compound interest computed from
     deposited_at on read. Bot downtime doesn't affect the math."""
     uid = 7
     await _economy.add_balance(uid, 10000)
 
-    times = [1_000_000.0]  # arbitrary epoch
+    # Post-changeover epoch so the whole window accrues at the current rate.
+    times = [_economy.SAVINGS_RATE_CHANGE_TS + 1_000_000.0]
     monkeypatch.setattr(_economy.time, "time", lambda: times[0])
 
     ok = await _economy.add_savings(uid, 1000)
@@ -341,7 +342,7 @@ async def test_savings_interest_compounds_correctly_across_long_gap(db, monkeypa
     times[0] += 21 * 86400.0
 
     value = await _economy.get_savings_value(uid)
-    expected = 1000 * (1.01 ** 21)
+    expected = 1000 * (1.003 ** 21)
     assert abs(value - expected) < 0.01, (
         f"21-day compound interest off: got {value}, expected ~{expected}"
     )

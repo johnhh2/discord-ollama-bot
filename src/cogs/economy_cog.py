@@ -16,6 +16,7 @@ from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
     add_guild_house, is_insured, get_insurance_expiry, _ct_now, _ct_today, do_daily_reset, _ensure_user,
     next_daily_reset_ts, get_savings_value, add_savings, remove_savings,
+    savings_growth, SAVINGS_DAILY_PCT,
     seize_from_savings, record_crime_event, CRIME_ELIGIBLE_NET_WORTH,
     _maybe_latch_crime_eligible,
 )
@@ -1421,7 +1422,7 @@ class EconomyCog(commands.Cog):
                     "**Usage:**\n"
                     "`!savings add <amount>` or `!savings +<amount>` — deposit coins\n"
                     "`!savings remove <amount>` or `!savings -<amount>` — withdraw coins\n\n"
-                    "*Savings earn **1% compound interest per day**.*"
+                    f"*Savings earn **{SAVINGS_DAILY_PCT} compound interest per day**.*"
                 )
             elif show_principals:
                 now = time.time()
@@ -1429,8 +1430,7 @@ class EconomyCog(commands.Cog):
                 interest = int(value) - principal
                 deposit_lines = []
                 for e in deposits:
-                    days = (now - e["deposited_at"]) / 86400.0
-                    e_val = int(e["amount"] * (1.01 ** days))
+                    e_val = int(e["amount"] * savings_growth(e["deposited_at"], now))
                     e_principal = int(e["amount"])
                     e_interest = e_val - e_principal
                     # <t:...:d> renders in the viewer's timezone — naive
@@ -1458,7 +1458,7 @@ class EconomyCog(commands.Cog):
                     "`!savings add <amount>` — deposit coins\n"
                     "`!savings remove <amount>` — withdraw coins\n"
                     "`!savings principals` — show deposit breakdown\n\n"
-                    "*1% compound interest per day, compounded on each deposit separately.*"
+                    f"*{SAVINGS_DAILY_PCT} compound interest per day, compounded on each deposit separately.*"
                 )
             await send_ephemeral(ctx, embed=emb("🐷 Piggy Bank", desc, C_GREEN))
             return
@@ -1526,7 +1526,7 @@ class EconomyCog(commands.Cog):
             deps = u.get("savings", [])
             if deps:
                 users_with_savings += 1
-                total_savings += int(sum(e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0)) for e in deps))
+                total_savings += int(sum(e["amount"] * savings_growth(e["deposited_at"], now) for e in deps))
             if u.get("jail_until", 0) > now:
                 jailed += 1
 
@@ -1563,7 +1563,7 @@ class EconomyCog(commands.Cog):
             "**Economy commands:**\n"
             "`!balance [@user]` — Check wallet\n"
             "`!pay @user <amount>` — Send coins\n"
-            f"{fmt_line('savings', '`!savings` — Piggy bank (1% daily interest)', uid_help, gid_help)}\n"
+            f"{fmt_line('savings', '`!savings` — Piggy bank (' + SAVINGS_DAILY_PCT + ' daily interest)', uid_help, gid_help)}\n"
             "`!assets` — Real estate (revenue with your daily)\n"
             "`!crime` — Steal, mug, jailbreak\n"
             "`!lottery` — Monthly lottery info\n"

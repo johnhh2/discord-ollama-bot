@@ -30,7 +30,7 @@ from src import state
 from src.economy import (
     _ct_today_date, _calendar_today_date,  # re-exported for tests
     _current_bucket_ct, _bucket_start_dt,
-    get_balance,
+    get_balance, savings_growth,
 )
 # Silence unused-import warnings — these names are part of this module's
 # test-facing surface even though graph_series itself doesn't reference them.
@@ -348,7 +348,7 @@ async def build_series_economy() -> SeriesData:
     now = _time.time()
     live_wallet = sum(u.get("balance", 0) for u in state.economy["users"].values())
     live_savings = int(sum(
-        e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0))
+        e["amount"] * savings_growth(e["deposited_at"], now)
         for u in state.economy["users"].values()
         for e in u.get("savings", [])
     ))
@@ -929,7 +929,7 @@ async def build_admin_series(
         for uid_str, user in state.economy["users"].items():
             wallet = user.get("balance", 0)
             savings = int(sum(
-                e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0))
+                e["amount"] * savings_growth(e["deposited_at"], now)
                 for e in user.get("savings", [])
             ))
             if field == "wallet":

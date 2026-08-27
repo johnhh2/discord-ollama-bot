@@ -297,15 +297,40 @@ def next_daily_reset_ts() -> int:
     return int(reset_dt.timestamp())
 
 
+# ── Savings interest ─────────────────────────────────────────────────────────
+# 0.3% compound per day — a bit over half the property revenue rate
+# (properties pay PROPERTY_REVENUE_YEARLY_MULT × cost per year, i.e.
+# 2/365 ≈ 0.55% of cost per day).
+SAVINGS_DAILY_MULT = 1.003
+# User-facing rate string — keeps help copy in lockstep with the math.
+SAVINGS_DAILY_PCT = f"{(SAVINGS_DAILY_MULT - 1.0) * 100:.2f}%"
+# Deposits accrued 1%/day before the 2026-08-26 rate cut. Interest earned
+# before the changeover is kept: the growth factor switches rate at the
+# boundary instead of recomputing history at the new rate.
+_LEGACY_SAVINGS_DAILY_MULT = 1.01
+SAVINGS_RATE_CHANGE_TS = 1787702400.0  # 2026-08-26 00:00:00 UTC
+
+
+def savings_growth(deposited_at: float, now: float | None = None) -> float:
+    """Compound growth factor for one savings deposit from deposited_at to now.
+    The single formula for savings value — every read path must use it."""
+    if now is None:
+        now = time.time()
+    if now <= deposited_at:
+        return 1.0
+    legacy_days = max(0.0, (min(now, SAVINGS_RATE_CHANGE_TS) - deposited_at) / 86400.0)
+    new_days = max(0.0, (now - max(deposited_at, SAVINGS_RATE_CHANGE_TS)) / 86400.0)
+    return (_LEGACY_SAVINGS_DAILY_MULT ** legacy_days) * (SAVINGS_DAILY_MULT ** new_days)
+
+
 async def get_savings_value(uid: int) -> float:
-    """Return the current compound value of a user's savings (1% daily interest per deposit)."""
+    """Return the current compound value of a user's savings (savings_growth per deposit)."""
     await _ensure_user(uid)
     deposits = state.economy["users"][str(uid)].get("savings", [])
     now = time.time()
     total = 0.0
     for entry in deposits:
-        days = (now - entry["deposited_at"]) / 86400.0
-        total += entry["amount"] * (1.01 ** days)
+        total += entry["amount"] * savings_growth(entry["deposited_at"], now)
     return total
 
 
@@ -328,14 +353,14 @@ async def remove_savings(uid: int, amount: int) -> bool:
     user = state.economy["users"][str(uid)]
     deposits = user.get("savings", [])
     now = time.time()
-    current_value = int(sum(e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0)) for e in deposits))
+    current_value = int(sum(e["amount"] * savings_growth(e["deposited_at"], now) for e in deposits))
     if current_value < amount:
         return False
     remaining = float(amount)
     new_deposits = []
     for entry in deposits:
-        days = (now - entry["deposited_at"]) / 86400.0
-        val = entry["amount"] * (1.01 ** days)
+        factor = savings_growth(entry["deposited_at"], now)
+        val = entry["amount"] * factor
         if remaining <= 0:
             new_deposits.append(entry)
         elif val <= remaining:
@@ -345,7 +370,7 @@ async def remove_savings(uid: int, amount: int) -> bool:
             # (kept_amount * factor) exactly equals (val - remaining). Truncating
             # to int here used to lose up to ~factor coins, letting a withdraw +
             # redeposit of the same amount drop displayed savings by 1.
-            kept_amount = entry["amount"] - remaining / (1.01 ** days)
+            kept_amount = entry["amount"] - remaining / factor
             if kept_amount > 0:
                 new_deposits.append({"amount": kept_amount, "deposited_at": entry["deposited_at"]})
             remaining = 0
@@ -364,21 +389,21 @@ async def seize_from_savings(uid: int, max_amount: int) -> int:
     user = state.economy["users"][str(uid)]
     deposits = user.get("savings", [])
     now = time.time()
-    current_value = int(sum(e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0)) for e in deposits))
+    current_value = int(sum(e["amount"] * savings_growth(e["deposited_at"], now) for e in deposits))
     if current_value <= 0:
         return 0
     seized = min(max_amount, current_value)
     remaining = float(seized)
     new_deposits = []
     for entry in deposits:
-        days = (now - entry["deposited_at"]) / 86400.0
-        val = entry["amount"] * (1.01 ** days)
+        factor = savings_growth(entry["deposited_at"], now)
+        val = entry["amount"] * factor
         if remaining <= 0:
             new_deposits.append(entry)
         elif val <= remaining:
             remaining -= val
         else:
-            kept_amount = entry["amount"] - remaining / (1.01 ** days)
+            kept_amount = entry["amount"] - remaining / factor
             if kept_amount > 0:
                 new_deposits.append({"amount": kept_amount, "deposited_at": entry["deposited_at"]})
             remaining = 0
@@ -405,7 +430,7 @@ async def snapshot_balances():
     for uid_str, user in state.economy["users"].items():
         wallet = user.get("balance", 0)
         deps = user.get("savings", [])
-        savings = int(sum(e["amount"] * (1.01 ** ((now - e["deposited_at"]) / 86400.0)) for e in deps))
+        savings = int(sum(e["amount"] * savings_growth(e["deposited_at"], now) for e in deps))
         snapshot[uid_str] = {
             "wallet": wallet, "savings": savings,
             # Property book value + lifetime revenue banked — feeds
