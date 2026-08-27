@@ -6,8 +6,8 @@ acquired_at, list_price, listed_at}}, source of truth: property_owners
 table). The catalog below is the full board — 36 properties from 10k to 2m.
 
 Economics:
-  - Revenue is 2× purchase price per year, derived (never hand-typed):
-    daily = cost * 2 // 365. One invariant for the whole catalog.
+  - Revenue is 1.1% of purchase price per day, derived (never hand-typed):
+    daily = cost * 11 // 1000. One invariant for the whole catalog.
   - Revenue accrues per property from max(last payout, acquisition) and is
     banked automatically with the owner's daily claim (!daily or the dailies
     channel). Accrual is capped at PROPERTY_ACCRUAL_CAP_BASE (plus artifact
@@ -34,9 +34,11 @@ PROPERTY_ACCRUAL_CAP_BASE = 10_000
 # Marketplace fee on player-to-player sales, paid by the seller out of the
 # sale price into the buyer's guild's house pot (burned in DMs).
 PROPERTY_SALE_FEE_PCT = 5
-# Revenue multiple: every property pays out this × its purchase price per
-# year (2/365 of cost per day).
-PROPERTY_REVENUE_YEARLY_MULT = 2
+# Revenue rate: every property pays out this ‰ (per mille) of its purchase
+# price per day — 11‰ = 1.1%/day, ≈4× purchase price per year.
+PROPERTY_DAILY_REVENUE_PERMILLE = 11
+# User-facing rate string — keeps help copy in lockstep with the math.
+PROPERTY_DAILY_REVENUE_PCT = f"{PROPERTY_DAILY_REVENUE_PERMILLE / 10:g}%"
 
 # ── Catalog ──────────────────────────────────────────────────────────────────
 # id      — stable key stored in the DB; never rename once shipped
@@ -107,8 +109,8 @@ def find_property(token: str) -> dict | None:
 
 
 def daily_revenue(cost: int) -> int:
-    """Daily revenue for a property: 2× its purchase price per year."""
-    return cost * PROPERTY_REVENUE_YEARLY_MULT // 365
+    """Daily revenue for a property: 1.1% of its purchase price per day."""
+    return cost * PROPERTY_DAILY_REVENUE_PERMILLE // 1000
 
 
 def owned_properties(uid: int) -> list[dict]:

@@ -71,8 +71,8 @@ async def test_catalog_ids_unique_and_revenue_formula():
     names = [p["name"].lower() for p in PROPERTIES]
     assert len(names) == len(set(names))
     for p in PROPERTIES:
-        # 2× purchase price per year, always derived from cost.
-        assert daily_revenue(p["cost"]) == p["cost"] * 2 // 365
+        # 1.1% of purchase price per day, always derived from cost.
+        assert daily_revenue(p["cost"]) == p["cost"] * 11 // 1000
         assert p["tier"] in (1, 2, 3, 4, 5)
 
 
@@ -87,7 +87,7 @@ async def test_find_property_matches_name_and_id():
 
 async def test_pending_revenue_accrues_daily_and_caps(db):
     uid = 9001
-    await _give_property(uid, "car_wash", acquired_days_ago=100.0)  # 20k → 109/day
+    await _give_property(uid, "car_wash", acquired_days_ago=100.0)  # 20k → 220/day
 
     now = time.time()
     user = _state.economy["users"][str(uid)]
@@ -112,7 +112,7 @@ async def test_pending_revenue_never_backdates_before_acquisition(db):
 
 async def test_accrual_cap_uses_daily_revenue_when_larger(db):
     uid = 9003
-    # Space Port: 2m → 10,958/day > 10k base cap.
+    # Space Port: 2m → 22,000/day > 10k base cap.
     await _give_property(uid, "space_port")
     assert accrual_cap(uid) == daily_revenue(2_000_000)
     # A big portfolio's cap is one full day of revenue — a daily claimer
@@ -129,15 +129,15 @@ async def test_cap_artifact_raises_accrual_cap(db):
     assert accrual_cap(uid) == PROPERTY_ACCRUAL_CAP_BASE + 5_000
 
 
-async def test_mogul_artifact_boosts_by_10pct_per_property(db):
+async def test_mogul_artifact_boosts_by_5pct_per_property(db):
     uid = 9005
-    await _give_property(uid, "car_wash")       # 109/day
-    await _give_property(uid, "lemonade_stand") # 54/day
+    await _give_property(uid, "car_wash")       # 220/day
+    await _give_property(uid, "lemonade_stand") # 110/day
     base = daily_revenue(20_000) + daily_revenue(10_000)
     assert portfolio_daily_revenue(uid) == base
     _give_artifact(uid, "property_mogul")
-    # 2 properties → +20%.
-    assert portfolio_daily_revenue(uid) == int(base * 1.2)
+    # 2 properties → +10%.
+    assert portfolio_daily_revenue(uid) == int(base * 1.1)
 
 
 async def test_bank_property_revenue_pays_and_stamps(db):

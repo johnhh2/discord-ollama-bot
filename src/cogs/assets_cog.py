@@ -25,7 +25,7 @@ from src.economy import add_balance, add_guild_house, _ensure_user
 from src.properties import (
     PROPERTIES, PROPERTY_MAX_OWNED, PROPERTY_SALE_FEE_PCT,
     find_property, daily_revenue, owned_properties, owned_property_count,
-    portfolio_value, portfolio_daily_revenue, accrual_cap,
+    portfolio_value, portfolio_daily_revenue, accrual_cap, PROPERTY_DAILY_REVENUE_PCT,
     pending_property_revenue,
 )
 from src.persistence import save_property_owner, try_set_record
@@ -75,7 +75,7 @@ class AssetsCog(commands.Cog):
             desc = (
                 f"**{member.display_name}** doesn't own any properties yet.\n\n"
                 f"{_SUBCOMMANDS_HELP}\n\n"
-                f"*Properties pay **2× their price per year**, banked automatically "
+                f"*Properties pay **{PROPERTY_DAILY_REVENUE_PCT} of their price per day**, banked automatically "
                 f"with your daily claim. Own up to **{PROPERTY_MAX_OWNED}**.*"
             )
             await send_ephemeral(ctx, embed=emb("🏘️ Real Estate", desc, C_PURPLE))
@@ -141,7 +141,7 @@ class AssetsCog(commands.Cog):
         lines.append(
             f"Every property is unique — one owner across all servers; 🏷️ marks "
             f"player listings, buyable from any server. "
-            f"Own up to **{PROPERTY_MAX_OWNED}**; revenue is 2× price per year, "
+            f"Own up to **{PROPERTY_MAX_OWNED}**; revenue is {PROPERTY_DAILY_REVENUE_PCT} of price per day, "
             "banked with your daily claim.\n"
             "`!assets buy <name>` • `!assets sell <name> <price>`"
         )

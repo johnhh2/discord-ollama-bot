@@ -342,7 +342,7 @@ async def test_savings_interest_compounds_correctly_across_long_gap(db, monkeypa
     times[0] += 21 * 86400.0
 
     value = await _economy.get_savings_value(uid)
-    expected = 1000 * (1.003 ** 21)
+    expected = 1000 * (1.006 ** 21)
     assert abs(value - expected) < 0.01, (
         f"21-day compound interest off: got {value}, expected ~{expected}"
     )

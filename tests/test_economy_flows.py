@@ -37,10 +37,10 @@ async def test_savings_compound_interest_30_days(db, monkeypatch):
     assert ok is True
     assert await _economy.get_balance(uid) == 900  # deducted
 
-    # Advance 30 days at the current 0.3%/day rate.
+    # Advance 30 days at the current 0.6%/day rate.
     times[0] = t0 + 30 * 86400.0
     value = await _economy.get_savings_value(uid)
-    expected = 100 * (1.003 ** 30)
+    expected = 100 * (1.006 ** 30)
     assert abs(value - expected) < 0.01
 
 
@@ -55,10 +55,10 @@ async def test_savings_rate_change_grandfathers_old_interest(db, monkeypatch):
     monkeypatch.setattr(_economy.time, "time", lambda: times[0])
     await _economy.add_savings(uid, 100)
 
-    # 10 days at the legacy 1% rate, then 5 days at the current 0.3% rate.
+    # 10 days at the legacy 1% rate, then 5 days at the current 0.6% rate.
     times[0] = change + 5 * 86400.0
     value = await _economy.get_savings_value(uid)
-    expected = 100 * (1.01 ** 10) * (1.003 ** 5)
+    expected = 100 * (1.01 ** 10) * (1.006 ** 5)
     assert abs(value - expected) < 0.01
 
 

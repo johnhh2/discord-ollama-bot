@@ -298,10 +298,9 @@ def next_daily_reset_ts() -> int:
 
 
 # ── Savings interest ─────────────────────────────────────────────────────────
-# 0.3% compound per day — a bit over half the property revenue rate
-# (properties pay PROPERTY_REVENUE_YEARLY_MULT × cost per year, i.e.
-# 2/365 ≈ 0.55% of cost per day).
-SAVINGS_DAILY_MULT = 1.003
+# 0.6% compound per day — a bit over half the property revenue rate
+# (1.1% of cost per day, see PROPERTY_DAILY_REVENUE_PERMILLE).
+SAVINGS_DAILY_MULT = 1.006
 # User-facing rate string — keeps help copy in lockstep with the math.
 SAVINGS_DAILY_PCT = f"{(SAVINGS_DAILY_MULT - 1.0) * 100:.2f}%"
 # Deposits accrued 1%/day before the 2026-08-26 rate cut. Interest earned

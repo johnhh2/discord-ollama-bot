@@ -104,9 +104,9 @@ ARTIFACTS: list[dict] = [
         "id": "property_mogul",
         "level": 50,
         "cost": ARTIFACT_PROPERTY_BOOST_COST,
-        "effect": "Your property revenue is 10% higher for every property you own",
+        "effect": "Your property revenue is 5% higher for every property you own",
         "max": 1,
-        "property_revenue_pct_per_property": 10,
+        "property_revenue_pct_per_property": 5,
     },
 ]
 

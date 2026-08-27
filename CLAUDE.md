@@ -259,8 +259,8 @@ like the economy itself. `state.property_owners` mirrors the table.
 
 Rules when touching this system:
 
-1. **Revenue is derived, never hand-typed.** `daily_revenue(cost) = cost * 2
-   // 365` (2× purchase price per year) is the single invariant; catalog
+1. **Revenue is derived, never hand-typed.** `daily_revenue(cost) = cost * 11
+   // 1000` (1.1% of purchase price per day) is the single invariant; catalog
    entries carry only `cost`. Don't add a per-property revenue field.
 2. **Revenue pays out with the daily claim only.** `bank_property_revenue`
    is called from `cmd_daily` and `events._auto_daily` — both inside the
