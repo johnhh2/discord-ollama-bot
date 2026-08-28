@@ -90,7 +90,7 @@ def _board_embed(title: str, description: str, color: int) -> discord.Embed:
 
 async def _bump_board(
     channel: discord.abc.Messageable, game: dict, embed: discord.Embed,
-    *, file: discord.File | None = None,
+    *, file: discord.File | None = None, silent: bool = True,
 ):
     """Send a fresh embed+board pair, THEN delete the prior pair. The embed
     and image are sent as TWO separate messages (embed first, then board
@@ -104,15 +104,19 @@ async def _bump_board(
     Tracks both message IDs:
       - game['embed_msg_id']: the text/embed message (sent first)
       - game['board_msg_id']: the image attachment message (sent second)
+
+    `silent` controls the embed message's notification: pass silent=False only
+    when it carries a turn ping for a player who isn't the one who just moved
+    (PvP). The bare image message never needs to notify anyone.
     """
     # Snapshot the prior IDs before we overwrite them with the new send.
     prior_ids = [game.get("board_msg_id"), game.get("embed_msg_id")]
 
     # Send the new pair first so the channel always has a current board.
-    embed_msg = await channel.send(embed=embed)
+    embed_msg = await channel.send(embed=embed, silent=silent)
     game["embed_msg_id"] = embed_msg.id
     if file is not None:
-        image_msg = await channel.send(file=file)
+        image_msg = await channel.send(file=file, silent=True)
         game["board_msg_id"] = image_msg.id
     else:
         # Render failed — no image; clear any stale board_msg_id so a future
@@ -916,7 +920,7 @@ class ChessCog(commands.Cog):
             game["black_seconds"] = prior_black_secs
             game["position_counts"][_position_key(board)] -= 1
             logging.error(f"chess save_chess_game failed: {e}", exc_info=True)
-            err = await channel.send(embed=emb("❌ Save Failed", "Couldn't save the move. Try again.", C_RED))
+            err = await channel.send(embed=emb("❌ Save Failed", "Couldn't save the move. Try again.", C_RED), silent=True)
             asyncio.create_task(_delete_after(err))
             return False, None
 
@@ -987,10 +991,17 @@ class ChessCog(commands.Cog):
             f"**Last move:** {game['last_move']}"
             f"{_captures_block(game)}"
         )
+        # PvP turn boards ping the next (human) player, who isn't the one who
+        # just moved — that notification is the point. Bot games only ever
+        # mention the lone human right after their own move (or name the
+        # engine), so those stay silent.
+        ping_next = (
+            bot_user is None or opponent_id != bot_user.id
+        ) and "elo" not in game and next_player is not None
         if file is not None:
-            await _bump_board(channel, game, _board_embed("♟️ Chess", desc, C_BLUE), file=file)
+            await _bump_board(channel, game, _board_embed("♟️ Chess", desc, C_BLUE), file=file, silent=not ping_next)
         else:
-            await _bump_board(channel, game, emb("♟️ Chess", desc, C_BLUE))
+            await _bump_board(channel, game, emb("♟️ Chess", desc, C_BLUE), silent=not ping_next)
         # Bumping reassigned board_msg_id; persist so a restart hits the right message.
         try:
             await save_chess_game(cid)
@@ -1019,7 +1030,7 @@ class ChessCog(commands.Cog):
                 "❌ Chess Engine Error",
                 "The chess engine failed to respond. Use `!stop` to end the game.",
                 C_RED,
-            ))
+            ), silent=True)
             return
 
         # Re-fetch in case state changed during pick_move (~500ms+).

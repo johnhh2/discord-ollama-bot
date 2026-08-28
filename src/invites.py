@@ -23,11 +23,20 @@ async def _wait_for_confirmations(
         return set()
     invited_ids = {u.id for u in invited_users}
     mentions = " ".join(u.mention for u in invited_users)
-    invite_msg = await ctx.send(embed=emb(
-        title,
-        f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ within 60 seconds to join!",
-        C_BLUE,
-    ))
+    # silent=False: the invitees haven't done anything yet — this ping is the
+    # only thing telling them a timed invite is waiting (ctx.send would
+    # otherwise default to silent via SilentContext). Embed mentions never
+    # notify, so the mentions also need to move into content for the ping
+    # to be real.
+    invite_msg = await ctx.send(
+        content=mentions,
+        embed=emb(
+            title,
+            f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ within 60 seconds to join!",
+            C_BLUE,
+        ),
+        silent=False,
+    )
     await invite_msg.add_reaction("✅")
 
     def check(reaction, user):
@@ -70,11 +79,17 @@ async def _send_invite(
     dest = dest or ctx
     invited_ids = {u.id for u in invited_users}
     mentions = " ".join(u.mention for u in invited_users)
-    invite_msg = await dest.send(embed=emb(
-        title,
-        f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ to join!",
-        C_BLUE,
-    ))
+    # silent=False + content mentions: same reasoning as _wait_for_confirmations
+    # — the ping is the invite's delivery mechanism.
+    invite_msg = await dest.send(
+        content=mentions,
+        embed=emb(
+            title,
+            f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ to join!",
+            C_BLUE,
+        ),
+        silent=False,
+    )
     await invite_msg.add_reaction("✅")
 
     def check(reaction, user):

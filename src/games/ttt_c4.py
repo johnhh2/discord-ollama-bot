@@ -239,16 +239,19 @@ async def _apply_ttt_move(channel, guild, mover, pos: int | None) -> None:
     if game.get("pending"):
         return  # invite/wager setup still in progress — not playable yet
     if uid != game["current"]:
-        err = await channel.send(embed=emb("⏳ Not Your Turn", f"Waiting for {guild.get_member(game['current']).mention if guild else 'opponent'}.", C_GOLD))
+        # Silent: this is feedback for the out-of-turn mover (who's watching);
+        # the mentioned waiting player shouldn't be pinged by someone else's
+        # misclick — and the embed self-deletes in seconds anyway.
+        err = await channel.send(embed=emb("⏳ Not Your Turn", f"Waiting for {guild.get_member(game['current']).mention if guild else 'opponent'}.", C_GOLD), silent=True)
         asyncio.create_task(_delete_after(err))
         return
     if pos is None or not 1 <= pos <= 9:
-        err = await channel.send("Use `!m <1-9>` to place your mark.")
+        err = await channel.send("Use `!m <1-9>` to place your mark.", silent=True)
         asyncio.create_task(_delete_after(err))
         return
     idx = pos - 1
     if game["board"][idx] is not None:
-        err = await channel.send(embed=emb("❌ Taken", "That square is already taken.", C_RED))
+        err = await channel.send(embed=emb("❌ Taken", "That square is already taken.", C_RED), silent=True)
         asyncio.create_task(_delete_after(err))
         return
     game["board"][idx] = game["marks"][uid]
@@ -314,17 +317,18 @@ async def _apply_c4_move(channel, guild, mover, pos: int | None) -> None:
     if game.get("pending"):
         return  # invite/wager setup still in progress — not playable yet
     if uid != game["current"]:
-        err = await channel.send(embed=emb("⏳ Not Your Turn", f"Waiting for {guild.get_member(game['current']).mention if guild else 'opponent'}.", C_GOLD))
+        # Silent for the same reason as the TTT branch above.
+        err = await channel.send(embed=emb("⏳ Not Your Turn", f"Waiting for {guild.get_member(game['current']).mention if guild else 'opponent'}.", C_GOLD), silent=True)
         asyncio.create_task(_delete_after(err))
         return
     if pos is None or not 1 <= pos <= 7:
-        err = await channel.send("Use `!m <1-7>` to drop a piece.")
+        err = await channel.send("Use `!m <1-7>` to drop a piece.", silent=True)
         asyncio.create_task(_delete_after(err))
         return
     col = pos - 1
     row = drop_in_column(game["board"], col)
     if row is None:
-        err = await channel.send(embed=emb("❌ Column Full", "That column is full.", C_RED))
+        err = await channel.send(embed=emb("❌ Column Full", "That column is full.", C_RED), silent=True)
         asyncio.create_task(_delete_after(err))
         return
     game["board"][row][col] = game["marks"][uid]

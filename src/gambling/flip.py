@@ -81,9 +81,9 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
     if n == 1:
         face = "Heads" if heads == 1 else "Tails"
         if wins:
-            msg = await channel.send(embed=emb(f"🪙 {face}!", f"**{author.display_name}** won **{amount:,} 🪙**! Balance: {new_bal:,} 🪙", C_GREEN))
+            msg = await channel.send(embed=emb(f"🪙 {face}!", f"**{author.display_name}** won **{amount:,} 🪙**! Balance: {new_bal:,} 🪙", C_GREEN), silent=True)
         else:
-            msg = await channel.send(embed=emb(f"🪙 {face}!", f"**{author.display_name}** lost **{amount:,} 🪙**. Balance: {new_bal:,} 🪙", C_RED))
+            msg = await channel.send(embed=emb(f"🪙 {face}!", f"**{author.display_name}** lost **{amount:,} 🪙**. Balance: {new_bal:,} 🪙", C_RED), silent=True)
     else:
         color = C_GREEN if net >= 0 else C_RED
         sign = "+" if net >= 0 else "-"
@@ -92,7 +92,7 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
             f"**{author.display_name}** — {heads} heads / {tails} tails\n"
             f"Wins: **{wins}/{n}** • Net: **{sign}{abs(net):,} 🪙** • Balance: {new_bal:,} 🪙"
         )
-        msg = await channel.send(embed=emb(title, desc, color))
+        msg = await channel.send(embed=emb(title, desc, color), silent=True)
 
     # Big results in the dailies channel stay pinned until the 5am reset.
     await keep_in_dailies_channel(guild, channel, msg, net)

@@ -521,7 +521,7 @@ def _stub_chess_edit_board(monkeypatch):
     Stub all three so cog calls don't try real channel I/O."""
     import src.games.chess as _chess_mod
     bump_calls = []
-    async def _stub_bump(channel, game, embed, *, file=None):
+    async def _stub_bump(channel, game, embed, *, file=None, silent=True):
         # Mimic the real _bump_board side-effect: assign a fresh message id.
         game["board_msg_id"] = (game.get("board_msg_id") or 0) + 1
         bump_calls.append((channel, game, embed, file))

@@ -66,7 +66,8 @@ def _resolve_channel_via(source_channel, target_id: int):
 
 
 async def announce_record(channel, category: str, holder_name: str, value: int, *,
-                          detail: str | None = None, holder_id: int | None = None) -> None:
+                          detail: str | None = None, holder_id: int | None = None,
+                          notify: bool = False) -> None:
     """Send a record-broken announcement embed to `channel`. Best-effort; swallows errors.
 
     `detail` is an optional italicized second line for categories whose value
@@ -84,9 +85,12 @@ async def announce_record(channel, category: str, holder_name: str, value: int, 
     category). Cross-guild global tops are tagged with the source guild name.
 
     Notification policy: when `holder_id` is given, the source-channel post
-    carries a content mention of the holder — embed mentions never notify, so
-    the mention must live in content for the achiever's ping to be real.
-    Everyone else on default notification settings hears nothing. The
+    carries a content mention of the holder so the achiever is highlighted.
+    That send is still `silent=True` by default — nearly every record breaks
+    off the holder's own action (a gamble, a purchase, a winning move), so
+    they're already watching the channel and a push notification is noise.
+    Pass `notify=True` only when the holder is NOT present for the trigger
+    (e.g. the scheduled lottery draw) and the ping needs to be real. The
     records-channel copy and the cross-guild mirrors are always `silent=True`:
     they fire unprompted off other people's gambling, and a records channel
     mirroring every guild would be a notification firehose.
@@ -112,7 +116,7 @@ async def announce_record(channel, category: str, holder_name: str, value: int, 
     embed = emb("🏆 New Record!", desc, C_GOLD)
     try:
         if holder_id is not None:
-            await channel.send(content=f"<@{holder_id}>", embed=embed)
+            await channel.send(content=f"<@{holder_id}>", embed=embed, silent=not notify)
         else:
             await channel.send(embed=embed, silent=True)
     except Exception:
@@ -541,11 +545,13 @@ async def shop_charge(
         return True
     if not await deduct_balance(uid, cost):
         label_str = f"This costs **{cost_label or f'{cost:,}'} 🪙**. "
+        # `ctx` may be a bare channel (dailies reaction claims) whose send is
+        # loud by default — the payer just acted, so keep this quiet.
         await ctx.send(embed=emb(
             "💸 Insufficient Funds",
             f"{label_str}Balance: {await get_balance(uid):,} 🪙",
             C_RED,
-        ))
+        ), silent=True)
         return False
     return True
 
@@ -605,7 +611,9 @@ async def _edit_board(
         msg = await channel.fetch_message(game["board_msg_id"])
         await msg.edit(**edit_kwargs)
     except (discord.NotFound, discord.HTTPException):
-        send_kwargs: dict = {"embed": embed}
+        # Silent: the normal edit path notifies nobody, and any player
+        # mentions here live inside the embed, which never notifies anyway.
+        send_kwargs: dict = {"embed": embed, "silent": True}
         if file is not None:
             send_kwargs["file"] = file
         await channel.send(**send_kwargs)

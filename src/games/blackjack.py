@@ -121,7 +121,7 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
             await record_gambling_event(message.guild.id if message.guild else None, uid, lost=amount)
         color, result = C_RED, f"❌ Dealer wins. **{uid_name}** loses **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙"
 
-    await message.channel.send(embed=emb("🃏 Blackjack", display + f"\n\n{result}", color))
+    await message.channel.send(embed=emb("🃏 Blackjack", display + f"\n\n{result}", color), silent=True)
     if new_bj_record:
         await announce_record(message.channel, "blackjack", uid_name, bj_winnings, holder_id=uid)
     if new_bal_record:

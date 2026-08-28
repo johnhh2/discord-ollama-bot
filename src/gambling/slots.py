@@ -153,7 +153,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
                 f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*")
         if first_time_slots:
             desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
-        msg = await channel.send(embed=emb("🎰 PROGRESSIVE JACKPOT!", desc, C_GOLD))
+        msg = await channel.send(embed=emb("🎰 PROGRESSIVE JACKPOT!", desc, C_GOLD), silent=True)
         try:
             await msg.pin()
         except Exception:
@@ -183,7 +183,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
                 f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
         if first_time_slots:
             desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
-        await channel.send(embed=emb("🎰 Money Back!", desc, C_GOLD))
+        await channel.send(embed=emb("🎰 Money Back!", desc, C_GOLD), silent=True)
         return
 
     if mult == 0:
@@ -193,7 +193,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
                 f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
         if first_time_slots:
             desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
-        msg = await channel.send(embed=emb("🎰 No Win", desc, C_RED))
+        msg = await channel.send(embed=emb("🎰 No Win", desc, C_RED), silent=True)
         await keep_in_dailies_channel(guild, channel, msg, -amount)
         return
 
@@ -226,7 +226,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
             f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
     if first_time_slots:
         desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
-    msg = await channel.send(embed=emb("🎰 Winner!", desc, C_GREEN))
+    msg = await channel.send(embed=emb("🎰 Winner!", desc, C_GREEN), silent=True)
     await keep_in_dailies_channel(guild, channel, msg, winnings - amount)
     if new_slots_record:
         await announce_record(channel, "slots_non_jackpot", author.display_name, record_winnings, holder_id=uid)

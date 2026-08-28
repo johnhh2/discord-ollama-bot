@@ -942,13 +942,13 @@ class EventsCog(commands.Cog):
                     "💥 Bust!",
                     display + f"\n\n**{message.author.display_name}** loses **{game['amount']:,} 🪙**. Balance: {await get_balance(uid):,} 🪙",
                     C_RED,
-                ))
+                ), silent=True)
             elif pval == 21:
                 await _blackjack_stand(message, uid, game)
             else:
                 await message.channel.send(embed=emb(
                     "🃏 Blackjack", display + "\n\n`!hit` to draw or `!stand` to hold.", C_BLUE,
-                ))
+                ), silent=True)
         else:
             await _blackjack_stand(message, uid, game)
         return True
@@ -973,7 +973,7 @@ class EventsCog(commands.Cog):
             "✅ Correct!",
             f"{message.author.mention} got it!\n**Answer:** `{expected}`\n+**{reward:,} 🪙** (Balance: {await get_balance(uid):,} 🪙)",
             C_GREEN,
-        ))
+        ), silent=True)
         return True
 
     async def _handle_hangman_guess(self, message: discord.Message) -> bool:

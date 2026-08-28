@@ -138,7 +138,9 @@ async def refresh_dailies_channel(bot, guild_id: int):
 
     if claim_msg is None:
         try:
-            claim_msg = await channel.send(embed=emb(DAILIES_TITLE, _dailies_body(), C_GOLD))
+            # Posted by the 5am reset / boot sweep — nobody asked for it, and
+            # it pings nobody, so it must not push-notify channel subscribers.
+            claim_msg = await channel.send(embed=emb(DAILIES_TITLE, _dailies_body(), C_GOLD), silent=True)
             for emoji in DAILIES_ALL_EMOJIS:
                 await claim_msg.add_reaction(emoji)
         except (discord.Forbidden, discord.HTTPException):

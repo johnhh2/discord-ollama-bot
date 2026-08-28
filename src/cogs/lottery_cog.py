@@ -206,10 +206,12 @@ class LotteryCog(commands.Cog):
                         allowed_mentions=discord.AllowedMentions(roles=[gamblers_role]),
                     )
 
+            # notify=True: the draw is scheduled — the winner isn't watching,
+            # so their record ping must actually notify.
             if new_lottery_record:
-                await announce_record(channel, "lottery", winner.display_name, pool, holder_id=int(winner_id))
+                await announce_record(channel, "lottery", winner.display_name, pool, holder_id=int(winner_id), notify=True)
             if new_bal_record:
-                await announce_record(channel, "highest_balance", winner.display_name, await get_balance(int(winner_id)), holder_id=int(winner_id))
+                await announce_record(channel, "highest_balance", winner.display_name, await get_balance(int(winner_id)), holder_id=int(winner_id), notify=True)
 
     async def _execute_purchase(self, guild_id: int, uid: int, tickets: int) -> dict:
         """Charge `uid` for `tickets` and add them to the guild's lottery.
@@ -385,12 +387,12 @@ class LotteryCog(commands.Cog):
 
         cfg = get_guild_cfg(guild.id)
         if not cfg.get("lottery_channel"):
-            await channel.send(embed=emb("🎰 Lottery Disabled", "Lottery channel not configured.", C_GREY))
+            await channel.send(embed=emb("🎰 Lottery Disabled", "Lottery channel not configured.", C_GREY), silent=True)
             return
 
         now_cst = _ct_now()
         if now_cst.day == 1 and now_cst.hour == 17:
-            await channel.send(embed=emb("🔒 Lottery Locked", "Ticket sales are closed for the final hour before the draw. Check back after 6pm CT!", C_RED))
+            await channel.send(embed=emb("🔒 Lottery Locked", "Ticket sales are closed for the final hour before the draw. Check back after 6pm CT!", C_RED), silent=True)
             return
 
         user = state.economy["users"][str(uid)]
@@ -402,7 +404,7 @@ class LotteryCog(commands.Cog):
                 f"**{DISCOUNT_DAILY_CAP:,}** of today's half-price tickets.\n"
                 "`!lottery <n>` still works at full price.",
                 C_GREY,
-            ))
+            ), silent=True)
             return
 
         balance = await get_balance(uid)
@@ -412,7 +414,7 @@ class LotteryCog(commands.Cog):
                 "💸 Insufficient Funds",
                 f"A half-price ticket costs **{DISCOUNT_TICKET_PRICE} 🪙** — you have **{balance:,} 🪙**.",
                 C_RED,
-            ))
+            ), silent=True)
             return
 
         result = await self._execute_purchase(guild.id, uid, tickets)
@@ -421,14 +423,14 @@ class LotteryCog(commands.Cog):
                 "🎟️ Ticket Cap Reached",
                 f"Each player can hold at most **{TICKET_CAP:,}** 🎟️ per lottery.",
                 C_RED,
-            ))
+            ), silent=True)
             return
         if result.get("error") == "funds":
             await channel.send(embed=emb(
                 "💸 Insufficient Funds",
                 f"Need {result['cost']:,} 🪙. Balance: {await get_balance(uid):,} 🪙",
                 C_RED,
-            ))
+            ), silent=True)
             return
 
         bonus_msg = "(+1,000 bonus as new player)" if result["was_new_player"] else ""
@@ -441,7 +443,7 @@ class LotteryCog(commands.Cog):
             f"**Your Tickets:** {result['user_tickets']:,} / {result['total_tickets']:,} total\n"
             f"**Ends:** <t:{timestamp}:R>",
             C_GREEN,
-        ))
+        ), silent=True)
 
         await self._process_automatch(guild, channel, uid, result["user_tickets"])
 

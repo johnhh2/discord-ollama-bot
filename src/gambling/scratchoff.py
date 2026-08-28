@@ -108,10 +108,13 @@ async def maybe_assign_gambler_role(guild: discord.Guild, member: discord.Member
     role = await get_or_create_gamblers_role(guild)
     if role and role not in member.roles:
         if await toggle_member_role(member, role, True, reason=f"Used all 3 scratchoffs {GAMBLER_ROLE_STREAK_REQUIRED} days in a row"):
+            # The member just scratched their third card in this channel, so
+            # they're already watching — mention for the highlight, no push.
             await channel.send(
                 f"🎲 {member.mention} You've been automatically added to the **Gamblers** role for using all 3 scratchoffs **{GAMBLER_ROLE_STREAK_REQUIRED} days in a row**! "
                 f"You'll be pinged whenever a slots jackpot or lottery is won. "
-                f"Use `!gambler-role off` to opt out."
+                f"Use `!gambler-role off` to opt out.",
+                silent=True,
             )
 
 
@@ -215,7 +218,7 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1) -> int:
     remaining = scratchoff_attempts_remaining(user, today, cap)
     if remaining <= 0:
         await save_economy(uid=uid)
-        await channel.send(embed=emb("🎰 Daily Limit", f"**{author.display_name}** has used all **{cap}** daily scratchoffs.\nCome back tomorrow!", C_GOLD))
+        await channel.send(embed=emb("🎰 Daily Limit", f"**{author.display_name}** has used all **{cap}** daily scratchoffs.\nCome back tomorrow!", C_GOLD), silent=True)
         return 0
 
     count = min(count, remaining)
@@ -314,7 +317,7 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1) -> int:
             show_hint = False
 
         total_won += payout
-        msg = await channel.send(embed=embed)
+        msg = await channel.send(embed=embed, silent=True)
 
         # Big wins posted in the guild's dailies channel are pinned until the
         # 5am reset (the reset repost purges the channel and clears the list).
