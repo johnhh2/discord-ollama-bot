@@ -133,6 +133,7 @@ SHOP_MUTE_COST            = 5_000
 SHOP_CURSE_COST           = 10_000
 SHOP_UNOREVERSE_COST      = 10_000
 SHOP_SPELLCHECK_COST      = 10_000  # per day
+SHOP_XP_COST_PER_XP       = 100     # coins per XP for !shop buyxp
 
 # Artifact costs (see src/artifacts.py for the catalog)
 ARTIFACT_SLOTS_BLANK_COST   = 15_000

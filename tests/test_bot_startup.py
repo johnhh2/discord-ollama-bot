@@ -117,7 +117,7 @@ async def test_known_top_level_commands_are_registered(loaded_bot):
         # Canonical names after the role*/channel* rename; legacy verb-first
         # names (createrole, …) survive as aliases.
         "nickname", "rolecreate", "rolecolor", "ragebait", "mock",
-        "insurance", "tax", "curse", "mute", "roleup", "roledown",
+        "insurance", "tax", "curse", "mute", "roleup", "roledown", "buyxp",
         # Settings / settings_cog
         "settings", "model", "roleplaymodel", "codingmodel", "vramtext",
         "setprompt", "clearprompt",

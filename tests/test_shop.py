@@ -594,3 +594,297 @@ async def test_shop_removenickname_works_while_self_insured(db):
     assert await get_balance(uid) == starting - SHOP_NICKNAME_REMOVE_COST
     ctx.author.edit.assert_awaited_once()
     assert not any("Protected" in (e.title or "") for e in ctx.sent_embeds)
+
+
+# ── !shop buyxp ──────────────────────────────────────────────────────────────
+#
+# Buys the FULL _xp_cost(current_level) at SHOP_XP_COST_PER_XP coins per XP.
+# The quote is confirmed via confirm_purchase (a long await), so the command
+# gates re-entry with ShopCog._buyxp_active and re-validates the level after
+# the confirm before charging.
+
+from src.leveling import _ensure_lvl_record, _xp_cost, xp_for_level  # noqa: E402
+from src.config import SHOP_XP_COST_PER_XP  # noqa: E402
+
+
+def _seed_level(gid: int, uid: int, internal_level: int, extra_xp: int = 0) -> dict:
+    rec = _ensure_lvl_record(gid, uid)
+    rec["xp"] = xp_for_level(internal_level) + extra_xp
+    rec["level"] = internal_level
+    return rec
+
+
+async def _yes_confirm(*a, **k):
+    return True
+
+
+async def test_shop_buyxp_charges_and_grants_exactly_one_level(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    uid = 9001
+    rec = _seed_level(42, uid, 3, extra_xp=50)  # mid-band progress
+    cost = _xp_cost(3) * SHOP_XP_COST_PER_XP
+    await add_balance(uid, cost + 500)
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _yes_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx)
+
+    # Exactly one level up, in-band progress preserved.
+    assert rec["level"] == 4
+    assert rec["xp"] == xp_for_level(4) + 50
+    # Charged and persisted.
+    assert await get_balance(uid) == 500
+    assert await _read_db_balance(uid) == 500
+    # Leveling row persisted.
+    import json
+    pool = await _persistence.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT data FROM leveling WHERE guild_id=? AND user_id=?",
+                (42, uid),
+            )
+            row = await cur.fetchone()
+    assert row is not None
+    assert json.loads(row[0])["level"] == 4
+    assert any("XP Purchased" in (e.title or "") for e in ctx.sent_embeds)
+
+
+async def test_shop_buyxp_declined_confirm_no_charge(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    uid = 9002
+    rec = _seed_level(42, uid, 3)
+    cost = _xp_cost(3) * SHOP_XP_COST_PER_XP
+    await add_balance(uid, cost + 500)
+
+    async def _no_confirm(*a, **k):
+        return False
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _no_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx)
+
+    assert rec["level"] == 3
+    assert rec["xp"] == xp_for_level(3)
+    assert await get_balance(uid) == cost + 500
+    assert (42, uid) not in cog._buyxp_active
+
+
+async def test_shop_buyxp_insufficient_funds_never_prompts(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    uid = 9003
+    rec = _seed_level(42, uid, 3)
+    cost = _xp_cost(3) * SHOP_XP_COST_PER_XP
+    await add_balance(uid, cost - 1)
+
+    confirm_calls = [0]
+
+    async def _counting_confirm(*a, **k):
+        confirm_calls[0] += 1
+        return True
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _counting_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx)
+
+    assert confirm_calls[0] == 0
+    assert rec["level"] == 3
+    assert await get_balance(uid) == cost - 1
+    assert any("Insufficient Funds" in (e.title or "") for e in ctx.sent_embeds)
+
+
+async def test_shop_buyxp_aborts_without_charge_if_level_changed_during_confirm(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+    from src.leveling import level_from_xp
+
+    cog = ShopCog(bot=None)
+    uid = 9004
+    rec = _seed_level(42, uid, 3)
+    cost = _xp_cost(3) * SHOP_XP_COST_PER_XP
+    await add_balance(uid, cost + 500)
+
+    async def _levelup_mid_confirm(*a, **k):
+        # Organic XP lands while the buttons are up: the user crosses into
+        # the next band, making the quoted price stale.
+        rec["xp"] += _xp_cost(3)
+        rec["level"] = level_from_xp(rec["xp"])
+        return True
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _levelup_mid_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx)
+
+    # No charge, no purchased XP on top of the organic gain.
+    assert await get_balance(uid) == cost + 500
+    assert rec["level"] == 4
+    assert rec["xp"] == xp_for_level(4)
+    assert any("Price Changed" in (e.title or "") for e in ctx.sent_embeds)
+
+
+async def test_concurrent_shop_buyxp_charges_once(monkeypatch):
+    """Two concurrent !shop buyxp calls: one buys, the other bails on the
+    in-flight gate. Exactly one charge, exactly one level gained."""
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    uid = 9005
+    rec = _seed_level(42, uid, 3)
+    cost = _xp_cost(3) * SHOP_XP_COST_PER_XP
+    _state.economy.setdefault("users", {})[str(uid)] = {
+        "balance": cost * 3, "savings": [],
+    }
+
+    charge_count = [0]
+
+    async def _yielding_charge(ctx, charge_uid, cost, **kwargs):
+        await asyncio.sleep(0)
+        if cost == 0:
+            return True
+        user = _state.economy["users"][str(charge_uid)]
+        if user["balance"] < cost:
+            return False
+        user["balance"] -= cost
+        charge_count[0] += 1
+        return True
+
+    async def _yielding_confirm(*a, **k):
+        await asyncio.sleep(0)  # the real confirm is a long await
+        return True
+
+    async def _noop(*a, **kw):
+        return None
+
+    monkeypatch.setattr(_shop_cog, "shop_charge", _yielding_charge)
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _yielding_confirm)
+    monkeypatch.setattr(_shop_cog, "save_leveling", _noop)
+    monkeypatch.setattr(_shop_cog, "record_levelup", _noop)
+
+    ctxs = []
+
+    async def _invoke():
+        ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+        ctxs.append(ctx)
+        await cog.shop_buyxp.callback(cog, ctx)
+
+    await asyncio.gather(_invoke(), _invoke())
+
+    assert charge_count[0] == 1, (
+        f"shop_buyxp double-charged: charged {charge_count[0]}× across 2 "
+        f"concurrent invocations (expected 1)"
+    )
+    assert rec["level"] == 4
+    assert rec["xp"] == xp_for_level(4)
+    assert _state.economy["users"][str(uid)]["balance"] == cost * 3 - cost
+    # The loser saw the in-flight gate.
+    all_titles = [e.title or "" for ctx in ctxs for e in ctx.sent_embeds]
+    assert any("Purchase Pending" in t for t in all_titles)
+    assert (42, uid) not in cog._buyxp_active
+
+
+async def test_shop_buyxp_rejected_in_dm(monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=9006))
+    ctx.guild = None  # FakeCtx substitutes a default guild for None
+    await cog.shop_buyxp.callback(cog, ctx)
+
+    assert any("Server Only" in (e.title or "") for e in ctx.sent_embeds)
+    assert _state.leveling == {}
+
+
+async def test_shop_buyxp_latches_crime_eligible_at_display_ten(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    uid = 9007
+    rec = _seed_level(42, uid, 8)  # buying lands internal 9 = display 10
+    cost = _xp_cost(8) * SHOP_XP_COST_PER_XP
+    await add_balance(uid, cost + 100)
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _yes_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx)
+
+    assert rec["level"] == 9
+    assert _state.economy["users"][str(uid)].get("crime_eligible") is True
+
+
+class _StubLevelingCog:
+    def __init__(self):
+        self._announce_levelup = AsyncMock()
+
+
+class _StubBot:
+    def __init__(self, leveling_cog):
+        self._leveling_cog = leveling_cog
+
+    def get_cog(self, name):
+        return self._leveling_cog if name == "LevelingCog" else None
+
+
+async def test_shop_buyxp_announces_levelup_for_paid_buy(monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    lvl_cog = _StubLevelingCog()
+    cog.bot = _StubBot(lvl_cog)
+    uid = 9008
+    _seed_level(42, uid, 3)
+    cost = _xp_cost(3) * SHOP_XP_COST_PER_XP
+    _state.economy.setdefault("users", {})[str(uid)] = {
+        "balance": cost + 500, "savings": [],
+    }
+
+    async def _true_charge(*a, **k):
+        return True
+
+    async def _noop(*a, **kw):
+        return None
+
+    monkeypatch.setattr(_shop_cog, "shop_charge", _true_charge)
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _yes_confirm)
+    monkeypatch.setattr(_shop_cog, "save_leveling", _noop)
+    monkeypatch.setattr(_shop_cog, "record_levelup", _noop)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx)
+
+    lvl_cog._announce_levelup.assert_awaited_once_with(ctx.author, 42)
+
+
+async def test_shop_buyxp_godmode_skips_announcement_and_reward(monkeypatch):
+    """Godmode buys free via shop_charge; skipping the announce keeps the
+    levelup_coin_reward from being a free-money printer."""
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    lvl_cog = _StubLevelingCog()
+    cog.bot = _StubBot(lvl_cog)
+    uid = 9009
+    rec = _seed_level(42, uid, 3)
+    _state.godmode_users.add(uid)
+
+    async def _true_charge(*a, **k):
+        return True
+
+    async def _noop(*a, **kw):
+        return None
+
+    monkeypatch.setattr(_shop_cog, "shop_charge", _true_charge)
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _yes_confirm)
+    monkeypatch.setattr(_shop_cog, "save_leveling", _noop)
+    monkeypatch.setattr(_shop_cog, "record_levelup", _noop)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx)
+
+    # XP still granted, but no announcement (and thus no coin reward).
+    assert rec["level"] == 4
+    lvl_cog._announce_levelup.assert_not_awaited()

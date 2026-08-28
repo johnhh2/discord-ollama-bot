@@ -16,7 +16,10 @@ from src.helpers import (
 )
 
 from src.economy import (
-    add_balance, is_insured, get_insurance_expiry,
+    add_balance, get_balance, is_insured, get_insurance_expiry,
+)
+from src.leveling import (
+    _ensure_lvl_record, _xp_cost, level_from_xp, display_level, record_levelup,
 )
 from src.permissions import (
     _wrong_channel_reply,
@@ -25,7 +28,7 @@ from src.persistence import (
     save_insurance, save_guild_settings,
     save_bot_roles,
     save_ragebait, save_mock, save_tax, save_curse, save_spellcheck,
-    save_user_artifact, try_set_record,
+    save_user_artifact, try_set_record, save_leveling,
 )
 from src.artifacts import ARTIFACTS, owned_qty, owned_artifact_count
 from src.confirm_view import confirm_purchase
@@ -43,6 +46,7 @@ from src.config import (
     SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_TAX_PER_MESSAGE,
     SHOP_TAX_DURATION_SECS,
     SHOP_SPELLCHECK_COST, SHOP_SPELLCHECK_DURATION_SECS,
+    SHOP_XP_COST_PER_XP,
     BOUNTY_MIN_AMOUNT,
 )
 from src import state
@@ -121,6 +125,7 @@ _SHOP_TOP_ALIASES: list[tuple[str, str, list[str]]] = [
     ("curse",          "shop_curse",         []),
     ("spellcheck",     "shop_spellcheck",    []),
     ("unoreverse",     "shop_unoreverse",    []),
+    ("buyxp",          "shop_buyxp",         []),
     ("artifacts",      "shop_artifacts",     ["artifact"]),
     # roleup and roledown both dispatch via shop_roleup (it reads
     # ctx.invoked_with to pick direction).
@@ -132,6 +137,9 @@ _SHOP_TOP_ALIASES: list[tuple[str, str, list[str]]] = [
 class ShopCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # (guild_id, user_id) pairs with an XP purchase confirm in flight —
+        # the confirm prompt is a long await, so gate re-entry explicitly.
+        self._buyxp_active: set = set()
         # Register declarative top-level aliases for shop subcommands. Tests
         # instantiate ShopCog(bot=None) to exercise subcommand handlers
         # directly, so skip registration when there's no bot to attach to.
@@ -321,6 +329,12 @@ class ShopCog(commands.Cog):
         fun_items.append((SHOP_UNOREVERSE_COST, L("unoreverse", f"`!shop unoreverse @user` — Redirect active mock/ragebait/curse onto someone else — **{SHOP_UNOREVERSE_COST:,} 🪙**")))
         fun_items.sort(key=lambda x: x[0])
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
+
+        # Leveling — variable price, quoted (and confirmed) at purchase time.
+        if _si.get("buyxp", True):
+            sections["✨ Leveling"] = [
+                f"`!shop buyxp` — Buy your next level's worth of XP — **{SHOP_XP_COST_PER_XP} 🪙/XP** (price scales with level)"
+            ]
 
         # Artifacts — permanent per-user upgrades, listed in their own menu.
         sections["🏺 Artifacts"] = [
@@ -1526,6 +1540,97 @@ class ShopCog(commands.Cog):
             f"**{ctx.author.display_name}** reversed {', '.join(redirected)} onto **{target.display_name}**!",
             C_PURPLE,
         ))
+
+    # ── !shop buyxp ───────────────────────────────────────────────────────────
+    #
+    # Buys the FULL cost of the current level band (_xp_cost, not the
+    # remaining diff), at SHOP_XP_COST_PER_XP coins per XP. Band costs are
+    # strictly increasing, so granting a full band always lands exactly one
+    # display level higher with in-band progress preserved.
+    @cmd_shop.command(name="buyxp", aliases=["xp"])
+    @_shop_subcommand("buyxp")
+    async def shop_buyxp(self, ctx: commands.Context):
+        uid = ctx.author.id
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "XP is per-server — use this in a server.", C_RED))
+            return
+        gid = ctx.guild.id
+        key = (gid, uid)
+        if key in self._buyxp_active:
+            await ctx.send(embed=emb("⏳ Purchase Pending", "Finish your current XP purchase first.", C_GREY))
+            return
+        self._buyxp_active.add(key)
+        try:
+            rec = _ensure_lvl_record(gid, uid)
+            quoted_level = rec["level"]
+            xp_amount = _xp_cost(quoted_level)
+            cost = xp_amount * SHOP_XP_COST_PER_XP
+            godmode = uid in state.godmode_users
+
+            if not godmode and await get_balance(uid) < cost:
+                await ctx.send(embed=emb(
+                    "💸 Insufficient Funds",
+                    f"Your next level costs **{xp_amount:,} XP** = **{cost:,} 🪙**.",
+                    C_RED,
+                ))
+                return
+
+            confirmed = await confirm_purchase(
+                ctx, title="✨ Buy XP",
+                description=(
+                    f"Buy **{xp_amount:,} XP** at {SHOP_XP_COST_PER_XP} 🪙/XP — "
+                    f"takes you to **Level {display_level(quoted_level) + 1}**."
+                ),
+                cost=cost, payer=ctx.author,
+            )
+            if not confirmed:
+                return
+
+            # The confirm wait is a long await — the quoted price is stale if
+            # the user levelled meanwhile (organic XP). Re-quote, don't charge.
+            if rec["level"] != quoted_level:
+                await ctx.send(embed=emb(
+                    "⚠️ Price Changed",
+                    "Your level changed while confirming — run it again for a fresh quote. You were not charged.",
+                    C_GREY,
+                ))
+                return
+
+            if not await shop_charge(ctx, uid, cost):
+                return
+
+            old_level = rec["level"]
+            rec["xp"] += xp_amount
+            new_level = level_from_xp(rec["xp"])
+            rec["level"] = new_level
+            leveled = new_level - old_level
+            if leveled > 0:
+                await record_levelup(gid, uid, count=leveled)
+                if old_level < 9 <= new_level:
+                    from src.economy import _ensure_user as _eu
+                    from src.persistence import save_economy as _save
+                    await _eu(uid)
+                    user = state.economy["users"][str(uid)]
+                    if not user.get("crime_eligible"):
+                        user["crime_eligible"] = True
+                        await _save(uid=uid)
+            await save_leveling(guild_id=gid, uid=uid)
+
+            await ctx.send(embed=emb(
+                "✨ XP Purchased",
+                f"+**{xp_amount:,} XP** — you are now **Level {display_level(new_level)}**.",
+                C_GREEN,
+            ))
+
+            # Full level-up treatment (announcement + levelup_coin_reward) —
+            # but not for godmode: a free buy plus the coin reward would be a
+            # money printer (same rationale as shop_payout's godmode rule).
+            if leveled > 0 and not godmode:
+                lvl_cog = self.bot.get_cog("LevelingCog") if self.bot else None
+                if lvl_cog:
+                    await lvl_cog._announce_levelup(ctx.author, gid)
+        finally:
+            self._buyxp_active.discard(key)
 
     # ── !shop roleup / roledown ───────────────────────────────────────────────
     #
