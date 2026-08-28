@@ -25,6 +25,7 @@ guild_settings: dict = {}
 # and an effect only fires in the guild it was bought in. Source of truth is
 # the shop_effects table (effect_type column); loaded at boot.
 insurance: dict = {}            # (guild_id, uid) -> {expires_at, protected_from}
+insurance_subs: set = set()     # (guild_id, uid) — auto-renew insurance at each daily claim
 locked_channels: dict = {}
 locked_roles: dict = {}
 active_ragebaits: dict = {}     # (guild_id, uid) -> {remaining, started_by, history, channel_id}

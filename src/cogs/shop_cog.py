@@ -17,6 +17,7 @@ from src.helpers import (
 
 from src.economy import (
     add_balance, get_balance, is_insured, get_insurance_expiry,
+    extend_insurance,
 )
 from src.leveling import (
     _ensure_lvl_record, _xp_cost, level_from_xp, display_level, record_levelup,
@@ -25,7 +26,7 @@ from src.permissions import (
     _wrong_channel_reply,
 )
 from src.persistence import (
-    save_insurance, save_guild_settings,
+    save_insurance, save_insurance_subs, save_guild_settings,
     save_bot_roles,
     save_ragebait, save_mock, save_tax, save_curse, save_spellcheck,
     save_user_artifact, try_set_record, save_leveling,
@@ -42,7 +43,7 @@ from src.config import (
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_ASSIGN_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
     SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_LOCK_COST, SHOP_RENAME_COST, SHOP_CHANNEL_COST, SHOP_CHANNEL_DELETE_COST, SHOP_INSURANCE_COST, SHOP_TAX_COST,
     SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST, SHOP_UNOREVERSE_COST,
-    SHOP_INSURANCE_DURATION_SECS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
+    SHOP_INSURANCE_DURATION_SECS, SHOP_INSURANCE_MAX_DAYS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
     SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_TAX_PER_MESSAGE,
     SHOP_TAX_DURATION_SECS,
     SHOP_SPELLCHECK_COST, SHOP_SPELLCHECK_DURATION_SECS,
@@ -317,7 +318,7 @@ class ShopCog(commands.Cog):
 
         # Fun & Social (sorted by cost)
         fun_items = [
-            (SHOP_INSURANCE_COST, f"`!shop insurance` — Protect yourself for 24 hours — **{SHOP_INSURANCE_COST:,} 🪙**"),
+            (SHOP_INSURANCE_COST, f"`!shop insurance [days|sub|unsub]` — Protection, prepaid or subscribed (renews with your daily) — **{SHOP_INSURANCE_COST:,} 🪙/day**"),
             (SHOP_TAX_COST,      f"`!shop tax @user` — Apply a per-message tax to a user for 24h — **{SHOP_TAX_COST:,} 🪙**"),
             (SHOP_MOCK_COST,      f"`!shop mock @user` — Mock someone's next {SHOP_MOCK_MESSAGES} messages — **{SHOP_MOCK_COST:,} 🪙**"),
         ]
@@ -1172,48 +1173,125 @@ class ShopCog(commands.Cog):
         await cog.create_bounty(ctx, args)
 
     # ── !shop insurance ───────────────────────────────────────────────────────
+    def _rollback_insurance_days(self, key: tuple, days: int):
+        """Undo a stamped-but-unpaid insurance extension. A concurrent purchase
+        may have extended on top of our stamp, so subtract our duration rather
+        than restoring a snapshot (which would clobber the other buyer)."""
+        entry = state.insurance.get(key)
+        if entry:
+            entry["expires_at"] -= days * SHOP_INSURANCE_DURATION_SECS
+            if entry["expires_at"] <= time.time():
+                state.insurance.pop(key, None)
+
     @cmd_shop.command(name="insurance")
     @_shop_subcommand(None)
-    async def shop_insurance(self, ctx: commands.Context):
+    async def shop_insurance(self, ctx: commands.Context, arg: str = None):
         uid = ctx.author.id
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
-
         key = (ctx.guild.id, uid)
-        existing = state.insurance.get(key)
-        if existing and uid not in state.godmode_users:
-            remaining = existing.get("expires_at", 0) - time.time()
-            half = SHOP_INSURANCE_DURATION_SECS / 2
-            if remaining > half:
-                earliest_ts = int(existing["expires_at"] - half)
+        protects_str = "ragebait, mock, nickname, role assignments, steal, tax, and spellcheck"
+
+        if arg and arg.lower() in ("sub", "subscribe"):
+            if key in state.insurance_subs:
                 await ctx.send(embed=emb(
-                    "🛡️ Insurance Active",
-                    f"You can't renew until your coverage is half expired. Come back <t:{earliest_ts}:R>.",
+                    "🛡️ Already Subscribed",
+                    f"You're already subscribed here — **{SHOP_INSURANCE_COST:,} 🪙** is deducted with each daily claim. `!shop insurance unsub` to cancel.",
                     C_GOLD,
                 ))
                 return
+            # Claim the sub synchronously before any await so two concurrent
+            # subscribes can't both buy the starter day.
+            state.insurance_subs.add(key)
+            start_str = ""
+            if get_insurance_expiry(ctx.guild.id, uid) is None:
+                # Not currently covered — charge the first day now so the
+                # subscription protects immediately, not at the next daily.
+                cost = 0 if uid in state.godmode_users else SHOP_INSURANCE_COST
+                expires_at = extend_insurance(ctx.guild.id, uid, 1)
+                if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST:,}"):
+                    state.insurance_subs.discard(key)
+                    self._rollback_insurance_days(key, 1)
+                    return
+                await save_insurance()
+                start_str = f" First day charged now — covered against {protects_str} (expires <t:{expires_at}:R>)."
+            await save_insurance_subs()
+            await ctx.send(embed=emb(
+                "🛡️ Insurance Subscribed",
+                f"Each daily claim now deducts **{SHOP_INSURANCE_COST:,} 🪙** and adds 24h of coverage.{start_str} "
+                f"Cancel anytime with `!shop insurance unsub`.",
+                C_GREEN,
+            ))
+            return
 
-        # Stamp the new insurance synchronously before shop_charge so a
-        # concurrent !shop insurance sees the fresh expires_at and bails on
-        # the "half expired" check instead of double-charging.
-        cost = 0 if uid in state.godmode_users else SHOP_INSURANCE_COST
-        expires_at = int(time.time() + SHOP_INSURANCE_DURATION_SECS)
-        state.insurance[key] = {
-            "expires_at": expires_at,
-            "protected_from": ["ragebait", "mock", "nickname", "role", "steal", "tax", "spellcheck"],
-        }
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST:,}"):
-            # Roll back to whatever insurance state existed before.
-            if existing is None:
-                state.insurance.pop(key, None)
-            else:
-                state.insurance[key] = existing
+        if arg and arg.lower() in ("unsub", "unsubscribe"):
+            if key not in state.insurance_subs:
+                await ctx.send(embed=emb(
+                    "🛡️ Not Subscribed",
+                    "You don't have an insurance subscription in this server. `!shop insurance sub` to start one.",
+                    C_GOLD,
+                ))
+                return
+            state.insurance_subs.discard(key)
+            await save_insurance_subs()
+            exp = get_insurance_expiry(ctx.guild.id, uid)
+            tail = f" Your current coverage still runs out <t:{exp}:R>." if exp else ""
+            await ctx.send(embed=emb(
+                "🛡️ Insurance Unsubscribed",
+                f"Your daily claim will no longer be charged for insurance.{tail}",
+                C_GREEN,
+            ))
+            return
+
+        # Prepay: `!shop insurance [days]` (default 1) at SHOP_INSURANCE_COST/day,
+        # stacking on top of any active coverage.
+        days = 1
+        if arg is not None:
+            try:
+                days = int(arg)
+            except ValueError:
+                await ctx.send(embed=emb(
+                    "🛡️ Insurance",
+                    f"Usage: `!shop insurance [days|sub|unsub]` — prepay coverage at **{SHOP_INSURANCE_COST:,} 🪙/day** "
+                    f"(up to {SHOP_INSURANCE_MAX_DAYS} days), or subscribe to auto-renew with your daily claim.",
+                    C_PURPLE,
+                ))
+                return
+            if not 1 <= days <= SHOP_INSURANCE_MAX_DAYS:
+                await ctx.send(embed=emb(
+                    "🛡️ Insurance",
+                    f"You can prepay between 1 and {SHOP_INSURANCE_MAX_DAYS} days.",
+                    C_RED,
+                ))
+                return
+        now = time.time()
+        current_exp = get_insurance_expiry(ctx.guild.id, uid)
+        remaining = max(0.0, (current_exp or now) - now)
+        if remaining + days * SHOP_INSURANCE_DURATION_SECS > SHOP_INSURANCE_MAX_DAYS * SHOP_INSURANCE_DURATION_SECS:
+            buyable = int((SHOP_INSURANCE_MAX_DAYS * SHOP_INSURANCE_DURATION_SECS - remaining) // SHOP_INSURANCE_DURATION_SECS)
+            await ctx.send(embed=emb(
+                "🛡️ Coverage Capped",
+                f"Total coverage can't exceed **{SHOP_INSURANCE_MAX_DAYS} days**. "
+                + (f"You can prepay up to **{buyable}** more day{'s' if buyable != 1 else ''} right now." if buyable > 0
+                   else "Come back when some of your current coverage has run down."),
+                C_GOLD,
+            ))
+            return
+
+        # Stamp the extension synchronously before shop_charge (see CLAUDE.md
+        # on per-user command races); roll back our days if the charge fails.
+        cost = 0 if uid in state.godmode_users else SHOP_INSURANCE_COST * days
+        expires_at = extend_insurance(ctx.guild.id, uid, days)
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST * days:,}"):
+            self._rollback_insurance_days(key, days)
             return
         await save_insurance()
+        sub_str = " Your subscription keeps extending it with each daily claim." if key in state.insurance_subs else ""
         await ctx.send(embed=emb(
             "🛡️ Insurance Purchased",
-            f"Protected against ragebait, mock, nickname, role assignments, steal, tax, and spellcheck! (expires <t:{expires_at}:R>)",
+            f"**{days} day{'s' if days != 1 else ''}** of protection against {protects_str}! "
+            f"(expires <t:{expires_at}:R>){sub_str}",
             C_GREEN,
         ))
 

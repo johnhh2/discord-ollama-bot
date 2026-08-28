@@ -72,6 +72,7 @@ def reset_bot_state(monkeypatch):
     # these (or set them to fresh values themselves), so this is additive-safe.
     monkeypatch.setattr(_state, "bot_admins", set())
     monkeypatch.setattr(_state, "godmode_users", set())
+    monkeypatch.setattr(_state, "insurance_subs", set())
     monkeypatch.setattr(_state, "command_perms", {})
     monkeypatch.setattr(_state, "user_perm_overrides", {})
     monkeypatch.setattr(_state, "blocklist", {})
@@ -122,7 +123,7 @@ def reset_bot_state(monkeypatch):
 
     # Stub all async DB save functions in persistence so tests don't need a real DB
     save_fn_names = [
-        "save_economy", "save_guild_house", "save_insurance", "save_jackpot",
+        "save_economy", "save_guild_house", "save_insurance", "save_insurance_subs", "save_jackpot",
         "save_guild_settings", "save_bot_roles", "save_bot_settings", "save_godmode_users",
         "save_chess_games", "save_chess_game", "delete_chess_game", "save_chess_report",
         "save_ragebait", "save_mock", "save_curse", "save_tax",

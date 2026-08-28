@@ -116,6 +116,19 @@ async def save_insurance():
             )
 
 
+async def save_insurance_subs():
+    """Persist insurance subscriptions (shop_effects, effect_type='insurance_sub').
+    A subscription row has no expiry — it lives until the user unsubscribes."""
+    async with with_transaction() as cur:
+        await cur.execute("DELETE FROM shop_effects WHERE effect_type='insurance_sub'")
+        for (guild_id, uid) in state.insurance_subs:
+            await cur.execute(
+                "INSERT INTO shop_effects (guild_id, user_id, effect_type)"
+                " VALUES (%s,%s,'insurance_sub')",
+                (int(guild_id), int(uid)),
+            )
+
+
 async def save_jackpot(value: int):
     state.slot_jackpot = value
     async with with_cursor() as cur:

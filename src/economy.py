@@ -145,6 +145,60 @@ async def announce_new_lottery(
     await channel.send(embed=embed)
 
 
+# Everything a bought/renewed insurance day protects against. Single source
+# of truth for `!shop insurance` and the subscription renewal below.
+INSURANCE_PROTECTS = ["ragebait", "mock", "nickname", "role", "steal", "tax", "spellcheck"]
+
+
+def extend_insurance(guild_id: int, uid: int, days: int) -> int:
+    """Extend (guild, user) insurance by `days` × 24h, from the current expiry
+    when coverage is still active (so renewals keep coverage continuous), else
+    from now. Synchronous on purpose — callers stamp before their first await
+    (see CLAUDE.md on per-user command races). Returns the new expiry ts.
+    Caller is responsible for save_insurance()."""
+    from src.config import SHOP_INSURANCE_DURATION_SECS
+    key = (int(guild_id), int(uid))
+    now = time.time()
+    existing = state.insurance.get(key)
+    base = existing["expires_at"] if existing and existing.get("expires_at", 0) > now else now
+    expires_at = int(base + days * SHOP_INSURANCE_DURATION_SECS)
+    state.insurance[key] = {"expires_at": expires_at, "protected_from": list(INSURANCE_PROTECTS)}
+    return expires_at
+
+
+async def renew_insurance_subs(uid: int) -> tuple[int, int]:
+    """Charge and renew every insurance subscription `uid` holds.
+
+    Called only from the daily-claim paths (cmd_daily / _auto_daily), inside
+    the synchronously-claimed daily_date window — that's what makes it
+    once-per-gameplay-day. For each subscribed guild: deduct one day's
+    premium and extend coverage by 24h. A renewal the user can't afford is
+    skipped (coverage lapses until they can pay again); the subscription
+    itself stays.
+
+    Returns (total_charged, lapsed_count).
+    """
+    from src.config import SHOP_INSURANCE_COST
+    subs = [key for key in state.insurance_subs if key[1] == uid]
+    if not subs:
+        return 0, 0
+    charged = 0
+    lapsed = 0
+    renewed = False
+    for key in subs:
+        free = uid in state.godmode_users
+        if free or await deduct_balance(uid, SHOP_INSURANCE_COST):
+            extend_insurance(key[0], uid, 1)
+            renewed = True
+            if not free:
+                charged += SHOP_INSURANCE_COST
+        else:
+            lapsed += 1
+    if renewed:
+        await save_insurance()
+    return charged, lapsed
+
+
 async def is_insured(guild_id: int, uid: int, against: str) -> bool:
     """True if user `uid` holds active insurance against `against` in `guild_id`.
 

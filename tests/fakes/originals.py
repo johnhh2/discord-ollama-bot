@@ -19,7 +19,7 @@ import src.persistence as _persistence
 # Names mirrored from tests/conftest.py:reset_bot_state.save_fn_names.
 # Kept in lockstep — if a new save_* is stubbed there, add it here too.
 _PERSISTENCE_SAVE_NAMES = [
-    "save_economy", "save_guild_house", "save_insurance", "save_jackpot",
+    "save_economy", "save_guild_house", "save_insurance", "save_insurance_subs", "save_jackpot",
     "save_guild_settings", "save_bot_roles", "save_bot_settings", "save_godmode_users",
     "save_chess_games", "save_chess_game", "delete_chess_game", "save_chess_report",
     "save_ragebait", "save_mock", "save_curse", "save_tax",

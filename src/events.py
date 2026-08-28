@@ -12,7 +12,7 @@ from src.helpers import (
     _effect_expired, announce_record,
 )
 from src.economy import (
-    add_balance, deduct_balance, get_balance, is_insured, _ct_today, _ensure_user,
+    add_balance, deduct_balance, get_balance, is_insured, renew_insurance_subs, _ct_today, _ensure_user,
 )
 from src.permissions import (
     _wrong_channel_reply,
@@ -349,15 +349,23 @@ async def _auto_daily(author, channel) -> tuple[int, int]:
     # so it pays at most once per gameplay-day. Banks and stamps atomically;
     # rolls itself back if the balance write fails.
     prop_rev = await bank_property_revenue(uid)
+    # Insurance subscriptions renew with the daily claim — inside the
+    # synchronously-claimed daily_date window, so at most once per day.
+    ins_cost, ins_lapsed = await renew_insurance_subs(uid)
     await save_economy(uid=uid)
     greeting = f"Welcome, **{author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
     prop_str = f" + **{prop_rev:,} 🪙** property revenue" if prop_rev else ""
+    ins_str = f" − **{ins_cost:,} 🪙** insurance" if ins_cost else ""
+    lapse_str = "\n⚠️ Couldn't afford your insurance renewal — coverage lapsed until you can pay." if ins_lapsed else ""
     await channel.send(embed=emb(
         "🪙 Daily Reward",
-        f"{greeting} **{DAILY_REWARD:,} 🪙**{prop_str} added. Balance: {await get_balance(uid):,} 🪙",
+        f"{greeting} **{DAILY_REWARD:,} 🪙**{prop_str}{ins_str} added. Balance: {await get_balance(uid):,} 🪙{lapse_str}",
         C_GREEN,
     ), silent=True)
-    return DAILY_REWARD + prop_rev, prop_rev
+    # Net claim: the dailies reaction flow stakes this on flip/slots, so the
+    # insurance premium can't be gambled — clamp at 0 (premium > reward is
+    # possible with multiple subscriptions).
+    return max(0, DAILY_REWARD + prop_rev - ins_cost), prop_rev
 
 
 async def _passive_ragebait(message: discord.Message, history: list[str]):

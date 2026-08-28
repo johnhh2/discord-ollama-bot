@@ -181,6 +181,20 @@ async def _init_db_state_inner(state, run_migrations):
             logging.error(f"[init_db_state] shop_effects.insurance failed: {e}", exc_info=True)
             raise
 
+        # ── shop_effects: insurance subscriptions ─────────────────────────
+        # effect_type='insurance_sub', no expiry — renewed/charged at each
+        # daily claim (src.economy.renew_insurance_subs).
+        try:
+            await cur.execute(
+                "SELECT guild_id, user_id FROM shop_effects"
+                " WHERE effect_type='insurance_sub'"
+            )
+            for guild_id, uid in await cur.fetchall():
+                state.insurance_subs.add((int(guild_id), int(uid)))
+        except Exception as e:
+            logging.error(f"[init_db_state] shop_effects.insurance_sub failed: {e}", exc_info=True)
+            raise
+
         # ── shop_effects: ragebait ────────────────────────────────────────
         try:
             await cur.execute(

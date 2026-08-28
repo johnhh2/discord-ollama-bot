@@ -14,7 +14,7 @@ from src.helpers import (
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
-    add_guild_house, is_insured, get_insurance_expiry, _ct_now, _ct_today, do_daily_reset, _ensure_user,
+    add_guild_house, is_insured, get_insurance_expiry, renew_insurance_subs, _ct_now, _ct_today, do_daily_reset, _ensure_user,
     next_daily_reset_ts, get_savings_value, add_savings, remove_savings,
     savings_growth, SAVINGS_DAILY_PCT,
     seize_from_savings, record_crime_event, CRIME_ELIGIBLE_NET_WORTH,
@@ -248,9 +248,14 @@ class EconomyCog(commands.Cog):
         # the highest_balance record offer below sees the full new balance.
         prop_rev = await bank_property_revenue(uid)
         await add_balance(uid, DAILY_REWARD, guild_id=gid, holder_name=ctx.author.display_name)
+        # Insurance subscriptions renew with the daily claim — inside the
+        # synchronously-claimed daily_date window, so at most once per day.
+        ins_cost, ins_lapsed = await renew_insurance_subs(uid)
         await save_economy(uid=uid)
         prop_str = f" + **{prop_rev:,} 🪙** property revenue" if prop_rev else ""
-        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**{prop_str}! Balance: **{await get_balance(uid):,} 🪙**", C_GREEN))
+        ins_str = f" − **{ins_cost:,} 🪙** insurance" if ins_cost else ""
+        lapse_str = "\n⚠️ Couldn't afford your insurance renewal — coverage lapsed until you can pay." if ins_lapsed else ""
+        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**{prop_str}{ins_str}! Balance: **{await get_balance(uid):,} 🪙**{lapse_str}", C_GREEN))
 
 
     @commands.command(name="balance", aliases=["bal", "b", "!", "$"])

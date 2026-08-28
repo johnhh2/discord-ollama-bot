@@ -125,7 +125,7 @@ SHOP_RENAME_COST          = 30_000
 SHOP_LOCK_COST            = 100_000
 SHOP_CHANNEL_COST         = 40_000
 SHOP_CHANNEL_DELETE_COST  = 75_000
-SHOP_INSURANCE_COST       = 500
+SHOP_INSURANCE_COST       = 1_000  # per day (prepay or subscription renewal)
 SHOP_TAX_COST             = 1_000
 SHOP_MOCK_COST            = 1_500
 SHOP_RAGEBAIT_COST        = 2_500
@@ -147,7 +147,8 @@ ARTIFACT_PROPERTY_CAP_COST   = 300_000
 ARTIFACT_PROPERTY_BOOST_COST = 1_000_000
 
 # Shop effect parameters
-SHOP_INSURANCE_DURATION_SECS = 86_400  # 24 hours
+SHOP_INSURANCE_DURATION_SECS = 86_400  # 24 hours (one prepaid/renewed day)
+SHOP_INSURANCE_MAX_DAYS      = 30      # cap on total remaining prepaid coverage
 SHOP_MOCK_MESSAGES           = 5
 SHOP_RAGEBAIT_MESSAGES       = 4       # remaining after initial AI send
 SHOP_CURSE_MESSAGES          = 5
