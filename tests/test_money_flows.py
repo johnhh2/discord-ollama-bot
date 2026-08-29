@@ -1084,3 +1084,49 @@ async def test_crime_eligible_does_not_latch_below_threshold(db):
     assert _state.economy["users"][str(uid)].get("crime_eligible", False) is False
     await _economy.add_balance(uid, 1)  # 100_001 → just over → latched
     assert _state.economy["users"][str(uid)]["crime_eligible"] is True
+
+
+async def test_mug_blocked_by_insurance_no_money_moves(db):
+    """!mug against an insured target: protected embed, thief keeps their
+    stake, victim untouched. Shares the "steal" insurance key with !steal
+    and !bankheist."""
+    cog = EconomyCog(bot=_StubBot())
+    thief = FakeMember(uid=114)
+    victim = FakeMember(uid=214)
+    await _economy.add_balance(thief.id, 5000)
+    await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 9)
+    _state.insurance[victim.id] = {
+        "expires_at": time.time() + 3600,
+        "protected_from": ["steal"],
+    }
+
+    ctx = _make_ctx(thief, victim, content="!mug @victim 100")
+    await cog.cmd_mug.callback(cog, ctx, target=victim, amount="100")
+
+    assert await _economy.get_balance(thief.id) == 5000
+    assert await _economy.get_balance(victim.id) == 10_000
+    assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
+
+
+async def test_bankheist_blocked_by_insurance_no_lobby(db):
+    """!bankheist against an insured target must stop at the shield before
+    any lobby opens — no heist state, no reactions to claim."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=115)
+    victim = FakeMember(uid=215)
+    await _economy.add_balance(host.id, 5000)
+    await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 9)
+    _state.insurance[victim.id] = {
+        "expires_at": time.time() + 3600,
+        "protected_from": ["steal"],
+    }
+
+    ctx = _make_ctx(host, victim, content="!bankheist @victim")
+    await cog.cmd_bankheist.callback(cog, ctx, target=victim)
+
+    assert cog._active_heists == {}  # lobby never opened
+    assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
+    assert await _economy.get_balance(host.id) == 5000
+    assert await _economy.get_balance(victim.id) == 10_000

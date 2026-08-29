@@ -333,3 +333,78 @@ async def test_concurrent_daily_invocations_grant_once(monkeypatch):
         f"daily double-claim: balance went {starting_balance} -> {final_balance} "
         f"(expected +{DAILY_REWARD})"
     )
+
+
+# ── daily claim × insurance subscription ──────────────────────────────────────
+
+async def test_daily_claim_renews_insurance_subscription(db):
+    """!daily with an active subscription: premium deducted on top of the
+    reward, coverage extended 24h from the current expiry, deduction shown
+    in the embed."""
+    import time as _t
+    from src.config import SHOP_INSURANCE_COST, SHOP_INSURANCE_DURATION_SECS
+
+    uid = 8101
+    await _economy.add_balance(uid, 5000)
+    _state.insurance_subs.add(uid)
+    expiry = int(_t.time() + 3600)
+    _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
+
+    cog = EconomyCog(bot=_StubBot())
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=1))
+    ctx.bot = _StubBot()
+    await cog.cmd_daily.callback(cog, ctx)
+
+    assert await _economy.get_balance(uid) == 5000 + DAILY_REWARD - SHOP_INSURANCE_COST
+    assert _state.insurance[uid]["expires_at"] == expiry + SHOP_INSURANCE_DURATION_SECS
+    desc = ctx.sent_embeds[-1].description
+    assert "insurance" in desc
+    assert f"{SHOP_INSURANCE_COST:,}" in desc
+
+
+async def test_daily_claim_insurance_lapses_when_broke(db):
+    """A subscriber who can't cover the premium keeps the daily reward and
+    the subscription, but coverage doesn't extend and the embed warns."""
+    import time as _t
+    from src.config import SHOP_INSURANCE_COST
+
+    uid = 8102
+    assert DAILY_REWARD < SHOP_INSURANCE_COST  # premise: reward alone can't pay
+    _state.insurance_subs.add(uid)
+    expiry = int(_t.time() + 3600)
+    _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
+
+    cog = EconomyCog(bot=_StubBot())
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=1))
+    ctx.bot = _StubBot()
+    await cog.cmd_daily.callback(cog, ctx)
+
+    assert await _economy.get_balance(uid) == DAILY_REWARD  # reward kept, no charge
+    assert _state.insurance[uid]["expires_at"] == expiry    # not extended
+    assert uid in _state.insurance_subs                      # sub retained
+    assert "lapsed" in ctx.sent_embeds[-1].description
+
+
+async def test_auto_daily_returns_net_claim_clamped_at_zero(db):
+    """_auto_daily's return sizes the dailies flip/slots stake — with the
+    premium exceeding the reward it must clamp at 0 (never a negative
+    stake), while the balance and embed reflect the real deduction."""
+    import time as _t
+    from src.config import SHOP_INSURANCE_COST
+    from src.events import _auto_daily
+    from tests.fakes.discord import FakeChannel
+
+    uid = 8103
+    await _economy.add_balance(uid, 5000)
+    _state.insurance_subs.add(uid)
+    _state.insurance[uid] = {"expires_at": int(_t.time() + 3600), "protected_from": ["steal"]}
+
+    author = FakeMember(uid=uid)
+    channel = FakeChannel()
+    claimed, prop_rev = await _auto_daily(author, channel)
+
+    assert claimed == 0  # max(0, DAILY_REWARD - premium), no property revenue
+    assert prop_rev == 0
+    assert await _economy.get_balance(uid) == 5000 + DAILY_REWARD - SHOP_INSURANCE_COST
+    embed = channel.send.call_args.kwargs["embed"]
+    assert "insurance" in embed.description
