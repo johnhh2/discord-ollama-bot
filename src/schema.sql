@@ -1258,3 +1258,11 @@ FROM chess_reports r
 WHERE r.elo IS NOT NULL AND r.winner_id = r.white_id
   AND NOT EXISTS (SELECT 1 FROM chess_user_stats s WHERE s.user_id = r.white_id)
 GROUP BY r.white_id;
+
+-- ── 0053_add_chess_report_analysis.sql ──
+-- Post-game engine analysis on finished chess games: per-player accuracy
+-- stats (ACPL, top-move match rate, estimated performance Elo) as JSON, and
+-- the cheat-flag suspect user id for admin review. Both NULL for unanalyzed
+-- games (pre-feature history, engine unavailable, or game too short).
+ALTER TABLE chess_reports ADD COLUMN IF NOT EXISTS analysis_json TEXT NULL;
+ALTER TABLE chess_reports ADD COLUMN IF NOT EXISTS flag_user_id BIGINT UNSIGNED NULL;

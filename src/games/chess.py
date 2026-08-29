@@ -27,7 +27,7 @@ from src.persistence import (
     load_head_to_head, load_bot_head_to_head, count_pvp_wins_in_guild, try_set_record,
 )
 from src.games.ttt_c4 import _setup_pvp_game
-from src.games import chess_engine, chess_render, chess_bot
+from src.games import chess_engine, chess_render, chess_bot, chess_analysis
 from src.games.bot_chess_rewards import (
     award_bot_defeat, rank_badges, RECORD_CATEGORY as _BOT_CHESS_RECORD,
 )
@@ -707,14 +707,14 @@ class ChessCog(commands.Cog):
 
         winner_id = report["winner_id"]
         bot_user = self.bot.user if self.bot is not None else None
+        # Prefer PGN-header names (always accurate, including the engine
+        # label "Sub-Maia/Maia/Stockfish (N Elo)" for bot wins) over
+        # guild.get_member (often misses without the privileged members
+        # intent).
+        pgn_white, pgn_black = _names_from_pgn(report.get("pgn", ""))
         if winner_id is None:
             outcome_line = f"Draw ({report['result']})"
         else:
-            # Prefer PGN-header names (always accurate, including the engine
-            # label "Sub-Maia/Maia/Stockfish (N Elo)" for bot wins) over
-            # guild.get_member (often misses without the privileged members
-            # intent).
-            pgn_white, pgn_black = _names_from_pgn(report.get("pgn", ""))
             if bot_user is not None and winner_id == bot_user.id:
                 # Bot won — use whichever PGN header corresponds to the bot.
                 winner_name = (
@@ -743,13 +743,20 @@ class ChessCog(commands.Cog):
 
         movetext = _movetext_only(report["pgn"])
         pgn_block = f"```pgn\n{movetext}\n```"
-        # Embeds cap description at 4096 chars; trim if needed.
-        if len(pgn_block) > 3800:
-            pgn_block = f"```pgn\n{movetext[:3600]}\n... (truncated)```"
+        # Embeds cap description at 4096 chars; trim if needed. Budget leaves
+        # headroom for the outcome line, analysis block, and links below.
+        if len(pgn_block) > 3300:
+            pgn_block = f"```pgn\n{movetext[:3100]}\n... (truncated)```"
         pgn_hint = f"\n*Full PGN: `!chess pgn {report_id}`*"
         links = _analysis_links(report["pgn"])
         links_line = f"\n{links}" if links else ""
-        desc = f"{outcome_line}\n\n{pgn_block}{pgn_hint}{links_line}"
+        analysis_block = chess_analysis.format_analysis_lines(
+            report.get("analysis"),
+            pgn_white or str(report["white_id"]),
+            pgn_black or str(report["black_id"]),
+        )
+        analysis_section = f"\n\n{analysis_block}" if analysis_block else ""
+        desc = f"{outcome_line}{analysis_section}\n\n{pgn_block}{pgn_hint}{links_line}"
         e = emb(f"♟️ Chess Game #{report_id}", desc, C_GREY)
         if file is not None:
             # Attach as top-level file so the board renders outside the embed
@@ -1273,6 +1280,28 @@ class ChessCog(commands.Cog):
             await _bump_board(channel, game, _board_embed("♟️ Chess — Game Over", desc, color), file=file)
         else:
             await _bump_board(channel, game, emb("♟️ Chess — Game Over", desc, color))
+
+        # Post-game engine analysis (est. Elo, ACPL, match rate — and the
+        # cheat-flag check for bot games). Background task: it edits the
+        # game-over embed above once the stats are in. The sync
+        # engine_available() gate means no task is even created when
+        # Stockfish is missing (and in tests).
+        if report_id is not None and chess_analysis.engine_available():
+            try:
+                pgn_white, pgn_black = _names_from_pgn(final_pgn)
+                asyncio.create_task(chess_analysis.analyze_and_post(
+                    bot=self.bot, channel=channel, guild=guild,
+                    report_id=report_id, pgn=final_pgn,
+                    white_id=game["white_id"], black_id=game["black_id"],
+                    winner_id=winner_id, elo=game.get("elo"),
+                    white_name=pgn_white or "White",
+                    black_name=pgn_black or "Black",
+                    white_seconds=int(game.get("white_seconds", 0) or 0),
+                    black_seconds=int(game.get("black_seconds", 0) or 0),
+                    embed_msg_id=game.get("embed_msg_id"),
+                ))
+            except Exception as e:
+                logging.error(f"chess analysis scheduling failed: {e}", exc_info=True)
 
 
 async def setup(bot):

@@ -121,6 +121,34 @@ async def save_chess_report(
         return cur.lastrowid
 
 
+async def save_chess_analysis(
+    report_id: int, analysis: dict, flag_user_id: int | None,
+) -> None:
+    """Attach post-game engine analysis to a finished game's report row.
+    `flag_user_id` is the cheat-flag suspect (None for clean games)."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "UPDATE chess_reports SET analysis_json=%s, flag_user_id=%s "
+            "WHERE report_id=%s",
+            (
+                json.dumps(analysis),
+                int(flag_user_id) if flag_user_id is not None else None,
+                int(report_id),
+            ),
+        )
+
+
+async def count_flagged_reports(user_id: int) -> int:
+    """All-time count of this user's cheat-flagged games, across guilds."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT COUNT(*) FROM chess_reports WHERE flag_user_id=%s",
+            (int(user_id),),
+        )
+        row = await cur.fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
 async def load_head_to_head(uid_a: int, uid_b: int) -> dict:
     """All-time head-to-head between two users from chess_reports.
 
@@ -194,13 +222,17 @@ async def load_chess_report(report_id: int) -> dict | None:
     async with with_cursor() as cur:
         await cur.execute(
             "SELECT report_id, guild_id, channel_id, white_id, black_id, winner_id, "
-            "result, pgn, final_fen, finished_at "
+            "result, pgn, final_fen, finished_at, elo, analysis_json, flag_user_id "
             "FROM chess_reports WHERE report_id=%s",
             (int(report_id),),
         )
         row = await cur.fetchone()
     if row is None:
         return None
+    try:
+        analysis = json.loads(row[11]) if row[11] else None
+    except (ValueError, TypeError):
+        analysis = None
     return {
         "report_id": row[0],
         "guild_id": row[1],
@@ -212,4 +244,7 @@ async def load_chess_report(report_id: int) -> dict | None:
         "pgn": row[7],
         "final_fen": row[8],
         "finished_at": row[9],
+        "elo": row[10],
+        "analysis": analysis,
+        "flag_user_id": row[12],
     }
