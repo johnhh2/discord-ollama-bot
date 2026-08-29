@@ -1303,7 +1303,7 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
         key = (ctx.guild.id, uid)
-        protects_str = "ragebait, mock, nickname, role assignments, steal, tax, and spellcheck"
+        protects_str = "ragebait, mock, nickname, role assignments, crime (steal/mug/bankheist), tax, and spellcheck"
 
         if arg and arg.lower() in ("sub", "subscribe"):
             if key in state.insurance_subs:
