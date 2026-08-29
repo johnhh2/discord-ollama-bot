@@ -105,8 +105,8 @@ async def test_shop_insurance_purchase_persists_to_state_and_db(db):
     assert await _read_db_balance(uid) == 1000
 
     # In-memory state populated
-    assert (42, uid) in _state.insurance
-    entry = _state.insurance[(42, uid)]
+    assert uid in _state.insurance
+    entry = _state.insurance[uid]
     assert "nickname" in entry["protected_from"]
     assert "tax" in entry["protected_from"]
 
@@ -121,7 +121,7 @@ async def test_shop_insurance_purchase_persists_to_state_and_db(db):
             )
             row = await cur.fetchone()
     assert row is not None
-    assert row[0] == 42
+    assert row[0] == 0  # bot-wide sentinel guild_id
     assert row[1] == uid
     assert row[2] > 0
 
@@ -139,7 +139,7 @@ async def test_shop_insurance_insufficient_funds(db):
 
     # Balance untouched (refunded effectively — or never deducted)
     assert await get_balance(uid) == SHOP_INSURANCE_COST - 1
-    assert (42, uid) not in _state.insurance
+    assert uid not in _state.insurance
 
 
 # ── nickname refund on Forbidden ──────────────────────────────────────────────
@@ -223,7 +223,7 @@ async def test_concurrent_shop_insurance_purchases_lose_no_days(monkeypatch):
     assert charge_count[0] == 2
     assert _state.economy["users"][str(uid)]["balance"] == starting_balance - 2 * SHOP_INSURANCE_COST
     # Both paid days present: expiry ≈ now + 2 × 24h.
-    expiry = _state.insurance[(42, uid)]["expires_at"]
+    expiry = _state.insurance[uid]["expires_at"]
     assert expiry >= before + 2 * SHOP_INSURANCE_DURATION_SECS - 5
 
 
@@ -242,13 +242,13 @@ async def test_shop_insurance_prepay_days_stack(db):
     await cog.shop_insurance.callback(cog, ctx, "3")
 
     assert await get_balance(uid) == SHOP_INSURANCE_COST * 2
-    expiry = _state.insurance[(42, uid)]["expires_at"]
+    expiry = _state.insurance[uid]["expires_at"]
     assert expiry >= before + 3 * SHOP_INSURANCE_DURATION_SECS - 5
 
     ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
     await cog.shop_insurance.callback(cog, ctx, "2")
     assert await get_balance(uid) == 0
-    assert _state.insurance[(42, uid)]["expires_at"] == expiry + 2 * SHOP_INSURANCE_DURATION_SECS
+    assert _state.insurance[uid]["expires_at"] == expiry + 2 * SHOP_INSURANCE_DURATION_SECS
 
 
 async def test_shop_insurance_prepay_respects_max_days_cap(db):
@@ -261,13 +261,13 @@ async def test_shop_insurance_prepay_respects_max_days_cap(db):
     uid = 6021
     await add_balance(uid, SHOP_INSURANCE_COST * 100)
     existing_expiry = int(_time.time() + (SHOP_INSURANCE_MAX_DAYS - 1) * SHOP_INSURANCE_DURATION_SECS)
-    _state.insurance[(42, uid)] = {"expires_at": existing_expiry, "protected_from": ["steal"]}
+    _state.insurance[uid] = {"expires_at": existing_expiry, "protected_from": ["steal"]}
 
     ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
     await cog.shop_insurance.callback(cog, ctx, "2")
 
     assert await get_balance(uid) == SHOP_INSURANCE_COST * 100  # not charged
-    assert _state.insurance[(42, uid)]["expires_at"] == existing_expiry  # not extended
+    assert _state.insurance[uid]["expires_at"] == existing_expiry  # not extended
     assert any("Capped" in (e.title or "") for e in ctx.sent_embeds)
 
 
@@ -285,8 +285,8 @@ async def test_shop_insurance_subscribe_charges_first_day_and_persists(db):
     await cog.shop_insurance.callback(cog, ctx, "sub")
 
     assert await get_balance(uid) == SHOP_INSURANCE_COST
-    assert (42, uid) in _state.insurance_subs
-    assert (42, uid) in _state.insurance
+    assert uid in _state.insurance_subs
+    assert uid in _state.insurance
 
     pool = await _persistence.get_pool()
     async with pool.acquire() as conn:
@@ -297,13 +297,13 @@ async def test_shop_insurance_subscribe_charges_first_day_and_persists(db):
                 (uid,),
             )
             row = await cur.fetchone()
-    assert row is not None and row[0] == 42
+    assert row is not None and row[0] == 0  # bot-wide sentinel guild_id
 
     # Unsubscribe removes the sub (coverage stays until expiry).
     ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
     await cog.shop_insurance.callback(cog, ctx, "unsub")
-    assert (42, uid) not in _state.insurance_subs
-    assert (42, uid) in _state.insurance
+    assert uid not in _state.insurance_subs
+    assert uid in _state.insurance
 
 
 async def test_shop_insurance_subscribe_insufficient_funds_rolls_back(db):
@@ -318,13 +318,13 @@ async def test_shop_insurance_subscribe_insufficient_funds_rolls_back(db):
     await cog.shop_insurance.callback(cog, ctx, "sub")
 
     assert await get_balance(uid) == SHOP_INSURANCE_COST - 1
-    assert (42, uid) not in _state.insurance_subs
-    assert (42, uid) not in _state.insurance
+    assert uid not in _state.insurance_subs
+    assert uid not in _state.insurance
 
 
 async def test_renew_insurance_subs_charges_and_extends():
-    """The daily-claim hook: each subscribed guild charges one premium and
-    extends coverage 24h from the current expiry; an unaffordable renewal
+    """The daily-claim hook: a subscribed user is charged one premium and
+    coverage extends 24h from the current expiry; an unaffordable renewal
     lapses without touching the subscription."""
     from src.economy import renew_insurance_subs, _ensure_user
     from src.config import SHOP_INSURANCE_COST, SHOP_INSURANCE_DURATION_SECS
@@ -332,25 +332,25 @@ async def test_renew_insurance_subs_charges_and_extends():
     uid = 6024
     await _ensure_user(uid)
     _state.economy["users"][str(uid)]["balance"] = SHOP_INSURANCE_COST + 100
-    _state.insurance_subs.add((42, uid))
+    _state.insurance_subs.add(uid)
     existing_expiry = int(_time.time() + 3600)
-    _state.insurance[(42, uid)] = {"expires_at": existing_expiry, "protected_from": ["steal"]}
+    _state.insurance[uid] = {"expires_at": existing_expiry, "protected_from": ["steal"]}
 
     charged, lapsed = await renew_insurance_subs(uid)
     assert charged == SHOP_INSURANCE_COST
     assert lapsed == 0
     assert _state.economy["users"][str(uid)]["balance"] == 100
-    assert _state.insurance[(42, uid)]["expires_at"] == existing_expiry + SHOP_INSURANCE_DURATION_SECS
-    assert "steal" in _state.insurance[(42, uid)]["protected_from"]
-    assert "mock" in _state.insurance[(42, uid)]["protected_from"]
+    assert _state.insurance[uid]["expires_at"] == existing_expiry + SHOP_INSURANCE_DURATION_SECS
+    assert "steal" in _state.insurance[uid]["protected_from"]
+    assert "mock" in _state.insurance[uid]["protected_from"]
 
     # Second renewal: can't afford — coverage untouched, sub retained.
     charged, lapsed = await renew_insurance_subs(uid)
     assert charged == 0
     assert lapsed == 1
     assert _state.economy["users"][str(uid)]["balance"] == 100
-    assert _state.insurance[(42, uid)]["expires_at"] == existing_expiry + SHOP_INSURANCE_DURATION_SECS
-    assert (42, uid) in _state.insurance_subs
+    assert _state.insurance[uid]["expires_at"] == existing_expiry + SHOP_INSURANCE_DURATION_SECS
+    assert uid in _state.insurance_subs
 
 
 async def test_concurrent_shop_unoreverse_charges_once(monkeypatch):
@@ -435,10 +435,9 @@ async def test_concurrent_shop_unoreverse_charges_once(monkeypatch):
 # charged and the effect must NOT be applied.
 
 
-def _insure(uid: int, against: list[str], guild_id: int = 42):
-    """Helper: stamp insurance on (guild_id, uid) for the given categories.
-    All shop tests use gid=42 ctx, so that's the default."""
-    _state.insurance[(guild_id, uid)] = {
+def _insure(uid: int, against: list[str]):
+    """Helper: stamp bot-wide insurance on uid for the given categories."""
+    _state.insurance[uid] = {
         "expires_at": _time.time() + 3600,
         "protected_from": against,
     }
@@ -1065,7 +1064,7 @@ async def test_shop_insurance_prepay_declined_confirm_no_charge(db, monkeypatch)
     await cog.shop_insurance.callback(cog, ctx, "2")
 
     assert await get_balance(uid) == SHOP_INSURANCE_COST * 3
-    assert (42, uid) not in _state.insurance
+    assert uid not in _state.insurance
 
 
 async def test_shop_insurance_sub_declined_confirm_no_sub(db, monkeypatch):
@@ -1081,8 +1080,8 @@ async def test_shop_insurance_sub_declined_confirm_no_sub(db, monkeypatch):
     await cog.shop_insurance.callback(cog, ctx, "sub")
 
     assert await get_balance(uid) == SHOP_INSURANCE_COST * 3
-    assert (42, uid) not in _state.insurance_subs
-    assert (42, uid) not in _state.insurance
+    assert uid not in _state.insurance_subs
+    assert uid not in _state.insurance
 
 
 async def test_shop_artifact_declined_confirm_no_charge(db, monkeypatch):

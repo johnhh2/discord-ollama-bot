@@ -318,7 +318,7 @@ class ShopCog(commands.Cog):
 
         # Fun & Social (sorted by cost)
         fun_items = [
-            (SHOP_INSURANCE_COST, f"`!shop insurance [days|sub|unsub]` — Protection, prepaid or subscribed (renews with your daily) — **{SHOP_INSURANCE_COST:,} 🪙/day**"),
+            (SHOP_INSURANCE_COST, f"`!shop insurance [days|sub|unsub]` — Protection in every server, prepaid or subscribed (renews with your daily) — **{SHOP_INSURANCE_COST:,} 🪙/day**"),
             (SHOP_TAX_COST,      f"`!shop tax @user` — Apply a per-message tax to a user for 24h — **{SHOP_TAX_COST:,} 🪙**"),
             (SHOP_MOCK_COST,      f"`!shop mock @user` — Mock someone's next {SHOP_MOCK_MESSAGES} messages — **{SHOP_MOCK_COST:,} 🪙**"),
         ]
@@ -496,8 +496,8 @@ class ShopCog(commands.Cog):
         if len(new_name) > 32:
             await ctx.send(embed=emb("❌ Too Long", "Nicknames must be 32 characters or fewer.", C_RED))
             return
-        if target.id != uid and ctx.guild and await is_insured(ctx.guild.id, target.id, "nickname"):
-            _exp = get_insurance_expiry(ctx.guild.id, target.id)
+        if target.id != uid and await is_insured(target.id,"nickname"):
+            _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be renamed (expires <t:{_exp}:R>).", C_GOLD))
             return
         desc = (f"Change **{target.display_name}**'s nickname to **{new_name}**."
@@ -571,8 +571,8 @@ class ShopCog(commands.Cog):
         if "admin" in name.lower():
             await ctx.send(embed=emb("❌ Invalid Name", "Role names cannot contain \"admin\".", C_RED))
             return
-        if target.id != uid and ctx.guild and await is_insured(ctx.guild.id, target.id, "role"):
-            _exp = get_insurance_expiry(ctx.guild.id, target.id)
+        if target.id != uid and await is_insured(target.id,"role"):
+            _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_CREATE_COST
@@ -632,8 +632,8 @@ class ShopCog(commands.Cog):
         if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
             await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can manage membership.", C_RED))
             return
-        if target.id != uid and ctx.guild and await is_insured(ctx.guild.id, target.id, "role"):
-            _exp = get_insurance_expiry(ctx.guild.id, target.id)
+        if target.id != uid and await is_insured(target.id,"role"):
+            _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_ASSIGN_COST
@@ -694,8 +694,8 @@ class ShopCog(commands.Cog):
         if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
             await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can manage membership.", C_RED))
             return
-        if member.id != uid and ctx.guild and await is_insured(ctx.guild.id, member.id, "role"):
-            _exp = get_insurance_expiry(ctx.guild.id, member.id)
+        if member.id != uid and await is_insured(member.id, "role"):
+            _exp = get_insurance_expiry(member.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{member.display_name}** has insurance and their roles can't be changed (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_REMOVE_COST
@@ -746,11 +746,11 @@ class ShopCog(commands.Cog):
             return
         insured_members = []
         for m in role.members:
-            if ctx.guild and await is_insured(ctx.guild.id, m.id, "role"):
+            if await is_insured(m.id, "role"):
                 insured_members.append(m)
         if insured_members:
             names = ", ".join(f"**{m.display_name}**" for m in insured_members)
-            _earliest = min(get_insurance_expiry(ctx.guild.id, m.id) for m in insured_members)
+            _earliest = min(get_insurance_expiry(m.id) for m in insured_members)
             await ctx.send(embed=emb("🛡️ Protected", f"{names} {'has' if len(insured_members) == 1 else 'have'} insurance — this role can't be deleted (expires <t:{_earliest}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_DELETE_COST
@@ -1177,8 +1177,8 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
         gid = ctx.guild.id
-        if target.id != uid and await is_insured(gid, target.id, "ragebait"):
-            _exp = get_insurance_expiry(gid, target.id)
+        if target.id != uid and await is_insured(target.id,"ragebait"):
+            _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against ragebait (expires <t:{_exp}:R>).", C_GOLD))
             return
         topic = " ".join(args[1:])
@@ -1249,8 +1249,8 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
         gid = ctx.guild.id
-        if target.id != uid and await is_insured(gid, target.id, "mock"):
-            _exp = get_insurance_expiry(gid, target.id)
+        if target.id != uid and await is_insured(target.id,"mock"):
+            _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against mock (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_MOCK_COST
@@ -1285,7 +1285,7 @@ class ShopCog(commands.Cog):
         await cog.create_bounty(ctx, args)
 
     # ── !shop insurance ───────────────────────────────────────────────────────
-    def _rollback_insurance_days(self, key: tuple, days: int):
+    def _rollback_insurance_days(self, key: int, days: int):
         """Undo a stamped-but-unpaid insurance extension. A concurrent purchase
         may have extended on top of our stamp, so subtract our duration rather
         than restoring a snapshot (which would clobber the other buyer)."""
@@ -1302,24 +1302,26 @@ class ShopCog(commands.Cog):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
-        key = (ctx.guild.id, uid)
+        # Insurance is bot-wide: one policy per user, valid in every server
+        # (the purchase itself still happens in a server).
+        key = uid
         protects_str = "ragebait, mock, nickname, role assignments, crime (steal/mug/bankheist), tax, and spellcheck"
 
         if arg and arg.lower() in ("sub", "subscribe"):
             if key in state.insurance_subs:
                 await ctx.send(embed=emb(
                     "🛡️ Already Subscribed",
-                    f"You're already subscribed here — **{SHOP_INSURANCE_COST:,} 🪙** is deducted with each daily claim. `!shop insurance unsub` to cancel.",
+                    f"You're already subscribed — **{SHOP_INSURANCE_COST:,} 🪙** is deducted with each daily claim. `!shop insurance unsub` to cancel.",
                     C_GOLD,
                 ))
                 return
-            sub_exp = get_insurance_expiry(ctx.guild.id, uid)
+            sub_exp = get_insurance_expiry(uid)
             first_day = sub_exp is None
             if not await confirm_prompt(
                 ctx, title="🛡️ Insurance Subscription",
                 description=(
                     f"Subscribe to insurance — each daily claim deducts **{SHOP_INSURANCE_COST:,} 🪙** "
-                    "and adds 24h of coverage."
+                    "and adds 24h of coverage, valid in every server."
                     + (f" The first day (**{SHOP_INSURANCE_COST:,} 🪙**) is charged now so coverage starts immediately." if first_day else "")
                     + f"\n\n**Protects against:** {protects_str}"
                     + "\n**Current coverage:** " + (f"expires <t:{sub_exp}:R>" if sub_exp else "none")
@@ -1332,7 +1334,7 @@ class ShopCog(commands.Cog):
             if key in state.insurance_subs:
                 await ctx.send(embed=emb(
                     "🛡️ Already Subscribed",
-                    f"You're already subscribed here — **{SHOP_INSURANCE_COST:,} 🪙** is deducted with each daily claim. `!shop insurance unsub` to cancel.",
+                    f"You're already subscribed — **{SHOP_INSURANCE_COST:,} 🪙** is deducted with each daily claim. `!shop insurance unsub` to cancel.",
                     C_GOLD,
                 ))
                 return
@@ -1340,11 +1342,11 @@ class ShopCog(commands.Cog):
             # subscribes can't both buy the starter day.
             state.insurance_subs.add(key)
             start_str = ""
-            if get_insurance_expiry(ctx.guild.id, uid) is None:
+            if get_insurance_expiry(uid) is None:
                 # Not currently covered — charge the first day now so the
                 # subscription protects immediately, not at the next daily.
                 cost = 0 if uid in state.godmode_users else SHOP_INSURANCE_COST
-                expires_at = extend_insurance(ctx.guild.id, uid, 1)
+                expires_at = extend_insurance(uid, 1)
                 if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST:,}"):
                     state.insurance_subs.discard(key)
                     self._rollback_insurance_days(key, 1)
@@ -1364,13 +1366,13 @@ class ShopCog(commands.Cog):
             if key not in state.insurance_subs:
                 await ctx.send(embed=emb(
                     "🛡️ Not Subscribed",
-                    "You don't have an insurance subscription in this server. `!shop insurance sub` to start one.",
+                    "You don't have an insurance subscription. `!shop insurance sub` to start one.",
                     C_GOLD,
                 ))
                 return
             state.insurance_subs.discard(key)
             await save_insurance_subs()
-            exp = get_insurance_expiry(ctx.guild.id, uid)
+            exp = get_insurance_expiry(uid)
             tail = f" Your current coverage still runs out <t:{exp}:R>." if exp else ""
             await ctx.send(embed=emb(
                 "🛡️ Insurance Unsubscribed",
@@ -1388,7 +1390,7 @@ class ShopCog(commands.Cog):
             except ValueError:
                 # Non-numeric arg ("status", "info", a typo…) — treat it as an
                 # info request: usage plus the caller's own coverage state.
-                info_exp = get_insurance_expiry(ctx.guild.id, uid)
+                info_exp = get_insurance_expiry(uid)
                 await ctx.send(embed=emb(
                     "🛡️ Insurance",
                     f"Usage: `!shop insurance [days|sub|unsub]` — prepay coverage at **{SHOP_INSURANCE_COST:,} 🪙/day** "
@@ -1407,7 +1409,7 @@ class ShopCog(commands.Cog):
                 ))
                 return
         now = time.time()
-        current_exp = get_insurance_expiry(ctx.guild.id, uid)
+        current_exp = get_insurance_expiry(uid)
         remaining = max(0.0, (current_exp or now) - now)
         if remaining + days * SHOP_INSURANCE_DURATION_SECS > SHOP_INSURANCE_MAX_DAYS * SHOP_INSURANCE_DURATION_SECS:
             buyable = int((SHOP_INSURANCE_MAX_DAYS * SHOP_INSURANCE_DURATION_SECS - remaining) // SHOP_INSURANCE_DURATION_SECS)
@@ -1443,7 +1445,7 @@ class ShopCog(commands.Cog):
         # a concurrent purchase (or sub renewal) may have extended coverage
         # during the prompt.
         now = time.time()
-        current_exp = get_insurance_expiry(ctx.guild.id, uid)
+        current_exp = get_insurance_expiry(uid)
         remaining = max(0.0, (current_exp or now) - now)
         if remaining + days * SHOP_INSURANCE_DURATION_SECS > SHOP_INSURANCE_MAX_DAYS * SHOP_INSURANCE_DURATION_SECS:
             await ctx.send(embed=emb(
@@ -1456,7 +1458,7 @@ class ShopCog(commands.Cog):
 
         # Stamp the extension synchronously before shop_charge (see CLAUDE.md
         # on per-user command races); roll back our days if the charge fails.
-        expires_at = extend_insurance(ctx.guild.id, uid, days)
+        expires_at = extend_insurance(uid, days)
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST * days:,}"):
             self._rollback_insurance_days(key, days)
             return
@@ -1464,8 +1466,8 @@ class ShopCog(commands.Cog):
         sub_str = " Your subscription keeps extending it with each daily claim." if key in state.insurance_subs else ""
         await ctx.send(embed=emb(
             "🛡️ Insurance Purchased",
-            f"**{days} day{'s' if days != 1 else ''}** of protection against {protects_str}! "
-            f"(expires <t:{expires_at}:R>){sub_str}",
+            f"**{days} day{'s' if days != 1 else ''}** of protection against {protects_str}, "
+            f"in every server! (expires <t:{expires_at}:R>){sub_str}",
             C_GREEN,
         ))
 
@@ -1601,8 +1603,8 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
         gid = ctx.guild.id
-        if await is_insured(gid, target.id, "tax"):
-            _exp = get_insurance_expiry(gid, target.id)
+        if await is_insured(target.id,"tax"):
+            _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against tax (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_TAX_COST
@@ -1707,8 +1709,8 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
         gid = ctx.guild.id
-        if await is_insured(gid, target.id, "spellcheck"):
-            _exp = get_insurance_expiry(gid, target.id)
+        if await is_insured(target.id,"spellcheck"):
+            _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be spellchecked (expires <t:{_exp}:R>).", C_GOLD))
             return
 
@@ -1780,8 +1782,8 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🔄 Uno Reverse", "You don't have any active mock, ragebait, or curse on you to reverse!", C_GREY))
             return
 
-        if await is_insured(gid, target.id, "mock"):
-            _exp = get_insurance_expiry(gid, target.id)
+        if await is_insured(target.id,"mock"):
+            _exp = get_insurance_expiry(target.id)
             await ctx.send(embed=emb(
                 "🛡️ Protected",
                 f"**{target.display_name}** has insurance and can't be targeted (expires <t:{_exp}:R>).",

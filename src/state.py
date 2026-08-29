@@ -20,12 +20,14 @@ bot_admins: set = set()
 godmode_users: set = set()
 bot_settings: dict = {"vram_text": "16GB"}
 guild_settings: dict = {}
-# Shop effects + insurance are scoped per server: every key below is a
-# (guild_id, user_id) int tuple. A user can hold one of each effect per guild,
-# and an effect only fires in the guild it was bought in. Source of truth is
-# the shop_effects table (effect_type column); loaded at boot.
-insurance: dict = {}            # (guild_id, uid) -> {expires_at, protected_from}
-insurance_subs: set = set()     # (guild_id, uid) — auto-renew insurance at each daily claim
+# Insurance is bot-wide (migration 0055): one policy per user, protecting them
+# in every server. Stored in shop_effects under the sentinel guild_id=0.
+insurance: dict = {}            # uid -> {expires_at, protected_from}
+insurance_subs: set = set()     # uid — auto-renew insurance at each daily claim
+# Shop effects are scoped per server: every key below is a (guild_id, user_id)
+# int tuple. A user can hold one of each effect per guild, and an effect only
+# fires in the guild it was bought in. Source of truth is the shop_effects
+# table (effect_type column); loaded at boot.
 locked_channels: dict = {}
 locked_roles: dict = {}
 active_ragebaits: dict = {}     # (guild_id, uid) -> {remaining, started_by, history, channel_id}

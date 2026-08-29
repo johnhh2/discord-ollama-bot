@@ -94,7 +94,7 @@ async def test_effects_view_lists_active_with_duration():
 async def test_effects_view_permanent_omits_duration():
     cog = EffectsCog(bot=None)
     uid = 7002
-    _state.insurance[(42, uid)] = {
+    _state.insurance[uid] = {
         "expires_at": None, "protected_from": ["tax"],
     }
     ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
@@ -208,9 +208,24 @@ async def test_effects_add_insurance_permanent(db):
     cog = EffectsCog(bot=None)
     target = FakeMember(uid=7103, display_name="t")
     ctx = _admin_ctx()
+    # Insurance is bot-wide, so granting it requires an env bot admin, not
+    # just a Discord server admin.
+    _state.bot_admins.add(ctx.author.id)
     await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "add", "insurance")
-    entry = _state.insurance[(42, target.id)]
+    entry = _state.insurance[target.id]
     assert "tax" in entry["protected_from"]
+
+
+@_aio
+async def test_effects_add_insurance_denied_for_mere_server_admin(db):
+    """Insurance became bot-wide in migration 0055 — a guild admin grant would
+    reach global state, so only env bot admins may add/remove it."""
+    cog = EffectsCog(bot=None)
+    target = FakeMember(uid=7113, display_name="t")
+    ctx = _admin_ctx()  # Discord server admin, NOT in BOT_ADMIN_IDS
+    await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "add", "insurance")
+    assert target.id not in _state.insurance
+    assert any("No Permission" in (e.title or "") for e in ctx.sent_embeds)
 
 
 @_aio

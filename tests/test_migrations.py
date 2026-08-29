@@ -196,3 +196,69 @@ async def test_down_files_dont_count_as_forward_migrations(tmp_path, fake_cur):
 
     applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
     assert applied == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_0055_collapses_per_guild_insurance_to_global(tmp_path, fake_cur):
+    """The real 0055 data migration: per-guild insurance rows collapse into one
+    guild_id=0 row per user carrying the LATEST expiry; multi-guild subs
+    collapse to one; other effect types are untouched; re-run is a no-op."""
+    _write(tmp_path, "0001_shop_effects.sql", """
+        CREATE TABLE shop_effects (
+            guild_id INTEGER NOT NULL DEFAULT 0,
+            user_id INTEGER NOT NULL,
+            effect_type TEXT NOT NULL,
+            expires_at DOUBLE NULL,
+            history_json TEXT NULL,
+            PRIMARY KEY (guild_id, user_id, effect_type)
+        );
+    """)
+    applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+    assert applied == [1]
+
+    # Old-style per-guild rows: user 10 insured in two guilds (different
+    # expiries) and subscribed in both; user 12 subscribed elsewhere; a tax
+    # row that must survive untouched.
+    seed = [
+        (1, 10, "insurance", 1_000.0, '["steal"]'),
+        (2, 10, "insurance", 2_000.0, '["tax"]'),
+        (3, 11, "insurance", 500.0, '["mock"]'),
+        (1, 10, "insurance_sub", None, None),
+        (2, 10, "insurance_sub", None, None),
+        (5, 12, "insurance_sub", None, None),
+        (7, 13, "tax", 999.0, None),
+    ]
+    for row in seed:
+        await fake_cur.execute(
+            "INSERT INTO shop_effects (guild_id, user_id, effect_type, expires_at, history_json)"
+            " VALUES (%s,%s,%s,%s,%s)", row,
+        )
+
+    # Ship the REAL 0055 file as the next migration in this sandbox.
+    real_sql = (Path(__file__).parent.parent / "migrations" / "0055_make_insurance_global.sql").read_text(encoding="utf-8")
+    _write(tmp_path, "0002_make_insurance_global.sql", real_sql)
+    _migrations._done = False
+    applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+    assert applied == [2]
+
+    async def _rows(effect_type):
+        await fake_cur.execute(
+            "SELECT guild_id, user_id, expires_at FROM shop_effects"
+            " WHERE effect_type=%s ORDER BY user_id", (effect_type,),
+        )
+        return await fake_cur.fetchall()
+
+    # One global insurance row per user, at the user's latest expiry.
+    assert await _rows("insurance") == [(0, 10, 2_000.0), (0, 11, 500.0)]
+    # Multi-guild subs collapsed to one global row each.
+    assert [(g, u) for g, u, _ in await _rows("insurance_sub")] == [(0, 10), (0, 12)]
+    # Non-insurance effects untouched.
+    assert await _rows("tax") == [(7, 13, 999.0)]
+
+    # Retry-safety: force the runner to re-execute 0002's statements (simulating
+    # a crash after a partial apply) — the NOT IN guards make it a no-op.
+    await fake_cur.execute("DELETE FROM schema_migrations WHERE version=2")
+    _migrations._done = False
+    applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+    assert applied == [2]
+    assert await _rows("insurance") == [(0, 10, 2_000.0), (0, 11, 500.0)]

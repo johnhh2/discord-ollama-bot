@@ -99,11 +99,11 @@ async def test_insurance_delete_and_replace(db):
     import time
     future = time.time() + 3600
 
-    _state.insurance[(42, 1)] = {
+    _state.insurance[1] = {
         "expires_at": future,
         "protected_from": ["nickname", "curse"],
     }
-    _state.insurance[(42, 2)] = {
+    _state.insurance[2] = {
         "expires_at": future,
         "protected_from": ["tax"],
     }
@@ -111,14 +111,14 @@ async def test_insurance_delete_and_replace(db):
 
     # Drop user 2, save again — DB should reflect the deletion (save_insurance
     # does DELETE FROM shop_effects WHERE effect_type='insurance' + re-insert).
-    del _state.insurance[(42, 2)]
+    del _state.insurance[2]
     await _persistence.save_insurance()
 
     _state.insurance.clear()
     await _persistence.init_db_state()
-    assert (42, 1) in _state.insurance
-    assert (42, 2) not in _state.insurance
-    assert _state.insurance[(42, 1)]["protected_from"] == ["nickname", "curse"]
+    assert 1 in _state.insurance
+    assert 2 not in _state.insurance
+    assert _state.insurance[1]["protected_from"] == ["nickname", "curse"]
 
 
 # ── lottery ───────────────────────────────────────────────────────────────────

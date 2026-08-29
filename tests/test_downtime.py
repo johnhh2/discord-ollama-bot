@@ -277,11 +277,11 @@ async def test_insurance_expired_entries_dropped_on_init_db_state(db):
     now expired. init_db_state must filter them out (line ~810 in
     persistence.py: `if expires_at > now`)."""
     now = time.time()
-    _state.insurance[(42, 1)] = {
+    _state.insurance[1] = {
         "expires_at": now - 86400,  # expired yesterday
         "protected_from": ["nickname"],
     }
-    _state.insurance[(42, 2)] = {
+    _state.insurance[2] = {
         "expires_at": now + 3600,  # still valid 1 hour
         "protected_from": ["curse"],
     }
@@ -291,26 +291,25 @@ async def test_insurance_expired_entries_dropped_on_init_db_state(db):
     _state.insurance.clear()
     await _persistence.init_db_state()
 
-    assert (42, 1) not in _state.insurance, (
+    assert 1 not in _state.insurance, (
         "expired insurance leaked into runtime state"
     )
-    assert (42, 2) in _state.insurance
+    assert 2 in _state.insurance
 
 
 async def test_insurance_is_insured_returns_false_after_expiry(db):
     """Real-time check: a user whose insurance expired during downtime
     is correctly reported as unprotected."""
     uid = 99
-    gid = 42
     # Insurance "expires" 1 second from now.
     expires = time.time() + 1
-    _state.insurance[(gid, uid)] = {
+    _state.insurance[uid] = {
         "expires_at": expires,
         "protected_from": ["nickname"],
     }
 
     # Still insured right now.
-    assert await _economy.is_insured(gid, uid, "nickname") is True
+    assert await _economy.is_insured(uid, "nickname") is True
 
     # Time passes (simulating downtime / wall-clock advance).
     # Use sleep here because is_insured uses time.time() directly and we
@@ -318,9 +317,9 @@ async def test_insurance_is_insured_returns_false_after_expiry(db):
     import asyncio
     await asyncio.sleep(1.1)
 
-    assert await _economy.is_insured(gid, uid, "nickname") is False
+    assert await _economy.is_insured(uid, "nickname") is False
     # And the expired entry was dropped from state by is_insured itself.
-    assert (gid, uid) not in _state.insurance
+    assert uid not in _state.insurance
 
 
 # ── savings ───────────────────────────────────────────────────────────────────

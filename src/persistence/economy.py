@@ -97,31 +97,33 @@ async def save_guild_house(guild_id: int):
 
 
 async def save_insurance():
-    """Persist insurance into the shop_effects table (effect_type='insurance'),
-    scoped per (guild_id, user_id). protected_from is stored as history_json and
+    """Persist insurance into the shop_effects table (effect_type='insurance').
+    Insurance is bot-wide since migration 0055 — one policy per user, stored
+    under the sentinel guild_id=0. protected_from is stored as history_json and
     the expiry as expires_at. The old standalone shop_insurance table was
     dropped in migration 0032."""
     async with with_transaction() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='insurance'")
-        for (guild_id, uid), entry in state.insurance.items():
+        for uid, entry in state.insurance.items():
             await cur.execute(
                 "INSERT INTO shop_effects (guild_id, user_id, effect_type, expires_at, history_json)"
-                " VALUES (%s,%s,'insurance',%s,%s)",
-                (int(guild_id), int(uid), entry["expires_at"],
+                " VALUES (0,%s,'insurance',%s,%s)",
+                (int(uid), entry["expires_at"],
                  json.dumps(entry.get("protected_from", []))),
             )
 
 
 async def save_insurance_subs():
-    """Persist insurance subscriptions (shop_effects, effect_type='insurance_sub').
-    A subscription row has no expiry — it lives until the user unsubscribes."""
+    """Persist insurance subscriptions (shop_effects, effect_type='insurance_sub',
+    bot-wide under the sentinel guild_id=0). A subscription row has no expiry —
+    it lives until the user unsubscribes."""
     async with with_transaction() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='insurance_sub'")
-        for (guild_id, uid) in state.insurance_subs:
+        for uid in state.insurance_subs:
             await cur.execute(
                 "INSERT INTO shop_effects (guild_id, user_id, effect_type)"
-                " VALUES (%s,%s,'insurance_sub')",
-                (int(guild_id), int(uid)),
+                " VALUES (0,%s,'insurance_sub')",
+                (int(uid),),
             )
 
 

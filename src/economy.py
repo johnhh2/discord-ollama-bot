@@ -152,14 +152,14 @@ async def announce_new_lottery(
 INSURANCE_PROTECTS = ["ragebait", "mock", "nickname", "role", "steal", "tax", "spellcheck"]
 
 
-def extend_insurance(guild_id: int, uid: int, days: int) -> int:
-    """Extend (guild, user) insurance by `days` × 24h, from the current expiry
-    when coverage is still active (so renewals keep coverage continuous), else
-    from now. Synchronous on purpose — callers stamp before their first await
-    (see CLAUDE.md on per-user command races). Returns the new expiry ts.
-    Caller is responsible for save_insurance()."""
+def extend_insurance(uid: int, days: int) -> int:
+    """Extend the user's bot-wide insurance by `days` × 24h, from the current
+    expiry when coverage is still active (so renewals keep coverage
+    continuous), else from now. Synchronous on purpose — callers stamp before
+    their first await (see CLAUDE.md on per-user command races). Returns the
+    new expiry ts. Caller is responsible for save_insurance()."""
     from src.config import SHOP_INSURANCE_DURATION_SECS
-    key = (int(guild_id), int(uid))
+    key = int(uid)
     now = time.time()
     existing = state.insurance.get(key)
     base = existing["expires_at"] if existing and existing.get("expires_at", 0) > now else now
@@ -169,45 +169,35 @@ def extend_insurance(guild_id: int, uid: int, days: int) -> int:
 
 
 async def renew_insurance_subs(uid: int) -> tuple[int, int]:
-    """Charge and renew every insurance subscription `uid` holds.
+    """Charge and renew `uid`'s insurance subscription, if they hold one.
 
     Called only from the daily-claim paths (cmd_daily / _auto_daily), inside
     the synchronously-claimed daily_date window — that's what makes it
-    once-per-gameplay-day. For each subscribed guild: deduct one day's
-    premium and extend coverage by 24h. A renewal the user can't afford is
-    skipped (coverage lapses until they can pay again); the subscription
-    itself stays.
+    once-per-gameplay-day. Deducts one day's premium and extends the bot-wide
+    coverage by 24h. A renewal the user can't afford is skipped (coverage
+    lapses until they can pay again); the subscription itself stays.
 
-    Returns (total_charged, lapsed_count).
+    Returns (total_charged, lapsed_count) — each 0 or one premium/lapse now
+    that insurance is global, but callers still read both.
     """
     from src.config import SHOP_INSURANCE_COST
-    subs = [key for key in state.insurance_subs if key[1] == uid]
-    if not subs:
+    if int(uid) not in state.insurance_subs:
         return 0, 0
-    charged = 0
-    lapsed = 0
-    renewed = False
-    for key in subs:
-        free = uid in state.godmode_users
-        if free or await deduct_balance(uid, SHOP_INSURANCE_COST):
-            extend_insurance(key[0], uid, 1)
-            renewed = True
-            if not free:
-                charged += SHOP_INSURANCE_COST
-        else:
-            lapsed += 1
-    if renewed:
+    free = uid in state.godmode_users
+    if free or await deduct_balance(uid, SHOP_INSURANCE_COST):
+        extend_insurance(uid, 1)
         await save_insurance()
-    return charged, lapsed
+        return 0 if free else SHOP_INSURANCE_COST, 0
+    return 0, 1
 
 
-async def is_insured(guild_id: int, uid: int, against: str) -> bool:
-    """True if user `uid` holds active insurance against `against` in `guild_id`.
+async def is_insured(uid: int, against: str) -> bool:
+    """True if user `uid` holds active insurance against `against`.
 
-    Insurance is scoped per (guild, user): a key is (int guild_id, int uid).
+    Insurance is bot-wide (one policy per user, valid in every server).
     Expired entries are pruned on read.
     """
-    key = (int(guild_id), int(uid))
+    key = int(uid)
     if key not in state.insurance:
         return False
     entry = state.insurance[key]
@@ -218,9 +208,9 @@ async def is_insured(guild_id: int, uid: int, against: str) -> bool:
     return against in entry.get("protected_from", [])
 
 
-def get_insurance_expiry(guild_id: int, uid: int) -> int | None:
-    """Return the insurance expiry timestamp for (guild_id, uid), or None."""
-    entry = state.insurance.get((int(guild_id), int(uid)))
+def get_insurance_expiry(uid: int) -> int | None:
+    """Return the user's insurance expiry timestamp, or None."""
+    entry = state.insurance.get(int(uid))
     if entry and entry.get("expires_at", 0) > time.time():
         return int(entry["expires_at"])
     return None

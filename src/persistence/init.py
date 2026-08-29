@@ -163,15 +163,16 @@ async def _init_db_state_inner(state, run_migrations):
         # ── shop_effects: insurance ───────────────────────────────────────
         # Insurance lives in shop_effects (effect_type='insurance') since
         # migration 0032: protected_from in history_json, expiry in expires_at.
+        # Bot-wide since 0055 — keyed by user alone (rows sit at guild_id=0).
         try:
             await cur.execute(
-                "SELECT guild_id, user_id, expires_at, history_json"
+                "SELECT user_id, expires_at, history_json"
                 " FROM shop_effects WHERE effect_type='insurance'"
             )
             now = _time.time()
-            for guild_id, uid, expires_at, protected_json in await cur.fetchall():
+            for uid, expires_at, protected_json in await cur.fetchall():
                 if expires_at and expires_at > now:
-                    state.insurance[(int(guild_id), int(uid))] = {
+                    state.insurance[int(uid)] = {
                         "expires_at": expires_at,
                         "protected_from": json.loads(protected_json) if protected_json else [],
                     }
@@ -181,14 +182,15 @@ async def _init_db_state_inner(state, run_migrations):
 
         # ── shop_effects: insurance subscriptions ─────────────────────────
         # effect_type='insurance_sub', no expiry — renewed/charged at each
-        # daily claim (src.economy.renew_insurance_subs).
+        # daily claim (src.economy.renew_insurance_subs). Bot-wide like
+        # insurance itself.
         try:
             await cur.execute(
-                "SELECT guild_id, user_id FROM shop_effects"
+                "SELECT user_id FROM shop_effects"
                 " WHERE effect_type='insurance_sub'"
             )
-            for guild_id, uid in await cur.fetchall():
-                state.insurance_subs.add((int(guild_id), int(uid)))
+            for (uid,) in await cur.fetchall():
+                state.insurance_subs.add(int(uid))
         except Exception as e:
             logging.error(f"[init_db_state] shop_effects.insurance_sub failed: {e}", exc_info=True)
             raise

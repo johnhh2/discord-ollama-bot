@@ -257,12 +257,36 @@ async def test_steal_blocked_by_insurance_no_money_moves(db, monkeypatch):
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
     _grant_level(victim.id, 9)
-    _state.insurance[(42, victim.id)] = {
+    _state.insurance[victim.id] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["steal"],
     }
 
     ctx = _make_ctx(thief, victim)
+    await cog.cmd_steal.callback(cog, ctx, target=victim)
+
+    assert await _economy.get_balance(thief.id) == 5000
+    assert await _economy.get_balance(victim.id) == 10_000
+    assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
+
+
+async def test_steal_blocked_by_insurance_bought_in_another_server(db, monkeypatch):
+    """Insurance is bot-wide (migration 0055): a policy protects the holder
+    in EVERY server, not just where it was bought. Steal attempted from a
+    different guild than the test default must still hit the shield."""
+    cog = EconomyCog(bot=_StubBot())
+    thief = FakeMember(uid=113)
+    victim = FakeMember(uid=213)
+    await _economy.add_balance(thief.id, 5000)
+    await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 9, gid=99)
+    _state.insurance[victim.id] = {
+        "expires_at": time.time() + 3600,
+        "protected_from": ["steal"],
+    }
+
+    ctx = _make_ctx(thief, victim)
+    ctx.guild = FakeGuild(gid=99)  # a different server than any "purchase"
     await cog.cmd_steal.callback(cog, ctx, target=victim)
 
     assert await _economy.get_balance(thief.id) == 5000
@@ -398,7 +422,7 @@ async def test_mug_blocked_by_insurance_no_charge(db, monkeypatch):
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
     _grant_level(victim.id, 12)
-    _state.insurance[(42, victim.id)] = {
+    _state.insurance[victim.id] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["steal"],
     }

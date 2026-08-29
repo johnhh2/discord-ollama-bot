@@ -186,7 +186,7 @@ async def test_tax_skips_when_target_is_insured(db, cog):
     channel = _Channel()
 
     await _economy.add_balance(payer.id, 5000)
-    _state.insurance[(42, payer.id)] = {
+    _state.insurance[payer.id] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["tax"],
     }
@@ -398,7 +398,7 @@ async def test_mock_skips_when_target_is_insured(db, cog):
     guild = FakeGuild(gid=42)
     channel = _Channel(ch_id=710)
 
-    _state.insurance[(42, target.id)] = {
+    _state.insurance[target.id] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["mock"],
     }
@@ -417,7 +417,7 @@ async def test_ragebait_skips_when_target_is_insured(db, cog):
     guild = FakeGuild(gid=42)
     channel = _Channel()
 
-    _state.insurance[(42, target.id)] = {
+    _state.insurance[target.id] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["ragebait"],
     }
@@ -622,7 +622,7 @@ async def test_spellcheck_skips_insured_target(db, cog, monkeypatch):
         return "fixed"
     monkeypatch.setattr(_events, "ollama_complete", _correct)
 
-    _state.insurance[(42, target.id)] = {
+    _state.insurance[target.id] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["spellcheck"],
     }

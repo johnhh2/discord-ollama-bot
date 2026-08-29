@@ -1,8 +1,9 @@
 """!effects — view and (for admins) manage a user's active shop effects.
 
-All shop effects are scoped per server: state dicts are keyed by a
-(guild_id, user_id) tuple. This cog reads/writes those dicts and persists via
-the same save_* helpers the shop uses.
+Shop effects are scoped per server: state dicts are keyed by a
+(guild_id, user_id) tuple. The exception is insurance, which is bot-wide
+(keyed by user_id; `global` flag below). This cog reads/writes those dicts
+and persists via the same save_* helpers the shop uses.
 
   !effects [@user]            — show your (or @user's) active effects + remaining time
   !effects list              — (server admin) list every effect type
@@ -23,7 +24,7 @@ from src.helpers import (
     emb, C_PURPLE, C_RED, C_GREEN, C_GREY,
     MemberConverter, parse_duration, format_duration, _effect_expired,
 )
-from src.permissions import requires_perm, is_admin, is_server_admin
+from src.permissions import requires_perm, is_admin, is_server_admin, is_global_admin
 from src.persistence import (
     save_mock, save_curse, save_tax, save_spellcheck, save_ragebait, save_insurance,
 )
@@ -46,7 +47,10 @@ _EFFECTS = {
     },
     "insurance": {
         "store": "insurance", "save": save_insurance, "admin_settable": True,
-        "emoji": "🛡️", "desc": "Protects the user from being targeted",
+        "emoji": "🛡️", "desc": "Protects the user from being targeted (all servers)",
+        # Bot-wide since migration 0055: the store is keyed by uid alone, and
+        # an admin grant/removal here affects every server.
+        "global": True,
     },
     "mock": {
         "store": "active_mocks", "save": save_mock, "admin_settable": False,
@@ -102,7 +106,7 @@ class EffectsCog(commands.Cog):
         out = []
         for name, spec in _EFFECTS.items():
             store = getattr(state, spec["store"])
-            data = store.get((guild_id, uid))
+            data = store.get(uid if spec.get("global") else (guild_id, uid))
             if data is None:
                 continue
             if _effect_expired(data):
@@ -199,10 +203,20 @@ class EffectsCog(commands.Cog):
         if self.bot and self.bot.user and target.id == self.bot.user.id:
             await ctx.send(embed=emb("❌ Invalid Target", "You can't put effects on the bot.", C_RED))
             return
+        # A global effect (insurance) outlives the guild the command ran in,
+        # so a guild-scoped admin grant must not reach it (see CLAUDE.md:
+        # "An override can never reach global state"). Env bot admins only.
+        if spec.get("global") and not is_global_admin(ctx):
+            await ctx.send(embed=emb(
+                "❌ No Permission",
+                f"`{effect}` is bot-wide — only bot admins can add or remove it.",
+                C_RED,
+            ))
+            return
 
         gid = ctx.guild.id
         store = getattr(state, spec["store"])
-        key = (gid, target.id)
+        key = target.id if spec.get("global") else (gid, target.id)
 
         if action == "remove":
             if key not in store:
@@ -241,9 +255,10 @@ class EffectsCog(commands.Cog):
         """Construct the state dict for an admin-granted effect."""
         now = time.time()
         if effect == "insurance":
+            from src.economy import INSURANCE_PROTECTS
             return {
                 "expires_at": expires_at if expires_at is not None else now + 10 * 365 * 86_400,
-                "protected_from": ["ragebait", "mock", "nickname", "role", "steal", "tax", "spellcheck"],
+                "protected_from": list(INSURANCE_PROTECTS),
             }
         if effect == "tax":
             # Admin grant: the admin becomes the master (receives the coins).

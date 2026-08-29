@@ -730,7 +730,7 @@ class EventsCog(commands.Cog):
         key = (message.guild.id, uid)
         if not (key in state.active_ragebaits and not message.content.startswith("!")):
             return
-        if await is_insured(message.guild.id, uid, "ragebait"):
+        if await is_insured(uid,"ragebait"):
             return
         if not await check_ollama_connected():
             return
@@ -754,7 +754,7 @@ class EventsCog(commands.Cog):
         key = (message.guild.id, uid)
         if not (key in state.active_mocks and not message.content.startswith("!")):
             return
-        if await is_insured(message.guild.id, uid, "mock"):
+        if await is_insured(uid,"mock"):
             return
         # Consume the charge synchronously BEFORE the send: the send yields,
         # so two concurrent messages on the last charge would otherwise both
@@ -781,7 +781,7 @@ class EventsCog(commands.Cog):
             del state.active_taxes[key]
             await save_tax(state.active_taxes)
             return
-        if await is_insured(message.guild.id, uid, "tax"):
+        if await is_insured(uid,"tax"):
             return
         tax_master_id = tax_data["master"]
         tax_label = tax_data.get("type", "tax").capitalize()
@@ -842,7 +842,7 @@ class EventsCog(commands.Cog):
             await save_spellcheck()
             return
 
-        if await is_insured(message.guild.id, uid, "spellcheck"):
+        if await is_insured(uid,"spellcheck"):
             return
 
         # Channel gating: blacklist denies, a whitelist (if set) allows only
