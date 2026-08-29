@@ -1313,13 +1313,16 @@ class ShopCog(commands.Cog):
                     C_GOLD,
                 ))
                 return
-            first_day = get_insurance_expiry(ctx.guild.id, uid) is None
+            sub_exp = get_insurance_expiry(ctx.guild.id, uid)
+            first_day = sub_exp is None
             if not await confirm_prompt(
                 ctx, title="🛡️ Insurance Subscription",
                 description=(
                     f"Subscribe to insurance — each daily claim deducts **{SHOP_INSURANCE_COST:,} 🪙** "
                     "and adds 24h of coverage."
-                    + (" The first day is charged now so coverage starts immediately." if first_day else "")
+                    + (f" The first day (**{SHOP_INSURANCE_COST:,} 🪙**) is charged now so coverage starts immediately." if first_day else "")
+                    + f"\n\n**Protects against:** {protects_str}"
+                    + "\n**Current coverage:** " + (f"expires <t:{sub_exp}:R>" if sub_exp else "none")
                 ),
                 payer=ctx.author,
             ):
@@ -1383,10 +1386,16 @@ class ShopCog(commands.Cog):
             try:
                 days = int(arg)
             except ValueError:
+                # Non-numeric arg ("status", "info", a typo…) — treat it as an
+                # info request: usage plus the caller's own coverage state.
+                info_exp = get_insurance_expiry(ctx.guild.id, uid)
                 await ctx.send(embed=emb(
                     "🛡️ Insurance",
                     f"Usage: `!shop insurance [days|sub|unsub]` — prepay coverage at **{SHOP_INSURANCE_COST:,} 🪙/day** "
-                    f"(up to {SHOP_INSURANCE_MAX_DAYS} days), or subscribe to auto-renew with your daily claim.",
+                    f"(up to {SHOP_INSURANCE_MAX_DAYS} days), or subscribe to auto-renew with your daily claim.\n\n"
+                    "**Your coverage:** " + (f"expires <t:{info_exp}:R>" if info_exp else "none") + "\n"
+                    "**Subscription:** " + ("active — renews with your daily claim"
+                                            if key in state.insurance_subs else "none"),
                     C_PURPLE,
                 ))
                 return
@@ -1413,9 +1422,20 @@ class ShopCog(commands.Cog):
 
         cost = 0 if uid in state.godmode_users else SHOP_INSURANCE_COST * days
         day_label = f"{days} day{'s' if days != 1 else ''}"
+        # Projection only — the authoritative expiry is stamped (and the cap
+        # re-checked) after the confirm, since coverage can drift during it.
+        projected_exp = int(max(now, current_exp or now) + days * SHOP_INSURANCE_DURATION_SECS)
         if not await confirm_purchase(
             ctx, title="🛡️ Insurance",
-            description=f"Prepay **{day_label}** of protection against {protects_str}.",
+            description=(
+                f"Prepay **{day_label}** of protection at **{SHOP_INSURANCE_COST:,} 🪙/day**.\n\n"
+                f"**Protects against:** {protects_str}\n"
+                "**Current coverage:** " + (f"expires <t:{current_exp}:R>" if current_exp else "none") + "\n"
+                f"**New coverage:** expires <t:{projected_exp}:R>\n"
+                "**Subscription:** " + ("active — renews with your daily claim"
+                                        if key in state.insurance_subs
+                                        else "none — `!shop insurance sub` to auto-renew")
+            ),
             cost=cost, payer=ctx.author,
         ):
             return
