@@ -51,6 +51,7 @@ from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_GREY,
     parse_int_amount, parse_duration,
 )
+from src.confirm_view import confirm_purchase
 from src.economy import add_balance, deduct_balance, get_balance
 from src.guild_config import get_guild_cfg
 from src.permissions import _wrong_channel_reply, is_silenced
@@ -308,6 +309,16 @@ class BountyCog(commands.Cog):
             return
 
         uid = ctx.author.id
+        expiry_note = f" It expires <t:{int(expires_at)}:R>." if expires_at else ""
+        if not await confirm_purchase(
+            ctx, title="🎯 Post Bounty",
+            description=(
+                f"Post a bounty: “{condition}”\n"
+                f"The reward is held in escrow until it's claimed or you cancel.{expiry_note}"
+            ),
+            cost=amount, payer=ctx.author,
+        ):
+            return
         # Escrow the reward up front. deduct_balance is a single atomic sync
         # mutation, so concurrent !bounty invocations can't both pass on a thin
         # balance — one wins, the other gets insufficient-funds.

@@ -30,7 +30,7 @@ from src.properties import (
     pending_property_revenue, property_value, property_daily_revenue,
     bank_buyback_offer,
 )
-from src.confirm_view import confirm_prompt
+from src.confirm_view import confirm_prompt, confirm_purchase
 from src.persistence import save_property_owner, delete_property_owner, try_set_record
 from src import state
 
@@ -215,6 +215,28 @@ class AssetsCog(commands.Cog):
         uid = ctx.author.id
         pid = prop["id"]
         cost = prop["cost"]
+        preview_row = {"upgraded": False}
+        if not await confirm_purchase(
+            ctx, title="🏘️ Buy Property",
+            description=(
+                f"Buy {_fmt_prop(prop)} from the bank.\n"
+                f"It earns **{property_daily_revenue(pid, preview_row):,} 🪙/day**, banked with your daily claim."
+            ),
+            cost=cost, payer=ctx.author,
+        ):
+            return
+        # The confirm wait is a long await — re-check the deed and the
+        # ownership cap, since a concurrent buyer may have moved first.
+        if _owner_row(pid) is not None:
+            await ctx.send(embed=emb("🔒 Not For Sale", f"{_fmt_prop(prop)} was bought while you were confirming. You were not charged.", C_RED))
+            return
+        if owned_property_count(uid) >= PROPERTY_MAX_OWNED:
+            await ctx.send(embed=emb(
+                "🏘️ Portfolio Full",
+                f"You already own **{PROPERTY_MAX_OWNED}** properties — sell one first (`!assets sell <name> <price>`).",
+                C_RED,
+            ))
+            return
         # Claim the deed synchronously, then charge; roll back on failure.
         row = {
             "owner_id": uid, "acquired_at": now, "list_price": None, "listed_at": None,
@@ -238,6 +260,29 @@ class AssetsCog(commands.Cog):
         pid = prop["id"]
         price = int(row["list_price"])
         seller_id = int(row["owner_id"])
+        upgraded_note = " (⭐ upgraded)" if row.get("upgraded") else ""
+        if not await confirm_purchase(
+            ctx, title="🏘️ Buy Property",
+            description=(
+                f"Buy {_fmt_prop(prop, row)}{upgraded_note} from <@{seller_id}>.\n"
+                f"It earns **{property_daily_revenue(pid, row):,} 🪙/day**, banked with your daily claim."
+            ),
+            cost=price, payer=ctx.author,
+        ):
+            return
+        # The confirm wait is a long await — re-check the listing, since the
+        # seller may have delisted/repriced or another buyer may have taken it.
+        if row.get("owner_id") != seller_id or not row.get("list_price") or int(row["list_price"]) != price \
+                or state.property_owners.get(pid) is not row:
+            await ctx.send(embed=emb("🏷️ Listing Changed", f"The listing for {_fmt_prop(prop)} changed while you were confirming. You were not charged.", C_RED))
+            return
+        if owned_property_count(uid) >= PROPERTY_MAX_OWNED:
+            await ctx.send(embed=emb(
+                "🏘️ Portfolio Full",
+                f"You already own **{PROPERTY_MAX_OWNED}** properties — sell one first (`!assets sell <name> <price>`).",
+                C_RED,
+            ))
+            return
         prior = dict(row)
         # Claim the deed synchronously (transfer + delist; the upgrade and
         # custom name travel with the business), then charge the buyer;
@@ -438,6 +483,21 @@ class AssetsCog(commands.Cog):
             await ctx.send(embed=emb("❌ Not Yours", f"You don't own {_fmt_prop(prop)}.", C_RED))
             return
         up_name, up_cost, up_boost = PROPERTY_UPGRADES[pid]
+        if row.get("upgraded"):
+            await ctx.send(embed=emb("⭐ Already Upgraded", f"{_fmt_prop(prop, row)} already has its **{up_name}**.", C_PURPLE))
+            return
+        if not await confirm_purchase(
+            ctx, title="⭐ Build Upgrade",
+            description=f"Build the **{up_name}** on {_fmt_prop(prop, row)} — **+{up_boost}%** revenue, cost folds into its value.",
+            cost=up_cost, payer=ctx.author,
+        ):
+            return
+        # The confirm wait is a long await — re-check ownership and the
+        # upgrade flag, since the deed may have sold (or a concurrent upgrade
+        # landed) during the prompt.
+        if row.get("owner_id") != uid or state.property_owners.get(pid) is not row:
+            await ctx.send(embed=emb("❌ Not Yours", f"You no longer own {_fmt_prop(prop)}. You were not charged.", C_RED))
+            return
         if row.get("upgraded"):
             await ctx.send(embed=emb("⭐ Already Upgraded", f"{_fmt_prop(prop, row)} already has its **{up_name}**.", C_PURPLE))
             return

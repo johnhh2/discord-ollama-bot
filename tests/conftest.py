@@ -187,6 +187,22 @@ def reset_bot_state(monkeypatch):
     import src.leveling as _leveling
     monkeypatch.setattr(_leveling, "upsert_levelup_delta", _noop, raising=False)
 
+    # Every purchase now opens with a Confirm/Cancel button prompt
+    # (confirm_purchase / confirm_prompt). Auto-accept by default so the
+    # existing purchase tests run unchanged; tests exercising decline,
+    # timeout, or mid-confirm drift monkeypatch these per-test (which
+    # overrides this stub).
+    async def _auto_confirm(*args, **kwargs):
+        return True
+    import src.cogs.shop_cog as _shop_cog_mod
+    import src.cogs.bounty_cog as _bounty_cog_mod
+    import src.cogs.assets_cog as _assets_cog_mod
+    monkeypatch.setattr(_shop_cog_mod, "confirm_purchase", _auto_confirm)
+    monkeypatch.setattr(_shop_cog_mod, "confirm_prompt", _auto_confirm)
+    monkeypatch.setattr(_bounty_cog_mod, "confirm_purchase", _auto_confirm)
+    monkeypatch.setattr(_assets_cog_mod, "confirm_purchase", _auto_confirm)
+    monkeypatch.setattr(_assets_cog_mod, "confirm_prompt", _auto_confirm)
+
 
 @pytest_asyncio.fixture
 async def db(monkeypatch):

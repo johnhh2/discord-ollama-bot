@@ -1015,3 +1015,156 @@ async def test_shop_buyxp_godmode_skips_announcement_and_reward(monkeypatch):
     # XP still granted, but no announcement (and thus no coin reward).
     assert rec["level"] == 4
     lvl_cog._announce_levelup.assert_not_awaited()
+
+
+# ── universal confirm gating (fixed-price items) ─────────────────────────────
+#
+# Every shop purchase now opens a Confirm/Cancel prompt before charging.
+# Representative decline/drift coverage — the conftest auto-accepts by
+# default, so these patch confirm_purchase per-test.
+
+async def _no_confirm(*a, **k):
+    return False
+
+
+async def test_shop_mock_declined_confirm_no_charge(db, monkeypatch):
+    """Cancelling the confirm must not charge or activate the mock."""
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_MOCK_COST
+
+    cog = ShopCog(bot=None)
+    buyer_uid = 9101
+    target_uid = 9102
+    await add_balance(buyer_uid, SHOP_MOCK_COST + 500)
+    target = FakeMember(uid=target_uid, display_name="t")
+
+    class _StubConverter:
+        async def convert(self, ctx, arg):
+            return target
+
+    monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _no_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=FakeGuild(gid=42))
+    await cog.shop_mock.callback(cog, ctx, f"<@{target_uid}>")
+
+    assert await get_balance(buyer_uid) == SHOP_MOCK_COST + 500
+    assert (42, target_uid) not in _state.active_mocks
+
+
+async def test_shop_insurance_prepay_declined_confirm_no_charge(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_INSURANCE_COST
+
+    cog = ShopCog(bot=None)
+    uid = 9103
+    await add_balance(uid, SHOP_INSURANCE_COST * 3)
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _no_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_insurance.callback(cog, ctx, "2")
+
+    assert await get_balance(uid) == SHOP_INSURANCE_COST * 3
+    assert (42, uid) not in _state.insurance
+
+
+async def test_shop_insurance_sub_declined_confirm_no_sub(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_INSURANCE_COST
+
+    cog = ShopCog(bot=None)
+    uid = 9104
+    await add_balance(uid, SHOP_INSURANCE_COST * 3)
+    monkeypatch.setattr(_shop_cog, "confirm_prompt", _no_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_insurance.callback(cog, ctx, "sub")
+
+    assert await get_balance(uid) == SHOP_INSURANCE_COST * 3
+    assert (42, uid) not in _state.insurance_subs
+    assert (42, uid) not in _state.insurance
+
+
+async def test_shop_artifact_declined_confirm_no_charge(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+    from src.artifacts import ARTIFACTS
+
+    cog = ShopCog(bot=None)
+    uid = 9105
+    await add_balance(uid, ARTIFACTS[0]["cost"] + 500)
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _no_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_artifacts.callback(cog, ctx, "buy", "1")
+
+    assert await get_balance(uid) == ARTIFACTS[0]["cost"] + 500
+    assert uid not in _state.user_artifacts or not _state.user_artifacts[uid]
+
+
+async def test_shop_lockchannel_taken_during_confirm_no_charge(db, monkeypatch):
+    """A channel locked by someone else during the confirm wait must not be
+    re-locked or charged — the post-confirm re-check catches the drift."""
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_LOCK_COST
+
+    cog = ShopCog(bot=None)
+    uid = 9106
+    rival_uid = 9107
+    await add_balance(uid, SHOP_LOCK_COST + 500)
+
+    guild = FakeGuild(gid=42)
+    channel_id = 777001
+
+    class _FakeChannel:
+        id = channel_id
+        name = "contested"
+        mention = "#contested"
+
+    monkeypatch.setattr(
+        ShopCog, "_resolve_channel_strict", lambda self, g, a: _FakeChannel()
+    )
+
+    async def _rival_locks_then_yes(*a, **k):
+        _state.locked_channels[channel_id] = rival_uid
+        return True
+
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _rival_locks_then_yes)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=guild)
+    await cog.shop_lockchannel.callback(cog, ctx, f"<#{channel_id}>")
+
+    assert await get_balance(uid) == SHOP_LOCK_COST + 500
+    assert _state.locked_channels[channel_id] == rival_uid
+    assert any("Already Locked" in (e.title or "") for e in ctx.sent_embeds)
+
+
+async def test_shop_unoreverse_effect_expired_during_confirm_no_charge(db, monkeypatch):
+    """If the caller's active effect runs out during the confirm wait, the
+    post-confirm pop finds nothing — no charge, no redirect."""
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_UNOREVERSE_COST
+
+    cog = ShopCog(bot=None)
+    uid = 9108
+    target_uid = 9109
+    await add_balance(uid, SHOP_UNOREVERSE_COST + 500)
+    _state.active_mocks[(42, uid)] = {"remaining": 3, "started_by": 1, "channel_id": 1}
+    target = FakeMember(uid=target_uid, display_name="t")
+
+    class _StubConverter:
+        async def convert(self, ctx, arg):
+            return target
+
+    monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+
+    async def _effect_expires_then_yes(*a, **k):
+        _state.active_mocks.pop((42, uid), None)
+        return True
+
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _effect_expires_then_yes)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_unoreverse.callback(cog, ctx, f"<@{target_uid}>")
+
+    assert await get_balance(uid) == SHOP_UNOREVERSE_COST + 500
+    assert (42, target_uid) not in _state.active_mocks

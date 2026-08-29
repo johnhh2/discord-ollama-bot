@@ -32,7 +32,7 @@ from src.persistence import (
     save_user_artifact, try_set_record, save_leveling,
 )
 from src.artifacts import ARTIFACTS, owned_qty, owned_artifact_count
-from src.confirm_view import confirm_purchase
+from src.confirm_view import confirm_prompt, confirm_purchase
 from src.guild_config import get_guild_cfg
 from src.ai import (
     keep_typing,
@@ -425,17 +425,28 @@ class ShopCog(commands.Cog):
         if lvl < req:
             await ctx.send(embed=emb("🔒 Level Locked", f"That artifact unlocks at **Level {req}** — you're Level {lvl}.", C_RED))
             return
+        if owned_qty(uid, art["id"]) >= art["max"]:
+            await ctx.send(embed=emb("🏺 Already Owned", "You already own that artifact.", C_PURPLE))
+            return
+
+        cost = 0 if uid in state.godmode_users else art["cost"]
+        if not await confirm_purchase(
+            ctx, title="🏺 Buy Artifact",
+            description=f"{art['effect']} — permanent and yours forever.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
 
         # Gate-and-claim runs synchronously before the charge await so a
         # second concurrent !artifacts buy sees the claim and bails instead
-        # of double-charging (see CLAUDE.md on per-user command races).
+        # of double-charging (see CLAUDE.md on per-user command races). The
+        # owned re-check also covers drift during the confirm wait.
         owned = state.user_artifacts.setdefault(uid, {})
         prior = owned.get(art["id"], 0)
         if prior >= art["max"]:
             await ctx.send(embed=emb("🏺 Already Owned", "You already own that artifact.", C_PURPLE))
             return
         owned[art["id"]] = prior + 1
-        cost = 0 if uid in state.godmode_users else art["cost"]
         if not await shop_charge(ctx, uid, cost, cost_label=f"{art['cost']:,}"):
             if prior:
                 owned[art["id"]] = prior
@@ -489,6 +500,10 @@ class ShopCog(commands.Cog):
             _exp = get_insurance_expiry(ctx.guild.id, target.id)
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be renamed (expires <t:{_exp}:R>).", C_GOLD))
             return
+        desc = (f"Change **{target.display_name}**'s nickname to **{new_name}**."
+                if target.id != uid else f"Change your nickname to **{new_name}**.")
+        if not await confirm_purchase(ctx, title="🎭 Nickname", description=desc, cost=cost, payer=ctx.author):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=cost_label):
             return
         try:
@@ -510,6 +525,12 @@ class ShopCog(commands.Cog):
     async def shop_removenickname(self, ctx: commands.Context):
         uid = ctx.author.id
         cost = 0 if uid in state.godmode_users else SHOP_NICKNAME_REMOVE_COST
+        if not await confirm_purchase(
+            ctx, title="🎭 Remove Nickname",
+            description="Reset your nickname to your username.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_NICKNAME_REMOVE_COST:,}"):
             return
         try:
@@ -555,6 +576,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_CREATE_COST
+        if not await confirm_purchase(
+            ctx, title="👑 Create Role",
+            description=f"Create role **{name}** and assign it to **{target.display_name}**.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_CREATE_COST:,}"):
             return
         try:
@@ -610,6 +637,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be given new roles (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_ASSIGN_COST
+        if not await confirm_purchase(
+            ctx, title="👑 Assign Role",
+            description=f"Assign **{role.name}** to **{target.display_name}**.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_ASSIGN_COST:,}"):
             return
         try:
@@ -666,11 +699,17 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🛡️ Protected", f"**{member.display_name}** has insurance and their roles can't be changed (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_REMOVE_COST
+        who = member.display_name if member != ctx.author else "you"
+        if not await confirm_purchase(
+            ctx, title="👑 Remove Role",
+            description=f"Remove **{role.name}** from **{who}**.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_REMOVE_COST:,}"):
             return
         try:
             await member.remove_roles(role)
-            who = member.display_name if member != ctx.author else "you"
             await ctx.send(embed=emb("✅ Role Removed", f"Role **{role.name}** has been removed from **{who}**.", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
@@ -715,6 +754,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🛡️ Protected", f"{names} {'has' if len(insured_members) == 1 else 'have'} insurance — this role can't be deleted (expires <t:{_earliest}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_DELETE_COST
+        if not await confirm_purchase(
+            ctx, title="👑 Delete Role",
+            description=f"Permanently delete the role **{role.name}**.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_DELETE_COST:,}"):
             return
         try:
@@ -754,6 +799,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Name", "Channel name must be at least 2 characters.", C_RED))
             return
         cost = 0 if uid in state.godmode_users else SHOP_CHANNEL_COST
+        if not await confirm_purchase(
+            ctx, title="📢 Create Channel",
+            description=f"Create a new text channel **#{channel_name}**.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_CHANNEL_COST:,}"):
             return
         try:
@@ -809,6 +860,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🔒 Locked", f"**{channel.name}** is locked — only its owner can delete it.", C_RED))
             return
         cost = 0 if uid in state.godmode_users else SHOP_CHANNEL_DELETE_COST
+        if not await confirm_purchase(
+            ctx, title="📢 Delete Channel",
+            description=f"Permanently delete {channel.mention}.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_CHANNEL_DELETE_COST:,}"):
             return
         try:
@@ -850,6 +907,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🔒 Locked", f"**{target_channel.name}** is locked — only its owner can rename it.", C_RED))
             return
         cost = 0 if uid in state.godmode_users else SHOP_RENAME_COST
+        if not await confirm_purchase(
+            ctx, title="📢 Rename Channel",
+            description=f"Rename **{target_channel.name}** to **{new_name}**.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_RENAME_COST:,}"):
             return
         try:
@@ -893,6 +956,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can rename it.", C_RED))
             return
         cost = 0 if uid in state.godmode_users else SHOP_RENAME_COST
+        if not await confirm_purchase(
+            ctx, title="👑 Rename Role",
+            description=f"Rename **{role.name}** to **{new_name}**.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_RENAME_COST:,}"):
             return
         try:
@@ -932,6 +1001,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🔒 Locked", f"**{target_channel.name}** is locked — only its owner can change its permissions.", C_RED))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLECHANNEL_COST
+        if not await confirm_purchase(
+            ctx, title="📢 Restrict Channel",
+            description=f"Make {target_channel.mention} visible only to **{role.name}**.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLECHANNEL_COST:,}"):
             return
         try:
@@ -968,9 +1043,21 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Already Locked", f"{target_channel.mention} is already locked.", C_RED))
             return
         cost = 0 if uid in state.godmode_users else SHOP_LOCK_COST
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_LOCK_COST:,}"):
+        if not await confirm_purchase(
+            ctx, title="🔒 Lock Channel",
+            description=f"Lock {target_channel.mention} so only you can modify or delete it.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
+        # Re-check and claim synchronously after the confirm wait — a
+        # concurrent locker may have taken it during the prompt.
+        if target_channel.id in state.locked_channels:
+            await ctx.send(embed=emb("❌ Already Locked", f"{target_channel.mention} is already locked.", C_RED))
             return
         state.locked_channels[target_channel.id] = uid
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_LOCK_COST:,}"):
+            state.locked_channels.pop(target_channel.id, None)
+            return
         cfg = get_guild_cfg(ctx.guild.id)
         cfg.setdefault("locked_channels", {})[str(target_channel.id)] = uid
         await save_guild_settings()
@@ -1024,9 +1111,21 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Already Locked", f"**{role.name}** is already locked.", C_RED))
             return
         cost = 0 if uid in state.godmode_users else SHOP_LOCK_COST
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_LOCK_COST:,}"):
+        if not await confirm_purchase(
+            ctx, title="🔒 Lock Role",
+            description=f"Lock **{role.name}** so only you can modify, delete, or manage it.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
+        # Re-check and claim synchronously after the confirm wait — a
+        # concurrent locker may have taken it during the prompt.
+        if role.id in state.locked_roles:
+            await ctx.send(embed=emb("❌ Already Locked", f"**{role.name}** is already locked.", C_RED))
             return
         state.locked_roles[role.id] = uid
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_LOCK_COST:,}"):
+            state.locked_roles.pop(role.id, None)
+            return
         cfg = get_guild_cfg(ctx.guild.id)
         cfg.setdefault("locked_roles", {})[str(role.id)] = uid
         await save_guild_settings()
@@ -1084,6 +1183,13 @@ class ShopCog(commands.Cog):
             return
         topic = " ".join(args[1:])
         cost = 0 if uid in state.godmode_users else SHOP_RAGEBAIT_COST
+        topic_note = f" (topic: {topic})" if topic else ""
+        if not await confirm_purchase(
+            ctx, title="🎣 Ragebait",
+            description=f"Ragebait **{target.display_name}** for {SHOP_RAGEBAIT_MESSAGES + 1} messages{topic_note}.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_RAGEBAIT_COST:,}"):
             return
         topic_clause = f" The topic should be specifically about: {topic}." if topic else ""
@@ -1148,6 +1254,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against mock (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_MOCK_COST
+        if not await confirm_purchase(
+            ctx, title="🎭 Mock",
+            description=f"Mock **{target.display_name}**'s next {SHOP_MOCK_MESSAGES} messages.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MOCK_COST:,}"):
             return
         state.active_mocks[(gid, target.id)] = {"remaining": SHOP_MOCK_MESSAGES, "started_by": uid, "channel_id": ctx.channel.id}
@@ -1194,6 +1306,26 @@ class ShopCog(commands.Cog):
         protects_str = "ragebait, mock, nickname, role assignments, steal, tax, and spellcheck"
 
         if arg and arg.lower() in ("sub", "subscribe"):
+            if key in state.insurance_subs:
+                await ctx.send(embed=emb(
+                    "🛡️ Already Subscribed",
+                    f"You're already subscribed here — **{SHOP_INSURANCE_COST:,} 🪙** is deducted with each daily claim. `!shop insurance unsub` to cancel.",
+                    C_GOLD,
+                ))
+                return
+            first_day = get_insurance_expiry(ctx.guild.id, uid) is None
+            if not await confirm_prompt(
+                ctx, title="🛡️ Insurance Subscription",
+                description=(
+                    f"Subscribe to insurance — each daily claim deducts **{SHOP_INSURANCE_COST:,} 🪙** "
+                    "and adds 24h of coverage."
+                    + (" The first day is charged now so coverage starts immediately." if first_day else "")
+                ),
+                payer=ctx.author,
+            ):
+                return
+            # The confirm wait is a long await — a concurrent subscribe may
+            # have landed during the prompt.
             if key in state.insurance_subs:
                 await ctx.send(embed=emb(
                     "🛡️ Already Subscribed",
@@ -1279,9 +1411,31 @@ class ShopCog(commands.Cog):
             ))
             return
 
+        cost = 0 if uid in state.godmode_users else SHOP_INSURANCE_COST * days
+        day_label = f"{days} day{'s' if days != 1 else ''}"
+        if not await confirm_purchase(
+            ctx, title="🛡️ Insurance",
+            description=f"Prepay **{day_label}** of protection against {protects_str}.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
+        # The confirm wait is a long await — re-check the coverage cap, since
+        # a concurrent purchase (or sub renewal) may have extended coverage
+        # during the prompt.
+        now = time.time()
+        current_exp = get_insurance_expiry(ctx.guild.id, uid)
+        remaining = max(0.0, (current_exp or now) - now)
+        if remaining + days * SHOP_INSURANCE_DURATION_SECS > SHOP_INSURANCE_MAX_DAYS * SHOP_INSURANCE_DURATION_SECS:
+            await ctx.send(embed=emb(
+                "🛡️ Coverage Capped",
+                f"Total coverage can't exceed **{SHOP_INSURANCE_MAX_DAYS} days** — your coverage "
+                "changed while confirming. You were not charged.",
+                C_GOLD,
+            ))
+            return
+
         # Stamp the extension synchronously before shop_charge (see CLAUDE.md
         # on per-user command races); roll back our days if the charge fails.
-        cost = 0 if uid in state.godmode_users else SHOP_INSURANCE_COST * days
         expires_at = extend_insurance(ctx.guild.id, uid, days)
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST * days:,}"):
             self._rollback_insurance_days(key, days)
@@ -1321,6 +1475,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Color", f"Could not parse color: `{color_str}`. Try hex codes like `#FF0000` or color names.", C_RED))
             return
         cost = 0 if uid in state.godmode_users else SHOP_ROLECOLOR_COST
+        if not await confirm_purchase(
+            ctx, title="🎨 Role Color",
+            description=f"Set **{role.name}**'s color to `{color_str}`.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLECOLOR_COST:,}"):
             return
         try:
@@ -1354,6 +1514,12 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
         cost = 0 if uid in state.godmode_users else SHOP_MUTE_COST
+        if not await confirm_purchase(
+            ctx, title="🔕 Mute",
+            description=f"Server-mute **{target.display_name}** for {SHOP_MUTE_MINUTES} minutes.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MUTE_COST:,}"):
             return
         try:
@@ -1420,6 +1586,15 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against tax (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_TAX_COST
+        if not await confirm_purchase(
+            ctx, title=f"{tax_emoji} {tax_type.capitalize()} Tax",
+            description=(
+                f"Tax **{target.display_name}** — they'll owe you "
+                f"**{SHOP_TAX_PER_MESSAGE:,} 🪙** per message for 24h."
+            ),
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_TAX_COST:,}"):
             return
         activated_at = time.time()
@@ -1456,6 +1631,12 @@ class ShopCog(commands.Cog):
             return
         gid = ctx.guild.id
         cost = 0 if uid in state.godmode_users else SHOP_CURSE_COST
+        if not await confirm_purchase(
+            ctx, title="🔮 Curse",
+            description=f"Curse **{target.display_name}**'s next {SHOP_CURSE_MESSAGES} messages.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_CURSE_COST:,}"):
             return
         state.active_curses[(gid, target.id)] = {"cursed_by": uid, "remaining": SHOP_CURSE_MESSAGES, "channel_id": ctx.channel.id}
@@ -1566,14 +1747,44 @@ class ShopCog(commands.Cog):
         gid = ctx.guild.id
         self_key = (gid, uid)
         target_key = (gid, target.id)
-        # Claim the active effects synchronously up front so a concurrent
+        # Non-destructive presence check for the usage/confirm messages — the
+        # actual claim (pop) happens after the confirm prompt.
+        active_names = [
+            name for name, effects in (
+                ("mock", state.active_mocks),
+                ("ragebait", state.active_ragebaits),
+                ("curse", state.active_curses),
+            ) if self_key in effects
+        ]
+        if not active_names:
+            await ctx.send(embed=emb("🔄 Uno Reverse", "You don't have any active mock, ragebait, or curse on you to reverse!", C_GREY))
+            return
+
+        if await is_insured(gid, target.id, "mock"):
+            _exp = get_insurance_expiry(gid, target.id)
+            await ctx.send(embed=emb(
+                "🛡️ Protected",
+                f"**{target.display_name}** has insurance and can't be targeted (expires <t:{_exp}:R>).",
+                C_GOLD,
+            ))
+            return
+        cost = 0 if uid in state.godmode_users else SHOP_UNOREVERSE_COST
+        if not await confirm_purchase(
+            ctx, title="🔄 Uno Reverse",
+            description=f"Redirect your active {', '.join(active_names)} onto **{target.display_name}**.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
+
+        # Claim the active effects synchronously so a concurrent
         # !shop unoreverse can't both pay the cost AND crash on .pop(KeyError)
         # when it tries to redirect the same effect a second time.
         mock_data = state.active_mocks.pop(self_key, None)
         rage_data = state.active_ragebaits.pop(self_key, None)
         curse_data = state.active_curses.pop(self_key, None)
         if mock_data is None and rage_data is None and curse_data is None:
-            await ctx.send(embed=emb("🔄 Uno Reverse", "You don't have any active mock, ragebait, or curse on you to reverse!", C_GREY))
+            # The effects ran out (or were reversed) during the confirm wait.
+            await ctx.send(embed=emb("🔄 Uno Reverse", "You don't have any active mock, ragebait, or curse on you to reverse! You were not charged.", C_GREY))
             return
 
         def _restore_claimed():
@@ -1584,16 +1795,6 @@ class ShopCog(commands.Cog):
             if curse_data is not None:
                 state.active_curses[self_key] = curse_data
 
-        if await is_insured(gid, target.id, "mock"):
-            _restore_claimed()
-            _exp = get_insurance_expiry(gid, target.id)
-            await ctx.send(embed=emb(
-                "🛡️ Protected",
-                f"**{target.display_name}** has insurance and can't be targeted (expires <t:{_exp}:R>).",
-                C_GOLD,
-            ))
-            return
-        cost = 0 if uid in state.godmode_users else SHOP_UNOREVERSE_COST
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_UNOREVERSE_COST:,}"):
             _restore_claimed()
             return
@@ -1743,6 +1944,12 @@ class ShopCog(commands.Cog):
             return
 
         cost = 0 if uid in state.godmode_users else SHOP_ROLE_MOVE_COST
+        if not await confirm_purchase(
+            ctx, title="👑 Move Role",
+            description=f"Move **{role.name}** {'up' if direction == 'roleup' else 'down'} one position.",
+            cost=cost, payer=ctx.author,
+        ):
+            return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLE_MOVE_COST:,}"):
             return
 

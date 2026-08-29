@@ -749,3 +749,20 @@ async def test_bounties_list_excludes_other_guilds(db):
     await cog.cmd_bounties.callback(cog, ctx)
     listing = next(e for e in ctx.sent_embeds if "Open Bounties" in e.title)
     assert "(1)" in listing.title
+
+
+async def test_bounty_declined_confirm_no_escrow(db, monkeypatch):
+    """Cancelling the post-bounty confirm must not escrow or post anything."""
+    author_id = 9801
+    await add_balance(author_id, 10_000)
+
+    async def _decline(*a, **k):
+        return False
+    monkeypatch.setattr("src.cogs.bounty_cog.confirm_purchase", _decline)
+
+    cog, bot, channel = _make_cog()
+    ctx = _ctx(author_id, channel)
+    await cog.create_bounty(ctx, ("5k", "do", "a", "thing"))
+
+    assert await get_balance(author_id) == 10_000
+    assert not _state.active_bounties

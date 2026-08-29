@@ -674,3 +674,94 @@ async def test_custom_name_and_upgrade_travel_on_market_sale(db):
     row = _state.property_owners["car_wash"]
     assert row["owner_id"] == buyer
     assert row["custom_name"] == "Sudsy Suds" and row["upgraded"] is True
+
+
+# ── purchase confirm gating ──────────────────────────────────────────────────
+#
+# Every property purchase (bank buy, market buy, upgrade) now opens a
+# Confirm/Cancel prompt before the deed claim; the conftest auto-accepts.
+
+async def test_buy_declined_confirm_no_charge_no_deed(db, monkeypatch):
+    uid = 9701
+    _set_level(uid, 50)
+    prop = find_property("Hot Dog Cart")
+    await add_balance(uid, prop["cost"] + 500)
+
+    async def _decline(*a, **k):
+        return False
+    monkeypatch.setattr("src.cogs.assets_cog.confirm_purchase", _decline)
+
+    cog = AssetsCog(bot=None)
+    await cog.assets_buy.callback(cog, _ctx(uid), name="Hot Dog Cart")
+
+    assert await get_balance(uid) == prop["cost"] + 500
+    assert prop["id"] not in _state.property_owners
+
+
+async def test_buy_deed_taken_during_confirm_no_charge(db, monkeypatch):
+    """A rival buying the deed during the confirm wait must not be clobbered —
+    the post-confirm re-check refuses without charging."""
+    uid = 9702
+    rival = 9703
+    _set_level(uid, 50)
+    prop = find_property("Hot Dog Cart")
+    await add_balance(uid, prop["cost"] + 500)
+
+    async def _rival_buys_then_yes(*a, **k):
+        await _give_property(rival, prop["id"])
+        return True
+    monkeypatch.setattr("src.cogs.assets_cog.confirm_purchase", _rival_buys_then_yes)
+
+    cog = AssetsCog(bot=None)
+    ctx = _ctx(uid)
+    await cog.assets_buy.callback(cog, ctx, name="Hot Dog Cart")
+
+    assert await get_balance(uid) == prop["cost"] + 500
+    assert _state.property_owners[prop["id"]]["owner_id"] == rival
+    assert any("Not For Sale" in (e.title or "") for e in ctx.sent_embeds)
+
+
+async def test_market_buy_delisted_during_confirm_no_charge(db, monkeypatch):
+    """A seller delisting during the confirm wait aborts the market buy."""
+    uid = 9704
+    seller = 9705
+    _set_level(uid, 50)
+    prop = find_property("Hot Dog Cart")
+    await _give_property(seller, prop["id"])
+    row = _state.property_owners[prop["id"]]
+    row["list_price"] = prop["cost"] * 2
+    row["listed_at"] = time.time()
+    await add_balance(uid, prop["cost"] * 3)
+
+    async def _delist_then_yes(*a, **k):
+        row.update(list_price=None, listed_at=None)
+        return True
+    monkeypatch.setattr("src.cogs.assets_cog.confirm_purchase", _delist_then_yes)
+
+    cog = AssetsCog(bot=None)
+    ctx = _ctx(uid)
+    await cog.assets_buy.callback(cog, ctx, name="Hot Dog Cart")
+
+    assert await get_balance(uid) == prop["cost"] * 3
+    assert _state.property_owners[prop["id"]]["owner_id"] == seller
+    assert any("Listing Changed" in (e.title or "") for e in ctx.sent_embeds)
+
+
+async def test_upgrade_declined_confirm_no_charge(db, monkeypatch):
+    from src.properties import PROPERTY_UPGRADES
+
+    uid = 9706
+    prop = find_property("Hot Dog Cart")
+    await _give_property(uid, prop["id"])
+    _up_name, up_cost, _up_boost = PROPERTY_UPGRADES[prop["id"]]
+    await add_balance(uid, up_cost + 500)
+
+    async def _decline(*a, **k):
+        return False
+    monkeypatch.setattr("src.cogs.assets_cog.confirm_purchase", _decline)
+
+    cog = AssetsCog(bot=None)
+    await cog.assets_upgrade.callback(cog, _ctx(uid), name="Hot Dog Cart")
+
+    assert await get_balance(uid) == up_cost + 500
+    assert not _state.property_owners[prop["id"]].get("upgraded")
