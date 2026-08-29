@@ -1,6 +1,8 @@
 import asyncio
+import datetime
 import logging
 import random
+from zoneinfo import ZoneInfo
 
 import discord
 from discord.ext import commands, tasks
@@ -39,6 +41,13 @@ NEW_PLAYER_POOL_BONUS = 1000
 CHESS_TICKET_TIERS = (("chess_week_500", 500), ("chess_week_1100", 1100))
 CHESS_TICKET_MIN_ELO = CHESS_TICKET_TIERS[0][1]
 CHESS_TICKET_BONUS_ELO = CHESS_TICKET_TIERS[1][1]
+# The reworked ticket economy starts with the September 2026 lottery. The
+# August 2026 pot still holds thousands of old 10-coin bulk tickets, so
+# selling a 1,000 🪙 ticket (or granting a free chess one) into it would be a
+# rip-off — no tickets of any kind until the 9/1/2026 6pm CT draw resets the
+# pool. This gate (and its three call sites) can be deleted once that date
+# has passed.
+TICKET_SALES_START_CT = datetime.datetime(2026, 9, 1, 18, 0, tzinfo=ZoneInfo("America/Chicago"))
 
 
 def _grant_row(guild_id: int, uid: int) -> dict:
@@ -87,6 +96,11 @@ def lottery_status_text() -> "str | None":
 def _sales_locked(now_cst) -> bool:
     """Ticket sales close for the final hour before the draw (5-6pm CT on the 1st)."""
     return now_cst.day == 1 and now_cst.hour == 17
+
+
+def _sales_not_started(now_cst) -> bool:
+    """True while the one-time TICKET_SALES_START_CT launch gate is closed."""
+    return now_cst < TICKET_SALES_START_CT
 
 
 class LotteryCog(commands.Cog):
@@ -271,6 +285,17 @@ class LotteryCog(commands.Cog):
             return
 
         now_cst = _ct_now()
+        if _sales_not_started(now_cst):
+            ts = int(TICKET_SALES_START_CT.timestamp())
+            await channel.send(embed=emb(
+                "🔒 Ticket Sales Paused",
+                "The lottery switched to a new ticket system, and the current pot "
+                "still holds the old cheap bulk tickets — no fair selling "
+                f"{DAILY_TICKET_PRICE:,} 🪙 tickets into it.\n"
+                f"Sales reopen when the next lottery starts, after the draw <t:{ts}:R>.",
+                C_GREY,
+            ), silent=silent)
+            return
         if _sales_locked(now_cst):
             await channel.send(embed=emb("🔒 Lottery Locked", "Ticket sales are closed for the final hour before the draw. Check back after 6pm CT!", C_RED), silent=silent)
             return
@@ -325,6 +350,10 @@ class LotteryCog(commands.Cog):
         """
         cfg = get_guild_cfg(guild.id)
         if not cfg.get("lottery_channel"):
+            return 0
+        # Launch gate: no free tickets into the pre-rework pot either — and
+        # the weekly gates stay unclaimed, so nothing is burned.
+        if _sales_not_started(_ct_now()):
             return 0
 
         # Claim the weekly gates synchronously before any await; roll back
@@ -392,9 +421,15 @@ class LotteryCog(commands.Cog):
         # Next 1st-of-month 6pm CT draw (handles CST/CDT automatically)
         timestamp = int(next_lottery_draw_dt(now_cst).timestamp())
 
+        pre_launch = _sales_not_started(now_cst)
         locked = _sales_locked(now_cst)
         bought_today = _grant_row(ctx.guild.id, uid).get("daily_day") == _ct_today()
-        if locked:
+        if pre_launch:
+            daily_status = (
+                "🔒 paused — the current pot predates the new ticket system; "
+                f"sales open <t:{int(TICKET_SALES_START_CT.timestamp())}:R> with the next lottery"
+            )
+        elif locked:
             daily_status = "🔒 sales closed for the final hour before the draw"
         elif bought_today:
             daily_status = f"✅ bought — next one <t:{next_daily_reset_ts()}:R>"
@@ -413,7 +448,7 @@ class LotteryCog(commands.Cog):
         await ctx.send(embed=emb(f"🎰 Current Lottery • ends <t:{timestamp}:R>", info, C_PURPLE))
 
         # Offer today's ticket when it's still unbought.
-        if locked or bought_today:
+        if pre_launch or locked or bought_today:
             return
         confirmed = await confirm_purchase(
             ctx,

@@ -378,6 +378,12 @@ async def test_reaction_slots_gambles_whole_claim_and_keeps_big_results(db, monk
 def _add_lottery_cog(bot, monkeypatch, today=TODAY):
     """Register a LotteryCog on the stub bot for the 🎟️ reaction path."""
     monkeypatch.setattr("src.cogs.lottery_cog._ct_today", lambda: today)
+    # Pin past the one-time TICKET_SALES_START_CT launch gate and clear of
+    # the 1st-of-month lock/draw windows.
+    import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    now_ct = _dt.datetime(2026, 10, 2, 12, 0, tzinfo=_ZI("America/Chicago"))
+    monkeypatch.setattr("src.cogs.lottery_cog._ct_now", lambda: now_ct)
     cog = LotteryCog(bot)
     cog.lottery_scheduler.cancel()
     bot.cogs["LotteryCog"] = cog

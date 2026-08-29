@@ -26,12 +26,15 @@ from src.cogs.lottery_cog import (
 )
 from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild
 
-TODAY = "2026-05-02"
-YESTERDAY = "2026-05-01"
-WEEK = "2026-W18"
-LAST_WEEK = "2026-W17"
-# A mid-month noon — well clear of the 1st-of-month lock/draw windows.
-NOW_CT = datetime.datetime(2026, 5, 2, 12, 0, tzinfo=ZoneInfo("America/Chicago"))
+TODAY = "2026-10-02"
+YESTERDAY = "2026-10-01"
+WEEK = "2026-W40"
+LAST_WEEK = "2026-W39"
+# A mid-month noon — well clear of the 1st-of-month lock/draw windows and
+# past the one-time TICKET_SALES_START_CT launch gate (9/1/2026).
+NOW_CT = datetime.datetime(2026, 10, 2, 12, 0, tzinfo=ZoneInfo("America/Chicago"))
+# Before the launch gate (and clear of the lock/draw windows).
+PRE_LAUNCH_NOW_CT = datetime.datetime(2026, 8, 15, 12, 0, tzinfo=ZoneInfo("America/Chicago"))
 GUILD_ID = 77
 
 
@@ -202,7 +205,7 @@ async def test_daily_ticket_without_lottery_channel_refused(db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_daily_ticket_locked_final_hour_before_draw(db, monkeypatch):
-    locked_now = datetime.datetime(2026, 5, 1, 17, 30, tzinfo=ZoneInfo("America/Chicago"))
+    locked_now = datetime.datetime(2026, 11, 1, 17, 30, tzinfo=ZoneInfo("America/Chicago"))
     _pin_clock(monkeypatch, now=locked_now)
     ctx = _lottery_ctx(uid=9208)
     await _economy.add_balance(ctx.author.id, 5_000)
@@ -214,6 +217,77 @@ async def test_daily_ticket_locked_final_hour_before_draw(db, monkeypatch):
     titles = [e.title for e in _channel_embeds(ctx)]
     assert "🔒 Lottery Locked" in titles
     assert _state.lottery_ticket_grants.get((GUILD_ID, ctx.author.id), {}).get("daily_day") is None
+
+
+# ── one-time launch gate: no tickets until the 9/1/2026 draw ─────────────────
+
+@pytest.mark.asyncio
+async def test_daily_ticket_paused_before_september_relaunch(db, monkeypatch):
+    """The pre-rework pot is full of old 10-coin bulk tickets — no 1,000 🪙
+    sales into it. Gate unburned, nothing charged."""
+    _pin_clock(monkeypatch, now=PRE_LAUNCH_NOW_CT)
+    ctx = _lottery_ctx(uid=9240)
+    await _economy.add_balance(ctx.author.id, 5_000)
+    cog = _make_cog()
+
+    await cog.buy_daily_ticket(ctx.author, ctx.channel, ctx.guild)
+
+    assert await _economy.get_balance(ctx.author.id) == 5_000
+    assert (await _persistence.load_lottery(GUILD_ID))["players"] == {}
+    assert _state.lottery_ticket_grants.get((GUILD_ID, ctx.author.id), {}).get("daily_day") is None
+    titles = [e.title for e in _channel_embeds(ctx)]
+    assert "🔒 Ticket Sales Paused" in titles
+
+
+@pytest.mark.asyncio
+async def test_chess_tickets_paused_before_september_relaunch(db, monkeypatch):
+    """Free chess tickets are held back too, without burning the weekly gates."""
+    _pin_clock(monkeypatch, now=PRE_LAUNCH_NOW_CT)
+    ctx = _lottery_ctx(uid=9241)
+    cog = _make_cog()
+
+    assert await cog.award_chess_tickets(ctx.guild, ctx.author.id, 1500) == 0
+    assert (await _persistence.load_lottery(GUILD_ID))["players"] == {}
+    assert _state.lottery_ticket_grants.get((GUILD_ID, ctx.author.id)) is None
+
+
+@pytest.mark.asyncio
+async def test_cmd_lottery_paused_shows_info_without_confirm(db, monkeypatch):
+    _pin_clock(monkeypatch, now=PRE_LAUNCH_NOW_CT)
+    ctx = _lottery_ctx(uid=9242)
+    await _economy.add_balance(ctx.author.id, 5_000)
+    cog = _make_cog()
+
+    confirm_calls = []
+
+    async def _spy_confirm(*args, **kwargs):
+        confirm_calls.append(1)
+        return True
+    monkeypatch.setattr("src.cogs.lottery_cog.confirm_purchase", _spy_confirm)
+
+    await cog.cmd_lottery.callback(cog, ctx)
+
+    info = ctx.sent_embeds[-1]
+    assert info.title.startswith("🎰 Current Lottery")
+    assert "🔒 paused" in info.description
+    assert confirm_calls == []
+    assert await _economy.get_balance(ctx.author.id) == 5_000
+
+
+@pytest.mark.asyncio
+async def test_tickets_flow_normally_after_relaunch_moment(db, monkeypatch):
+    """The instant the 9/1/2026 6pm CT draw time passes, sales are open (the
+    scheduler's draw runs in the same minute and resets the pot)."""
+    just_after = datetime.datetime(2026, 9, 1, 19, 0, tzinfo=ZoneInfo("America/Chicago"))
+    _pin_clock(monkeypatch, now=just_after)
+    ctx = _lottery_ctx(uid=9243)
+    await _economy.add_balance(ctx.author.id, 5_000)
+    cog = _make_cog()
+
+    await cog.buy_daily_ticket(ctx.author, ctx.channel, ctx.guild)
+
+    assert (await _persistence.load_lottery(GUILD_ID))["players"][str(ctx.author.id)] == 1
+    assert await cog.award_chess_tickets(ctx.guild, ctx.author.id, 1200) == 2
 
 
 # ── !lottery: info + confirm prompt ───────────────────────────────────────────
