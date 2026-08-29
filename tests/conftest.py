@@ -88,6 +88,7 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "active_events", {})
     monkeypatch.setattr(_state, "user_artifacts", {})
     monkeypatch.setattr(_state, "property_owners", {})
+    monkeypatch.setattr(_state, "lottery_ticket_grants", {})
     monkeypatch.setattr(_state, "rigged_slots", {})
     monkeypatch.setattr(_state, "rigged_steal", {})
     monkeypatch.setattr(_state, "active_chess_games", {})
@@ -134,7 +135,7 @@ def reset_bot_state(monkeypatch):
         "save_property_owner", "delete_property_owner",
         "save_gambler_streak", "save_command_streak", "save_ai_threads",
         "save_quote_log", "save_saved_quotes", "save_lottery", "save_records",
-        "save_lottery_automatch", "delete_lottery_automatch", "clear_lottery_automatch",
+        "save_lottery_ticket_grant",
         "save_leveling", "save_command_perms", "save_channel_prompts",
         "save_balance_history", "save_bot_stats_history",
         "save_command_usage_history",
@@ -211,11 +212,13 @@ def reset_bot_state(monkeypatch):
     import src.cogs.shop_cog as _shop_cog_mod
     import src.cogs.bounty_cog as _bounty_cog_mod
     import src.cogs.assets_cog as _assets_cog_mod
+    import src.cogs.lottery_cog as _lottery_cog_mod
     monkeypatch.setattr(_shop_cog_mod, "confirm_purchase", _auto_confirm)
     monkeypatch.setattr(_shop_cog_mod, "confirm_prompt", _auto_confirm)
     monkeypatch.setattr(_bounty_cog_mod, "confirm_purchase", _auto_confirm)
     monkeypatch.setattr(_assets_cog_mod, "confirm_purchase", _auto_confirm)
     monkeypatch.setattr(_assets_cog_mod, "confirm_prompt", _auto_confirm)
+    monkeypatch.setattr(_lottery_cog_mod, "confirm_purchase", _auto_confirm)
 
 
 @pytest_asyncio.fixture

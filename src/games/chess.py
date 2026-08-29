@@ -1205,6 +1205,22 @@ class ChessCog(commands.Cog):
                 except Exception as e:
                     logging.error(f"bot_chess_rewards.award_bot_defeat failed: {e}", exc_info=True)
 
+                # Free weekly lottery ticket(s) for beating a 500+ Elo bot
+                # (one more at 1100+) — gated per ISO week inside the cog.
+                get_cog = getattr(self.bot, "get_cog", None)
+                lottery_cog = get_cog("LotteryCog") if get_cog else None
+                if lottery_cog is not None and guild is not None:
+                    try:
+                        free_tickets = await lottery_cog.award_chess_tickets(
+                            guild, winner_id, bot_elo,
+                        )
+                        if free_tickets == 1:
+                            payout_line += " 🎟️ **+1** free lottery ticket (weekly chess bonus)."
+                        elif free_tickets > 1:
+                            payout_line += f" 🎟️ **+{free_tickets}** free lottery tickets (weekly chess bonus)."
+                    except Exception as e:
+                        logging.error(f"lottery award_chess_tickets failed: {e}", exc_info=True)
+
         # Head-to-head line. PvP uses the all-time pairwise record; bot games
         # use the per-Elo record so a 0-3 vs Sub-Maia 400 doesn't pollute the
         # 5-1 vs Maia 1500 record.

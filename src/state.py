@@ -64,6 +64,14 @@ rigged_flips: dict = {}
 rigged_scratch: dict = {}
 rigged_steal: dict = {}
 gambler_streak: dict = {}
+# Lottery ticket-grant gates, keyed (guild_id, user_id):
+# {"daily_day": str|None, "chess_week_500": str|None, "chess_week_1100": str|None}.
+# daily_day is the gameplay-day the user last bought their once-a-day 1,000 🪙
+# ticket in that guild; the chess_week_* fields hold the ISO week of the last
+# free weekly chess-win ticket (500+/1100+ Elo) claimed there. Gate checks
+# claim these synchronously (see CLAUDE.md concurrency rules). Source of truth
+# is the lottery_ticket_grants table; loaded at boot.
+lottery_ticket_grants: dict = {}
 # {uid_str: {"date": "YYYY-MM-DD", "count": int}} — sequential-day streak of
 # using any command (bumped in on_command_completion). Source of truth is the
 # command_streak table; loaded at boot. Update logic lives in src/streaks.py.

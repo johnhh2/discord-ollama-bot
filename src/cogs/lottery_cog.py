@@ -6,12 +6,12 @@ import discord
 from discord.ext import commands, tasks
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, C_GREY, announce_record, parse_int_amount,
+    emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, C_GREY, announce_record,
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, drain_bot_balance_into_lottery, announce_new_lottery,
-    _ensure_user, _ct_now, _ct_today, lottery_month_key, next_lottery_draw_dt,
-    record_gambling_event, add_guild_house,
+    _ensure_user, _ct_now, _ct_today, lottery_month_key, lottery_week_key, next_lottery_draw_dt,
+    next_daily_reset_ts, record_gambling_event, add_guild_house,
 )
 from src.persistence import (
     save_lottery,
@@ -25,40 +25,35 @@ from src.confirm_view import confirm_purchase
 from src import state, status_manager
 
 
-TICKET_PRICE = 10
-DISCOUNT_TICKET_PRICE = 5   # 50% off
-DISCOUNT_DAILY_CAP = 100    # first N tickets per user per gameplay-day
-TICKET_CAP = 5000           # max tickets one player can hold per lottery
+# One purchasable ticket per user per server per gameplay-day — sold from the
+# dailies-channel 🎟️ button or the confirm prompt on !lottery. No bulk
+# buying, no discounts.
+DAILY_TICKET_PRICE = 1000
+# Of each 1,000 🪙 ticket: 700 to the prize pool, 300 to the guild house
+# (same 70/30 split the old 10-coin tickets had).
+TICKET_POOL_SHARE = 700
+TICKET_HOUSE_SHARE = DAILY_TICKET_PRICE - TICKET_POOL_SHARE
+NEW_PLAYER_POOL_BONUS = 1000
+# Free weekly chess-win tickets: beat a bot at/above the threshold Elo to
+# claim that tier's ticket once per ISO week (per server, like the daily).
+CHESS_TICKET_TIERS = (("chess_week_500", 500), ("chess_week_1100", 1100))
+CHESS_TICKET_MIN_ELO = CHESS_TICKET_TIERS[0][1]
+CHESS_TICKET_BONUS_ELO = CHESS_TICKET_TIERS[1][1]
 
 
-def discount_tickets_remaining(user: dict, today: str) -> int:
-    """How many half-price tickets the user has left today.
-
-    Mutates `user` to roll the counter when `lottery_disc_date` is stale
-    (mirrors scratchoff_attempts_remaining) and normalizes
-    `lottery_disc_used` to an int so callers can safely `+=` it.
-    """
-    if user.get("lottery_disc_date") != today:
-        user["lottery_disc_date"] = today
-        user["lottery_disc_used"] = 0
-    elif "lottery_disc_used" not in user:
-        user["lottery_disc_used"] = 0
-    return max(0, DISCOUNT_DAILY_CAP - user["lottery_disc_used"])
+def _grant_row(guild_id: int, uid: int) -> dict:
+    """The user's ticket-grant gate row for this guild (created empty)."""
+    return state.lottery_ticket_grants.setdefault(
+        (guild_id, uid),
+        {"daily_day": None, "chess_week_500": None, "chess_week_1100": None},
+    )
 
 
-def ticket_cost(tickets: int, discount_remaining: int) -> "tuple[int, int]":
-    """Return (total cost, how many of `tickets` are billed at half price)."""
-    discounted = min(tickets, max(0, discount_remaining))
-    return discounted * DISCOUNT_TICKET_PRICE + (tickets - discounted) * TICKET_PRICE, discounted
-
-
-def max_affordable_tickets(balance: int, discount_remaining: int) -> int:
-    """How many tickets `balance` buys when the first `discount_remaining` are half price."""
-    disc = max(0, discount_remaining)
-    disc_cost = disc * DISCOUNT_TICKET_PRICE
-    if balance < disc_cost:
-        return balance // DISCOUNT_TICKET_PRICE
-    return disc + (balance - disc_cost) // TICKET_PRICE
+async def _persist_grant_row(guild_id: int, uid: int, row: dict) -> None:
+    try:
+        await persistence.save_lottery_ticket_grant(guild_id, uid, row)
+    except Exception:
+        logging.exception("[lottery] failed to persist ticket grant for %s/%s", guild_id, uid)
 
 
 async def record_tickets_purchased(count: int) -> None:
@@ -87,6 +82,11 @@ def lottery_status_text() -> "str | None":
     if count <= 0:
         return None
     return f"{count}x 🎟️ sold today"
+
+
+def _sales_locked(now_cst) -> bool:
+    """Ticket sales close for the final hour before the draw (5-6pm CT on the 1st)."""
+    return now_cst.day == 1 and now_cst.hour == 17
 
 
 class LotteryCog(commands.Cog):
@@ -156,12 +156,6 @@ class LotteryCog(commands.Cog):
                 lottery = {"prize_pool": 5000, "players": {}, "last_drawn_week": current_month, "last_posted_week": 0}
                 await drain_bot_balance_into_lottery(lottery, guild.id)
                 await save_lottery(guild.id, lottery)
-                # Automatch opt-ins last one lottery — the fresh pool starts
-                # with no auto-buyers until players re-arm.
-                try:
-                    await persistence.clear_lottery_automatch(guild.id)
-                except Exception:
-                    logging.exception("[lottery] failed to clear automatch for guild %s", guild.id)
 
             # 7pm: announce new lottery
             if now.hour >= 19 and lottery.get("last_posted_week") != current_month:
@@ -213,242 +207,149 @@ class LotteryCog(commands.Cog):
             if new_bal_record:
                 await announce_record(channel, "highest_balance", winner.display_name, await get_balance(int(winner_id)), holder_id=int(winner_id), notify=True)
 
-    async def _execute_purchase(self, guild_id: int, uid: int, tickets: int) -> dict:
-        """Charge `uid` for `tickets` and add them to the guild's lottery.
+    async def _execute_purchase(self, guild_id: int, uid: int, tickets: int, cost: int) -> dict:
+        """Add `tickets` to the guild's lottery for `uid`, charging `cost`
+        (0 for the free chess-win tickets).
 
         Runs inside the guild lock: save_lottery rewrites the whole snapshot,
         so an unlocked concurrent purchase would erase this buyer's tickets
         (while keeping their coins), and a save racing the 1st-of-month draw
         would resurrect the paid-out pool.
 
-        Returns {"error": "cap"} or {"error": "funds", "cost": n} on failure,
-        else the purchase details for the caller to render.
+        The once-a-day / once-a-week gates live with the CALLERS, which must
+        claim them synchronously before awaiting (see CLAUDE.md concurrency
+        rules) and roll them back if this returns an error.
+
+        Returns {"error": "funds", "cost": n} on failure, else the purchase
+        details for the caller to render.
         """
         async with self._lock(guild_id):
             # Load inside the lock — any earlier snapshot may be stale.
             lottery = await load_lottery(guild_id)
             players = lottery.setdefault("players", {})
-            current_tickets = int(players.get(str(uid), 0))
-            if current_tickets + tickets > TICKET_CAP:
-                return {"error": "cap"}
 
-            # Claim the discount synchronously before the charge and roll it
-            # back if the charge fails — the counter is per-user across
-            # guilds, so a purchase in another guild's lock can interleave
-            # at any await.
-            user = state.economy["users"][str(uid)]
-            remaining = discount_tickets_remaining(user, _ct_today())
-            cost, discounted = ticket_cost(tickets, remaining)
-            user["lottery_disc_used"] += discounted
-            if not await deduct_balance(uid, cost):
-                user["lottery_disc_used"] -= discounted
-                return {"error": "funds", "cost": cost}
-            # deduct_balance's save_economy persisted the discount claim.
-            await record_gambling_event(guild_id, uid, lost=cost)
+            if cost > 0:
+                if not await deduct_balance(uid, cost):
+                    return {"error": "funds", "cost": cost}
+                await record_gambling_event(guild_id, uid, lost=cost)
 
             was_new_player = str(uid) not in players
             players[str(uid)] = players.get(str(uid), 0) + tickets
             lottery.setdefault("prize_pool", 0)
-            # A full-price ticket (10) splits 7 pool / 3 house; a half-price
-            # ticket (5) splits 4 / 1.
-            full = tickets - discounted
-            lottery["prize_pool"] += full * 7 + discounted * 4
+            if cost > 0:
+                lottery["prize_pool"] += TICKET_POOL_SHARE * tickets
+                await add_guild_house(guild_id, TICKET_HOUSE_SHARE * tickets)
             if was_new_player:
-                lottery["prize_pool"] += 1000
-            await add_guild_house(guild_id, full * 3 + discounted)
+                lottery["prize_pool"] += NEW_PLAYER_POOL_BONUS
 
             await save_lottery(guild_id, lottery)
-            await record_tickets_purchased(tickets)
+            if cost > 0:
+                await record_tickets_purchased(tickets)
 
         return {
             "tickets": tickets,
             "cost": cost,
-            "discounted": discounted,
             "was_new_player": was_new_player,
             "prize_pool": lottery["prize_pool"],
             "user_tickets": players[str(uid)],
             "total_tickets": sum(players.values()),
         }
 
-    async def _process_automatch(self, guild, channel, buyer_uid: int, buyer_total: int) -> None:
-        """Auto-buy tickets for automatch opt-ins the buyer just passed.
+    async def buy_daily_ticket(self, member, channel, guild, *, silent: bool = False) -> None:
+        """Buy `member`'s once-a-day 1,000 🪙 ticket for this guild's lottery.
 
-        Runs after a successful purchase, outside the guild lock — every
-        auto-buy goes through _execute_purchase, which re-validates the cap
-        and cost under the lock. Automatch only ever raises a user to the
-        buyer's total, never past it, so one pass can't trigger another
-        (and _execute_purchase never calls back into this method).
-        """
-        try:
-            automatch = await persistence.load_lottery_automatch(guild.id)
-        except Exception:
-            logging.exception("[lottery] failed to load automatch opt-ins for guild %s", guild.id)
-            return
-        if not automatch:
-            return
-
-        lottery = await load_lottery(guild.id)
-        players = lottery.get("players", {})
-        lines = []
-        for uid_str, max_tickets in automatch.items():
-            if uid_str == str(buyer_uid):
-                continue
-            current = int(players.get(uid_str, 0))
-            target = min(buyer_total, max_tickets, TICKET_CAP)
-            needed = target - current
-            if needed <= 0:
-                continue
-            uid = int(uid_str)
-            await _ensure_user(uid)
-            user = state.economy["users"][uid_str]
-            remaining = discount_tickets_remaining(user, _ct_today())
-            affordable = max_affordable_tickets(await get_balance(uid), remaining)
-            tickets = min(needed, affordable)
-            if tickets <= 0:
-                lines.append(f"<@{uid}> couldn't afford to match ({needed:,} 🎟️ needed)")
-                continue
-            result = await self._execute_purchase(guild.id, uid, tickets)
-            if result.get("error"):
-                continue
-            short = target - result["user_tickets"]
-            suffix = f" ({short:,} short — balance ran out)" if short > 0 else ""
-            lines.append(
-                f"<@{uid}> auto-bought **{result['tickets']:,}** 🎟️ for "
-                f"**{result['cost']:,} 🪙** — now at **{result['user_tickets']:,}**{suffix}"
-            )
-        if lines:
-            await channel.send(embed=emb("🎯 Automatch", "\n".join(lines), C_PURPLE))
-
-    async def _cmd_automatch(self, ctx: commands.Context, amount: "str | None") -> None:
-        """`!lottery automatch [<max>|off]` — view, arm, or disarm automatch."""
-        uid = ctx.author.id
-        guild_id = ctx.guild.id
-        automatch = await persistence.load_lottery_automatch(guild_id)
-        current = automatch.get(str(uid))
-
-        if amount is None:
-            if current:
-                desc = (
-                    f"Automatch is **on** — when another player buys past your ticket "
-                    f"total, you auto-buy 🎟️ to tie them, up to **{current:,}** 🎟️ held.\n"
-                    "Lasts until this lottery is drawn. `!lottery automatch off` to disable."
-                )
-            else:
-                desc = (
-                    "Automatch is **off**.\n"
-                    "`!lottery automatch <max tickets>` — whenever another player buys "
-                    "past your ticket total, automatically buy 🎟️ to tie them, never "
-                    "holding more than `<max tickets>`."
-                )
-            await ctx.send(embed=emb("🎯 Lottery Automatch", desc, C_PURPLE))
-            return
-
-        if amount.lower() in ("off", "stop", "0"):
-            if current is None:
-                await ctx.send(embed=emb("🎯 Lottery Automatch", "Automatch is already off.", C_GREY))
-                return
-            await persistence.delete_lottery_automatch(guild_id, uid)
-            await ctx.send(embed=emb(
-                "🎯 Automatch Disabled",
-                "You'll no longer auto-buy 🎟️ to match other players.",
-                C_GREY,
-            ))
-            return
-
-        max_tickets = parse_int_amount(amount)
-        if max_tickets is None or max_tickets <= 0:
-            await ctx.send(embed=emb(
-                "❌ Invalid Amount",
-                "Usage: `!lottery automatch <max tickets>` or `!lottery automatch off`.",
-                C_RED,
-            ))
-            return
-        max_tickets = min(max_tickets, TICKET_CAP)
-        await persistence.save_lottery_automatch(guild_id, uid, max_tickets)
-        await ctx.send(embed=emb(
-            "🎯 Automatch Enabled",
-            f"When another player buys past your ticket total, you'll automatically "
-            f"buy 🎟️ to tie them — holding up to **{max_tickets:,}** 🎟️.\n"
-            "Tickets are billed from your balance at the normal (or half-price) rate, "
-            "starting with the next purchase anyone makes.\n"
-            "Lasts until this lottery is drawn. `!lottery automatch off` to disable.",
-            C_GREEN,
-        ))
-
-    async def buy_discounted_tickets(self, member, channel, guild) -> None:
-        """Buy all of `member`'s remaining half-price tickets for the day.
-
-        Backs the dailies-channel 🎟️ reaction (src/cogs/dailies_cog.py).
-        Results are posted to `channel` — the dailies channel, whose sweeper
-        cleans them up after 5 minutes.
+        Backs both purchase paths: the dailies-channel 🎟️ reaction
+        (src/cogs/dailies_cog.py, silent=True — the sweeper cleans the
+        results up after 5 minutes) and the !lottery confirm prompt.
         """
         uid = member.id
         await _ensure_user(uid)
 
         cfg = get_guild_cfg(guild.id)
         if not cfg.get("lottery_channel"):
-            await channel.send(embed=emb("🎰 Lottery Disabled", "Lottery channel not configured.", C_GREY), silent=True)
+            await channel.send(embed=emb("🎰 Lottery Disabled", "Lottery channel not configured.", C_GREY), silent=silent)
             return
 
         now_cst = _ct_now()
-        if now_cst.day == 1 and now_cst.hour == 17:
-            await channel.send(embed=emb("🔒 Lottery Locked", "Ticket sales are closed for the final hour before the draw. Check back after 6pm CT!", C_RED), silent=True)
+        if _sales_locked(now_cst):
+            await channel.send(embed=emb("🔒 Lottery Locked", "Ticket sales are closed for the final hour before the draw. Check back after 6pm CT!", C_RED), silent=silent)
             return
 
-        user = state.economy["users"][str(uid)]
-        remaining = discount_tickets_remaining(user, _ct_today())
-        if remaining <= 0:
+        # Gate-and-claim runs synchronously (no await between the check and
+        # the claim), so a second concurrent invocation bails here instead of
+        # buying a second ticket. Rolled back if the charge fails.
+        today = _ct_today()
+        row = _grant_row(guild.id, uid)
+        prior = row.get("daily_day")
+        if prior == today:
             await channel.send(embed=emb(
-                "🎟️ No Half-Price Tickets Left",
-                f"**{member.display_name}**, you've already bought all "
-                f"**{DISCOUNT_DAILY_CAP:,}** of today's half-price tickets.\n"
-                "`!lottery <n>` still works at full price.",
+                "🎟️ Daily Ticket Already Bought",
+                f"**{member.display_name}**, you already have today's ticket for "
+                f"this server. Next one <t:{next_daily_reset_ts()}:R>.",
                 C_GREY,
-            ), silent=True)
+            ), silent=silent)
             return
+        row["daily_day"] = today
 
-        balance = await get_balance(uid)
-        tickets = min(remaining, balance // DISCOUNT_TICKET_PRICE)
-        if tickets <= 0:
-            await channel.send(embed=emb(
-                "💸 Insufficient Funds",
-                f"A half-price ticket costs **{DISCOUNT_TICKET_PRICE} 🪙** — you have **{balance:,} 🪙**.",
-                C_RED,
-            ), silent=True)
-            return
-
-        result = await self._execute_purchase(guild.id, uid, tickets)
-        if result.get("error") == "cap":
-            await channel.send(embed=emb(
-                "🎟️ Ticket Cap Reached",
-                f"Each player can hold at most **{TICKET_CAP:,}** 🎟️ per lottery.",
-                C_RED,
-            ), silent=True)
-            return
+        result = await self._execute_purchase(guild.id, uid, 1, DAILY_TICKET_PRICE)
         if result.get("error") == "funds":
+            row["daily_day"] = prior
             await channel.send(embed=emb(
                 "💸 Insufficient Funds",
-                f"Need {result['cost']:,} 🪙. Balance: {await get_balance(uid):,} 🪙",
+                f"Today's ticket costs **{DAILY_TICKET_PRICE:,} 🪙** — you have "
+                f"**{await get_balance(uid):,} 🪙**.",
                 C_RED,
-            ), silent=True)
+            ), silent=silent)
             return
+        await _persist_grant_row(guild.id, uid, row)
 
         bonus_msg = "(+1,000 bonus as new player)" if result["was_new_player"] else ""
         timestamp = int(next_lottery_draw_dt(now_cst).timestamp())
         await channel.send(embed=emb(
-            "🎰 Tickets Purchased",
-            f"**{member.display_name}** bought **{result['tickets']:,}** 🎟️ "
-            f"for **{result['cost']:,} 🪙** (all half price)\n\n"
+            "🎰 Daily Ticket Purchased",
+            f"**{member.display_name}** bought today's 🎟️ for **{DAILY_TICKET_PRICE:,} 🪙**\n\n"
             f"**Prize Pool:** {result['prize_pool']:,} 🪙 {bonus_msg}\n"
             f"**Your Tickets:** {result['user_tickets']:,} / {result['total_tickets']:,} total\n"
             f"**Ends:** <t:{timestamp}:R>",
             C_GREEN,
-        ), silent=True)
+        ), silent=silent)
 
-        await self._process_automatch(guild, channel, uid, result["user_tickets"])
+    async def award_chess_tickets(self, guild, uid: int, bot_elo: int) -> int:
+        """Free weekly lottery tickets for beating a chess bot in `guild`:
+        one for a 500+ Elo win, one more for 1100+. Each tier claims once
+        per ISO week per server. Returns how many tickets were granted
+        (0 when already claimed this week, below 500, or lottery disabled).
+
+        Called from the chess endgame path (src/games/chess.py) after a
+        human defeats the engine.
+        """
+        cfg = get_guild_cfg(guild.id)
+        if not cfg.get("lottery_channel"):
+            return 0
+
+        # Claim the weekly gates synchronously before any await; roll back
+        # if the grant fails so the win isn't burned for nothing.
+        week = lottery_week_key()
+        row = _grant_row(guild.id, uid)
+        priors: dict = {}
+        for field, threshold in CHESS_TICKET_TIERS:
+            if bot_elo >= threshold and row.get(field) != week:
+                priors[field] = row.get(field)
+                row[field] = week
+        if not priors:
+            return 0
+
+        await _ensure_user(uid)
+        result = await self._execute_purchase(guild.id, uid, len(priors), 0)
+        if result.get("error"):
+            for field, value in priors.items():
+                row[field] = value
+            return 0
+        await _persist_grant_row(guild.id, uid, row)
+        return len(priors)
 
     @commands.command(name="lottery")
-    async def cmd_lottery(self, ctx: commands.Context, n: str = None, amount: str = None):
+    async def cmd_lottery(self, ctx: commands.Context):
         uid = ctx.author.id
         await _ensure_user(uid)
 
@@ -461,10 +362,6 @@ class LotteryCog(commands.Cog):
         lottery_channel_id = cfg.get("lottery_channel")
         if not lottery_channel_id:
             await ctx.send(embed=emb("🎰 Lottery Disabled", "Lottery channel not configured.", C_GREY))
-            return
-
-        if n is not None and n.lower() == "automatch":
-            await self._cmd_automatch(ctx, amount)
             return
 
         lottery = await load_lottery(ctx.guild.id)
@@ -486,159 +383,52 @@ class LotteryCog(commands.Cog):
             await ctx.send(embed=emb("🎰 Lottery", f"The next lottery is starting soon!\n\n**Opens:** <t:{ts}:R>", C_GREY))
             return
 
-        if n is None:
-            # Show lottery info
-            pool = lottery.get("prize_pool", 0)
-            players_dict = lottery.get("players", {})
-            user_tickets = int(players_dict.get(str(uid), 0))
-
-            # Next 1st-of-month 6pm CT draw (handles CST/CDT automatically)
-            timestamp = int(next_lottery_draw_dt(now_cst).timestamp())
-
-            total_tickets = sum(players_dict.values())
-            remaining_disc = discount_tickets_remaining(
-                state.economy["users"][str(uid)], _ct_today()
-            )
-            info = f"**Prize Pool:** {pool:,} 🪙 (+1,000 🪙 per player)\n"
-            info += f"**Players:** {len(players_dict)}\n"
-            info += f"**Ticket Cost:** {TICKET_PRICE} 🪙 for 1 🎟️ — your first "
-            info += f"{DISCOUNT_DAILY_CAP:,} each day cost {DISCOUNT_TICKET_PRICE} 🪙 "
-            info += f"(**{remaining_disc:,}** left today)\n\n"
-            info += f"**Your Tickets:** {user_tickets:,} / {total_tickets:,} total\n"
-            info += "Use `!lottery <n>` to buy more tickets"
-            try:
-                my_automatch = (await persistence.load_lottery_automatch(ctx.guild.id)).get(str(uid))
-            except Exception:
-                my_automatch = None
-            if my_automatch:
-                info += f"\n**Automatch:** on — auto-buys to tie other buyers, up to {my_automatch:,} 🎟️"
-            else:
-                info += "\nUse `!lottery automatch <max>` to auto-match other buyers"
-
-            await ctx.send(embed=emb(f"🎰 Current Lottery • ends <t:{timestamp}:R>", info, C_PURPLE))
-            return
-
-        # Block purchases in the 1-hour window before the draw (5-6pm CT on the 1st)
-        if now_cst.day == 1 and now_cst.hour == 17:
-            await ctx.send(embed=emb("🔒 Lottery Locked", "Ticket sales are closed for the final hour before the draw. Check back after 6pm CT!", C_RED))
-            return
-
+        # Show lottery info
+        pool = lottery.get("prize_pool", 0)
         players_dict = lottery.get("players", {})
-        current_tickets = int(players_dict.get(str(uid), 0))
+        user_tickets = int(players_dict.get(str(uid), 0))
+        total_tickets = sum(players_dict.values())
 
-        if n.lower() == "match":
-            # Buy enough tickets to tie the current leader in this guild's lottery.
-            other_max = max(
-                (int(v) for k, v in players_dict.items() if k != str(uid)),
-                default=0,
-            )
-            if other_max <= current_tickets:
-                await ctx.send(embed=emb(
-                    "🎟️ Nothing to Match",
-                    f"You already have **{current_tickets:,}** 🎟️ — nobody else is ahead of you.",
-                    C_GOLD,
-                ))
-                return
-            tickets = other_max - current_tickets
-            # Respect the per-player cap even when matching.
-            if current_tickets + tickets > TICKET_CAP:
-                tickets = TICKET_CAP - current_tickets
-            if tickets <= 0:
-                await ctx.send(embed=emb(
-                    "🎟️ Ticket Cap Reached",
-                    f"You're already at the **{TICKET_CAP:,}** 🎟️ cap.",
-                    C_RED,
-                ))
-                return
-            # Cost estimate for the confirm dialog; the authoritative cost is
-            # recomputed from the live discount counter inside the lock.
-            cost, _ = ticket_cost(
-                tickets,
-                discount_tickets_remaining(state.economy["users"][str(uid)], _ct_today()),
-            )
-            payer_bal = await get_balance(uid)
-            if payer_bal < cost:
-                await ctx.send(embed=emb(
-                    "💸 Insufficient Funds",
-                    f"Matching the leader costs **{cost:,} 🪙** for **{tickets:,}** 🎟️ — you have **{payer_bal:,} 🪙**.",
-                    C_RED,
-                ))
-                return
-
-            confirmed = await confirm_purchase(
-                ctx,
-                title="🎰 Match Leader",
-                description=f"Buy **{tickets:,}** 🎟️ to tie the leader at **{other_max:,}** tickets.",
-                cost=cost,
-                payer=ctx.author,
-            )
-            if not confirmed:
-                return
-
-            # Re-validate after the confirm window — leader may have bought more,
-            # the lock window may have opened, or balance may have dropped.
-            now_cst = _ct_now()
-            if now_cst.day == 1 and now_cst.hour == 17:
-                await ctx.send(embed=emb("🔒 Lottery Locked", "Ticket sales closed during confirmation.", C_RED))
-                return
-            lottery = await load_lottery(ctx.guild.id)
-            players_dict = lottery.get("players", {})
-            current_tickets = int(players_dict.get(str(uid), 0))
-            if current_tickets + tickets > TICKET_CAP:
-                await ctx.send(embed=emb(
-                    "🎟️ Ticket Cap Reached",
-                    f"Your tickets changed during confirmation — cancelling to avoid going over the **{TICKET_CAP:,}** cap.",
-                    C_RED,
-                ))
-                return
-        else:
-            tickets = parse_int_amount(n)
-            if tickets is None or tickets <= 0:
-                await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a positive number.", C_RED))
-                return
-
-            if current_tickets + tickets > TICKET_CAP:
-                remaining = TICKET_CAP - current_tickets
-                await ctx.send(embed=emb(
-                    "🎟️ Ticket Cap Reached",
-                    f"Each player can hold at most **{TICKET_CAP:,}** 🎟️ per lottery.\n"
-                    f"You have **{current_tickets:,}**; you can buy up to **{remaining:,}** more.",
-                    C_RED,
-                ))
-                return
-
-        result = await self._execute_purchase(ctx.guild.id, uid, tickets)
-        if result.get("error") == "cap":
-            await ctx.send(embed=emb(
-                "🎟️ Ticket Cap Reached",
-                f"Each player can hold at most **{TICKET_CAP:,}** 🎟️ per lottery.",
-                C_RED,
-            ))
-            return
-        if result.get("error") == "funds":
-            await ctx.send(embed=emb("💸 Insufficient Funds", f"Need {result['cost']:,} 🪙. Balance: {await get_balance(uid):,} 🪙", C_RED))
-            return
-
-        bonus_msg = "(+1,000 bonus as new player)" if result["was_new_player"] else ""
-        half_msg = f" ({result['discounted']:,} at half price)" if result["discounted"] else ""
-
-        # Calculate when lottery ends
+        # Next 1st-of-month 6pm CT draw (handles CST/CDT automatically)
         timestamp = int(next_lottery_draw_dt(now_cst).timestamp())
 
-        embed_msg = emb(
-            "🎰 Tickets Purchased",
-            f"**{ctx.author.display_name}** bought **{tickets:,}** 🎟️ for **{result['cost']:,} 🪙**{half_msg}\n\n"
-            f"**Prize Pool:** {result['prize_pool']:,} 🪙 {bonus_msg}\n"
-            f"**Your Tickets:** {result['user_tickets']:,} / {result['total_tickets']:,} total\n"
-            f"**Ends:** <t:{timestamp}:R>",
-            C_GREEN
+        locked = _sales_locked(now_cst)
+        bought_today = _grant_row(ctx.guild.id, uid).get("daily_day") == _ct_today()
+        if locked:
+            daily_status = "🔒 sales closed for the final hour before the draw"
+        elif bought_today:
+            daily_status = f"✅ bought — next one <t:{next_daily_reset_ts()}:R>"
+        else:
+            daily_status = "available — confirm below, or react 🎟️ in the dailies channel"
+
+        info = f"**Prize Pool:** {pool:,} 🪙 (+1,000 🪙 per player)\n"
+        info += f"**Players:** {len(players_dict)}\n"
+        info += f"**Your Tickets:** {user_tickets:,} / {total_tickets:,} total\n\n"
+        info += f"**Today's ticket** ({DAILY_TICKET_PRICE:,} 🪙, 1 per day per server): {daily_status}\n"
+        info += (
+            f"**Chess bonus:** beat a {CHESS_TICKET_MIN_ELO}+ Elo bot for a free "
+            f"weekly 🎟️ (+1 more at {CHESS_TICKET_BONUS_ELO}+)"
         )
-        await ctx.send(embed=embed_msg)
 
-        await self._process_automatch(ctx.guild, ctx.channel, uid, result["user_tickets"])
+        await ctx.send(embed=emb(f"🎰 Current Lottery • ends <t:{timestamp}:R>", info, C_PURPLE))
 
+        # Offer today's ticket when it's still unbought.
+        if locked or bought_today:
+            return
+        confirmed = await confirm_purchase(
+            ctx,
+            title="🎟️ Daily Lottery Ticket",
+            description="Buy today's lottery ticket for this server?",
+            cost=DAILY_TICKET_PRICE,
+            payer=ctx.author,
+        )
+        if not confirmed:
+            return
+        # buy_daily_ticket re-checks the gate and the lock window itself —
+        # both may have changed during the confirm wait (e.g. a concurrent
+        # dailies 🎟️ click).
+        await self.buy_daily_ticket(ctx.author, ctx.channel, ctx.guild)
 
 
 async def setup(bot):
     await bot.add_cog(LotteryCog(bot))
-

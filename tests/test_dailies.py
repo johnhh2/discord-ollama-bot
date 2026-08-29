@@ -22,7 +22,7 @@ from src.cogs.dailies_cog import (
     DAILIES_CLAIM_EMOJI, DAILIES_FLIP_EMOJI, DAILIES_SLOTS_EMOJI,
     DAILIES_TICKETS_EMOJI, DAILIES_ALL_EMOJIS, _delete_unless_kept,
 )
-from src.cogs.lottery_cog import LotteryCog, DISCOUNT_DAILY_CAP
+from src.cogs.lottery_cog import LotteryCog, DAILY_TICKET_PRICE, TICKET_POOL_SHARE
 from src.cogs.settings_cog import SettingsCog
 import src.persistence as _persistence
 
@@ -147,7 +147,7 @@ async def test_refresh_posts_claim_embed_and_reaction(db, monkeypatch):
     assert f"{DAILIES_CLAIM_EMOJI} claim dailies" in claim.embed.description
     assert f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip" in claim.embed.description
     assert f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet" in claim.embed.description
-    assert f"{DAILIES_TICKETS_EMOJI} buy today's half-price lottery tickets" in claim.embed.description
+    assert f"{DAILIES_TICKETS_EMOJI} buy today's lottery ticket" in claim.embed.description
     assert cfg["dailies_message_id"] == claim.id
     assert cfg["dailies_reset_day"] == TODAY
     assert len(channel.purge_calls) == 1
@@ -385,12 +385,12 @@ def _add_lottery_cog(bot, monkeypatch, today=TODAY):
 
 
 @pytest.mark.asyncio
-async def test_reaction_tickets_buys_half_price_tickets_without_claiming(db, monkeypatch):
-    """🎟️ buys the full daily half-price allotment and nothing else — the
-    daily reward stays unclaimed and no scratchoffs are burned."""
+async def test_reaction_tickets_buys_daily_ticket_without_claiming(db, monkeypatch):
+    """🎟️ buys the once-a-day 1,000 🪙 ticket and nothing else — the daily
+    reward stays unclaimed and no scratchoffs are burned."""
     bot, guild, channel, member = await _claim_setup(monkeypatch)
     _state.guild_settings["42"]["lottery_channel"] = 600
-    _state.economy["users"]["1"]["balance"] = 1_000
+    _state.economy["users"]["1"]["balance"] = 2_000
     _add_lottery_cog(bot, monkeypatch)
     cog = _make_cog(bot)
 
@@ -400,24 +400,24 @@ async def test_reaction_tickets_buys_half_price_tickets_without_claiming(db, mon
     user = _state.economy["users"]["1"]
     assert user["daily_date"] is None                # daily reward untouched
     assert user["scratch_used"] == 0                 # no scratchoffs burned
-    assert user["lottery_disc_used"] == DISCOUNT_DAILY_CAP
-    # Only the ticket purchase moved money: 10 tickets at 5 🪙.
-    assert user["balance"] == 1_000 - DISCOUNT_DAILY_CAP * 5
+    assert _state.lottery_ticket_grants[(42, 1)]["daily_day"] == TODAY
+    # Only the ticket purchase moved money.
+    assert user["balance"] == 2_000 - DAILY_TICKET_PRICE
     lot = await _persistence.load_lottery(42)
-    assert lot["players"]["1"] == DISCOUNT_DAILY_CAP
-    # 10 half-price tickets: pool +4 each, +1,000 new-player bonus.
-    assert lot["prize_pool"] == DISCOUNT_DAILY_CAP * 4 + 1_000
+    assert lot["players"]["1"] == 1
+    # Pool share of the ticket price, +1,000 new-player bonus.
+    assert lot["prize_pool"] == TICKET_POOL_SHARE + 1_000
     titles = [m.embed.title for m in channel.sent if m.embed is not None]
-    assert "🎰 Tickets Purchased" in titles
+    assert "🎰 Daily Ticket Purchased" in titles
     assert "🪙 Daily Reward" not in titles
     assert "🎫 Scratchoff" not in titles
 
 
 @pytest.mark.asyncio
-async def test_reaction_tickets_second_click_reports_no_discounts_left(db, monkeypatch):
+async def test_reaction_tickets_second_click_reports_already_bought(db, monkeypatch):
     bot, guild, channel, member = await _claim_setup(monkeypatch)
     _state.guild_settings["42"]["lottery_channel"] = 600
-    _state.economy["users"]["1"]["balance"] = 1_000
+    _state.economy["users"]["1"]["balance"] = 5_000
     _add_lottery_cog(bot, monkeypatch)
     cog = _make_cog(bot)
 
@@ -428,15 +428,16 @@ async def test_reaction_tickets_second_click_reports_no_discounts_left(db, monke
         _payload(message_id=777, member=member, emoji=DAILIES_TICKETS_EMOJI))
 
     titles = [m.embed.title for m in channel.sent if m.embed is not None]
-    assert "🎟️ No Half-Price Tickets Left" in titles
+    assert "🎟️ Daily Ticket Already Bought" in titles
     lot = await _persistence.load_lottery(42)
-    assert lot["players"]["1"] == DISCOUNT_DAILY_CAP  # unchanged
+    assert lot["players"]["1"] == 1  # unchanged
+    assert _state.economy["users"]["1"]["balance"] == 5_000 - DAILY_TICKET_PRICE
 
 
 @pytest.mark.asyncio
 async def test_reaction_tickets_without_lottery_channel_reports_disabled(db, monkeypatch):
     bot, guild, channel, member = await _claim_setup(monkeypatch)
-    _state.economy["users"]["1"]["balance"] = 1_000
+    _state.economy["users"]["1"]["balance"] = 2_000
     _add_lottery_cog(bot, monkeypatch)
     cog = _make_cog(bot)
 
@@ -445,7 +446,9 @@ async def test_reaction_tickets_without_lottery_channel_reports_disabled(db, mon
 
     titles = [m.embed.title for m in channel.sent if m.embed is not None]
     assert "🎰 Lottery Disabled" in titles
-    assert _state.economy["users"]["1"].get("lottery_disc_used", 0) == 0
+    # The daily gate must not be burned by a refused purchase.
+    assert _state.lottery_ticket_grants.get((42, 1), {}).get("daily_day") is None
+    assert _state.economy["users"]["1"]["balance"] == 2_000
 
 
 @pytest.mark.asyncio

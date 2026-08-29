@@ -59,7 +59,7 @@ async def _init_db_state_inner(state, run_migrations):
                 "SELECT user_id, balance, last_daily, daily_date, scratch_used,"
                 " scratch_date, jailbreak_used, jail_until, savings, jail_reason,"
                 " crime_eligible, bail_amount, bot_chess_elo_max_today,"
-                " bot_chess_elo_max_date, lottery_disc_used, lottery_disc_date,"
+                " bot_chess_elo_max_date,"
                 " scratch_won_today, property_paid_at, property_revenue_total"
                 " FROM economy_users"
             )
@@ -68,7 +68,7 @@ async def _init_db_state_inner(state, run_migrations):
                  jb_used, jail_until, savings_json, jail_reason,
                  crime_eligible, bail_amount,
                  bot_chess_elo_max_today, bot_chess_elo_max_date,
-                 lottery_disc_used, lottery_disc_date, scratch_won_today,
+                 scratch_won_today,
                  property_paid_at, property_revenue_total) = row
                 state.economy["users"][str(uid)] = {
                     "balance": bal,
@@ -84,8 +84,6 @@ async def _init_db_state_inner(state, run_migrations):
                     "bail_amount": int(bail_amount or 0),
                     "bot_chess_elo_max_today": int(bot_chess_elo_max_today or 0),
                     "bot_chess_elo_max_date": bot_chess_elo_max_date,
-                    "lottery_disc_used": int(lottery_disc_used or 0),
-                    "lottery_disc_date": lottery_disc_date,
                     "scratch_won_today": int(scratch_won_today or 0),
                     "property_paid_at": float(property_paid_at or 0.0),
                     "property_revenue_total": int(property_revenue_total or 0),
@@ -411,6 +409,24 @@ async def _init_db_state_inner(state, run_migrations):
             state.lottery_tickets_today["count"] = int(row[0]) if row else 0
         except Exception as e:
             logging.error(f"[init_db_state] daily_counters failed: {e}", exc_info=True)
+            raise
+
+        # ── lottery_ticket_grants ─────────────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT guild_id, user_id, daily_day, chess_week_500, chess_week_1100"
+                " FROM lottery_ticket_grants"
+            )
+            state.lottery_ticket_grants = {
+                (int(r[0]), int(r[1])): {
+                    "daily_day": r[2],
+                    "chess_week_500": r[3],
+                    "chess_week_1100": r[4],
+                }
+                for r in await cur.fetchall()
+            }
+        except Exception as e:
+            logging.error(f"[init_db_state] lottery_ticket_grants failed: {e}", exc_info=True)
             raise
 
         # ── recap_usage ───────────────────────────────────────────────────

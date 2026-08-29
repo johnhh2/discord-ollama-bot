@@ -137,9 +137,11 @@ async def announce_new_lottery(
 
     embed = discord.Embed(title="🎰 New Monthly Lottery", color=C_PURPLE)
     embed.description = (
-        "A new lottery has started! Buy tickets with `!lottery <n>`\n\n"
+        "A new lottery has started! Grab your daily 🎟️ with `!lottery` "
+        "or the dailies-channel 🎟️ button\n\n"
         f"**Prize Pool:** {prize_pool:,} 🪙 (+1,000 🪙 per player)\n"
-        f"**Ticket Cost:** 10 🪙 for 1 🎟️ — your first 100 each day are half price\n"
+        "**Tickets:** 1,000 🪙 for 1 🎟️, one per day per server — plus a free "
+        "🎟️ each week for beating a 500+ Elo chess bot (+1 more at 1100+)\n"
         f"**Ends:** <t:{timestamp}:R>"
     )
     await channel.send(embed=embed)
@@ -319,6 +321,16 @@ def lottery_month_key(now_ct: datetime.datetime) -> int:
     via the normal save path.
     """
     return now_ct.year * 100 + now_ct.month
+
+
+def lottery_week_key() -> str:
+    """ISO year-week key ("2026-W35") of the current gameplay-day in CT.
+
+    Gates the free weekly chess-win lottery tickets. Derived from _ct_today()
+    so the week rolls with the 5am gameplay-day boundary, not midnight.
+    """
+    iso = _ct_today_date().isocalendar()
+    return f"{iso[0]}-W{iso[1]:02d}"
 
 
 def next_lottery_draw_dt(now_ct: datetime.datetime) -> datetime.datetime:
@@ -632,8 +644,6 @@ async def do_daily_reset():
         user["scratch_used"] = 0
         user["scratch_date"] = today
         user["scratch_won_today"] = 0
-        user["lottery_disc_used"] = 0
-        user["lottery_disc_date"] = today
         user["jailbreak_used"] = False
         user["bot_chess_elo_max_today"] = 0
         user["bot_chess_elo_max_date"] = today
