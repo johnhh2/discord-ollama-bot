@@ -1205,21 +1205,27 @@ class ChessCog(commands.Cog):
                 except Exception as e:
                     logging.error(f"bot_chess_rewards.award_bot_defeat failed: {e}", exc_info=True)
 
-                # Free weekly lottery ticket(s) for beating a 500+ Elo bot
-                # (one more at 1100+) — gated per ISO week inside the cog.
-                get_cog = getattr(self.bot, "get_cog", None)
-                lottery_cog = get_cog("LotteryCog") if get_cog else None
-                if lottery_cog is not None and guild is not None:
-                    try:
-                        free_tickets = await lottery_cog.award_chess_tickets(
-                            guild, winner_id, bot_elo,
-                        )
-                        if free_tickets == 1:
-                            payout_line += " 🎟️ **+1** free lottery ticket (weekly chess bonus)."
-                        elif free_tickets > 1:
-                            payout_line += f" 🎟️ **+{free_tickets}** free lottery tickets (weekly chess bonus)."
-                    except Exception as e:
-                        logging.error(f"lottery award_chess_tickets failed: {e}", exc_info=True)
+            # Free weekly lottery ticket(s) for any human chess win — PvP or
+            # bot. The cog tops the winner up to the win's weekly ceiling
+            # (any win 1, 600+ Elo bot 2, 1100+ bot 3). A bot game with no
+            # bot_user reference can't confirm the winner is human, so skip.
+            is_human_win = (
+                bot_user is not None and winner_id != bot_user.id
+            ) or (bot_user is None and "elo" not in game)
+            get_cog = getattr(self.bot, "get_cog", None)
+            lottery_cog = get_cog("LotteryCog") if get_cog else None
+            if lottery_cog is not None and guild is not None and is_human_win:
+                ticket_elo = int(game["elo"]) if "elo" in game else None
+                try:
+                    free_tickets = await lottery_cog.award_chess_tickets(
+                        guild, winner_id, ticket_elo,
+                    )
+                    if free_tickets == 1:
+                        payout_line += " 🎟️ **+1** free lottery ticket (weekly chess bonus)."
+                    elif free_tickets > 1:
+                        payout_line += f" 🎟️ **+{free_tickets}** free lottery tickets (weekly chess bonus)."
+                except Exception as e:
+                    logging.error(f"lottery award_chess_tickets failed: {e}", exc_info=True)
 
         # Head-to-head line. PvP uses the all-time pairwise record; bot games
         # use the per-Elo record so a 0-3 vs Sub-Maia 400 doesn't pollute the

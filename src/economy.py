@@ -140,8 +140,8 @@ async def announce_new_lottery(
         "A new lottery has started! Grab your daily 🎟️ with `!lottery` "
         "or the dailies-channel 🎟️ button\n\n"
         f"**Prize Pool:** {prize_pool:,} 🪙 (+1,000 🪙 per player)\n"
-        "**Tickets:** 1,000 🪙 for 1 🎟️, one per day per server — plus a free "
-        "🎟️ each week for beating a 500+ Elo chess bot (+1 more at 1100+)\n"
+        "**Tickets:** 1,000 🪙 for 1 🎟️, one per day per server — plus up to "
+        "3 free 🎟️ a week from chess wins (any win 1, a 600+ Elo bot 2, 1100+ 3)\n"
         f"**Ends:** <t:{timestamp}:R>"
     )
     await channel.send(embed=embed)

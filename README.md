@@ -64,7 +64,7 @@ PvP works too, with SAN/UCI move input, board rendering, threat analysis (`!ches
 ### 🎰 Economy & casino
 - `!daily` rewards with streaks (5am CT reset, DST-aware), `!savings` with compounding interest, `!pay`, `!graph` for balance history
 - `!assets` real estate — 36 unique bot-wide properties (10k–2m 🪙) paying 1.1% of their price per day, banked automatically with your daily claim, with a cross-server player marketplace (`!assets sell <name> <price>`; lowball listings get an instant 75%-of-value bank buyback offer), one named upgrade per property (+35–75% revenue), and renameable businesses (`!assets rename`)
-- `!slots` with a progressive jackpot, `!blackjack`, `!flip`, `!scratchoff`, and a monthly `!lottery` drawn on the 1st of each month at 6pm CT (one 1,000-coin ticket per user per server per day — bought from the dailies-channel 🎟️ button or a `!lottery` confirm prompt — plus a free weekly ticket for beating a 500+ Elo chess bot, and one more if the win was at 1100+)
+- `!slots` with a progressive jackpot, `!blackjack`, `!flip`, `!scratchoff`, and a monthly `!lottery` drawn on the 1st of each month at 6pm CT (one 1,000-coin ticket per user per server per day — bought from the dailies-channel 🎟️ button or a `!lottery` confirm prompt — plus up to 3 free tickets a week from chess wins: any win tops you up to 1, beating a 600+ Elo bot to 2, a 1100+ bot to 3)
 - Crime layer: `!steal`, `!mug`, `!bankheist` co-op heists, `!jail` / `!bail` / `!jailbreak`, and purchasable insurance
 - `!bounty <coins> [duration] <condition>` — escrowed rewards anyone can claim, with author accept/reject via DM and a community-vote contest path
 - `!leaderboard`, `!records`, `!economy` server overview

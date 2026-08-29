@@ -36,11 +36,23 @@ DAILY_TICKET_PRICE = 1000
 TICKET_POOL_SHARE = 700
 TICKET_HOUSE_SHARE = DAILY_TICKET_PRICE - TICKET_POOL_SHARE
 NEW_PLAYER_POOL_BONUS = 1000
-# Free weekly chess-win tickets: beat a bot at/above the threshold Elo to
-# claim that tier's ticket once per ISO week (per server, like the daily).
-CHESS_TICKET_TIERS = (("chess_week_500", 500), ("chess_week_1100", 1100))
-CHESS_TICKET_MIN_ELO = CHESS_TICKET_TIERS[0][1]
-CHESS_TICKET_BONUS_ELO = CHESS_TICKET_TIERS[1][1]
+# Free weekly chess-win tickets, granted as a cumulative weekly ceiling (per
+# server, like the daily): any chess win — PvP included — is worth 1 ticket,
+# beating a 600+ Elo bot 2, a 1100+ bot 3. Each win only tops the winner up
+# to its ceiling: beating 100 Elo then 600 Elo pays 1 + 1, not 1 + 2, and
+# nothing ever exceeds CHESS_TICKET_WEEKLY_CAP in one week.
+CHESS_TICKET_BOT_TIERS = ((1100, 3), (600, 2))
+CHESS_TICKET_WEEKLY_CAP = 3
+
+
+def chess_ticket_ceiling(bot_elo: "int | None") -> int:
+    """Weekly ticket ceiling a chess win at this strength tops the winner up
+    to. `bot_elo` is None for PvP wins."""
+    if bot_elo is not None:
+        for threshold, ceiling in CHESS_TICKET_BOT_TIERS:
+            if bot_elo >= threshold:
+                return ceiling
+    return 1
 # The reworked ticket economy starts with the September 2026 lottery. The
 # August 2026 pot still holds thousands of old 10-coin bulk tickets, so
 # selling a 1,000 🪙 ticket (or granting a free chess one) into it would be a
@@ -54,7 +66,7 @@ def _grant_row(guild_id: int, uid: int) -> dict:
     """The user's ticket-grant gate row for this guild (created empty)."""
     return state.lottery_ticket_grants.setdefault(
         (guild_id, uid),
-        {"daily_day": None, "chess_week_500": None, "chess_week_1100": None},
+        {"daily_day": None, "chess_week": None, "chess_tickets": 0},
     )
 
 
@@ -339,43 +351,44 @@ class LotteryCog(commands.Cog):
             C_GREEN,
         ), silent=silent)
 
-    async def award_chess_tickets(self, guild, uid: int, bot_elo: int) -> int:
-        """Free weekly lottery tickets for beating a chess bot in `guild`:
-        one for a 500+ Elo win, one more for 1100+. Each tier claims once
-        per ISO week per server. Returns how many tickets were granted
-        (0 when already claimed this week, below 500, or lottery disabled).
+    async def award_chess_tickets(self, guild, uid: int, bot_elo: "int | None" = None) -> int:
+        """Free weekly lottery tickets for a chess win in `guild`, topping the
+        winner up to the win's ceiling (chess_ticket_ceiling: any win 1,
+        600+ Elo bot 2, 1100+ bot 3) within the current ISO week. Pass
+        bot_elo=None for PvP wins. Returns how many tickets were granted
+        (0 when already at the ceiling or lottery disabled).
 
         Called from the chess endgame path (src/games/chess.py) after a
-        human defeats the engine.
+        human wins a game.
         """
         cfg = get_guild_cfg(guild.id)
         if not cfg.get("lottery_channel"):
             return 0
         # Launch gate: no free tickets into the pre-rework pot either — and
-        # the weekly gates stay unclaimed, so nothing is burned.
+        # the weekly counter stays untouched, so nothing is burned.
         if _sales_not_started(_ct_now()):
             return 0
 
-        # Claim the weekly gates synchronously before any await; roll back
+        # Claim the weekly counter synchronously before any await; roll back
         # if the grant fails so the win isn't burned for nothing.
         week = lottery_week_key()
         row = _grant_row(guild.id, uid)
-        priors: dict = {}
-        for field, threshold in CHESS_TICKET_TIERS:
-            if bot_elo >= threshold and row.get(field) != week:
-                priors[field] = row.get(field)
-                row[field] = week
-        if not priors:
+        prior_week, prior_count = row.get("chess_week"), int(row.get("chess_tickets") or 0)
+        if prior_week != week:
+            row["chess_week"] = week
+            row["chess_tickets"] = 0
+        grant = chess_ticket_ceiling(bot_elo) - row["chess_tickets"]
+        if grant <= 0:
             return 0
+        row["chess_tickets"] += grant
 
         await _ensure_user(uid)
-        result = await self._execute_purchase(guild.id, uid, len(priors), 0)
+        result = await self._execute_purchase(guild.id, uid, grant, 0)
         if result.get("error"):
-            for field, value in priors.items():
-                row[field] = value
+            row["chess_week"], row["chess_tickets"] = prior_week, prior_count
             return 0
         await _persist_grant_row(guild.id, uid, row)
-        return len(priors)
+        return grant
 
     @commands.command(name="lottery")
     async def cmd_lottery(self, ctx: commands.Context):
@@ -441,8 +454,8 @@ class LotteryCog(commands.Cog):
         info += f"**Your Tickets:** {user_tickets:,} / {total_tickets:,} total\n\n"
         info += f"**Today's ticket** ({DAILY_TICKET_PRICE:,} 🪙, 1 per day per server): {daily_status}\n"
         info += (
-            f"**Chess bonus:** beat a {CHESS_TICKET_MIN_ELO}+ Elo bot for a free "
-            f"weekly 🎟️ (+1 more at {CHESS_TICKET_BONUS_ELO}+)"
+            "**Chess bonus:** free weekly 🎟️ for chess wins — any win 1, a 600+ "
+            f"Elo bot 2, 1100+ 3 (each win tops you up to its tier, max {CHESS_TICKET_WEEKLY_CAP}/week)"
         )
 
         await ctx.send(embed=emb(f"🎰 Current Lottery • ends <t:{timestamp}:R>", info, C_PURPLE))

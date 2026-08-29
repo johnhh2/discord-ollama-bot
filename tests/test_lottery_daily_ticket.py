@@ -287,7 +287,7 @@ async def test_tickets_flow_normally_after_relaunch_moment(db, monkeypatch):
     await cog.buy_daily_ticket(ctx.author, ctx.channel, ctx.guild)
 
     assert (await _persistence.load_lottery(GUILD_ID))["players"][str(ctx.author.id)] == 1
-    assert await cog.award_chess_tickets(ctx.guild, ctx.author.id, 1200) == 2
+    assert await cog.award_chess_tickets(ctx.guild, ctx.author.id, 1200) == 3
 
 
 # ── !lottery: info + confirm prompt ───────────────────────────────────────────
@@ -364,72 +364,75 @@ async def test_cmd_lottery_shows_ticket_counts(db, monkeypatch):
     await cog.cmd_lottery.callback(cog, ctx)
 
     info = ctx.sent_embeds[-1]
-    assert "**Your Tickets:** 3 / 3 total" in info.description
+    assert "**Your Tickets:** 4 / 4 total" in info.description
 
 
 # ── weekly chess-win tickets ──────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_chess_win_500_grants_one_free_ticket(db, monkeypatch):
+async def test_any_chess_win_grants_one_free_ticket(db, monkeypatch):
+    """A low-Elo bot win tops the winner up to ceiling 1, with no pool share
+    beyond the new-player bonus and no house cut."""
     _pin_clock(monkeypatch)
     ctx = _lottery_ctx(uid=9220)
     uid = ctx.author.id
     cog = _make_cog()
 
-    granted = await cog.award_chess_tickets(ctx.guild, uid, 500)
+    granted = await cog.award_chess_tickets(ctx.guild, uid, 100)
 
     assert granted == 1
     lot = await _persistence.load_lottery(GUILD_ID)
     assert lot["players"][str(uid)] == 1
-    # Free ticket: no pool share beyond the new-player bonus, no house cut.
     assert lot["prize_pool"] == NEW_PLAYER_POOL_BONUS
     assert _economy.get_guild_house_balance(GUILD_ID) == 0
     row = _state.lottery_ticket_grants[(GUILD_ID, uid)]
-    assert row["chess_week_500"] == WEEK
-    assert row["chess_week_1100"] is None
+    assert row["chess_week"] == WEEK
+    assert row["chess_tickets"] == 1
 
 
 @pytest.mark.asyncio
-async def test_chess_win_1100_grants_both_tiers(db, monkeypatch):
+async def test_pvp_chess_win_grants_one_free_ticket(db, monkeypatch):
     _pin_clock(monkeypatch)
     ctx = _lottery_ctx(uid=9221)
     uid = ctx.author.id
     cog = _make_cog()
 
-    granted = await cog.award_chess_tickets(ctx.guild, uid, 1100)
-
-    assert granted == 2
-    assert (await _persistence.load_lottery(GUILD_ID))["players"][str(uid)] == 2
-    row = _state.lottery_ticket_grants[(GUILD_ID, uid)]
-    assert row["chess_week_500"] == WEEK
-    assert row["chess_week_1100"] == WEEK
+    assert await cog.award_chess_tickets(ctx.guild, uid, None) == 1
+    assert await cog.award_chess_tickets(ctx.guild, uid, None) == 0
+    assert (await _persistence.load_lottery(GUILD_ID))["players"][str(uid)] == 1
 
 
 @pytest.mark.asyncio
-async def test_chess_win_below_500_grants_nothing(db, monkeypatch):
+async def test_chess_bot_tier_ceilings(db, monkeypatch):
+    """600+ tops up to 2, 1100+ to 3 — a first 1100+ win pays all 3 at once."""
     _pin_clock(monkeypatch)
     ctx = _lottery_ctx(uid=9222)
+    uid = ctx.author.id
     cog = _make_cog()
 
-    assert await cog.award_chess_tickets(ctx.guild, ctx.author.id, 400) == 0
-    assert (await _persistence.load_lottery(GUILD_ID))["players"] == {}
+    assert await cog.award_chess_tickets(ctx.guild, uid, 1500) == 3
+    assert await cog.award_chess_tickets(ctx.guild, uid, 1500) == 0
+    assert await cog.award_chess_tickets(ctx.guild, uid, 100) == 0
+    assert (await _persistence.load_lottery(GUILD_ID))["players"][str(uid)] == 3
+    assert _state.lottery_ticket_grants[(GUILD_ID, uid)]["chess_tickets"] == 3
 
 
 @pytest.mark.asyncio
-async def test_chess_tiers_claim_once_per_week(db, monkeypatch):
-    """A second 500+ win in the same week grants nothing; a later 1100+ win
-    still claims the unclaimed 1100 tier."""
+async def test_chess_wins_top_up_not_stack(db, monkeypatch):
+    """Beating 100 Elo then 600 Elo pays 1 + 1 (not 1 + 2); a later 1100+
+    win adds only the last 1. Total never passes 3/week."""
     _pin_clock(monkeypatch)
     ctx = _lottery_ctx(uid=9223)
     uid = ctx.author.id
     cog = _make_cog()
 
-    assert await cog.award_chess_tickets(ctx.guild, uid, 700) == 1
+    assert await cog.award_chess_tickets(ctx.guild, uid, 100) == 1
+    assert await cog.award_chess_tickets(ctx.guild, uid, 600) == 1
     assert await cog.award_chess_tickets(ctx.guild, uid, 900) == 0
-    assert await cog.award_chess_tickets(ctx.guild, uid, 1500) == 1
-    assert await cog.award_chess_tickets(ctx.guild, uid, 1500) == 0
+    assert await cog.award_chess_tickets(ctx.guild, uid, 1100) == 1
+    assert await cog.award_chess_tickets(ctx.guild, uid, 1900) == 0
 
-    assert (await _persistence.load_lottery(GUILD_ID))["players"][str(uid)] == 2
+    assert (await _persistence.load_lottery(GUILD_ID))["players"][str(uid)] == 3
 
 
 @pytest.mark.asyncio
@@ -439,13 +442,13 @@ async def test_chess_tickets_reset_on_new_week(db, monkeypatch):
     uid = ctx.author.id
     cog = _make_cog()
     _state.lottery_ticket_grants[(GUILD_ID, uid)] = {
-        "daily_day": None, "chess_week_500": LAST_WEEK, "chess_week_1100": LAST_WEEK,
+        "daily_day": None, "chess_week": LAST_WEEK, "chess_tickets": 3,
     }
 
-    assert await cog.award_chess_tickets(ctx.guild, uid, 1200) == 2
+    assert await cog.award_chess_tickets(ctx.guild, uid, 1200) == 3
     row = _state.lottery_ticket_grants[(GUILD_ID, uid)]
-    assert row["chess_week_500"] == WEEK
-    assert row["chess_week_1100"] == WEEK
+    assert row["chess_week"] == WEEK
+    assert row["chess_tickets"] == 3
 
 
 @pytest.mark.asyncio
@@ -476,4 +479,4 @@ async def test_ticket_grants_survive_reboot(db, monkeypatch):
     await _persistence.init_db_state()
 
     row = _state.lottery_ticket_grants[(GUILD_ID, uid)]
-    assert row == {"daily_day": TODAY, "chess_week_500": WEEK, "chess_week_1100": WEEK}
+    assert row == {"daily_day": TODAY, "chess_week": WEEK, "chess_tickets": 3}
