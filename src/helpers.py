@@ -285,7 +285,7 @@ def _log_audit(user: str, command: str, error: str):
 
 
 async def send_ephemeral(ctx: commands.Context, *args, **kwargs) -> discord.Message:
-    """Send a message with delete_after=60 and register it for cleanup on restart."""
+    """Send a message with delete_after=EPHEMERAL_DELETE_AFTER and register it for cleanup on restart."""
     kwargs["delete_after"] = EPHEMERAL_DELETE_AFTER
     msg = await ctx.send(*args, **kwargs)
     await add_ephemeral_msg(msg.channel.id, msg.id)

@@ -844,7 +844,7 @@ async def test_chess_view_loads_report(db):
 @_aio
 async def test_chess_view_message_is_ephemeral(db, monkeypatch):
     """!chess view sends through send_ephemeral so the message auto-expires
-    after EPHEMERAL_DELETE_AFTER (60s). Spy on send_ephemeral to confirm
+    after EPHEMERAL_DELETE_AFTER. Spy on send_ephemeral to confirm
     the chess cog routes view replies through it, not raw ctx.send."""
     from src.persistence import save_chess_report
     rid = await save_chess_report(
