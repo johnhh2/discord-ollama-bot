@@ -2,7 +2,7 @@
 import pytest
 
 import src.state as _state
-from src.cogs.profile_cog import ProfileCog, _BONUS_BIN_COUNT
+from src.cogs.profile_cog import ProfileCog
 from src.economy import add_balance
 from src.games import bot_chess_rewards as br
 
@@ -35,7 +35,7 @@ async def test_profile_shows_wallet_tickets_and_empty_chess_ranks(db):
     assert "No bot defeats yet" in desc
 
 
-async def test_profile_shows_chess_ranks_and_bonus_progress(db):
+async def test_profile_shows_chess_ranks(db):
     cog = ProfileCog(bot=_StubBot())
     member = FakeMember(uid=9101, display_name="Bob")
     ctx = FakeCtx(author=member, guild=FakeGuild(gid=42))
@@ -47,7 +47,8 @@ async def test_profile_shows_chess_ranks_and_bonus_progress(db):
     desc = _profile_desc(ctx)
     assert "Max Elo defeated: **1,500**" in desc
     assert "Total Elo defeated: **2,700**" in desc
-    assert f"**2/{_BONUS_BIN_COUNT}** claimed" in desc
+    # The bonus-progress line was deliberately dropped from the profile.
+    assert "First-defeat bonuses" not in desc
 
 
 async def test_profile_targets_other_member(db):

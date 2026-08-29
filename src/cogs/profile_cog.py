@@ -2,9 +2,9 @@
 
 Aggregates the global economy (wallet, savings, artifacts, real estate),
 per-guild bits (lottery tickets, level), the chess-only ranks (max /
-cumulative bot Elo defeated + first-defeat bonus progress), and the daily
-command streak. Read-only: never materializes economy/leveling rows for the
-target beyond what get_balance already does.
+cumulative bot Elo defeated), and the daily command streak. Read-only:
+never materializes economy/leveling rows for the target beyond what
+get_balance already does.
 """
 import time
 
@@ -14,26 +14,18 @@ from discord.ext import commands
 from src import state
 from src.artifacts import owned_artifact_count
 from src.economy import _ct_today, get_balance, get_savings_value
-from src.games import chess_bot
 from src.games.bot_chess_rewards import (
     FIRST_DEFEAT_BONUS,
     FIRST_DEFEAT_BONUS_MIN_ELO,
     RANK_MAX_EMOJI,
     RANK_TOTAL_EMOJI,
     chess_ranks,
-    claimed_bonus_bins,
 )
 from src.helpers import emb, C_BLUE, C_GREY, OptionalMember
 from src.leveling import display_level
 from src.persistence import load_lottery
 from src.properties import owned_properties, portfolio_value
 from src.streaks import effective_streak, get_command_streak_entry
-
-
-# Every 100-Elo bin from the bonus floor up to the top selectable bin carries
-# a one-time first-defeat bonus; used for the "claimed x/y" progress line.
-_TOP_BONUS_BIN = chess_bot.round_elo_to_bin(chess_bot.ELO_MAX)
-_BONUS_BIN_COUNT = (_TOP_BONUS_BIN - FIRST_DEFEAT_BONUS_MIN_ELO) // 100 + 1
 
 
 class ProfileCog(commands.Cog):
@@ -88,13 +80,8 @@ class ProfileCog(commands.Cog):
         max_elo, total_elo = chess_ranks(uid)
         lines.append("\n**♟️ Chess Ranks**")
         if max_elo > 0:
-            claimed = len(claimed_bonus_bins(uid))
             lines.append(f"{RANK_MAX_EMOJI} Max Elo defeated: **{max_elo:,}**")
             lines.append(f"{RANK_TOTAL_EMOJI} Total Elo defeated: **{total_elo:,}**")
-            lines.append(
-                f"🎁 First-defeat bonuses: **{claimed}/{_BONUS_BIN_COUNT}** claimed "
-                f"(+{FIRST_DEFEAT_BONUS:,} 🪙 each, Elo {FIRST_DEFEAT_BONUS_MIN_ELO}+)"
-            )
         else:
             lines.append(
                 f"No bot defeats yet — `!chessbot [elo]` to earn ranks "
