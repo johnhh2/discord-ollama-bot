@@ -486,6 +486,23 @@ async def _init_db_state_inner(state, run_migrations):
             logging.error(f"[init_db_state] chess_games failed: {e}", exc_info=True)
             raise
 
+        # ── chess_user_stats ──────────────────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT user_id, max_elo_defeated, total_elo_defeated, bonus_bins "
+                "FROM chess_user_stats"
+            )
+            state.chess_user_stats = {}
+            for uid, max_elo, total_elo, bins_json in await cur.fetchall():
+                state.chess_user_stats[str(uid)] = {
+                    "max_elo_defeated": int(max_elo or 0),
+                    "total_elo_defeated": int(total_elo or 0),
+                    "bonus_bins": set(json.loads(bins_json) if bins_json else []),
+                }
+        except Exception as e:
+            logging.error(f"[init_db_state] chess_user_stats failed: {e}", exc_info=True)
+            raise
+
         # ── ai_threads (ask, story, roleplay, rpg) ───────────────────────
         try:
             await cur.execute(

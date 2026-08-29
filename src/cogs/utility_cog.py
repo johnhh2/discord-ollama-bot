@@ -160,6 +160,7 @@ class UtilityCog(commands.Cog):
             "`!games` — View all games and gambling commands"
         ))
         lb_lines = [
+            "`!profile [@user]` — Player overview: coins, level, tickets, chess ranks",
             "`!leaderboard` — Top 10 richest users",
             "`!roles` — View role thresholds and your progress",
             "`!levels` — Top 10 users by XP level",

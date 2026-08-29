@@ -28,7 +28,9 @@ from src.persistence import (
 )
 from src.games.ttt_c4 import _setup_pvp_game
 from src.games import chess_engine, chess_render, chess_bot
-from src.games.bot_chess_rewards import award_bot_defeat, RECORD_CATEGORY as _BOT_CHESS_RECORD
+from src.games.bot_chess_rewards import (
+    award_bot_defeat, rank_badges, RECORD_CATEGORY as _BOT_CHESS_RECORD,
+)
 from src import state
 
 
@@ -79,6 +81,13 @@ def _render_file_for_game(game: dict, *, orientation_for_uid: int | None = None)
         logging.warning(f"chess render unavailable: {e}")
         return None
     return discord.File(io.BytesIO(png), filename=BOARD_IMG_FILENAME)
+
+
+def _badge_suffix(uid: int) -> str:
+    """' · 🏅1,900 🏆45.3k' — the compact chess-rank badges for a player line
+    in the match embed, or '' for a user with no bot defeats yet."""
+    badges = rank_badges(uid)
+    return f" · {badges}" if badges else ""
 
 
 def _board_embed(title: str, description: str, color: int) -> discord.Embed:
@@ -506,8 +515,11 @@ class ChessCog(commands.Cog):
         state.active_chess_games[cid] = game
 
         wager_info = f"\nWager: {amount:,} 🪙 each" if amount > 0 else ""
+        white_badges = _badge_suffix(white_id)
+        black_badges = _badge_suffix(black_id)
         desc = (
-            f"{ctx.author.mention} (White ♙) vs {opponent.mention} (Black ♟){wager_info}\n"
+            f"{ctx.author.mention} (White ♙{white_badges}) vs "
+            f"{opponent.mention} (Black ♟{black_badges}){wager_info}\n"
             f"{ctx.author.mention}'s turn. Type your move (e.g. `e4`, `Nf3`, `O-O`, `e2e4`) or `!move <move>`\n\n"
             f"**Last move:** {game['last_move']}"
             f"{_captures_block(game)}"
@@ -551,7 +563,7 @@ class ChessCog(commands.Cog):
         state.active_chess_games[cid] = game
 
         desc = (
-            f"{ctx.author.mention} (White ♙) vs 🤖 **{black_name}** (Black ♟)\n"
+            f"{ctx.author.mention} (White ♙{_badge_suffix(uid)}) vs 🤖 **{black_name}** (Black ♟)\n"
             f"{ctx.author.mention}'s turn. Type your move (e.g. `e4`, `Nf3`, `O-O`, `e2e4`) or `!move <move>`\n\n"
             f"**Last move:** {game['last_move']}"
             f"{_captures_block(game)}"
@@ -985,6 +997,8 @@ class ChessCog(commands.Cog):
             next_mention = f"🤖 **{chess_bot.engine_name_with_elo(elo)}**"
         else:
             next_mention = next_player.mention if next_player else "Next player"
+            if next_player is not None:
+                next_mention += _badge_suffix(opponent_id)
         check_note = " — **check!**" if board.is_check() else ""
         desc = (
             f"{next_mention}'s turn{check_note}. Type your move (e.g. `e4`, `Nf3`, `O-O`, `e2e4`) or `!move <move>`\n\n"
@@ -1166,12 +1180,17 @@ class ChessCog(commands.Cog):
             ):
                 bot_elo = int(game.get("elo", 0) or 0)
                 try:
-                    bounty, record_broken = await award_bot_defeat(
+                    bounty, record_broken, first_bonus = await award_bot_defeat(
                         user_id=winner_id, guild_id=gid,
                         holder_name=winner_name, bot_elo=bot_elo,
                     )
                     if bounty > 0:
                         payout_line += f" **+{bounty:,} 🪙** for defeating a {bot_elo}-Elo bot today."
+                    if first_bonus > 0:
+                        payout_line += (
+                            f" 🎉 First-ever win at **{bot_elo} Elo**: "
+                            f"**+{first_bonus:,} 🪙** bonus!"
+                        )
                     if record_broken:
                         asyncio.create_task(
                             announce_record(channel, _BOT_CHESS_RECORD, winner_name, bot_elo, holder_id=winner_id)

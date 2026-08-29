@@ -1,3 +1,5 @@
+import json
+
 from src import state
 from src.db import with_cursor
 
@@ -62,6 +64,33 @@ async def save_chess_games() -> None:
         for ch_id in channel_ids:
             game = state.active_chess_games[ch_id]
             await cur.execute(_CHESS_GAME_UPSERT_SQL, _row_for_game(ch_id, game))
+
+
+_CHESS_USER_STATS_UPSERT_SQL = (
+    "INSERT INTO chess_user_stats "
+    "(user_id, max_elo_defeated, total_elo_defeated, bonus_bins) "
+    "VALUES (%s,%s,%s,%s) "
+    "ON DUPLICATE KEY UPDATE "
+    "max_elo_defeated=VALUES(max_elo_defeated), "
+    "total_elo_defeated=VALUES(total_elo_defeated), "
+    "bonus_bins=VALUES(bonus_bins)"
+)
+
+
+async def save_chess_user_stats(uid: int) -> None:
+    """Mirror state.chess_user_stats[uid] into the chess_user_stats table.
+    Takes the whole row in one shot (like save_property_owner) so a call
+    site can't silently drop a column."""
+    row = state.chess_user_stats.get(str(uid))
+    if row is None:
+        return
+    async with with_cursor() as cur:
+        await cur.execute(_CHESS_USER_STATS_UPSERT_SQL, (
+            int(uid),
+            int(row.get("max_elo_defeated", 0)),
+            int(row.get("total_elo_defeated", 0)),
+            json.dumps(sorted(int(b) for b in row.get("bonus_bins", ()))),
+        ))
 
 
 async def save_chess_report(

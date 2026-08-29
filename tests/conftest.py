@@ -91,6 +91,7 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "rigged_slots", {})
     monkeypatch.setattr(_state, "rigged_steal", {})
     monkeypatch.setattr(_state, "active_chess_games", {})
+    monkeypatch.setattr(_state, "chess_user_stats", {})
     monkeypatch.setattr(_state, "active_blackjack_games", {})
     monkeypatch.setattr(_state, "active_hangman_games", {})
     monkeypatch.setattr(_state, "active_ttt_games", {})
@@ -126,6 +127,7 @@ def reset_bot_state(monkeypatch):
         "save_economy", "save_guild_house", "save_insurance", "save_insurance_subs", "save_jackpot",
         "save_guild_settings", "save_bot_roles", "save_bot_settings", "save_godmode_users",
         "save_chess_games", "save_chess_game", "delete_chess_game", "save_chess_report",
+        "save_chess_user_stats",
         "save_ragebait", "save_mock", "save_curse", "save_tax",
         "save_rigged_slots", "save_rigged_flips", "save_rigged_scratch", "save_rigged_steal",
         "save_user_artifact",

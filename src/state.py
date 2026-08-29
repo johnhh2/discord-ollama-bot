@@ -53,6 +53,12 @@ user_artifacts: dict = {}
 # unless the owner has a live marketplace listing. Source of truth is the
 # property_owners table; loaded at boot. Catalog lives in src/properties.py.
 property_owners: dict = {}
+# Per-user all-time bot-chess stats — the chess-only ranks + first-defeat
+# bonuses: {uid_str: {"max_elo_defeated": int, "total_elo_defeated": int,
+# "bonus_bins": set[int]}}. Global (not guild-scoped), like the economy.
+# Source of truth is the chess_user_stats table; loaded at boot. Written by
+# src/games/bot_chess_rewards.py:award_bot_defeat.
+chess_user_stats: dict = {}
 rigged_slots: dict = {}
 rigged_flips: dict = {}
 rigged_scratch: dict = {}

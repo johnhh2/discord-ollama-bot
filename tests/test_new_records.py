@@ -360,3 +360,20 @@ async def test_records_embed_pluralizes_multi_day_streaks(db):
     await cog.cmd_records.callback(cog, ctx)
 
     assert "**Command Streak:** 42 days — **veteran**" in ctx.sent_embeds[-1].description
+
+
+async def test_records_embed_renders_chess_categories(db):
+    from src.cogs.economy_cog import EconomyCog
+
+    await _persistence.save_records(GID, {
+        "highest_bot_chess_elo_defeated": {"value": 1900, "holder_id": 4, "holder_name": "kasparov"},
+        "chess_pvp_wins": {"value": 1, "holder_id": 5, "holder_name": "duelist"},
+    })
+    cog = EconomyCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=1), guild=FakeGuild(gid=GID))
+    await cog.cmd_records.callback(cog, ctx)
+
+    desc = ctx.sent_embeds[-1].description
+    assert "**Stockfish Elo Defeated:** 1,900 Elo — **kasparov**" in desc
+    # Singular at exactly one win, like the streak line.
+    assert "**PvP Chess Wins:** 1 win — **duelist**" in desc
