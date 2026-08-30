@@ -159,6 +159,60 @@ async def test_slots_rigged_forces_three_of_a_kind_and_decrements(db, monkeypatc
     assert 3 not in _state.rigged_slots
 
 
+# ── !unrig ────────────────────────────────────────────────────────────────────
+
+async def _count_rig_rows(uid: int) -> int:
+    """Rows across all four rigged_* tables for one user."""
+    pool = await _persistence.get_pool()
+    total = 0
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            for table in ("rigged_slots", "rigged_flips", "rigged_scratch", "rigged_steal"):
+                await cur.execute(f"SELECT COUNT(*) FROM {table} WHERE user_id=%s", (uid,))
+                total += (await cur.fetchone())[0]
+    return total
+
+
+@pytest.mark.asyncio
+async def test_unrig_clears_all_rigs_for_target_only(db):
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=1)
+
+    _state.rigged_slots[5] = "7️⃣"
+    _state.rigged_flips[5] = 3
+    _state.rigged_scratch[5] = 4
+    _state.rigged_steal[5] = 2
+    _state.rigged_flips[6] = 1   # bystander's rig must survive
+    await _persistence.save_rigged_slots()
+    await _persistence.save_rigged_flips()
+    await _persistence.save_rigged_scratch()
+    await _persistence.save_rigged_steal()
+
+    target = FakeMember(uid=5, display_name="rigged-guy")
+    await cog.cmd_unrig.callback(cog, ctx, target=target)
+
+    assert 5 not in _state.rigged_slots
+    assert 5 not in _state.rigged_flips
+    assert 5 not in _state.rigged_scratch
+    assert 5 not in _state.rigged_steal
+    assert await _count_rig_rows(5) == 0
+    # Bystander untouched, in memory and in the DB.
+    assert _state.rigged_flips[6] == 1
+    assert await _count_rig_rows(6) == 1
+    assert ctx.sent_embeds[-1].title == "🧹 Rigs Cleared"
+
+
+@pytest.mark.asyncio
+async def test_unrig_with_no_active_rigs_reports_not_rigged(db):
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=1)
+
+    target = FakeMember(uid=7, display_name="clean-guy")
+    await cog.cmd_unrig.callback(cog, ctx, target=target)
+
+    assert ctx.sent_embeds[-1].title == "🧹 Not Rigged"
+
+
 def test_slots_house_edge_is_positive_at_10k_bet():
     """Simulate many slot spins at a 10k bet; verify expected gross return
     is below the bet (house edge > 0). Uses a fixed seed so the result

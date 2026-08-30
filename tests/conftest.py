@@ -90,6 +90,8 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "property_owners", {})
     monkeypatch.setattr(_state, "lottery_ticket_grants", {})
     monkeypatch.setattr(_state, "rigged_slots", {})
+    monkeypatch.setattr(_state, "rigged_flips", {})
+    monkeypatch.setattr(_state, "rigged_scratch", {})
     monkeypatch.setattr(_state, "rigged_steal", {})
     monkeypatch.setattr(_state, "active_chess_games", {})
     monkeypatch.setattr(_state, "chess_user_stats", {})

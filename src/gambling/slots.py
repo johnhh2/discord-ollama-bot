@@ -318,6 +318,7 @@ class SlotsCog(commands.Cog):
             "`!rig flip @user <n>` — rig next n coin flips to win",
             "`!rig scratch @user <1-4>` — rig 3rd daily scratchoff to match N symbols",
             "`!rig steal @user [n]` — rig next n steal attempts to succeed (default 1)",
+            "`!unrig @user` — clear all active rigs for a player",
         ]
 
         async def name(uid: int) -> str:
@@ -503,6 +504,37 @@ class SlotsCog(commands.Cog):
             f"**{target_name}**'s next **{n_int}** `!steal` {'attempt' if n_int == 1 else 'attempts'} will succeed!",
             C_GOLD,
         ))
+
+    @commands.command(name="unrig", hidden=True)
+    async def cmd_unrig(self, ctx: commands.Context, target: OptionalMember = None):
+        """Hidden admin-only command: clear all active rigs for a player."""
+        if target is None:
+            target = ctx.author
+        uid = target.id
+        target_name = target.display_name
+
+        cleared = []
+        if state.rigged_slots.pop(uid, None) is not None:
+            await save_rigged_slots()
+            cleared.append("🎰 slots")
+        if state.rigged_flips.pop(uid, None) is not None:
+            await save_rigged_flips()
+            cleared.append("🪙 flip")
+        if state.rigged_scratch.pop(uid, None) is not None:
+            await save_rigged_scratch()
+            cleared.append("🎫 scratch")
+        if state.rigged_steal.pop(uid, None) is not None:
+            await save_rigged_steal()
+            cleared.append("🦹 steal")
+
+        if cleared:
+            await ctx.send(embed=emb(
+                "🧹 Rigs Cleared",
+                f"Cleared for **{target_name}**: {', '.join(cleared)}.",
+                C_GOLD,
+            ))
+        else:
+            await ctx.send(embed=emb("🧹 Not Rigged", f"**{target_name}** has no active rigs.", C_RED))
 
 
 async def setup(bot):
