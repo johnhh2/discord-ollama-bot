@@ -55,7 +55,7 @@ def _always(_: int) -> bool:
 
 UNLOCKS: dict[str, dict] = {
     # Level 3 — savings (advertised: savings)
-    "savings":     {"level": 3, "enabled": _always,                       "usage": f"`!savings add|remove <amount>` — piggy bank with {SAVINGS_DAILY_PCT} daily interest", "reward": True},
+    "savings":     {"level": 3, "enabled": _always,                       "usage": f"`!deposit` / `!withdraw <amount>` — piggy bank with {SAVINGS_DAILY_PCT} daily interest", "reward": True},
 
     # Level 5 — role family (advertised: rolecreate). rolelock/roleunlock gated separately at 8.
     # !roles is the role leaderboard — never gated.
@@ -121,13 +121,25 @@ _SHOP_SUBCOMMANDS = {
 }
 
 
+# Top-level shorthand commands that share another command's gate. Kept out of
+# UNLOCKS itself so they don't multiply the level-up announcement lines.
+_GATE_ALIASES: dict[str, str] = {
+    "save": "savings",
+    "deposit": "savings",
+    "withdraw": "savings",
+}
+
+
 def lookup(qualified_name: str) -> Optional[dict]:
     """Return the unlock entry for a command, or None if it isn't level-gated.
 
-    Handles `!shop rolecreate` and `!rolecreate` as the same gate.
+    Handles `!shop rolecreate` and `!rolecreate` as the same gate, and
+    shorthand commands (`!deposit`) as their parent's gate (`savings`).
     """
     if qualified_name in UNLOCKS:
         return UNLOCKS[qualified_name]
+    if qualified_name in _GATE_ALIASES:
+        return UNLOCKS.get(_GATE_ALIASES[qualified_name])
     parts = qualified_name.split(" ")
     if len(parts) == 2 and parts[0] == "shop" and parts[1] in _SHOP_SUBCOMMANDS:
         return UNLOCKS.get(parts[1])

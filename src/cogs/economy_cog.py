@@ -1419,6 +1419,18 @@ class EconomyCog(commands.Cog):
         elif action in ("-", "remove", "withdraw"):
             action = "remove"
 
+        # A signed amount wins over the action word: the piggy bank's rule is
+        # "minus means withdraw" (`!savings -500`), so `!withdraw -500` and
+        # `!deposit -500` both withdraw instead of dead-ending on a
+        # contradictory "must be positive" error. A leading `+` is just noise.
+        if action in ("add", "remove") and amount:
+            token = amount.strip()
+            if len(token) > 1 and token[0] == "-":
+                action = "remove"
+                amount = token[1:]
+            elif len(token) > 1 and token[0] == "+":
+                amount = token[1:]
+
         show_principals = action in ("principals", "principal")
 
         if action is None or action not in ("add", "remove"):
@@ -1428,8 +1440,8 @@ class EconomyCog(commands.Cog):
                 desc = (
                     f"**{ctx.author.display_name}** has no savings yet.\n\n"
                     "**Usage:**\n"
-                    "`!savings add <amount>` or `!savings +<amount>` — deposit coins\n"
-                    "`!savings remove <amount>` or `!savings -<amount>` — withdraw coins\n\n"
+                    "`!deposit <amount>` — put coins in (`!savings +<amount>` works too)\n"
+                    "`!withdraw <amount>` — take coins out (`!savings -<amount>` works too)\n\n"
                     f"*Savings earn **{SAVINGS_DAILY_PCT} compound interest per day**.*"
                 )
             elif show_principals:
@@ -1463,20 +1475,46 @@ class EconomyCog(commands.Cog):
                     f"**Principal:** {principal:,} 🪙\n"
                     f"**Interest earned:** +{interest:,} 🪙\n\n"
                     "**Usage:**\n"
-                    "`!savings add <amount>` — deposit coins\n"
-                    "`!savings remove <amount>` — withdraw coins\n"
+                    "`!deposit <amount>` — put coins in\n"
+                    "`!withdraw <amount>` — take coins out\n"
                     "`!savings principals` — show deposit breakdown\n\n"
                     f"*{SAVINGS_DAILY_PCT} compound interest per day, compounded on each deposit separately.*"
                 )
             await send_ephemeral(ctx, embed=emb("🐷 Piggy Bank", desc, C_GREEN))
             return
 
-        parsed = await parse_amount(ctx, amount)
-        if parsed is None:
+        if amount is None or not amount.strip():
+            verb = "deposit" if action == "add" else "withdraw"
+            await ctx.send(embed=emb(
+                "❌ Missing Amount",
+                f"Usage: `!{verb} <amount>` — e.g. `!{verb} 2.5k`.",
+                C_RED,
+            ))
             return
-        if parsed <= 0:
-            await ctx.send(embed=emb("❌ Invalid Amount", "Amount must be positive.", C_RED))
-            return
+
+        if amount.strip().lower() == "all":
+            # `!save all` is advertised in command_tips.txt; make withdraw
+            # symmetric: everything in the wallet / the full savings value.
+            parsed = (
+                await get_balance(uid) if action == "add"
+                else int(await get_savings_value(uid))
+            )
+            if parsed <= 0:
+                where = "wallet" if action == "add" else "savings"
+                await ctx.send(embed=emb(
+                    "❌ Nothing to Move", f"Your {where} is empty.", C_RED,
+                ))
+                return
+        else:
+            # parse_amount enforces >= 1, and the sign-routing above already
+            # turned any minus into a withdraw — so the only failures left
+            # are genuinely malformed amounts.
+            parsed = await parse_amount(
+                ctx, amount,
+                error_msg="Amount must be at least 1 coin — plain numbers, `2.5k`/`1m` shorthand, `50%` of your wallet, or `all`.",
+            )
+            if parsed is None:
+                return
 
         if action == "add":
             if not await add_savings(uid, parsed):
@@ -1514,6 +1552,18 @@ class EconomyCog(commands.Cog):
     @commands.command(name="save")
     async def cmd_save(self, ctx: commands.Context, amount: str = None):
         await self.cmd_savings(ctx, "add", amount)
+
+    # Shorthands for the savings subcommands. Both take a plain positive
+    # amount; a minus still flips to withdraw via the sign-routing in
+    # cmd_savings. Level-gated with `savings` via _GATE_ALIASES in
+    # src/level_unlocks.py.
+    @commands.command(name="deposit", aliases=["dep"])
+    async def cmd_deposit(self, ctx: commands.Context, amount: str = None):
+        await self.cmd_savings(ctx, "add", amount)
+
+    @commands.command(name="withdraw", aliases=["wd"])
+    async def cmd_withdraw(self, ctx: commands.Context, amount: str = None):
+        await self.cmd_savings(ctx, "remove", amount)
 
     @commands.command(name="economy", aliases=["eco"])
     @requires_perm
