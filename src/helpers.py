@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import subprocess
 import time
 
@@ -518,6 +519,79 @@ class OptionalMember(commands.Converter):
                 except Exception:
                     pass
             return None
+
+
+_USER_TOKEN_RE = re.compile(r"<@!?(\d{15,20})>|(\d{15,20})")
+
+
+def _match_users_by_name(users, query: str) -> list:
+    """Case-insensitive name match over *users*; exact matches trump substrings."""
+    q = query.lower()
+    subs, exact = [], []
+    for u in users:
+        disp = u.display_name.lower()
+        name = u.name.lower()
+        if q == disp or q == name:
+            exact.append(u)
+        elif q in disp or q in name:
+            subs.append(u)
+    return exact or subs
+
+
+class GlobalUser(commands.Converter):
+    """Resolves a user beyond the current guild: mention, raw ID, or name.
+
+    Resolution order:
+    1. Mention / ID token → current-guild member if present, else a global
+       ``fetch_user`` — so a user in no shared-with-here guild still resolves.
+    2. Name (exact, then substring) against current-guild members.
+    3. Name (exact, then substring) against every user the bot can see
+       across all its guilds (``bot.users``).
+
+    Purely numeric tokens shorter than a real ID are **never** name-matched —
+    a short number is a count/amount, not a name. Unlike `OptionalMember`,
+    failure raises `BadArgument`, so annotate as ``Optional[GlobalUser]``:
+    discord.py then rewinds the failed token onto the next parameter
+    (``!rig flip 5`` rigs 5 flips for yourself instead of eating the 5).
+    Ambiguous names send their own embed before raising, like `OptionalMember`.
+    """
+
+    async def convert(self, ctx: commands.Context, argument: str) -> "discord.Member | discord.User":
+        arg = argument.strip()
+
+        m = _USER_TOKEN_RE.fullmatch(arg)
+        if m:
+            uid = int(m.group(1) or m.group(2))
+            if ctx.guild:
+                member = await fetch_member(ctx.guild, uid)
+                if member:
+                    return member
+            user = ctx.bot.get_user(uid)
+            if user:
+                return user
+            try:
+                return await ctx.bot.fetch_user(uid)
+            except discord.HTTPException:
+                raise commands.BadArgument(f"No user with ID `{uid}`.")
+
+        if arg.isdigit():
+            raise commands.BadArgument(f"User '{arg}' not found.")
+
+        pools = [ctx.guild.members] if ctx.guild else []
+        pools.append(list(ctx.bot.users))
+        for pool in pools:
+            matches = _match_users_by_name(pool, arg)
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                names = ", ".join(u.display_name for u in matches[:5])
+                msg = f"'{arg}' matched multiple users: {names}"
+                try:
+                    await ctx.send(embed=emb("❌ Ambiguous User", msg, C_RED))
+                except Exception:
+                    pass
+                raise commands.BadArgument(msg)
+        raise commands.BadArgument(f"User '{arg}' not found.")
 
 
 async def toggle_member_role(

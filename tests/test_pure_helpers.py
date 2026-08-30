@@ -405,6 +405,134 @@ class TestOptionalMember:
         assert await OptionalMember().convert(ctx, "alice") is None
 
 
+# ── GlobalUser (rig targets: cross-guild by ID or name) ───────────────────────
+
+def _not_found():
+    import discord
+    from types import SimpleNamespace
+    return discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "Unknown User")
+
+
+class _RigGuild:
+    """Guild fake for GlobalUser: member cache + a fetch that always 404s."""
+    def __init__(self, members: list):
+        self.members = members
+        self.id = 1
+
+    def get_member(self, uid):
+        return next((m for m in self.members if m.id == uid), None)
+
+    async def fetch_member(self, uid):
+        raise _not_found()
+
+
+class _UserBot:
+    """Bot fake: `users` is the cross-guild cache; `fetchable` is the Discord API."""
+    def __init__(self, users: list | None = None, fetchable: dict | None = None):
+        self.users = list(users or [])
+        self._fetchable = dict(fetchable or {})
+
+    def get_user(self, uid):
+        return next((u for u in self.users if u.id == uid), None)
+
+    async def fetch_user(self, uid):
+        if uid in self._fetchable:
+            return self._fetchable[uid]
+        raise _not_found()
+
+
+def _rig_ctx(members=None, cached_users=None, fetchable=None) -> FakeCtx:
+    ctx = FakeCtx()
+    ctx.guild = _RigGuild(members or [])
+    ctx.bot = _UserBot(cached_users, fetchable)
+    return ctx
+
+
+UID = 111111111111111111  # 18 digits — passes the real-ID regex
+
+
+@pytest.mark.asyncio
+class TestGlobalUser:
+    async def test_id_prefers_guild_member(self):
+        from src.helpers import GlobalUser
+        member = FakeMember(uid=UID, display_name="here")
+        stranger = FakeMember(uid=UID, display_name="cached-copy")
+        ctx = _rig_ctx(members=[member], cached_users=[stranger])
+        assert await GlobalUser().convert(ctx, str(UID)) is member
+
+    async def test_id_of_out_of_guild_user_resolves_from_cache(self):
+        from src.helpers import GlobalUser
+        stranger = FakeMember(uid=UID, display_name="elsewhere")
+        ctx = _rig_ctx(cached_users=[stranger])
+        assert await GlobalUser().convert(ctx, str(UID)) is stranger
+
+    async def test_id_falls_back_to_api_fetch(self):
+        from src.helpers import GlobalUser
+        stranger = FakeMember(uid=UID, display_name="uncached")
+        ctx = _rig_ctx(fetchable={UID: stranger})
+        assert await GlobalUser().convert(ctx, str(UID)) is stranger
+
+    async def test_mention_of_out_of_guild_user_resolves(self):
+        from src.helpers import GlobalUser
+        stranger = FakeMember(uid=UID, display_name="elsewhere")
+        ctx = _rig_ctx(cached_users=[stranger])
+        assert await GlobalUser().convert(ctx, f"<@{UID}>") is stranger
+
+    async def test_nonexistent_id_raises(self):
+        from discord.ext import commands as dpy_commands
+        from src.helpers import GlobalUser
+        ctx = _rig_ctx()
+        with pytest.raises(dpy_commands.BadArgument):
+            await GlobalUser().convert(ctx, str(UID))
+
+    async def test_short_number_never_name_matches(self):
+        """The `!rig flip 5` bug: a count must not fuzzy-match 'user5'."""
+        from discord.ext import commands as dpy_commands
+        from src.helpers import GlobalUser
+        ctx = _rig_ctx(members=[FakeMember(uid=2, display_name="user5")])
+        with pytest.raises(dpy_commands.BadArgument):
+            await GlobalUser().convert(ctx, "5")
+
+    async def test_name_prefers_guild_member_over_global(self):
+        from src.helpers import GlobalUser
+        member = FakeMember(uid=2, display_name="alice")
+        stranger = FakeMember(uid=3, display_name="alice")
+        ctx = _rig_ctx(members=[member], cached_users=[stranger])
+        assert await GlobalUser().convert(ctx, "alice") is member
+
+    async def test_name_resolves_out_of_guild_user(self):
+        from src.helpers import GlobalUser
+        stranger = FakeMember(uid=3, display_name="faraway-friend")
+        ctx = _rig_ctx(members=[FakeMember(uid=2, display_name="bob")],
+                       cached_users=[stranger])
+        assert await GlobalUser().convert(ctx, "faraway") is stranger
+
+    async def test_exact_name_beats_substring_ambiguity(self):
+        from src.helpers import GlobalUser
+        alice = FakeMember(uid=2, display_name="alice")
+        alicia = FakeMember(uid=3, display_name="alicia")
+        ctx = _rig_ctx(members=[alice, alicia])
+        assert await GlobalUser().convert(ctx, "alice") is alice
+
+    async def test_ambiguous_name_sends_embed_and_raises(self):
+        from discord.ext import commands as dpy_commands
+        from src.helpers import GlobalUser
+        ctx = _rig_ctx(cached_users=[
+            FakeMember(uid=2, display_name="alice_smith"),
+            FakeMember(uid=3, display_name="alice_jones"),
+        ])
+        with pytest.raises(dpy_commands.BadArgument):
+            await GlobalUser().convert(ctx, "alice")
+        assert any("alice_smith" in (e.description or "") for e in ctx.sent_embeds)
+
+    async def test_dm_context_searches_global_cache(self):
+        from src.helpers import GlobalUser
+        stranger = FakeMember(uid=3, display_name="dm-target")
+        ctx = _rig_ctx(cached_users=[stranger])
+        ctx.guild = None
+        assert await GlobalUser().convert(ctx, "dm-target") is stranger
+
+
 # ── get_command_perm hierarchical fallback ────────────────────────────────────
 
 class TestGetCommandPermFallback:

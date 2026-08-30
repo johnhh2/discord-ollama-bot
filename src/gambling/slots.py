@@ -1,10 +1,11 @@
 import random
+from typing import Optional
 
 import discord
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, parse_amount, send_ephemeral, fetch_member, shop_charge, shop_payout, OptionalMember,
+    emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, parse_amount, send_ephemeral, fetch_member, shop_charge, shop_payout, GlobalUser,
     announce_record,
 )
 from src.economy import (
@@ -319,6 +320,8 @@ class SlotsCog(commands.Cog):
             "`!rig scratch @user <1-4>` — rig a random upcoming scratchoff to match N symbols",
             "`!rig steal @user [n]` — rig next n steal attempts to succeed (default 1)",
             "`!unrig @user` — clear all active rigs for a player",
+            "",
+            "*@user can be a mention, user ID, or name — including users in other servers. Omit it to target yourself.*",
         ]
 
         async def name(uid: int) -> str:
@@ -362,7 +365,7 @@ class SlotsCog(commands.Cog):
     }
 
     @cmd_rig.command(name="slots", hidden=True)
-    async def cmd_rig_slots(self, ctx: commands.Context, target: OptionalMember = None, mult: str = "75"):
+    async def cmd_rig_slots(self, ctx: commands.Context, target: Optional[GlobalUser] = None, mult: str = "75"):
         """Hidden admin-only command: rig the next slots spin. mult: 75/15/7/4/3/cancel."""
         if target is None:
             target = ctx.author
@@ -400,7 +403,7 @@ class SlotsCog(commands.Cog):
         ))
 
     @cmd_rig.command(name="flip", hidden=True)
-    async def cmd_rig_flip(self, ctx: commands.Context, target: OptionalMember = None, n: str = "1"):
+    async def cmd_rig_flip(self, ctx: commands.Context, target: Optional[GlobalUser] = None, n: str = "1"):
         """Hidden admin-only command: rig the next n coin flips to win. n can be 'cancel'."""
         if target is None:
             target = ctx.author
@@ -422,8 +425,8 @@ class SlotsCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid", "n must be a positive number or `cancel`.", C_RED))
             return
 
-        if n_int < 1:
-            await ctx.send(embed=emb("❌ Invalid", "n must be at least 1.", C_RED))
+        if not 1 <= n_int <= 1000:
+            await ctx.send(embed=emb("❌ Invalid", "n must be between 1 and 1000.", C_RED))
             return
 
         state.rigged_flips[uid] = state.rigged_flips.get(uid, 0) + n_int
@@ -435,7 +438,7 @@ class SlotsCog(commands.Cog):
         ))
 
     @cmd_rig.command(name="scratch", hidden=True)
-    async def cmd_rig_scratch(self, ctx: commands.Context, target: OptionalMember = None, n: str = "4"):
+    async def cmd_rig_scratch(self, ctx: commands.Context, target: Optional[GlobalUser] = None, n: str = "4"):
         """Hidden admin-only command: rig a random upcoming scratchoff to match N symbols (1-4)."""
         if target is None:
             target = ctx.author
@@ -471,7 +474,7 @@ class SlotsCog(commands.Cog):
         ))
 
     @cmd_rig.command(name="steal", hidden=True)
-    async def cmd_rig_steal(self, ctx: commands.Context, target: OptionalMember = None, n: str = "1"):
+    async def cmd_rig_steal(self, ctx: commands.Context, target: Optional[GlobalUser] = None, n: str = "1"):
         """Hidden admin-only command: rig the next n steal attempts to succeed. n can be 'cancel'."""
         if target is None:
             target = ctx.author
@@ -493,8 +496,8 @@ class SlotsCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid", "n must be a positive number or `cancel`.", C_RED))
             return
 
-        if n_int < 1:
-            await ctx.send(embed=emb("❌ Invalid", "n must be at least 1.", C_RED))
+        if not 1 <= n_int <= 1000:
+            await ctx.send(embed=emb("❌ Invalid", "n must be between 1 and 1000.", C_RED))
             return
 
         state.rigged_steal[uid] = state.rigged_steal.get(uid, 0) + n_int
@@ -506,7 +509,7 @@ class SlotsCog(commands.Cog):
         ))
 
     @commands.command(name="unrig", hidden=True)
-    async def cmd_unrig(self, ctx: commands.Context, target: OptionalMember = None):
+    async def cmd_unrig(self, ctx: commands.Context, target: Optional[GlobalUser] = None):
         """Hidden admin-only command: clear all active rigs for a player."""
         if target is None:
             target = ctx.author
