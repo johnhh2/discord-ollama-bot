@@ -316,7 +316,7 @@ class SlotsCog(commands.Cog):
         lines = [
             "`!rig slots @user [mult]` — rig next slots spin (mult: 75/15/7/4/3, default 75)",
             "`!rig flip @user <n>` — rig next n coin flips to win",
-            "`!rig scratch @user <1-4>` — rig 3rd daily scratchoff to match N symbols",
+            "`!rig scratch @user <1-4>` — rig a random upcoming scratchoff to match N symbols",
             "`!rig steal @user [n]` — rig next n steal attempts to succeed (default 1)",
             "`!unrig @user` — clear all active rigs for a player",
         ]
@@ -346,7 +346,7 @@ class SlotsCog(commands.Cog):
             for uid, n in flips_rigged.items():
                 lines.append(f"🪙 {await name(uid)} — {n} flip {'win' if n == 1 else 'wins'}")
             for uid, n in scratch_rigged.items():
-                lines.append(f"🎫 {await name(uid)} — {n} symbol match on 3rd scratch")
+                lines.append(f"🎫 {await name(uid)} — {n} symbol match on a random upcoming scratch")
             for uid, n in steal_rigged.items():
                 lines.append(f"🦹 {await name(uid)} — {n} steal {'success' if n == 1 else 'successes'}")
 
@@ -436,7 +436,7 @@ class SlotsCog(commands.Cog):
 
     @cmd_rig.command(name="scratch", hidden=True)
     async def cmd_rig_scratch(self, ctx: commands.Context, target: OptionalMember = None, n: str = "4"):
-        """Hidden admin-only command: rig the 3rd daily scratchoff to match N symbols (1-4)."""
+        """Hidden admin-only command: rig a random upcoming scratchoff to match N symbols (1-4)."""
         if target is None:
             target = ctx.author
         uid = target.id
@@ -466,7 +466,7 @@ class SlotsCog(commands.Cog):
         payout_map = {1: "100 🪙", 2: "1,000 🪙", 3: "10,000 🪙", 4: "100,000 🪙"}
         await ctx.send(embed=emb(
             "🎫 Scratch Rigged",
-            f"**{target_name}**'s 3rd daily scratchoff will match **{n_int}** symbol(s) — payout: **{payout_map[n_int]}**!",
+            f"One of **{target_name}**'s upcoming scratchoffs (random) will match **{n_int}** symbol(s) — payout: **{payout_map[n_int]}**!",
             C_GOLD,
         ))
 

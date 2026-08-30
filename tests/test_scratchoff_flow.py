@@ -14,7 +14,7 @@ import pytest
 import src.state as _state
 import src.economy as _economy
 from src.gambling.scratchoff import (
-    ScratchoffCog, scratchoff_attempts_remaining,
+    ScratchoffCog, scratchoff_attempts_remaining, play_scratchoffs,
 )
 
 from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild, FakeChannel
@@ -241,3 +241,65 @@ async def test_concurrent_scratchoff_invocations_cap_at_three(monkeypatch):
         f"invocations (expected 3)"
     )
     assert _state.economy["users"]["1"]["scratch_used"] == 3
+
+
+# ── Scratch rig: random upcoming card, not fixed-third ────────────────────────
+
+async def _run_rigged_batch(monkeypatch, uid: int, roll: float) -> list[bool]:
+    """Play a full 3-card batch with a 4-match rig active and the rig-fire
+    roll pinned to `roll`. Returns, per card in order, whether it was the
+    rigged one (a 4-match on an otherwise zero-match day)."""
+    today = "2026-05-02"
+    monkeypatch.setattr("src.gambling.scratchoff._ct_today", lambda: today)
+
+    # Zero natural matches: the first random.choices call draws the daily
+    # goal (all symbol #0), later calls draw cards (all symbol #1). The
+    # rigged card is built from the goal directly, so it stays a 4-match.
+    calls = {"n": 0}
+
+    def _fake_choices(pop, k):
+        calls["n"] += 1
+        return [pop[0] if calls["n"] == 1 else pop[1]] * k
+
+    monkeypatch.setattr("src.gambling.scratchoff.random.choices", _fake_choices)
+    monkeypatch.setattr("src.gambling.scratchoff.random.random", lambda: roll)
+
+    await _economy._ensure_user(uid)
+    user = _state.economy["users"][str(uid)]
+    user["scratch_date"] = today
+    user["scratch_used"] = 0
+    _state.rigged_scratch[uid] = 4
+
+    author = FakeMember(uid=uid, display_name="player")
+    channel = FakeChannel(ch_id=100)
+    cards: list = []
+
+    async def record_send(content=None, *, embed=None, **kwargs):
+        if embed is not None and embed.title == "🎫 Scratchoff":
+            cards.append(embed)
+        return None
+
+    channel.send = record_send
+    await play_scratchoffs(_StubBot(), author, channel, guild=None, count=3)
+
+    assert len(cards) == 3
+    return ["💎 4 Matches" in (e.description or "") for e in cards]
+
+
+@pytest.mark.asyncio
+async def test_scratch_rig_can_fire_on_first_card(db, monkeypatch):
+    """The rig is no longer pinned to the day's 3rd card — a low roll fires
+    it on the very first card, and the entry is consumed (single-use)."""
+    rigged = await _run_rigged_batch(monkeypatch, uid=21, roll=0.0)
+    assert rigged == [True, False, False]
+    assert 21 not in _state.rigged_scratch
+
+
+@pytest.mark.asyncio
+async def test_scratch_rig_guaranteed_by_last_card(db, monkeypatch):
+    """A high roll defers the rig past every earlier card, but the last card
+    of the day fires it unconditionally — the rig never rolls over silently
+    once the day's cards are all played."""
+    rigged = await _run_rigged_batch(monkeypatch, uid=22, roll=0.99)
+    assert rigged == [False, False, True]
+    assert 22 not in _state.rigged_scratch

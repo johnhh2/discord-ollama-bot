@@ -247,8 +247,14 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1) -> int:
     total_won = 0
     for i in range(count):
         attempt_idx = first_attempt + i
-        is_third = attempt_idx == 2
-        rig_matches = state.rigged_scratch.get(uid) if is_third else None
+        rig_matches = None
+        if uid in state.rigged_scratch:
+            # Fire on a uniformly random one of the user's remaining cards
+            # today: P = 1/(cards left including this one), so the last
+            # card of the day is guaranteed if it hasn't fired earlier.
+            cards_left = cap - attempt_idx
+            if cards_left <= 1 or random.random() < 1.0 / cards_left:
+                rig_matches = state.rigged_scratch[uid]
 
         if rig_matches is not None:
             # Build a card with exactly rig_matches positions matching the goal

@@ -272,7 +272,9 @@ def _pin_no_natural_matches(monkeypatch):
     """Make unrigged cards deterministic zero-match: the first random.choices
     call in play_scratchoffs draws the daily goal (all symbol #0), every later
     call draws a card (all symbol #1). Rigged cards bypass random.choices, so
-    a state.rigged_scratch entry still controls the third card's matches."""
+    a state.rigged_scratch entry still controls a card's matches. The rig-fire
+    roll (random.random) is pinned high so the rig defers to the user's last
+    card of the day — the third in these 3-card claims."""
     calls = {"n": 0}
 
     def _fake_choices(pop, k):
@@ -280,6 +282,7 @@ def _pin_no_natural_matches(monkeypatch):
         return [pop[0] if calls["n"] == 1 else pop[1]] * k
 
     monkeypatch.setattr("src.gambling.scratchoff.random.choices", _fake_choices)
+    monkeypatch.setattr("src.gambling.scratchoff.random.random", lambda: 0.99)
 
 
 @pytest.mark.asyncio
