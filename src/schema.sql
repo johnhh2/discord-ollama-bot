@@ -1352,3 +1352,10 @@ ALTER TABLE lottery_ticket_grants DROP COLUMN IF EXISTS chess_week_1100;
 -- 🪙/🎰 reactions leave property revenue out of the flip/slots stake — it
 -- still banks with the claim. Users opt in with `!daily property`.
 ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS daily_gamble_property BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- ── 0058_add_insurance_paid_since_claim.sql ──
+-- Insurance-premium accrual counters, reported (and reset) by the next daily
+-- claim: how much the 5am sweep charged, and how many renewals lapsed
+-- unpaid, since the user's last claim.
+ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS ins_paid_since_claim BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS ins_lapsed_since_claim INT NOT NULL DEFAULT 0;

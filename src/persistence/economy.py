@@ -24,6 +24,8 @@ def _economy_user_row(uid_str: str, u: dict) -> tuple:
         float(u.get("property_paid_at", 0.0) or 0.0),
         int(u.get("property_revenue_total", 0) or 0),
         bool(u.get("daily_gamble_property", False)),
+        int(u.get("ins_paid_since_claim", 0) or 0),
+        int(u.get("ins_lapsed_since_claim", 0) or 0),
     )
 
 
@@ -32,8 +34,9 @@ _ECONOMY_UPSERT_SQL = """INSERT INTO economy_users
      scratch_date, jailbreak_used, jail_until, savings, jail_reason,
      crime_eligible, bail_amount, bot_chess_elo_max_today, bot_chess_elo_max_date,
      scratch_won_today,
-     property_paid_at, property_revenue_total, daily_gamble_property)
-   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+     property_paid_at, property_revenue_total, daily_gamble_property,
+     ins_paid_since_claim, ins_lapsed_since_claim)
+   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
    ON DUPLICATE KEY UPDATE
      balance=VALUES(balance),
      last_daily=VALUES(last_daily),
@@ -51,7 +54,9 @@ _ECONOMY_UPSERT_SQL = """INSERT INTO economy_users
      scratch_won_today=VALUES(scratch_won_today),
      property_paid_at=VALUES(property_paid_at),
      property_revenue_total=VALUES(property_revenue_total),
-     daily_gamble_property=VALUES(daily_gamble_property)"""
+     daily_gamble_property=VALUES(daily_gamble_property),
+     ins_paid_since_claim=VALUES(ins_paid_since_claim),
+     ins_lapsed_since_claim=VALUES(ins_lapsed_since_claim)"""
 
 
 async def save_economy(uid: int = None):

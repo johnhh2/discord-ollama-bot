@@ -233,7 +233,7 @@ class EconomyCog(commands.Cog):
         tick after the 5am CT rollover — whether or not they log on. Guarded:
         a failed tick must not stop the loop for good."""
         try:
-            await sweep_insurance_subs(self.bot)
+            await sweep_insurance_subs()
         except Exception:
             logging.exception("[insurance] sweep tick failed")
 
@@ -266,6 +266,12 @@ class EconomyCog(commands.Cog):
         # increments the counter, double-collecting the reward.
         user_data["daily_date"] = today
         user_data["last_daily"] = time.time()
+        # Premiums charged by the 5am sweep since the user's last claim —
+        # read + reset inside the same synchronous claim window.
+        ins_paid = int(user_data.get("ins_paid_since_claim", 0) or 0)
+        ins_lapsed = int(user_data.get("ins_lapsed_since_claim", 0) or 0)
+        user_data["ins_paid_since_claim"] = 0
+        user_data["ins_lapsed_since_claim"] = 0
         gid = ctx.guild.id if ctx.guild else None
         # Property revenue rides the daily claim (banks + stamps atomically;
         # see src/properties.py). Banked BEFORE the reward's add_balance so
@@ -274,7 +280,12 @@ class EconomyCog(commands.Cog):
         await add_balance(uid, DAILY_REWARD, guild_id=gid, holder_name=ctx.author.display_name)
         await save_economy(uid=uid)
         prop_str = f" + **{prop_rev:,} 🪙** property revenue" if prop_rev else ""
-        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**{prop_str}! Balance: **{await get_balance(uid):,} 🪙**", C_GREEN))
+        ins_str = f"\n🛡️ Insurance paid since your last claim: **{ins_paid:,} 🪙**" if ins_paid else ""
+        lapse_str = (
+            f"\n⚠️ {ins_lapsed} insurance renewal{'s' if ins_lapsed != 1 else ''} couldn't be paid — "
+            "coverage lapsed those days." if ins_lapsed else ""
+        )
+        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**{prop_str}! Balance: **{await get_balance(uid):,} 🪙**{ins_str}{lapse_str}", C_GREEN))
 
     @cmd_daily.command(name="property")
     async def cmd_daily_property(self, ctx: commands.Context):

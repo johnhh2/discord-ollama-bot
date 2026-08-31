@@ -191,7 +191,7 @@ async def renew_insurance_subs(uid: int) -> tuple[int, int]:
     return 0, 1
 
 
-async def sweep_insurance_subs(bot=None) -> None:
+async def sweep_insurance_subs() -> None:
     """Charge every insurance subscriber one day's premium for the new
     gameplay-day — independent of whether they log on.
 
@@ -199,8 +199,10 @@ async def sweep_insurance_subs(bot=None) -> None:
     (persisted in economy_meta) makes it fire once per gameplay-day: at the
     first tick after the 5am CT rollover, or right after boot if the bot was
     down at 5am. A subscriber who can't afford the premium lapses for the day
-    (coverage stops extending; the subscription stays) and is told by
-    best-effort DM when `bot` is provided.
+    (coverage stops extending; the subscription stays). Charges and lapses
+    are tallied into ins_paid_since_claim / ins_lapsed_since_claim, which the
+    user's next daily claim reports and resets — the sweep itself sends
+    nothing.
 
     On the very first run (no marker yet — the boot that ships this feature)
     the day is stamped without charging: subscribers were already charged by
@@ -217,24 +219,16 @@ async def sweep_insurance_subs(bot=None) -> None:
     await save_insurance_sweep_day()
     if prior is None:
         return
-    from src.config import SHOP_INSURANCE_COST
     for uid in list(state.insurance_subs):
+        await _ensure_user(uid)
         charged, lapsed = await renew_insurance_subs(uid)
+        user_data = state.economy["users"][str(uid)]
         if charged:
+            user_data["ins_paid_since_claim"] = int(user_data.get("ins_paid_since_claim", 0) or 0) + charged
+        if lapsed:
+            user_data["ins_lapsed_since_claim"] = int(user_data.get("ins_lapsed_since_claim", 0) or 0) + lapsed
+        if charged or lapsed:
             await save_economy(uid=uid)
-        if lapsed and bot is not None:
-            from src.helpers import emb, C_RED
-            try:
-                user = bot.get_user(uid) or await bot.fetch_user(uid)
-                await user.send(embed=emb(
-                    "🛡️ Insurance Lapsed",
-                    f"Couldn't afford your **{SHOP_INSURANCE_COST:,} 🪙** insurance renewal at the "
-                    "5am reset — coverage has lapsed until you can pay again. "
-                    "Your subscription is still active.",
-                    C_RED,
-                ))
-            except Exception:
-                logging.info("[insurance] lapse DM to %s failed", uid)
 
 
 async def is_insured(uid: int, against: str) -> bool:

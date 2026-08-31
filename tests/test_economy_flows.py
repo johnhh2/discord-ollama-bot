@@ -377,10 +377,13 @@ async def test_insurance_sweep_charges_and_extends_once_per_day(db):
     assert await _economy.get_balance(uid) == 5000 - SHOP_INSURANCE_COST
     assert _state.insurance[uid]["expires_at"] == expiry + SHOP_INSURANCE_DURATION_SECS
     assert _state.economy["last_insurance_sweep"] == _ct_today()
+    # The charge accrues for the next daily claim's message.
+    assert _state.economy["users"][str(uid)]["ins_paid_since_claim"] == SHOP_INSURANCE_COST
 
     await sweep_insurance_subs()  # same gameplay-day: no second charge
     assert await _economy.get_balance(uid) == 5000 - SHOP_INSURANCE_COST
     assert _state.insurance[uid]["expires_at"] == expiry + SHOP_INSURANCE_DURATION_SECS
+    assert _state.economy["users"][str(uid)]["ins_paid_since_claim"] == SHOP_INSURANCE_COST
 
 
 async def test_insurance_sweep_first_run_stamps_without_charging(db):
@@ -403,12 +406,11 @@ async def test_insurance_sweep_first_run_stamps_without_charging(db):
     assert _state.economy["last_insurance_sweep"] == _ct_today()
 
 
-async def test_insurance_sweep_lapse_keeps_sub_and_dms(db):
+async def test_insurance_sweep_lapse_keeps_sub_and_tallies(db):
     """A subscriber who can't cover the premium keeps the subscription, but
-    coverage doesn't extend — and they get a best-effort DM about the lapse."""
+    coverage doesn't extend — the lapse is tallied for the next claim
+    message (the sweep itself sends nothing)."""
     import time as _t
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
     from src.economy import sweep_insurance_subs
 
     uid = 8104
@@ -418,15 +420,55 @@ async def test_insurance_sweep_lapse_keeps_sub_and_dms(db):
     _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
     _state.economy["last_insurance_sweep"] = "2020-01-01"
 
-    dm_user = SimpleNamespace(send=AsyncMock())
-    bot = SimpleNamespace(get_user=lambda _uid: dm_user)
-
-    await sweep_insurance_subs(bot)
+    await sweep_insurance_subs()
 
     assert _state.insurance[uid]["expires_at"] == expiry  # not extended
     assert uid in _state.insurance_subs                   # sub retained
-    dm_user.send.assert_awaited_once()
-    assert "lapsed" in dm_user.send.await_args.kwargs["embed"].description
+    user = _state.economy["users"][str(uid)]
+    assert user.get("ins_paid_since_claim", 0) == 0
+    assert user["ins_lapsed_since_claim"] == 1
+
+
+async def test_daily_claim_reports_and_resets_insurance_paid(db):
+    """!daily shows what the 5am sweeps charged (and any lapses) since the
+    last claim on its own line, then zeroes the counters."""
+    uid = 8108
+    await _economy.add_balance(uid, 5000)
+    user = _state.economy["users"][str(uid)]
+    user["ins_paid_since_claim"] = 3000
+    user["ins_lapsed_since_claim"] = 2
+
+    cog = EconomyCog(bot=_StubBot())
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=1))
+    ctx.bot = _StubBot()
+    await cog.cmd_daily.callback(cog, ctx)
+
+    desc = ctx.sent_embeds[-1].description
+    assert "Insurance paid since your last claim: **3,000 🪙**" in desc
+    assert "2 insurance renewals couldn't be paid" in desc
+    assert user["ins_paid_since_claim"] == 0
+    assert user["ins_lapsed_since_claim"] == 0
+    # Reported, not re-charged: balance only moved by the reward itself.
+    assert await _economy.get_balance(uid) == 5000 + DAILY_REWARD
+
+
+async def test_auto_daily_reports_and_resets_insurance_paid(db):
+    """The auto-claim message carries the same insurance-paid line."""
+    from src.events import _auto_daily
+    from tests.fakes.discord import FakeChannel
+
+    uid = 8109
+    await _economy.add_balance(uid, 5000)
+    user = _state.economy["users"][str(uid)]
+    user["ins_paid_since_claim"] = 1000
+
+    channel = FakeChannel()
+    claimed, prop_rev = await _auto_daily(FakeMember(uid=uid), channel)
+
+    assert claimed == DAILY_REWARD  # the info line never shrinks the stake
+    assert user["ins_paid_since_claim"] == 0
+    embed = channel.send.call_args.kwargs["embed"]
+    assert "Insurance paid since your last claim: **1,000 🪙**" in embed.description
 
 
 async def test_auto_daily_ignores_insurance_subscription(db):

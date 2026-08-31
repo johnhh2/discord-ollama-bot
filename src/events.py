@@ -340,10 +340,18 @@ async def _auto_daily(author, channel) -> tuple[int, int]:
     user_data["daily_date"] = today
     if is_new:
         user_data["last_daily"] = time.time()
+    # Premiums charged by the 5am sweep since the user's last claim — read +
+    # reset inside the same synchronous claim window.
+    ins_paid = int(user_data.get("ins_paid_since_claim", 0) or 0)
+    ins_lapsed = int(user_data.get("ins_lapsed_since_claim", 0) or 0)
+    user_data["ins_paid_since_claim"] = 0
+    user_data["ins_lapsed_since_claim"] = 0
     try:
         await add_balance(uid, DAILY_REWARD)
     except Exception:
         user_data["daily_date"] = stored  # roll back the claim on failure
+        user_data["ins_paid_since_claim"] = ins_paid
+        user_data["ins_lapsed_since_claim"] = ins_lapsed
         raise
     # Property revenue rides the daily claim — inside the same claimed day,
     # so it pays at most once per gameplay-day. Banks and stamps atomically;
@@ -352,9 +360,14 @@ async def _auto_daily(author, channel) -> tuple[int, int]:
     await save_economy(uid=uid)
     greeting = f"Welcome, **{author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
     prop_str = f" + **{prop_rev:,} 🪙** property revenue" if prop_rev else ""
+    ins_str = f"\n🛡️ Insurance paid since your last claim: **{ins_paid:,} 🪙**" if ins_paid else ""
+    lapse_str = (
+        f"\n⚠️ {ins_lapsed} insurance renewal{'s' if ins_lapsed != 1 else ''} couldn't be paid — "
+        "coverage lapsed those days." if ins_lapsed else ""
+    )
     await channel.send(embed=emb(
         "🪙 Daily Reward",
-        f"{greeting} **{DAILY_REWARD:,} 🪙**{prop_str} added. Balance: {await get_balance(uid):,} 🪙",
+        f"{greeting} **{DAILY_REWARD:,} 🪙**{prop_str} added. Balance: {await get_balance(uid):,} 🪙{ins_str}{lapse_str}",
         C_GREEN,
     ), silent=True)
     return DAILY_REWARD + prop_rev, prop_rev

@@ -319,9 +319,13 @@ gameplay-day by `sweep_insurance_subs` (`src/economy.py`), driven from
 EconomyCog's minute loop — at the first tick after the 5am CT rollover, or at
 boot if the bot was down at 5am. Charging is independent of user activity:
 subscribers pay (and stay covered) whether or not they log on; one who can't
-afford the premium lapses for the day (sub retained) and gets a best-effort
-DM. The once-per-day gate is the `last_insurance_sweep` marker in
-`economy_meta`, claimed synchronously before any await. Do **not** re-attach
+afford the premium lapses for the day (sub retained). The sweep sends
+nothing itself — charges and lapses accrue in the per-user
+`ins_paid_since_claim` / `ins_lapsed_since_claim` columns, which the next
+daily claim (`!daily` or `_auto_daily`) reports on its own line and resets
+inside the synchronous claim window. The once-per-day gate is the
+`last_insurance_sweep` marker in `economy_meta`, claimed synchronously
+before any await. Do **not** re-attach
 premium charging to `!daily`/`_auto_daily` — the daily claim and the dailies
 flip/slots stake must never see insurance costs.
 

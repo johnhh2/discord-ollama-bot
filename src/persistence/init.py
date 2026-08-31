@@ -61,7 +61,7 @@ async def _init_db_state_inner(state, run_migrations):
                 " crime_eligible, bail_amount, bot_chess_elo_max_today,"
                 " bot_chess_elo_max_date,"
                 " scratch_won_today, property_paid_at, property_revenue_total,"
-                " daily_gamble_property"
+                " daily_gamble_property, ins_paid_since_claim, ins_lapsed_since_claim"
                 " FROM economy_users"
             )
             for row in await cur.fetchall():
@@ -71,7 +71,8 @@ async def _init_db_state_inner(state, run_migrations):
                  bot_chess_elo_max_today, bot_chess_elo_max_date,
                  scratch_won_today,
                  property_paid_at, property_revenue_total,
-                 daily_gamble_property) = row
+                 daily_gamble_property,
+                 ins_paid_since_claim, ins_lapsed_since_claim) = row
                 state.economy["users"][str(uid)] = {
                     "balance": bal,
                     "last_daily": last_daily,
@@ -90,6 +91,8 @@ async def _init_db_state_inner(state, run_migrations):
                     "property_paid_at": float(property_paid_at or 0.0),
                     "property_revenue_total": int(property_revenue_total or 0),
                     "daily_gamble_property": bool(daily_gamble_property),
+                    "ins_paid_since_claim": int(ins_paid_since_claim or 0),
+                    "ins_lapsed_since_claim": int(ins_lapsed_since_claim or 0),
                 }
         except Exception as e:
             logging.error(f"[init_db_state] economy_users failed: {e}", exc_info=True)
