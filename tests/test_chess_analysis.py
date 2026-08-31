@@ -17,25 +17,37 @@ pytestmark = pytest.mark.asyncio
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Pure math: ACPL → est. Elo
+# Pure math: win% conversion and avg win%-loss → est. Elo
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 async def test_estimate_elo_anchors_and_clamps():
-    assert ca.estimate_elo_from_acpl(0) == 2900     # clamped at the top
-    assert ca.estimate_elo_from_acpl(5) == 2900
-    assert ca.estimate_elo_from_acpl(50) == 1750    # exact anchor
-    assert ca.estimate_elo_from_acpl(300) == 500    # clamped at the bottom
+    assert ca.estimate_elo_from_awpl(0) == 2900      # clamped at the top
+    assert ca.estimate_elo_from_awpl(0.4) == 2900
+    assert ca.estimate_elo_from_awpl(4.5) == 1750    # exact anchor
+    assert ca.estimate_elo_from_awpl(30) == 250      # clamped at the bottom
 
 
 async def test_estimate_elo_is_monotonic_and_rounded():
     prev = None
-    for acpl in range(0, 300, 5):
-        est = ca.estimate_elo_from_acpl(float(acpl))
+    for tenths in range(0, 300, 5):
+        est = ca.estimate_elo_from_awpl(tenths / 10.0)
         assert est % 50 == 0
         if prev is not None:
             assert est <= prev
         prev = est
+
+
+async def test_win_pct_grades_by_context_not_raw_centipawns():
+    """The v1→v2 motivation: the same cp swing costs a lot in an equal
+    position and almost nothing in a decided one — clamped-cp ACPL graded
+    the decided-position blunder as zero and inflated weak games to ~1500+."""
+    assert ca.win_pct(0) == pytest.approx(50.0)
+    assert ca.win_pct(0) - ca.win_pct(-300) > 20      # blunder while equal
+    assert ca.win_pct(900) - ca.win_pct(600) < 8      # same swing, decided game
+    # Perfect move → ~100% accuracy; torching 30 win% → very low.
+    assert ca.move_accuracy_pct(0) == pytest.approx(100.0, abs=0.1)
+    assert ca.move_accuracy_pct(30) < 25.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -43,17 +55,18 @@ async def test_estimate_elo_is_monotonic_and_rounded():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _row(color, matched, loss, trivial=False):
-    return {"color": color, "matched": matched, "loss": loss, "trivial": trivial}
+def _row(color, matched, loss, trivial=False, wp_loss=0.0):
+    return {"color": color, "matched": matched, "loss": loss,
+            "wp_loss": wp_loss, "trivial": trivial}
 
 
 async def test_summarize_computes_acpl_and_match_over_nontrivial_only():
     evals = [
-        _row("white", True, 0),
-        _row("white", True, 20),
-        _row("white", False, 40, trivial=True),  # excluded from match rate
-        _row("black", False, 100),
-        _row("black", False, 200),
+        _row("white", True, 0, wp_loss=0.0),
+        _row("white", True, 20, wp_loss=2.0),
+        _row("white", False, 40, trivial=True, wp_loss=4.0),  # excluded from match rate
+        _row("black", False, 100, wp_loss=10.0),
+        _row("black", False, 200, wp_loss=20.0),
     ]
     a = ca.summarize_evals(
         evals, white_seconds=30, black_seconds=0,
@@ -62,11 +75,35 @@ async def test_summarize_computes_acpl_and_match_over_nontrivial_only():
     w, b = a["white"], a["black"]
     assert w["moves"] == 3 and w["nontrivial"] == 2
     assert w["acpl"] == pytest.approx(20.0)          # (0+20+40)/3
+    assert w["awpl"] == pytest.approx(2.0)           # (0+2+4)/3
+    assert w["est_elo"] == ca.estimate_elo_from_awpl(2.0)
+    assert 0 < w["accuracy"] <= 100
     assert w["match_pct"] == pytest.approx(100.0)    # 2/2 non-trivial matched
     assert w["avg_seconds"] == pytest.approx(3.0)
     assert b["acpl"] == pytest.approx(150.0)
+    assert b["awpl"] == pytest.approx(15.0)
+    assert b["est_elo"] < w["est_elo"]
+    assert b["accuracy"] < w["accuracy"]
     assert b["match_pct"] == pytest.approx(0.0)
     assert b["avg_seconds"] is None                  # no clock data
+
+
+async def test_weak_game_with_clamped_blunders_estimates_weak():
+    """Regression for 600-level games estimating ~1500-1800: long decided
+    stretches where the cp clamp hid blunders as 0 loss diluted ACPL, and
+    est_elo came out strong. Graded by win% lost, the equal-position queen
+    hangs dominate and the estimate lands where it belongs."""
+    rows = []
+    for i in range(20):
+        if i % 4 == 0:    # queen hang while roughly equal: ~45 win% torched
+            rows.append(_row("white", False, 800,
+                             wp_loss=ca.win_pct(0) - ca.win_pct(-800)))
+        elif i % 2 == 0:  # flailing in decided positions: clamp made these 0 cp
+            rows.append(_row("white", False, 0, wp_loss=0.5))
+        else:
+            rows.append(_row("white", False, 60, wp_loss=5.0))
+    a = ca.summarize_evals(rows)
+    assert a["white"]["est_elo"] <= 1000
 
 
 async def test_summarize_handles_side_with_no_rows():
@@ -85,11 +122,13 @@ _HUMAN = 10
 
 def _suspicious_analysis(acpl=10.0, match=85.0, nontrivial=20):
     return {
-        "version": 1, "depth": 12,
+        "version": 2, "depth": 12,
         "white": {"moves": 25, "nontrivial": nontrivial, "acpl": acpl,
-                  "match_pct": match, "est_elo": ca.estimate_elo_from_acpl(acpl),
+                  "awpl": 0.8, "accuracy": 97.4, "match_pct": match,
+                  "est_elo": ca.estimate_elo_from_awpl(0.8),  # 2650
                   "avg_seconds": 5.0},
         "black": {"moves": 25, "nontrivial": 20, "acpl": 60.0,
+                  "awpl": 5.5, "accuracy": 79.0,
                   "match_pct": 30.0, "est_elo": 1600, "avg_seconds": None},
     }
 
@@ -180,7 +219,8 @@ async def test_collect_grades_matches_and_losses():
     evals = await ca._collect_move_evals(pgn, eval_match)
     assert evals is not None
     assert len(evals) == len(moves) - ca.BOOK_PLIES
-    assert all(e["matched"] and e["loss"] == 0 and not e["trivial"] for e in evals)
+    assert all(e["matched"] and e["loss"] == 0 and e["wp_loss"] == 0
+               and not e["trivial"] for e in evals)
     # Colors alternate starting with whoever moves at ply BOOK_PLIES.
     first_color = "white" if ca.BOOK_PLIES % 2 == 0 else "black"
     assert evals[0]["color"] == first_color
@@ -195,7 +235,12 @@ async def test_collect_grades_matches_and_losses():
         return other, 50, 0
 
     evals = await ca._collect_move_evals(pgn, eval_miss)
-    assert all((not e["matched"]) and e["loss"] == 100 for e in evals)
+    expected_wp = ca.win_pct(50) - ca.win_pct(-50)
+    assert all(
+        (not e["matched"]) and e["loss"] == 100
+        and e["wp_loss"] == pytest.approx(expected_wp)
+        for e in evals
+    )
 
 
 async def test_collect_marks_trivial_on_wide_gap():
@@ -307,7 +352,7 @@ async def test_pipeline_persists_flags_and_alerts(db, monkeypatch):
     # Game channel got the analysis embed (no game-over embed to edit here).
     game_embed = channel.send.call_args_list[0].kwargs["embed"]
     assert "Engine Analysis" in game_embed.description
-    assert "~2,650 Elo" in game_embed.description  # ACPL 10 anchor
+    assert "~2,650 Elo" in game_embed.description  # awpl 0.8 anchor
 
     # Admin-log channel got the cheat alert with the repeat count.
     alert = log_channel.send.call_args.kwargs["embed"]

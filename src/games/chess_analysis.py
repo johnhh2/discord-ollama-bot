@@ -3,11 +3,12 @@
 After every finished chess game long enough to analyze (bot AND PvP),
 _finalize_game schedules analyze_and_post as a background task. It replays
 the PGN through full-strength Stockfish, computes per-player accuracy stats
-— average centipawn loss (ACPL) and top-engine-move match rate over
-non-trivial positions — maps ACPL to a rough performance-Elo estimate,
-appends the results to the game-over embed (edit-in-place, fallback to a
-follow-up embed), and persists them on the chess_reports row so
-`!chess view` shows them forever after.
+— average centipawn loss (ACPL), average win%-loss and accuracy (both in
+win-probability space, per Lichess's published metric), and top-engine-move
+match rate over non-trivial positions — maps average win%-loss to a rough
+performance-Elo estimate, appends the results to the game-over embed
+(edit-in-place, fallback to a follow-up embed), and persists them on the
+chess_reports row so `!chess view` shows them forever after.
 
 Cheat flagging: a human who beats (or draws) a FLAG_MIN_BOT_ELO+ bot while
 playing at near-engine accuracy over enough non-trivial moves gets the game
@@ -33,6 +34,7 @@ from __future__ import annotations
 
 import io
 import logging
+import math
 import os
 import shutil
 
@@ -49,7 +51,10 @@ from src.persistence import count_flagged_reports, save_chess_analysis
 
 # Bumped when the stat definitions change, so stored analyses from different
 # eras aren't compared apples-to-oranges.
-ANALYSIS_VERSION = 1
+# v2: est_elo derived from average win%-loss instead of ACPL — clamped-cp
+# ACPL zeroed out blunders in decided positions, wildly inflating estimates
+# for weak games (a 600 vs 600 game graded ~1500-1800). Adds awpl/accuracy.
+ANALYSIS_VERSION = 2
 
 # Per-position engine budget. Depth 12 is plenty to grade human/bot moves;
 # the time cap keeps a pathological position from stalling the whole pass.
@@ -83,36 +88,66 @@ FLAG_MAX_ACPL = 25.0
 FLAG_MIN_MATCH_PCT = 70.0
 FLAG_MIN_NONTRIVIAL = 15
 
-# ACPL → performance-Elo anchors (piecewise linear, rough fit to published
-# online-play accuracy curves). This is an ESTIMATE for display and flagging
-# only — label it "~" wherever it's shown. Clamped to the ends, rounded to
-# the nearest 50 to avoid false precision.
-_ACPL_ELO_ANCHORS: list[tuple[float, int]] = [
-    (5, 2900),
-    (10, 2650),
-    (15, 2500),
-    (20, 2350),
-    (30, 2100),
-    (40, 1900),
-    (50, 1750),
-    (70, 1500),
-    (90, 1300),
-    (120, 1050),
-    (160, 800),
-    (250, 500),
+# Moves are graded in win-probability space — the industry-standard approach
+# (Lichess's published accuracy metric; chess.com's CAPS is the same idea):
+# every eval becomes a winning percentage via a logistic curve, and a move's
+# cost is the win% it threw away. Raw centipawn loss can't tell a blunder
+# from noise once the game is decided — with the ±CP_CAP clamp, hanging a
+# queen at −15 graded as ZERO loss, which is how a 600 vs 600 game full of
+# clamped-out blunders once estimated at ~1500-1800. In win% space that same
+# blunder correctly costs ~nothing (the game was already lost) while an
+# equal-position blunder costs a fortune, and the curve saturates smoothly
+# instead of cliffing at the clamp. ACPL is still computed (clamped, same as
+# Lichess's own ACPL) for display and the cheat-flag thresholds.
+WIN_PCT_K = 0.00368208  # Lichess's logistic constant: cp → win%
+_ACC_A, _ACC_B, _ACC_C = 103.1668, 0.04354, 3.1669  # Lichess move accuracy
+
+
+def win_pct(cp: float) -> float:
+    """Winning chance (0-100) for the side whose POV the eval is from —
+    Lichess's published logistic conversion."""
+    return 50.0 + 50.0 * (2.0 / (1.0 + math.exp(-WIN_PCT_K * cp)) - 1.0)
+
+
+def move_accuracy_pct(wp_loss: float) -> float:
+    """Lichess's per-move accuracy (0-100) from the win% a move threw away."""
+    acc = _ACC_A * math.exp(-_ACC_B * wp_loss) - _ACC_C
+    return max(0.0, min(100.0, acc))
+
+
+# Average win%-loss-per-move → performance-Elo anchors (piecewise linear,
+# hand-tuned: no public standard exists — chess.com's mapping is proprietary
+# and Lichess deliberately doesn't publish one — so this is calibrated
+# against the ACPL curve the v1 table was fit to, restated in win% terms).
+# This is an ESTIMATE for display only — label it "~" wherever it's shown.
+# Clamped to the ends, rounded to the nearest 50 to avoid false precision.
+_AWPL_ELO_ANCHORS: list[tuple[float, int]] = [
+    (0.4, 2900),
+    (0.8, 2650),
+    (1.2, 2500),
+    (1.8, 2350),
+    (2.6, 2100),
+    (3.5, 1900),
+    (4.5, 1750),
+    (6.0, 1500),
+    (7.8, 1300),
+    (10.0, 1050),
+    (13.0, 800),
+    (18.0, 500),
+    (25.0, 250),
 ]
 
 
-def estimate_elo_from_acpl(acpl: float) -> int:
-    """Rough performance-Elo estimate from average centipawn loss."""
-    anchors = _ACPL_ELO_ANCHORS
-    if acpl <= anchors[0][0]:
+def estimate_elo_from_awpl(awpl: float) -> int:
+    """Rough performance-Elo estimate from average win% lost per move."""
+    anchors = _AWPL_ELO_ANCHORS
+    if awpl <= anchors[0][0]:
         return anchors[0][1]
-    if acpl >= anchors[-1][0]:
+    if awpl >= anchors[-1][0]:
         return anchors[-1][1]
     for (x0, y0), (x1, y1) in zip(anchors, anchors[1:]):
-        if x0 <= acpl <= x1:
-            frac = (acpl - x0) / (x1 - x0)
+        if x0 <= awpl <= x1:
+            frac = (awpl - x0) / (x1 - x0)
             elo = y0 + frac * (y1 - y0)
             return int(round(elo / 50.0)) * 50
     return anchors[-1][1]
@@ -142,10 +177,11 @@ async def _collect_move_evals(pgn_str: str, evaluate) -> list[dict] | None:
     `evaluate(board)` → (best_move, best_cp, second_cp), cp from the
     side-to-move's POV — injected so tests can grade without an engine.
 
-    Each returned row: {"color", "matched", "loss", "trivial"}. Each
-    position is evaluated once; the eval of the position AFTER a move
+    Each returned row: {"color", "matched", "loss", "wp_loss", "trivial"}.
+    Each position is evaluated once; the eval of the position AFTER a move
     (negated to the mover's POV) is the played move's value, so
-    loss = best_cp − played_cp.
+    loss = best_cp − played_cp and wp_loss is the same delta in
+    win-probability space.
     """
     game = chess.pgn.read_game(io.StringIO(pgn_str))
     if game is None:
@@ -173,6 +209,7 @@ async def _collect_move_evals(pgn_str: str, evaluate) -> list[dict] | None:
             continue  # engine gave no score for one side of the delta
         played_cp = -nxt[1]  # opponent POV → mover POV
         loss = min(max(0, best_cp - played_cp), CP_CAP)
+        wp_loss = max(0.0, win_pct(best_cp) - win_pct(played_cp))
         trivial = (
             only_move
             or second_cp is None
@@ -182,6 +219,7 @@ async def _collect_move_evals(pgn_str: str, evaluate) -> list[dict] | None:
             "color": "white" if mover_is_white else "black",
             "matched": best_move == move,
             "loss": loss,
+            "wp_loss": wp_loss,
             "trivial": trivial,
         })
     return evals or None
@@ -202,6 +240,14 @@ def summarize_evals(
             analysis[color] = {"moves": 0}
             continue
         acpl = sum(r["loss"] for r in rows) / len(rows)
+        awpl = sum(r.get("wp_loss", 0.0) for r in rows) / len(rows)
+        # Game accuracy à la Lichess: blend of arithmetic and harmonic means
+        # of per-move accuracies (harmonic punishes blunders the way one bad
+        # move ruins a game). Lichess additionally volatility-weights; we
+        # skip that refinement.
+        accs = [move_accuracy_pct(r.get("wp_loss", 0.0)) for r in rows]
+        harmonic = len(accs) / sum(1.0 / max(a, 0.1) for a in accs)
+        accuracy = (sum(accs) / len(accs) + harmonic) / 2.0
         nontrivial = [r for r in rows if not r["trivial"]]
         matched = sum(1 for r in nontrivial if r["matched"])
         match_pct = round(100.0 * matched / len(nontrivial), 1) if nontrivial else None
@@ -212,8 +258,10 @@ def summarize_evals(
             "moves": len(rows),
             "nontrivial": len(nontrivial),
             "acpl": round(acpl, 1),
+            "awpl": round(awpl, 2),
+            "accuracy": round(accuracy, 1),
             "match_pct": match_pct,
-            "est_elo": estimate_elo_from_acpl(acpl),
+            "est_elo": estimate_elo_from_awpl(awpl),
             "avg_seconds": avg_seconds,
         }
     return analysis
@@ -257,7 +305,10 @@ def format_analysis_lines(analysis: dict | None, white_name: str, black_name: st
         side = analysis.get(key)
         if not side or not side.get("moves"):
             continue
-        parts = [f"est. **~{side['est_elo']:,} Elo**", f"{side['acpl']:g} ACPL"]
+        parts = [f"est. **~{side['est_elo']:,} Elo**"]
+        if side.get("accuracy") is not None:  # absent on pre-v2 analyses
+            parts.append(f"{side['accuracy']:g}% accuracy")
+        parts.append(f"{side['acpl']:g} ACPL")
         if side.get("match_pct") is not None:
             parts.append(f"{side['match_pct']:g}% top moves")
         if side.get("avg_seconds"):
