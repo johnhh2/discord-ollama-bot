@@ -115,6 +115,26 @@ def move_accuracy_pct(wp_loss: float) -> float:
     return max(0.0, min(100.0, acc))
 
 
+# The Elo estimate averages win%-loss over CONTESTED moves only, weighting
+# each move by the stake in the position before it: p·(100−p) — the variance
+# of the game's outcome, 1.0 when equal, →0 when decided. Without this, a
+# game decided early contributes dozens of plies where neither side can lose
+# meaningful win%, diluting the average toward "flawless" (the same lopsided
+# games that inflate Lichess accuracy for beginners). The soft floor zeroes
+# out positions ≥~97% decided so a long mop-up phase adds no weight at all.
+STAKE_FLOOR = 0.1  # stake below this (win% ≥ ~96.7 either way) counts zero
+# Minimum total stake weight for an Elo estimate — fewer effective contested
+# moves than this and the game is too one-sided to grade, est_elo is None.
+EST_MIN_EFFECTIVE_MOVES = 4.0
+
+
+def stake_weight(wp_before: float) -> float:
+    """Weight (0-1) of a move in the Elo estimate: how contested the
+    position it was played in still was."""
+    stake = wp_before * (100.0 - wp_before) / 2500.0
+    return max(0.0, (stake - STAKE_FLOOR) / (1.0 - STAKE_FLOOR))
+
+
 # Average win%-loss-per-move → performance-Elo anchors (piecewise linear,
 # hand-tuned: no public standard exists — chess.com's mapping is proprietary
 # and Lichess deliberately doesn't publish one — so this is calibrated
@@ -177,11 +197,11 @@ async def _collect_move_evals(pgn_str: str, evaluate) -> list[dict] | None:
     `evaluate(board)` → (best_move, best_cp, second_cp), cp from the
     side-to-move's POV — injected so tests can grade without an engine.
 
-    Each returned row: {"color", "matched", "loss", "wp_loss", "trivial"}.
-    Each position is evaluated once; the eval of the position AFTER a move
-    (negated to the mover's POV) is the played move's value, so
+    Each returned row: {"color", "matched", "loss", "wp_loss", "weight",
+    "trivial"}. Each position is evaluated once; the eval of the position
+    AFTER a move (negated to the mover's POV) is the played move's value, so
     loss = best_cp − played_cp and wp_loss is the same delta in
-    win-probability space.
+    win-probability space; weight is the position's stake_weight.
     """
     game = chess.pgn.read_game(io.StringIO(pgn_str))
     if game is None:
@@ -209,7 +229,8 @@ async def _collect_move_evals(pgn_str: str, evaluate) -> list[dict] | None:
             continue  # engine gave no score for one side of the delta
         played_cp = -nxt[1]  # opponent POV → mover POV
         loss = min(max(0, best_cp - played_cp), CP_CAP)
-        wp_loss = max(0.0, win_pct(best_cp) - win_pct(played_cp))
+        wp_before = win_pct(best_cp)
+        wp_loss = max(0.0, wp_before - win_pct(played_cp))
         trivial = (
             only_move
             or second_cp is None
@@ -220,6 +241,7 @@ async def _collect_move_evals(pgn_str: str, evaluate) -> list[dict] | None:
             "matched": best_move == move,
             "loss": loss,
             "wp_loss": wp_loss,
+            "weight": stake_weight(wp_before),
             "trivial": trivial,
         })
     return evals or None
@@ -240,11 +262,20 @@ def summarize_evals(
             analysis[color] = {"moves": 0}
             continue
         acpl = sum(r["loss"] for r in rows) / len(rows)
-        awpl = sum(r.get("wp_loss", 0.0) for r in rows) / len(rows)
+        # Elo estimate: stake-weighted mean win%-loss over contested moves.
+        # A game decided early has little weight left — below the effective-
+        # sample floor there's nothing to grade and est_elo is None.
+        wsum = sum(r.get("weight", 1.0) for r in rows)
+        awpl = (
+            sum(r.get("wp_loss", 0.0) * r.get("weight", 1.0) for r in rows) / wsum
+            if wsum > 0 else 0.0
+        )
+        est_elo = estimate_elo_from_awpl(awpl) if wsum >= EST_MIN_EFFECTIVE_MOVES else None
         # Game accuracy à la Lichess: blend of arithmetic and harmonic means
         # of per-move accuracies (harmonic punishes blunders the way one bad
-        # move ruins a game). Lichess additionally volatility-weights; we
-        # skip that refinement.
+        # move ruins a game), unweighted over the whole game so the number
+        # stays comparable to Lichess's. Lichess additionally volatility-
+        # weights; we skip that refinement.
         accs = [move_accuracy_pct(r.get("wp_loss", 0.0)) for r in rows]
         harmonic = len(accs) / sum(1.0 / max(a, 0.1) for a in accs)
         accuracy = (sum(accs) / len(accs) + harmonic) / 2.0
@@ -259,9 +290,10 @@ def summarize_evals(
             "nontrivial": len(nontrivial),
             "acpl": round(acpl, 1),
             "awpl": round(awpl, 2),
+            "eff_moves": round(wsum, 1),
             "accuracy": round(accuracy, 1),
             "match_pct": match_pct,
-            "est_elo": estimate_elo_from_awpl(awpl),
+            "est_elo": est_elo,
             "avg_seconds": avg_seconds,
         }
     return analysis
@@ -305,7 +337,9 @@ def format_analysis_lines(analysis: dict | None, white_name: str, black_name: st
         side = analysis.get(key)
         if not side or not side.get("moves"):
             continue
-        parts = [f"est. **~{side['est_elo']:,} Elo**"]
+        parts = []
+        if side.get("est_elo") is not None:  # None: too one-sided to grade
+            parts.append(f"est. **~{side['est_elo']:,} Elo**")
         if side.get("accuracy") is not None:  # absent on pre-v2 analyses
             parts.append(f"{side['accuracy']:g}% accuracy")
         parts.append(f"{side['acpl']:g} ACPL")
@@ -401,7 +435,7 @@ async def _post_cheat_alert(
     guild_name = guild.name if guild is not None else "DM"
     channel_ref = channel.mention if hasattr(channel, "mention") else str(getattr(channel, "id", "?"))
     stat_line = (
-        f"~{side.get('est_elo', 0):,} Elo est. — {side.get('acpl', 0):g} ACPL, "
+        f"~{side.get('est_elo') or 0:,} Elo est. — {side.get('acpl', 0):g} ACPL, "
         f"{side.get('match_pct', 0):g}% top moves over {side.get('nontrivial', 0)} non-trivial"
     )
     lines = [

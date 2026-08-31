@@ -55,9 +55,9 @@ async def test_win_pct_grades_by_context_not_raw_centipawns():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _row(color, matched, loss, trivial=False, wp_loss=0.0):
+def _row(color, matched, loss, trivial=False, wp_loss=0.0, weight=1.0):
     return {"color": color, "matched": matched, "loss": loss,
-            "wp_loss": wp_loss, "trivial": trivial}
+            "wp_loss": wp_loss, "weight": weight, "trivial": trivial}
 
 
 async def test_summarize_computes_acpl_and_match_over_nontrivial_only():
@@ -75,14 +75,13 @@ async def test_summarize_computes_acpl_and_match_over_nontrivial_only():
     w, b = a["white"], a["black"]
     assert w["moves"] == 3 and w["nontrivial"] == 2
     assert w["acpl"] == pytest.approx(20.0)          # (0+20+40)/3
-    assert w["awpl"] == pytest.approx(2.0)           # (0+2+4)/3
-    assert w["est_elo"] == ca.estimate_elo_from_awpl(2.0)
+    assert w["awpl"] == pytest.approx(2.0)           # (0+2+4)/3, weight 1 each
+    assert w["est_elo"] is None                      # 3 eff. moves < the floor
     assert 0 < w["accuracy"] <= 100
     assert w["match_pct"] == pytest.approx(100.0)    # 2/2 non-trivial matched
     assert w["avg_seconds"] == pytest.approx(3.0)
     assert b["acpl"] == pytest.approx(150.0)
     assert b["awpl"] == pytest.approx(15.0)
-    assert b["est_elo"] < w["est_elo"]
     assert b["accuracy"] < w["accuracy"]
     assert b["match_pct"] == pytest.approx(0.0)
     assert b["avg_seconds"] is None                  # no clock data
@@ -106,6 +105,34 @@ async def test_weak_game_with_clamped_blunders_estimates_weak():
     assert a["white"]["est_elo"] <= 1000
 
 
+async def test_est_elo_stake_weighting_and_floor():
+    """A game decided early must not read as flawless: decided-phase plies
+    carry ~zero stake weight, so they no longer dilute the estimate (the
+    unweighted mean here would be ~2.3 awpl → ~2200 Elo)."""
+    live = [_row("white", False, 300, wp_loss=25.0, weight=1.0) for _ in range(3)]
+    live += [_row("white", False, 100, wp_loss=8.0, weight=0.8) for _ in range(2)]
+    mopup = [_row("white", False, 0, wp_loss=0.2, weight=0.0) for _ in range(30)]
+    a = ca.summarize_evals(live + mopup)
+    w = a["white"]
+    expected = (25.0 * 3 + 8.0 * 0.8 * 2) / (3 + 1.6)
+    assert w["awpl"] == pytest.approx(expected, abs=0.01)
+    assert w["est_elo"] == ca.estimate_elo_from_awpl(expected)
+    assert w["est_elo"] <= 500
+
+    # Nothing contested at all → below the effective-sample floor: accuracy
+    # still reported, but no Elo estimate.
+    a2 = ca.summarize_evals(mopup)
+    assert a2["white"]["est_elo"] is None
+    assert a2["white"]["accuracy"] is not None
+
+
+async def test_stake_weight_shape():
+    assert ca.stake_weight(50.0) == pytest.approx(1.0)
+    assert ca.stake_weight(2.5) == 0.0     # decided either way → zero weight
+    assert ca.stake_weight(97.5) == 0.0
+    assert 0.0 < ca.stake_weight(80.0) < ca.stake_weight(60.0) < 1.0
+
+
 async def test_summarize_handles_side_with_no_rows():
     a = ca.summarize_evals([_row("white", True, 10)])
     assert a["black"] == {"moves": 0}
@@ -124,11 +151,12 @@ def _suspicious_analysis(acpl=10.0, match=85.0, nontrivial=20):
     return {
         "version": 2, "depth": 12,
         "white": {"moves": 25, "nontrivial": nontrivial, "acpl": acpl,
-                  "awpl": 0.8, "accuracy": 97.4, "match_pct": match,
+                  "awpl": 0.8, "eff_moves": 12.0, "accuracy": 97.4,
+                  "match_pct": match,
                   "est_elo": ca.estimate_elo_from_awpl(0.8),  # 2650
                   "avg_seconds": 5.0},
         "black": {"moves": 25, "nontrivial": 20, "acpl": 60.0,
-                  "awpl": 5.5, "accuracy": 79.0,
+                  "awpl": 5.5, "eff_moves": 12.0, "accuracy": 79.0,
                   "match_pct": 30.0, "est_elo": 1600, "avg_seconds": None},
     }
 
