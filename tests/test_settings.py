@@ -182,7 +182,8 @@ async def test_lottery_channel_set_persists_and_seeds_lottery(db, monkeypatch):
 
     # And a lottery row was seeded for this guild.
     lot = await _persistence.load_lottery(99)
-    assert lot["prize_pool"] == 5000
+    from src.config import LOTTERY_SEED_POOL
+    assert lot["prize_pool"] == LOTTERY_SEED_POOL
 
 
 async def test_lottery_channel_clear_disables(db):

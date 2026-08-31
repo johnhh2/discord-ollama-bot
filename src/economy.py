@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import discord
 
 from src import state
-from src.config import OLLAMA_MODEL, DAILY_RESET_HOUR
+from src.config import OLLAMA_MODEL, DAILY_RESET_HOUR, LOTTERY_SEED_POOL
 from src.persistence import (
     save_economy, save_insurance, try_set_record,
     load_balance_history, save_balance_history,
@@ -121,7 +121,7 @@ async def drain_bot_balance_into_lottery(lottery: dict, guild_id: int) -> int:
 
 
 async def announce_new_lottery(
-    channel: discord.TextChannel, prize_pool: int = 5000,
+    channel: discord.TextChannel, prize_pool: int = LOTTERY_SEED_POOL,
     now: datetime.datetime = None
 ):
     """Announce a new monthly lottery to the specified channel."""

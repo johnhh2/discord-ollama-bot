@@ -22,6 +22,7 @@ from src.persistence import (
 # Attribute access (not `from`-imported) so the conftest stubs on the
 # persistence package reach the calls here.
 import src.persistence as persistence
+from src.config import LOTTERY_SEED_POOL
 from src.guild_config import get_guild_cfg
 from src.confirm_view import confirm_purchase
 from src import state, status_manager
@@ -179,7 +180,7 @@ class LotteryCog(commands.Cog):
                 # Persist the drawn marker + reset BEFORE paying/announcing:
                 # a crash mid-payout must not leave last_drawn_week stale, or
                 # the next tick (or reboot) re-draws and pays the pool again.
-                lottery = {"prize_pool": 5000, "players": {}, "last_drawn_week": current_month, "last_posted_week": 0}
+                lottery = {"prize_pool": LOTTERY_SEED_POOL, "players": {}, "last_drawn_week": current_month, "last_posted_week": 0}
                 await drain_bot_balance_into_lottery(lottery, guild.id)
                 await save_lottery(guild.id, lottery)
 

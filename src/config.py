@@ -61,6 +61,10 @@ SLOT_JACKPOT_SEED = 5_000
 SLOT_JACKPOT_CONTRIB = 0.02
 SLOT_HOUSE_CHANCE = 0.05
 
+# Prize pool every fresh monthly lottery starts with (the guild-house drain
+# and per-player bonuses stack on top).
+LOTTERY_SEED_POOL = 50_000
+
 INITIAL_BOT_ADMIN_IDS = [
     int(uid.strip())
     for uid in os.getenv("BOT_ADMIN_IDS", "").split(",")
