@@ -21,6 +21,7 @@ from src.economy import (
 )
 from src.leveling import (
     _ensure_lvl_record, _xp_cost, level_from_xp, display_level, record_levelup,
+    xp_for_level,
 )
 from src.permissions import (
     _wrong_channel_reply,
@@ -1876,11 +1877,16 @@ class ShopCog(commands.Cog):
                 ))
                 return
 
+            projected_xp = rec["xp"] + xp_amount
+            projected_level = level_from_xp(projected_xp)
+            xp_in_level = projected_xp - xp_for_level(projected_level)
+            xp_band = _xp_cost(projected_level)
             confirmed = await confirm_purchase(
                 ctx, title="✨ Buy XP",
                 description=(
-                    f"Buy **{xp_amount:,} XP** at {SHOP_XP_COST_PER_XP} 🪙/XP — "
-                    f"takes you to **Level {display_level(quoted_level) + 1}**."
+                    f"Buy **{xp_amount:,} XP** at {SHOP_XP_COST_PER_XP} 🪙/XP.\n"
+                    f"After purchase, you will be lvl **{display_level(projected_level)}** "
+                    f"with **{xp_in_level:,}/{xp_band:,}** xp."
                 ),
                 cost=cost, payer=ctx.author,
             )
