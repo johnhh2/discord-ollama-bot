@@ -135,26 +135,33 @@ def stake_weight(wp_before: float) -> float:
     return max(0.0, (stake - STAKE_FLOOR) / (1.0 - STAKE_FLOOR))
 
 
-# Average win%-loss-per-move → performance-Elo anchors (piecewise linear,
-# hand-tuned: no public standard exists — chess.com's mapping is proprietary
-# and Lichess deliberately doesn't publish one — so this is calibrated
-# against the ACPL curve the v1 table was fit to, restated in win% terms).
-# This is an ESTIMATE for display only — label it "~" wherever it's shown.
-# Clamped to the ends, rounded to the nearest 50 to avoid false precision.
+# Stake-weighted-average win%-loss → performance-Elo anchors (piecewise
+# linear). No public standard exists — chess.com's mapping is proprietary and
+# Lichess deliberately doesn't publish one — so these were CALIBRATED
+# EMPIRICALLY against this very pipeline: Stockfish UCI_LimitStrength
+# self-play at Elo 1320/1700/2200/2700 (3 games each, graded at depth 12)
+# measured weighted awpl ≈ 5.3 / 2.6 / 3.0 / 2.1 respectively, and a
+# degraded-Maia bot configured at 600 measured ≈ 9.1. Known limits: per-game
+# variance is large (single 1320 sides ranged 1.3-11.0), and above ~1700 the
+# depth-12 grading noise floor (~2 awpl) compresses estimates toward
+# 2000-2300. This is an ESTIMATE for display only — label it "~" wherever
+# it's shown. Clamped to the ends (bottom = ELO_MIN of the bot scale),
+# rounded to the nearest 50 to avoid false precision.
 _AWPL_ELO_ANCHORS: list[tuple[float, int]] = [
-    (0.4, 2900),
-    (0.8, 2650),
-    (1.2, 2500),
-    (1.8, 2350),
-    (2.6, 2100),
-    (3.5, 1900),
-    (4.5, 1750),
-    (6.0, 1500),
-    (7.8, 1300),
-    (10.0, 1050),
-    (13.0, 800),
-    (18.0, 500),
-    (25.0, 250),
+    (0.5, 2900),
+    (1.0, 2700),
+    (1.6, 2500),
+    (2.2, 2300),
+    (2.8, 2000),
+    (3.5, 1800),
+    (4.2, 1550),
+    (5.0, 1300),
+    (6.5, 1000),
+    (8.0, 800),
+    (9.5, 600),
+    (12.0, 400),
+    (16.0, 250),
+    (22.0, 100),
 ]
 
 

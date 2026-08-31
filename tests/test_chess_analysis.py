@@ -23,9 +23,10 @@ pytestmark = pytest.mark.asyncio
 
 async def test_estimate_elo_anchors_and_clamps():
     assert ca.estimate_elo_from_awpl(0) == 2900      # clamped at the top
-    assert ca.estimate_elo_from_awpl(0.4) == 2900
-    assert ca.estimate_elo_from_awpl(4.5) == 1750    # exact anchor
-    assert ca.estimate_elo_from_awpl(30) == 250      # clamped at the bottom
+    assert ca.estimate_elo_from_awpl(0.5) == 2900
+    assert ca.estimate_elo_from_awpl(5.0) == 1300    # exact anchor (SF@1320 point)
+    assert ca.estimate_elo_from_awpl(9.5) == 600     # degraded-Maia@600 point
+    assert ca.estimate_elo_from_awpl(30) == 100      # clamped at the bottom
 
 
 async def test_estimate_elo_is_monotonic_and_rounded():
@@ -153,7 +154,7 @@ def _suspicious_analysis(acpl=10.0, match=85.0, nontrivial=20):
         "white": {"moves": 25, "nontrivial": nontrivial, "acpl": acpl,
                   "awpl": 0.8, "eff_moves": 12.0, "accuracy": 97.4,
                   "match_pct": match,
-                  "est_elo": ca.estimate_elo_from_awpl(0.8),  # 2650
+                  "est_elo": ca.estimate_elo_from_awpl(0.8),  # 2800
                   "avg_seconds": 5.0},
         "black": {"moves": 25, "nontrivial": 20, "acpl": 60.0,
                   "awpl": 5.5, "eff_moves": 12.0, "accuracy": 79.0,
@@ -380,7 +381,7 @@ async def test_pipeline_persists_flags_and_alerts(db, monkeypatch):
     # Game channel got the analysis embed (no game-over embed to edit here).
     game_embed = channel.send.call_args_list[0].kwargs["embed"]
     assert "Engine Analysis" in game_embed.description
-    assert "~2,650 Elo" in game_embed.description  # awpl 0.8 anchor
+    assert "~2,800 Elo" in game_embed.description  # awpl 0.8 → 2800
 
     # Admin-log channel got the cheat alert with the repeat count.
     alert = log_channel.send.call_args.kwargs["embed"]
@@ -456,5 +457,5 @@ async def test_chess_view_renders_stored_analysis(db, monkeypatch):
 
     desc = ctx.sent_embeds[-1].description
     assert "Engine Analysis" in desc
-    assert "~2,650 Elo" in desc
+    assert "~2,800 Elo" in desc
     assert "ACPL" in desc
