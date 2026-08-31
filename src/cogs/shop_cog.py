@@ -1311,7 +1311,7 @@ class ShopCog(commands.Cog):
             if key in state.insurance_subs:
                 await ctx.send(embed=emb(
                     "🛡️ Already Subscribed",
-                    f"You're already subscribed — **{SHOP_INSURANCE_COST:,} 🪙** is deducted with each daily claim. `!shop insurance unsub` to cancel.",
+                    f"You're already subscribed — **{SHOP_INSURANCE_COST:,} 🪙** is charged at the 5am reset each day. `!shop insurance unsub` to cancel.",
                     C_GOLD,
                 ))
                 return
@@ -1320,8 +1320,8 @@ class ShopCog(commands.Cog):
             if not await confirm_prompt(
                 ctx, title="🛡️ Insurance Subscription",
                 description=(
-                    f"Subscribe to insurance — each daily claim deducts **{SHOP_INSURANCE_COST:,} 🪙** "
-                    "and adds 24h of coverage, valid in every server."
+                    f"Subscribe to insurance — **{SHOP_INSURANCE_COST:,} 🪙** is charged at the 5am reset "
+                    "each day (whether or not you log on), adding 24h of coverage valid in every server."
                     + (f" The first day (**{SHOP_INSURANCE_COST:,} 🪙**) is charged now so coverage starts immediately." if first_day else "")
                     + f"\n\n**Protects against:** {protects_str}"
                     + "\n**Current coverage:** " + (f"expires <t:{sub_exp}:R>" if sub_exp else "none")
@@ -1334,7 +1334,7 @@ class ShopCog(commands.Cog):
             if key in state.insurance_subs:
                 await ctx.send(embed=emb(
                     "🛡️ Already Subscribed",
-                    f"You're already subscribed — **{SHOP_INSURANCE_COST:,} 🪙** is deducted with each daily claim. `!shop insurance unsub` to cancel.",
+                    f"You're already subscribed — **{SHOP_INSURANCE_COST:,} 🪙** is charged at the 5am reset each day. `!shop insurance unsub` to cancel.",
                     C_GOLD,
                 ))
                 return
@@ -1356,7 +1356,7 @@ class ShopCog(commands.Cog):
             await save_insurance_subs()
             await ctx.send(embed=emb(
                 "🛡️ Insurance Subscribed",
-                f"Each daily claim now deducts **{SHOP_INSURANCE_COST:,} 🪙** and adds 24h of coverage.{start_str} "
+                f"**{SHOP_INSURANCE_COST:,} 🪙** is now charged at the 5am reset each day, adding 24h of coverage.{start_str} "
                 f"Cancel anytime with `!shop insurance unsub`.",
                 C_GREEN,
             ))
@@ -1376,7 +1376,7 @@ class ShopCog(commands.Cog):
             tail = f" Your current coverage still runs out <t:{exp}:R>." if exp else ""
             await ctx.send(embed=emb(
                 "🛡️ Insurance Unsubscribed",
-                f"Your daily claim will no longer be charged for insurance.{tail}",
+                f"You'll no longer be charged the daily premium.{tail}",
                 C_GREEN,
             ))
             return
@@ -1394,9 +1394,9 @@ class ShopCog(commands.Cog):
                 await ctx.send(embed=emb(
                     "🛡️ Insurance",
                     f"Usage: `!shop insurance [days|sub|unsub]` — prepay coverage at **{SHOP_INSURANCE_COST:,} 🪙/day** "
-                    f"(up to {SHOP_INSURANCE_MAX_DAYS} days), or subscribe to auto-renew with your daily claim.\n\n"
+                    f"(up to {SHOP_INSURANCE_MAX_DAYS} days), or subscribe to auto-renew daily at the 5am reset.\n\n"
                     "**Your coverage:** " + (f"expires <t:{info_exp}:R>" if info_exp else "none") + "\n"
-                    "**Subscription:** " + ("active — renews with your daily claim"
+                    "**Subscription:** " + ("active — renews daily at the 5am reset"
                                             if key in state.insurance_subs else "none"),
                     C_PURPLE,
                 ))
@@ -1434,7 +1434,7 @@ class ShopCog(commands.Cog):
                 f"**Protects against:** {protects_str}\n"
                 "**Current coverage:** " + (f"expires <t:{current_exp}:R>" if current_exp else "none") + "\n"
                 f"**New coverage:** expires <t:{projected_exp}:R>\n"
-                "**Subscription:** " + ("active — renews with your daily claim"
+                "**Subscription:** " + ("active — renews daily at the 5am reset"
                                         if key in state.insurance_subs
                                         else "none — `!shop insurance sub` to auto-renew")
             ),
@@ -1463,7 +1463,7 @@ class ShopCog(commands.Cog):
             self._rollback_insurance_days(key, days)
             return
         await save_insurance()
-        sub_str = " Your subscription keeps extending it with each daily claim." if key in state.insurance_subs else ""
+        sub_str = " Your subscription keeps extending it daily at the 5am reset." if key in state.insurance_subs else ""
         await ctx.send(embed=emb(
             "🛡️ Insurance Purchased",
             f"**{days} day{'s' if days != 1 else ''}** of protection against {protects_str}, "

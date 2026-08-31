@@ -7,7 +7,7 @@ from src.config import HISTORY_LIMIT, RIDDLES_FILE, SLOT_JACKPOT_SEED
 # ── Persistent state (populated from DB in on_ready via init_db_state) ────────
 
 channel_prompts: dict = {}
-economy: dict = {"users": {}, "last_daily_reset": None, "guild_house": {}}
+economy: dict = {"users": {}, "last_daily_reset": None, "last_insurance_sweep": None, "guild_house": {}}
 slot_jackpot: int = SLOT_JACKPOT_SEED
 bot_roles: set = set()
 # Per-guild rank for each bot-created role: {(guild_id, role_id): rank}.
@@ -23,7 +23,7 @@ guild_settings: dict = {}
 # Insurance is bot-wide (migration 0055): one policy per user, protecting them
 # in every server. Stored in shop_effects under the sentinel guild_id=0.
 insurance: dict = {}            # uid -> {expires_at, protected_from}
-insurance_subs: set = set()     # uid — auto-renew insurance at each daily claim
+insurance_subs: set = set()     # uid — insurance auto-renews via the daily 5am sweep (sweep_insurance_subs)
 # Shop effects are scoped per server: every key below is a (guild_id, user_id)
 # int tuple. A user can hold one of each effect per guild, and an effect only
 # fires in the guild it was bought in. Source of truth is the shop_effects

@@ -271,12 +271,16 @@ Rules when touching this system:
    portfolio revenue)` — a daily claimer never loses coins to the cap; a
    lapsed claimer accrues at most the cap. Per-property accrual starts at
    `max(property_paid_at, acquired_at)` so purchases never pay backdated rent.
-4. **Property revenue is excluded from gambling records.** The dailies
-   buttons stake the full claim (daily + property revenue + scratchoffs) but
-   pass the property portion as `record_exclude` to `play_flip`/`play_slots`,
-   which shrink the record *offer* (never the payout). A hand-typed
-   `!flip`/`!slots` keeps `record_exclude=0`. Preserve this split if you add
-   another auto-staked income source.
+4. **Property revenue stays out of the dailies stake by default.** The
+   dailies buttons stake the daily reward + scratchoffs; property revenue
+   (which always banks with the claim) joins the stake only for users who
+   opted in with `!daily property` (per-user `daily_gamble_property` column,
+   default off). When staked, the property portion is passed as
+   `record_exclude` to `play_flip`/`play_slots`, which shrink the record
+   *offer* (never the payout) — auto-staked property income mustn't hand
+   owners the gambling records. A hand-typed `!flip`/`!slots` keeps
+   `record_exclude=0`. Preserve this split if you add another auto-staked
+   income source.
 5. **Both property records are global per-user stats** (`total_assets`,
    `highest_property_value` in `GLOBAL_STAT_CATEGORIES`) — deeds are bot-wide,
    so a purchase in one guild moves every guild's record.
@@ -307,6 +311,19 @@ Rules when touching this system:
     mirrors `state.property_owners[pid]` in one shot so a call site can't
     silently drop a column (listing, upgrade, custom name). Keep it that
     way when adding fields.
+
+## Insurance subscriptions: charged by the 5am sweep, not the daily claim
+
+Subscription premiums (`!shop insurance sub`) are charged once per
+gameplay-day by `sweep_insurance_subs` (`src/economy.py`), driven from
+EconomyCog's minute loop — at the first tick after the 5am CT rollover, or at
+boot if the bot was down at 5am. Charging is independent of user activity:
+subscribers pay (and stay covered) whether or not they log on; one who can't
+afford the premium lapses for the day (sub retained) and gets a best-effort
+DM. The once-per-day gate is the `last_insurance_sweep` marker in
+`economy_meta`, claimed synchronously before any await. Do **not** re-attach
+premium charging to `!daily`/`_auto_daily` — the daily claim and the dailies
+flip/slots stake must never see insurance costs.
 
 ## Concurrency: per-user command races
 

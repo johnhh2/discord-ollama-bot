@@ -88,9 +88,11 @@ def _dailies_body() -> str:
         "lost, which are kept until the dailies reset.\n"
         f"Dailies reset <t:{next_daily_reset_ts()}:R>.\n\n"
         f"{DAILIES_CLAIM_EMOJI} claim dailies\n"
-        f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip the daily reward + property revenue + all scratchoff winnings\n"
-        f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet the daily reward + property revenue + all scratchoff winnings on slots\n"
-        f"{DAILIES_TICKETS_EMOJI} buy today's lottery ticket — {DAILY_TICKET_PRICE:,} 🪙, 1 per day (no claim)"
+        f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip the daily reward + all scratchoff winnings\n"
+        f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet the daily reward + all scratchoff winnings on slots\n"
+        f"{DAILIES_TICKETS_EMOJI} buy today's lottery ticket — {DAILY_TICKET_PRICE:,} 🪙, 1 per day (no claim)\n\n"
+        "Property revenue banks with your claim but isn't gambled — "
+        "`!daily property` opts it into the 🪙/🎰 stake."
     )
 
 
@@ -268,16 +270,21 @@ class DailiesCog(commands.Cog):
         winnings = await play_scratchoffs(
             self.bot, member, channel, guild, count=scratchoff_daily_cap(member.id)
         )
-        # Property revenue is part of the stake (owners gamble their full
-        # claim) but excluded from the flip/slots record math — auto-staked
-        # property income mustn't hand property owners the gambling records.
-        stake = claimed + winnings
+        # Property revenue banks with the claim but joins the stake only for
+        # users who opted in with `!daily property`. When staked, it's still
+        # excluded from the flip/slots record math — auto-staked property
+        # income mustn't hand property owners the gambling records.
+        user_data = state.economy["users"].get(str(member.id), {})
+        if user_data.get("daily_gamble_property", False):
+            stake, record_exclude = claimed + winnings, prop_rev
+        else:
+            stake, record_exclude = claimed - prop_rev + winnings, 0
         if not stake:
             return
         if gamble == DAILIES_FLIP_EMOJI:
-            await play_flip(member, channel, guild, stake, record_exclude=prop_rev)
+            await play_flip(member, channel, guild, stake, record_exclude=record_exclude)
         elif gamble == DAILIES_SLOTS_EMOJI and stake >= SLOT_MIN_BET:
-            await play_slots(member, channel, guild, stake, record_exclude=prop_rev)
+            await play_slots(member, channel, guild, stake, record_exclude=record_exclude)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):

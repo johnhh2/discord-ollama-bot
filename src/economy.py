@@ -171,11 +171,11 @@ def extend_insurance(uid: int, days: int) -> int:
 async def renew_insurance_subs(uid: int) -> tuple[int, int]:
     """Charge and renew `uid`'s insurance subscription, if they hold one.
 
-    Called only from the daily-claim paths (cmd_daily / _auto_daily), inside
-    the synchronously-claimed daily_date window — that's what makes it
-    once-per-gameplay-day. Deducts one day's premium and extends the bot-wide
-    coverage by 24h. A renewal the user can't afford is skipped (coverage
-    lapses until they can pay again); the subscription itself stays.
+    Called only from sweep_insurance_subs, inside the synchronously-claimed
+    last_insurance_sweep window — that's what makes it once-per-gameplay-day.
+    Deducts one day's premium and extends the bot-wide coverage by 24h. A
+    renewal the user can't afford is skipped (coverage lapses until they can
+    pay again); the subscription itself stays.
 
     Returns (total_charged, lapsed_count) — each 0 or one premium/lapse now
     that insurance is global, but callers still read both.
@@ -189,6 +189,52 @@ async def renew_insurance_subs(uid: int) -> tuple[int, int]:
         await save_insurance()
         return 0 if free else SHOP_INSURANCE_COST, 0
     return 0, 1
+
+
+async def sweep_insurance_subs(bot=None) -> None:
+    """Charge every insurance subscriber one day's premium for the new
+    gameplay-day — independent of whether they log on.
+
+    Called from EconomyCog's minute loop. The last_insurance_sweep marker
+    (persisted in economy_meta) makes it fire once per gameplay-day: at the
+    first tick after the 5am CT rollover, or right after boot if the bot was
+    down at 5am. A subscriber who can't afford the premium lapses for the day
+    (coverage stops extending; the subscription stays) and is told by
+    best-effort DM when `bot` is provided.
+
+    On the very first run (no marker yet — the boot that ships this feature)
+    the day is stamped without charging: subscribers were already charged by
+    the old claim-time flow that day.
+    """
+    today = _ct_today()
+    prior = state.economy.get("last_insurance_sweep")
+    if prior == today:
+        return
+    # Claim the day synchronously before any await — a boot sweep and the
+    # minute loop must not both charge (see CLAUDE.md on command races).
+    state.economy["last_insurance_sweep"] = today
+    from src.persistence import save_insurance_sweep_day
+    await save_insurance_sweep_day()
+    if prior is None:
+        return
+    from src.config import SHOP_INSURANCE_COST
+    for uid in list(state.insurance_subs):
+        charged, lapsed = await renew_insurance_subs(uid)
+        if charged:
+            await save_economy(uid=uid)
+        if lapsed and bot is not None:
+            from src.helpers import emb, C_RED
+            try:
+                user = bot.get_user(uid) or await bot.fetch_user(uid)
+                await user.send(embed=emb(
+                    "🛡️ Insurance Lapsed",
+                    f"Couldn't afford your **{SHOP_INSURANCE_COST:,} 🪙** insurance renewal at the "
+                    "5am reset — coverage has lapsed until you can pay again. "
+                    "Your subscription is still active.",
+                    C_RED,
+                ))
+            except Exception:
+                logging.info("[insurance] lapse DM to %s failed", uid)
 
 
 async def is_insured(uid: int, against: str) -> bool:

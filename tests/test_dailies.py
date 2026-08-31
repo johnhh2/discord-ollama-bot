@@ -8,6 +8,7 @@ Covers the react-to-claim flow end to end against the fake DB:
 - the !settings dailies-channel subcommand wires the config
 """
 import asyncio
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -376,6 +377,76 @@ async def test_reaction_slots_gambles_whole_claim_and_keeps_big_results(db, monk
     assert _state.guild_settings["42"]["dailies_keep_ids"] == [
         scratch_msgs[2].id, slots_msgs[0].id,
     ]
+
+
+async def _give_property_with_pending_revenue(uid: int, pid: str = "car_wash"):
+    """Install property ownership with a full day of unbanked revenue."""
+    now = time.time()
+    row = {
+        "owner_id": uid, "acquired_at": now - 10 * 86400.0,
+        "list_price": None, "listed_at": None,
+        "upgraded": False, "custom_name": None,
+    }
+    _state.property_owners[pid] = row
+    await _persistence.save_property_owner(pid, row)
+    _state.economy["users"][str(uid)]["property_paid_at"] = now - 86400.0
+
+
+def _spy_flip(monkeypatch):
+    """Wrap the dailies cog's play_flip binding, recording stake/exclude."""
+    import src.cogs.dailies_cog as _dailies_mod
+    real_flip = _dailies_mod.play_flip
+    seen = {}
+
+    async def _wrapped(member, channel, guild, stake, record_exclude=0):
+        seen["stake"], seen["exclude"] = stake, record_exclude
+        return await real_flip(member, channel, guild, stake, record_exclude=record_exclude)
+
+    monkeypatch.setattr("src.cogs.dailies_cog.play_flip", _wrapped)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_reaction_flip_leaves_property_revenue_out_of_stake_by_default(db, monkeypatch):
+    """Property revenue banks with the claim but is NOT gambled unless the
+    owner opted in with !daily property — the flip stakes only the daily
+    reward (+ scratchoff winnings, none here)."""
+    from src.properties import daily_revenue
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _pin_no_natural_matches(monkeypatch)   # all three cards miss
+    _state.rigged_flips[1] = 1             # the follow-up flip wins
+    await _give_property_with_pending_revenue(1)
+    rev = daily_revenue(20_000)
+    seen = _spy_flip(monkeypatch)
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_FLIP_EMOJI))
+
+    assert seen == {"stake": DAILY_REWARD, "exclude": 0}
+    # Revenue banked untouched; only the daily reward was flipped (won 2x).
+    assert _state.economy["users"]["1"]["balance"] == rev + DAILY_REWARD * 2
+
+
+@pytest.mark.asyncio
+async def test_reaction_flip_includes_property_revenue_when_opted_in(db, monkeypatch):
+    """With daily_gamble_property on, the whole claim is staked and the
+    property portion rides as record_exclude."""
+    from src.properties import daily_revenue
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _pin_no_natural_matches(monkeypatch)
+    _state.rigged_flips[1] = 1
+    await _give_property_with_pending_revenue(1)
+    _state.economy["users"]["1"]["daily_gamble_property"] = True
+    rev = daily_revenue(20_000)
+    seen = _spy_flip(monkeypatch)
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_FLIP_EMOJI))
+
+    assert seen == {"stake": DAILY_REWARD + rev, "exclude": rev}
+    assert _state.economy["users"]["1"]["balance"] == (DAILY_REWARD + rev) * 2
 
 
 def _add_lottery_cog(bot, monkeypatch, today=TODAY):

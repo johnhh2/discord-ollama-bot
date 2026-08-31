@@ -62,7 +62,7 @@ def reset_bot_state(monkeypatch):
     import src.status_manager as _status_manager
     _status_manager._providers.clear()
 
-    _reset_dict(_state.economy, {"users": {}, "last_daily_reset": None, "guild_house": {}})
+    _reset_dict(_state.economy, {"users": {}, "last_daily_reset": None, "last_insurance_sweep": None, "guild_house": {}})
     _reset_dict(_state.lottery_tickets_today, {"date": None, "count": 0})
     _reset_dict(_state.guild_settings, {})
     _reset_dict(_state.insurance, {})
@@ -127,7 +127,8 @@ def reset_bot_state(monkeypatch):
 
     # Stub all async DB save functions in persistence so tests don't need a real DB
     save_fn_names = [
-        "save_economy", "save_guild_house", "save_insurance", "save_insurance_subs", "save_jackpot",
+        "save_economy", "save_guild_house", "save_insurance", "save_insurance_subs",
+        "save_insurance_sweep_day", "save_jackpot",
         "save_guild_settings", "save_bot_roles", "save_bot_settings", "save_godmode_users",
         "save_chess_games", "save_chess_game", "delete_chess_game", "save_chess_report",
         "save_chess_user_stats", "save_chess_analysis",

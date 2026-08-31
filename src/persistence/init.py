@@ -60,7 +60,8 @@ async def _init_db_state_inner(state, run_migrations):
                 " scratch_date, jailbreak_used, jail_until, savings, jail_reason,"
                 " crime_eligible, bail_amount, bot_chess_elo_max_today,"
                 " bot_chess_elo_max_date,"
-                " scratch_won_today, property_paid_at, property_revenue_total"
+                " scratch_won_today, property_paid_at, property_revenue_total,"
+                " daily_gamble_property"
                 " FROM economy_users"
             )
             for row in await cur.fetchall():
@@ -69,7 +70,8 @@ async def _init_db_state_inner(state, run_migrations):
                  crime_eligible, bail_amount,
                  bot_chess_elo_max_today, bot_chess_elo_max_date,
                  scratch_won_today,
-                 property_paid_at, property_revenue_total) = row
+                 property_paid_at, property_revenue_total,
+                 daily_gamble_property) = row
                 state.economy["users"][str(uid)] = {
                     "balance": bal,
                     "last_daily": last_daily,
@@ -87,6 +89,7 @@ async def _init_db_state_inner(state, run_migrations):
                     "scratch_won_today": int(scratch_won_today or 0),
                     "property_paid_at": float(property_paid_at or 0.0),
                     "property_revenue_total": int(property_revenue_total or 0),
+                    "daily_gamble_property": bool(daily_gamble_property),
                 }
         except Exception as e:
             logging.error(f"[init_db_state] economy_users failed: {e}", exc_info=True)
@@ -97,6 +100,9 @@ async def _init_db_state_inner(state, run_migrations):
             await cur.execute("SELECT value_text FROM economy_meta WHERE key_name='last_daily_reset'")
             row = await cur.fetchone()
             state.economy["last_daily_reset"] = row[0] if row and row[0] is not None else None
+            await cur.execute("SELECT value_text FROM economy_meta WHERE key_name='last_insurance_sweep'")
+            row = await cur.fetchone()
+            state.economy["last_insurance_sweep"] = row[0] if row and row[0] is not None else None
         except Exception as e:
             logging.error(f"[init_db_state] economy_meta failed: {e}", exc_info=True)
             raise
@@ -181,9 +187,10 @@ async def _init_db_state_inner(state, run_migrations):
             raise
 
         # ── shop_effects: insurance subscriptions ─────────────────────────
-        # effect_type='insurance_sub', no expiry — renewed/charged at each
-        # daily claim (src.economy.renew_insurance_subs). Bot-wide like
-        # insurance itself.
+        # effect_type='insurance_sub', no expiry — charged once per
+        # gameplay-day by the 5am sweep (src.economy.sweep_insurance_subs),
+        # whether or not the subscriber logs on. Bot-wide like insurance
+        # itself.
         try:
             await cur.execute(
                 "SELECT user_id FROM shop_effects"

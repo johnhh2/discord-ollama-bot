@@ -20,6 +20,7 @@ from src.persistence.economy import (  # noqa: F401
     save_guild_house,
     save_insurance,
     save_insurance_subs,
+    save_insurance_sweep_day,
     save_jackpot,
 )
 from src.persistence.settings import (  # noqa: F401

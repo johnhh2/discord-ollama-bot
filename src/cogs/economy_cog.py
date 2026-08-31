@@ -6,7 +6,7 @@ import datetime
 from zoneinfo import ZoneInfo
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_ORANGE, C_GREY, C_BLUE, parse_amount, parse_int_amount, send_ephemeral, fetch_member, shop_charge, OptionalMember,
@@ -14,7 +14,7 @@ from src.helpers import (
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
-    add_guild_house, is_insured, get_insurance_expiry, renew_insurance_subs, _ct_now, _ct_today, do_daily_reset, _ensure_user,
+    add_guild_house, is_insured, get_insurance_expiry, sweep_insurance_subs, _ct_now, _ct_today, do_daily_reset, _ensure_user,
     next_daily_reset_ts, get_savings_value, add_savings, remove_savings,
     savings_growth, SAVINGS_DAILY_PCT,
     seize_from_savings, record_crime_event, CRIME_ELIGIBLE_NET_WORTH,
@@ -219,7 +219,31 @@ class EconomyCog(commands.Cog):
         # channel_id → heist_state. One bankheist lobby per channel at a time.
         self._active_heists: dict[int, dict] = {}
 
-    @commands.command(name="daily")
+    async def cog_load(self):
+        # Started here (not __init__) so tests constructing the cog directly
+        # don't spawn the background loop — only bot.add_cog does.
+        self._insurance_sweep_task.start()
+
+    def cog_unload(self):
+        self._insurance_sweep_task.cancel()
+
+    @tasks.loop(minutes=1)
+    async def _insurance_sweep_task(self):
+        """Charge insurance subscribers for the new gameplay-day at the first
+        tick after the 5am CT rollover — whether or not they log on. Guarded:
+        a failed tick must not stop the loop for good."""
+        try:
+            await sweep_insurance_subs(self.bot)
+        except Exception:
+            logging.exception("[insurance] sweep tick failed")
+
+    @_insurance_sweep_task.before_loop
+    async def _before_insurance_sweep(self):
+        await self.bot.wait_until_ready()
+        import src.persistence as _pkg
+        await _pkg.init_done.wait()
+
+    @commands.group(name="daily", invoke_without_command=True)
     async def cmd_daily(self, ctx: commands.Context):
         uid = ctx.author.id
         await _ensure_user(uid)
@@ -248,14 +272,33 @@ class EconomyCog(commands.Cog):
         # the highest_balance record offer below sees the full new balance.
         prop_rev = await bank_property_revenue(uid)
         await add_balance(uid, DAILY_REWARD, guild_id=gid, holder_name=ctx.author.display_name)
-        # Insurance subscriptions renew with the daily claim — inside the
-        # synchronously-claimed daily_date window, so at most once per day.
-        ins_cost, ins_lapsed = await renew_insurance_subs(uid)
         await save_economy(uid=uid)
         prop_str = f" + **{prop_rev:,} 🪙** property revenue" if prop_rev else ""
-        ins_str = f" − **{ins_cost:,} 🪙** insurance" if ins_cost else ""
-        lapse_str = "\n⚠️ Couldn't afford your insurance renewal — coverage lapsed until you can pay." if ins_lapsed else ""
-        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**{prop_str}{ins_str}! Balance: **{await get_balance(uid):,} 🪙**{lapse_str}", C_GREEN))
+        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**{prop_str}! Balance: **{await get_balance(uid):,} 🪙**", C_GREEN))
+
+    @cmd_daily.command(name="property")
+    async def cmd_daily_property(self, ctx: commands.Context):
+        """Toggle whether property revenue joins the dailies 🪙/🎰 stake.
+        Off by default: revenue always banks with the claim either way."""
+        uid = ctx.author.id
+        await _ensure_user(uid)
+        user_data = state.economy["users"][str(uid)]
+        enabled = not user_data.get("daily_gamble_property", False)
+        user_data["daily_gamble_property"] = enabled
+        await save_economy(uid=uid)
+        if enabled:
+            body = (
+                "Property revenue is now **included** in your dailies 🪙/🎰 stake — "
+                "reacting gambles the daily reward + property revenue + scratchoff winnings. "
+                "Run `!daily property` again to leave it out."
+            )
+        else:
+            body = (
+                "Property revenue is now **left out** of your dailies 🪙/🎰 stake (the default) — "
+                "it still banks with your claim, but only the daily reward + scratchoff winnings "
+                "are gambled. Run `!daily property` again to include it."
+            )
+        await ctx.send(embed=emb("🏠 Dailies Stake", body, C_GREEN))
 
 
     @commands.command(name="balance", aliases=["bal", "b", "!", "$"])

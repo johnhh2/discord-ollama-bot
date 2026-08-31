@@ -23,6 +23,7 @@ def _economy_user_row(uid_str: str, u: dict) -> tuple:
         int(u.get("scratch_won_today", 0) or 0),
         float(u.get("property_paid_at", 0.0) or 0.0),
         int(u.get("property_revenue_total", 0) or 0),
+        bool(u.get("daily_gamble_property", False)),
     )
 
 
@@ -31,8 +32,8 @@ _ECONOMY_UPSERT_SQL = """INSERT INTO economy_users
      scratch_date, jailbreak_used, jail_until, savings, jail_reason,
      crime_eligible, bail_amount, bot_chess_elo_max_today, bot_chess_elo_max_date,
      scratch_won_today,
-     property_paid_at, property_revenue_total)
-   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+     property_paid_at, property_revenue_total, daily_gamble_property)
+   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
    ON DUPLICATE KEY UPDATE
      balance=VALUES(balance),
      last_daily=VALUES(last_daily),
@@ -49,7 +50,8 @@ _ECONOMY_UPSERT_SQL = """INSERT INTO economy_users
      bot_chess_elo_max_date=VALUES(bot_chess_elo_max_date),
      scratch_won_today=VALUES(scratch_won_today),
      property_paid_at=VALUES(property_paid_at),
-     property_revenue_total=VALUES(property_revenue_total)"""
+     property_revenue_total=VALUES(property_revenue_total),
+     daily_gamble_property=VALUES(daily_gamble_property)"""
 
 
 async def save_economy(uid: int = None):
@@ -93,6 +95,17 @@ async def save_guild_house(guild_id: int):
             "INSERT INTO guild_house_balance (guild_id, balance) VALUES (%s,%s)"
             " ON DUPLICATE KEY UPDATE balance=VALUES(balance)",
             (int(guild_id), bal),
+        )
+
+
+async def save_insurance_sweep_day():
+    """Persist the last_insurance_sweep gameplay-day marker (economy_meta) —
+    the once-per-day gate for the 5am insurance-subscription sweep."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "INSERT INTO economy_meta (key_name, value_text) VALUES ('last_insurance_sweep', %s)"
+            " ON DUPLICATE KEY UPDATE value_text=VALUES(value_text)",
+            (state.economy.get("last_insurance_sweep"),),
         )
 
 

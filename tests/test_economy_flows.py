@@ -335,14 +335,12 @@ async def test_concurrent_daily_invocations_grant_once(monkeypatch):
     )
 
 
-# ── daily claim × insurance subscription ──────────────────────────────────────
+# ── insurance subscriptions: charged by the 5am sweep, not the daily claim ────
 
-async def test_daily_claim_renews_insurance_subscription(db):
-    """!daily with an active subscription: premium deducted on top of the
-    reward, coverage extended 24h from the current expiry, deduction shown
-    in the embed."""
+async def test_daily_claim_does_not_charge_insurance(db):
+    """Premiums are the 5am sweep's job — !daily with an active subscription
+    pays the plain reward and leaves coverage untouched."""
     import time as _t
-    from src.config import SHOP_INSURANCE_COST, SHOP_INSURANCE_DURATION_SECS
 
     uid = 8101
     await _economy.add_balance(uid, 5000)
@@ -355,56 +353,132 @@ async def test_daily_claim_renews_insurance_subscription(db):
     ctx.bot = _StubBot()
     await cog.cmd_daily.callback(cog, ctx)
 
-    assert await _economy.get_balance(uid) == 5000 + DAILY_REWARD - SHOP_INSURANCE_COST
-    assert _state.insurance[uid]["expires_at"] == expiry + SHOP_INSURANCE_DURATION_SECS
-    desc = ctx.sent_embeds[-1].description
-    assert "insurance" in desc
-    assert f"{SHOP_INSURANCE_COST:,}" in desc
+    assert await _economy.get_balance(uid) == 5000 + DAILY_REWARD
+    assert _state.insurance[uid]["expires_at"] == expiry
+    assert "insurance" not in ctx.sent_embeds[-1].description
 
 
-async def test_daily_claim_insurance_lapses_when_broke(db):
-    """A subscriber who can't cover the premium keeps the daily reward and
-    the subscription, but coverage doesn't extend and the embed warns."""
+async def test_insurance_sweep_charges_and_extends_once_per_day(db):
+    """The sweep deducts one premium and extends coverage 24h; a same-day
+    second run is a no-op."""
     import time as _t
-    from src.config import SHOP_INSURANCE_COST
+    from src.config import SHOP_INSURANCE_COST, SHOP_INSURANCE_DURATION_SECS
+    from src.economy import sweep_insurance_subs, _ct_today
 
     uid = 8102
-    assert DAILY_REWARD < SHOP_INSURANCE_COST  # premise: reward alone can't pay
+    await _economy.add_balance(uid, 5000)
     _state.insurance_subs.add(uid)
     expiry = int(_t.time() + 3600)
     _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
+    _state.economy["last_insurance_sweep"] = "2020-01-01"
 
-    cog = EconomyCog(bot=_StubBot())
-    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=1))
-    ctx.bot = _StubBot()
-    await cog.cmd_daily.callback(cog, ctx)
+    await sweep_insurance_subs()
 
-    assert await _economy.get_balance(uid) == DAILY_REWARD  # reward kept, no charge
-    assert _state.insurance[uid]["expires_at"] == expiry    # not extended
-    assert uid in _state.insurance_subs                      # sub retained
-    assert "lapsed" in ctx.sent_embeds[-1].description
+    assert await _economy.get_balance(uid) == 5000 - SHOP_INSURANCE_COST
+    assert _state.insurance[uid]["expires_at"] == expiry + SHOP_INSURANCE_DURATION_SECS
+    assert _state.economy["last_insurance_sweep"] == _ct_today()
+
+    await sweep_insurance_subs()  # same gameplay-day: no second charge
+    assert await _economy.get_balance(uid) == 5000 - SHOP_INSURANCE_COST
+    assert _state.insurance[uid]["expires_at"] == expiry + SHOP_INSURANCE_DURATION_SECS
 
 
-async def test_auto_daily_returns_net_claim_clamped_at_zero(db):
-    """_auto_daily's return sizes the dailies flip/slots stake — with the
-    premium exceeding the reward it must clamp at 0 (never a negative
-    stake), while the balance and embed reflect the real deduction."""
+async def test_insurance_sweep_first_run_stamps_without_charging(db):
+    """The very first sweep (no marker yet — the deploy that ships it) only
+    stamps the day: subscribers were charged by the old claim-time flow."""
     import time as _t
-    from src.config import SHOP_INSURANCE_COST
-    from src.events import _auto_daily
-    from tests.fakes.discord import FakeChannel
+    from src.economy import sweep_insurance_subs, _ct_today
 
     uid = 8103
     await _economy.add_balance(uid, 5000)
     _state.insurance_subs.add(uid)
-    _state.insurance[uid] = {"expires_at": int(_t.time() + 3600), "protected_from": ["steal"]}
+    expiry = int(_t.time() + 3600)
+    _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
+    assert _state.economy.get("last_insurance_sweep") is None
+
+    await sweep_insurance_subs()
+
+    assert await _economy.get_balance(uid) == 5000       # not charged
+    assert _state.insurance[uid]["expires_at"] == expiry  # not extended
+    assert _state.economy["last_insurance_sweep"] == _ct_today()
+
+
+async def test_insurance_sweep_lapse_keeps_sub_and_dms(db):
+    """A subscriber who can't cover the premium keeps the subscription, but
+    coverage doesn't extend — and they get a best-effort DM about the lapse."""
+    import time as _t
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from src.economy import sweep_insurance_subs
+
+    uid = 8104
+    await _economy._ensure_user(uid)  # exists, balance 0 — can't pay
+    _state.insurance_subs.add(uid)
+    expiry = int(_t.time() + 3600)
+    _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
+    _state.economy["last_insurance_sweep"] = "2020-01-01"
+
+    dm_user = SimpleNamespace(send=AsyncMock())
+    bot = SimpleNamespace(get_user=lambda _uid: dm_user)
+
+    await sweep_insurance_subs(bot)
+
+    assert _state.insurance[uid]["expires_at"] == expiry  # not extended
+    assert uid in _state.insurance_subs                   # sub retained
+    dm_user.send.assert_awaited_once()
+    assert "lapsed" in dm_user.send.await_args.kwargs["embed"].description
+
+
+async def test_auto_daily_ignores_insurance_subscription(db):
+    """_auto_daily sizes the dailies flip/slots stake — an active
+    subscription no longer deducts from (or shows up in) the claim."""
+    import time as _t
+    from src.events import _auto_daily
+    from tests.fakes.discord import FakeChannel
+
+    uid = 8105
+    await _economy.add_balance(uid, 5000)
+    _state.insurance_subs.add(uid)
+    expiry = int(_t.time() + 3600)
+    _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
 
     author = FakeMember(uid=uid)
     channel = FakeChannel()
     claimed, prop_rev = await _auto_daily(author, channel)
 
-    assert claimed == 0  # max(0, DAILY_REWARD - premium), no property revenue
+    assert claimed == DAILY_REWARD
     assert prop_rev == 0
-    assert await _economy.get_balance(uid) == 5000 + DAILY_REWARD - SHOP_INSURANCE_COST
+    assert await _economy.get_balance(uid) == 5000 + DAILY_REWARD
+    assert _state.insurance[uid]["expires_at"] == expiry
     embed = channel.send.call_args.kwargs["embed"]
-    assert "insurance" in embed.description
+    assert "insurance" not in embed.description
+
+
+# ── !daily property toggle ────────────────────────────────────────────────────
+
+async def test_daily_property_toggle_flips_flag(db):
+    uid = 8106
+    await _economy._ensure_user(uid)
+    cog = EconomyCog(bot=_StubBot())
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=1))
+    ctx.bot = _StubBot()
+
+    await cog.cmd_daily_property.callback(cog, ctx)
+    assert _state.economy["users"][str(uid)]["daily_gamble_property"] is True
+    assert "included" in ctx.sent_embeds[-1].description
+
+    await cog.cmd_daily_property.callback(cog, ctx)
+    assert _state.economy["users"][str(uid)]["daily_gamble_property"] is False
+    assert "left out" in ctx.sent_embeds[-1].description
+
+
+async def test_daily_property_flag_persists(db):
+    uid = 8107
+    await _economy._ensure_user(uid)
+    _state.economy["users"][str(uid)]["daily_gamble_property"] = True
+    await _persistence.save_economy(uid=uid)
+
+    _state.economy["users"].clear()
+    await _persistence.init_db_state()
+
+    assert _state.economy["users"][str(uid)]["daily_gamble_property"] is True
