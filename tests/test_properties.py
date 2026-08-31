@@ -425,7 +425,7 @@ async def test_property_records_mirror_across_guilds(db):
 
 async def test_flip_record_excludes_property_portion(db, monkeypatch):
     """A dailies-claim flip stakes daily + property revenue, but only the
-    non-property portion may enter the 'biggest flip win' record."""
+    non-property portion may enter the 'biggest flip payout' record."""
     from src.gambling.flip import play_flip
     from src.persistence.records import load_records
     from tests.fakes.discord import FakeChannel

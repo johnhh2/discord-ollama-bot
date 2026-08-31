@@ -346,7 +346,7 @@ async def test_records_embed_renders_units_for_the_new_categories(db):
     # scratchoff day is coins like every other economy record.
     assert "**Artifacts Owned:** 5 — **collector**" in desc
     assert "**Command Streak:** 1 day — **newbie**" in desc
-    assert "**Scratchoff Day:** 300,000 🪙 — **lucky**" in desc
+    assert "**Scratchoff Day Payout:** 300,000 🪙 — **lucky**" in desc
 
 
 async def test_records_embed_pluralizes_multi_day_streaks(db):
@@ -374,6 +374,6 @@ async def test_records_embed_renders_chess_categories(db):
     await cog.cmd_records.callback(cog, ctx)
 
     desc = ctx.sent_embeds[-1].description
-    assert "**Stockfish Elo Defeated:** 1,900 Elo — **kasparov**" in desc
+    assert "**Highest Elo Defeated:** 1,900 Elo — **kasparov**" in desc
     # Singular at exactly one win, like the streak line.
     assert "**PvP Chess Wins:** 1 win — **duelist**" in desc

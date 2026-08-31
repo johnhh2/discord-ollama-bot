@@ -28,7 +28,7 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
     commands.Context. Inputs are
     assumed validated (amount >= 1, n >= 1, side in heads/tails).
 
-    `record_exclude` shrinks the stake considered for the "biggest flip win"
+    `record_exclude` shrinks the stake considered for the "biggest flip payout"
     record (payouts are untouched). The dailies claim passes its property
     revenue portion here so property owners' auto-staked income can't
     trivialize the record; a hand-typed !flip wagers real coins knowingly and

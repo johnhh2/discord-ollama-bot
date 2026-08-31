@@ -1433,34 +1433,44 @@ class EconomyCog(commands.Cog):
         else:
             hm_wins_str = "**Hangmans Completed:** *none yet*"
 
-        lines = [
-            fmt("highest_balance", "Balance"),
-            fmt("lottery", "Lottery Payout"),
-            fmt("slots_jackpot", "Slots Jackpot",
-                lambda rec: f"\n  ↳ Symbols: {rec.get('symbols', '?')} • Bet: {rec['bet']:,} 🪙" if rec.get('bet') is not None else ""),
-            fmt("slots_non_jackpot", "Slots Non-Jackpot",
-                lambda rec: f"\n  ↳ Symbols: {rec.get('symbols', '?')} • Bet: {rec['bet']:,} 🪙" if rec.get('bet') is not None else ""),
-            fmt("blackjack", "Blackjack Payout",
-                lambda rec: f"\n  ↳ Hand: {rec.get('player_hand', '?')} ({rec.get('player_score', '?')}) • Dealer: {rec.get('dealer_score', '?')}"),
-            fmt("flip", "Flip Payout"),
-            fmt("hangman_payout", "Hangman Payout",
-                lambda rec: f"\n  ↳ Word: `{rec.get('word', '?')}`"),
-            hm_wins_str,
-            fmt("highest_bot_chess_elo_defeated", "Stockfish Elo Defeated", unit="Elo"),
-            fmt("chess_pvp_wins", "PvP Chess Wins",
-                unit="win" if (r.get("chess_pvp_wins") or {}).get("value") == 1 else "wins"),
-            fmt("scratchoff_day", "Scratchoff Day"),
-            fmt(CRIME_RECORD_CATEGORY, "Crime Score",
-                lambda rec: f"\n  ↳ {format_crime_record_detail(rec)}"),
-            fmt("total_artifacts", "Artifacts Owned", unit=""),
-            fmt("total_assets", "Properties Owned", unit=""),
-            fmt("highest_property_value", "Property Portfolio"),
-            fmt("command_streak", "Command Streak",
-                unit="day" if (r.get("command_streak") or {}).get("value") == 1 else "days"),
+        sections = [
+            ("💰 Economy", [
+                fmt("highest_balance", "Balance"),
+                fmt(CRIME_RECORD_CATEGORY, "Crime Payout",
+                    lambda rec: f"\n  ↳ {format_crime_record_detail(rec)}"),
+                fmt("command_streak", "Command Streak",
+                    unit="day" if (r.get("command_streak") or {}).get("value") == 1 else "days"),
+            ]),
+            ("🎰 Gambling", [
+                fmt("lottery", "Lottery Payout"),
+                fmt("slots_jackpot", "Slots Jackpot Payout",
+                    lambda rec: f"\n  ↳ Symbols: {rec.get('symbols', '?')} • Bet: {rec['bet']:,} 🪙" if rec.get('bet') is not None else ""),
+                fmt("slots_non_jackpot", "Slots Non-Jackpot Payout",
+                    lambda rec: f"\n  ↳ Symbols: {rec.get('symbols', '?')} • Bet: {rec['bet']:,} 🪙" if rec.get('bet') is not None else ""),
+                fmt("blackjack", "Blackjack Payout",
+                    lambda rec: f"\n  ↳ Hand: {rec.get('player_hand', '?')} ({rec.get('player_score', '?')}) • Dealer: {rec.get('dealer_score', '?')}"),
+                fmt("flip", "Flip Payout"),
+                fmt("scratchoff_day", "Scratchoff Day Payout"),
+            ]),
+            ("🎮 Games", [
+                fmt("hangman_payout", "Hangman Payout",
+                    lambda rec: f"\n  ↳ Word: `{rec.get('word', '?')}`"),
+                hm_wins_str,
+                fmt("highest_bot_chess_elo_defeated", "Highest Elo Defeated", unit="Elo"),
+                fmt("chess_pvp_wins", "PvP Chess Wins",
+                    unit="win" if (r.get("chess_pvp_wins") or {}).get("value") == 1 else "wins"),
+            ]),
+            ("🏠 Assets", [
+                fmt("total_artifacts", "Artifacts Owned", unit=""),
+                fmt("total_assets", "Properties Owned", unit=""),
+                fmt("highest_property_value", "Property Portfolio"),
+            ]),
         ]
 
         embed = discord.Embed(title=title, color=C_GOLD)
-        embed.description = "\n".join(lines)
+        embed.description = "\n\n".join(
+            f"__**{header}**__\n" + "\n".join(entries) for header, entries in sections
+        )
         await ctx.send(embed=embed)
 
     @commands.command(name="savings", aliases=["piggybank"])

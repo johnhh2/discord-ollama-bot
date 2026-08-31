@@ -1,5 +1,5 @@
 """The shared `crime` record: !steal, !mug and !bankheist all compete for one
-"biggest crime score" row rather than three separate ones.
+"biggest crime payout" row rather than three separate ones.
 
 The interesting parts are (a) that the three crimes share a single row and the
 winner is whoever took the most, regardless of which crime did it, and (b) that
@@ -118,7 +118,7 @@ async def test_successful_steal_sets_the_crime_record(db, monkeypatch):
     announced = _announced(ctx.channel)
     assert any(e.title == "🏆 New Record!" for e in announced)
     body = next(e.description for e in announced if e.title == "🏆 New Record!")
-    assert "biggest crime score" in body
+    assert "biggest crime payout" in body
     assert "1,000 🪙" in body
     assert "Steal • robbed victim" in body
 
@@ -270,7 +270,7 @@ async def test_bankheist_credits_the_whole_crew(db, monkeypatch):
     body = next(
         e.description for e in _announced(ctx.channel) if e.title == "🏆 New Record!"
     )
-    assert "**host, j1, j2, j3** just set a new biggest crime score record" in body
+    assert "**host, j1, j2, j3** just set a new biggest crime payout record" in body
     assert "crew: host, j1, j2, j3 — 500 🪙 each" in body
 
 
@@ -429,7 +429,7 @@ async def test_records_embed_renders_the_crime_line_with_the_crew(db):
     await cog.cmd_records.callback(cog, ctx)
 
     desc = ctx.sent_embeds[-1].description
-    assert "**Crime Score:** 2,000 🪙 — **host, j1, j2**" in desc
+    assert "**Crime Payout:** 2,000 🪙 — **host, j1, j2**" in desc
     assert "↳ Bank Heist • robbed target • crew: host 666 🪙, j1 667 🪙, j2 667 🪙" in desc
 
 
@@ -438,4 +438,4 @@ async def test_records_embed_shows_the_crime_line_as_empty_before_any_crime(db):
     ctx = FakeCtx(author=FakeMember(uid=1), guild=FakeGuild(gid=GID))
     await cog.cmd_records.callback(cog, ctx)
 
-    assert "**Crime Score:** *none yet*" in ctx.sent_embeds[-1].description
+    assert "**Crime Payout:** *none yet*" in ctx.sent_embeds[-1].description

@@ -28,20 +28,20 @@ def emb(title: str, description: str, color: int) -> discord.Embed:
 
 RECORD_LABELS = {
     "highest_balance": "highest balance",
-    "flip": "biggest flip win",
-    "slots_jackpot": "biggest slots jackpot",
-    "slots_non_jackpot": "biggest non-jackpot slots win",
-    "lottery": "biggest lottery prize",
-    "blackjack": "biggest blackjack win",
+    "flip": "biggest flip payout",
+    "slots_jackpot": "biggest slots jackpot payout",
+    "slots_non_jackpot": "biggest non-jackpot slots payout",
+    "lottery": "biggest lottery payout",
+    "blackjack": "biggest blackjack payout",
     "hangman_payout": "biggest hangman payout",
-    "highest_bot_chess_elo_defeated": "highest Stockfish Elo defeated",
+    "highest_bot_chess_elo_defeated": "highest Elo defeated",
     "chess_pvp_wins": "most PvP chess wins",
     "total_artifacts": "most artifacts owned",
     "total_assets": "most properties owned",
     "highest_property_value": "highest property portfolio value",
     "command_streak": "longest daily command streak",
-    "scratchoff_day": "best scratchoff day",
-    "crime": "biggest crime score",
+    "scratchoff_day": "biggest scratchoff day payout",
+    "crime": "biggest crime payout",
 }
 
 
