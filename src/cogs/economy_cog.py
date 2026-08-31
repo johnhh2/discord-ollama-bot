@@ -604,7 +604,10 @@ class EconomyCog(commands.Cog):
                 frame = build_frame(robber_steps[i], cop_steps[i], done=(i == steps - 1), caught=caught_now)
                 e = emb("🦹 Robbery in Progress...", frame, C_ORANGE)
                 if msg is None:
-                    msg = await ctx.send(embed=e)
+                    # silent=True: the animation (and the result embed it edits
+                    # into) must never notify the channel; the victim gets one
+                    # explicit ping below instead.
+                    msg = await ctx.send(embed=e, silent=True)
                 else:
                     await msg.edit(embed=e)
                 await asyncio.sleep(0.6)
@@ -665,6 +668,8 @@ class EconomyCog(commands.Cog):
                         C_ORANGE,
                     )
 
+            if stolen > 0:
+                await ctx.send(f"🚨 <@{victim_id}> — you've been robbed!")
             await msg.edit(embed=result_embed)
 
             await try_set_crime_record(
@@ -1339,7 +1344,9 @@ class EconomyCog(commands.Cog):
                 frame = build_mug_frame(robber_steps[i], cop_steps[i], done=(i == steps - 1), caught=caught_now)
                 e = emb("🔪 Mugging in Progress...", frame, C_ORANGE)
                 if msg is None:
-                    msg = await ctx.send(embed=e)
+                    # silent=True: see _run_steal — result must not notify the
+                    # channel; the victim gets one explicit ping below.
+                    msg = await ctx.send(embed=e, silent=True)
                 else:
                     await msg.edit(embed=e)
                 await asyncio.sleep(0.6)
@@ -1377,6 +1384,8 @@ class EconomyCog(commands.Cog):
                     f"**{target.display_name}**'s balance: **{await get_balance(target.id):,} 🪙**",
                     C_ORANGE,
                 )
+            if actual_steal > 0:
+                await ctx.send(f"🚨 <@{target.id}> — you've been mugged!")
             await msg.edit(embed=result_embed)
 
             # Getting caught doesn't undo the take — the victim is out the
