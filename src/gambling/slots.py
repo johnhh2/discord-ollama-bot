@@ -9,7 +9,7 @@ from src.helpers import (
     announce_record,
 )
 from src.economy import (
-    get_balance, _ensure_user, record_gambling_event,
+    get_balance, get_total_balance, _ensure_user, record_gambling_event,
 )
 from src.permissions import (
     is_admin, check_game_channel,
@@ -173,7 +173,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
         if new_jackpot_record:
             await announce_record(channel, "slots_jackpot", author.display_name, record_prize, holder_id=uid)
         if new_bal_record:
-            await announce_record(channel, "highest_balance", author.display_name, new_bal, holder_id=uid)
+            await announce_record(channel, "highest_balance", author.display_name, await get_total_balance(uid), holder_id=uid)
         return
 
     # Money Back (cherry retention)
@@ -232,7 +232,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
     if new_slots_record:
         await announce_record(channel, "slots_non_jackpot", author.display_name, record_winnings, holder_id=uid)
     if new_bal_record:
-        await announce_record(channel, "highest_balance", author.display_name, new_bal, holder_id=uid)
+        await announce_record(channel, "highest_balance", author.display_name, await get_total_balance(uid), holder_id=uid)
 
 
 class SlotsCog(commands.Cog):

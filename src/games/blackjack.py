@@ -7,7 +7,7 @@ from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_BLUE, parse_amount, shop_charge, shop_payout, announce_record,
 )
 from src.economy import (
-    get_balance, record_gambling_event,
+    get_balance, get_total_balance, record_gambling_event,
 )
 from src.permissions import (
     check_game_channel,
@@ -125,7 +125,7 @@ async def _blackjack_stand(message: discord.Message, uid: int, game: dict):
     if new_bj_record:
         await announce_record(message.channel, "blackjack", uid_name, bj_winnings, holder_id=uid)
     if new_bal_record:
-        await announce_record(message.channel, "highest_balance", uid_name, await get_balance(uid), holder_id=uid)
+        await announce_record(message.channel, "highest_balance", uid_name, await get_total_balance(uid), holder_id=uid)
 
 
 
@@ -193,7 +193,7 @@ class BlackjackCog(commands.Cog):
                 if new_bj_record:
                     await announce_record(ctx.channel, "blackjack", username, winnings, holder_id=uid)
                 if new_bal_record:
-                    await announce_record(ctx.channel, "highest_balance", username, new_bal, holder_id=uid)
+                    await announce_record(ctx.channel, "highest_balance", username, await get_total_balance(uid), holder_id=uid)
             return
 
         await ctx.send(embed=emb("🃏 Blackjack", display + "\n\nType `hit` to draw a card or `stand` to hold.", C_BLUE))

@@ -73,15 +73,25 @@ async def get_balance(uid: int) -> int:
     return state.economy["users"][str(uid)]["balance"]
 
 
+async def get_total_balance(uid: int) -> int:
+    """Wallet + current savings value — the number the highest_balance record
+    tracks. Announce sites must display this, not the bare wallet, so the
+    announced value matches the record."""
+    await _ensure_user(uid)
+    wallet = state.economy["users"][str(uid)]["balance"]
+    return wallet + int(await get_savings_value(uid))
+
+
 async def add_balance(uid: int, n: int, guild_id: int = None, holder_name: str = None) -> bool:
-    """Adds `n` to uid's balance. Returns True if this caused a new highest_balance record."""
+    """Adds `n` to uid's balance. Returns True if this caused a new
+    highest_balance record (wallet + savings)."""
     await _ensure_user(uid)
     state.economy["users"][str(uid)]["balance"] += n
     await save_economy(uid=uid)
     await _maybe_latch_crime_eligible(uid)
     if guild_id is not None and holder_name is not None:
-        new_bal = state.economy["users"][str(uid)]["balance"]
-        return await try_set_record(guild_id, "highest_balance", new_bal, uid, holder_name)
+        total = await get_total_balance(uid)
+        return await try_set_record(guild_id, "highest_balance", total, uid, holder_name)
     return False
 
 

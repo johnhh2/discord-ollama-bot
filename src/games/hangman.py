@@ -10,7 +10,7 @@ from src.helpers import (
     emb, C_GREEN, C_RED, C_ORANGE, _delete_after, _edit_board, announce_record,
 )
 from src.economy import (
-    add_balance, get_balance, record_gambling_event,
+    add_balance, get_balance, get_total_balance, record_gambling_event,
 )
 from src.permissions import (
     check_game_channel,
@@ -139,7 +139,7 @@ async def _distribute_hangman_rewards(cid: int, game: dict) -> tuple[str, list[t
         new_bal = await get_balance(pid)
         msg += f"**{name}**: +{reward:,} 🪙 | Balance: {new_bal:,} 🪙\n"
         if new_bal_record:
-            pending.append(("highest_balance", name, new_bal, pid))
+            pending.append(("highest_balance", name, await get_total_balance(pid), pid))
         # Per-player wins row, but announce only when it beats the guild leader's
         # row — otherwise each win trivially beats the player's own prior count.
         if gid:

@@ -11,7 +11,7 @@ from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, C_GREY, announce_record,
 )
 from src.economy import (
-    add_balance, deduct_balance, get_balance, drain_bot_balance_into_lottery, announce_new_lottery,
+    add_balance, deduct_balance, get_balance, get_total_balance, drain_bot_balance_into_lottery, announce_new_lottery,
     _ensure_user, _ct_now, _ct_today, lottery_month_key, lottery_week_key, next_lottery_draw_dt,
     next_daily_reset_ts, record_gambling_event, add_guild_house,
 )
@@ -232,7 +232,7 @@ class LotteryCog(commands.Cog):
             if new_lottery_record:
                 await announce_record(channel, "lottery", winner.display_name, pool, holder_id=int(winner_id), notify=True)
             if new_bal_record:
-                await announce_record(channel, "highest_balance", winner.display_name, await get_balance(int(winner_id)), holder_id=int(winner_id), notify=True)
+                await announce_record(channel, "highest_balance", winner.display_name, await get_total_balance(int(winner_id)), holder_id=int(winner_id), notify=True)
 
     async def _execute_purchase(self, guild_id: int, uid: int, tickets: int, cost: int) -> dict:
         """Add `tickets` to the guild's lottery for `uid`, charging `cost`

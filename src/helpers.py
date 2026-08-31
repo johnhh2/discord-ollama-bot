@@ -27,7 +27,7 @@ def emb(title: str, description: str, color: int) -> discord.Embed:
 
 
 RECORD_LABELS = {
-    "highest_balance": "highest balance",
+    "highest_balance": "highest balance (wallet + savings)",
     "flip": "biggest flip payout",
     "slots_jackpot": "biggest slots jackpot payout",
     "slots_non_jackpot": "biggest non-jackpot slots payout",

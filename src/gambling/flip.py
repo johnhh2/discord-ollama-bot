@@ -6,7 +6,7 @@ from src.helpers import (
     emb, C_GREEN, C_RED, parse_amount, shop_charge, shop_payout, announce_record,
 )
 from src.economy import (
-    get_balance, record_gambling_event,
+    get_balance, get_total_balance, record_gambling_event,
 )
 from src.permissions import (
     check_game_channel,
@@ -100,7 +100,7 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
     if new_flip_record:
         await announce_record(channel, "flip", author.display_name, record_winnings_per, holder_id=author.id)
     if new_bal_record:
-        await announce_record(channel, "highest_balance", author.display_name, new_bal, holder_id=author.id)
+        await announce_record(channel, "highest_balance", author.display_name, await get_total_balance(uid), holder_id=author.id)
 
 
 class FlipCog(commands.Cog):

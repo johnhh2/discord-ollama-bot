@@ -1444,7 +1444,7 @@ class EconomyCog(commands.Cog):
 
         sections = [
             ("💰 Economy", [
-                fmt("highest_balance", "Balance"),
+                fmt("highest_balance", "Highest Balance"),
                 fmt(CRIME_RECORD_CATEGORY, "Crime Payout",
                     lambda rec: f"\n  ↳ {format_crime_record_detail(rec)}"),
                 fmt("command_streak", "Command Streak",
@@ -1470,9 +1470,9 @@ class EconomyCog(commands.Cog):
                     unit="win" if (r.get("chess_pvp_wins") or {}).get("value") == 1 else "wins"),
             ]),
             ("🏠 Assets", [
-                fmt("total_artifacts", "Artifacts Owned", unit=""),
                 fmt("total_assets", "Properties Owned", unit=""),
                 fmt("highest_property_value", "Property Portfolio"),
+                fmt("total_artifacts", "Artifacts Owned", unit=""),
             ]),
         ]
 
