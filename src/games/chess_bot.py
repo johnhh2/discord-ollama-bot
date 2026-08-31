@@ -10,6 +10,18 @@ import chess
 import chess.engine
 
 
+# Rating scale: bot Elo labels are LICHESS-SCALE. Maia networks are trained
+# on Lichess games at their target rating, so "Maia 1500" means "moves like
+# a Lichess 1500" by construction, and the sub-Maia tier inherits that scale
+# by degrading downward from Maia 1100. chess.com ratings run ~200-400 lower
+# below 2000, so a chess.com-600 player should pick roughly a 900 bot. The
+# native tier (2000+) is only approximately on-scale: Stockfish's UCI_Elo is
+# anchored to CCRL blitz (an engine pool, hardware/TC-dependent, compressed
+# near the top) — but human rating scales converge above ~2000 anyway, so
+# treat those labels as "roughly this strong". The post-game analysis
+# estimator (chess_analysis.py) is calibrated against these same tiers, so
+# its est. Elo agrees with this scale by construction.
+#
 # Three-tier strength model:
 #   - Sub-Maia (100-1000): Maia 1100 as the baseline (real human-shaped moves),
 #     with two probabilistic degraders layered on top:

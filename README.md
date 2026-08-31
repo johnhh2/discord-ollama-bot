@@ -59,6 +59,8 @@ flowchart LR
 | 1100–1900 | [Maia](https://maiachess.com) human-trained neural networks (one per 100-Elo bin) via lc0 |
 | 2000–3190 | Stockfish at native strength |
 
+Ratings are **Lichess-scale** (Maia is trained on Lichess games at each rating). If you think in chess.com terms, pick ~200–400 higher than your chess.com rating below 2000; the two scales converge above that. The 2000+ tier is approximate — Stockfish's built-in limiter is engine-pool-calibrated — so read those labels as "roughly this strong". Post-game analysis estimates use the same scale.
+
 PvP works too, with SAN/UCI move input, board rendering, threat analysis (`!chessthreats`), and archived games (`!chess view <id>`).
 
 ### 🎰 Economy & casino

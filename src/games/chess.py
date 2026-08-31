@@ -807,6 +807,7 @@ class ChessCog(commands.Cog):
             "`!chess @user [wager]` — Play another player. Optional wager in 🪙; winner takes the pot.\n"
             f"`!chessbot [elo]` (alias `!chess @TheBot [elo]`) — Play the bot. Elo `{elo_lo}`–`{elo_hi}`, default `{elo_default}`. "
             f"Elo 100-1000 uses Sub-Maia, 1100-1900 uses Maia, 2000+ uses Stockfish.\n"
+            "  • Ratings are **Lichess-scale** (chess.com runs ~200-400 lower below 2000; 2000+ is approximate).\n"
             f"  • Beat the bot to earn **{COINS_PER_NEW_ELO_LOW} 🪙 per new Elo point under {LOW_ELO_THRESHOLD}**, "
             f"**{COINS_PER_NEW_ELO} 🪙 per new Elo point at/above {LOW_ELO_THRESHOLD}** "
             "(above your daily highwater; resets 5am CT).\n"

@@ -141,7 +141,9 @@ def stake_weight(wp_before: float) -> float:
 # EMPIRICALLY against this very pipeline: Stockfish UCI_LimitStrength
 # self-play at Elo 1320/1700/2200/2700 (3 games each, graded at depth 12)
 # measured weighted awpl ≈ 5.3 / 2.6 / 3.0 / 2.1 respectively, and a
-# degraded-Maia bot configured at 600 measured ≈ 9.1. Known limits: per-game
+# degraded-Maia bot configured at 600 measured ≈ 9.1. Estimates therefore
+# come out on the bot's own Lichess-ish scale (see the rating-scale note atop
+# chess_bot.py), agreeing with !chess bot labels. Known limits: per-game
 # variance is large (single 1320 sides ranged 1.3-11.0), and above ~1700 the
 # depth-12 grading noise floor (~2 awpl) compresses estimates toward
 # 2000-2300. This is an ESTIMATE for display only — label it "~" wherever
