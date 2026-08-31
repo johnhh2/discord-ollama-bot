@@ -365,9 +365,16 @@ async def _auto_daily(author, channel) -> tuple[int, int]:
         f"\n⚠️ {ins_lapsed} insurance renewal{'s' if ins_lapsed != 1 else ''} couldn't be paid — "
         "coverage lapsed those days." if ins_lapsed else ""
     )
+    prop_note = ""
+    if prop_rev:
+        prop_note = (
+            "\n*Property revenue joins your dailies 🪙/🎰 stake — `!daily property` to leave it out.*"
+            if user_data.get("daily_gamble_property", False)
+            else "\n*Property revenue isn't part of the dailies 🪙/🎰 stake — `!daily property` to include it.*"
+        )
     await channel.send(embed=emb(
         "🪙 Daily Reward",
-        f"{greeting} **{DAILY_REWARD:,} 🪙**{prop_str} added. Balance: {await get_balance(uid):,} 🪙{ins_str}{lapse_str}",
+        f"{greeting} **{DAILY_REWARD:,} 🪙**{prop_str} added. Balance: {await get_balance(uid):,} 🪙{ins_str}{lapse_str}{prop_note}",
         C_GREEN,
     ), silent=True)
     return DAILY_REWARD + prop_rev, prop_rev

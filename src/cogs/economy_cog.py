@@ -285,7 +285,14 @@ class EconomyCog(commands.Cog):
             f"\n⚠️ {ins_lapsed} insurance renewal{'s' if ins_lapsed != 1 else ''} couldn't be paid — "
             "coverage lapsed those days." if ins_lapsed else ""
         )
-        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**{prop_str}! Balance: **{await get_balance(uid):,} 🪙**{ins_str}{lapse_str}", C_GREEN))
+        prop_note = ""
+        if prop_rev:
+            prop_note = (
+                "\n*Property revenue joins your dailies 🪙/🎰 stake — `!daily property` to leave it out.*"
+                if user_data.get("daily_gamble_property", False)
+                else "\n*Property revenue isn't part of the dailies 🪙/🎰 stake — `!daily property` to include it.*"
+            )
+        await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**{prop_str}! Balance: **{await get_balance(uid):,} 🪙**{ins_str}{lapse_str}{prop_note}", C_GREEN))
 
     @cmd_daily.command(name="property")
     async def cmd_daily_property(self, ctx: commands.Context):

@@ -175,9 +175,11 @@ async def test_auto_daily_includes_property_revenue(db):
     assert prop_rev == rev
     assert total == DAILY_REWARD + rev
     assert await get_balance(uid) == DAILY_REWARD + rev
-    # The claim message names the property portion.
+    # The claim message names the property portion and points at the
+    # stake toggle.
     sent = channel.send.await_args
     assert "property revenue" in sent.kwargs["embed"].description
+    assert "`!daily property` to include it" in sent.kwargs["embed"].description
 
 
 async def test_cmd_daily_message_includes_property_revenue(db):
@@ -196,6 +198,14 @@ async def test_cmd_daily_message_includes_property_revenue(db):
     desc = ctx.sent_embeds[-1].description
     assert f"+{DAILY_REWARD:,} 🪙" in desc
     assert f"{rev:,} 🪙** property revenue" in desc
+    assert "`!daily property` to include it" in desc
+
+    # An opted-in owner sees the inverse note on the next day's claim.
+    user["daily_date"] = None
+    user["daily_gamble_property"] = True
+    user["property_paid_at"] = now - DAY
+    await EconomyCog.cmd_daily.callback(cog, ctx)
+    assert "`!daily property` to leave it out" in ctx.sent_embeds[-1].description
 
 
 async def test_cmd_daily_without_property_message_unchanged(db):
