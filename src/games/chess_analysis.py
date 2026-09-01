@@ -17,7 +17,8 @@ flagged. An alert embed goes to the global admin-log channel
 flagged-game count. This is a heuristic tripwire for a human to review, NOT
 proof — thresholds are tuned to catch sustained master-level play, which the
 false-positive traps below can't reach:
-  - the opening is skipped (memorized theory looks engine-perfect),
+  - the opening is skipped while it stays theory-shaped (memorized theory
+    looks engine-perfect; the skip ends at the first significant swing),
   - "trivial" positions (only-move, or best move crushes the second-best)
     are excluded from the match rate — punishing a weak bot's blunders is
     exactly where honest humans look engine-like,
@@ -25,8 +26,9 @@ false-positive traps below can't reach:
     games can't trip it.
 
 Engine cost is bounded: one Stockfish process per finished game, one
-analyse call per post-book position at depth ANALYSIS_DEPTH with a
-per-position wall-clock cap, run strictly after the game ends. The
+analyse call per position (book plies included — their evals decide when
+theory ended) at depth ANALYSIS_DEPTH with a per-position wall-clock cap,
+run strictly after the game ends. The
 engine-facing seam is _run_engine_analysis; everything below it is pure
 math and unit-testable without a Stockfish binary.
 """
@@ -63,9 +65,16 @@ ANALYSIS_DEPTH = 12
 ANALYSIS_TIME_PER_POSITION = 0.4
 ANALYSIS_MULTIPV = 2  # best + runner-up, for the triviality gap below
 
-# The first BOOK_PLIES half-moves are skipped: opening theory is memorized,
-# so grading it inflates everyone's accuracy.
+# The first BOOK_PLIES half-moves are treated as memorized opening theory
+# and skipped — grading recited theory inflates everyone's accuracy (and the
+# cheat flag's match rate). But the exemption holds only while the game still
+# LOOKS like theory: a balanced eval and no real mistake. At the first
+# significant swing — eval outside ±BOOK_EXIT_CP, or a move losing more than
+# BOOK_EXIT_CP — grading starts immediately, triggering move included. A
+# 100-Elo bot hanging its bishop on move 3 is not "book", and without this
+# a weak player's decisive early blunders were never graded at all.
 BOOK_PLIES = 12
+BOOK_EXIT_CP = 150
 
 # A position is "trivial" when the best move beats the runner-up by more
 # than this many centipawns (obvious recapture, mate-in-sight, only path) —
@@ -139,9 +148,12 @@ def stake_weight(wp_before: float) -> float:
 # linear). No public standard exists — chess.com's mapping is proprietary and
 # Lichess deliberately doesn't publish one — so these were CALIBRATED
 # EMPIRICALLY against this very pipeline: Stockfish UCI_LimitStrength
-# self-play at Elo 1320/1700/2200/2700 (3 games each, graded at depth 12)
-# measured weighted awpl ≈ 5.3 / 2.6 / 3.0 / 2.1 respectively, and a
-# degraded-Maia bot configured at 600 measured ≈ 9.1. Estimates therefore
+# self-play at Elo 1320/1700/2200/2700 (3-4 games each, graded at depth 12)
+# measured weighted awpl ≈ 4.8 / 2.6 / 3.0 / 2.1 respectively (1320
+# re-measured after the theory-exit book change; the others' self-play
+# openings stay balanced past ply 12, so their old-sampling numbers stand),
+# and one game of a degraded-Maia bot configured at 600 measured ≈ 6.5.
+# Estimates therefore
 # come out on the bot's own Lichess-ish scale (see the rating-scale note atop
 # chess_bot.py), agreeing with !chess bot labels. Known limits: per-game
 # variance is large (single 1320 sides ranged 1.3-11.0), and above ~1700 the
@@ -222,10 +234,10 @@ async def _collect_move_evals(pgn_str: str, evaluate) -> list[dict] | None:
     board = game.board()
     evals: list[dict] = []
     prev = None  # eval of the current position, carried between plies
+    in_book = True
     for i, move in enumerate(moves):
-        if i < BOOK_PLIES:
-            board.push(move)
-            continue
+        if in_book and i >= BOOK_PLIES:
+            in_book = False
         if prev is None:
             prev = await _eval_position(board, evaluate)
         best_move, best_cp, second_cp = prev
@@ -238,6 +250,13 @@ async def _collect_move_evals(pgn_str: str, evaluate) -> list[dict] | None:
             continue  # engine gave no score for one side of the delta
         played_cp = -nxt[1]  # opponent POV → mover POV
         loss = min(max(0, best_cp - played_cp), CP_CAP)
+        if in_book:
+            # Still theory-shaped? Then this ply stays ungraded book. A
+            # swung eval or a real error ends the book for good, and the
+            # move that ended it is graded like any other.
+            if abs(best_cp) <= BOOK_EXIT_CP and loss <= BOOK_EXIT_CP:
+                continue
+            in_book = False
         wp_before = win_pct(best_cp)
         wp_loss = max(0.0, wp_before - win_pct(played_cp))
         trivial = (

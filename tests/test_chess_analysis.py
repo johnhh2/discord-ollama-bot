@@ -272,6 +272,33 @@ async def test_collect_grades_matches_and_losses():
     )
 
 
+async def test_book_skip_ends_at_first_significant_swing():
+    """The 12-ply theory exemption holds only while the game looks like
+    theory. A big loss on ply 4 ends it — and that ply is graded."""
+    pgn, moves = _line_game()
+
+    def _played_or_any(board):
+        ply = board.ply()
+        return moves[ply] if ply < len(moves) else next(iter(board.legal_moves))
+
+    async def eval_swing(board):
+        played = _played_or_any(board)
+        if board.ply() < 5:
+            return played, 0, -50           # balanced: still book
+        return played, 300, 150             # ply-4 mover blundered 300cp
+
+    evals = await ca._collect_move_evals(pgn, eval_swing)
+    assert len(evals) == len(moves) - 4     # graded from ply 4, not 12
+    assert evals[0]["color"] == "white" and evals[0]["loss"] == 300
+
+    # Unbalanced eval alone also ends book, even with no losing move.
+    async def eval_unbalanced(board):
+        return _played_or_any(board), 200, 100
+
+    evals = await ca._collect_move_evals(pgn, eval_unbalanced)
+    assert len(evals) == len(moves)         # graded from ply 0
+
+
 async def test_collect_marks_trivial_on_wide_gap():
     pgn, moves = _line_game()
 
