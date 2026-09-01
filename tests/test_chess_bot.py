@@ -897,7 +897,7 @@ def _stub_chess_helpers(monkeypatch):
     + _delete_after + check_chess_channel. Stub all three for cog tests."""
     import src.games.chess as _chess_mod
     bump_calls = []
-    async def _stub_bump(channel, game, embed, *, file=None, ping_content=None):
+    async def _stub_bump(channel, game, embed, *, file=None, turn_content=None, ping=False):
         game["board_msg_id"] = (game.get("board_msg_id") or 0) + 1
         bump_calls.append((channel, game, embed, file))
     monkeypatch.setattr(_chess_mod, "_bump_board", _stub_bump)

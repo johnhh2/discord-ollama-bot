@@ -89,26 +89,56 @@ class _BumpChannel(_RecordingChannel):
 
 
 @pytest.mark.asyncio
-async def test_chess_turn_ping_rides_in_content_loud(db):
-    """A PvP turn board's ping must be message content with silent=False —
-    the next player didn't act and won't be notified any other way."""
+async def test_chess_turn_ping_is_its_own_loud_message_after_the_board(db):
+    """A PvP turn ping is a separate content message with silent=False, sent
+    AFTER the board — the thread's channel-list preview then reads whose turn
+    it is, and the next player (who didn't act) still gets a real ping."""
     chan = _BumpChannel()
-    await _bump_board(chan, {}, emb("♟️ Chess", "turn", C_BLUE), ping_content="<@2>")
+    game: dict = {}
+    await _bump_board(
+        chan, game, emb("♟️ Chess", "turn", C_BLUE),
+        turn_content="<@2>'s turn!", ping=True,
+    )
 
-    _, kwargs = chan.sent[0]
-    assert kwargs.get("content") == "<@2>"
-    assert kwargs.get("silent") is False
+    # The embed goes first, silent.
+    _, embed_kwargs = chan.sent[0]
+    assert embed_kwargs.get("silent") is True
+    # The turn line is the LAST message: loud, content-only.
+    turn_args, turn_kwargs = chan.sent[-1]
+    assert turn_args == ("<@2>'s turn!",)
+    assert turn_kwargs.get("silent") is False
+    assert game["turn_msg_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_chess_bot_game_turn_line_is_silent(db):
+    """Bot games post the same trailing turn line for the thread preview,
+    but silent — the lone human just moved."""
+    chan = _BumpChannel()
+    game: dict = {}
+    await _bump_board(
+        chan, game, emb("♟️ Chess", "turn", C_BLUE),
+        turn_content="🤖 **Maia (1300)**'s turn!",
+    )
+
+    turn_args, turn_kwargs = chan.sent[-1]
+    assert turn_args == ("🤖 **Maia (1300)**'s turn!",)
+    assert turn_kwargs.get("silent") is True
+    assert game["turn_msg_id"] is not None
 
 
 @pytest.mark.asyncio
 async def test_chess_bump_without_ping_is_silent(db):
-    """Every other chess board bump (bot games, game-over) stays silent."""
+    """Board bumps with no turn line (game-over) stay silent and send no
+    extra message."""
     chan = _BumpChannel()
-    await _bump_board(chan, {}, emb("♟️ Chess", "turn", C_BLUE))
+    game: dict = {}
+    await _bump_board(chan, game, emb("♟️ Chess", "turn", C_BLUE))
 
-    _, kwargs = chan.sent[0]
-    assert kwargs.get("content") is None
-    assert kwargs.get("silent") is True
+    for args, kwargs in chan.sent:
+        assert kwargs.get("silent") is True
+        assert not args
+    assert game["turn_msg_id"] is None
 
 
 @pytest.mark.asyncio
@@ -140,11 +170,11 @@ async def test_chess_board_still_deletes_prior_pair_in_channel(db):
             return SimpleNamespace(id=mid, delete=_del)
 
     chan = _Chan()
-    game = {"embed_msg_id": 11, "board_msg_id": 12}
+    game = {"embed_msg_id": 11, "board_msg_id": 12, "turn_msg_id": 13}
 
     await _bump_board(chan, game, emb("♟️ Chess", "turn", C_BLUE))
 
-    assert sorted(deleted) == [11, 12]
+    assert sorted(deleted) == [11, 12, 13]
 
 
 @pytest.mark.asyncio

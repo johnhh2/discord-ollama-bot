@@ -25,7 +25,7 @@ def _stub_helpers(monkeypatch):
     state. Stubs _bump_board so the listener can apply moves without real I/O."""
     import src.games.chess as _chess_mod
     bump_calls = []
-    async def _stub_bump(channel, game, embed, *, file=None, ping_content=None):
+    async def _stub_bump(channel, game, embed, *, file=None, turn_content=None, ping=False):
         game["board_msg_id"] = (game.get("board_msg_id") or 0) + 1
         bump_calls.append((channel, game, embed, file))
     monkeypatch.setattr(_chess_mod, "_bump_board", _stub_bump)

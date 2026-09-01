@@ -525,10 +525,10 @@ def _stub_chess_edit_board(monkeypatch):
     Stub all three so cog calls don't try real channel I/O."""
     import src.games.chess as _chess_mod
     bump_calls = []
-    async def _stub_bump(channel, game, embed, *, file=None, ping_content=None):
+    async def _stub_bump(channel, game, embed, *, file=None, turn_content=None, ping=False):
         # Mimic the real _bump_board side-effect: assign a fresh message id.
         game["board_msg_id"] = (game.get("board_msg_id") or 0) + 1
-        bump_calls.append((channel, game, embed, file, ping_content))
+        bump_calls.append((channel, game, embed, file, turn_content, ping))
     monkeypatch.setattr(_chess_mod, "_bump_board", _stub_bump)
 
     edit_calls = []
@@ -633,8 +633,9 @@ async def test_move_applies_and_flips_turn(db, _stub_chess_edit_board):
 
 @_aio
 async def test_pvp_move_pings_next_player_via_content(db, _stub_chess_edit_board):
-    """PvP turn boards must carry the next player's mention as ping_content —
-    embed mentions never notify, so the ping has to ride in message content."""
+    """PvP turn boards must carry the next player's mention as a loud turn
+    line — embed mentions never notify, so the ping has to ride in message
+    content."""
     cog = ChessCog(bot=None)
     white = FakeMember(uid=1140, display_name="White")
     black = FakeMember(uid=1141, display_name="Black")
@@ -645,13 +646,15 @@ async def test_pvp_move_pings_next_player_via_content(db, _stub_chess_edit_board
     await cog.cmd_move_chess.callback(cog, ctx, "e4")
 
     assert _stub_chess_edit_board, "expected a board bump after the move"
-    *_, ping_content = _stub_chess_edit_board[-1]
-    assert ping_content == black.mention
+    *_, turn_content, ping = _stub_chess_edit_board[-1]
+    assert turn_content == f"{black.mention}'s turn!"
+    assert ping is True
 
 
 @_aio
-async def test_bot_game_move_does_not_ping(db, _stub_chess_edit_board):
-    """Bot games have no one to notify — the lone human just moved."""
+async def test_bot_game_move_posts_turn_line_without_ping(db, _stub_chess_edit_board):
+    """Bot games still post the turn line (so the thread preview shows whose
+    turn it is) but silent — the lone human just moved."""
     cog = ChessCog(bot=None)
     white = FakeMember(uid=1142, display_name="White")
     _seed_chess_game(754, white.id, 999999)
@@ -661,8 +664,9 @@ async def test_bot_game_move_does_not_ping(db, _stub_chess_edit_board):
     await cog.cmd_move_chess.callback(cog, ctx, "e4")
 
     assert _stub_chess_edit_board, "expected a board bump after the move"
-    *_, ping_content = _stub_chess_edit_board[-1]
-    assert ping_content is None
+    *_, turn_content, ping = _stub_chess_edit_board[-1]
+    assert turn_content is not None and turn_content.endswith("'s turn!")
+    assert ping is False
 
 
 @_aio
@@ -761,7 +765,7 @@ async def test_checkmate_headline_uses_pgn_name_when_guild_cache_misses(
     await cog.cmd_move_chess.callback(cog, ctx_b, "Qh4#")
 
     game_over_embeds = [
-        embed for _ch, _g, embed, _f, _p in _stub_chess_edit_board
+        embed for _ch, _g, embed, _f, _t, _p in _stub_chess_edit_board
         if embed.title and "Game Over" in embed.title
     ]
     assert game_over_embeds, "expected a game-over embed"

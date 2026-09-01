@@ -100,7 +100,8 @@ def _board_embed(title: str, description: str, color: int) -> discord.Embed:
 
 async def _bump_board(
     channel: discord.abc.Messageable, game: dict, embed: discord.Embed,
-    *, file: discord.File | None = None, ping_content: str | None = None,
+    *, file: discord.File | None = None, turn_content: str | None = None,
+    ping: bool = False,
 ):
     """Send a fresh embed+board pair. The embed and image are sent as TWO
     separate messages (embed first, then board image) so the board renders
@@ -117,26 +118,29 @@ async def _bump_board(
     posting so the shared channel doesn't fill with stale boards —
     post-then-delete means there's never a window with no board visible.
 
-    Tracks both message IDs:
+    Tracks the message IDs:
       - game['embed_msg_id']: the text/embed message (sent first)
       - game['board_msg_id']: the image attachment message (sent second)
+      - game['turn_msg_id']: the turn-line message (sent last; in-memory
+        only, not persisted — after a restart the one stale turn line in a
+        legacy in-channel game just goes undeleted once)
 
-    `ping_content` carries a turn ping (PvP only — the next player isn't the
-    one who just moved, so the notification is the point). It must ride in
-    message content with silent=False, because embed mentions never notify;
-    every other chess message stays silent. The bare image message never
-    needs to notify anyone.
+    `turn_content` is the "@X's turn!" line, sent as its own message AFTER
+    the board so the thread's channel-list preview reads whose turn it is.
+    With `ping=True` (PvP only — the next player isn't the one who just
+    moved, so the notification is the point) it goes out loud; content
+    mentions are the only thing that actually notifies (embed mentions
+    never do). Bot games send the line silent — the lone human just moved
+    (or the engine is about to). Every other chess message stays silent.
     """
     # Snapshot the prior IDs before we overwrite them with the new send.
     prior_ids = (
         [] if isinstance(channel, discord.Thread)
-        else [game.get("board_msg_id"), game.get("embed_msg_id")]
+        else [game.get("board_msg_id"), game.get("embed_msg_id"), game.get("turn_msg_id")]
     )
 
-    # Send the new pair first so the channel always has a current board.
-    embed_msg = await channel.send(
-        content=ping_content, embed=embed, silent=ping_content is None,
-    )
+    # Send the new set first so the channel always has a current board.
+    embed_msg = await channel.send(embed=embed, silent=True)
     game["embed_msg_id"] = embed_msg.id
     if file is not None:
         image_msg = await channel.send(file=file, silent=True)
@@ -145,6 +149,11 @@ async def _bump_board(
         # Render failed — no image; clear any stale board_msg_id so a future
         # bump doesn't try to delete a nonexistent message.
         game["board_msg_id"] = None
+    if turn_content is not None:
+        turn_msg = await channel.send(turn_content, silent=not ping)
+        game["turn_msg_id"] = turn_msg.id
+    else:
+        game["turn_msg_id"] = None
 
     # Now delete the prior pair (image first, then embed) so the most recent
     # message in the channel remains the new board.
@@ -1187,9 +1196,11 @@ class ChessCog(commands.Cog):
         bot_user = self.bot.user if self.bot is not None else None
         if bot_user is not None and opponent_id == bot_user.id:
             elo = game.get("elo", chess_bot.ELO_DEFAULT)
-            next_mention = f"🤖 **{chess_bot.engine_name_with_elo(elo)}**"
+            base_mention = f"🤖 **{chess_bot.engine_name_with_elo(elo)}**"
+            next_mention = base_mention
         else:
-            next_mention = next_player.mention if next_player else "Next player"
+            base_mention = next_player.mention if next_player else "Next player"
+            next_mention = base_mention
             if next_player is not None:
                 next_mention += _badge_suffix(opponent_id)
         check_note = " — **check!**" if board.is_check() else ""
@@ -1198,19 +1209,20 @@ class ChessCog(commands.Cog):
             f"**Last move:** {game['last_move']}"
             f"{_captures_block(game)}"
         )
-        # PvP turn boards ping the next (human) player, who isn't the one who
-        # just moved — that notification is the point, and it must ride in
-        # message content (embed mentions never notify). Bot games only ever
-        # mention the lone human right after their own move (or name the
-        # engine), so those stay silent.
+        # Every move posts an "@X's turn!" line after the board so the thread
+        # preview reads whose turn it is. In PvP it pings the next (human)
+        # player, who isn't the one who just moved — that notification is the
+        # point, and it must ride in message content (embed mentions never
+        # notify). Bot games send the line silent: the lone human just moved
+        # (or the engine is about to).
         ping_next = (
             bot_user is None or opponent_id != bot_user.id
         ) and "elo" not in game and next_player is not None
-        ping_content = next_player.mention if ping_next else None
+        turn_content = f"{base_mention}'s turn!"
         if file is not None:
-            await _bump_board(channel, game, _board_embed("♟️ Chess", desc, C_BLUE), file=file, ping_content=ping_content)
+            await _bump_board(channel, game, _board_embed("♟️ Chess", desc, C_BLUE), file=file, turn_content=turn_content, ping=ping_next)
         else:
-            await _bump_board(channel, game, emb("♟️ Chess", desc, C_BLUE), ping_content=ping_content)
+            await _bump_board(channel, game, emb("♟️ Chess", desc, C_BLUE), turn_content=turn_content, ping=ping_next)
         # Bumping reassigned board_msg_id; persist so a restart hits the right message.
         try:
             await save_chess_game(cid)
