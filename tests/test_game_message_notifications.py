@@ -89,10 +89,51 @@ class _BumpChannel(_RecordingChannel):
 
 
 @pytest.mark.asyncio
-async def test_chess_turn_ping_is_its_own_loud_message_after_the_board(db):
-    """A PvP turn ping is a separate content message with silent=False, sent
-    AFTER the board — the thread's channel-list preview then reads whose turn
-    it is, and the next player (who didn't act) still gets a real ping."""
+async def test_chess_turn_ping_rides_on_the_board_message_loud(db):
+    """A PvP turn ping is the content of the board-image message itself,
+    with silent=False — one message carries the board AND the "@X's turn!"
+    line, so the thread's channel-list preview reads whose turn it is and
+    the next player (who didn't act) gets a real ping."""
+    chan = _BumpChannel()
+    game: dict = {}
+    board_file = object()  # _bump_board just forwards it to send()
+    await _bump_board(
+        chan, game, emb("♟️ Chess", "turn", C_BLUE),
+        file=board_file, turn_content="<@2>'s turn!", ping=True,
+    )
+
+    # The embed goes first, silent.
+    _, embed_kwargs = chan.sent[0]
+    assert embed_kwargs.get("silent") is True
+    # The board message is LAST: image + turn content, loud.
+    board_args, board_kwargs = chan.sent[-1]
+    assert board_args == ("<@2>'s turn!",)
+    assert board_kwargs.get("file") is board_file
+    assert board_kwargs.get("silent") is False
+    assert game["board_msg_id"] is not None
+    assert game["turn_msg_id"] is None  # no standalone turn message
+
+
+@pytest.mark.asyncio
+async def test_chess_bot_game_turn_line_is_silent(db):
+    """Bot games carry the same turn line on the board message for the
+    thread preview, but silent — the lone human just moved."""
+    chan = _BumpChannel()
+    game: dict = {}
+    await _bump_board(
+        chan, game, emb("♟️ Chess", "turn", C_BLUE),
+        file=object(), turn_content="Maia (1300)'s turn!",
+    )
+
+    board_args, board_kwargs = chan.sent[-1]
+    assert board_args == ("Maia (1300)'s turn!",)
+    assert board_kwargs.get("silent") is True
+
+
+@pytest.mark.asyncio
+async def test_chess_turn_line_falls_back_to_own_message_without_board(db):
+    """When the board render failed there's no image message to carry the
+    turn line — it goes out standalone, keeping the ping."""
     chan = _BumpChannel()
     game: dict = {}
     await _bump_board(
@@ -100,30 +141,10 @@ async def test_chess_turn_ping_is_its_own_loud_message_after_the_board(db):
         turn_content="<@2>'s turn!", ping=True,
     )
 
-    # The embed goes first, silent.
-    _, embed_kwargs = chan.sent[0]
-    assert embed_kwargs.get("silent") is True
-    # The turn line is the LAST message: loud, content-only.
     turn_args, turn_kwargs = chan.sent[-1]
     assert turn_args == ("<@2>'s turn!",)
     assert turn_kwargs.get("silent") is False
-    assert game["turn_msg_id"] is not None
-
-
-@pytest.mark.asyncio
-async def test_chess_bot_game_turn_line_is_silent(db):
-    """Bot games post the same trailing turn line for the thread preview,
-    but silent — the lone human just moved."""
-    chan = _BumpChannel()
-    game: dict = {}
-    await _bump_board(
-        chan, game, emb("♟️ Chess", "turn", C_BLUE),
-        turn_content="🤖 **Maia (1300)**'s turn!",
-    )
-
-    turn_args, turn_kwargs = chan.sent[-1]
-    assert turn_args == ("🤖 **Maia (1300)**'s turn!",)
-    assert turn_kwargs.get("silent") is True
+    assert game["board_msg_id"] is None
     assert game["turn_msg_id"] is not None
 
 

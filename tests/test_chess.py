@@ -670,6 +670,26 @@ async def test_bot_game_move_posts_turn_line_without_ping(db, _stub_chess_edit_b
 
 
 @_aio
+async def test_bot_turn_line_is_plain_engine_name(db, _stub_chess_edit_board, monkeypatch):
+    """When it's the engine's move, the turn line is the bare engine name —
+    no 🤖, no bold — so the thread preview stays clean."""
+    monkeypatch.setattr(ChessCog, "_play_bot_reply", AsyncMock())
+    bot_uid = 999_000_555
+    cog = ChessCog(bot=SimpleNamespace(user=SimpleNamespace(id=bot_uid)))
+    white = FakeMember(uid=1143, display_name="White")
+    _seed_chess_game(755, white.id, bot_uid)
+    _state.active_chess_games[755]["elo"] = 1300
+    ctx = _ctx_for(white, channel_id=755)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "e4")
+
+    *_, turn_content, ping = _stub_chess_edit_board[-1]
+    assert turn_content == f"{chess_bot.engine_name_with_elo(1300)}'s turn!"
+    assert "🤖" not in turn_content and "**" not in turn_content
+    assert ping is False
+
+
+@_aio
 async def test_capture_move_annotates_last_move_with_captured_piece(
     db, _stub_chess_edit_board,
 ):
