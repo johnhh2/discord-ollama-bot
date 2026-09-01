@@ -466,7 +466,12 @@ async def fetch_member(guild: discord.Guild, user_id: int) -> "discord.Member | 
 
 
 class MemberConverter(commands.Converter):
-    """Accepts a mention, user ID, or case-insensitive display name / username substring."""
+    """Accepts a mention, user ID, or case-insensitive display name / username substring.
+
+    Purely numeric tokens only ever resolve as exact IDs (via the built-in
+    converter) — they are never substring-matched against names, so a stray
+    number like `!pay 42 100` can't silently target someone with "42" in
+    their name. Mirrors `GlobalUser`'s rule."""
 
     async def convert(self, ctx: commands.Context, argument: str) -> discord.Member:
         # Try built-in converter first (handles mentions and exact IDs)
@@ -475,7 +480,7 @@ class MemberConverter(commands.Converter):
         except commands.BadArgument:
             pass
 
-        if ctx.guild is None:
+        if ctx.guild is None or argument.isdigit():
             raise commands.BadArgument(f"Member '{argument}' not found.")
 
         # Case-insensitive substring match against display name and username

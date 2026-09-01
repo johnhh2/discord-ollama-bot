@@ -347,6 +347,22 @@ class TestMemberConverter:
         # Error mentions matched names so the user can disambiguate.
         assert "alice_smith" in str(exc_info.value)
 
+    async def test_digit_only_token_never_substring_matches_names(self):
+        """A purely numeric token is an ID (or an amount), never a name query
+        — '42' must not resolve to a member with '42' in their name."""
+        from discord.ext import commands as dpy_commands
+        ctx = _ctx_with_members([FakeMember(uid=1, display_name="player42")])
+        with pytest.raises(dpy_commands.BadArgument):
+            await MemberConverter().convert(ctx, "42")
+
+    async def test_digit_bearing_name_still_matches_non_numeric_query(self):
+        """The digit guard only blocks all-digit tokens; queries containing
+        digits alongside letters still substring-match."""
+        m = FakeMember(uid=1, display_name="player42")
+        ctx = _ctx_with_members([m])
+        result = await MemberConverter().convert(ctx, "player4")
+        assert result is m
+
     async def test_no_guild_context_raises_bad_argument(self):
         """In DMs (ctx.guild is None) the substring path is skipped entirely."""
         from discord.ext import commands as dpy_commands
