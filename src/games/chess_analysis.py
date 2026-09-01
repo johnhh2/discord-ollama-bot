@@ -46,7 +46,7 @@ import chess.pgn
 import discord
 
 from src import state
-from src.games.chess_bot import _resolve_stockfish_path
+from src.games.chess_bot import _resolve_stockfish_path, MAIA_ELO_MIN
 from src.helpers import emb, C_GREY, C_RED
 from src.persistence import count_flagged_reports, save_chess_analysis
 
@@ -505,6 +505,20 @@ async def analyze_and_post(
         return
 
     bot_user_id = bot.user.id if bot is not None and bot.user is not None else None
+
+    # Sub-Maia bots (configured below MAIA_ELO_MIN) are Maia-1100 degraded by
+    # INJECTED random/blunder moves — grading their move quality measures the
+    # underlying network between injections and reads far above the label, so
+    # no estimate is shown or stored for that side. The human's side (and any
+    # 1100+ bot, whose engine actually plays at its label) keeps its estimate.
+    if (
+        elo is not None and int(elo) < MAIA_ELO_MIN
+        and bot_user_id is not None and bot_user_id in (white_id, black_id)
+    ):
+        bot_side = analysis.get("white" if bot_user_id == white_id else "black")
+        if bot_side:
+            bot_side["est_elo"] = None
+
     suspect_id = None
     if elo is not None:
         suspect_id = flag_suspect(

@@ -441,6 +441,30 @@ async def test_pipeline_no_flag_for_clean_or_pvp_games(db, monkeypatch):
     log_channel.send.assert_not_called()
 
 
+async def test_sub_maia_bot_side_gets_no_estimate(db, monkeypatch):
+    """Bots configured below MAIA_ELO_MIN blunder by injection, so their
+    move-quality estimate is meaningless — suppressed on their side only;
+    the human's estimate stays. A Maia-range bot (1100+) keeps both."""
+    rid = await _seed_report(elo=600)
+    channel = await _run_pipeline(
+        monkeypatch, analysis=_suspicious_analysis(acpl=55.0, match=40.0),
+        elo=600, report_id=rid, log_channel=None,
+    )
+    report = await load_chess_report(rid)
+    assert report["analysis"]["black"]["est_elo"] is None      # bot side
+    assert report["analysis"]["white"]["est_elo"] is not None  # human side
+    embed = channel.send.call_args_list[0].kwargs["embed"]
+    assert embed.description.count("Elo**") == 1               # only one estimate shown
+
+    rid2 = await _seed_report(elo=1100)
+    await _run_pipeline(
+        monkeypatch, analysis=_suspicious_analysis(acpl=55.0, match=40.0),
+        elo=1100, report_id=rid2, log_channel=None,
+    )
+    report2 = await load_chess_report(rid2)
+    assert report2["analysis"]["black"]["est_elo"] is not None
+
+
 async def test_pipeline_edits_game_over_embed_in_place(db, monkeypatch):
     """When the game-over embed still exists, analysis is appended to it
     instead of posting a separate message."""
