@@ -626,6 +626,34 @@ async def test_pay_to_bot_user_credits_guild_house(db):
     assert _economy.get_guild_house_balance(77) == 1000
 
 
+async def test_pay_usage_message_echoes_invoked_alias(db):
+    """`!give` with unparseable args must show `Usage: !give ...`, not
+    `!pay` — a hardcoded canonical name reads as "give doesn't exist,
+    use pay", even though the alias dispatched fine."""
+    cog = EconomyCog(bot=_StubBot())
+    sender = FakeMember(uid=505)
+
+    ctx = FakeCtx(author=sender, guild=FakeGuild(gid=42))
+    ctx.bot = _StubBot()
+    ctx.invoked_with = "give"
+    await cog.cmd_pay.callback(cog, ctx, recipient=None, amount="1")
+
+    assert ctx.sent_messages == ["Usage: `!give @user <amount>`"]
+
+
+async def test_pay_usage_message_defaults_to_pay_without_invoked_with(db):
+    """FakeCtx (and any duck-typed ctx) without invoked_with falls back to
+    the canonical name."""
+    cog = EconomyCog(bot=_StubBot())
+    sender = FakeMember(uid=506)
+
+    ctx = FakeCtx(author=sender, guild=FakeGuild(gid=42))
+    ctx.bot = _StubBot()
+    await cog.cmd_pay.callback(cog, ctx, recipient=None, amount=None)
+
+    assert ctx.sent_messages == ["Usage: `!pay @user <amount>`"]
+
+
 # ── !jailbreak ────────────────────────────────────────────────────────────────
 
 async def test_jailbreak_success_clears_jail_until(db, monkeypatch):

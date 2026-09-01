@@ -1712,7 +1712,10 @@ class EconomyCog(commands.Cog):
     @commands.command(name="pay", aliases=["give", "gift", "donate", "tip", "send"])
     async def cmd_pay(self, ctx: commands.Context, recipient: OptionalMember = None, amount: str = None):
         if recipient is None or amount is None:
-            await ctx.send("Usage: `!pay @user <amount>`")
+            # Echo the alias the user typed (!give, !gift, ...) — a hardcoded
+            # `!pay` here reads as "that command doesn't exist, use !pay".
+            invoked = getattr(ctx, "invoked_with", None) or "pay"
+            await ctx.send(f"Usage: `!{invoked} @user <amount>`")
             return
         if recipient.id == ctx.author.id:
             await ctx.send(embed=emb("❌ Invalid Recipient", f"**{ctx.author.display_name}** can't pay themselves.", C_RED))

@@ -550,7 +550,13 @@ class EventsCog(commands.Cog):
         if isinstance(error, commands.UserInputError):
             if ctx.command is not None:
                 prefix = ctx.clean_prefix or "!"
-                usage = f"{prefix}{ctx.command.qualified_name} {ctx.command.signature}".rstrip()
+                # Echo the command name as the user typed it (alias-aware):
+                # showing the canonical name for an alias invocation reads as
+                # "that command doesn't exist, use this one instead".
+                parents = getattr(ctx, "invoked_parents", None) or []
+                typed = " ".join([*parents, getattr(ctx, "invoked_with", None) or ""]).strip() \
+                    or ctx.command.qualified_name
+                usage = f"{prefix}{typed} {ctx.command.signature}".rstrip()
                 await ctx.send(f"❌ Usage: `{usage}`")
             return
         state.audit_log.append({
@@ -1080,6 +1086,20 @@ class EventsCog(commands.Cog):
             await message.reply("Yes?")
             await self.bot.process_commands(message)
             return
+
+        # "@Bot !give @user 1" is a command, not an AI prompt. The dispatcher
+        # only sees the "!" prefix at the very start of the raw content, so a
+        # mention-prefixed command never reached it — the LLM answered in
+        # prose instead (typically coaching the user toward the canonical
+        # command name). Same for a "!command" DM, where the LLM used to
+        # answer on top of the command. Strip the mention and dispatch;
+        # an unresolvable "!word" still falls through to the AI.
+        if content.startswith("!"):
+            message.content = content
+            ctx = await self.bot.get_context(message)
+            if ctx.command is not None:
+                await self.bot.invoke(ctx)
+                return
 
         # AI thread: only invited participants get a response
         if ai_thread is not None and uid not in ai_thread["invited_ids"]:

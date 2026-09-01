@@ -676,6 +676,95 @@ async def test_message_in_ai_thread_from_uninvited_user_does_not_route(monkeypat
     assert msg in bot.process_commands_calls
 
 
+# ── Mention-prefixed commands must dispatch, not go to the LLM ────────────────
+
+def _make_command_aware_bot():
+    """Stub bot whose get_context resolves '!give'/'!pay' like the real
+    dispatcher (command is None for anything else)."""
+    class _BotUser:
+        id = 999_999
+    class _Bot:
+        user = _BotUser()
+        cogs = {}
+        def __init__(self):
+            self.process_commands_calls = []
+            self.invoked = []
+        async def process_commands(self, m):
+            self.process_commands_calls.append(m)
+        async def get_context(self, m):
+            word = m.content.split()[0][1:].lower() if m.content.startswith("!") else ""
+            cmd = "pay-command" if word in ("give", "pay") else None
+            return type("Ctx", (), {"command": cmd, "message": m})()
+        async def invoke(self, ctx):
+            self.invoked.append(ctx)
+        async def fetch_user(self, uid):
+            return type("U", (), {"display_name": f"user_{uid}", "id": uid})()
+    return _Bot()
+
+
+def _stub_routing_side_effects(monkeypatch, respond_calls):
+    import src.events as _events
+    async def _stub_respond(*a, **kw):
+        respond_calls.append(a)
+    monkeypatch.setattr(_events, "respond", _stub_respond)
+    async def _no_xp(*a, **kw):
+        return (0, False)
+    monkeypatch.setattr(_events, "_grant_xp", _no_xp)
+    async def _no_daily(*a, **kw):
+        return None
+    monkeypatch.setattr(_events, "_auto_daily", _no_daily)
+
+
+async def test_mention_prefixed_command_dispatches_instead_of_llm(monkeypatch):
+    """'@Bot !give @user 1' must run the give/pay command, not send the
+    message to the LLM (which used to answer in prose, coaching the user
+    to type !pay while the dispatcher never saw the message)."""
+    from src.events import EventsCog
+
+    bot = _make_command_aware_bot()
+    cog = EventsCog(bot)
+    respond_calls = []
+    _stub_routing_side_effects(monkeypatch, respond_calls)
+
+    author = FakeMember(uid=8005)
+    msg = FakeMessage(
+        content=f"<@{bot.user.id}> !give <@8006> 1", author=author, message_id=100_002
+    )
+    msg.guild = FakeGuild(gid=42)
+    msg.mentions = [bot.user]
+    msg.reference = None
+
+    await cog.on_message(msg)
+
+    assert respond_calls == [], "LLM must not answer a mention-prefixed command"
+    assert len(bot.invoked) == 1 and bot.invoked[0].command == "pay-command"
+    # The mention was stripped so the dispatcher saw the bare command.
+    assert msg.content == "!give <@8006> 1"
+
+
+async def test_mention_prefixed_unknown_bang_word_still_goes_to_llm(monkeypatch):
+    """'@Bot !notacommand ...' resolves to no command — the AI keeps it."""
+    from src.events import EventsCog
+
+    bot = _make_command_aware_bot()
+    cog = EventsCog(bot)
+    respond_calls = []
+    _stub_routing_side_effects(monkeypatch, respond_calls)
+
+    author = FakeMember(uid=8007)
+    msg = FakeMessage(
+        content=f"<@{bot.user.id}> !zzz hello", author=author, message_id=100_003
+    )
+    msg.guild = FakeGuild(gid=42)
+    msg.mentions = [bot.user]
+    msg.reference = None
+
+    await cog.on_message(msg)
+
+    assert bot.invoked == []
+    assert len(respond_calls) == 1, "unknown !word falls through to the AI"
+
+
 # ── Thread isinstance regression ──────────────────────────────────────────────
 
 async def test_fake_thread_satisfies_discord_thread_isinstance():
