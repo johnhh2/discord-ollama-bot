@@ -45,7 +45,10 @@ from src.invites import _wait_for_confirmations, _send_invite
 from src.games.ttt_c4 import build_ttt_display, build_c4_display
 from src.games.hangman import build_hangman_display
 from src.games import chess_engine, chess_render
-from src.games.chess import BOARD_IMG_FILENAME, _bump_board as _bump_chess_board
+from src.games.chess import (
+    BOARD_IMG_FILENAME, _bump_board as _bump_chess_board,
+    _close_game_thread, _game_result_name,
+)
 
 
 log = logging.getLogger(__name__)
@@ -703,11 +706,23 @@ class AICog(commands.Cog):
             logging.warning(f"chess render unavailable in forfeit: {e}")
 
         forfeit_embed = emb("🏳️ Chess Forfeited", desc, C_RED)
+        # Awaited (not fire-and-forget): the board must land before cmd_stop
+        # archives the game thread — nothing can post into it afterwards.
         if file is not None:
             forfeit_embed.set_image(url=f"attachment://{BOARD_IMG_FILENAME}")
-            asyncio.create_task(_bump_chess_board(ctx.channel, game, forfeit_embed, file=file))
+            await _bump_chess_board(ctx.channel, game, forfeit_embed, file=file)
         else:
-            asyncio.create_task(_bump_chess_board(ctx.channel, game, forfeit_embed))
+            await _bump_chess_board(ctx.channel, game, forfeit_embed)
+
+        # Stamp the outcome on the thread now; cmd_stop archives it after the
+        # ⏹️ Stopped summary goes out (can't send into an archived thread).
+        bot_user = self.bot.user if self.bot is not None else None
+        winner_name = _game_result_name(game, opponent_id, guild, bot_user)
+        await _close_game_thread(
+            ctx.channel,
+            f"👑 {winner_name} won against {ctx.author.display_name}",
+            archive=False,
+        )
 
         return line
 
@@ -776,9 +791,12 @@ class AICog(commands.Cog):
 
         # Chess has its own state shape (white_id/black_id/fen/pgn) and needs to
         # produce a chess_reports row on forfeit so `!chess view <id>` works.
+        # A forfeited game's thread closes with the summary below (the rename
+        # already happened inside _stop_chess_game).
         chess_line = await self._stop_chess_game(ctx)
         if chess_line:
             stopped.append(chess_line)
+            close_thread = close_thread or isinstance(ctx.channel, discord.Thread)
 
         # Race: multi-player; pot splits across opponents instead of paying one.
         if cid in state.active_race_games and uid in state.active_race_games[cid]["players"]:
@@ -804,7 +822,12 @@ class AICog(commands.Cog):
             try:
                 await ctx.channel.edit(archived=True, locked=True)
             except discord.Forbidden:
-                log_bot_permission_error(ctx.guild, "Manage Threads")
+                # Locking needs Manage Threads; archiving our own thread
+                # doesn't — retry without the lock before giving up.
+                try:
+                    await ctx.channel.edit(archived=True)
+                except Exception:
+                    log_bot_permission_error(ctx, "Manage Threads")
             except Exception:
                 pass
 
@@ -851,7 +874,7 @@ class AICog(commands.Cog):
                 try:
                     await ch.edit(archived=True, locked=True)
                 except discord.Forbidden:
-                    log_bot_permission_error(ctx.guild, "Manage Threads")
+                    log_bot_permission_error(ctx, "Manage Threads")
                     failed += 1
                 except Exception:
                     failed += 1

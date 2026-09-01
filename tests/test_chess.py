@@ -1528,8 +1528,9 @@ async def test_chess_start_opens_thread_and_keys_game_by_thread_id(
     g = _state.active_chess_games[951]
     assert g["white_id"] == challenger.id
     assert g["black_id"] == opponent.id
-    name = ctx.channel.create_thread.await_args.kwargs["name"]
-    assert "Challenger" in name and "Opponent" in name
+    kwargs = ctx.channel.create_thread.await_args.kwargs
+    assert "Challenger" in kwargs["name"] and "Opponent" in kwargs["name"]
+    assert kwargs["auto_archive_duration"] == 10080  # hide after a week idle
     added = {call.args[0] for call in thread.add_user.await_args_list}
     assert added == {challenger, opponent}
     # The board pair went to the thread, silently.
@@ -1596,6 +1597,96 @@ async def test_chess_start_thread_failure_falls_back_to_channel(
 
     assert 955 in _state.active_chess_games
     assert _state.active_chess_games[955]["white_id"] == challenger.id
+
+
+@_aio
+async def test_checkmate_renames_thread_with_crown_and_closes_it(db, _stub_chess_edit_board):
+    """A decisive game stamps '👑 X won against Y' on its thread and closes
+    it (archived + locked). No analysis engine in tests, so the close is
+    immediate."""
+    cog = ChessCog(bot=None)
+    white = FakeMember(uid=1640, display_name="White")
+    black = FakeMember(uid=1641, display_name="Black")
+    _seed_chess_game(957, white.id, black.id)
+    ctx_w = _ctx_for(white, channel_id=957)
+    ctx_w.guild.members.append(black)
+    ctx_b = _ctx_for(black, channel_id=957, guild=ctx_w.guild)
+    thread = FakeThread(thread_id=957)
+    thread.guild = ctx_w.guild
+    ctx_w.channel = thread
+    ctx_b.channel = thread
+
+    # Fool's mate: black wins.
+    await cog.cmd_move_chess.callback(cog, ctx_w, "f3")
+    await cog.cmd_move_chess.callback(cog, ctx_b, "e5")
+    await cog.cmd_move_chess.callback(cog, ctx_w, "g4")
+    await cog.cmd_move_chess.callback(cog, ctx_b, "Qh4#")
+
+    assert 957 not in _state.active_chess_games
+    kwargs = thread.edit.await_args.kwargs
+    assert kwargs["name"] == "👑 Black won against White"
+    assert kwargs["archived"] is True
+    assert kwargs["locked"] is True
+
+
+@_aio
+async def test_stalemate_renames_thread_with_scales_and_closes_it(db, _stub_chess_edit_board):
+    """A stalemate stamps '⚖️ X stalemated Y' (X = last mover) and closes
+    the thread."""
+    cog = ChessCog(bot=None)
+    white = FakeMember(uid=1642, display_name="W")
+    black = FakeMember(uid=1643, display_name="B")
+    _state.active_chess_games[958] = {
+        "fen": "k7/8/K6Q/8/8/8/8/8 w - - 0 1",
+        "pgn": '[Event "x"]\n[Site "Discord"]\n[Date "????.??.??"]\n[Round "?"]\n[White "W"]\n[Black "B"]\n[Result "*"]\n\n*\n',
+        "white_id": white.id,
+        "black_id": black.id,
+        "current_id": white.id,
+        "amount": 0,
+        "last_move": "",
+        "board_msg_id": 1,
+    }
+    ctx = _ctx_for(white, channel_id=958)
+    ctx.guild.members.append(black)
+    thread = FakeThread(thread_id=958)
+    thread.guild = ctx.guild
+    ctx.channel = thread
+
+    await cog.cmd_move_chess.callback(cog, ctx, "Qb6")  # stalemate-in-one
+
+    assert 958 not in _state.active_chess_games
+    kwargs = thread.edit.await_args.kwargs
+    assert kwargs["name"] == "⚖️ W stalemated B"
+    assert kwargs["archived"] is True
+
+
+@_aio
+async def test_forfeit_renames_thread_then_stop_closes_it(db, _stub_chess_edit_board):
+    """!stop in a game thread: the forfeit stamps '👑 winner won against
+    forfeiter', and the thread archives after the ⏹️ Stopped summary."""
+    from src.cogs.ai_cog import AICog
+    ai_cog = AICog(bot=SimpleNamespace(user=SimpleNamespace(id=999_000_888)))
+    quitter = FakeMember(uid=1644, display_name="Quitter")
+    opponent = FakeMember(uid=1645, display_name="Black")
+    _seed_chess_game(959, quitter.id, opponent.id)
+    ctx = _ctx_for(quitter, channel_id=959)
+    ctx.guild.members.append(opponent)
+    thread = FakeThread(thread_id=959)
+    thread.guild = ctx.guild
+    ctx.channel = thread
+
+    await ai_cog.cmd_stop.callback(ai_cog, ctx)
+
+    assert 959 not in _state.active_chess_games
+    # Two edits: rename first (board + summary still need to post), then close.
+    assert thread.edit.await_count == 2
+    rename, close = thread.edit.await_args_list
+    assert rename.kwargs == {"name": "👑 Black won against Quitter"}
+    assert close.kwargs.get("archived") is True
+    # Forfeit report exists with the opponent as winner.
+    report = await load_chess_report(1)
+    assert report is not None
+    assert report["winner_id"] == opponent.id
 
 
 @_aio

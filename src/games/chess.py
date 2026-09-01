@@ -158,9 +158,9 @@ async def _bump_board(
             pass
 
 
-# Threads auto-archive after a day of inactivity; a new message (a move,
-# !stop) auto-unarchives them, so long-running games survive.
-GAME_THREAD_AUTO_ARCHIVE_MINUTES = 1440
+# Threads hide from the channel after a week of inactivity; a new message
+# (a move, !stop) auto-unarchives them, so long-running games survive.
+GAME_THREAD_AUTO_ARCHIVE_MINUTES = 10080
 
 
 async def _try_create_game_thread(ctx: commands.Context, name: str):
@@ -188,6 +188,71 @@ async def _try_create_game_thread(ctx: commands.Context, name: str):
             "chess: create_thread failed (%s); playing in channel", type(e).__name__,
         )
         return None
+
+
+async def _close_game_thread(
+    channel: discord.abc.Messageable, name: str | None = None,
+    *, archive: bool = True,
+):
+    """Rename and/or close a finished game's thread. No-op outside threads.
+
+    Locking needs Manage Threads (archiving/renaming our own thread doesn't),
+    so a Forbidden on the full close retries without the lock — the outcome
+    name and the archive matter more than keeping the thread sealed."""
+    if not isinstance(channel, discord.Thread):
+        return
+    kwargs: dict = {}
+    if name:
+        kwargs["name"] = name[:100]
+    if archive:
+        kwargs.update(archived=True, locked=True)
+    try:
+        await channel.edit(**kwargs)
+    except discord.Forbidden:
+        if archive:
+            kwargs.pop("locked", None)
+            try:
+                await channel.edit(**kwargs)
+                return
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+        logging.warning(f"chess: couldn't close game thread {channel.id}")
+    except discord.HTTPException as e:
+        logging.warning(f"chess: closing game thread {channel.id} failed: {e}")
+
+
+def _game_result_name(game: dict, uid: int | None, guild, bot_user) -> str:
+    """Best display name for a player at game end — the engine label for the
+    bot, PGN header otherwise, guild.get_member as a last resort."""
+    if uid is None:
+        return "opponent"
+    if bot_user is not None and uid == bot_user.id:
+        return chess_bot.engine_name_with_elo(game.get("elo", chess_bot.ELO_DEFAULT))
+    pgn_white, pgn_black = _names_from_pgn(game.get("pgn", ""))
+    if uid == game.get("white_id") and pgn_white:
+        return pgn_white
+    if uid == game.get("black_id") and pgn_black:
+        return pgn_black
+    return _player_display_name(guild, uid, str(uid))
+
+
+def _outcome_thread_name(
+    game: dict, *, winner_id: int | None, mover_name: str,
+    reason: str | None, guild, bot_user,
+) -> str:
+    """'👑 X won against Y' / '⚖️ X stalemated Y' (X = last mover for draws;
+    non-stalemate draws read 'X drew with Y')."""
+    if winner_id is not None:
+        loser_id = (
+            game["black_id"] if winner_id == game["white_id"] else game["white_id"]
+        )
+        winner = _game_result_name(game, winner_id, guild, bot_user)
+        loser = _game_result_name(game, loser_id, guild, bot_user)
+        return f"👑 {winner} won against {loser}"
+    # current_id already flipped to the player who did NOT make the final move.
+    other = _game_result_name(game, game.get("current_id"), guild, bot_user)
+    verb = "stalemated" if reason == "stalemate" else "drew with"
+    return f"⚖️ {mover_name} {verb} {other}"
 
 
 def _initial_pgn(white_name: str, black_name: str, guild_name: str | None,
@@ -1431,10 +1496,11 @@ class ChessCog(commands.Cog):
         # game-over embed above once the stats are in. The sync
         # engine_available() gate means no task is even created when
         # Stockfish is missing (and in tests).
+        analysis_task = None
         if report_id is not None and chess_analysis.engine_available():
             try:
                 pgn_white, pgn_black = _names_from_pgn(final_pgn)
-                asyncio.create_task(chess_analysis.analyze_and_post(
+                analysis_task = asyncio.create_task(chess_analysis.analyze_and_post(
                     bot=self.bot, channel=channel, guild=guild,
                     report_id=report_id, pgn=final_pgn,
                     white_id=game["white_id"], black_id=game["black_id"],
@@ -1447,6 +1513,26 @@ class ChessCog(commands.Cog):
                 ))
             except Exception as e:
                 logging.error(f"chess analysis scheduling failed: {e}", exc_info=True)
+
+        # Stamp the outcome on the game's thread and close it. The rename
+        # happens now; when an analysis task is pending, the archive waits
+        # for it — the analysis edit can't reach an archived thread.
+        if isinstance(channel, discord.Thread):
+            thread_name = _outcome_thread_name(
+                game, winner_id=winner_id, mover_name=mover_name,
+                reason=reason, guild=guild, bot_user=bot_user,
+            )
+            if analysis_task is None:
+                await _close_game_thread(channel, thread_name)
+            else:
+                await _close_game_thread(channel, thread_name, archive=False)
+
+                async def _close_when_analyzed(task=analysis_task):
+                    try:
+                        await task
+                    finally:
+                        await _close_game_thread(channel)
+                asyncio.create_task(_close_when_analyzed())
 
 
 async def setup(bot):
