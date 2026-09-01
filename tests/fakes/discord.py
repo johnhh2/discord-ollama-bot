@@ -104,7 +104,9 @@ class FakeChannel:
                  public: bool = True):
         self.id = ch_id
         self.guild = guild
-        self.send = AsyncMock()
+        # Return a FakeMessage (not a bare Mock) — callers like the chess
+        # game-start path read `.id` off the result and persist it.
+        self.send = AsyncMock(side_effect=lambda *a, **kw: FakeMessage())
         if guild is not None:
             if getattr(guild, "default_role", None) is None:
                 guild.default_role = object()

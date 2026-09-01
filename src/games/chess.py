@@ -15,6 +15,7 @@ from discord.ext import commands
 from src.helpers import (
     emb, C_RED, C_GOLD, C_BLUE, C_GREEN, C_GREY,
     _delete_after, send_ephemeral, announce_record, parse_int_amount,
+    log_bot_permission_error,
 )
 from src.economy import (
     add_balance, record_gambling_event,
@@ -99,30 +100,43 @@ def _board_embed(title: str, description: str, color: int) -> discord.Embed:
 
 async def _bump_board(
     channel: discord.abc.Messageable, game: dict, embed: discord.Embed,
-    *, file: discord.File | None = None, silent: bool = True,
+    *, file: discord.File | None = None, ping_content: str | None = None,
 ):
-    """Send a fresh embed+board pair, THEN delete the prior pair. The embed
-    and image are sent as TWO separate messages (embed first, then board
-    image) so the board renders BELOW the embed in Discord's UI — same-
-    message attachments always render above their embed regardless of order.
+    """Send a fresh embed+board pair. The embed and image are sent as TWO
+    separate messages (embed first, then board image) so the board renders
+    BELOW the embed in Discord's UI — same-message attachments always render
+    above their embed regardless of order.
 
-    Order matters: post-then-delete (rather than delete-then-post) means the
-    channel never has a window with no board visible. The user always sees
-    either the old or the new board, never an empty channel between them.
+    In a game thread (every game's home since threads landed) the pair just
+    appends: the thread is dedicated to this one game, so there's nothing to
+    clean up, and skipping the fetch+delete round-trips posts the new board
+    faster.
+
+    In a regular channel (legacy games started before game threads, or a
+    channel where thread creation failed) the prior pair is deleted AFTER
+    posting so the shared channel doesn't fill with stale boards —
+    post-then-delete means there's never a window with no board visible.
 
     Tracks both message IDs:
       - game['embed_msg_id']: the text/embed message (sent first)
       - game['board_msg_id']: the image attachment message (sent second)
 
-    `silent` controls the embed message's notification: pass silent=False only
-    when it carries a turn ping for a player who isn't the one who just moved
-    (PvP). The bare image message never needs to notify anyone.
+    `ping_content` carries a turn ping (PvP only — the next player isn't the
+    one who just moved, so the notification is the point). It must ride in
+    message content with silent=False, because embed mentions never notify;
+    every other chess message stays silent. The bare image message never
+    needs to notify anyone.
     """
     # Snapshot the prior IDs before we overwrite them with the new send.
-    prior_ids = [game.get("board_msg_id"), game.get("embed_msg_id")]
+    prior_ids = (
+        [] if isinstance(channel, discord.Thread)
+        else [game.get("board_msg_id"), game.get("embed_msg_id")]
+    )
 
     # Send the new pair first so the channel always has a current board.
-    embed_msg = await channel.send(embed=embed, silent=silent)
+    embed_msg = await channel.send(
+        content=ping_content, embed=embed, silent=ping_content is None,
+    )
     game["embed_msg_id"] = embed_msg.id
     if file is not None:
         image_msg = await channel.send(file=file, silent=True)
@@ -142,6 +156,38 @@ async def _bump_board(
             await old.delete()
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
+
+
+# Threads auto-archive after a day of inactivity; a new message (a move,
+# !stop) auto-unarchives them, so long-running games survive.
+GAME_THREAD_AUTO_ARCHIVE_MINUTES = 1440
+
+
+async def _try_create_game_thread(ctx: commands.Context, name: str):
+    """Open the public thread a new game will be played in, or None to fall
+    back to playing in the invoking channel (DMs, channels that can't host
+    threads, missing Create Public Threads permission, active-thread cap).
+    PvP wagers are already escrowed by the time this runs, so degrading to
+    an in-channel game keeps the match honoured."""
+    if ctx.guild is None:
+        return None
+    create = getattr(ctx.channel, "create_thread", None)
+    if create is None:
+        return None
+    try:
+        return await create(
+            name=name[:100],
+            type=discord.ChannelType.public_thread,
+            auto_archive_duration=GAME_THREAD_AUTO_ARCHIVE_MINUTES,
+        )
+    except discord.Forbidden:
+        log_bot_permission_error(ctx, "Create Public Threads")
+        return None
+    except discord.HTTPException as e:
+        logging.warning(
+            "chess: create_thread failed (%s); playing in channel", type(e).__name__,
+        )
+        return None
 
 
 def _initial_pgn(white_name: str, black_name: str, guild_name: str | None,
@@ -435,6 +481,16 @@ class ChessCog(commands.Cog):
         if await check_chess_channel(ctx):
             return
 
+        # Games are played in their own threads — starting one from inside a
+        # thread would try to nest threads (Discord forbids it).
+        if isinstance(ctx.channel, discord.Thread):
+            await ctx.send(embed=emb(
+                "❌ Game Threads",
+                "Start games from the chess channel itself — each game gets its own thread.",
+                C_RED,
+            ))
+            return
+
         cid = ctx.channel.id
 
         if (
@@ -448,7 +504,9 @@ class ChessCog(commands.Cog):
         # Claim the channel slot synchronously before any await: a second
         # !chess during the invite/confirmation window would otherwise pass
         # the gate above and clobber this game (eating its wagers). The move
-        # handlers see current_id=None, so the placeholder is inert.
+        # handlers see current_id=None, so the placeholder is inert. (The
+        # slot frees as soon as the game moves into its thread, so matches
+        # can run concurrently — the claim only serializes the setup window.)
         placeholder = {"pending": True, "current_id": None, "fen": chess_engine.STARTING_FEN, "amount": 0}
         state.active_chess_games[cid] = placeholder
         try:
@@ -490,7 +548,6 @@ class ChessCog(commands.Cog):
                 del state.active_chess_games[cid]
 
     async def _start_pvp_chess(self, ctx: commands.Context, opponent, amount: int):
-        cid = ctx.channel.id
         uid = ctx.author.id
 
         if not await _setup_pvp_game(ctx, opponent, amount, "♟️ Chess Invite"):
@@ -500,6 +557,14 @@ class ChessCog(commands.Cog):
         white_name = ctx.author.display_name
         black_name = opponent.display_name
         guild_name = ctx.guild.name if ctx.guild else None
+
+        # The accepted match gets its own thread; the game is keyed by the
+        # thread's id, so the parent channel is immediately free for the next
+        # match. Falls back to the invoking channel (old behavior) when a
+        # thread can't be created.
+        thread = await _try_create_game_thread(ctx, f"♟️ {white_name} vs {black_name}")
+        dest = thread if thread is not None else ctx.channel
+        cid = dest.id
 
         game = {
             "fen": chess_engine.STARTING_FEN,
@@ -514,6 +579,14 @@ class ChessCog(commands.Cog):
         _start_clock(game)
         state.active_chess_games[cid] = game
 
+        if thread is not None:
+            # Pull both players into the thread so it lands in their sidebar.
+            for player in (ctx.author, opponent):
+                try:
+                    await thread.add_user(player)
+                except discord.HTTPException:
+                    pass
+
         wager_info = f"\nWager: {amount:,} 🪙 each" if amount > 0 else ""
         white_badges = _badge_suffix(white_id)
         black_badges = _badge_suffix(black_id)
@@ -527,10 +600,10 @@ class ChessCog(commands.Cog):
         file = _render_file_for_game(game, orientation_for_uid=white_id)
         # Two messages so the board image renders BELOW the embed in Discord
         # (same-message attachments always render above their embed).
-        embed_msg = await ctx.send(embed=_board_embed("♟️ Chess", desc, C_BLUE))
+        embed_msg = await dest.send(embed=_board_embed("♟️ Chess", desc, C_BLUE), silent=True)
         game["embed_msg_id"] = embed_msg.id
         if file is not None:
-            image_msg = await ctx.send(file=file)
+            image_msg = await dest.send(file=file, silent=True)
             game["board_msg_id"] = image_msg.id
         else:
             game["board_msg_id"] = None
@@ -539,7 +612,6 @@ class ChessCog(commands.Cog):
     async def _start_bot_chess(self, ctx: commands.Context, elo: int):
         """Bot-vs-human game: skip _setup_pvp_game entirely. No wagers, no
         confirmation, no opponent balance. Human always plays White (v1)."""
-        cid = ctx.channel.id
         uid = ctx.author.id
         bot_user = self.bot.user
 
@@ -547,6 +619,13 @@ class ChessCog(commands.Cog):
         white_name = ctx.author.display_name
         black_name = chess_bot.engine_name_with_elo(elo)
         guild_name = ctx.guild.name if ctx.guild else None
+
+        # Acceptance is implicit for bot games — thread up immediately. The
+        # game is keyed by the thread's id (parent channel stays free); falls
+        # back to the invoking channel when a thread can't be created.
+        thread = await _try_create_game_thread(ctx, f"♟️ {white_name} vs {black_name}")
+        dest = thread if thread is not None else ctx.channel
+        cid = dest.id
 
         game = {
             "fen": chess_engine.STARTING_FEN,
@@ -562,6 +641,12 @@ class ChessCog(commands.Cog):
         _start_clock(game)
         state.active_chess_games[cid] = game
 
+        if thread is not None:
+            try:
+                await thread.add_user(ctx.author)
+            except discord.HTTPException:
+                pass
+
         desc = (
             f"{ctx.author.mention} (White ♙{_badge_suffix(uid)}) vs 🤖 **{black_name}** (Black ♟)\n"
             f"{ctx.author.mention}'s turn. Type your move (e.g. `e4`, `Nf3`, `O-O`, `e2e4`) or `!move <move>`\n\n"
@@ -571,10 +656,10 @@ class ChessCog(commands.Cog):
         file = _render_file_for_game(game, orientation_for_uid=white_id)
         # Two messages so the board image renders BELOW the embed in Discord
         # (same-message attachments always render above their embed).
-        embed_msg = await ctx.send(embed=_board_embed("♟️ Chess", desc, C_BLUE))
+        embed_msg = await dest.send(embed=_board_embed("♟️ Chess", desc, C_BLUE), silent=True)
         game["embed_msg_id"] = embed_msg.id
         if file is not None:
-            image_msg = await ctx.send(file=file)
+            image_msg = await dest.send(file=file, silent=True)
             game["board_msg_id"] = image_msg.id
         else:
             game["board_msg_id"] = None
@@ -584,6 +669,15 @@ class ChessCog(commands.Cog):
     @commands.command(name="chessbot")
     async def cmd_chessbot(self, ctx: commands.Context, *args):
         if await check_chess_channel(ctx):
+            return
+
+        # See cmd_chess: games get their own thread; no nesting.
+        if isinstance(ctx.channel, discord.Thread):
+            await ctx.send(embed=emb(
+                "❌ Game Threads",
+                "Start games from the chess channel itself — each game gets its own thread.",
+                C_RED,
+            ))
             return
 
         cid = ctx.channel.id
@@ -804,6 +898,7 @@ class ChessCog(commands.Cog):
         )
         desc = (
             "**Start a game**\n"
+            "Each accepted match opens its own thread in the chess channel — the whole game plays out there.\n"
             "`!chess @user [wager]` — Play another player. Optional wager in 🪙; winner takes the pot.\n"
             f"`!chessbot [elo]` (alias `!chess @TheBot [elo]`) — Play the bot. Elo `{elo_lo}`–`{elo_hi}`, default `{elo_default}`. "
             f"Elo 100-1000 uses Sub-Maia, 1100-1900 uses Maia, 2000+ uses Stockfish.\n"
@@ -814,10 +909,10 @@ class ChessCog(commands.Cog):
             "\n"
             "**Make a move**\n"
             "`!move <move>` — e.g. `!move e4`, `!move Nf3`, `!move e2e4`, `!move O-O`, `!move e7e8q` (promote).\n"
-            "  • In a chess channel during your turn you can also just type the move directly — the bot will pick it up and delete your message.\n"
+            "  • In your game thread during your turn you can also just type the move directly — the bot will pick it up and delete your message.\n"
             "\n"
             "**End / forfeit**\n"
-            "`!stop` — Forfeit the active game in this channel. Wager goes to the opponent.\n"
+            "`!stop` — Forfeit the game (run it inside the game's thread). Wager goes to the opponent.\n"
             "\n"
             "**Replay finished games**\n"
             "`!chess view <id>` — Show the game outcome, final position image, and movetext.\n"
@@ -837,7 +932,7 @@ class ChessCog(commands.Cog):
         asyncio.create_task(_delete_after(ctx.message))
 
         if cid not in state.active_chess_games:
-            err = await ctx.send("No active chess game in this channel. Start one with `!chess @user [amount]` (PvP) or `!chessbot [elo]` (vs the bot).")
+            err = await ctx.send("No active chess game here. Start one with `!chess @user [amount]` (PvP) or `!chessbot [elo]` (vs the bot) — each game plays out in its own thread.")
             asyncio.create_task(_delete_after(err))
             return
 
@@ -953,6 +1048,25 @@ class ChessCog(commands.Cog):
             asyncio.create_task(self._play_bot_reply(channel, cid))
         return True, None
 
+    # ── thread-delete cleanup: a deleted game thread must not strand its game ─
+    @commands.Cog.listener()
+    async def on_thread_delete(self, thread: discord.Thread):
+        """A mod deleting a game thread would otherwise leave the game row
+        (and any escrowed wagers) stranded forever — there'd be no channel
+        left to type `!stop` in. Refund the stakes and drop the game."""
+        game = state.active_chess_games.pop(thread.id, None)
+        if game is None:
+            return
+        amount = int(game.get("amount", 0) or 0)
+        if amount > 0 and game.get("white_id") and game.get("black_id"):
+            await add_balance(game["white_id"], amount)
+            await add_balance(game["black_id"], amount)
+        try:
+            await delete_chess_game(thread.id)
+        except Exception as e:
+            logging.error(f"chess delete_chess_game (thread delete) failed: {e}", exc_info=True)
+        logging.info(f"chess: cancelled game in deleted thread {thread.id}")
+
     # ── bare-move listener: accept `e4` as shorthand for `!move e4` ──────────
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -970,9 +1084,15 @@ class ChessCog(commands.Cog):
             return
         # Restrict to configured chess channels only — without this, plain text
         # like "e4" in any channel with an active game would consume chat.
+        # Game threads qualify via their parent: games live in threads under
+        # a chess channel.
         cfg = get_guild_cfg(message.guild.id) or {}
         chess_channels = cfg.get("chess_channels", []) or cfg.get("game_channels", [])
-        if chess_channels and message.channel.id not in chess_channels:
+        if (
+            chess_channels
+            and message.channel.id not in chess_channels
+            and getattr(message.channel, "parent_id", None) not in chess_channels
+        ):
             return
 
         board = chess_engine.board_from_fen(game["fen"])
@@ -1014,16 +1134,18 @@ class ChessCog(commands.Cog):
             f"{_captures_block(game)}"
         )
         # PvP turn boards ping the next (human) player, who isn't the one who
-        # just moved — that notification is the point. Bot games only ever
+        # just moved — that notification is the point, and it must ride in
+        # message content (embed mentions never notify). Bot games only ever
         # mention the lone human right after their own move (or name the
         # engine), so those stay silent.
         ping_next = (
             bot_user is None or opponent_id != bot_user.id
         ) and "elo" not in game and next_player is not None
+        ping_content = next_player.mention if ping_next else None
         if file is not None:
-            await _bump_board(channel, game, _board_embed("♟️ Chess", desc, C_BLUE), file=file, silent=not ping_next)
+            await _bump_board(channel, game, _board_embed("♟️ Chess", desc, C_BLUE), file=file, ping_content=ping_content)
         else:
-            await _bump_board(channel, game, emb("♟️ Chess", desc, C_BLUE), silent=not ping_next)
+            await _bump_board(channel, game, emb("♟️ Chess", desc, C_BLUE), ping_content=ping_content)
         # Bumping reassigned board_msg_id; persist so a restart hits the right message.
         try:
             await save_chess_game(cid)

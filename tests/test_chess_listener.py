@@ -25,7 +25,7 @@ def _stub_helpers(monkeypatch):
     state. Stubs _bump_board so the listener can apply moves without real I/O."""
     import src.games.chess as _chess_mod
     bump_calls = []
-    async def _stub_bump(channel, game, embed, *, file=None, silent=True):
+    async def _stub_bump(channel, game, embed, *, file=None, ping_content=None):
         game["board_msg_id"] = (game.get("board_msg_id") or 0) + 1
         bump_calls.append((channel, game, embed, file))
     monkeypatch.setattr(_chess_mod, "_bump_board", _stub_bump)
@@ -268,5 +268,45 @@ async def test_listener_ignores_overly_long_content(db, _stub_helpers, _allow_al
     await cog.on_message(msg)
 
     g = _state.active_chess_games[2010]
+    assert g["current_id"] == white_id
+    msg.delete.assert_not_awaited()
+
+
+@_aio
+async def test_listener_accepts_move_in_game_thread_under_chess_channel(db, _stub_helpers, monkeypatch):
+    """Games live in threads now — a bare move in a thread whose parent is a
+    configured chess channel must be picked up."""
+    import src.games.chess as _chess_mod
+    monkeypatch.setattr(_chess_mod, "get_guild_cfg", lambda _gid: {"chess_channels": [2000]})
+
+    cog = _make_cog()
+    white_id, black_id = 3100, 3101
+    _seed_game(9000, white_id, black_id)
+    msg = _fake_msg(white_id, "e4", channel_id=9000)
+    msg.channel.parent_id = 2000  # thread under the chess channel
+
+    await cog.on_message(msg)
+
+    g = _state.active_chess_games[9000]
+    assert g["current_id"] == black_id
+    msg.delete.assert_awaited_once()
+
+
+@_aio
+async def test_listener_ignores_thread_outside_chess_channels(db, _stub_helpers, monkeypatch):
+    """A thread under some unrelated channel doesn't qualify, even with an
+    active game keyed to it."""
+    import src.games.chess as _chess_mod
+    monkeypatch.setattr(_chess_mod, "get_guild_cfg", lambda _gid: {"chess_channels": [2000]})
+
+    cog = _make_cog()
+    white_id, black_id = 3102, 3103
+    _seed_game(9001, white_id, black_id)
+    msg = _fake_msg(white_id, "e4", channel_id=9001)
+    msg.channel.parent_id = 555  # thread under a non-chess channel
+
+    await cog.on_message(msg)
+
+    g = _state.active_chess_games[9001]
     assert g["current_id"] == white_id
     msg.delete.assert_not_awaited()

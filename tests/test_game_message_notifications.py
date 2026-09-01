@@ -13,15 +13,18 @@ SilentContext's silent default and carry its mentions in content, since
 embed mentions never notify).
 """
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 import src.economy as _economy
-from src.helpers import announce_record
+from src.helpers import announce_record, emb, C_BLUE
 from src.gambling.flip import play_flip
+from src.games.chess import _bump_board
 from src.invites import _wait_for_confirmations
 
-from tests.fakes.discord import FakeCtx, FakeGuild, FakeMember
+from tests.fakes.discord import FakeCtx, FakeGuild, FakeMember, FakeThread
 
 
 class _RecordingChannel:
@@ -73,6 +76,75 @@ async def test_play_flip_result_is_silent(db):
     assert chan.sent, "flip should announce its result"
     for _, kwargs in chan.sent:
         assert kwargs.get("silent") is True
+
+
+class _BumpChannel(_RecordingChannel):
+    """_bump_board reads .id off the returned message — hand back stubs."""
+    _next_id = 0
+
+    async def send(self, *args, **kwargs):
+        self.sent.append((args, kwargs))
+        self._next_id += 1
+        return SimpleNamespace(id=self._next_id)
+
+
+@pytest.mark.asyncio
+async def test_chess_turn_ping_rides_in_content_loud(db):
+    """A PvP turn board's ping must be message content with silent=False —
+    the next player didn't act and won't be notified any other way."""
+    chan = _BumpChannel()
+    await _bump_board(chan, {}, emb("♟️ Chess", "turn", C_BLUE), ping_content="<@2>")
+
+    _, kwargs = chan.sent[0]
+    assert kwargs.get("content") == "<@2>"
+    assert kwargs.get("silent") is False
+
+
+@pytest.mark.asyncio
+async def test_chess_bump_without_ping_is_silent(db):
+    """Every other chess board bump (bot games, game-over) stays silent."""
+    chan = _BumpChannel()
+    await _bump_board(chan, {}, emb("♟️ Chess", "turn", C_BLUE))
+
+    _, kwargs = chan.sent[0]
+    assert kwargs.get("content") is None
+    assert kwargs.get("silent") is True
+
+
+@pytest.mark.asyncio
+async def test_chess_board_appends_in_thread_without_deleting(db):
+    """In a game thread the board pair just appends — no fetch/delete of the
+    prior pair. The thread is dedicated to the game, and skipping the extra
+    round-trips posts the new board faster."""
+    thread = FakeThread(thread_id=777)
+    thread.fetch_message = AsyncMock()
+    game = {"embed_msg_id": 11, "board_msg_id": 12}
+
+    await _bump_board(thread, game, emb("♟️ Chess", "turn", C_BLUE))
+
+    thread.fetch_message.assert_not_awaited()
+    thread.send.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chess_board_still_deletes_prior_pair_in_channel(db):
+    """Legacy in-channel games (started before game threads, or thread
+    creation failed) keep post-then-delete so the shared channel doesn't
+    fill with stale boards."""
+    deleted: list[int] = []
+
+    class _Chan(_BumpChannel):
+        async def fetch_message(self, mid):
+            async def _del():
+                deleted.append(mid)
+            return SimpleNamespace(id=mid, delete=_del)
+
+    chan = _Chan()
+    game = {"embed_msg_id": 11, "board_msg_id": 12}
+
+    await _bump_board(chan, game, emb("♟️ Chess", "turn", C_BLUE))
+
+    assert sorted(deleted) == [11, 12]
 
 
 @pytest.mark.asyncio

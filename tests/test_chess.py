@@ -6,12 +6,16 @@ exercised here because cairosvg requires libcairo, which CI installs but
 dev machines may not; render failures fall through to a text-only embed
 and the assertions target state, not rendered bytes.
 """
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
 import chess
+import discord
 import pytest
 
 import src.state as _state
 import src.cogs.ai_cog as _ai_cog
-from src.games import chess_engine
+from src.games import chess_engine, chess_bot
 from src.games.chess import (
     ChessCog,
     _append_san_to_pgn,
@@ -19,7 +23,7 @@ from src.games.chess import (
 )
 from src.persistence import load_chess_report
 
-from tests.fakes.discord import FakeMember, FakeGuild, FakeCtx, FakeMessage
+from tests.fakes.discord import FakeMember, FakeGuild, FakeCtx, FakeMessage, FakeThread
 
 
 _aio = pytest.mark.asyncio
@@ -521,10 +525,10 @@ def _stub_chess_edit_board(monkeypatch):
     Stub all three so cog calls don't try real channel I/O."""
     import src.games.chess as _chess_mod
     bump_calls = []
-    async def _stub_bump(channel, game, embed, *, file=None, silent=True):
+    async def _stub_bump(channel, game, embed, *, file=None, ping_content=None):
         # Mimic the real _bump_board side-effect: assign a fresh message id.
         game["board_msg_id"] = (game.get("board_msg_id") or 0) + 1
-        bump_calls.append((channel, game, embed, file))
+        bump_calls.append((channel, game, embed, file, ping_content))
     monkeypatch.setattr(_chess_mod, "_bump_board", _stub_bump)
 
     edit_calls = []
@@ -628,6 +632,40 @@ async def test_move_applies_and_flips_turn(db, _stub_chess_edit_board):
 
 
 @_aio
+async def test_pvp_move_pings_next_player_via_content(db, _stub_chess_edit_board):
+    """PvP turn boards must carry the next player's mention as ping_content —
+    embed mentions never notify, so the ping has to ride in message content."""
+    cog = ChessCog(bot=None)
+    white = FakeMember(uid=1140, display_name="White")
+    black = FakeMember(uid=1141, display_name="Black")
+    _seed_chess_game(753, white.id, black.id)
+    ctx = _ctx_for(white, channel_id=753)
+    ctx.guild.members.append(black)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "e4")
+
+    assert _stub_chess_edit_board, "expected a board bump after the move"
+    *_, ping_content = _stub_chess_edit_board[-1]
+    assert ping_content == black.mention
+
+
+@_aio
+async def test_bot_game_move_does_not_ping(db, _stub_chess_edit_board):
+    """Bot games have no one to notify — the lone human just moved."""
+    cog = ChessCog(bot=None)
+    white = FakeMember(uid=1142, display_name="White")
+    _seed_chess_game(754, white.id, 999999)
+    _state.active_chess_games[754]["elo"] = 1300
+    ctx = _ctx_for(white, channel_id=754)
+
+    await cog.cmd_move_chess.callback(cog, ctx, "e4")
+
+    assert _stub_chess_edit_board, "expected a board bump after the move"
+    *_, ping_content = _stub_chess_edit_board[-1]
+    assert ping_content is None
+
+
+@_aio
 async def test_capture_move_annotates_last_move_with_captured_piece(
     db, _stub_chess_edit_board,
 ):
@@ -723,7 +761,7 @@ async def test_checkmate_headline_uses_pgn_name_when_guild_cache_misses(
     await cog.cmd_move_chess.callback(cog, ctx_b, "Qh4#")
 
     game_over_embeds = [
-        embed for _ch, _g, embed, _f in _stub_chess_edit_board
+        embed for _ch, _g, embed, _f, _p in _stub_chess_edit_board
         if embed.title and "Game Over" in embed.title
     ]
     assert game_over_embeds, "expected a game-over embed"
@@ -1460,6 +1498,122 @@ async def test_chess_start_persists_via_init_reload(db, _stub_chess_edit_board, 
     assert g["white_id"] == challenger.id
     assert g["black_id"] == opponent.id
     assert g["current_id"] == challenger.id
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Game threads: each match plays out in its own thread under the chess channel
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@_aio
+async def test_chess_start_opens_thread_and_keys_game_by_thread_id(
+    db, _stub_chess_edit_board, _stub_setup_pvp_game,
+):
+    """An accepted PvP match opens a thread named after the players; the game
+    is keyed by the thread id (parent channel stays free for the next match)
+    and both players are pulled into the thread."""
+    cog = ChessCog(bot=None)
+    challenger = FakeMember(uid=1620, display_name="Challenger")
+    opponent = FakeMember(uid=1621, display_name="Opponent")
+    ctx = _ctx_for(challenger, channel_id=950)
+    ctx.guild.members.append(opponent)
+    ctx.message.mentions = [opponent]
+    thread = FakeThread(thread_id=951)
+    ctx.channel.create_thread = AsyncMock(return_value=thread)
+
+    await cog.cmd_chess.callback(cog, ctx)
+
+    assert 951 in _state.active_chess_games
+    assert 950 not in _state.active_chess_games
+    g = _state.active_chess_games[951]
+    assert g["white_id"] == challenger.id
+    assert g["black_id"] == opponent.id
+    name = ctx.channel.create_thread.await_args.kwargs["name"]
+    assert "Challenger" in name and "Opponent" in name
+    added = {call.args[0] for call in thread.add_user.await_args_list}
+    assert added == {challenger, opponent}
+    # The board pair went to the thread, silently.
+    assert thread.send.await_count >= 1
+    for call in thread.send.await_args_list:
+        assert call.kwargs.get("silent") is True
+
+
+@_aio
+async def test_chessbot_start_opens_thread(db, _stub_chess_edit_board):
+    """Bot games accept implicitly — the thread opens immediately."""
+    cog = ChessCog(bot=SimpleNamespace(user=SimpleNamespace(id=999_000_777)))
+    player = FakeMember(uid=1622, display_name="Player")
+    ctx = _ctx_for(player, channel_id=952)
+    thread = FakeThread(thread_id=953)
+    ctx.channel.create_thread = AsyncMock(return_value=thread)
+
+    await cog.cmd_chessbot.callback(cog, ctx)
+
+    assert 953 in _state.active_chess_games
+    assert 952 not in _state.active_chess_games
+    g = _state.active_chess_games[953]
+    assert g["elo"] == chess_bot.ELO_DEFAULT
+    thread.add_user.assert_awaited_once_with(player)
+
+
+@_aio
+async def test_chess_start_inside_thread_rejected(
+    db, _stub_chess_edit_board, _stub_setup_pvp_game,
+):
+    """Starting a game from inside a thread is refused — threads can't nest,
+    and every other chess command still works there."""
+    cog = ChessCog(bot=None)
+    challenger = FakeMember(uid=1624)
+    opponent = FakeMember(uid=1625)
+    thread = FakeThread(thread_id=954)
+    ctx = FakeCtx(author=challenger, guild=FakeGuild(gid=42), channel=thread)
+    ctx.message = FakeMessage(author=challenger)
+    ctx.message.mentions = [opponent]
+
+    await cog.cmd_chess.callback(cog, ctx)
+
+    assert 954 not in _state.active_chess_games
+    assert len(_stub_setup_pvp_game) == 0
+    assert any("Game Threads" in (e.title or "") for e in ctx.sent_embeds)
+
+
+@_aio
+async def test_chess_start_thread_failure_falls_back_to_channel(
+    db, _stub_chess_edit_board, _stub_setup_pvp_game,
+):
+    """No Create Public Threads permission (or thread cap) degrades to the
+    old in-channel game — wagers are already escrowed by then."""
+    cog = ChessCog(bot=None)
+    challenger = FakeMember(uid=1626)
+    opponent = FakeMember(uid=1627)
+    ctx = _ctx_for(challenger, channel_id=955)
+    ctx.guild.members.append(opponent)
+    ctx.message.mentions = [opponent]
+    resp = MagicMock(status=403, reason="Forbidden")
+    ctx.channel.create_thread = AsyncMock(side_effect=discord.HTTPException(resp, "no perms"))
+
+    await cog.cmd_chess.callback(cog, ctx)
+
+    assert 955 in _state.active_chess_games
+    assert _state.active_chess_games[955]["white_id"] == challenger.id
+
+
+@_aio
+async def test_thread_delete_cancels_game_and_refunds_wagers(db, _stub_chess_edit_board):
+    """A mod deleting a game thread cancels the game and refunds both stakes
+    (there'd be no channel left to !stop in otherwise)."""
+    from src.economy import get_balance
+    cog = ChessCog(bot=None)
+    white, black = 1630, 1631
+    _seed_chess_game(956, white, black, amount=250)
+    base_w = await get_balance(white)
+    base_b = await get_balance(black)
+
+    await cog.on_thread_delete(SimpleNamespace(id=956))
+
+    assert 956 not in _state.active_chess_games
+    assert await get_balance(white) == base_w + 250
+    assert await get_balance(black) == base_b + 250
 
 
 @_aio
