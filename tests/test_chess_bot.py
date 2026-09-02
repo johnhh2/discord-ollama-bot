@@ -22,7 +22,11 @@ import pytest
 import src.state as _state
 import src.cogs.ai_cog as _ai_cog
 from src.games import chess_bot, chess_engine
-from src.games.chess import ChessCog, _initial_pgn
+from src.games.chess import ChessCog, _initial_pgn, _BotLadderView
+from src.games.bot_chess_rewards import (
+    FIRST_DEFEAT_BONUS, bonus_bin_ladder, suggested_bot_elo,
+)
+from src.economy import lottery_week_key
 
 from tests.fakes.discord import FakeMember, FakeGuild, FakeCtx, FakeMessage
 
@@ -940,7 +944,8 @@ def _ctx_for(member: FakeMember, channel_id: int, *, mentions=()) -> FakeCtx:
 
 
 @_aio
-async def test_cmd_chess_bot_mention_default_elo(db, _stub_chess_helpers):
+async def test_cmd_chess_bot_mention_without_elo_shows_ladder(db, _stub_chess_helpers):
+    """`!chess @Bot` with no Elo is the ladder menu, not a game at a default."""
     cog = _make_bot_cog()
     challenger = FakeMember(uid=2000, display_name="Alice")
     bot_member = FakeMember(uid=cog.bot.user.id, display_name="TheBot")
@@ -948,13 +953,10 @@ async def test_cmd_chess_bot_mention_default_elo(db, _stub_chess_helpers):
 
     await cog.cmd_chess.callback(cog, ctx)
 
-    assert 1000 in _state.active_chess_games
-    g = _state.active_chess_games[1000]
-    assert g["white_id"] == challenger.id
-    assert g["black_id"] == cog.bot.user.id
-    assert g["current_id"] == challenger.id
-    assert g["elo"] == chess_bot.ELO_DEFAULT
-    assert g["amount"] == 0
+    assert 1000 not in _state.active_chess_games
+    assert "Chess vs the Bot" in ctx.sent_embeds[-1].title
+    assert len(ctx.sent_views) == 1
+    assert isinstance(ctx.sent_views[0], _BotLadderView)
 
 
 @_aio
@@ -1013,7 +1015,7 @@ async def test_cmd_chess_bot_mention_skips_setup_pvp_game(db, _stub_chess_helper
     bot_member = FakeMember(uid=cog.bot.user.id)
     ctx = _ctx_for(challenger, channel_id=1004, mentions=[bot_member])
 
-    await cog.cmd_chess.callback(cog, ctx)
+    await cog.cmd_chess.callback(cog, ctx, "1300")
 
     assert 1004 in _state.active_chess_games
     assert setup_called == [], "_setup_pvp_game should not be called for bot games"
@@ -1059,19 +1061,17 @@ def _allow_chess_channel(monkeypatch):
 
 
 @_aio
-async def test_cmd_chessbot_default_elo(db, _stub_chess_helpers, _allow_chess_channel):
-    """!chessbot with no args starts a bot game at ELO_DEFAULT."""
+async def test_cmd_chessbot_without_elo_shows_ladder(db, _stub_chess_helpers, _allow_chess_channel):
+    """!chessbot with no args shows the ladder menu instead of starting a game."""
     cog = _make_bot_cog()
     challenger = FakeMember(uid=2050, display_name="Alice")
     ctx = _ctx_for(challenger, channel_id=1050)
 
     await cog.cmd_chessbot.callback(cog, ctx)
 
-    assert 1050 in _state.active_chess_games
-    g = _state.active_chess_games[1050]
-    assert g["white_id"] == challenger.id
-    assert g["black_id"] == cog.bot.user.id
-    assert g["elo"] == chess_bot.ELO_DEFAULT
+    assert 1050 not in _state.active_chess_games
+    assert "Chess vs the Bot" in ctx.sent_embeds[-1].title
+    assert isinstance(ctx.sent_views[-1], _BotLadderView)
 
 
 @_aio
@@ -1129,6 +1129,220 @@ async def test_cmd_chessbot_blocked_when_channel_busy(db, _stub_chess_helpers, _
         assert "Game Active" in ctx.sent_embeds[-1].title
     finally:
         _state.active_ttt_games.pop(1055, None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bot ladder menu — !chessbot / !chess @Bot with no Elo
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _seed_stats(uid: int, max_elo: int, bins=()):
+    _state.chess_user_stats[str(uid)] = {
+        "max_elo_defeated": max_elo,
+        "total_elo_defeated": max_elo,
+        "bonus_bins": set(bins),
+        "elo_spent": 0,
+    }
+
+
+class TestSuggestedBotElo:
+    def test_ladder_spans_bonus_tier_to_top_bin(self):
+        ladder = bonus_bin_ladder()
+        assert ladder[0] == 1100
+        assert ladder[-1] == chess_bot.round_elo_to_bin(chess_bot.ELO_MAX)
+        assert all(b - a == 100 for a, b in zip(ladder, ladder[1:]))
+
+    def test_fresh_user_starts_at_the_floor(self):
+        assert suggested_bot_elo(3100) == (chess_bot.ELO_MIN, False)
+
+    def test_one_bin_above_best_below_bonus_tier(self):
+        _seed_stats(3101, 700)
+        assert suggested_bot_elo(3101) == (800, False)
+
+    def test_step_up_into_bonus_tier_carries_bonus(self):
+        _seed_stats(3102, 1000)
+        assert suggested_bot_elo(3102) == (1100, True)
+
+    def test_lowest_unclaimed_bonus_beats_step_up(self):
+        """Jumped straight to 1500: the open 1100 bonus is the better target."""
+        _seed_stats(3103, 1500, bins={1500})
+        assert suggested_bot_elo(3103) == (1100, True)
+
+    def test_step_up_once_lower_bins_are_claimed(self):
+        _seed_stats(3104, 1400, bins={1100, 1200, 1300, 1400})
+        assert suggested_bot_elo(3104) == (1500, True)
+
+    def test_capped_at_top_bin_when_everything_is_claimed(self):
+        top = bonus_bin_ladder()[-1]
+        _seed_stats(3105, top, bins=set(bonus_bin_ladder()))
+        assert suggested_bot_elo(3105) == (top, False)
+
+
+class _FakeInteraction:
+    def __init__(self, user):
+        self.user = user
+        self.response = SimpleNamespace(
+            send_message=AsyncMock(), defer=AsyncMock(), edit_message=AsyncMock(),
+        )
+
+
+def _play_button(view: _BotLadderView):
+    return view.children[0]
+
+
+def _bonus_button(view: _BotLadderView):
+    return view.children[1]
+
+
+@_aio
+async def test_ladder_counts_this_weeks_tickets_across_guilds(db, _stub_chess_helpers, _allow_chess_channel):
+    cog = _make_bot_cog()
+    challenger = FakeMember(uid=2060)
+    ctx = _ctx_for(challenger, channel_id=1060)
+    week = lottery_week_key()
+    _state.lottery_ticket_grants[(42, 2060)] = {"daily_day": None, "chess_week": week, "chess_tickets": 1}
+    _state.lottery_ticket_grants[(43, 2060)] = {"daily_day": None, "chess_week": week, "chess_tickets": 1}
+    _state.lottery_ticket_grants[(44, 2060)] = {"daily_day": None, "chess_week": "2000-W01", "chess_tickets": 2}
+    _state.lottery_ticket_grants[(42, 2061)] = {"daily_day": None, "chess_week": week, "chess_tickets": 2}
+
+    await cog.cmd_chessbot.callback(cog, ctx)
+
+    desc = ctx.sent_embeds[-1].description
+    assert "**Weekly lottery tickets:** 2/2" in desc
+    assert "Highest bot defeated:** none yet" in desc
+
+
+@_aio
+async def test_ladder_button_targets_open_bonus_with_engine_name(db, _stub_chess_helpers, _allow_chess_channel):
+    cog = _make_bot_cog()
+    challenger = FakeMember(uid=2062)
+    ctx = _ctx_for(challenger, channel_id=1062)
+    _seed_stats(2062, 1500, bins={1500})
+
+    await cog.cmd_chessbot.callback(cog, ctx)
+
+    view = ctx.sent_views[-1]
+    assert view.elo == 1100
+    label = _play_button(view).label
+    assert label.startswith("Play Maia (1100 Elo)")
+    assert f"{FIRST_DEFEAT_BONUS:,}" in label
+    desc = ctx.sent_embeds[-1].description
+    assert "Highest bot defeated:** Maia (1500 Elo)" in desc
+    assert "1/" + str(len(bonus_bin_ladder())) + " claimed" in desc
+
+
+@_aio
+async def test_ladder_button_labels_step_up_by_tier(db, _stub_chess_helpers, _allow_chess_channel):
+    cog = _make_bot_cog()
+    challenger = FakeMember(uid=2063)
+    ctx = _ctx_for(challenger, channel_id=1063)
+    _seed_stats(2063, 700)
+
+    await cog.cmd_chessbot.callback(cog, ctx)
+
+    view = ctx.sent_views[-1]
+    assert view.elo == 800
+    assert _play_button(view).label == "Play Sub-Maia (800 Elo)"
+
+
+@_aio
+async def test_ladder_play_button_starts_game_at_suggested_elo(db, _stub_chess_helpers, _allow_chess_channel):
+    cog = _make_bot_cog()
+    challenger = FakeMember(uid=2064)
+    ctx = _ctx_for(challenger, channel_id=1064)
+    _seed_stats(2064, 1900, bins=set(range(1100, 2000, 100)))
+    await cog.cmd_chessbot.callback(cog, ctx)
+    view = ctx.sent_views[-1]
+    assert view.elo == 2000
+    interaction = _FakeInteraction(challenger)
+
+    await _play_button(view).callback(interaction)
+
+    interaction.response.edit_message.assert_awaited_once_with(view=None)
+    assert view.is_finished()
+    g = _state.active_chess_games[1064]
+    assert g["white_id"] == challenger.id
+    assert g["black_id"] == cog.bot.user.id
+    assert g["elo"] == 2000
+
+
+@_aio
+async def test_ladder_play_button_fires_once(db, _stub_chess_helpers, _allow_chess_channel):
+    cog = _make_bot_cog()
+    challenger = FakeMember(uid=2065)
+    ctx = _ctx_for(challenger, channel_id=1065)
+    await cog.cmd_chessbot.callback(cog, ctx)
+    view = ctx.sent_views[-1]
+
+    await _play_button(view).callback(_FakeInteraction(challenger))
+    second = _FakeInteraction(challenger)
+    await _play_button(view).callback(second)
+
+    second.response.defer.assert_awaited_once()
+    second.response.edit_message.assert_not_awaited()
+    assert len([e for e in ctx.sent_embeds if "Game Active" in e.title]) == 0
+
+
+@_aio
+async def test_ladder_buttons_reject_other_users(db, _stub_chess_helpers, _allow_chess_channel):
+    cog = _make_bot_cog()
+    challenger = FakeMember(uid=2066)
+    intruder = FakeMember(uid=2067)
+    ctx = _ctx_for(challenger, channel_id=1066)
+    await cog.cmd_chessbot.callback(cog, ctx)
+    view = ctx.sent_views[-1]
+
+    for button in (_play_button(view), _bonus_button(view)):
+        interaction = _FakeInteraction(intruder)
+        await button.callback(interaction)
+        interaction.response.send_message.assert_awaited_once()
+        args, kwargs = interaction.response.send_message.call_args
+        assert "Not your menu" in args[0]
+        assert kwargs.get("ephemeral") is True
+
+    assert 1066 not in _state.active_chess_games
+    assert not view.is_finished()
+
+
+@_aio
+async def test_ladder_play_button_respects_blocklist(db, _stub_chess_helpers, _allow_chess_channel, monkeypatch):
+    cog = _make_bot_cog()
+    challenger = FakeMember(uid=2068)
+    ctx = _ctx_for(challenger, channel_id=1068)
+    await cog.cmd_chessbot.callback(cog, ctx)
+    view = ctx.sent_views[-1]
+    import src.games.chess as _chess_mod
+    monkeypatch.setattr(_chess_mod, "is_silenced", lambda uid, gid: uid == 2068)
+    interaction = _FakeInteraction(challenger)
+
+    await _play_button(view).callback(interaction)
+
+    interaction.response.defer.assert_awaited_once()
+    assert 1068 not in _state.active_chess_games
+
+
+@_aio
+async def test_ladder_bonus_list_button_is_an_ephemeral_checklist(db, _stub_chess_helpers, _allow_chess_channel):
+    cog = _make_bot_cog()
+    challenger = FakeMember(uid=2069)
+    ctx = _ctx_for(challenger, channel_id=1069)
+    _seed_stats(2069, 1200, bins={1100, 1200})
+    await cog.cmd_chessbot.callback(cog, ctx)
+    view = ctx.sent_views[-1]
+    interaction = _FakeInteraction(challenger)
+
+    await _bonus_button(view).callback(interaction)
+
+    interaction.response.send_message.assert_awaited_once()
+    kwargs = interaction.response.send_message.call_args.kwargs
+    assert kwargs.get("ephemeral") is True
+    desc = kwargs["embed"].description
+    assert "✅ 1100" in desc and "✅ 1200" in desc and "⬜ 1300" in desc
+    assert f"2/{len(bonus_bin_ladder())}" in desc
+    assert "**Maia**" in desc and "**Stockfish**" in desc
+    # The menu stays usable after peeking at the list.
+    assert not view.is_finished()
+    assert 1069 not in _state.active_chess_games
 
 
 # ─────────────────────────────────────────────────────────────────────────────

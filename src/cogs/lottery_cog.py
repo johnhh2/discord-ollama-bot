@@ -55,6 +55,18 @@ def chess_ticket_ceiling(bot_elo: "int | None") -> int:
             if bot_elo >= threshold:
                 return ceiling
     return 0
+
+
+def chess_tickets_granted_this_week(uid: int) -> int:
+    """Free chess-win tickets `uid` has already been granted this ISO week,
+    summed across every guild — the weekly ceiling is bot-wide, so this is
+    the count a win anywhere tops up from (and what !chessbot reports)."""
+    week = lottery_week_key()
+    return sum(
+        int(r.get("chess_tickets") or 0)
+        for (_g, u), r in state.lottery_ticket_grants.items()
+        if u == uid and r.get("chess_week") == week
+    )
 # The reworked ticket economy starts with the September 2026 lottery. The
 # August 2026 pot still holds thousands of old 10-coin bulk tickets, so
 # selling a 1,000 🪙 ticket (or granting a free chess one) into it would be a
@@ -395,12 +407,7 @@ class LotteryCog(commands.Cog):
         week = lottery_week_key()
         row = _grant_row(guild.id, uid)
         prior_week, prior_count = row.get("chess_week"), int(row.get("chess_tickets") or 0)
-        week_total = sum(
-            int(r.get("chess_tickets") or 0)
-            for (_g, u), r in state.lottery_ticket_grants.items()
-            if u == uid and r.get("chess_week") == week
-        )
-        grant = ceiling - week_total
+        grant = ceiling - chess_tickets_granted_this_week(uid)
         if grant <= 0:
             return 0
         if prior_week != week:

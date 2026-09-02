@@ -22,6 +22,7 @@ from __future__ import annotations
 from src import state
 from src.economy import _ct_today, add_balance, _ensure_user
 from src.persistence import save_chess_user_stats, save_economy, try_set_record
+from src.games.chess_bot import ELO_MIN, ELO_MAX, round_elo_to_bin
 
 
 # Per-elo-point payout. Sub-Maia tier (Elo 100-1000) pays COINS_PER_NEW_ELO_LOW;
@@ -136,6 +137,40 @@ def claimed_bonus_bins(user_id: int) -> set[int]:
     if not row:
         return set()
     return set(row.get("bonus_bins", ()))
+
+
+def bonus_bin_ladder() -> list[int]:
+    """Every Elo bin that carries a first-defeat bonus, lowest first: 1100 up
+    to the top bin a game can actually be started at (ELO_MAX rounds up to
+    it at the command boundary, so that bin is reachable and claimable)."""
+    top = round_elo_to_bin(ELO_MAX)
+    return list(range(FIRST_DEFEAT_BONUS_MIN_ELO, top + 1, 100))
+
+
+def next_unclaimed_bonus_bin(user_id: int) -> int | None:
+    """Lowest bonus bin this user hasn't claimed yet, or None once every
+    bin's bonus has been earned."""
+    claimed = claimed_bonus_bins(user_id)
+    for elo in bonus_bin_ladder():
+        if elo not in claimed:
+            return elo
+    return None
+
+
+def suggested_bot_elo(user_id: int) -> tuple[int, bool]:
+    """The bot Elo the !chessbot ladder menu offers: one bin above the user's
+    highest defeat (ELO_MIN for a first game, never past the top bin) — unless
+    a lower bonus bin is still unclaimed, in which case that first win is the
+    better next target. Returns (elo, carries_first_defeat_bonus)."""
+    max_elo, _ = chess_ranks(user_id)
+    top = round_elo_to_bin(ELO_MAX)
+    step_up = min(top, max(ELO_MIN, round_elo_to_bin(max_elo) + 100))
+    bonus_bin = next_unclaimed_bonus_bin(user_id)
+    elo = step_up if bonus_bin is None else min(step_up, bonus_bin)
+    carries_bonus = (
+        elo >= FIRST_DEFEAT_BONUS_MIN_ELO and elo not in claimed_bonus_bins(user_id)
+    )
+    return elo, carries_bonus
 
 
 def _compact_int(n: int) -> str:

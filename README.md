@@ -51,7 +51,8 @@ flowchart LR
 - Streaming output with a global semaphore so a single GPU is never oversubscribed
 
 ### ♟️ A chess bot that plays like a human
-`!chess @TheBot 1400` gives you an opponent that actually plays like a 1400 — not a crippled engine that alternates brilliancies and free queens.
+`!chess @TheBot 1400` (or `!chessbot 1400`) gives you an opponent that actually plays like a 1400 — not a crippled engine that alternates brilliancies and free queens.
+A bare `!chessbot` shows your ladder instead: this week's free lottery tickets, your best defeat, first-win bonus progress, and a Play button for the suggested next Elo.
 
 | Requested Elo | Engine behind the board |
 |---|---|

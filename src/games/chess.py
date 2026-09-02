@@ -18,10 +18,11 @@ from src.helpers import (
     log_bot_permission_error,
 )
 from src.confirm_view import confirm_prompt
+from src.config import EPHEMERAL_DELETE_AFTER
 from src.economy import (
-    add_balance, record_gambling_event,
+    add_balance, record_gambling_event, next_lottery_week_reset_ts,
 )
-from src.permissions import check_chess_channel, requires_perm, is_admin
+from src.permissions import check_chess_channel, requires_perm, is_admin, is_silenced
 from src.artifacts import has_chessthreats_unlock
 from src.guild_config import get_guild_cfg
 from src.persistence import (
@@ -37,8 +38,13 @@ from src.games.ttt_c4 import _setup_pvp_game
 from src.games import chess_engine, chess_render, chess_bot, chess_analysis
 from src.games.bot_chess_rewards import (
     award_bot_defeat, rank_badges, RECORD_CATEGORY as _BOT_CHESS_RECORD,
-    RANK_TOTAL_EMOJI, chess_elo_balance, chess_ranks,
+    RANK_MAX_EMOJI, RANK_TOTAL_EMOJI, chess_elo_balance, chess_ranks,
     spend_chess_elo, refund_chess_elo,
+    FIRST_DEFEAT_BONUS, FIRST_DEFEAT_BONUS_MIN_ELO,
+    bonus_bin_ladder, claimed_bonus_bins, suggested_bot_elo,
+)
+from src.cogs.lottery_cog import (
+    CHESS_TICKET_BOT_TIERS, CHESS_TICKET_WEEKLY_CAP, chess_tickets_granted_this_week,
 )
 from src import state
 
@@ -205,6 +211,29 @@ async def _bump_board(
 # Threads hide from the channel after a week of inactivity; a new message
 # (a move, !stop) auto-unarchives them, so long-running games survive.
 GAME_THREAD_AUTO_ARCHIVE_MINUTES = 10080
+
+
+async def _start_blocked(ctx: commands.Context) -> bool:
+    """Refuse (with an error embed) to start a game from inside a game thread
+    — Discord forbids nesting — or in a channel that already hosts one.
+    Returns True when the caller must bail. The success path never awaits,
+    so a caller's synchronous slot claim right after it stays atomic."""
+    if isinstance(ctx.channel, discord.Thread):
+        await ctx.send(embed=emb(
+            "❌ Game Threads",
+            "Start games from the chess channel itself — each game gets its own thread.",
+            C_RED,
+        ))
+        return True
+    cid = ctx.channel.id
+    if (
+        cid in state.active_ttt_games
+        or cid in state.active_c4_games
+        or cid in state.active_chess_games
+    ):
+        await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
+        return True
+    return False
 
 
 async def _try_create_game_thread(ctx: commands.Context, name: str):
@@ -532,6 +561,105 @@ def _names_from_pgn(pgn_str: str) -> tuple[str | None, str | None]:
     return white, black
 
 
+# ── !chessbot with no Elo: the bot-ladder menu ──────────────────────────────
+
+
+def _bonus_list_embed(uid: int) -> discord.Embed:
+    """Checklist of every first-win bonus bin (✅ claimed / ⬜ open), grouped
+    by the engine tier that plays at that Elo."""
+    claimed = claimed_bonus_bins(uid)
+    ladder = bonus_bin_ladder()
+    tiers: dict[str, list[str]] = {}
+    for elo in ladder:
+        mark = "✅" if elo in claimed else "⬜"
+        tiers.setdefault(chess_bot.engine_label_for_elo(elo), []).append(f"{mark} {elo}")
+    rows = "\n".join(f"**{tier}** — " + " · ".join(cells) for tier, cells in tiers.items())
+    desc = (
+        f"Your first-ever win against the bot at each Elo bin from "
+        f"{FIRST_DEFEAT_BONUS_MIN_ELO} up pays **{FIRST_DEFEAT_BONUS:,} 🪙** — "
+        f"once per bin, never resets.\n"
+        f"Claimed: **{len(claimed & set(ladder))}/{len(ladder)}**\n\n{rows}"
+    )
+    return emb("🎉 First-Win Bonuses", desc, C_GOLD)
+
+
+class _BotLadderView(discord.ui.View):
+    """Buttons under the bot-ladder embed: Play the suggested Elo, or peek at
+    the first-win bonus checklist. Only the invoker can click. Play drops the
+    buttons and starts the game through the same gated path as
+    `!chessbot <elo>`; the list button answers ephemerally and leaves the
+    menu up. Lives as long as the (auto-deleting) menu message."""
+
+    def __init__(
+        self, cog, ctx, *, elo: int, bonus: bool,
+        timeout: float = float(EPHEMERAL_DELETE_AFTER),
+    ):
+        super().__init__(timeout=timeout)
+        self.cog = cog
+        self.ctx = ctx
+        self.elo = elo
+        self.message: discord.Message | None = None
+        self._fired = False
+        label = f"Play {chess_bot.engine_name_with_elo(elo)}"
+        if bonus:
+            label += f" · +{FIRST_DEFEAT_BONUS:,} 🪙 first win"
+        self.add_item(_PlayBotButton(label=label))
+        self.add_item(_BonusListButton())
+
+    async def _owned_by(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.ctx.author.id:
+            return True
+        await interaction.response.send_message(
+            "Not your menu — run `!chessbot` for yours.", ephemeral=True,
+        )
+        return False
+
+    async def on_timeout(self):
+        if self._fired or self.message is None:
+            return
+        for c in self.children:
+            c.disabled = True
+        try:
+            await self.message.edit(view=self)
+        except discord.HTTPException:
+            pass
+
+
+class _PlayBotButton(discord.ui.Button):
+    def __init__(self, *, label: str):
+        super().__init__(label=label, style=discord.ButtonStyle.success)
+
+    async def callback(self, interaction: discord.Interaction):
+        view: _BotLadderView = self.view  # type: ignore[assignment]
+        if not await view._owned_by(interaction):
+            return
+        # Blocklist gate (see CLAUDE.md): a click starts a game without any
+        # message passing on_message, and a ban may have landed since the
+        # menu was posted. The double-click guard runs before any await so
+        # two fast clicks can't both launch.
+        guild = view.ctx.guild
+        if view._fired or is_silenced(interaction.user.id, guild.id if guild else None):
+            await interaction.response.defer()
+            return
+        view._fired = True
+        await interaction.response.edit_message(view=None)
+        view.stop()
+        await view.cog._launch_bot_game(view.ctx, view.elo)
+
+
+class _BonusListButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="First-win bonuses", style=discord.ButtonStyle.secondary)
+
+    async def callback(self, interaction: discord.Interaction):
+        view: _BotLadderView = self.view  # type: ignore[assignment]
+        if not await view._owned_by(interaction):
+            return
+        await interaction.response.send_message(
+            embed=_bonus_list_embed(interaction.user.id), ephemeral=True,
+        )
+
+
 class ChessCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -606,26 +734,10 @@ class ChessCog(commands.Cog):
 
         if await check_chess_channel(ctx):
             return
-
-        # Games are played in their own threads — starting one from inside a
-        # thread would try to nest threads (Discord forbids it).
-        if isinstance(ctx.channel, discord.Thread):
-            await ctx.send(embed=emb(
-                "❌ Game Threads",
-                "Start games from the chess channel itself — each game gets its own thread.",
-                C_RED,
-            ))
+        if await _start_blocked(ctx):
             return
 
         cid = ctx.channel.id
-
-        if (
-            cid in state.active_ttt_games
-            or cid in state.active_c4_games
-            or cid in state.active_chess_games
-        ):
-            await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
-            return
 
         # Claim the channel slot synchronously before any await: a second
         # !chess during the invite/confirmation window would otherwise pass
@@ -644,7 +756,11 @@ class ChessCog(commands.Cog):
             )
 
             if is_bot_game:
-                raw_elo = trailing_int if trailing_int is not None else chess_bot.ELO_DEFAULT
+                if trailing_int is None:
+                    # `!chess @Bot` with no Elo: the ladder menu, not a game.
+                    await self._send_bot_ladder(ctx)
+                    return
+                raw_elo = trailing_int
                 if not (chess_bot.ELO_MIN <= raw_elo <= chess_bot.ELO_MAX):
                     await ctx.send(embed=emb(
                         "❌ Invalid Elo",
@@ -800,25 +916,43 @@ class ChessCog(commands.Cog):
         if await check_chess_channel(ctx):
             return
 
-        # See cmd_chess: games get their own thread; no nesting.
-        if isinstance(ctx.channel, discord.Thread):
+        # No Elo: the ladder menu (weekly ticket progress, suggested next
+        # challenge, first-win bonuses) rather than a game at a default Elo.
+        if not args:
+            if await _start_blocked(ctx):
+                return
+            await self._send_bot_ladder(ctx)
+            return
+
+        try:
+            raw_elo = int(args[0])
+        except ValueError:
             await ctx.send(embed=emb(
-                "❌ Game Threads",
-                "Start games from the chess channel itself — each game gets its own thread.",
+                "❌ Invalid Elo",
+                f"Usage: `!chessbot [elo]` where elo is {chess_bot.ELO_MIN}-{chess_bot.ELO_MAX}.",
                 C_RED,
             ))
             return
-
-        cid = ctx.channel.id
-        if (
-            cid in state.active_ttt_games
-            or cid in state.active_c4_games
-            or cid in state.active_chess_games
-        ):
-            await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
+        if not (chess_bot.ELO_MIN <= raw_elo <= chess_bot.ELO_MAX):
+            await ctx.send(embed=emb(
+                "❌ Invalid Elo",
+                f"Elo must be between {chess_bot.ELO_MIN} and {chess_bot.ELO_MAX}.",
+                C_RED,
+            ))
             return
+        elo = chess_bot.round_elo_to_bin(raw_elo)
+        if elo != raw_elo:
+            await ctx.send(f"✍️ Rounded Elo to **{elo}**.")
+        await self._launch_bot_game(ctx, elo)
 
-        # Claim the channel slot synchronously before any await (see cmd_chess).
+    async def _launch_bot_game(self, ctx: commands.Context, elo: int):
+        """Gated start for a bot game at an already-validated Elo bin: refuses
+        thread nesting and busy channels, claims the channel slot
+        synchronously (see cmd_chess), then hands off to _start_bot_chess.
+        Shared by `!chessbot <elo>` and the ladder menu's Play button."""
+        if await _start_blocked(ctx):
+            return
+        cid = ctx.channel.id
         placeholder = {"pending": True, "current_id": None, "fen": chess_engine.STARTING_FEN, "amount": 0}
         state.active_chess_games[cid] = placeholder
         try:
@@ -826,33 +960,54 @@ class ChessCog(commands.Cog):
             if bot_user is None:
                 await ctx.send(embed=emb("❌ Bot Not Ready", "Bot user not initialized; try again in a moment.", C_RED))
                 return
-
-            raw_elo = chess_bot.ELO_DEFAULT
-            if args:
-                try:
-                    raw_elo = int(args[0])
-                except ValueError:
-                    await ctx.send(embed=emb(
-                        "❌ Invalid Elo",
-                        f"Usage: `!chessbot [elo]` where elo is {chess_bot.ELO_MIN}-{chess_bot.ELO_MAX}.",
-                        C_RED,
-                    ))
-                    return
-            if not (chess_bot.ELO_MIN <= raw_elo <= chess_bot.ELO_MAX):
-                await ctx.send(embed=emb(
-                    "❌ Invalid Elo",
-                    f"Elo must be between {chess_bot.ELO_MIN} and {chess_bot.ELO_MAX}.",
-                    C_RED,
-                ))
-                return
-            elo = chess_bot.round_elo_to_bin(raw_elo)
-            if elo != raw_elo:
-                await ctx.send(f"✍️ Rounded Elo to **{elo}**.")
-
             await self._start_bot_chess(ctx, elo)
         finally:
             if state.active_chess_games.get(cid) is placeholder:
                 del state.active_chess_games[cid]
+
+    async def _send_bot_ladder(self, ctx: commands.Context):
+        """`!chessbot` / `!chess @Bot` with no Elo: where the invoker stands on
+        the bot ladder — this week's free lottery tickets, their best defeat,
+        first-win bonus progress — plus a Play button for the suggested next
+        Elo and a button listing the bonus bins."""
+        uid = ctx.author.id
+        got = chess_tickets_granted_this_week(uid)
+        ticket_min_elo = CHESS_TICKET_BOT_TIERS[0][0]
+        tickets = (
+            f"🎟️ **Weekly lottery tickets:** {got}/{CHESS_TICKET_WEEKLY_CAP} claimed this week "
+            f"· resets <t:{next_lottery_week_reset_ts()}:R>\n"
+        )
+        if got < CHESS_TICKET_WEEKLY_CAP:
+            tickets += (
+                f"Beat a {ticket_min_elo}+ Elo bot to claim the rest "
+                f"(counted across all servers).\n"
+            )
+        if ctx.guild is not None and not get_guild_cfg(ctx.guild.id).get("lottery_channel"):
+            tickets += "This server has no lottery, so wins here can't grant tickets.\n"
+
+        max_elo, _ = chess_ranks(uid)
+        best = chess_bot.engine_name_with_elo(max_elo) if max_elo > 0 else "none yet"
+        ladder = bonus_bin_ladder()
+        claimed = len(claimed_bonus_bins(uid) & set(ladder))
+        elo, bonus = suggested_bot_elo(uid)
+        if bonus:
+            why = f"your first win there pays **+{FIRST_DEFEAT_BONUS:,} 🪙**"
+        elif max_elo <= 0:
+            why = "the bottom rung — work your way up"
+        else:
+            why = "one bin above your best"
+        desc = (
+            f"{tickets}\n"
+            f"{RANK_MAX_EMOJI} **Highest bot defeated:** {best}\n"
+            f"🎉 **First-win bonuses:** {claimed}/{len(ladder)} claimed · "
+            f"{FIRST_DEFEAT_BONUS:,} 🪙 each, once ever per Elo bin ({FIRST_DEFEAT_BONUS_MIN_ELO}+)\n\n"
+            f"**Suggested next challenge:** {chess_bot.engine_name_with_elo(elo)} — {why}.\n"
+            f"Or pick any Elo with `!chessbot <elo>` ({chess_bot.ELO_MIN}–{chess_bot.ELO_MAX})."
+        )
+        view = _BotLadderView(self, ctx, elo=elo, bonus=bonus)
+        view.message = await send_ephemeral(
+            ctx, embed=emb("🤖 Chess vs the Bot", desc, C_BLUE), view=view,
+        )
 
     # ── !chessthreats: view of all hanging pieces ────────────────────────────
     # Free for bot admins (debug tool); everyone else unlocks it permanently
@@ -1034,7 +1189,7 @@ class ChessCog(commands.Cog):
             _, lifetime = chess_ranks(uid)
             lines = [
                 "Unlock piece sets and board colors with the chess Elo you've "
-                "beaten out of the bot (`!chess <elo>`). Spending never lowers "
+                "beaten out of the bot (`!chessbot <elo>`). Spending never lowers "
                 f"your {RANK_TOTAL_EMOJI} rank.",
                 "",
                 f"Your spendable Elo: **{balance:,} {RANK_TOTAL_EMOJI}**"
@@ -1108,7 +1263,7 @@ class ChessCog(commands.Cog):
                 "🔒 Elo Locked",
                 f"**{item['name']}** unlocks after you've beaten a "
                 f"**{item['req_max_elo']:,}+ Elo** bot at least once "
-                f"(`!chess <elo>`). Spendable Elo alone isn't enough.",
+                f"(`!chessbot <elo>`). Spendable Elo alone isn't enough.",
                 C_RED,
             ))
             return
@@ -1119,7 +1274,7 @@ class ChessCog(commands.Cog):
             await ctx.send(embed=emb(
                 "💸 Not Enough Elo",
                 f"**{item['name']}** costs **{cost:,} {RANK_TOTAL_EMOJI}** — you have "
-                f"**{chess_elo_balance(uid):,}**. Beat the chess bot (`!chess <elo>`) to earn more.",
+                f"**{chess_elo_balance(uid):,}**. Beat the chess bot (`!chessbot <elo>`) to earn more.",
                 C_RED,
             ))
             return
@@ -1286,6 +1441,8 @@ class ChessCog(commands.Cog):
         desc = (
             "**Game commands**\n"
             "`!chess @user [wager]` — Play another player. Optional wager in 🪙; winner takes the pot.\n"
+            f"`!chessbot <elo>` — Play the bot at that strength ({chess_bot.ELO_MIN}–{chess_bot.ELO_MAX}: Sub-Maia, Maia, Stockfish).\n"
+            "`!chessbot` — Your bot ladder: weekly free-ticket progress, suggested next Elo, first-win bonuses.\n"
             "`!stop` — Forfeit the game (run it inside the game's thread). Wager goes to the opponent.\n"
             "\n"
             "**Replay finished games**\n"

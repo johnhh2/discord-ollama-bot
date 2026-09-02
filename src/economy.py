@@ -380,6 +380,20 @@ def lottery_week_key() -> str:
     return f"{iso[0]}-W{iso[1]:02d}"
 
 
+def next_lottery_week_reset_ts() -> int:
+    """Unix timestamp of the next lottery_week_key() rollover: the coming
+    Monday at the 5am CT daily reset. ISO weeks start on Monday, and the key
+    follows the gameplay-day, so the boundary is 5am rather than midnight.
+    For Discord `<t:...:R>` timestamps."""
+    today = _ct_today_date()
+    next_monday = today + datetime.timedelta(days=7 - today.weekday())
+    reset = datetime.datetime.combine(
+        next_monday, datetime.time(DAILY_RESET_HOUR, 0),
+        tzinfo=ZoneInfo("America/Chicago"),
+    )
+    return int(reset.timestamp())
+
+
 def next_lottery_draw_dt(now_ct: datetime.datetime) -> datetime.datetime:
     """Next lottery draw: the upcoming 1st of the month at 6pm CT.
 

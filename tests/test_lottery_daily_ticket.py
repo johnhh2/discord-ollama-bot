@@ -488,3 +488,39 @@ async def test_ticket_grants_survive_reboot(db, monkeypatch):
 
     row = _state.lottery_ticket_grants[(GUILD_ID, uid)]
     assert row == {"daily_day": TODAY, "chess_week": WEEK, "chess_tickets": 2}
+
+
+@pytest.mark.asyncio
+async def test_chess_tickets_granted_this_week_sums_across_guilds(db, monkeypatch):
+    """The !chessbot ladder's count: this week's grants in every guild,
+    ignoring stale weeks and other users."""
+    from src.cogs.lottery_cog import chess_tickets_granted_this_week
+    _pin_clock(monkeypatch)
+    uid = 9230
+    _state.lottery_ticket_grants[(77, uid)] = {"daily_day": None, "chess_week": WEEK, "chess_tickets": 1}
+    _state.lottery_ticket_grants[(88, uid)] = {"daily_day": None, "chess_week": WEEK, "chess_tickets": 1}
+    _state.lottery_ticket_grants[(99, uid)] = {"daily_day": None, "chess_week": LAST_WEEK, "chess_tickets": 2}
+    _state.lottery_ticket_grants[(77, 9231)] = {"daily_day": None, "chess_week": WEEK, "chess_tickets": 2}
+
+    assert chess_tickets_granted_this_week(uid) == 2
+    assert chess_tickets_granted_this_week(9232) == 0
+
+
+def test_next_lottery_week_reset_is_monday_5am_ct(monkeypatch):
+    """The weekly chess-ticket window rolls with the gameplay-day: the coming
+    Monday at 5am CT, so a Monday 3am caller is still in last week."""
+    from src import economy
+    ct = ZoneInfo("America/Chicago")
+    monday_5am = int(datetime.datetime(2026, 10, 5, 5, 0, tzinfo=ct).timestamp())
+
+    # Friday noon -> the coming Monday.
+    monkeypatch.setattr(economy, "_ct_now", lambda: datetime.datetime(2026, 10, 2, 12, 0, tzinfo=ct))
+    assert economy.next_lottery_week_reset_ts() == monday_5am
+    # Monday 3am is still Sunday's gameplay-day -> later that morning.
+    monkeypatch.setattr(economy, "_ct_now", lambda: datetime.datetime(2026, 10, 5, 3, 0, tzinfo=ct))
+    assert economy.next_lottery_week_reset_ts() == monday_5am
+    # Monday 6am -> the following Monday.
+    monkeypatch.setattr(economy, "_ct_now", lambda: datetime.datetime(2026, 10, 5, 6, 0, tzinfo=ct))
+    assert economy.next_lottery_week_reset_ts() == int(
+        datetime.datetime(2026, 10, 12, 5, 0, tzinfo=ct).timestamp()
+    )

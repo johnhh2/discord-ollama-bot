@@ -1586,12 +1586,12 @@ async def test_chessbot_start_opens_thread(db, _stub_chess_edit_board):
     thread = FakeThread(thread_id=953)
     ctx.channel.create_thread = AsyncMock(return_value=thread)
 
-    await cog.cmd_chessbot.callback(cog, ctx)
+    await cog.cmd_chessbot.callback(cog, ctx, "1300")
 
     assert 953 in _state.active_chess_games
     assert 952 not in _state.active_chess_games
     g = _state.active_chess_games[953]
-    assert g["elo"] == chess_bot.ELO_DEFAULT
+    assert g["elo"] == 1300
     thread.add_user.assert_awaited_once_with(player)
 
 
