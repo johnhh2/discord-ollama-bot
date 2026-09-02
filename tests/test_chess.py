@@ -1155,11 +1155,11 @@ async def test_chess_bare_shows_help_menu(db):
     desc = e.description or ""
     # All command groups present.
     assert "!chess @user" in desc
-    assert "!chessbot" in desc
-    assert "!move" in desc
     assert "!stop" in desc
     assert "!chess view" in desc
     assert "!chess pgn" in desc
+    assert "!chess shop" in desc
+    assert "!chess inventory" in desc
 
 
 @_aio

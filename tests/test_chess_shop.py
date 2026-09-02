@@ -1,7 +1,7 @@
-"""Chess shop (!shop chess): Elo actually moves, unlocks persist, and the
+"""Chess shop (!chess shop): Elo actually moves, unlocks persist, and the
 purchase is race-safe.
 
-Same strategy as tests/test_shop.py: drive the cog method directly via
+The shop lives under !chess shop (ChessCog); drive the dispatcher via
 .callback with fake ctx objects. confirm_prompt is auto-accepted by the
 conftest stub; tests exercising decline/drift override it per-test.
 """
@@ -11,12 +11,12 @@ import pytest
 
 import src.state as _state
 import src.persistence as _persistence
-import src.cogs.shop_cog as _shop_cog
+import src.games.chess as _chess_mod
 from src.chess_shop import (
     BOARD_ITEMS, CHESS_SHOP_ITEMS, PIECE_SET_ITEMS,
     find_chess_item, has_chess_unlock,
 )
-from src.cogs.shop_cog import ShopCog
+from src.games.chess import ChessCog
 from src.games.bot_chess_rewards import (
     chess_elo_balance, refund_chess_elo, spend_chess_elo,
 )
@@ -132,10 +132,10 @@ async def test_spend_rejects_negative():
 async def test_listing_shows_items_and_balance(db):
     uid = 6101
     _give_elo(uid, 45_300, spent=5_000)
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
 
-    await cog.shop_chess.callback(cog, ctx)
+    await cog.cmd_chess.callback(cog, ctx, "shop")
 
     assert len(ctx.sent_embeds) == 1
     e = ctx.sent_embeds[0]
@@ -152,10 +152,10 @@ async def test_listing_shows_items_and_balance(db):
 async def test_buy_success_unlocks_and_spends(db):
     uid = 6201
     _give_elo(uid, 10_000)
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
 
-    await cog.shop_chess.callback(cog, ctx, "buy", "fantasy")
+    await cog.cmd_chess.callback(cog, ctx, "shop", "buy", "fantasy")
 
     assert has_chess_unlock(uid, "pieces:fantasy")
     assert chess_elo_balance(uid) == 5_000
@@ -168,11 +168,11 @@ async def test_buy_success_unlocks_and_spends(db):
 async def test_buy_by_number(db):
     uid = 6202
     _give_elo(uid, 25_000)
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
 
     # Item 2 in the combined list is Fantasy (1 is the Classic default).
-    await cog.shop_chess.callback(cog, ctx, "buy", "2")
+    await cog.cmd_chess.callback(cog, ctx, "shop", "buy", "2")
 
     assert has_chess_unlock(uid, "pieces:fantasy")
     assert chess_elo_balance(uid) == 20_000
@@ -181,10 +181,10 @@ async def test_buy_by_number(db):
 async def test_buy_board_color(db):
     uid = 6203
     _give_elo(uid, 20_000)
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
 
-    await cog.shop_chess.callback(cog, ctx, "buy", "charcoal")
+    await cog.cmd_chess.callback(cog, ctx, "shop", "buy", "charcoal")
 
     assert has_chess_unlock(uid, "board:charcoal")
     assert chess_elo_balance(uid) == 0
@@ -194,10 +194,10 @@ async def test_buy_board_color(db):
 async def test_buy_insufficient_elo_rejected(db):
     uid = 6204
     _give_elo(uid, 4_999)
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
 
-    await cog.shop_chess.callback(cog, ctx, "buy", "fantasy")
+    await cog.cmd_chess.callback(cog, ctx, "shop", "buy", "fantasy")
 
     assert not has_chess_unlock(uid, "pieces:fantasy")
     assert chess_elo_balance(uid) == 4_999
@@ -209,10 +209,10 @@ async def test_buy_already_owned_rejected(db):
     uid = 6205
     _give_elo(uid, 50_000)
     _state.chess_unlocks[uid] = {"pieces:fantasy"}
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
 
-    await cog.shop_chess.callback(cog, ctx, "buy", "fantasy")
+    await cog.cmd_chess.callback(cog, ctx, "shop", "buy", "fantasy")
 
     assert chess_elo_balance(uid) == 50_000   # nothing spent
     assert "Already Yours" in ctx.sent_embeds[-1].title
@@ -221,10 +221,10 @@ async def test_buy_already_owned_rejected(db):
 async def test_buy_default_item_rejected(db):
     uid = 6206
     _give_elo(uid, 50_000)
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
 
-    await cog.shop_chess.callback(cog, ctx, "buy", "classic")
+    await cog.cmd_chess.callback(cog, ctx, "shop", "buy", "classic")
 
     assert chess_elo_balance(uid) == 50_000
     assert "Already Yours" in ctx.sent_embeds[-1].title
@@ -236,11 +236,11 @@ async def test_buy_declined_confirm_no_charge(db, monkeypatch):
 
     async def _no_confirm(*a, **k):
         return False
-    monkeypatch.setattr(_shop_cog, "confirm_prompt", _no_confirm)
+    monkeypatch.setattr(_chess_mod, "confirm_prompt", _no_confirm)
 
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
-    await cog.shop_chess.callback(cog, ctx, "buy", "fantasy")
+    await cog.cmd_chess.callback(cog, ctx, "shop", "buy", "fantasy")
 
     assert not has_chess_unlock(uid, "pieces:fantasy")
     assert chess_elo_balance(uid) == 10_000
@@ -250,10 +250,10 @@ async def test_buy_godmode_is_free(db):
     uid = 6208
     _give_elo(uid, 0)
     _state.godmode_users.add(uid)
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
 
-    await cog.shop_chess.callback(cog, ctx, "buy", "pixel")
+    await cog.cmd_chess.callback(cog, ctx, "shop", "buy", "pixel")
 
     assert has_chess_unlock(uid, "pieces:pixel")
     assert chess_elo_balance(uid) == 0
@@ -270,14 +270,14 @@ async def test_concurrent_buys_charge_once(db, monkeypatch):
     async def _yielding_confirm(*a, **k):
         await asyncio.sleep(0)
         return True
-    monkeypatch.setattr(_shop_cog, "confirm_prompt", _yielding_confirm)
+    monkeypatch.setattr(_chess_mod, "confirm_prompt", _yielding_confirm)
 
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx1 = FakeCtx(author=FakeMember(uid=uid))
     ctx2 = FakeCtx(author=FakeMember(uid=uid))
     await asyncio.gather(
-        cog.shop_chess.callback(cog, ctx1, "buy", "merida"),
-        cog.shop_chess.callback(cog, ctx2, "buy", "merida"),
+        cog.cmd_chess.callback(cog, ctx1, "shop", "buy", "merida"),
+        cog.cmd_chess.callback(cog, ctx2, "shop", "buy", "merida"),
     )
 
     assert has_chess_unlock(uid, "pieces:merida")
@@ -296,10 +296,10 @@ async def test_prestige_gate_marks_all_20k_items():
 async def test_buy_20k_item_requires_1100_bot_win(db):
     uid = 6301
     _give_elo(uid, 50_000, max_elo=1_000)   # rich, but never beat 1100+
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
 
-    await cog.shop_chess.callback(cog, ctx, "buy", "pixel")
+    await cog.cmd_chess.callback(cog, ctx, "shop", "buy", "pixel")
 
     assert not has_chess_unlock(uid, "pieces:pixel")
     assert chess_elo_balance(uid) == 50_000
@@ -309,10 +309,10 @@ async def test_buy_20k_item_requires_1100_bot_win(db):
 async def test_buy_20k_item_at_exact_1100_allowed(db):
     uid = 6302
     _give_elo(uid, 50_000, max_elo=1_100)
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
 
-    await cog.shop_chess.callback(cog, ctx, "buy", "pixel")
+    await cog.cmd_chess.callback(cog, ctx, "shop", "buy", "pixel")
 
     assert has_chess_unlock(uid, "pieces:pixel")
     assert chess_elo_balance(uid) == 30_000
@@ -321,10 +321,10 @@ async def test_buy_20k_item_at_exact_1100_allowed(db):
 async def test_cheaper_items_ignore_prestige_gate(db):
     uid = 6303
     _give_elo(uid, 50_000, max_elo=400)     # low ceiling, lots of grinding
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
 
-    await cog.shop_chess.callback(cog, ctx, "buy", "merida")
+    await cog.cmd_chess.callback(cog, ctx, "shop", "buy", "merida")
 
     assert has_chess_unlock(uid, "pieces:merida")
 
@@ -332,10 +332,10 @@ async def test_cheaper_items_ignore_prestige_gate(db):
 async def test_listing_strikes_through_gated_items(db):
     uid = 6304
     _give_elo(uid, 50_000, max_elo=1_000)
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
 
-    await cog.shop_chess.callback(cog, ctx)
+    await cog.cmd_chess.callback(cog, ctx, "shop")
 
     desc = ctx.sent_embeds[0].description
     assert "Beat a 1,100+ Elo bot" in desc
@@ -349,9 +349,9 @@ async def test_unlocks_reload_from_db(db):
     """chess_unlocks and elo_spent survive a state wipe + init_db_state."""
     uid = 6210
     _give_elo(uid, 10_000)
-    cog = ShopCog(bot=None)
+    cog = ChessCog(bot=None)
     ctx = FakeCtx(author=FakeMember(uid=uid))
-    await cog.shop_chess.callback(cog, ctx, "buy", "celtic")
+    await cog.cmd_chess.callback(cog, ctx, "shop", "buy", "celtic")
 
     _state.chess_unlocks = {}
     _state.chess_user_stats = {}

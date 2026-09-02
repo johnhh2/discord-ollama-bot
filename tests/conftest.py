@@ -219,8 +219,10 @@ def reset_bot_state(monkeypatch):
     import src.cogs.bounty_cog as _bounty_cog_mod
     import src.cogs.assets_cog as _assets_cog_mod
     import src.cogs.lottery_cog as _lottery_cog_mod
+    import src.games.chess as _chess_game_mod
     monkeypatch.setattr(_shop_cog_mod, "confirm_purchase", _auto_confirm)
     monkeypatch.setattr(_shop_cog_mod, "confirm_prompt", _auto_confirm)
+    monkeypatch.setattr(_chess_game_mod, "confirm_prompt", _auto_confirm)
     monkeypatch.setattr(_bounty_cog_mod, "confirm_purchase", _auto_confirm)
     monkeypatch.setattr(_assets_cog_mod, "confirm_purchase", _auto_confirm)
     monkeypatch.setattr(_assets_cog_mod, "confirm_prompt", _auto_confirm)

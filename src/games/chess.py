@@ -13,10 +13,11 @@ import discord
 from discord.ext import commands
 
 from src.helpers import (
-    emb, C_RED, C_GOLD, C_BLUE, C_GREEN, C_GREY,
+    emb, C_RED, C_GOLD, C_BLUE, C_GREEN, C_GREY, C_PURPLE,
     _delete_after, send_ephemeral, announce_record, parse_int_amount,
     log_bot_permission_error,
 )
+from src.confirm_view import confirm_prompt
 from src.economy import (
     add_balance, record_gambling_event,
 )
@@ -26,17 +27,18 @@ from src.guild_config import get_guild_cfg
 from src.persistence import (
     save_chess_game, delete_chess_game, save_chess_report, load_chess_report,
     load_head_to_head, load_bot_head_to_head, count_pvp_wins_in_guild, try_set_record,
-    save_chess_equipped,
+    save_chess_equipped, save_chess_unlock, save_chess_user_stats,
 )
 from src.chess_shop import (
-    BOARD_ITEMS, PIECE_SET_ITEMS,
+    BOARD_ITEMS, CHESS_SHOP_ITEMS, PIECE_SET_ITEMS,
     elo_requirement_met, equipped_cosmetics, find_chess_item, has_chess_unlock,
 )
 from src.games.ttt_c4 import _setup_pvp_game
 from src.games import chess_engine, chess_render, chess_bot, chess_analysis
 from src.games.bot_chess_rewards import (
     award_bot_defeat, rank_badges, RECORD_CATEGORY as _BOT_CHESS_RECORD,
-    RANK_TOTAL_EMOJI, chess_elo_balance,
+    RANK_TOTAL_EMOJI, chess_elo_balance, chess_ranks,
+    spend_chess_elo, refund_chess_elo,
 )
 from src import state
 
@@ -567,6 +569,9 @@ class ChessCog(commands.Cog):
         if args and args[0].lower() in ("inventory", "inv"):
             await self._cmd_inventory(ctx)
             return
+        if args and args[0].lower() == "shop":
+            await self._cmd_shop(ctx, args[1:])
+            return
         # Cosmetics: `!chess wood`, `!chess blue`, `!chess kiwen-suwi` equips
         # an owned piece set / board color. Name and key tokens only — bare
         # numbers stay Elo/wager arguments, and any mention means a
@@ -1007,6 +1012,133 @@ class ChessCog(commands.Cog):
         else:
             await send_ephemeral(ctx, embed=emb(f"♟️ Chess Game #{report_id} — PGN", f"{pgn_block}{links_line}", C_GREY))
 
+    # ── !chess shop: unlock piece sets / board colors with chess Elo ────────
+    async def _cmd_shop(self, ctx: commands.Context, args: tuple[str, ...]):
+        """Chess cosmetics, priced in spendable chess Elo (lifetime
+        total_elo_defeated minus what's already been spent here). Unlocks
+        are permanent and global."""
+        uid = ctx.author.id
+
+        if not args:
+            balance = chess_elo_balance(uid)
+            _, lifetime = chess_ranks(uid)
+            lines = [
+                "Unlock piece sets and board colors with the chess Elo you've "
+                "beaten out of the bot (`!chess <elo>`). Spending never lowers "
+                f"your {RANK_TOTAL_EMOJI} rank.",
+                "",
+                f"Your spendable Elo: **{balance:,} {RANK_TOTAL_EMOJI}**"
+                + (f" (lifetime {lifetime:,})" if lifetime else ""),
+                "",
+                "**Piece sets**",
+            ]
+            i = 0
+            for section_items in (PIECE_SET_ITEMS, BOARD_ITEMS):
+                for it in section_items:
+                    i += 1
+                    if it["cost"] == 0:
+                        lines.append(f"**{i}.** {it['name']} — ✅ default")
+                    elif has_chess_unlock(uid, it["id"]):
+                        lines.append(f"**{i}.** {it['name']} — ✅ **Owned**")
+                    elif not elo_requirement_met(uid, it):
+                        lines.append(
+                            f"~~**{i}.** {it['name']} — **{it['cost']:,} {RANK_TOTAL_EMOJI}**~~ "
+                            f"🔒 **Beat a {it['req_max_elo']:,}+ Elo bot**"
+                        )
+                    else:
+                        lines.append(
+                            f"**{i}.** {it['name']} — **{it['cost']:,} {RANK_TOTAL_EMOJI}**"
+                        )
+                if section_items is PIECE_SET_ITEMS:
+                    lines.append("")
+                    lines.append("**Board colors**")
+            lines.append("")
+            lines.append("Buy with `!chess shop buy <number or name>`.")
+            await send_ephemeral(ctx, embed=emb("♟️ Chess Shop", "\n".join(lines), C_PURPLE))
+            return
+
+        if args[0].lower() != "buy" or len(args) < 2:
+            await ctx.send(embed=emb(
+                "♟️ Chess Shop",
+                "Usage: `!chess shop` to browse, `!chess shop buy <number or name>` to unlock.",
+                C_PURPLE,
+            ))
+            return
+
+        item = find_chess_item(" ".join(args[1:]))
+        if item is None:
+            await ctx.send(embed=emb(
+                "❌ Unknown Item",
+                f"Pick a number between 1 and {len(CHESS_SHOP_ITEMS)}, or an item name (see `!chess shop`).",
+                C_RED,
+            ))
+            return
+        if item["cost"] == 0 or has_chess_unlock(uid, item["id"]):
+            await ctx.send(embed=emb("♟️ Already Yours", f"You already have **{item['name']}**.", C_PURPLE))
+            return
+
+        if not elo_requirement_met(uid, item):
+            await ctx.send(embed=emb(
+                "🔒 Elo Locked",
+                f"**{item['name']}** unlocks after you've beaten a "
+                f"**{item['req_max_elo']:,}+ Elo** bot at least once "
+                f"(`!chess <elo>`). Spendable Elo alone isn't enough.",
+                C_RED,
+            ))
+            return
+
+        cost = 0 if uid in state.godmode_users else item["cost"]
+        kind = "piece set" if item in PIECE_SET_ITEMS else "board color"
+        if chess_elo_balance(uid) < cost:
+            await ctx.send(embed=emb(
+                "💸 Not Enough Elo",
+                f"**{item['name']}** costs **{cost:,} {RANK_TOTAL_EMOJI}** — you have "
+                f"**{chess_elo_balance(uid):,}**. Beat the chess bot (`!chess <elo>`) to earn more.",
+                C_RED,
+            ))
+            return
+        if not await confirm_prompt(
+            ctx,
+            title="♟️ Unlock Chess Item",
+            description=(
+                f"Unlock the **{item['name']}** {kind} permanently?\n"
+                f"**Cost:** {cost:,} {RANK_TOTAL_EMOJI} spendable chess Elo"
+            ),
+            payer=ctx.author,
+        ):
+            return
+
+        # Gate-and-claim runs synchronously after the confirm await: the
+        # owned re-check covers drift during the wait, and spend_chess_elo's
+        # balance check + deduction has no await between them, so a second
+        # concurrent buy sees the spent Elo / the unlock and bails instead
+        # of double-charging (see CLAUDE.md on per-user command races).
+        if has_chess_unlock(uid, item["id"]):
+            await ctx.send(embed=emb("♟️ Already Yours", f"You already have **{item['name']}**.", C_PURPLE))
+            return
+        if not spend_chess_elo(uid, cost):
+            await ctx.send(embed=emb(
+                "💸 Not Enough Elo",
+                f"You no longer have **{cost:,} {RANK_TOTAL_EMOJI}** spendable.",
+                C_RED,
+            ))
+            return
+        state.chess_unlocks.setdefault(uid, set()).add(item["id"])
+        try:
+            await save_chess_user_stats(uid)
+            await save_chess_unlock(uid, item["id"])
+        except Exception:
+            state.chess_unlocks.get(uid, set()).discard(item["id"])
+            refund_chess_elo(uid, cost)
+            raise
+        await ctx.send(embed=emb(
+            "♟️ Unlocked",
+            f"The **{item['name']}** {kind} is yours forever — "
+            f"**{chess_elo_balance(uid):,} {RANK_TOTAL_EMOJI}** spendable Elo left. "
+            f"Equip it with `!chess {item['name'].lower()}`.",
+            C_GREEN,
+        ))
+
     # ── !chess inventory: owned + equipped cosmetics ────────────────────────
     async def _cmd_inventory(self, ctx: commands.Context):
         uid = ctx.author.id
@@ -1034,7 +1166,7 @@ class ChessCog(commands.Cog):
                 lines.append("")
                 lines.append("**Board colors**")
         lines.append("")
-        lines.append("Equip with `!chess <name>` · unlock more in `!shop chess`.")
+        lines.append("Equip with `!chess <name>` · unlock more in `!chess shop`.")
         await send_ephemeral(ctx, embed=emb("♟️ Chess Inventory", "\n".join(lines), C_BLUE))
 
     # ── !chess <item name>: equip an owned piece set / board color ──────────
@@ -1045,7 +1177,7 @@ class ChessCog(commands.Cog):
             await send_ephemeral(ctx, embed=emb(
                 "🔒 Not Unlocked",
                 f"The **{item['name']}** {kind} costs **{item['cost']:,} {RANK_TOTAL_EMOJI}** "
-                f"chess Elo — unlock it with `!shop chess buy {item['name'].lower()}`.",
+                f"chess Elo — unlock it with `!chess shop buy {item['name'].lower()}`.",
                 C_RED,
             ))
             return
@@ -1071,36 +1203,17 @@ class ChessCog(commands.Cog):
 
     # ── !chess (no args) / !chess help: show the chess command menu ─────────
     async def _cmd_help(self, ctx: commands.Context):
-        elo_lo, elo_hi, elo_default = chess_bot.ELO_MIN, chess_bot.ELO_MAX, chess_bot.ELO_DEFAULT
-        from src.games.bot_chess_rewards import (
-            COINS_PER_NEW_ELO,
-            COINS_PER_NEW_ELO_LOW,
-            LOW_ELO_THRESHOLD,
-        )
         desc = (
-            "**Start a game**\n"
-            "Each accepted match opens its own thread in the chess channel — the whole game plays out there.\n"
+            "**Game commands**\n"
             "`!chess @user [wager]` — Play another player. Optional wager in 🪙; winner takes the pot.\n"
-            f"`!chessbot [elo]` (alias `!chess @TheBot [elo]`) — Play the bot. Elo `{elo_lo}`–`{elo_hi}`, default `{elo_default}`. "
-            f"Elo 100-1000 uses Sub-Maia, 1100-1900 uses Maia, 2000+ uses Stockfish.\n"
-            "  • Ratings are **Lichess-scale** (chess.com runs ~200-400 lower below 2000; 2000+ is approximate).\n"
-            f"  • Beat the bot to earn **{COINS_PER_NEW_ELO_LOW} 🪙 per new Elo point under {LOW_ELO_THRESHOLD}**, "
-            f"**{COINS_PER_NEW_ELO} 🪙 per new Elo point at/above {LOW_ELO_THRESHOLD}** "
-            "(above your daily highwater; resets 5am CT).\n"
-            "\n"
-            "**Make a move**\n"
-            "`!move <move>` — e.g. `!move e4`, `!move Nf3`, `!move e2e4`, `!move O-O`, `!move e7e8q` (promote).\n"
-            "  • In your game thread during your turn you can also just type the move directly — the bot will pick it up and delete your message.\n"
-            "\n"
-            "**End / forfeit**\n"
             "`!stop` — Forfeit the game (run it inside the game's thread). Wager goes to the opponent.\n"
             "\n"
             "**Replay finished games**\n"
             "`!chess view <id>` — Show the game outcome, final position image, and movetext.\n"
             "`!chess pgn <id>` — Full headered PGN (paste into [lichess.org/paste](https://lichess.org/paste) for analysis).\n"
             "\n"
-            "**Cosmetics**\n"
-            f"`!shop chess` — Unlock piece sets & board colors with the chess Elo you've earned ({RANK_TOTAL_EMOJI}).\n"
+            "**Shop & cosmetics**\n"
+            f"`!chess shop` — Unlock piece sets & board colors with the chess Elo you've earned ({RANK_TOTAL_EMOJI}).\n"
             "`!chess inventory` — See what you own and what's equipped.\n"
             "`!chess <name>` — Equip an owned piece set or board color (e.g. `!chess wood`, `!chess blue`).\n"
             "\n"

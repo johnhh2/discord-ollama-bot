@@ -31,17 +31,8 @@ from src.persistence import (
     save_bot_roles,
     save_ragebait, save_mock, save_tax, save_curse, save_spellcheck,
     save_user_artifact, try_set_record, save_leveling,
-    save_chess_unlock, save_chess_user_stats,
 )
 from src.artifacts import ARTIFACTS, owned_qty, owned_artifact_count
-from src.chess_shop import (
-    CHESS_SHOP_ITEMS, PIECE_SET_ITEMS, BOARD_ITEMS,
-    has_chess_unlock, find_chess_item, elo_requirement_met,
-)
-from src.games.bot_chess_rewards import (
-    RANK_TOTAL_EMOJI, chess_elo_balance, chess_ranks,
-    spend_chess_elo, refund_chess_elo,
-)
 from src.confirm_view import confirm_prompt, confirm_purchase
 from src.guild_config import get_guild_cfg
 from src.ai import (
@@ -352,11 +343,6 @@ class ShopCog(commands.Cog):
             "`!artifacts` — Permanent artifacts with passive effects"
         ]
 
-        # Chess cosmetics — priced in chess Elo, not coins.
-        sections["♟️ Chess"] = [
-            f"`!shop chess` — Piece sets & board colors, unlocked with chess Elo ({RANK_TOTAL_EMOJI})"
-        ]
-
         # Bounties — only surfaced where the feature is enabled (a bounty
         # channel is configured). The reward is escrowed from the poster, so
         # there's no fixed price to list; show the minimum and the channel.
@@ -483,134 +469,6 @@ class ShopCog(commands.Cog):
                     ctx.channel, "total_artifacts", ctx.author.display_name, total,
                     holder_id=uid,
                 )
-
-    # ── !shop chess ───────────────────────────────────────────────────────────
-    @cmd_shop.command(name="chess")
-    @_shop_subcommand(None)
-    async def shop_chess(self, ctx: commands.Context, *args):
-        """Chess cosmetics, priced in spendable chess Elo (lifetime
-        total_elo_defeated minus what's already been spent here). Unlocks
-        are permanent and global; nothing equips them yet."""
-        uid = ctx.author.id
-
-        if not args:
-            balance = chess_elo_balance(uid)
-            _, lifetime = chess_ranks(uid)
-            lines = [
-                "Unlock piece sets and board colors with the chess Elo you've "
-                "beaten out of the bot (`!chess <elo>`). Spending never lowers "
-                f"your {RANK_TOTAL_EMOJI} rank.",
-                "",
-                f"Your spendable Elo: **{balance:,} {RANK_TOTAL_EMOJI}**"
-                + (f" (lifetime {lifetime:,})" if lifetime else ""),
-                "",
-                "**Piece sets**",
-            ]
-            i = 0
-            for section_items in (PIECE_SET_ITEMS, BOARD_ITEMS):
-                for it in section_items:
-                    i += 1
-                    if it["cost"] == 0:
-                        lines.append(f"**{i}.** {it['name']} — ✅ default")
-                    elif has_chess_unlock(uid, it["id"]):
-                        lines.append(f"**{i}.** {it['name']} — ✅ **Owned**")
-                    elif not elo_requirement_met(uid, it):
-                        lines.append(
-                            f"~~**{i}.** {it['name']} — **{it['cost']:,} {RANK_TOTAL_EMOJI}**~~ "
-                            f"🔒 **Beat a {it['req_max_elo']:,}+ Elo bot**"
-                        )
-                    else:
-                        lines.append(
-                            f"**{i}.** {it['name']} — **{it['cost']:,} {RANK_TOTAL_EMOJI}**"
-                        )
-                if section_items is PIECE_SET_ITEMS:
-                    lines.append("")
-                    lines.append("**Board colors**")
-            lines.append("")
-            lines.append("Buy with `!shop chess buy <number or name>`.")
-            await send_ephemeral(ctx, embed=emb("♟️ Chess Shop", "\n".join(lines), C_PURPLE))
-            return
-
-        if args[0].lower() != "buy" or len(args) < 2:
-            await ctx.send(embed=emb(
-                "♟️ Chess Shop",
-                "Usage: `!shop chess` to browse, `!shop chess buy <number or name>` to unlock.",
-                C_PURPLE,
-            ))
-            return
-
-        item = find_chess_item(" ".join(args[1:]))
-        if item is None:
-            await ctx.send(embed=emb(
-                "❌ Unknown Item",
-                f"Pick a number between 1 and {len(CHESS_SHOP_ITEMS)}, or an item name (see `!shop chess`).",
-                C_RED,
-            ))
-            return
-        if item["cost"] == 0 or has_chess_unlock(uid, item["id"]):
-            await ctx.send(embed=emb("♟️ Already Yours", f"You already have **{item['name']}**.", C_PURPLE))
-            return
-
-        if not elo_requirement_met(uid, item):
-            await ctx.send(embed=emb(
-                "🔒 Elo Locked",
-                f"**{item['name']}** unlocks after you've beaten a "
-                f"**{item['req_max_elo']:,}+ Elo** bot at least once "
-                f"(`!chess <elo>`). Spendable Elo alone isn't enough.",
-                C_RED,
-            ))
-            return
-
-        cost = 0 if uid in state.godmode_users else item["cost"]
-        kind = "piece set" if item in PIECE_SET_ITEMS else "board color"
-        if chess_elo_balance(uid) < cost:
-            await ctx.send(embed=emb(
-                "💸 Not Enough Elo",
-                f"**{item['name']}** costs **{cost:,} {RANK_TOTAL_EMOJI}** — you have "
-                f"**{chess_elo_balance(uid):,}**. Beat the chess bot (`!chess <elo>`) to earn more.",
-                C_RED,
-            ))
-            return
-        if not await confirm_prompt(
-            ctx,
-            title="♟️ Unlock Chess Item",
-            description=(
-                f"Unlock the **{item['name']}** {kind} permanently?\n"
-                f"**Cost:** {cost:,} {RANK_TOTAL_EMOJI} spendable chess Elo"
-            ),
-            payer=ctx.author,
-        ):
-            return
-
-        # Gate-and-claim runs synchronously after the confirm await: the
-        # owned re-check covers drift during the wait, and spend_chess_elo's
-        # balance check + deduction has no await between them, so a second
-        # concurrent buy sees the spent Elo / the unlock and bails instead
-        # of double-charging (see CLAUDE.md on per-user command races).
-        if has_chess_unlock(uid, item["id"]):
-            await ctx.send(embed=emb("♟️ Already Yours", f"You already have **{item['name']}**.", C_PURPLE))
-            return
-        if not spend_chess_elo(uid, cost):
-            await ctx.send(embed=emb(
-                "💸 Not Enough Elo",
-                f"You no longer have **{cost:,} {RANK_TOTAL_EMOJI}** spendable.",
-                C_RED,
-            ))
-            return
-        state.chess_unlocks.setdefault(uid, set()).add(item["id"])
-        try:
-            await save_chess_user_stats(uid)
-            await save_chess_unlock(uid, item["id"])
-        except Exception:
-            state.chess_unlocks.get(uid, set()).discard(item["id"])
-            refund_chess_elo(uid, cost)
-            raise
-        await ctx.send(embed=emb(
-            "♟️ Unlocked",
-            f"The **{item['name']}** {kind} is yours forever — "
-            f"**{chess_elo_balance(uid):,} {RANK_TOTAL_EMOJI}** spendable Elo left.",
-            C_GREEN,
-        ))
 
     # ── !shop nickname ────────────────────────────────────────────────────────
     @cmd_shop.command(name="nickname")

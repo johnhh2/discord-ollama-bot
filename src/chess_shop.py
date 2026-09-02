@@ -40,7 +40,7 @@ BOARD_ITEMS = [
 ]
 
 # One flat list so the shop can number items continuously across both
-# sections and `!shop chess buy <n>` is unambiguous.
+# sections and `!chess shop buy <n>` is unambiguous.
 CHESS_SHOP_ITEMS = PIECE_SET_ITEMS + BOARD_ITEMS
 
 # Prestige gate: every 20k item additionally requires having beaten an

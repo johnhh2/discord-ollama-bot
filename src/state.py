@@ -62,7 +62,7 @@ property_owners: dict = {}
 # boot. Written by src/games/bot_chess_rewards.py:award_bot_defeat; elo_spent
 # rises when the chess shop consumes spendable Elo.
 chess_user_stats: dict = {}
-# Chess-shop unlocks (!shop chess): {uid: {"pieces:rhosgfx", "board:blue", ...}}.
+# Chess-shop unlocks (!chess shop): {uid: {"pieces:rhosgfx", "board:blue", ...}}.
 # Global (not guild-scoped), like the economy. Source of truth is the
 # chess_unlocks table; loaded at boot. Catalog lives in src/chess_shop.py;
 # cost-0 defaults are owned by everyone and never stored here.

@@ -73,7 +73,7 @@ async def test_equip_unowned_rejected(db):
 
     assert equipped_cosmetics(uid) == ("cburnett", "default")
     assert "Not Unlocked" in ctx.sent_embeds[-1].title
-    assert "shop chess" in ctx.sent_embeds[-1].description
+    assert "chess shop" in ctx.sent_embeds[-1].description
 
 
 async def test_equip_default_switches_back(db):
@@ -169,7 +169,7 @@ async def test_help_mentions_cosmetics_commands(db):
 
     desc = ctx.sent_embeds[-1].description
     assert "!chess inventory" in desc
-    assert "!shop chess" in desc
+    assert "!chess shop" in desc
 
 
 # ── Render plumbing ───────────────────────────────────────────────────────────
