@@ -1410,8 +1410,9 @@ def _stub_setup_pvp_game(monkeypatch):
     Records calls so tests can assert it was invoked (or not)."""
     import src.games.chess as _chess_mod
     calls = []
-    async def _stub(ctx, opponent, amount, invite_title):
-        calls.append({"opponent": opponent, "amount": amount, "title": invite_title})
+    async def _stub(ctx, opponent, amount, invite_title, *, timeout=60.0):
+        calls.append({"opponent": opponent, "amount": amount,
+                      "title": invite_title, "timeout": timeout})
         return True
     monkeypatch.setattr(_chess_mod, "_setup_pvp_game", _stub)
     return calls
@@ -1437,9 +1438,22 @@ async def test_chess_start_creates_active_game(db, _stub_chess_edit_board, _stub
     assert g["current_id"] == challenger.id  # white moves first
     assert g["fen"] == chess_engine.STARTING_FEN
     assert g["amount"] == 0
-    # _setup_pvp_game was called.
+    # _setup_pvp_game was called with the 1-hour chess accept window.
     assert len(_stub_setup_pvp_game) == 1
     assert _stub_setup_pvp_game[0]["opponent"] is opponent
+    assert _stub_setup_pvp_game[0]["timeout"] == 3600.0
+
+
+@_aio
+async def test_invite_window_text_matches_timeout():
+    """The invite embed wording tracks the actual timeout instead of a
+    hardcoded '60 seconds'."""
+    from src.invites import _window_text
+    assert _window_text(60) == "60 seconds"
+    assert _window_text(45) == "45 seconds"
+    assert _window_text(300) == "5 minutes"
+    assert _window_text(3600) == "1 hour"
+    assert _window_text(7200) == "2 hours"
 
 
 @_aio
@@ -1483,7 +1497,7 @@ async def test_chess_start_setup_rejection_no_game_created(db, _stub_chess_edit_
     """If _setup_pvp_game returns False (no opponent, declined, etc.), the
     cog must not create the active game state."""
     import src.games.chess as _chess_mod
-    async def _stub_rejected(ctx, opponent, amount, invite_title):
+    async def _stub_rejected(ctx, opponent, amount, invite_title, *, timeout=60.0):
         return False
     monkeypatch.setattr(_chess_mod, "_setup_pvp_game", _stub_rejected)
 

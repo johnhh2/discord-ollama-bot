@@ -1025,7 +1025,7 @@ async def test_cmd_chess_human_opponent_still_goes_through_setup(db, _stub_chess
     (trailing int treated as a wager, not an Elo)."""
     import src.games.chess as _chess_mod
     setup_called = []
-    async def _spy(ctx, opponent, amount, invite_title):
+    async def _spy(ctx, opponent, amount, invite_title, *, timeout=60.0):
         setup_called.append({"opponent": opponent, "amount": amount})
         return True
     monkeypatch.setattr(_chess_mod, "_setup_pvp_game", _spy)

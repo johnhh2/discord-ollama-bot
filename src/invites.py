@@ -12,6 +12,19 @@ from src.helpers import emb, C_BLUE
 INVITE_LISTEN_SECS = 3600.0
 
 
+def _window_text(seconds: float) -> str:
+    """'60 seconds' / '5 minutes' / '1 hour' — human wording for the invite
+    window shown in the embed, so the text always matches the timeout."""
+    secs = int(seconds)
+    if secs >= 3600 and secs % 3600 == 0:
+        h = secs // 3600
+        return f"{h} hour" + ("s" if h != 1 else "")
+    if secs >= 60 and secs % 60 == 0 and secs > 60:
+        m = secs // 60
+        return f"{m} minutes"
+    return f"{secs} seconds"
+
+
 async def _wait_for_confirmations(
     ctx: commands.Context,
     invited_users: list,
@@ -32,7 +45,8 @@ async def _wait_for_confirmations(
         content=mentions,
         embed=emb(
             title,
-            f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ within 60 seconds to join!",
+            f"{mentions}\n{ctx.author.mention} is inviting you. "
+            f"React ✅ within {_window_text(timeout)} to join!",
             C_BLUE,
         ),
         silent=False,

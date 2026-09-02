@@ -171,12 +171,14 @@ async def _send_game_board(ctx: commands.Context, game: dict, title: str,
     game["board_msg_id"] = msg.id
 
 
-async def _setup_pvp_game(ctx, opponent, amount, invite_title):
+async def _setup_pvp_game(ctx, opponent, amount, invite_title, *, timeout: float = 60.0):
     """Validates opponent, deducts wagers, waits for confirmation.
 
     `amount` is the already-parsed wager (int >= 0); callers parse the raw
     string (with `k`/`m` shorthand) before invoking. Returns True if the game
-    should proceed; False if an error was already sent."""
+    should proceed; False if an error was already sent. `timeout` is the
+    accept window — wagers are only affordability-checked before it and
+    charged after the ✅, so a long window never freezes balances."""
     uid = ctx.author.id
     if opponent is None:
         await ctx.send(f"Usage: `!{ctx.invoked_with} @user [amount]`")
@@ -205,7 +207,9 @@ async def _setup_pvp_game(ctx, opponent, amount, invite_title):
                 return False
 
     wager_text = f" for {amount:,} 🪙" if amount > 0 else ""
-    confirmed = await _wait_for_confirmations(ctx, [opponent], title=f"{invite_title}{wager_text}")
+    confirmed = await _wait_for_confirmations(
+        ctx, [opponent], title=f"{invite_title}{wager_text}", timeout=timeout,
+    )
     if not confirmed:
         await ctx.send(embed=emb(
             "❌ Invite Declined", f"{opponent.display_name} didn't accept.", C_RED,

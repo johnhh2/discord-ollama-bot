@@ -45,6 +45,13 @@ from src import state
 
 BOARD_IMG_FILENAME = "board.png"
 
+# Chess invites stay open for an hour (vs the 60s default for TTT/C4):
+# chess games are slower-paced commitments and invitees are often not
+# watching the channel. Note the accept window holds the channel's game
+# slot, so a pending chess invite blocks new games in that channel until
+# it's accepted or expires. Wagers are charged only after acceptance.
+PVP_INVITE_TIMEOUT_SECS = 3600.0
+
 
 def _last_move_info_from_pgn(pgn_str: str) -> tuple[chess.Move | None, bool]:
     """Parse a PGN and return (last_move, was_capture). last_move is None
@@ -669,7 +676,10 @@ class ChessCog(commands.Cog):
     async def _start_pvp_chess(self, ctx: commands.Context, opponent, amount: int):
         uid = ctx.author.id
 
-        if not await _setup_pvp_game(ctx, opponent, amount, "♟️ Chess Invite"):
+        if not await _setup_pvp_game(
+            ctx, opponent, amount, "♟️ Chess Invite",
+            timeout=PVP_INVITE_TIMEOUT_SECS,
+        ):
             return
 
         white_id, black_id = uid, opponent.id
