@@ -115,6 +115,21 @@ def refund_chess_elo(user_id: int, amount: int) -> None:
     row["elo_spent"] = max(0, int(row.get("elo_spent", 0)) - max(0, amount))
 
 
+async def award_pvp_defeat(*, user_id: int, opponent_est_elo: int) -> int:
+    """Credit a PvP win with spendable chess Elo: the defeated opponent's
+    engine-estimated strength this game goes into total_elo_defeated (the
+    🏆 cumulative rank, spendable in !chess shop) but never
+    max_elo_defeated — the 🏅 rank stays a bot-ladder achievement.
+    Returns the amount credited (0 when there's no usable estimate)."""
+    gain = int(opponent_est_elo or 0)
+    if gain <= 0:
+        return 0
+    row = _stats_row(user_id)
+    row["total_elo_defeated"] = int(row.get("total_elo_defeated", 0)) + gain
+    await save_chess_user_stats(user_id)
+    return gain
+
+
 def claimed_bonus_bins(user_id: int) -> set[int]:
     """Elo bins whose one-time first-defeat bonus this user has claimed."""
     row = state.chess_user_stats.get(str(user_id))

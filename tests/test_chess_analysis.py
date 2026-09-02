@@ -510,3 +510,118 @@ async def test_chess_view_renders_stored_analysis(db, monkeypatch):
     assert "Engine Analysis" in desc
     assert "~2,800 Elo" in desc
     assert "ACPL" in desc
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PvP spendable-Elo award (cumulative 🏆 only, never the 🏅 max)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PVP_OPPONENT = 11
+
+
+def _pvp_analysis(loser_est=1600):
+    a = _suspicious_analysis()
+    a["black"]["est_elo"] = loser_est
+    return a
+
+
+async def _run_pvp_pipeline(monkeypatch, *, analysis, winner_id):
+    async def _canned(*args, **kwargs):
+        return analysis
+
+    monkeypatch.setattr(ca, "_run_engine_analysis", _canned)
+    report_id = await save_chess_report(
+        guild_id=42, channel_id=100, white_id=_HUMAN, black_id=_PVP_OPPONENT,
+        winner_id=winner_id, result="1-0", pgn=_pgn_fixture(),
+        final_fen=chess.STARTING_FEN, elo=None,
+    )
+    channel = FakeChannel(ch_id=100)
+    channel.mention = "#chess"
+    await ca.analyze_and_post(
+        bot=_StubBot(), channel=channel, guild=FakeGuild(gid=42),
+        report_id=report_id, pgn=_pgn_fixture(),
+        white_id=_HUMAN, black_id=_PVP_OPPONENT, winner_id=winner_id,
+        elo=None, white_name="Winner", black_name="Loser",
+        embed_msg_id=None,
+    )
+    return channel
+
+
+async def test_pvp_win_awards_losers_est_elo_to_total_only(db, monkeypatch):
+    from src.games.bot_chess_rewards import chess_ranks
+
+    channel = await _run_pvp_pipeline(
+        monkeypatch, analysis=_pvp_analysis(loser_est=1600), winner_id=_HUMAN,
+    )
+
+    max_elo, total = chess_ranks(_HUMAN)
+    assert total == 1600          # loser's est. strength credited
+    assert max_elo == 0           # 🏅 stays a bot-ladder stat
+    assert chess_ranks(_PVP_OPPONENT) == (0, 0)   # loser gets nothing
+    # Award line rides in the analysis embed.
+    embed = channel.send.call_args.kwargs["embed"]
+    assert "+1,600" in embed.description
+    assert "Winner" in embed.description
+
+
+async def test_pvp_draw_awards_nothing(db, monkeypatch):
+    from src.games.bot_chess_rewards import chess_ranks
+
+    await _run_pvp_pipeline(
+        monkeypatch, analysis=_pvp_analysis(), winner_id=None,
+    )
+
+    assert chess_ranks(_HUMAN) == (0, 0)
+    assert chess_ranks(_PVP_OPPONENT) == (0, 0)
+
+
+async def test_pvp_no_award_when_loser_ungraded(db, monkeypatch):
+    """est_elo None (game too short/one-sided to grade) → no award, which
+    also makes insta-forfeit farming worthless."""
+    from src.games.bot_chess_rewards import chess_ranks
+
+    await _run_pvp_pipeline(
+        monkeypatch, analysis=_pvp_analysis(loser_est=None), winner_id=_HUMAN,
+    )
+
+    assert chess_ranks(_HUMAN) == (0, 0)
+
+
+async def test_bot_game_does_not_double_award_via_analysis(db, monkeypatch):
+    """Bot games (elo set) are paid by award_bot_defeat at game end; the
+    analysis pipeline must not add a second cumulative credit."""
+    from src.games.bot_chess_rewards import chess_ranks
+
+    report_id = await _seed_report(elo=1500)
+    await _run_pipeline(
+        monkeypatch, analysis=_suspicious_analysis(), elo=1500,
+        report_id=report_id, log_channel=FakeChannel(ch_id=555),
+    )
+
+    assert chess_ranks(_HUMAN) == (0, 0)
+
+
+async def test_award_pvp_defeat_bumps_total_never_max(db):
+    from src.games.bot_chess_rewards import award_pvp_defeat, chess_ranks
+
+    _state.chess_user_stats[str(_HUMAN)] = {
+        "max_elo_defeated": 900, "total_elo_defeated": 5_000,
+        "bonus_bins": set(), "elo_spent": 1_000,
+    }
+    gain = await award_pvp_defeat(user_id=_HUMAN, opponent_est_elo=2_000)
+
+    assert gain == 2_000
+    assert chess_ranks(_HUMAN) == (900, 7_000)
+    assert await _read_elo_row() == (900, 7_000)
+
+
+async def _read_elo_row():
+    import src.persistence as _persistence
+    pool = await _persistence.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT max_elo_defeated, total_elo_defeated "
+                "FROM chess_user_stats WHERE user_id=?", (_HUMAN,),
+            )
+            return await cur.fetchone()

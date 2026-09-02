@@ -47,6 +47,7 @@ import discord
 
 from src import state
 from src.games.chess_bot import _resolve_stockfish_path, MAIA_ELO_MIN
+from src.games.bot_chess_rewards import RANK_TOTAL_EMOJI, award_pvp_defeat
 from src.helpers import emb, C_GREY, C_RED
 from src.persistence import count_flagged_reports, save_chess_analysis
 
@@ -530,9 +531,38 @@ async def analyze_and_post(
     except Exception as e:
         logging.error(f"chess analysis save failed for report {report_id}: {e}", exc_info=True)
 
+    # PvP win: the defeated opponent's estimated strength this game becomes
+    # spendable chess Elo for the winner (cumulative 🏆 only — the 🏅 max
+    # stays a bot-ladder stat; award_bot_defeat covers bot games at game
+    # end). elo is None exactly for PvP reports. est_elo is None for games
+    # too short/one-sided to grade, which also makes insta-forfeit farming
+    # worthless, and a thrown game grades its thrower near the floor.
+    pvp_award_line = ""
+    if (
+        elo is None and winner_id is not None
+        and bot_user_id not in (white_id, black_id)
+    ):
+        loser_side = analysis.get("black" if winner_id == white_id else "white") or {}
+        loser_est = loser_side.get("est_elo")
+        if loser_est:
+            try:
+                gain = await award_pvp_defeat(
+                    user_id=int(winner_id), opponent_est_elo=int(loser_est),
+                )
+                if gain > 0:
+                    winner_name = white_name if winner_id == white_id else black_name
+                    pvp_award_line = (
+                        f"{winner_name} earns **+{gain:,}** {RANK_TOTAL_EMOJI} "
+                        "spendable Elo (opponent's est. strength — `!chess shop`)"
+                    )
+            except Exception as e:
+                logging.error(f"pvp elo award failed for report {report_id}: {e}", exc_info=True)
+
     # Show the stats where the game just ended: edit the game-over embed in
     # place, or fall back to a small follow-up embed if it's gone.
     block = format_analysis_lines(analysis, white_name, black_name)
+    if pvp_award_line:
+        block = f"{block}\n{pvp_award_line}" if block else pvp_award_line
     if block:
         edited = False
         if embed_msg_id is not None:
