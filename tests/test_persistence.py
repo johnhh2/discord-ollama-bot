@@ -956,6 +956,39 @@ async def test_grant_xp_blocks_until_init_done(db):
     assert _state.leveling["42"]["8002"]["xp"] > 9_999
 
 
+async def test_drain_house_blocks_until_init_done(db):
+    """The lottery draw calls drain_bot_balance_into_lottery from a scheduled
+    task. A tick before init_db_state has loaded guild_house would find an
+    empty in-memory pot, transfer 0, and start the fresh lottery without the
+    house money while the DB row keeps its coins (the 9/1/2026 draws did
+    exactly this). The drain must block on init_done."""
+    import asyncio
+    import src.economy as _economy
+
+    # Seed a real house pot in the DB and clear in-memory state to simulate a
+    # restart where init_db_state hasn't run yet.
+    _state.economy["guild_house"]["77"] = 123_456
+    await _persistence.save_guild_house(77)
+    _state.economy["guild_house"].clear()
+    _persistence.init_done.clear()
+
+    lottery = {"prize_pool": 50_000, "players": {}}
+    drain_task = asyncio.create_task(
+        _economy.drain_bot_balance_into_lottery(lottery, 77)
+    )
+    await asyncio.sleep(0.05)
+    assert not drain_task.done(), "drain should block on init_done"
+
+    # Simulate init_db_state finishing: load the real row, then set the event.
+    _persistence._init_db_state_done = False
+    await _persistence.init_db_state()  # also sets init_done
+
+    transferred = await drain_task
+    assert transferred == 123_456
+    assert lottery["prize_pool"] == 173_456
+    assert _state.economy["guild_house"]["77"] == 0
+
+
 # ── restart_msg ───────────────────────────────────────────────────────────────
 
 async def test_restart_msg_save_load_clear_cycle(db):

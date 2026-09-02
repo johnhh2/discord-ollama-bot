@@ -270,6 +270,33 @@ async def test_lottery_legacy_week_key_transitions_to_monthly(db):
         ) is True
 
 
+async def test_lottery_scheduler_before_loop_waits_for_init(db):
+    """A restart landing near a 1st-of-month 6pm draw: the scheduler must not
+    tick until init_db_state has loaded guild_house into memory, or the
+    draw's house drain sees an empty pot and the fresh lottery starts
+    without it (this is how the 9/1/2026 pools missed their house money).
+    """
+    import asyncio
+    from src.cogs.lottery_cog import LotteryCog
+
+    before = LotteryCog.lottery_scheduler._before_loop
+    assert before is not None, "lottery scheduler must gate on ready + init"
+
+    class _Bot:
+        async def wait_until_ready(self):
+            return None
+
+    class _Cog:
+        bot = _Bot()
+
+    _persistence.init_done.clear()
+    gate = asyncio.create_task(before(_Cog()))
+    await asyncio.sleep(0.05)
+    assert not gate.done(), "before_loop must block until init_done is set"
+    _persistence.init_done.set()
+    await asyncio.wait_for(gate, timeout=1)
+
+
 # ── insurance ─────────────────────────────────────────────────────────────────
 
 async def test_insurance_expired_entries_dropped_on_init_db_state(db):

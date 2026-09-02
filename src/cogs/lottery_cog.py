@@ -152,6 +152,18 @@ class LotteryCog(commands.Cog):
             except Exception:
                 logging.exception("[lottery] scheduler failed for guild %s", guild.id)
 
+    @lottery_scheduler.before_loop
+    async def _before_lottery_scheduler(self):
+        # wait_until_ready gates only the gateway; init_db_state (which loads
+        # guild_house into state.economy) finishes later, inside on_ready. A
+        # tick in that window finds an empty in-memory house pot, so a
+        # 1st-of-month draw drains 0 into the fresh lottery while the DB row
+        # keeps its coins — the 9/1/2026 draws started without their house
+        # pots exactly this way (backfilled by migration 0059).
+        await self.bot.wait_until_ready()
+        import src.persistence as _pkg
+        await _pkg.init_done.wait()
+
     async def _run_guild_schedule(self, guild, now):
         cfg = get_guild_cfg(guild.id)
         lottery_channel_id = cfg.get("lottery_channel")

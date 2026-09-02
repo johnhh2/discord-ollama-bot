@@ -120,6 +120,13 @@ async def add_guild_house(guild_id: int, amount: int):
 async def drain_bot_balance_into_lottery(lottery: dict, guild_id: int) -> int:
     """Transfer this guild's house balance into the lottery prize pool. Returns the amount transferred."""
     from src.persistence import save_guild_house
+    # Block until init_db_state has loaded guild_house from the DB. Before
+    # that, the in-memory pot reads 0 and the drain silently transfers
+    # nothing — the fresh lottery starts without the house money while the
+    # DB row keeps its coins (migration 0059 backfilled the 9/1/2026 draws
+    # that hit this).
+    import src.persistence as _pkg
+    await _pkg.init_done.wait()
     state.economy.setdefault("guild_house", {})
     key = str(guild_id)
     house_balance = state.economy["guild_house"].get(key, 0)
