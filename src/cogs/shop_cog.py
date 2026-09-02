@@ -36,7 +36,7 @@ from src.persistence import (
 from src.artifacts import ARTIFACTS, owned_qty, owned_artifact_count
 from src.chess_shop import (
     CHESS_SHOP_ITEMS, PIECE_SET_ITEMS, BOARD_ITEMS,
-    has_chess_unlock, find_chess_item,
+    has_chess_unlock, find_chess_item, elo_requirement_met,
 )
 from src.games.bot_chess_rewards import (
     RANK_TOTAL_EMOJI, chess_elo_balance, chess_ranks,
@@ -514,6 +514,11 @@ class ShopCog(commands.Cog):
                         lines.append(f"**{i}.** {it['name']} — ✅ default")
                     elif has_chess_unlock(uid, it["id"]):
                         lines.append(f"**{i}.** {it['name']} — ✅ **Owned**")
+                    elif not elo_requirement_met(uid, it):
+                        lines.append(
+                            f"~~**{i}.** {it['name']} — **{it['cost']:,} {RANK_TOTAL_EMOJI}**~~ "
+                            f"🔒 **Beat a {it['req_max_elo']:,}+ Elo bot**"
+                        )
                     else:
                         lines.append(
                             f"**{i}.** {it['name']} — **{it['cost']:,} {RANK_TOTAL_EMOJI}**"
@@ -544,6 +549,16 @@ class ShopCog(commands.Cog):
             return
         if item["cost"] == 0 or has_chess_unlock(uid, item["id"]):
             await ctx.send(embed=emb("♟️ Already Yours", f"You already have **{item['name']}**.", C_PURPLE))
+            return
+
+        if not elo_requirement_met(uid, item):
+            await ctx.send(embed=emb(
+                "🔒 Elo Locked",
+                f"**{item['name']}** unlocks after you've beaten a "
+                f"**{item['req_max_elo']:,}+ Elo** bot at least once "
+                f"(`!chess <elo>`). Spendable Elo alone isn't enough.",
+                C_RED,
+            ))
             return
 
         cost = 0 if uid in state.godmode_users else item["cost"]

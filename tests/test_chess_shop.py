@@ -27,9 +27,9 @@ from tests.fakes.discord import FakeCtx, FakeMember
 pytestmark = pytest.mark.asyncio
 
 
-def _give_elo(uid: int, total: int, spent: int = 0):
+def _give_elo(uid: int, total: int, spent: int = 0, max_elo: int = 1500):
     _state.chess_user_stats[str(uid)] = {
-        "max_elo_defeated": 1500,
+        "max_elo_defeated": max_elo,
         "total_elo_defeated": total,
         "bonus_bins": set(),
         "elo_spent": spent,
@@ -285,6 +285,64 @@ async def test_concurrent_buys_charge_once(db, monkeypatch):
     assert await _read_db_elo_spent(uid) == 15_000
     titles = [e.title for e in ctx1.sent_embeds + ctx2.sent_embeds]
     assert titles.count("♟️ Unlocked") == 1
+
+
+async def test_prestige_gate_marks_all_20k_items():
+    for it in CHESS_SHOP_ITEMS:
+        expected = 1_100 if it["cost"] >= 20_000 else 0
+        assert it["req_max_elo"] == expected, it["name"]
+
+
+async def test_buy_20k_item_requires_1100_bot_win(db):
+    uid = 6301
+    _give_elo(uid, 50_000, max_elo=1_000)   # rich, but never beat 1100+
+    cog = ShopCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=uid))
+
+    await cog.shop_chess.callback(cog, ctx, "buy", "pixel")
+
+    assert not has_chess_unlock(uid, "pieces:pixel")
+    assert chess_elo_balance(uid) == 50_000
+    assert "Elo Locked" in ctx.sent_embeds[-1].title
+
+
+async def test_buy_20k_item_at_exact_1100_allowed(db):
+    uid = 6302
+    _give_elo(uid, 50_000, max_elo=1_100)
+    cog = ShopCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=uid))
+
+    await cog.shop_chess.callback(cog, ctx, "buy", "pixel")
+
+    assert has_chess_unlock(uid, "pieces:pixel")
+    assert chess_elo_balance(uid) == 30_000
+
+
+async def test_cheaper_items_ignore_prestige_gate(db):
+    uid = 6303
+    _give_elo(uid, 50_000, max_elo=400)     # low ceiling, lots of grinding
+    cog = ShopCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=uid))
+
+    await cog.shop_chess.callback(cog, ctx, "buy", "merida")
+
+    assert has_chess_unlock(uid, "pieces:merida")
+
+
+async def test_listing_strikes_through_gated_items(db):
+    uid = 6304
+    _give_elo(uid, 50_000, max_elo=1_000)
+    cog = ShopCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=uid))
+
+    await cog.shop_chess.callback(cog, ctx)
+
+    desc = ctx.sent_embeds[0].description
+    assert "Beat a 1,100+ Elo bot" in desc
+    assert "~~" in desc
+    # Ungated items are not struck through: Merida's line has no strikes.
+    merida_line = next(ln for ln in desc.split("\n") if "Merida" in ln)
+    assert "~~" not in merida_line
 
 
 async def test_unlocks_reload_from_db(db):

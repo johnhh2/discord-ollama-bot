@@ -30,7 +30,7 @@ from src.persistence import (
 )
 from src.chess_shop import (
     BOARD_ITEMS, PIECE_SET_ITEMS,
-    equipped_cosmetics, find_chess_item, has_chess_unlock,
+    elo_requirement_met, equipped_cosmetics, find_chess_item, has_chess_unlock,
 )
 from src.games.ttt_c4 import _setup_pvp_game
 from src.games import chess_engine, chess_render, chess_bot, chess_analysis
@@ -1025,7 +1025,11 @@ class ChessCog(commands.Cog):
                 elif has_chess_unlock(uid, it["id"]):
                     lines.append(f"✅ {it['name']}")
                 else:
-                    lines.append(f"🔒 {it['name']} — {it['cost']:,} {RANK_TOTAL_EMOJI}")
+                    gate = (
+                        f" · beat a {it['req_max_elo']:,}+ Elo bot"
+                        if not elo_requirement_met(uid, it) else ""
+                    )
+                    lines.append(f"🔒 {it['name']} — {it['cost']:,} {RANK_TOTAL_EMOJI}{gate}")
             if section_items is PIECE_SET_ITEMS:
                 lines.append("")
                 lines.append("**Board colors**")

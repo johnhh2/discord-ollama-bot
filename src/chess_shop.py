@@ -43,6 +43,25 @@ BOARD_ITEMS = [
 # sections and `!shop chess buy <n>` is unambiguous.
 CHESS_SHOP_ITEMS = PIECE_SET_ITEMS + BOARD_ITEMS
 
+# Prestige gate: every 20k item additionally requires having beaten an
+# 1100+ Elo bot (the Maia boundary) at least once — max_elo_defeated, not
+# spendable balance. Derived from cost so future 20k items inherit the gate.
+PRESTIGE_COST = 20_000
+PRESTIGE_MIN_MAX_ELO = 1_100
+for _it in CHESS_SHOP_ITEMS:
+    _it["req_max_elo"] = PRESTIGE_MIN_MAX_ELO if _it["cost"] >= PRESTIGE_COST else 0
+
+
+def elo_requirement_met(uid: int, item: dict) -> bool:
+    """Whether the user clears the item's prestige gate (best single bot
+    Elo defeated, lifetime — spending Elo can never lose it)."""
+    req = item.get("req_max_elo", 0)
+    if req <= 0:
+        return True
+    from src.games.bot_chess_rewards import chess_ranks
+    max_elo, _ = chess_ranks(uid)
+    return max_elo >= req
+
 # Every catalog key must exist in the renderer, so an unlock can never point
 # at something render_board_png doesn't know (module-load assert, same
 # pattern as PROPERTY_UPGRADES in src/properties.py).
