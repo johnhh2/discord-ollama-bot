@@ -1053,14 +1053,30 @@ class ChessCog(commands.Cog):
                     lines.append("")
                     lines.append("**Board colors**")
             lines.append("")
-            lines.append("Buy with `!chess shop buy <number or name>`.")
+            lines.append(
+                "Buy with `!chess shop buy <number or name>` · "
+                "preview with `!chess shop view <number or name>`."
+            )
             await send_ephemeral(ctx, embed=emb("♟️ Chess Shop", "\n".join(lines), C_PURPLE))
+            return
+
+        if args[0].lower() in ("view", "preview") and len(args) >= 2:
+            item = find_chess_item(" ".join(args[1:]))
+            if item is None:
+                await ctx.send(embed=emb(
+                    "❌ Unknown Item",
+                    f"Pick a number between 1 and {len(CHESS_SHOP_ITEMS)}, or an item name (see `!chess shop`).",
+                    C_RED,
+                ))
+                return
+            await self._send_shop_preview(ctx, item)
             return
 
         if args[0].lower() != "buy" or len(args) < 2:
             await ctx.send(embed=emb(
                 "♟️ Chess Shop",
-                "Usage: `!chess shop` to browse, `!chess shop buy <number or name>` to unlock.",
+                "Usage: `!chess shop` to browse, `!chess shop buy <number or name>` to unlock, "
+                "`!chess shop view <number or name>` to preview.",
                 C_PURPLE,
             ))
             return
@@ -1138,6 +1154,60 @@ class ChessCog(commands.Cog):
             f"Equip it with `!chess {item['name'].lower()}`.",
             C_GREEN,
         ))
+
+    # A developed position that shows every piece type on both square
+    # colors — what the gallery used to showcase the sets. The lastmove
+    # squares (g1→f3) also show off the board theme's move tint.
+    _PREVIEW_FEN = "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 6 5"
+
+    async def _send_shop_preview(self, ctx: commands.Context, item: dict):
+        """Render a sample board for a shop item, combined with the user's
+        currently equipped item in the other slot — so the preview shows
+        exactly what they'd get."""
+        uid = ctx.author.id
+        eq_pieces, eq_board = equipped_cosmetics(uid)
+        if item in PIECE_SET_ITEMS:
+            kind, piece_set, theme = "piece set", item["key"], eq_board
+        else:
+            kind, piece_set, theme = "board color", eq_pieces, item["key"]
+        try:
+            png = chess_render.render_board_png(
+                chess.Board(self._PREVIEW_FEN),
+                last_move=chess.Move.from_uci("g1f3"),
+                piece_set=piece_set, theme=theme,
+            )
+        except RuntimeError as e:
+            await ctx.send(embed=emb("❌ Render Failed", f"Couldn't render preview: {e}", C_RED))
+            return
+
+        if item["cost"] == 0:
+            status = "Default — everyone has it."
+        elif has_chess_unlock(uid, item["id"]):
+            status = f"✅ Owned — equip with `!chess {item['name'].lower()}`."
+        elif not elo_requirement_met(uid, item):
+            status = (
+                f"~~**{item['cost']:,} {RANK_TOTAL_EMOJI}**~~ "
+                f"🔒 Beat a {item['req_max_elo']:,}+ Elo bot first."
+            )
+        else:
+            status = (
+                f"**{item['cost']:,} {RANK_TOTAL_EMOJI}** — "
+                f"`!chess shop buy {item['name'].lower()}` to unlock."
+            )
+        other = (
+            f"your equipped board ({eq_board})" if kind == "piece set"
+            else f"your equipped pieces ({eq_pieces})"
+        )
+        preview_embed = emb(
+            f"♟️ Preview — {item['name']} ({kind})",
+            f"{status}\nShown with {other}.",
+            C_PURPLE,
+        )
+        preview_embed.set_image(url=f"attachment://{BOARD_IMG_FILENAME}")
+        await ctx.send(
+            embed=preview_embed,
+            file=discord.File(io.BytesIO(png), filename=BOARD_IMG_FILENAME),
+        )
 
     # ── !chess inventory: owned + equipped cosmetics ────────────────────────
     async def _cmd_inventory(self, ctx: commands.Context):

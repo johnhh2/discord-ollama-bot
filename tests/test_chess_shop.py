@@ -345,6 +345,89 @@ async def test_listing_strikes_through_gated_items(db):
     assert "~~" not in merida_line
 
 
+# ── Previews ──────────────────────────────────────────────────────────────────
+
+def _capture_render(monkeypatch) -> dict:
+    captured: dict = {}
+
+    def _fake_render(board, **kwargs):
+        captured.update(kwargs)
+        return b"\x89PNG\r\n\x1a\nfake"
+    monkeypatch.setattr(_chess_mod.chess_render, "render_board_png", _fake_render)
+    return captured
+
+
+async def test_view_piece_set_renders_with_equipped_board(db, monkeypatch):
+    uid = 6401
+    _give_elo(uid, 0)
+    _state.chess_equipped[uid] = {"pieces": "cburnett", "board": "green"}
+    captured = _capture_render(monkeypatch)
+    cog = ChessCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=uid))
+
+    await cog.cmd_chess.callback(cog, ctx, "shop", "view", "wood")
+
+    assert captured["piece_set"] == "rhosgfx"
+    assert captured["theme"] == "green"        # combined with equipped board
+    e = ctx.sent_embeds[-1]
+    assert "Preview — Wood" in e.title
+    assert "10,000" in e.description           # not owned: shows price + buy hint
+    assert "buy wood" in e.description
+
+
+async def test_view_board_renders_with_equipped_pieces(db, monkeypatch):
+    uid = 6402
+    _give_elo(uid, 0)
+    _state.chess_unlocks[uid] = {"pieces:pixel", "board:blue"}
+    _state.chess_equipped[uid] = {"pieces": "pixel", "board": "default"}
+    captured = _capture_render(monkeypatch)
+    cog = ChessCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=uid))
+
+    await cog.cmd_chess.callback(cog, ctx, "shop", "view", "blue")
+
+    assert captured["theme"] == "blue"
+    assert captured["piece_set"] == "pixel"    # combined with equipped pieces
+    e = ctx.sent_embeds[-1]
+    assert "Preview — Blue" in e.title
+    assert "Owned" in e.description            # owned: equip hint, no price
+    assert "!chess blue" in e.description
+
+
+async def test_view_gated_item_shows_lock(db, monkeypatch):
+    uid = 6403
+    _give_elo(uid, 50_000, max_elo=1_000)
+    _capture_render(monkeypatch)
+    cog = ChessCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=uid))
+
+    await cog.cmd_chess.callback(cog, ctx, "shop", "view", "pixel")
+
+    assert "1,100+ Elo bot" in ctx.sent_embeds[-1].description
+
+
+async def test_view_unknown_item_rejected(db, monkeypatch):
+    _capture_render(monkeypatch)
+    cog = ChessCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=6404))
+
+    await cog.cmd_chess.callback(cog, ctx, "shop", "view", "nope")
+
+    assert "Unknown Item" in ctx.sent_embeds[-1].title
+
+
+async def test_view_render_failure_reports_cleanly(db, monkeypatch):
+    def _boom(board, **kwargs):
+        raise RuntimeError("no cairo")
+    monkeypatch.setattr(_chess_mod.chess_render, "render_board_png", _boom)
+    cog = ChessCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=6405))
+
+    await cog.cmd_chess.callback(cog, ctx, "shop", "view", "wood")
+
+    assert "Render Failed" in ctx.sent_embeds[-1].title
+
+
 async def test_unlocks_reload_from_db(db):
     """chess_unlocks and elo_spent survive a state wipe + init_db_state."""
     uid = 6210
