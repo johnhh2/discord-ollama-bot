@@ -1414,10 +1414,11 @@ class ChessCog(commands.Cog):
                 except Exception as e:
                     logging.error(f"bot_chess_rewards.award_bot_defeat failed: {e}", exc_info=True)
 
-            # Free weekly lottery ticket(s) for any human chess win — PvP or
-            # bot. The cog tops the winner up to the win's weekly ceiling
-            # (any win 1, 600+ Elo bot 2, 1100+ bot 3). A bot game with no
-            # bot_user reference can't confirm the winner is human, so skip.
+            # Free weekly lottery ticket(s) for beating a 600+ Elo bot — the
+            # cog tops the winner up to the weekly ceiling (2, shared across
+            # all servers) and grants nothing for PvP or sub-600 wins. A bot
+            # game with no bot_user reference can't confirm the winner is
+            # human, so skip.
             is_human_win = (
                 bot_user is not None and winner_id != bot_user.id
             ) or (bot_user is None and "elo" not in game)

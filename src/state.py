@@ -70,8 +70,10 @@ gambler_streak: dict = {}
 # {"daily_day": str|None, "chess_week": str|None, "chess_tickets": int}.
 # daily_day is the gameplay-day the user last bought their once-a-day 1,000 🪙
 # ticket in that guild; chess_week/chess_tickets count the free chess-win
-# tickets granted there in the current ISO week (cumulative weekly ceiling —
-# see chess_ticket_ceiling in src/cogs/lottery_cog.py). Gate checks claim
+# tickets granted there in the current ISO week. The chess ceiling is global:
+# the gate sums a user's rows across all guilds for the week (cumulative
+# weekly ceiling — see chess_ticket_ceiling in src/cogs/lottery_cog.py).
+# Gate checks claim
 # these synchronously (see CLAUDE.md concurrency rules). Source of truth is
 # the lottery_ticket_grants table; loaded at boot.
 lottery_ticket_grants: dict = {}

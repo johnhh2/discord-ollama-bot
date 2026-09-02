@@ -37,23 +37,24 @@ DAILY_TICKET_PRICE = 1000
 TICKET_POOL_SHARE = 700
 TICKET_HOUSE_SHARE = DAILY_TICKET_PRICE - TICKET_POOL_SHARE
 NEW_PLAYER_POOL_BONUS = 1000
-# Free weekly chess-win tickets, granted as a cumulative weekly ceiling (per
-# server, like the daily): any chess win — PvP included — is worth 1 ticket,
-# beating a 600+ Elo bot 2, a 1100+ bot 3. Each win only tops the winner up
-# to its ceiling: beating 100 Elo then 600 Elo pays 1 + 1, not 1 + 2, and
-# nothing ever exceeds CHESS_TICKET_WEEKLY_CAP in one week.
-CHESS_TICKET_BOT_TIERS = ((1100, 3), (600, 2))
-CHESS_TICKET_WEEKLY_CAP = 3
+# Free weekly chess-win tickets, granted as a cumulative weekly ceiling:
+# only beating a 600+ Elo bot rewards, topping the winner up to 2 tickets in
+# the current ISO week. PvP wins and sub-600 bot wins grant nothing. The
+# ceiling is GLOBAL per user — wins anywhere count against one weekly cap
+# (each granted ticket still lands in the pot of the server it was won in).
+CHESS_TICKET_BOT_TIERS = ((600, 2),)
+CHESS_TICKET_WEEKLY_CAP = 2
 
 
 def chess_ticket_ceiling(bot_elo: "int | None") -> int:
     """Weekly ticket ceiling a chess win at this strength tops the winner up
-    to. `bot_elo` is None for PvP wins."""
+    to. `bot_elo` is None for PvP wins, which (like sub-600 bot wins) grant
+    nothing."""
     if bot_elo is not None:
         for threshold, ceiling in CHESS_TICKET_BOT_TIERS:
             if bot_elo >= threshold:
                 return ceiling
-    return 1
+    return 0
 # The reworked ticket economy starts with the September 2026 lottery. The
 # August 2026 pot still holds thousands of old 10-coin bulk tickets, so
 # selling a 1,000 🪙 ticket (or granting a free chess one) into it would be a
@@ -354,14 +355,19 @@ class LotteryCog(commands.Cog):
 
     async def award_chess_tickets(self, guild, uid: int, bot_elo: "int | None" = None) -> int:
         """Free weekly lottery tickets for a chess win in `guild`, topping the
-        winner up to the win's ceiling (chess_ticket_ceiling: any win 1,
-        600+ Elo bot 2, 1100+ bot 3) within the current ISO week. Pass
-        bot_elo=None for PvP wins. Returns how many tickets were granted
-        (0 when already at the ceiling or lottery disabled).
+        winner up to the win's ceiling (chess_ticket_ceiling: 600+ Elo bot 2;
+        PvP and sub-600 bot wins 0) within the current ISO week. The weekly
+        counter is global — tickets already granted in any other guild this
+        week count against the ceiling, though each new ticket still goes
+        into this guild's pot. Returns how many tickets were granted (0 when
+        already at the ceiling or lottery disabled).
 
         Called from the chess endgame path (src/games/chess.py) after a
         human wins a game.
         """
+        ceiling = chess_ticket_ceiling(bot_elo)
+        if ceiling <= 0:
+            return 0
         cfg = get_guild_cfg(guild.id)
         if not cfg.get("lottery_channel"):
             return 0
@@ -371,16 +377,23 @@ class LotteryCog(commands.Cog):
             return 0
 
         # Claim the weekly counter synchronously before any await; roll back
-        # if the grant fails so the win isn't burned for nothing.
+        # if the grant fails so the win isn't burned for nothing. Tickets
+        # already granted this week are summed across every guild (the bonus
+        # is bot-wide), but the claim lands in this guild's row.
         week = lottery_week_key()
         row = _grant_row(guild.id, uid)
         prior_week, prior_count = row.get("chess_week"), int(row.get("chess_tickets") or 0)
+        week_total = sum(
+            int(r.get("chess_tickets") or 0)
+            for (_g, u), r in state.lottery_ticket_grants.items()
+            if u == uid and r.get("chess_week") == week
+        )
+        grant = ceiling - week_total
+        if grant <= 0:
+            return 0
         if prior_week != week:
             row["chess_week"] = week
             row["chess_tickets"] = 0
-        grant = chess_ticket_ceiling(bot_elo) - row["chess_tickets"]
-        if grant <= 0:
-            return 0
         row["chess_tickets"] += grant
 
         await _ensure_user(uid)
@@ -455,8 +468,8 @@ class LotteryCog(commands.Cog):
         info += f"**Your Tickets:** {user_tickets:,} / {total_tickets:,} total\n\n"
         info += f"**Today's ticket** ({DAILY_TICKET_PRICE:,} 🪙, 1 per day per server): {daily_status}\n"
         info += (
-            "**Chess bonus:** free weekly 🎟️ for chess wins — any win 1, a 600+ "
-            f"Elo bot 2, 1100+ 3 (each win tops you up to its tier, max {CHESS_TICKET_WEEKLY_CAP}/week)"
+            "**Chess bonus:** free weekly 🎟️ for beating a 600+ Elo chess bot — "
+            f"tops you up to {CHESS_TICKET_WEEKLY_CAP}/week, counted across all servers"
         )
 
         await ctx.send(embed=emb(f"🎰 Current Lottery • ends <t:{timestamp}:R>", info, C_PURPLE))
