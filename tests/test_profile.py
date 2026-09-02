@@ -20,7 +20,7 @@ def _profile_desc(ctx: FakeCtx) -> str:
     return ctx.sent_embeds[-1].description
 
 
-async def test_profile_shows_wallet_tickets_and_empty_chess_ranks(db):
+async def test_profile_shows_wallet_and_hides_chess_ranks_without_defeats(db):
     cog = ProfileCog(bot=_StubBot())
     member = FakeMember(uid=9100, display_name="Alice")
     ctx = FakeCtx(author=member, guild=FakeGuild(gid=42))
@@ -31,8 +31,8 @@ async def test_profile_shows_wallet_tickets_and_empty_chess_ranks(db):
     desc = _profile_desc(ctx)
     assert "12,345" in desc
     assert "Lottery tickets: **0**" in desc
-    assert "Chess Ranks" in desc
-    assert "No bot defeats yet" in desc
+    # No bot defeats → the whole chess section is omitted.
+    assert "Chess Ranks" not in desc
 
 
 async def test_profile_shows_chess_ranks(db):
@@ -49,6 +49,45 @@ async def test_profile_shows_chess_ranks(db):
     assert "Total Elo defeated: **2,700**" in desc
     # The bonus-progress line was deliberately dropped from the profile.
     assert "First-defeat bonuses" not in desc
+
+
+async def test_profile_level_line_shows_global_level_without_lvl_hint(db):
+    """The level line drops the !lvl hint and adds the cross-guild global level."""
+    cog = ProfileCog(bot=_StubBot())
+    member = FakeMember(uid=9107, display_name="Eve")
+    ctx = FakeCtx(author=member, guild=FakeGuild(gid=42))
+    # 150 XP here (level 1 → display 2); 100 XP elsewhere → 250 global
+    # (level 2 → display 3, thresholds at 100 / 202 / 309 XP).
+    _state.leveling.setdefault("42", {})["9107"] = {"xp": 150, "level": 1}
+    _state.leveling.setdefault("77", {})["9107"] = {"xp": 100, "level": 0}
+
+    await cog.cmd_profile.callback(cog, ctx, target=None)
+
+    desc = _profile_desc(ctx)
+    assert "Level **2**" in desc
+    assert "Global level **3**" in desc
+    assert "!lvl" not in desc
+
+
+async def test_profile_counts_records_held_in_guild(db):
+    from src.persistence import save_records
+
+    cog = ProfileCog(bot=_StubBot())
+    member = FakeMember(uid=9108, display_name="Fay")
+    ctx = FakeCtx(author=member, guild=FakeGuild(gid=42))
+    await save_records(42, {
+        "slots": {"value": 500, "holder_id": 9108, "holder_name": "Fay"},
+        "crime": {"value": 300, "holder_id": 9108, "holder_name": "Fay"},
+        "flip": {"value": 900, "holder_id": 1234, "holder_name": "Someone"},
+    })
+    # A record in another guild doesn't count here.
+    await save_records(77, {
+        "lottery": {"value": 100, "holder_id": 9108, "holder_name": "Fay"},
+    })
+
+    await cog.cmd_profile.callback(cog, ctx, target=None)
+
+    assert "Records held: **2**" in _profile_desc(ctx)
 
 
 async def test_profile_targets_other_member(db):
@@ -92,4 +131,4 @@ async def test_profile_works_in_dm(db):
 
     desc = _profile_desc(ctx)
     assert "Lottery tickets" not in desc
-    assert "Chess Ranks" in desc
+    assert "Chess Ranks" not in desc

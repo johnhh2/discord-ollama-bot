@@ -15,15 +15,13 @@ from src import state
 from src.artifacts import owned_artifact_count
 from src.economy import _ct_today, get_balance, get_savings_value
 from src.games.bot_chess_rewards import (
-    FIRST_DEFEAT_BONUS,
-    FIRST_DEFEAT_BONUS_MIN_ELO,
     RANK_MAX_EMOJI,
     RANK_TOTAL_EMOJI,
     chess_ranks,
 )
 from src.helpers import emb, C_BLUE, C_GREY, OptionalMember
-from src.leveling import display_level
-from src.persistence import load_lottery
+from src.leveling import display_level, level_from_xp
+from src.persistence import load_lottery, load_records
 from src.properties import owned_properties, portfolio_value
 from src.streaks import effective_streak, get_command_streak_entry
 
@@ -54,11 +52,23 @@ class ProfileCog(commands.Cog):
             tickets = lottery.get("players", {}).get(str(uid), 0)
             lines.append(f"🎟️ Lottery tickets: **{tickets:,}**")
 
+            records = await load_records(ctx.guild.id)
+            held = sum(
+                1 for rec in records.values()
+                if str(rec.get("holder_id")) == str(uid)
+            )
+            lines.append(f"🏆 Records held: **{held:,}**")
+
             lvl_rec = state.leveling.get(str(ctx.guild.id), {}).get(str(uid))
             if lvl_rec is not None:
+                global_xp = sum(
+                    int(g.get(str(uid), {}).get("xp", 0) or 0)
+                    for g in state.leveling.values()
+                )
                 lines.append(
                     f"📊 Level **{display_level(lvl_rec.get('level', 0))}** "
-                    f"— {lvl_rec.get('xp', 0):,} XP (`!lvl`)"
+                    f"— {lvl_rec.get('xp', 0):,} XP · "
+                    f"🌐 Global level **{display_level(level_from_xp(global_xp))}**"
                 )
 
         streak = effective_streak(get_command_streak_entry(str(uid)), _ct_today())
@@ -76,18 +86,12 @@ class ProfileCog(commands.Cog):
         if float(user_row.get("jail_until", 0) or 0) > time.time():
             lines.append(f"⛓️ In jail until <t:{int(user_row['jail_until'])}:R>")
 
-        # ── Chess ranks ───────────────────────────────────────────────────
+        # ── Chess ranks (only once the user has beaten a bot) ─────────────
         max_elo, total_elo = chess_ranks(uid)
-        lines.append("\n**♟️ Chess Ranks**")
         if max_elo > 0:
+            lines.append("\n**♟️ Chess Ranks**")
             lines.append(f"{RANK_MAX_EMOJI} Max Elo defeated: **{max_elo:,}**")
             lines.append(f"{RANK_TOTAL_EMOJI} Total Elo defeated: **{total_elo:,}**")
-        else:
-            lines.append(
-                f"No bot defeats yet — `!chessbot [elo]` to earn ranks "
-                f"(+{FIRST_DEFEAT_BONUS:,} 🪙 first-win bonus per Elo "
-                f"{FIRST_DEFEAT_BONUS_MIN_ELO}+ rank)."
-            )
 
         embed = discord.Embed(
             title=f"🪪 {target.display_name}'s Profile",
