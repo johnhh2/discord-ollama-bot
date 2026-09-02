@@ -335,7 +335,7 @@ class ShopCog(commands.Cog):
         # Leveling — variable price, quoted (and confirmed) at purchase time.
         if _si.get("buyxp", True):
             sections["✨ Leveling"] = [
-                f"`!shop buyxp` — Buy your next level's worth of XP — **{SHOP_XP_COST_PER_XP} 🪙/XP** (price scales with level)"
+                f"`!shop buyxp [lvl <x>]` — Buy your next level's worth of XP, or every level up to lvl x — **{SHOP_XP_COST_PER_XP} 🪙/XP** (price scales with level)"
             ]
 
         # Artifacts — permanent per-user upgrades, listed in their own menu.
@@ -1845,18 +1845,32 @@ class ShopCog(commands.Cog):
 
     # ── !shop buyxp ───────────────────────────────────────────────────────────
     #
-    # Buys the FULL cost of the current level band (_xp_cost, not the
-    # remaining diff), at SHOP_XP_COST_PER_XP coins per XP. Band costs are
-    # strictly increasing, so granting a full band always lands exactly one
-    # display level higher with in-band progress preserved.
+    # Buys FULL level bands (_xp_cost, not the remaining diff), at
+    # SHOP_XP_COST_PER_XP coins per XP. Band costs are strictly increasing, so
+    # granting whole bands always lands exactly on the target display level
+    # with in-band progress preserved. No argument buys one band (next level);
+    # `lvl <x>` / `lvl<x>` buys every band up to display level x.
     @cmd_shop.command(name="buyxp", aliases=["xp"])
     @_shop_subcommand("buyxp")
-    async def shop_buyxp(self, ctx: commands.Context):
+    async def shop_buyxp(self, ctx: commands.Context, *args: str):
         uid = ctx.author.id
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "XP is per-server — use this in a server.", C_RED))
             return
         gid = ctx.guild.id
+
+        target_display = None
+        if args:
+            m = re.fullmatch(r"(?:lvl|level)\s*(\d{1,4})", " ".join(args).strip().lower())
+            if not m:
+                await ctx.send(embed=emb(
+                    "✨ Buy XP",
+                    "Usage: `!buyxp` — buy your next level\n`!buyxp lvl <x>` — buy every level up to lvl x",
+                    C_GREY,
+                ))
+                return
+            target_display = int(m.group(1))
+
         key = (gid, uid)
         if key in self._buyxp_active:
             await ctx.send(embed=emb("⏳ Purchase Pending", "Finish your current XP purchase first.", C_GREY))
@@ -1865,14 +1879,28 @@ class ShopCog(commands.Cog):
         try:
             rec = _ensure_lvl_record(gid, uid)
             quoted_level = rec["level"]
-            xp_amount = _xp_cost(quoted_level)
+            if target_display is None:
+                target_internal = quoted_level + 1
+            else:
+                if target_display <= display_level(quoted_level):
+                    await ctx.send(embed=emb(
+                        "✨ Buy XP",
+                        f"You're already lvl **{display_level(quoted_level)}** — pick a higher target.",
+                        C_GREY,
+                    ))
+                    return
+                target_internal = target_display - 1
+            levels = target_internal - quoted_level
+            xp_amount = xp_for_level(target_internal) - xp_for_level(quoted_level)
             cost = xp_amount * SHOP_XP_COST_PER_XP
             godmode = uid in state.godmode_users
 
             if not godmode and await get_balance(uid) < cost:
+                what = ("Your next level" if levels == 1
+                        else f"Reaching lvl **{display_level(target_internal)}**")
                 await ctx.send(embed=emb(
                     "💸 Insufficient Funds",
-                    f"Your next level costs **{xp_amount:,} XP** = **{cost:,} 🪙**.",
+                    f"{what} costs **{xp_amount:,} XP** = **{cost:,} 🪙**.",
                     C_RED,
                 ))
                 return
@@ -1881,10 +1909,11 @@ class ShopCog(commands.Cog):
             projected_level = level_from_xp(projected_xp)
             xp_in_level = projected_xp - xp_for_level(projected_level)
             xp_band = _xp_cost(projected_level)
+            level_note = f" (**{levels}** levels)" if levels > 1 else ""
             confirmed = await confirm_purchase(
                 ctx, title="✨ Buy XP",
                 description=(
-                    f"Buy **{xp_amount:,} XP** at {SHOP_XP_COST_PER_XP} 🪙/XP.\n"
+                    f"Buy **{xp_amount:,} XP** at {SHOP_XP_COST_PER_XP} 🪙/XP{level_note}.\n"
                     f"After purchase, you will be lvl **{display_level(projected_level)}** "
                     f"with **{xp_in_level:,}/{xp_band:,}** xp."
                 ),

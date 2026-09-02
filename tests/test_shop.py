@@ -825,6 +825,87 @@ async def test_shop_buyxp_insufficient_funds_never_prompts(db, monkeypatch):
     assert any("Insufficient Funds" in (e.title or "") for e in ctx.sent_embeds)
 
 
+async def test_shop_buyxp_lvl_target_grants_up_to_target(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    uid = 9021
+    rec = _seed_level(42, uid, 3, extra_xp=50)  # display lvl 4, mid-band
+    xp_amount = xp_for_level(6) - xp_for_level(3)  # bands 3,4,5 → display lvl 7
+    cost = xp_amount * SHOP_XP_COST_PER_XP
+    await add_balance(uid, cost + 500)
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _yes_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx, "lvl", "7")
+
+    # Lands exactly on the target with in-band progress preserved.
+    assert rec["level"] == 6
+    assert rec["xp"] == xp_for_level(6) + 50
+    assert await get_balance(uid) == 500
+    assert any("XP Purchased" in (e.title or "") for e in ctx.sent_embeds)
+
+
+async def test_shop_buyxp_lvl_target_accepts_joined_token(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    uid = 9022
+    rec = _seed_level(42, uid, 3)
+    xp_amount = xp_for_level(5) - xp_for_level(3)
+    cost = xp_amount * SHOP_XP_COST_PER_XP
+    await add_balance(uid, cost)
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _yes_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx, "lvl6")
+
+    assert rec["level"] == 5
+    assert await get_balance(uid) == 0
+
+
+async def test_shop_buyxp_lvl_target_not_above_current_rejected(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    uid = 9023
+    rec = _seed_level(42, uid, 3)  # display lvl 4
+    await add_balance(uid, 10_000_000)
+
+    confirm_calls = [0]
+
+    async def _counting_confirm(*a, **k):
+        confirm_calls[0] += 1
+        return True
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _counting_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx, "lvl", "4")
+
+    assert confirm_calls[0] == 0
+    assert rec["level"] == 3
+    assert await get_balance(uid) == 10_000_000
+    assert any("pick a higher target" in (e.description or "") for e in ctx.sent_embeds)
+    assert (42, uid) not in cog._buyxp_active
+
+
+async def test_shop_buyxp_bad_arg_shows_usage(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    uid = 9024
+    rec = _seed_level(42, uid, 3)
+    await add_balance(uid, 10_000_000)
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _yes_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx, "banana")
+
+    assert rec["level"] == 3
+    assert await get_balance(uid) == 10_000_000
+    assert any("Usage" in (e.description or "") for e in ctx.sent_embeds)
+
+
 async def test_shop_buyxp_aborts_without_charge_if_level_changed_during_confirm(db, monkeypatch):
     from src.cogs.shop_cog import ShopCog
     from src.leveling import level_from_xp
