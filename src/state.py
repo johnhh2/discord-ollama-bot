@@ -57,10 +57,21 @@ user_artifacts: dict = {}
 property_owners: dict = {}
 # Per-user all-time bot-chess stats — the chess-only ranks + first-defeat
 # bonuses: {uid_str: {"max_elo_defeated": int, "total_elo_defeated": int,
-# "bonus_bins": set[int]}}. Global (not guild-scoped), like the economy.
-# Source of truth is the chess_user_stats table; loaded at boot. Written by
-# src/games/bot_chess_rewards.py:award_bot_defeat.
+# "bonus_bins": set[int], "elo_spent": int}}. Global (not guild-scoped),
+# like the economy. Source of truth is the chess_user_stats table; loaded at
+# boot. Written by src/games/bot_chess_rewards.py:award_bot_defeat; elo_spent
+# rises when the chess shop consumes spendable Elo.
 chess_user_stats: dict = {}
+# Chess-shop unlocks (!shop chess): {uid: {"pieces:rhosgfx", "board:blue", ...}}.
+# Global (not guild-scoped), like the economy. Source of truth is the
+# chess_unlocks table; loaded at boot. Catalog lives in src/chess_shop.py;
+# cost-0 defaults are owned by everyone and never stored here.
+chess_unlocks: dict = {}
+# Equipped chess cosmetics (!chess <name>): {uid: {"pieces": key, "board":
+# key}} with renderer keys. Global, like the unlocks. Source of truth is the
+# chess_equipped table; loaded at boot. Absent uid = defaults (cburnett /
+# default board).
+chess_equipped: dict = {}
 rigged_slots: dict = {}
 rigged_flips: dict = {}
 rigged_scratch: dict = {}

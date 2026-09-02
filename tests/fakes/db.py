@@ -43,6 +43,8 @@ _TABLE_PKS = {
     "chess_games": ("channel_id",),
     "chess_reports": ("report_id",),
     "chess_user_stats": ("user_id",),
+    "chess_unlocks": ("user_id", "item_id"),
+    "chess_equipped": ("user_id",),
     "ai_threads": ("thread_id",),
     "leveling": ("guild_id", "user_id"),
     "gambler_streak": ("user_id",),

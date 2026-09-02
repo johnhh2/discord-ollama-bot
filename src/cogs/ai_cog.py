@@ -45,6 +45,7 @@ from src.invites import _wait_for_confirmations, _send_invite
 from src.games.ttt_c4 import build_ttt_display, build_c4_display
 from src.games.hangman import build_hangman_display
 from src.games import chess_engine, chess_render
+from src.chess_shop import equipped_cosmetics
 from src.games.chess import (
     BOARD_IMG_FILENAME, _bump_board as _bump_chess_board,
     _close_game_thread, _game_result_name,
@@ -700,7 +701,10 @@ class AICog(commands.Cog):
         desc = f"{ctx.author.display_name} forfeited.{view_line}"
         file = None
         try:
-            png = chess_render.render_board_png(board, orientation=chess.WHITE)
+            ps, th = equipped_cosmetics(ctx.author.id)
+            png = chess_render.render_board_png(
+                board, orientation=chess.WHITE, piece_set=ps, theme=th,
+            )
             file = discord.File(io.BytesIO(png), filename=BOARD_IMG_FILENAME)
         except RuntimeError as e:
             logging.warning(f"chess render unavailable in forfeit: {e}")

@@ -69,6 +69,7 @@ def _stats_row(user_id: int) -> dict:
         "max_elo_defeated": 0,
         "total_elo_defeated": 0,
         "bonus_bins": set(),
+        "elo_spent": 0,
     })
 
 
@@ -79,6 +80,39 @@ def chess_ranks(user_id: int) -> tuple[int, int]:
     if not row:
         return 0, 0
     return int(row.get("max_elo_defeated", 0)), int(row.get("total_elo_defeated", 0))
+
+
+def chess_elo_balance(user_id: int) -> int:
+    """Spendable chess Elo: lifetime total_elo_defeated minus what the user
+    has consumed unlocking chess-shop items. total_elo_defeated itself is a
+    monotonic lifetime stat (ranks, records, profile) and is never
+    decremented — spending only ever raises elo_spent."""
+    row = state.chess_user_stats.get(str(user_id))
+    if not row:
+        return 0
+    return int(row.get("total_elo_defeated", 0)) - int(row.get("elo_spent", 0))
+
+
+def spend_chess_elo(user_id: int, amount: int) -> bool:
+    """Consume `amount` spendable Elo. Synchronous gate-and-claim (no await
+    between the balance check and the mutation), so concurrent purchases
+    can't double-spend — see CLAUDE.md on per-user command races. The caller
+    persists with save_chess_user_stats."""
+    if amount < 0:
+        return False
+    if chess_elo_balance(user_id) < amount:
+        return False
+    _stats_row(user_id)["elo_spent"] = (
+        int(_stats_row(user_id).get("elo_spent", 0)) + amount
+    )
+    return True
+
+
+def refund_chess_elo(user_id: int, amount: int) -> None:
+    """Roll back a spend_chess_elo claim after a failed purchase step.
+    Never drives elo_spent negative."""
+    row = _stats_row(user_id)
+    row["elo_spent"] = max(0, int(row.get("elo_spent", 0)) - max(0, amount))
 
 
 def claimed_bonus_bins(user_id: int) -> set[int]:

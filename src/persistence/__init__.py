@@ -69,6 +69,8 @@ from src.persistence.chess import (  # noqa: F401
     delete_chess_game,
     save_chess_report,
     save_chess_user_stats,
+    save_chess_unlock,
+    save_chess_equipped,
     save_chess_analysis,
     count_flagged_reports,
     load_chess_report,

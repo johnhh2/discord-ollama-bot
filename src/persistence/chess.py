@@ -68,12 +68,13 @@ async def save_chess_games() -> None:
 
 _CHESS_USER_STATS_UPSERT_SQL = (
     "INSERT INTO chess_user_stats "
-    "(user_id, max_elo_defeated, total_elo_defeated, bonus_bins) "
-    "VALUES (%s,%s,%s,%s) "
+    "(user_id, max_elo_defeated, total_elo_defeated, bonus_bins, elo_spent) "
+    "VALUES (%s,%s,%s,%s,%s) "
     "ON DUPLICATE KEY UPDATE "
     "max_elo_defeated=VALUES(max_elo_defeated), "
     "total_elo_defeated=VALUES(total_elo_defeated), "
-    "bonus_bins=VALUES(bonus_bins)"
+    "bonus_bins=VALUES(bonus_bins), "
+    "elo_spent=VALUES(elo_spent)"
 )
 
 
@@ -90,7 +91,41 @@ async def save_chess_user_stats(uid: int) -> None:
             int(row.get("max_elo_defeated", 0)),
             int(row.get("total_elo_defeated", 0)),
             json.dumps(sorted(int(b) for b in row.get("bonus_bins", ()))),
+            int(row.get("elo_spent", 0)),
         ))
+
+
+async def save_chess_equipped(uid: int) -> None:
+    """Mirror state.chess_equipped[uid] into the chess_equipped table.
+    Whole-row upsert (like save_chess_user_stats) so a call site can't
+    silently drop a column. A missing state row is a no-op — defaults are
+    represented by having no row at all."""
+    row = state.chess_equipped.get(int(uid))
+    if row is None:
+        return
+    async with with_cursor() as cur:
+        await cur.execute(
+            "INSERT INTO chess_equipped (user_id, piece_set, board_theme) "
+            "VALUES (%s,%s,%s) "
+            "ON DUPLICATE KEY UPDATE "
+            "piece_set=VALUES(piece_set), board_theme=VALUES(board_theme)",
+            (
+                int(uid),
+                row.get("pieces") or "cburnett",
+                row.get("board") or "default",
+            ),
+        )
+
+
+async def save_chess_unlock(uid: int, item_id: str) -> None:
+    """Record a chess-shop unlock (permanent, global — mirror of one entry
+    in state.chess_unlocks[uid]). Idempotent: re-unlocking is a no-op."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "INSERT INTO chess_unlocks (user_id, item_id) VALUES (%s,%s) "
+            "ON DUPLICATE KEY UPDATE item_id=VALUES(item_id)",
+            (int(uid), item_id),
+        )
 
 
 async def save_chess_report(

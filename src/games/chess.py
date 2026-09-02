@@ -26,11 +26,17 @@ from src.guild_config import get_guild_cfg
 from src.persistence import (
     save_chess_game, delete_chess_game, save_chess_report, load_chess_report,
     load_head_to_head, load_bot_head_to_head, count_pvp_wins_in_guild, try_set_record,
+    save_chess_equipped,
+)
+from src.chess_shop import (
+    BOARD_ITEMS, PIECE_SET_ITEMS,
+    equipped_cosmetics, find_chess_item, has_chess_unlock,
 )
 from src.games.ttt_c4 import _setup_pvp_game
 from src.games import chess_engine, chess_render, chess_bot, chess_analysis
 from src.games.bot_chess_rewards import (
     award_bot_defeat, rank_badges, RECORD_CATEGORY as _BOT_CHESS_RECORD,
+    RANK_TOTAL_EMOJI, chess_elo_balance,
 )
 from src import state
 
@@ -62,7 +68,11 @@ def _last_move_info_from_pgn(pgn_str: str) -> tuple[chess.Move | None, bool]:
     return last_move, was_capture
 
 
-def _render_file_for_game(game: dict, *, orientation_for_uid: int | None = None) -> discord.File | None:
+def _render_file_for_game(
+    game: dict, *,
+    orientation_for_uid: int | None = None,
+    cosmetics_uid: int | None = None,
+) -> discord.File | None:
     try:
         board = chess_engine.board_from_fen(game["fen"])
     except Exception:
@@ -70,6 +80,15 @@ def _render_file_for_game(game: dict, *, orientation_for_uid: int | None = None)
     orientation = chess.WHITE
     if orientation_for_uid is not None and orientation_for_uid == game.get("black_id"):
         orientation = chess.BLACK
+    # Whose equipped piece set / board colors this render uses. Defaults to
+    # the POV player, else white. The bot's uid resolves to defaults
+    # (equipped_cosmetics has no row for it), so callers rendering for the
+    # bot's turn pass the human side explicitly to avoid the board
+    # flip-flopping between styles as turns alternate.
+    if cosmetics_uid is None:
+        cosmetics_uid = orientation_for_uid if orientation_for_uid is not None else game.get("white_id")
+    piece_set, theme = equipped_cosmetics(cosmetics_uid) if cosmetics_uid is not None \
+        else (chess_render.DEFAULT_PIECE_SET, chess_render.DEFAULT_BOARD_THEME)
     # FEN-derived boards have an empty move_stack, so board.peek() won't
     # work. Recover the last move + capture flag from the PGN.
     last_move, was_capture = _last_move_info_from_pgn(game.get("pgn", ""))
@@ -77,6 +96,7 @@ def _render_file_for_game(game: dict, *, orientation_for_uid: int | None = None)
         png = chess_render.render_board_png(
             board, orientation=orientation, last_move=last_move,
             last_move_was_capture=was_capture,
+            piece_set=piece_set, theme=theme,
         )
     except RuntimeError as e:
         logging.warning(f"chess render unavailable: {e}")
@@ -544,6 +564,20 @@ class ChessCog(commands.Cog):
         if args and args[0].lower() in ("help", "?"):
             await self._cmd_help(ctx)
             return
+        if args and args[0].lower() in ("inventory", "inv"):
+            await self._cmd_inventory(ctx)
+            return
+        # Cosmetics: `!chess wood`, `!chess blue`, `!chess kiwen-suwi` equips
+        # an owned piece set / board color. Name and key tokens only — bare
+        # numbers stay Elo/wager arguments, and any mention means a
+        # challenge, so neither can be shadowed by an item.
+        if args and not ctx.message.mentions:
+            token = " ".join(args)
+            if not token.isdigit():
+                item = find_chess_item(token)
+                if item is not None:
+                    await self._cmd_equip(ctx, item)
+                    return
 
         opponent = ctx.message.mentions[0] if ctx.message.mentions else None
         # Bare `!chess` with no mention and no parseable args → show the help
@@ -844,10 +878,12 @@ class ChessCog(commands.Cog):
         if ctx.author.id == game.get("black_id"):
             orientation = chess.BLACK
         try:
+            ps, th = equipped_cosmetics(ctx.author.id)
             png = chess_render.render_board_png(
                 board,
                 orientation=orientation,
                 threat_squares=threats,
+                piece_set=ps, theme=th,
             )
         except RuntimeError as e:
             await ctx.send(embed=emb(
@@ -910,7 +946,10 @@ class ChessCog(commands.Cog):
             board = chess_engine.new_board()
         file = None
         try:
-            png = chess_render.render_board_png(board, orientation=chess.WHITE)
+            ps, th = equipped_cosmetics(ctx.author.id)
+            png = chess_render.render_board_png(
+                board, orientation=chess.WHITE, piece_set=ps, theme=th,
+            )
             file = discord.File(io.BytesIO(png), filename=BOARD_IMG_FILENAME)
         except RuntimeError as e:
             logging.warning(f"chess render unavailable in view: {e}")
@@ -968,6 +1007,64 @@ class ChessCog(commands.Cog):
         else:
             await send_ephemeral(ctx, embed=emb(f"♟️ Chess Game #{report_id} — PGN", f"{pgn_block}{links_line}", C_GREY))
 
+    # ── !chess inventory: owned + equipped cosmetics ────────────────────────
+    async def _cmd_inventory(self, ctx: commands.Context):
+        uid = ctx.author.id
+        eq_pieces, eq_board = equipped_cosmetics(uid)
+        lines = [
+            f"Spendable chess Elo: **{chess_elo_balance(uid):,} {RANK_TOTAL_EMOJI}**",
+            "",
+            "**Piece sets**",
+        ]
+        for section_items, equipped_key in (
+            (PIECE_SET_ITEMS, eq_pieces), (BOARD_ITEMS, eq_board),
+        ):
+            for it in section_items:
+                if it["key"] == equipped_key:
+                    lines.append(f"✦ **{it['name']}** — equipped")
+                elif has_chess_unlock(uid, it["id"]):
+                    lines.append(f"✅ {it['name']}")
+                else:
+                    lines.append(f"🔒 {it['name']} — {it['cost']:,} {RANK_TOTAL_EMOJI}")
+            if section_items is PIECE_SET_ITEMS:
+                lines.append("")
+                lines.append("**Board colors**")
+        lines.append("")
+        lines.append("Equip with `!chess <name>` · unlock more in `!shop chess`.")
+        await send_ephemeral(ctx, embed=emb("♟️ Chess Inventory", "\n".join(lines), C_BLUE))
+
+    # ── !chess <item name>: equip an owned piece set / board color ──────────
+    async def _cmd_equip(self, ctx: commands.Context, item: dict):
+        uid = ctx.author.id
+        kind = "piece set" if item in PIECE_SET_ITEMS else "board color"
+        if not has_chess_unlock(uid, item["id"]):
+            await send_ephemeral(ctx, embed=emb(
+                "🔒 Not Unlocked",
+                f"The **{item['name']}** {kind} costs **{item['cost']:,} {RANK_TOTAL_EMOJI}** "
+                f"chess Elo — unlock it with `!shop chess buy {item['name'].lower()}`.",
+                C_RED,
+            ))
+            return
+        slot = "pieces" if item in PIECE_SET_ITEMS else "board"
+        row = state.chess_equipped.setdefault(uid, {})
+        if row.get(slot, None) == item["key"] or (
+            not row.get(slot) and item["cost"] == 0
+        ):
+            await send_ephemeral(ctx, embed=emb(
+                "♟️ Already Equipped", f"**{item['name']}** is already your {kind}.", C_BLUE,
+            ))
+            return
+        row.setdefault("pieces", chess_render.DEFAULT_PIECE_SET)
+        row.setdefault("board", chess_render.DEFAULT_BOARD_THEME)
+        row[slot] = item["key"]
+        await save_chess_equipped(uid)
+        await send_ephemeral(ctx, embed=emb(
+            "♟️ Equipped",
+            f"**{item['name']}** is now your {kind} — your boards render with it "
+            "from the next move on.",
+            C_GREEN,
+        ))
+
     # ── !chess (no args) / !chess help: show the chess command menu ─────────
     async def _cmd_help(self, ctx: commands.Context):
         elo_lo, elo_hi, elo_default = chess_bot.ELO_MIN, chess_bot.ELO_MAX, chess_bot.ELO_DEFAULT
@@ -997,6 +1094,11 @@ class ChessCog(commands.Cog):
             "**Replay finished games**\n"
             "`!chess view <id>` — Show the game outcome, final position image, and movetext.\n"
             "`!chess pgn <id>` — Full headered PGN (paste into [lichess.org/paste](https://lichess.org/paste) for analysis).\n"
+            "\n"
+            "**Cosmetics**\n"
+            f"`!shop chess` — Unlock piece sets & board colors with the chess Elo you've earned ({RANK_TOTAL_EMOJI}).\n"
+            "`!chess inventory` — See what you own and what's equipped.\n"
+            "`!chess <name>` — Equip an owned piece set or board color (e.g. `!chess wood`, `!chess blue`).\n"
             "\n"
             "**Notation**\n"
             "SAN (`Nf3`, `O-O`, `Qxh4#`) or UCI (`g1f3`, `e1g1`, `d8h4`). Both work everywhere."
@@ -1196,10 +1298,21 @@ class ChessCog(commands.Cog):
         board: chess.Board, opponent_id: int,
     ):
         """Render the new board, bump it to the bottom, persist the new msg id."""
-        file = _render_file_for_game(game, orientation_for_uid=opponent_id)
+        bot_user = self.bot.user if self.bot is not None else None
+        # POV follows the next player, but cosmetics stay the human's when
+        # the next player is the bot — otherwise a bot game's board would
+        # alternate styles every move.
+        cosmetics_uid = opponent_id
+        if bot_user is not None and opponent_id == bot_user.id:
+            cosmetics_uid = (
+                game.get("white_id") if game.get("black_id") == opponent_id
+                else game.get("black_id")
+            )
+        file = _render_file_for_game(
+            game, orientation_for_uid=opponent_id, cosmetics_uid=cosmetics_uid,
+        )
         guild = channel.guild if hasattr(channel, "guild") else None
         next_player = guild.get_member(opponent_id) if guild is not None else None
-        bot_user = self.bot.user if self.bot is not None else None
         # turn_name feeds the trailing "@X's turn!" line — plain text for the
         # engine (no 🤖/bold: it reads as the thread preview); next_mention is
         # the embed's dressed-up version.
@@ -1507,7 +1620,12 @@ class ChessCog(commands.Cog):
             f"{view_line}"
         )
 
-        file = _render_file_for_game(game, orientation_for_uid=None)
+        # Final board renders white-POV; cosmetics follow white unless white
+        # is the bot (bot games where the human took black).
+        cosmetics_uid = game.get("white_id")
+        if bot_user is not None and cosmetics_uid == bot_user.id:
+            cosmetics_uid = game.get("black_id")
+        file = _render_file_for_game(game, orientation_for_uid=None, cosmetics_uid=cosmetics_uid)
         if file is not None:
             await _bump_board(channel, game, _board_embed("♟️ Chess — Game Over", desc, color), file=file)
         else:

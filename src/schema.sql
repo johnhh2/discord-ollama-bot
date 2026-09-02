@@ -1397,3 +1397,34 @@ UPDATE guild_house_balance
                       FROM lottery
                      WHERE last_drawn_week = 202609
                         OR last_posted_week = 202609);
+
+-- ── 0060_add_chess_unlocks.sql ──
+-- Chess shop unlocks: per-user and global (no guild dimension, like the
+-- economy). item_id is 'pieces:<key>' or 'board:<key>' from the catalog in
+-- src/chess_shop.py. Cost-0 defaults (cburnett pieces, default board) are
+-- owned by everyone and never written here.
+CREATE TABLE IF NOT EXISTS chess_unlocks (
+    user_id BIGINT NOT NULL,
+    item_id VARCHAR(64) NOT NULL,
+    PRIMARY KEY (user_id, item_id)
+);
+
+-- ── 0061_add_chess_elo_spent.sql ──
+-- Spendable-Elo accounting for the chess shop: a user's spendable balance is
+-- total_elo_defeated - elo_spent. total_elo_defeated stays a monotonic
+-- lifetime stat (profile ranks, records) and is never decremented; unlock
+-- purchases only ever raise elo_spent.
+ALTER TABLE chess_user_stats
+    ADD COLUMN IF NOT EXISTS elo_spent BIGINT NOT NULL DEFAULT 0;
+
+-- ── 0062_add_chess_equipped.sql ──
+-- Equipped chess cosmetics (!chess <name>): one row per user, global like
+-- the chess_unlocks they come from. Values are renderer keys
+-- (chess_render.PIECE_SET_KEYS / BOARD_THEMES); the renderer falls back to
+-- its defaults on an unknown value, so a stale row can never break board
+-- rendering.
+CREATE TABLE IF NOT EXISTS chess_equipped (
+    user_id BIGINT NOT NULL PRIMARY KEY,
+    piece_set VARCHAR(32) NOT NULL DEFAULT 'cburnett',
+    board_theme VARCHAR(32) NOT NULL DEFAULT 'default'
+);

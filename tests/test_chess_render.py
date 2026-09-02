@@ -169,6 +169,165 @@ def test_render_no_threat_squares_passes_empty_fill(monkeypatch):
     assert captured["fill"] == {}
 
 
+# -----------------------------------------------------------------------------
+# Board themes
+# -----------------------------------------------------------------------------
+
+
+def test_all_themes_have_complete_palettes():
+    """Every theme defines square colors plus full move/capture tint pairs,
+    and the default theme name resolves."""
+    assert chess_render.DEFAULT_BOARD_THEME in chess_render.BOARD_THEMES
+    for name, t in chess_render.BOARD_THEMES.items():
+        assert set(t) == {"light", "dark", "move", "capture"}, name
+        for palette in ("move", "capture"):
+            assert set(t[palette]) == {
+                "square light lastmove", "square dark lastmove",
+            }, (name, palette)
+
+
+def test_default_theme_matches_python_chess_square_colors():
+    """The default theme's square colors mirror python-chess's built-ins, so
+    adding the theme hook changed nothing about today's renders."""
+    t = chess_render.BOARD_THEMES["default"]
+    assert t["light"] == "#ffce9e"
+    assert t["dark"] == "#d18b47"
+
+
+def _capture_colors(monkeypatch):
+    captured: dict = {}
+
+    def _fake_svg_board(board, **kwargs):
+        captured.update(kwargs.get("colors") or {})
+        return "<svg/>"
+    monkeypatch.setattr(chess_render.chess.svg, "board", _fake_svg_board)
+    monkeypatch.setattr(chess_render, "cairosvg",
+                        type("X", (), {"svg2png": staticmethod(lambda **k: b"PNG")}))
+    return captured
+
+
+def test_render_theme_sets_square_and_move_colors(monkeypatch):
+    """theme= drives both the square colors and the (non-capture) lastmove
+    tint passed to chess.svg.board()."""
+    captured = _capture_colors(monkeypatch)
+    chess_render.render_board_png(chess.Board(), theme="blue")
+    t = chess_render.BOARD_THEMES["blue"]
+    assert captured["square light"] == t["light"]
+    assert captured["square dark"] == t["dark"]
+    assert captured["square light lastmove"] == t["move"]["square light lastmove"]
+    assert captured["square dark lastmove"] == t["move"]["square dark lastmove"]
+
+
+def test_render_theme_capture_uses_red_palette(monkeypatch):
+    """last_move_was_capture=True selects the theme's capture (red) tints."""
+    captured = _capture_colors(monkeypatch)
+    chess_render.render_board_png(
+        chess.Board(), theme="coffee", last_move_was_capture=True,
+    )
+    t = chess_render.BOARD_THEMES["coffee"]
+    assert captured["square light lastmove"] == t["capture"]["square light lastmove"]
+    assert captured["square dark lastmove"] == t["capture"]["square dark lastmove"]
+
+
+def test_render_unknown_theme_falls_back_to_default(monkeypatch):
+    """A stale/unknown theme name renders with the default palette instead of
+    raising — board rendering must never break mid-game."""
+    captured = _capture_colors(monkeypatch)
+    chess_render.render_board_png(chess.Board(), theme="no-such-theme")
+    t = chess_render.BOARD_THEMES[chess_render.DEFAULT_BOARD_THEME]
+    assert captured["square light"] == t["light"]
+    assert captured["square dark"] == t["dark"]
+
+
+# -----------------------------------------------------------------------------
+# Piece sets
+# -----------------------------------------------------------------------------
+
+
+def test_all_vendored_piece_sets_load_and_parse():
+    """Every non-default set loads 12 symbols, each a well-formed <g> with
+    the id python-chess's <use href="#{color}-{piece}"> lookup expects."""
+    import xml.etree.ElementTree as ET
+
+    expected_ids = {
+        "P": "white-pawn", "N": "white-knight", "B": "white-bishop",
+        "R": "white-rook", "Q": "white-queen", "K": "white-king",
+        "p": "black-pawn", "n": "black-knight", "b": "black-bishop",
+        "r": "black-rook", "q": "black-queen", "k": "black-king",
+    }
+    for name in chess_render.PIECE_SET_KEYS:
+        if name == chess_render.DEFAULT_PIECE_SET:
+            continue
+        pieces = chess_render._load_piece_set(name)
+        assert pieces is not None, name
+        assert set(pieces) == set(expected_ids), name
+        for sym, raw in pieces.items():
+            el = ET.fromstring(raw)
+            assert el.get("id") == expected_ids[sym], (name, sym)
+
+
+def test_render_piece_set_swaps_and_restores(monkeypatch):
+    """piece_set= swaps chess.svg.PIECES for the duration of the svg build
+    and restores the built-in set afterwards, even though the swap has no
+    official python-chess API."""
+    original_pawn = chess_render.chess.svg.PIECES["P"]
+    seen: dict = {}
+
+    def _fake_svg_board(board, **kwargs):
+        seen["pawn"] = chess_render.chess.svg.PIECES["P"]
+        return "<svg/>"
+    monkeypatch.setattr(chess_render.chess.svg, "board", _fake_svg_board)
+    monkeypatch.setattr(chess_render, "cairosvg",
+                        type("X", (), {"svg2png": staticmethod(lambda **k: b"PNG")}))
+
+    chess_render.render_board_png(chess.Board(), piece_set="rhosgfx")
+
+    assert seen["pawn"] != original_pawn
+    assert chess_render.chess.svg.PIECES["P"] == original_pawn
+
+
+def test_render_piece_set_restores_when_board_raises(monkeypatch):
+    """A failure inside chess.svg.board must not leave the swapped piece set
+    behind for every later render."""
+    original_pawn = chess_render.chess.svg.PIECES["P"]
+
+    def _boom(board, **kwargs):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(chess_render.chess.svg, "board", _boom)
+    monkeypatch.setattr(chess_render, "cairosvg",
+                        type("X", (), {"svg2png": staticmethod(lambda **k: b"PNG")}))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        chess_render.render_board_png(chess.Board(), piece_set="rhosgfx")
+
+    assert chess_render.chess.svg.PIECES["P"] == original_pawn
+
+
+def test_render_unknown_piece_set_uses_default(monkeypatch):
+    """A stale/unknown piece-set name renders with the built-in set instead
+    of raising — rendering must never break mid-game."""
+    original_pawn = chess_render.chess.svg.PIECES["P"]
+    seen: dict = {}
+
+    def _fake_svg_board(board, **kwargs):
+        seen["pawn"] = chess_render.chess.svg.PIECES["P"]
+        return "<svg/>"
+    monkeypatch.setattr(chess_render.chess.svg, "board", _fake_svg_board)
+    monkeypatch.setattr(chess_render, "cairosvg",
+                        type("X", (), {"svg2png": staticmethod(lambda **k: b"PNG")}))
+
+    chess_render.render_board_png(chess.Board(), piece_set="no-such-set")
+
+    assert seen["pawn"] == original_pawn
+
+
+@_skip_no_cairo
+def test_render_vendored_set_produces_png():
+    """End-to-end: a vendored set renders to real PNG bytes."""
+    png = chess_render.render_board_png(chess.Board(), piece_set="rhosgfx")
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+
+
 def test_render_fails_loudly_without_cairo(monkeypatch):
     """When cairosvg is unavailable, render_board_png raises RuntimeError with
     a helpful message — not a cryptic OSError from deep inside cairosvg."""
