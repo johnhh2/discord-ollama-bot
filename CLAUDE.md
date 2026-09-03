@@ -329,6 +329,14 @@ before any await. Do **not** re-attach
 premium charging to `!daily`/`_auto_daily` — the daily claim and the dailies
 flip/slots stake must never see insurance costs.
 
+The one premium charged outside the sweep is a new subscriber's first day:
+`!shop insurance sub` buys it immediately when the user has no coverage
+**or** coverage that runs out before the next 5am sweep
+(`ShopCog._sub_needs_first_day`), stacking 24h on whatever remains. Without
+that bridge a subscriber whose prepaid coverage ended mid-day lapsed until
+5am. When coverage already reaches past the next sweep, nothing is charged at
+subscribe time — the sweep extends from the existing expiry.
+
 ## Concurrency: per-user command races
 
 Discord users can fire several invocations of the same command before the first finishes (spam-typing, multi-device, scripted clients). Because asyncio is cooperative, a coroutine only loses control at an `await` — so a sequence like *check counter → await network/DB → mutate counter* is racey: two invocations both pass the check before either mutates, and the user gets the resource twice. This bot has had four of these bugs in one month (`!scratchoff`, `!daily`, `!bail`, `!shop insurance`, `!shop unoreverse`). The pattern is easy to introduce and easy to miss in code review.

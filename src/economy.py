@@ -244,6 +244,11 @@ async def sweep_insurance_subs() -> None:
     On the very first run (no marker yet — the boot that ships this feature)
     the day is stamped without charging: subscribers were already charged by
     the old claim-time flow that day.
+
+    The only premium charged outside this sweep is a new subscriber's first
+    day, bought at `!shop insurance sub` time when their coverage is absent or
+    would run out before the next sweep (ShopCog._sub_needs_first_day) — so a
+    mid-day subscriber never lapses waiting for 5am.
     """
     today = _ct_today()
     prior = state.economy.get("last_insurance_sweep")

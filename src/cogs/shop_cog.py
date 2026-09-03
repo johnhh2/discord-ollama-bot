@@ -17,7 +17,7 @@ from src.helpers import (
 
 from src.economy import (
     add_balance, get_balance, is_insured, get_insurance_expiry,
-    extend_insurance,
+    extend_insurance, next_daily_reset_ts,
 )
 from src.leveling import (
     _ensure_lvl_record, _xp_cost, level_from_xp, display_level, record_levelup,
@@ -319,7 +319,7 @@ class ShopCog(commands.Cog):
 
         # Fun & Social (sorted by cost)
         fun_items = [
-            (SHOP_INSURANCE_COST, f"`!shop insurance [days|sub|unsub]` — Protection in every server, prepaid or subscribed (renews with your daily) — **{SHOP_INSURANCE_COST:,} 🪙/day**"),
+            (SHOP_INSURANCE_COST, f"`!shop insurance [days|sub|unsub]` — Protection in every server, prepaid or subscribed (renews at the 5am reset) — **{SHOP_INSURANCE_COST:,} 🪙/day**"),
             (SHOP_TAX_COST,      f"`!shop tax @user` — Apply a per-message tax to a user for 24h — **{SHOP_TAX_COST:,} 🪙**"),
             (SHOP_MOCK_COST,      f"`!shop mock @user` — Mock someone's next {SHOP_MOCK_MESSAGES} messages — **{SHOP_MOCK_COST:,} 🪙**"),
         ]
@@ -1296,6 +1296,16 @@ class ShopCog(commands.Cog):
             if entry["expires_at"] <= time.time():
                 state.insurance.pop(key, None)
 
+    @staticmethod
+    def _sub_needs_first_day(expiry: int | None) -> bool:
+        """True when a new subscriber has to buy their first day right now:
+        no active coverage, or coverage that runs out before the next 5am
+        sweep — the first premium the subscription itself would charge.
+        Without that bridge a mid-day subscriber lapses from their old expiry
+        until 5am. When coverage already reaches past the next sweep, the
+        sweep's charge lands while it still holds and extends from it."""
+        return expiry is None or expiry < next_daily_reset_ts()
+
     @cmd_shop.command(name="insurance")
     @_shop_subcommand(None)
     async def shop_insurance(self, ctx: commands.Context, arg: str = None):
@@ -1317,13 +1327,21 @@ class ShopCog(commands.Cog):
                 ))
                 return
             sub_exp = get_insurance_expiry(uid)
-            first_day = sub_exp is None
+            if sub_exp is None:
+                first_day_str = f" The first day (**{SHOP_INSURANCE_COST:,} 🪙**) is charged now so coverage starts immediately."
+            elif self._sub_needs_first_day(sub_exp):
+                first_day_str = (
+                    f" Your current coverage runs out before the next 5am charge, so the first day "
+                    f"(**{SHOP_INSURANCE_COST:,} 🪙**) is charged now to keep it continuous."
+                )
+            else:
+                first_day_str = ""
             if not await confirm_prompt(
                 ctx, title="🛡️ Insurance Subscription",
                 description=(
                     f"Subscribe to insurance — **{SHOP_INSURANCE_COST:,} 🪙** is charged at the 5am reset "
                     "each day (whether or not you log on), adding 24h of coverage valid in every server."
-                    + (f" The first day (**{SHOP_INSURANCE_COST:,} 🪙**) is charged now so coverage starts immediately." if first_day else "")
+                    + first_day_str
                     + f"\n\n**Protects against:** {protects_str}"
                     + "\n**Current coverage:** " + (f"expires <t:{sub_exp}:R>" if sub_exp else "none")
                 ),
@@ -1343,9 +1361,12 @@ class ShopCog(commands.Cog):
             # subscribes can't both buy the starter day.
             state.insurance_subs.add(key)
             start_str = ""
-            if get_insurance_expiry(uid) is None:
-                # Not currently covered — charge the first day now so the
-                # subscription protects immediately, not at the next daily.
+            cur_exp = get_insurance_expiry(uid)
+            if self._sub_needs_first_day(cur_exp):
+                # Not covered, or covered only until some point before the
+                # next 5am sweep — charge the first day now (stacked on any
+                # remaining coverage) so the subscription protects without a
+                # gap until the sweep takes over.
                 cost = 0 if uid in state.godmode_users else SHOP_INSURANCE_COST
                 expires_at = extend_insurance(uid, 1)
                 if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST:,}"):
@@ -1353,7 +1374,13 @@ class ShopCog(commands.Cog):
                     self._rollback_insurance_days(key, 1)
                     return
                 await save_insurance()
-                start_str = f" First day charged now — covered against {protects_str} (expires <t:{expires_at}:R>)."
+                if cur_exp is None:
+                    start_str = f" First day charged now — covered against {protects_str} (expires <t:{expires_at}:R>)."
+                else:
+                    start_str = (
+                        f" Your coverage would have run out <t:{cur_exp}:R>, before the first 5am charge, "
+                        f"so the first day was charged now — covered until <t:{expires_at}:f>."
+                    )
             await save_insurance_subs()
             await ctx.send(embed=emb(
                 "🛡️ Insurance Subscribed",

@@ -322,6 +322,75 @@ async def test_shop_insurance_subscribe_insufficient_funds_rolls_back(db):
     assert uid not in _state.insurance
 
 
+async def test_shop_insurance_subscribe_bridges_coverage_ending_before_sweep(db, monkeypatch):
+    """Subscribing while covered only until *before* the next 5am sweep buys
+    the first day now, stacked on the current expiry — otherwise the user
+    lapses from that expiry until the sweep's first charge."""
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_INSURANCE_COST, SHOP_INSURANCE_DURATION_SECS
+
+    now = int(_time.time())
+    monkeypatch.setattr(_shop_cog, "next_daily_reset_ts", lambda *a, **k: now + 7200)
+    cog = ShopCog(bot=None)
+    uid = 6025
+    await add_balance(uid, SHOP_INSURANCE_COST * 2)
+    expiry = now + 3600  # runs out an hour before the sweep
+    _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_insurance.callback(cog, ctx, "sub")
+
+    assert uid in _state.insurance_subs
+    assert await get_balance(uid) == SHOP_INSURANCE_COST
+    assert _state.insurance[uid]["expires_at"] == expiry + SHOP_INSURANCE_DURATION_SECS
+    assert "before the first 5am charge" in ctx.sent_embeds[-1].description
+
+
+async def test_shop_insurance_subscribe_no_charge_when_coverage_reaches_sweep(db, monkeypatch):
+    """Coverage that already outlasts the next 5am sweep needs no starter
+    day — the sweep charges then and extends from the existing expiry."""
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_INSURANCE_COST
+
+    now = int(_time.time())
+    monkeypatch.setattr(_shop_cog, "next_daily_reset_ts", lambda *a, **k: now + 7200)
+    cog = ShopCog(bot=None)
+    uid = 6026
+    await add_balance(uid, SHOP_INSURANCE_COST * 2)
+    expiry = now + 10800  # outlasts the sweep by an hour
+    _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_insurance.callback(cog, ctx, "sub")
+
+    assert uid in _state.insurance_subs
+    assert await get_balance(uid) == SHOP_INSURANCE_COST * 2   # nothing charged now
+    assert _state.insurance[uid]["expires_at"] == expiry       # untouched
+    assert "First day charged" not in ctx.sent_embeds[-1].description
+
+
+async def test_shop_insurance_subscribe_bridge_insufficient_funds_rolls_back(db, monkeypatch):
+    """An unaffordable bridge day leaves the sub unclaimed and the existing
+    coverage exactly as it was."""
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_INSURANCE_COST
+
+    now = int(_time.time())
+    monkeypatch.setattr(_shop_cog, "next_daily_reset_ts", lambda *a, **k: now + 7200)
+    cog = ShopCog(bot=None)
+    uid = 6027
+    await add_balance(uid, SHOP_INSURANCE_COST - 1)
+    expiry = now + 3600
+    _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_insurance.callback(cog, ctx, "sub")
+
+    assert uid not in _state.insurance_subs
+    assert await get_balance(uid) == SHOP_INSURANCE_COST - 1
+    assert _state.insurance[uid]["expires_at"] == expiry
+
+
 async def test_renew_insurance_subs_charges_and_extends():
     """The daily-claim hook: a subscribed user is charged one premium and
     coverage extends 24h from the current expiry; an unaffordable renewal
