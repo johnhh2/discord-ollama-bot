@@ -90,7 +90,7 @@ def _dailies_body() -> str:
         f"{DAILIES_CLAIM_EMOJI} claim dailies\n"
         f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip the daily reward + all scratchoff winnings\n"
         f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet the daily reward + all scratchoff winnings on slots\n"
-        f"{DAILIES_TICKETS_EMOJI} buy today's lottery ticket — {DAILY_TICKET_PRICE:,} 🪙, 1 per day (no claim)\n\n"
+        f"{DAILIES_TICKETS_EMOJI} buy today's lottery ticket — {DAILY_TICKET_PRICE:,} 🪙, 1 per day\n\n"
         "Property revenue banks with your claim but isn't gambled — "
         "`!daily property` opts it into the 🪙/🎰 stake."
     )

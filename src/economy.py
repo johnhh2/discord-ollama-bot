@@ -139,9 +139,16 @@ async def drain_bot_balance_into_lottery(lottery: dict, guild_id: int) -> int:
 
 async def announce_new_lottery(
     channel: discord.TextChannel, prize_pool: int = LOTTERY_SEED_POOL,
-    now: datetime.datetime = None
+    now: datetime.datetime = None, sales_open_ts: "int | None" = None,
 ):
-    """Announce a new monthly lottery to the specified channel."""
+    """Announce a new monthly lottery to the specified channel.
+
+    `sales_open_ts`: Unix time ticket sales open, passed by the scheduler's
+    7pm draw-day post — the draw-day lock (src/cogs/lottery_cog.py) holds
+    the fresh lottery's tickets until the next 5am CT dailies reset, so the
+    embed points at that instead of inviting an immediate buy. The settings
+    command's mid-month first post leaves it None: sales are already open.
+    """
     from src.helpers import C_PURPLE
     if now is None:
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -153,13 +160,26 @@ async def announce_new_lottery(
     timestamp = int(next_lottery_draw_dt(now_cst).timestamp())
 
     embed = discord.Embed(title="🎰 New Monthly Lottery", color=C_PURPLE)
+    if sales_open_ts is None:
+        intro = (
+            "A new lottery has started! Grab your daily 🎟️ with `!lottery` "
+            "or the dailies-channel 🎟️ button"
+        )
+        sales_line = ""
+    else:
+        intro = (
+            "A new lottery has started! Its 🎟️ go on sale with the dailies "
+            "reset — grab yours daily with `!lottery` or the dailies-channel "
+            "🎟️ button"
+        )
+        # Kept after **Ends** so the draw stays the embed's first timestamp.
+        sales_line = f"\n**Tickets on sale:** <t:{sales_open_ts}:R>"
     embed.description = (
-        "A new lottery has started! Grab your daily 🎟️ with `!lottery` "
-        "or the dailies-channel 🎟️ button\n\n"
+        f"{intro}\n\n"
         f"**Prize Pool:** {prize_pool:,} 🪙 (+1,000 🪙 per player)\n"
         "**Tickets:** 1,000 🪙 for 1 🎟️, one per day per server — plus up to "
         "3 free 🎟️ a week from chess wins (any win 1, a 600+ Elo bot 2, 1100+ 3)\n"
-        f"**Ends:** <t:{timestamp}:R>"
+        f"**Ends:** <t:{timestamp}:R>{sales_line}"
     )
     await channel.send(embed=embed)
 
@@ -402,9 +422,11 @@ def lottery_period_key(now_ct: datetime.datetime) -> str:
     return f"{draw.year}-{draw.month - 1:02d}"
 
 
-def next_daily_reset_ts() -> int:
-    """Unix timestamp of the next 5am CT daily reset."""
-    now_ct = _ct_now()
+def next_daily_reset_ts(now_ct: "datetime.datetime | None" = None) -> int:
+    """Unix timestamp of the next 5am CT daily reset (after `now_ct`, a CT
+    datetime; defaults to now)."""
+    if now_ct is None:
+        now_ct = _ct_now()
     if now_ct.hour < DAILY_RESET_HOUR:
         reset_date = now_ct.date()
     else:

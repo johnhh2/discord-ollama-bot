@@ -221,6 +221,119 @@ async def test_daily_ticket_locked_final_hour_before_draw(db, monkeypatch):
     assert _state.lottery_ticket_grants.get((GUILD_ID, ctx.author.id), {}).get("daily_day") is None
 
 
+# ── draw-day lock: no sales from the 6pm draw until the 5am reset ────────────
+
+def _ct(*args):
+    return datetime.datetime(*args, tzinfo=ZoneInfo("America/Chicago"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("now", [
+    _ct(2026, 11, 1, 18, 0),    # the draw itself
+    _ct(2026, 11, 1, 23, 59),   # draw-day evening
+    _ct(2026, 11, 2, 4, 59),    # small hours of the 2nd, still draw-day's gameplay-day
+])
+async def test_daily_ticket_locked_after_draw_until_reset(db, monkeypatch, now):
+    """A fresh lottery takes no tickets on draw day: the dailies 🎟️ button
+    is one click per embed and only resets at 5am, so same-evening sales
+    forced an un-react/re-react nobody discovered. Gate unburned, nothing
+    charged."""
+    _pin_clock(monkeypatch, today="2026-11-01", now=now)
+    ctx = _lottery_ctx(uid=9209)
+    await _economy.add_balance(ctx.author.id, 5_000)
+    cog = _make_cog()
+
+    await cog.buy_daily_ticket(ctx.author, ctx.channel, ctx.guild)
+
+    assert await _economy.get_balance(ctx.author.id) == 5_000
+    embeds = _channel_embeds(ctx)
+    assert [e.title for e in embeds] == ["🔒 Lottery Locked"]
+    assert "new lottery just started" in embeds[0].description
+    assert _state.lottery_ticket_grants.get((GUILD_ID, ctx.author.id), {}).get("daily_day") is None
+
+
+@pytest.mark.asyncio
+async def test_daily_ticket_opens_at_the_reset_after_the_draw(db, monkeypatch):
+    _pin_clock(monkeypatch, today="2026-11-02", now=_ct(2026, 11, 2, 5, 0))
+    ctx = _lottery_ctx(uid=9210)
+    await _economy.add_balance(ctx.author.id, 5_000)
+    cog = _make_cog()
+
+    await cog.buy_daily_ticket(ctx.author, ctx.channel, ctx.guild)
+
+    assert (await _persistence.load_lottery(GUILD_ID))["players"][str(ctx.author.id)] == 1
+    assert await _economy.get_balance(ctx.author.id) == 4_000
+
+
+@pytest.mark.asyncio
+async def test_draw_day_lock_is_only_the_first_of_the_month(db, monkeypatch):
+    """The small-hours-of-the-2nd branch is the tail of the 1st's lock, not
+    a standalone window: 3am on any other day sells."""
+    _pin_clock(monkeypatch, today="2026-11-14", now=_ct(2026, 11, 15, 3, 0))
+    ctx = _lottery_ctx(uid=9211)
+    await _economy.add_balance(ctx.author.id, 5_000)
+    cog = _make_cog()
+
+    await cog.buy_daily_ticket(ctx.author, ctx.channel, ctx.guild)
+
+    assert (await _persistence.load_lottery(GUILD_ID))["players"][str(ctx.author.id)] == 1
+
+
+@pytest.mark.asyncio
+async def test_chess_tickets_still_granted_during_draw_day_lock(db, monkeypatch):
+    """The lock is a sales lock: a chess win on draw-day evening still gets
+    its free tickets, into the fresh pot."""
+    _pin_clock(monkeypatch, today="2026-11-01", now=_ct(2026, 11, 1, 20, 0))
+    ctx = _lottery_ctx(uid=9212)
+    cog = _make_cog()
+
+    assert await cog.award_chess_tickets(ctx.guild, ctx.author.id, 1200) == 2
+    assert (await _persistence.load_lottery(GUILD_ID))["players"][str(ctx.author.id)] == 2
+
+
+@pytest.mark.asyncio
+async def test_cmd_lottery_during_draw_day_lock_skips_confirm(db, monkeypatch):
+    """!lottery on draw-day evening shows the lock (pointing at the reset)
+    and doesn't offer the confirm prompt."""
+    _pin_clock(monkeypatch, today="2026-11-01", now=_ct(2026, 11, 1, 20, 0))
+    ctx = _lottery_ctx(uid=9213)
+    await _economy.add_balance(ctx.author.id, 5_000)
+    cog = _make_cog()
+
+    confirm_calls = []
+
+    async def _spy_confirm(*args, **kwargs):
+        confirm_calls.append(1)
+        return True
+    monkeypatch.setattr("src.cogs.lottery_cog.confirm_purchase", _spy_confirm)
+
+    await cog.cmd_lottery.callback(cog, ctx)
+
+    info = ctx.sent_embeds[-1]
+    assert info.title.startswith("🎰 Current Lottery")
+    assert "🔒 new lottery just started" in info.description
+    assert confirm_calls == []
+    assert await _economy.get_balance(ctx.author.id) == 5_000
+
+
+@pytest.mark.asyncio
+async def test_new_lottery_announcement_points_at_sales_open(db):
+    """The scheduler's 7pm draw-day post says when tickets go on sale, with
+    the draw still the embed's first timestamp; the settings command's post
+    (no sales_open_ts) keeps the plain invite."""
+    ctx = _lottery_ctx(uid=9214)
+    now = _ct(2026, 11, 1, 19, 0)
+
+    await _economy.announce_new_lottery(ctx.channel, 5_000, now, sales_open_ts=1_700_000_000)
+    await _economy.announce_new_lottery(ctx.channel, 5_000, now)
+
+    locked, plain = _channel_embeds(ctx)
+    assert "**Tickets on sale:** <t:1700000000:R>" in locked.description
+    assert locked.description.index("**Ends:**") < locked.description.index("**Tickets on sale:**")
+    assert "Tickets on sale" not in plain.description
+    assert "Grab your daily" in plain.description
+
+
 # ── one-time launch gate: no tickets until the 9/1/2026 draw ─────────────────
 
 @pytest.mark.asyncio
@@ -277,11 +390,12 @@ async def test_cmd_lottery_paused_shows_info_without_confirm(db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tickets_flow_normally_after_relaunch_moment(db, monkeypatch):
-    """The instant the 9/1/2026 6pm CT draw time passes, sales are open (the
-    scheduler's draw runs in the same minute and resets the pot)."""
-    just_after = datetime.datetime(2026, 9, 1, 19, 0, tzinfo=ZoneInfo("America/Chicago"))
-    _pin_clock(monkeypatch, now=just_after)
+async def test_tickets_flow_normally_after_relaunch(db, monkeypatch):
+    """Past the 9/1/2026 launch gate — and the draw-day lock that follows
+    every 1st-of-month draw — sales and chess grants flow normally from the
+    9/2 5am CT reset."""
+    first_open = datetime.datetime(2026, 9, 2, 5, 0, tzinfo=ZoneInfo("America/Chicago"))
+    _pin_clock(monkeypatch, today="2026-09-02", now=first_open)
     ctx = _lottery_ctx(uid=9243)
     await _economy.add_balance(ctx.author.id, 5_000)
     cog = _make_cog()

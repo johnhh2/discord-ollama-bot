@@ -22,7 +22,7 @@ from src.persistence import (
 # Attribute access (not `from`-imported) so the conftest stubs on the
 # persistence package reach the calls here.
 import src.persistence as persistence
-from src.config import LOTTERY_SEED_POOL
+from src.config import DAILY_RESET_HOUR, LOTTERY_SEED_POOL
 from src.guild_config import get_guild_cfg
 from src.confirm_view import confirm_purchase
 from src import state, status_manager
@@ -122,9 +122,31 @@ def lottery_status_text() -> "str | None":
     return f"{count}x 🎟️ sold today"
 
 
-def _sales_locked(now_cst) -> bool:
-    """Ticket sales close for the final hour before the draw (5-6pm CT on the 1st)."""
+def _pre_draw_lock(now_cst) -> bool:
+    """The final hour before the 6pm CT draw on the 1st: nothing sells into
+    a pot that's about to be drawn."""
     return now_cst.day == 1 and now_cst.hour == 17
+
+
+def _post_draw_lock(now_cst) -> bool:
+    """From the 6pm CT draw on the 1st until the 5am CT dailies reset on the
+    2nd: the fresh lottery takes no tickets on draw day.
+
+    The dailies-channel 🎟️ reaction is one click per claim embed, and the
+    embed (with its reactions) is only reposted at the 5am reset. Selling
+    into the new pot the same evening meant anyone who had clicked 🎟️
+    earlier that day had to un-react and re-react to buy — nobody worked
+    that out. Holding sales until the reset hands everyone a fresh button.
+    Sales only; free chess-win tickets still land in the new pot.
+    """
+    if now_cst.day == 1:
+        return now_cst.hour >= 18
+    return now_cst.day == 2 and now_cst.hour < DAILY_RESET_HOUR
+
+
+def _sales_locked(now_cst) -> bool:
+    """True from 5pm CT on the 1st through the 5am CT reset on the 2nd."""
+    return _pre_draw_lock(now_cst) or _post_draw_lock(now_cst)
 
 
 def _sales_not_started(now_cst) -> bool:
@@ -243,7 +265,12 @@ class LotteryCog(commands.Cog):
             if now.hour >= 19 and lottery.get("last_posted_week") != current_month:
                 lottery["last_posted_week"] = current_month
                 await save_lottery(guild.id, lottery)
-                await announce_new_lottery(channel, lottery["prize_pool"], now)
+                # 7pm on the 1st sits inside the draw-day sales lock: point
+                # the post at the 5am reset when tickets actually go on sale.
+                await announce_new_lottery(
+                    channel, lottery["prize_pool"], now,
+                    sales_open_ts=next_daily_reset_ts(now),
+                )
 
         eligible = self._eligible_players(guild, players) if drew else {}
         if drew and players and pool > 0 and not eligible:
@@ -371,7 +398,18 @@ class LotteryCog(commands.Cog):
             ), silent=silent)
             return
         if _sales_locked(now_cst):
-            await channel.send(embed=emb("🔒 Lottery Locked", "Ticket sales are closed for the final hour before the draw. Check back after 6pm CT!", C_RED), silent=silent)
+            reset_ts = next_daily_reset_ts(now_cst)
+            if _pre_draw_lock(now_cst):
+                reason = (
+                    "Ticket sales are closed for the final hour before the draw. "
+                    f"The next lottery's tickets go on sale with the dailies reset <t:{reset_ts}:R>."
+                )
+            else:
+                reason = (
+                    "A new lottery just started — its tickets go on sale with the "
+                    f"dailies reset <t:{reset_ts}:R>."
+                )
+            await channel.send(embed=emb("🔒 Lottery Locked", reason, C_RED), silent=silent)
             return
 
         # Gate-and-claim runs synchronously (no await between the check and
@@ -499,7 +537,12 @@ class LotteryCog(commands.Cog):
             # Next lottery starts at 7pm today
             next_lottery_start = now_cst.replace(hour=19, minute=0, second=0, microsecond=0)
             ts = int(next_lottery_start.timestamp())
-            await ctx.send(embed=emb("🎰 Lottery", f"The next lottery is starting soon!\n\n**Opens:** <t:{ts}:R>", C_GREY))
+            await ctx.send(embed=emb(
+                "🎰 Lottery",
+                f"The next lottery is starting soon!\n\n**Opens:** <t:{ts}:R>\n"
+                f"**Tickets on sale:** <t:{next_daily_reset_ts(now_cst)}:R> (the dailies reset)",
+                C_GREY,
+            ))
             return
 
         # Show lottery info
@@ -519,8 +562,16 @@ class LotteryCog(commands.Cog):
                 "🔒 paused — the current pot predates the new ticket system; "
                 f"sales open <t:{int(TICKET_SALES_START_CT.timestamp())}:R> with the next lottery"
             )
+        elif _pre_draw_lock(now_cst):
+            daily_status = (
+                "🔒 sales closed for the final hour before the draw — the next "
+                f"lottery's tickets go on sale <t:{next_daily_reset_ts(now_cst)}:R>"
+            )
         elif locked:
-            daily_status = "🔒 sales closed for the final hour before the draw"
+            daily_status = (
+                "🔒 new lottery just started — tickets go on sale with the "
+                f"dailies reset <t:{next_daily_reset_ts(now_cst)}:R>"
+            )
         elif bought_today:
             daily_status = f"✅ bought — next one <t:{next_daily_reset_ts()}:R>"
         else:
