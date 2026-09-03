@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import random
 import time
@@ -19,6 +20,10 @@ from src.persistence import (
     try_set_record, load_records,
 )
 from src.invites import _wait_for_confirmations
+from src.games.game_threads import (
+    _refuse_in_thread, _try_create_game_thread, _add_thread_members,
+    _close_game_thread, _join_names,
+)
 from src.config import (
     HANGMAN_MAX_WRONG, HANGMAN_BASE_REWARD, HANGMAN_LENGTH_OFFSET,
     HANGMAN_LENGTH_MULT, HANGMAN_UNIQUE_MULT, HANGMAN_RARE_MULT, HANGMAN_ULTRA_RARE_MULT,
@@ -163,6 +168,54 @@ async def _distribute_hangman_rewards(cid: int, game: dict) -> tuple[str, list[t
     return msg.strip(), pending
 
 
+def _hangman_thread_name(game: dict, *, won: bool) -> str:
+    """'🎉 A, B solved python' / '💀 A lost — the word was python'. Names
+    the players who actually guessed (the host alone if nobody did)."""
+    names = game.get("player_names", {})
+    active = game.get("active_players", set())
+    who = [names.get(pid, str(pid)) for pid in names if pid in active]
+    if not who:
+        host = game.get("user_id")
+        who = [names.get(host, str(host))]
+    word = game["word"]
+    if won:
+        return f"🎉 {_join_names(who)} solved {word}"
+    return f"💀 {_join_names(who)} lost — the word was {word}"
+
+
+def _open_board_embed(game: dict, color: int) -> discord.Embed:
+    return emb(
+        "🔤 Hangman",
+        build_hangman_display(game)
+        + "\n\nJust type a letter or use `!guess`/`!g` to guess the full word!"
+        + f"\n\n**Last move:** {game['last_move']}",
+        color,
+    )
+
+
+async def _hangman_won(channel, cid: int, game: dict, title: str) -> None:
+    """Pay out, post the final board, announce records, then close the
+    game's thread (records must land before the archive)."""
+    reward_msg, pending_records = await _distribute_hangman_rewards(cid, game)
+    await _edit_board(channel, game, emb(title, build_hangman_display(game) + "\n\n" + reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
+    for cat, holder, val, hid in pending_records:
+        await announce_record(channel, cat, holder, val, holder_id=hid)
+    await _close_game_thread(channel, _hangman_thread_name(game, won=True))
+
+
+async def _hangman_lost(channel, cid: int, game: dict, name: str, guess: str) -> None:
+    """Out of lives. Settle synchronously before the board edit: a concurrent
+    guess during the await must find the game already gone — and if the
+    edit raises, the game must not stay stuck at max wrong guesses forever
+    (the win path already does this)."""
+    del state.active_hangman_games[cid]
+    word = game["word"]
+    game["last_move"] = f"{name} guessed `{guess}` — Game over! The word was `{word}`"
+    pot_msg = hangman_pot_msg(word, len(game["active_players"]))
+    await _edit_board(channel, game, emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n{pot_msg}\n\n**Last move:** {game['last_move']}", C_RED))
+    await _close_game_thread(channel, _hangman_thread_name(game, won=False))
+
+
 async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: int, cid: int, guess: str, author_name: str):
     """Shared hangman guess logic used by both `!guess`/`!g` command and free-text intercept."""
     game = state.active_hangman_games[cid]
@@ -184,59 +237,40 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
         if guess == game["word"]:
             game["last_move"] = f"{name} guessed the word! 🎉"
             game["guessed_letters"].update(game["word"])  # reveal full word for display
-            reward_msg, pending_records = await _distribute_hangman_rewards(cid, game)
-            await _edit_board(channel, game, emb("🎉 Correct!", build_hangman_display(game) + "\n\n" + reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
-            for cat, holder, val, hid in pending_records:
-                await announce_record(channel, cat, holder, val, holder_id=hid)
+            await _hangman_won(channel, cid, game, "🎉 Correct!")
         elif guess in game["guessed_words"]:
             game["last_move"] = f"{name} guessed `{guess}` ❌ (already tried)"
-            await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
+            await _edit_board(channel, game, _open_board_embed(game, C_ORANGE))
         else:
             game["guessed_words"].add(guess)
             game["wrong_guesses"] += 1
             if game["wrong_guesses"] >= HANGMAN_MAX_WRONG:
-                # Settle synchronously before the board edit: a concurrent
-                # guess during the await must find the game already gone —
-                # and if the edit raises, the game must not stay stuck at
-                # max wrong guesses forever (win path already does this).
-                del state.active_hangman_games[cid]
-                word = game["word"]
-                game["last_move"] = f"{name} guessed `{guess}` — Game over! The word was `{word}`"
-                pot_msg = hangman_pot_msg(word, len(game["active_players"]))
-                await _edit_board(channel, game, emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n{pot_msg}\n\n**Last move:** {game['last_move']}", C_RED))
+                await _hangman_lost(channel, cid, game, name, guess)
             else:
                 game["last_move"] = f"{name} guessed `{guess}` ❌"
-                await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_RED))
+                await _edit_board(channel, game, _open_board_embed(game, C_RED))
         return
 
     # Single letter guess
     if guess in game["guessed_letters"]:
         game["last_move"] = f"{name} guessed `{guess}` (already tried)"
-        await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
+        await _edit_board(channel, game, _open_board_embed(game, C_ORANGE))
         return
     game["guessed_letters"].add(guess)
     if guess in game["word"]:
         if all(c in game["guessed_letters"] for c in game["word"]):
             game["last_move"] = f"{name} guessed `{guess}` ✅ — word complete! 🎉"
-            reward_msg, pending_records = await _distribute_hangman_rewards(cid, game)
-            await _edit_board(channel, game, emb("🎉 You Got It!", build_hangman_display(game) + "\n\n" + reward_msg + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
-            for cat, holder, val, hid in pending_records:
-                await announce_record(channel, cat, holder, val, holder_id=hid)
+            await _hangman_won(channel, cid, game, "🎉 You Got It!")
         else:
             game["last_move"] = f"{name} guessed `{guess}` ✅"
-            await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_GREEN))
+            await _edit_board(channel, game, _open_board_embed(game, C_GREEN))
     else:
         game["wrong_guesses"] += 1
         if game["wrong_guesses"] >= HANGMAN_MAX_WRONG:
-            # Settle synchronously before the board edit (see word-guess branch).
-            del state.active_hangman_games[cid]
-            word = game["word"]
-            game["last_move"] = f"{name} guessed `{guess}` — Game over! The word was `{word}`"
-            pot_msg = hangman_pot_msg(word, len(game["active_players"]))
-            await _edit_board(channel, game, emb("💀 Game Over", build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n{pot_msg}\n\n**Last move:** {game['last_move']}", C_RED))
+            await _hangman_lost(channel, cid, game, name, guess)
         else:
             game["last_move"] = f"{name} guessed `{guess}` ❌"
-            await _edit_board(channel, game, emb("🔤 Hangman", build_hangman_display(game) + f"\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** {game['last_move']}", C_ORANGE))
+            await _edit_board(channel, game, _open_board_embed(game, C_ORANGE))
 
 
 class HangmanCog(commands.Cog):
@@ -248,6 +282,8 @@ class HangmanCog(commands.Cog):
     @commands.command(name="hangman", aliases=["hang", "hm"])
     async def cmd_hangman(self, ctx: commands.Context, *args):
         if await check_game_channel(ctx):
+            return
+        if await _refuse_in_thread(ctx):
             return
         uid = ctx.author.id
         _HANGMAN_COOLDOWN = 6 * 3600
@@ -266,7 +302,7 @@ class HangmanCog(commands.Cog):
         if ctx.author.bot:
             self._last_hangman_by_uid[uid] = time.time()
         word = random.choice(HANGMAN_WORDS)
-        state.active_hangman_games[cid] = {
+        game = {
             "word": word,
             "guessed_letters": set(),
             "guessed_words": set(),  # Track full word guesses to prevent repeats
@@ -279,14 +315,42 @@ class HangmanCog(commands.Cog):
             "board_msg_id": None,
             "last_move": "Game started!",
         }
+        # Claim the parent channel synchronously for the invite window; the
+        # game moves into its own thread once the lobby is settled.
+        state.active_hangman_games[cid] = game
         # Invite flow for mentioned users
         invited_users = [m for m in ctx.message.mentions if m.id != ctx.author.id]
         if invited_users:
             confirmed = await _wait_for_confirmations(ctx, invited_users, title="📨 Hangman Invite")
-            state.active_hangman_games[cid]["invited_players"].update(confirmed)
-        game = state.active_hangman_games[cid]
-        board_msg = await ctx.send(embed=emb("🔤 Hangman", build_hangman_display(game) + "\n\nJust type a letter or use `!guess`/`!g` to guess the full word!\n\n**Last move:** Game started!", C_ORANGE))
+            if state.active_hangman_games.get(cid) is not game:
+                return  # host !stop'd while the invite was pending
+            game["invited_players"].update(confirmed)
+        players = [ctx.author] + [m for m in invited_users if m.id in game["invited_players"]]
+        # The lobby gets its own thread and the game is keyed by the thread's
+        # id, so the parent channel is free for the next game immediately.
+        # Falls back to the invoking channel when a thread can't be created.
+        thread = await _try_create_game_thread(
+            ctx, f"🔤 Hangman: {_join_names([p.display_name for p in players])}",
+        )
+        if state.active_hangman_games.get(cid) is not game:
+            await _close_game_thread(thread)  # !stop'd mid-creation; don't orphan it
+            return
+        dest = ctx.channel
+        if thread is not None:
+            del state.active_hangman_games[cid]
+            state.active_hangman_games[thread.id] = game
+            dest = thread
+            await _add_thread_members(thread, *players)
+        board_msg = await dest.send(embed=_open_board_embed(game, C_ORANGE), silent=True)
         game["board_msg_id"] = board_msg.id
+
+    @commands.Cog.listener()
+    async def on_thread_delete(self, thread: discord.Thread):
+        """A mod deleting a game thread would strand the game forever (no
+        channel left to guess or `!stop` in) — drop it. Nothing to refund:
+        hangman has no stake."""
+        if state.active_hangman_games.pop(thread.id, None) is not None:
+            logging.info(f"hangman: cancelled game in deleted thread {thread.id}")
 
     @commands.command(name="guess", aliases=["g"])
     async def cmd_guess(self, ctx: commands.Context, *, guess: str = None):

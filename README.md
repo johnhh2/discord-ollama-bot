@@ -78,6 +78,7 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 
 ### 🎮 Games & progression
 - `!hangman` (~7.5k-word list, rarity-weighted payouts), `!ttt`, `!c4`, `!race`, `!puzzle`
+- Chess, hangman, tic-tac-toe and Connect 4 each play out in their own thread under the channel they were started from; the thread is renamed with the result (`👑 X won against Y`) and closed when the game ends
 - Per-guild XP and levels (`!lvl`, `!levels`) with commands gated behind level thresholds
 
 ### ⛏️ Minecraft server status

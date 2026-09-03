@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 import discord
 from discord.ext import commands
@@ -15,6 +16,10 @@ from src.permissions import (
     is_silenced,
 )
 from src.invites import _wait_for_confirmations
+from src.games.game_threads import (
+    _refuse_in_thread, _try_create_game_thread, _add_thread_members,
+    _close_game_thread,
+)
 from src import state
 
 
@@ -156,10 +161,42 @@ async def _clear_all_reactions(channel, game: dict) -> None:
         return
 
 
-async def _send_game_board(ctx: commands.Context, game: dict, title: str,
+def _player_name(game: dict, guild, uid: int | None) -> str:
+    """Display name for a player at game end — the name captured at game
+    start, guild.get_member as a fallback (members can drop out of cache)."""
+    if uid is None:
+        return "opponent"
+    name = game.get("names", {}).get(uid)
+    if name:
+        return name
+    if guild is not None:
+        member = guild.get_member(uid)
+        if member is not None:
+            return member.display_name
+    return str(uid)
+
+
+def _other_player(game: dict, uid: int) -> int | None:
+    return next((p for p in game.get("players", ()) if p != uid), None)
+
+
+def _win_thread_name(game: dict, guild, winner_uid: int) -> str:
+    winner = _player_name(game, guild, winner_uid)
+    loser = _player_name(game, guild, _other_player(game, winner_uid))
+    return f"👑 {winner} won against {loser}"
+
+
+def _draw_thread_name(game: dict, guild, mover_uid: int) -> str:
+    mover = _player_name(game, guild, mover_uid)
+    other = _player_name(game, guild, _other_player(game, mover_uid))
+    return f"⚖️ {mover} drew with {other}"
+
+
+async def _send_game_board(ctx: commands.Context, dest, game: dict, title: str,
                            board_text: str, player1_desc: str, player2_desc: str,
                            controls: str, amount: int) -> None:
-    """Send the initial PVP board message and store its ID in game['board_msg_id']."""
+    """Send the initial PVP board message into `dest` (the game's thread, or
+    the invoking channel) and store its ID in game['board_msg_id']."""
     wager_info = f"\nWager: {amount:,} 🪙 each" if amount > 0 else ""
     desc = (
         f"{board_text}\n\n"
@@ -167,7 +204,9 @@ async def _send_game_board(ctx: commands.Context, game: dict, title: str,
         f"{ctx.author.mention}'s turn. {controls}\n\n"
         f"**Last move:** {game['last_move']}"
     )
-    msg = await ctx.send(embed=emb(title, desc, C_BLUE))
+    # Silent: both players were just pulled into the thread (or are watching
+    # the channel they typed the command in) — no push needed.
+    msg = await dest.send(embed=emb(title, desc, C_BLUE), silent=True)
     game["board_msg_id"] = msg.id
 
 
@@ -277,11 +316,14 @@ async def _apply_ttt_move(channel, guild, mover, pos: int | None) -> None:
             gid = guild.id if guild else None
             await record_gambling_event(gid, winner_uid, gained=amount)
             await record_gambling_event(gid, loser_uid, lost=amount)
-        winner_name = guild.get_member(winner_uid).display_name if guild else str(winner_uid)
+        winner_name = _player_name(game, guild, winner_uid)
         game["last_move"] = f"{name} played position {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
-        winner_mention = guild.get_member(winner_uid).mention if guild else str(winner_uid)
+        winner_mention = f"<@{winner_uid}>"
         await _edit_board(channel, game, emb("🎉 Tic-Tac-Toe Won!", build_ttt_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         await _clear_all_reactions(channel, game)
+        # Stamp the outcome on the game's thread and close it (last: nothing
+        # can be edited in an archived thread).
+        await _close_game_thread(channel, _win_thread_name(game, guild, winner_uid))
     elif all(c is not None for c in game["board"]) or is_ttt_stalemate(game["board"]):
         del state.active_ttt_games[cid]  # settle before any await (see win branch)
         amount = game.get("amount", 0)
@@ -292,6 +334,7 @@ async def _apply_ttt_move(channel, guild, mover, pos: int | None) -> None:
         draw_text = "\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
         await _edit_board(channel, game, emb("🤝 Tic-Tac-Toe Draw", build_ttt_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
         await _clear_all_reactions(channel, game)
+        await _close_game_thread(channel, _draw_thread_name(game, guild, uid))
     else:
         players = game["players"]
         game["current"] = players[1] if uid == players[0] else players[0]
@@ -353,11 +396,12 @@ async def _apply_c4_move(channel, guild, mover, pos: int | None) -> None:
             gid = guild.id if guild else None
             await record_gambling_event(gid, winner_uid, gained=amount)
             await record_gambling_event(gid, loser_uid, lost=amount)
-        winner_name = guild.get_member(winner_uid).display_name if guild else str(winner_uid)
+        winner_name = _player_name(game, guild, winner_uid)
         game["last_move"] = f"{name} dropped in column {pos} — {winner_name} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "")
-        winner_mention = guild.get_member(winner_uid).mention if guild else str(winner_uid)
+        winner_mention = f"<@{winner_uid}>"
         await _edit_board(channel, game, emb("🎉 Connect 4 Won!", build_c4_display(game) + f"\n\n{winner_mention} wins!" + (f" **+{winnings:,} 🪙**" if winnings > 0 else "") + f"\n\n**Last move:** {game['last_move']}", C_GREEN))
         await _clear_all_reactions(channel, game)
+        await _close_game_thread(channel, _win_thread_name(game, guild, winner_uid))
     elif all(game["board"][r][c] is not None for r in range(6) for c in range(7)):
         del state.active_c4_games[cid]  # settle before any await (see win branch)
         amount = game.get("amount", 0)
@@ -368,6 +412,7 @@ async def _apply_c4_move(channel, guild, mover, pos: int | None) -> None:
         draw_text = "\n\nIt's a draw!" + (f" Each player gets {amount:,} 🪙 back." if amount > 0 else "")
         await _edit_board(channel, game, emb("🤝 Connect 4 Draw", build_c4_display(game) + draw_text + f"\n\n**Last move:** {game['last_move']}", C_GOLD))
         await _clear_all_reactions(channel, game)
+        await _close_game_thread(channel, _draw_thread_name(game, guild, uid))
     else:
         players = game["players"]
         game["current"] = players[1] if uid == players[0] else players[0]
@@ -383,13 +428,45 @@ async def _apply_c4_move(channel, guild, mover, pos: int | None) -> None:
         await _remove_user_reaction(channel, game, move_emoji, mover)
 
 
+# Per-game config for the shared PvP starter. `registry` is looked up on
+# `state` at call time (tests swap the dicts out between runs).
+_PVP_KINDS = {
+    "ttt": {
+        "registry": "active_ttt_games",
+        "invite": "📨 Tic-Tac-Toe Invite",
+        "title": "🎮 Tic-Tac-Toe",
+        "thread_emoji": "🎮",
+        "marks": ("❌", "⭕"),
+        "new_board": lambda: [None] * 9,
+        "display": build_ttt_display,
+        "controls": "Use `!m <1-9>` or click a number reaction",
+    },
+    "c4": {
+        "registry": "active_c4_games",
+        "invite": "📨 Connect 4 Invite",
+        "title": "🟡 Connect 4",
+        "thread_emoji": "🟡",
+        "marks": ("🔴", "🟡"),
+        "new_board": lambda: [[None] * 7 for _ in range(6)],
+        "display": build_c4_display,
+        "controls": "Use `!m <1-7>` or click a number reaction",
+    },
+}
+
+
 class TttC4Cog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="ttt")
-    async def cmd_ttt(self, ctx: commands.Context, opponent: discord.User = None, amount: str = "0"):
+    async def _start_pvp(self, ctx: commands.Context, opponent, amount: str, kind: str):
+        """Shared `!ttt` / `!c4` body: invite + wager, then a thread for the
+        match (the game is keyed by the thread's id, so the parent channel
+        is free for the next match as soon as the thread exists)."""
+        spec = _PVP_KINDS[kind]
+        registry = getattr(state, spec["registry"])
         if await check_game_channel(ctx):
+            return
+        if await _refuse_in_thread(ctx):
             return
         cid = ctx.channel.id
         uid = ctx.author.id
@@ -404,65 +481,63 @@ class TttC4Cog(commands.Cog):
         # a second !ttt/!c4 during the confirmation window would otherwise
         # pass the gate and clobber this game (eating its wagers).
         placeholder = {"pending": True}
-        state.active_ttt_games[cid] = placeholder
+        registry[cid] = placeholder
+        thread = None
         try:
-            if not await _setup_pvp_game(ctx, opponent, amount, "📨 Tic-Tac-Toe Invite"):
+            if not await _setup_pvp_game(ctx, opponent, amount, spec["invite"]):
                 return
-            state.active_ttt_games[cid] = {
-                "board": [None]*9,
+            # Wagers are escrowed by now; a thread failure (no Create Public
+            # Threads, thread cap) falls back to playing in the channel.
+            thread = await _try_create_game_thread(
+                ctx, f"{spec['thread_emoji']} {ctx.author.display_name} vs {opponent.display_name}",
+            )
+            dest = thread if thread is not None else ctx.channel
+            p1_mark, p2_mark = spec["marks"]
+            game = {
+                "board": spec["new_board"](),
                 "players": [uid, opponent.id],
-                "marks": {uid: "❌", opponent.id: "⭕"},
+                "marks": {uid: p1_mark, opponent.id: p2_mark},
+                "names": {uid: ctx.author.display_name, opponent.id: opponent.display_name},
                 "current": uid,
                 "amount": amount,
                 "board_msg_id": None,
                 "last_move": f"{ctx.author.display_name}'s turn",
             }
+            registry[dest.id] = game
         finally:
-            if state.active_ttt_games.get(cid) is placeholder:
-                del state.active_ttt_games[cid]
-        await _send_game_board(ctx, state.active_ttt_games[cid], "🎮 Tic-Tac-Toe",
-                               build_ttt_display(state.active_ttt_games[cid]),
-                               f"{ctx.author.mention} (❌)", f"{opponent.mention} (⭕)",
-                               "Use `!m <1-9>` or click a number reaction", amount)
-        await _add_initial_reactions(ctx.channel, state.active_ttt_games[cid]["board_msg_id"], "ttt")
+            # Early return, exception, or the game moved into its thread:
+            # release the parent-channel slot (identity check — the
+            # in-channel fallback replaced the placeholder with the game).
+            if registry.get(cid) is placeholder:
+                del registry[cid]
+        await _add_thread_members(thread, ctx.author, opponent)
+        await _send_game_board(ctx, dest, game, spec["title"], spec["display"](game),
+                               f"{ctx.author.mention} ({p1_mark})", f"{opponent.mention} ({p2_mark})",
+                               spec["controls"], amount)
+        await _add_initial_reactions(dest, game["board_msg_id"], kind)
+
+    @commands.command(name="ttt")
+    async def cmd_ttt(self, ctx: commands.Context, opponent: discord.User = None, amount: str = "0"):
+        await self._start_pvp(ctx, opponent, amount, "ttt")
 
     @commands.command(name="c4")
     async def cmd_c4(self, ctx: commands.Context, opponent: discord.User = None, amount: str = "0"):
-        if await check_game_channel(ctx):
-            return
-        cid = ctx.channel.id
-        uid = ctx.author.id
-        if cid in state.active_ttt_games or cid in state.active_c4_games:
-            await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
-            return
-        amount = parse_int_amount(amount)
-        if amount is None:
-            await ctx.send("Amount must be a positive whole number (e.g. `100`, `2.5k`).")
-            return
-        # Claim the channel slot synchronously before the invite/wager awaits
-        # (see cmd_ttt).
-        placeholder = {"pending": True}
-        state.active_c4_games[cid] = placeholder
-        try:
-            if not await _setup_pvp_game(ctx, opponent, amount, "📨 Connect 4 Invite"):
-                return
-            state.active_c4_games[cid] = {
-                "board": [[None]*7 for _ in range(6)],
-                "players": [uid, opponent.id],
-                "marks": {uid: "🔴", opponent.id: "🟡"},
-                "current": uid,
-                "amount": amount,
-                "board_msg_id": None,
-                "last_move": f"{ctx.author.display_name}'s turn",
-            }
-        finally:
-            if state.active_c4_games.get(cid) is placeholder:
-                del state.active_c4_games[cid]
-        await _send_game_board(ctx, state.active_c4_games[cid], "🟡 Connect 4",
-                               build_c4_display(state.active_c4_games[cid]),
-                               f"{ctx.author.mention} (🔴)", f"{opponent.mention} (🟡)",
-                               "Use `!m <1-7>` or click a number reaction", amount)
-        await _add_initial_reactions(ctx.channel, state.active_c4_games[cid]["board_msg_id"], "c4")
+        await self._start_pvp(ctx, opponent, amount, "c4")
+
+    @commands.Cog.listener()
+    async def on_thread_delete(self, thread: discord.Thread):
+        """A mod deleting a game thread would otherwise leave the game (and
+        any escrowed wagers) stranded forever — there'd be no channel left
+        to type `!stop` in. Refund the stakes and drop the game."""
+        for registry in (state.active_ttt_games, state.active_c4_games):
+            game = registry.pop(thread.id, None)
+            if game is None or game.get("pending"):
+                continue
+            amount = int(game.get("amount", 0) or 0)
+            if amount > 0:
+                for player_uid in game.get("players", ()):
+                    await add_balance(player_uid, amount)
+            logging.info(f"ttt/c4: cancelled game in deleted thread {thread.id}")
 
     @commands.command(name="m",)
     async def cmd_move(self, ctx: commands.Context, pos: int = None):

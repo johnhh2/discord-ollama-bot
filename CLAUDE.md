@@ -337,6 +337,37 @@ that bridge a subscriber whose prepaid coverage ended mid-day lapsed until
 5am. When coverage already reaches past the next sweep, nothing is charged at
 subscribe time — the sweep extends from the existing expiry.
 
+## Game threads: chess, tic-tac-toe, Connect 4, hangman
+
+Every match plays out in a public thread under the channel it was started
+from. The helpers live in `src/games/game_threads.py`; don't reimplement
+them per game.
+
+1. **Start**: gate with `_refuse_in_thread(ctx)` (threads can't nest), claim
+   the parent-channel slot synchronously (placeholder / game dict keyed by
+   `ctx.channel.id`) for the invite window, then `_try_create_game_thread`
+   *after* wagers are escrowed. Key the live game by **the thread's id** so
+   the parent channel is free for the next match at once; release the
+   parent slot with an identity check. `None` from the thread helper means
+   "play in the channel" (DMs, no Create Public Threads, thread cap) — the
+   game must still work keyed by the channel id. Pull players in with
+   `_add_thread_members` and send the board into the thread with
+   `silent=True`.
+2. **End**: after the final board edit and any `announce_record` sends,
+   `_close_game_thread(channel, "👑 X won against Y")` (draws use ⚖️,
+   hangman 🎉/💀). It renames and archives + locks in one edit and no-ops
+   outside threads, so the fallback game needs no special casing. Nothing
+   can be edited in an archived thread — close **last**.
+3. **`!stop`**: the forfeit path renames with `archive=False` and sets
+   `close_thread`; `cmd_stop` archives after the ⏹️ summary. Fire-and-forget
+   board edits go in its `board_edits` list so they land before the archive.
+4. **Deleted thread**: add an `on_thread_delete` listener that pops the game
+   by `thread.id` and refunds any stake — there's no channel left to
+   `!stop` in otherwise.
+
+Coverage: [tests/test_game_threads.py](tests/test_game_threads.py) and the
+"Game threads" block of [tests/test_chess.py](tests/test_chess.py).
+
 ## Concurrency: per-user command races
 
 Discord users can fire several invocations of the same command before the first finishes (spam-typing, multi-device, scripted clients). Because asyncio is cooperative, a coroutine only loses control at an `await` — so a sequence like *check counter → await network/DB → mutate counter* is racey: two invocations both pass the check before either mutates, and the user gets the resource twice. This bot has had four of these bugs in one month (`!scratchoff`, `!daily`, `!bail`, `!shop insurance`, `!shop unoreverse`). The pattern is easy to introduce and easy to miss in code review.

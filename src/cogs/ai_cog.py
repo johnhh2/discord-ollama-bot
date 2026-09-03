@@ -48,9 +48,10 @@ from src.games.blackjack import retire_blackjack_buttons
 from src.games import chess_engine, chess_render
 from src.chess_shop import equipped_cosmetics
 from src.games.chess import (
-    BOARD_IMG_FILENAME, _bump_board as _bump_chess_board,
-    _close_game_thread, _game_result_name,
+    BOARD_IMG_FILENAME, _bump_board as _bump_chess_board, _game_result_name,
 )
+from src.games.game_threads import _close_game_thread
+from src.games.ttt_c4 import _player_name as _pvp_player_name
 
 
 log = logging.getLogger(__name__)
@@ -614,17 +615,22 @@ class AICog(commands.Cog):
         emoji_label: str,
         build_display,
         display_kwargs_for=lambda game, uid: {},
+        board_edits: list | None = None,
     ) -> str | None:
         """Forfeit a 2-player PvP game (ttt/c4) in this channel.
 
         Returns the human-readable line to append to the !stop summary, or
         None if there's no matching game / the user isn't in it. Pays out
         the wager pot to the opponent, tags game["last_move"], edits the
-        board to a 🏳️ embed asynchronously, and removes the game.
+        board to a 🏳️ embed asynchronously (the task lands in `board_edits`
+        so cmd_stop can wait for it before archiving a game thread), stamps
+        the outcome on the game's thread, and removes the game.
         """
         cid = ctx.channel.id
         uid = ctx.author.id
-        if cid not in registry or uid not in registry[cid]["players"]:
+        # `.get`: during the invite window the slot holds a {"pending": True}
+        # placeholder with no players yet.
+        if cid not in registry or uid not in registry[cid].get("players", ()):
             return None
         game = registry[cid]
         amount = game.get("amount", 0)
@@ -639,11 +645,21 @@ class AICog(commands.Cog):
             line = f"{emoji_label} (forfeited)"
         display = build_display(game, **display_kwargs_for(game, uid))
         title = f"🏳️ {emoji_label.split(' ', 1)[1]} Forfeited"
-        asyncio.create_task(_edit_board(
+        edit = asyncio.create_task(_edit_board(
             ctx.channel, game,
             emb(title, display + f"\n\n**Last move:** {game['last_move']}", C_RED),
         ))
+        if board_edits is not None:
+            board_edits.append(edit)
         del registry[cid]
+        # Stamp the outcome on the thread now; cmd_stop archives it after the
+        # ⏹️ Stopped summary goes out (can't send into an archived thread).
+        winner_name = _pvp_player_name(game, ctx.guild, opponent_uid)
+        await _close_game_thread(
+            ctx.channel,
+            f"👑 {winner_name} won against {ctx.author.display_name}",
+            archive=False,
+        )
         return line
 
     async def _stop_chess_game(self, ctx: commands.Context) -> str | None:
@@ -737,6 +753,9 @@ class AICog(commands.Cog):
         cid = ctx.channel.id
         stopped: list[str] = []
         close_thread = False
+        # Fire-and-forget board edits that must land before a game thread
+        # is archived (nothing can be edited in an archived thread).
+        board_edits: list[asyncio.Task] = []
 
         # AI thread (ask/story/roleplay/rpg) — owner closes the thread; an
         # invited user just leaves the group.
@@ -775,24 +794,32 @@ class AICog(commands.Cog):
             game = state.active_hangman_games[cid]
             word = game["word"]
             game["last_move"] = f"{ctx.author.display_name} forfeited. The word was `{word}`"
-            asyncio.create_task(_edit_board(
+            board_edits.append(asyncio.create_task(_edit_board(
                 ctx.channel, game,
                 emb(
                     "🏳️ Hangman Forfeited",
                     build_hangman_display(game) + f"\n\nThe word was `{word}`.\n\n**Last move:** {game['last_move']}",
                     C_RED,
                 ),
-            ))
+            )))
             del state.active_hangman_games[cid]
             stopped.append(f"🔤 Hangman (the word was `{word}`)")
+            # Rename now, archive with the summary below.
+            await _close_game_thread(
+                ctx.channel,
+                f"🏳️ {ctx.author.display_name} forfeited — the word was {word}",
+                archive=False,
+            )
+            close_thread = True
 
         # 2-player PvP games — same shape, factored into _stop_pvp_game.
         for line in (
-            await self._stop_pvp_game(ctx, state.active_ttt_games, "🎮 Tic-Tac-Toe", build_ttt_display),
-            await self._stop_pvp_game(ctx, state.active_c4_games,  "🟡 Connect 4",   build_c4_display),
+            await self._stop_pvp_game(ctx, state.active_ttt_games, "🎮 Tic-Tac-Toe", build_ttt_display, board_edits=board_edits),
+            await self._stop_pvp_game(ctx, state.active_c4_games,  "🟡 Connect 4",   build_c4_display, board_edits=board_edits),
         ):
             if line:
                 stopped.append(line)
+                close_thread = True
 
         # Chess has its own state shape (white_id/black_id/fen/pgn) and needs to
         # produce a chess_reports row on forfeit so `!chess view <id>` works.
@@ -824,6 +851,8 @@ class AICog(commands.Cog):
         await ctx.send(embed=emb("⏹️ Stopped", "\n".join(stopped), C_GREY))
 
         if close_thread and isinstance(ctx.channel, discord.Thread):
+            if board_edits:
+                await asyncio.gather(*board_edits, return_exceptions=True)
             try:
                 await ctx.channel.edit(archived=True, locked=True)
             except discord.Forbidden:

@@ -16,7 +16,6 @@ from src.helpers import (
     C_ORANGE,
     emb, C_RED, C_GOLD, C_BLUE, C_GREEN, C_GREY, C_PURPLE,
     _delete_after, send_ephemeral, announce_record, parse_int_amount,
-    log_bot_permission_error,
 )
 from src.confirm_view import confirm_prompt
 from src.config import EPHEMERAL_DELETE_AFTER
@@ -37,6 +36,9 @@ from src.chess_shop import (
     elo_requirement_met, equipped_cosmetics, find_chess_item, has_chess_unlock,
 )
 from src.games.ttt_c4 import _setup_pvp_game
+from src.games.game_threads import (
+    _refuse_in_thread, _try_create_game_thread, _close_game_thread,
+)
 from src.games import chess_engine, chess_render, chess_bot, chess_analysis
 from src.games.bot_chess_rewards import (
     award_bot_defeat, rank_badges, RECORD_CATEGORY as _BOT_CHESS_RECORD,
@@ -210,22 +212,12 @@ async def _bump_board(
             pass
 
 
-# Threads hide from the channel after a week of inactivity; a new message
-# (a move, !stop) auto-unarchives them, so long-running games survive.
-GAME_THREAD_AUTO_ARCHIVE_MINUTES = 10080
-
-
 async def _start_blocked(ctx: commands.Context) -> bool:
     """Refuse (with an error embed) to start a game from inside a game thread
     — Discord forbids nesting — or in a channel that already hosts one.
     Returns True when the caller must bail. The success path never awaits,
     so a caller's synchronous slot claim right after it stays atomic."""
-    if isinstance(ctx.channel, discord.Thread):
-        await ctx.send(embed=emb(
-            "❌ Game Threads",
-            "Start games from the chess channel itself — each game gets its own thread.",
-            C_RED,
-        ))
+    if await _refuse_in_thread(ctx):
         return True
     cid = ctx.channel.id
     if (
@@ -236,64 +228,6 @@ async def _start_blocked(ctx: commands.Context) -> bool:
         await ctx.send(embed=emb("❌ Game Active", "A game is already active in this channel.", C_RED))
         return True
     return False
-
-
-async def _try_create_game_thread(ctx: commands.Context, name: str):
-    """Open the public thread a new game will be played in, or None to fall
-    back to playing in the invoking channel (DMs, channels that can't host
-    threads, missing Create Public Threads permission, active-thread cap).
-    PvP wagers are already escrowed by the time this runs, so degrading to
-    an in-channel game keeps the match honoured."""
-    if ctx.guild is None:
-        return None
-    create = getattr(ctx.channel, "create_thread", None)
-    if create is None:
-        return None
-    try:
-        return await create(
-            name=name[:100],
-            type=discord.ChannelType.public_thread,
-            auto_archive_duration=GAME_THREAD_AUTO_ARCHIVE_MINUTES,
-        )
-    except discord.Forbidden:
-        log_bot_permission_error(ctx, "Create Public Threads")
-        return None
-    except discord.HTTPException as e:
-        logging.warning(
-            "chess: create_thread failed (%s); playing in channel", type(e).__name__,
-        )
-        return None
-
-
-async def _close_game_thread(
-    channel: discord.abc.Messageable, name: str | None = None,
-    *, archive: bool = True,
-):
-    """Rename and/or close a finished game's thread. No-op outside threads.
-
-    Locking needs Manage Threads (archiving/renaming our own thread doesn't),
-    so a Forbidden on the full close retries without the lock — the outcome
-    name and the archive matter more than keeping the thread sealed."""
-    if not isinstance(channel, discord.Thread):
-        return
-    kwargs: dict = {}
-    if name:
-        kwargs["name"] = name[:100]
-    if archive:
-        kwargs.update(archived=True, locked=True)
-    try:
-        await channel.edit(**kwargs)
-    except discord.Forbidden:
-        if archive:
-            kwargs.pop("locked", None)
-            try:
-                await channel.edit(**kwargs)
-                return
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-        logging.warning(f"chess: couldn't close game thread {channel.id}")
-    except discord.HTTPException as e:
-        logging.warning(f"chess: closing game thread {channel.id} failed: {e}")
 
 
 def _game_result_name(game: dict, uid: int | None, guild, bot_user) -> str:
