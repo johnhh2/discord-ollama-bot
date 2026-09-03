@@ -24,7 +24,7 @@ import src.cogs.ai_cog as _ai_cog
 from src.games import chess_bot, chess_engine
 from src.games.chess import ChessCog, _initial_pgn, _BotLadderView
 from src.games.bot_chess_rewards import (
-    FIRST_DEFEAT_BONUS, bonus_bin_ladder, suggested_bot_elo,
+    first_defeat_bonus, bonus_bin_ladder, suggested_bot_elo,
 )
 from src.economy import lottery_week_key
 
@@ -1225,7 +1225,7 @@ async def test_ladder_button_targets_open_bonus_with_engine_name(db, _stub_chess
     assert view.elo == 1100
     label = _play_button(view).label
     assert label.startswith("Play Maia (1100 Elo)")
-    assert f"{FIRST_DEFEAT_BONUS:,}" in label
+    assert f"{first_defeat_bonus(1100):,}" in label
     desc = ctx.sent_embeds[-1].description
     assert "Highest bot defeated:** Maia (1500 Elo)" in desc
     assert "1/" + str(len(bonus_bin_ladder())) + " claimed" in desc
@@ -1337,7 +1337,7 @@ async def test_ladder_bonus_list_button_is_an_ephemeral_checklist(db, _stub_ches
     kwargs = interaction.response.send_message.call_args.kwargs
     assert kwargs.get("ephemeral") is True
     desc = kwargs["embed"].description
-    assert "✅ 1100" in desc and "✅ 1200" in desc and "⬜ 1300" in desc
+    assert "✅ 1100 (50k)" in desc and "✅ 1200 (55k)" in desc and "⬜ 1300 (60k)" in desc
     assert f"2/{len(bonus_bin_ladder())}" in desc
     assert "**Maia**" in desc and "**Stockfish**" in desc
     # The menu stays usable after peeking at the list.

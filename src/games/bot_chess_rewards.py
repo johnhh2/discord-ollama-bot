@@ -51,10 +51,22 @@ RECORD_CATEGORY = "highest_bot_chess_elo_defeated"
 
 # One-time first-defeat bonus, per Elo bin at/above the Maia boundary: the
 # first time a user EVER beats the bot at a given bin (1100, 1200, ...) they
-# earn FIRST_DEFEAT_BONUS once. Unlike the daily highwater above, claimed
-# bins never reset — they persist in chess_user_stats.bonus_bins.
-FIRST_DEFEAT_BONUS = 100_000
+# earn first_defeat_bonus(bin) once — the base at 1100, one step more for
+# every bin above it. Unlike the daily highwater above, claimed bins never
+# reset — they persist in chess_user_stats.bonus_bins.
 FIRST_DEFEAT_BONUS_MIN_ELO = 1100
+FIRST_DEFEAT_BONUS_BASE = 50_000
+FIRST_DEFEAT_BONUS_STEP = 5_000
+
+
+def first_defeat_bonus(elo: int) -> int:
+    """Coins paid the first time a user ever beats the bot at `elo`'s bin:
+    FIRST_DEFEAT_BONUS_BASE at 1100, plus FIRST_DEFEAT_BONUS_STEP for every
+    100 Elo above it (1200 → 55k, 1300 → 60k, …). 0 below the bonus tier."""
+    if elo < FIRST_DEFEAT_BONUS_MIN_ELO:
+        return 0
+    steps = (elo - FIRST_DEFEAT_BONUS_MIN_ELO) // 100
+    return FIRST_DEFEAT_BONUS_BASE + FIRST_DEFEAT_BONUS_STEP * steps
 
 # Chess-only rank emoji (shown in !profile and, compactly, in match embeds).
 # Unicode has no red trophy, so the sports medal (red ribbon) stands in for
@@ -209,8 +221,8 @@ async def award_bot_defeat(
     Returns (payout_coins, record_broken, first_defeat_bonus):
       payout_coins: 0 if no new ground was gained today.
       record_broken: True iff this win set a new per-guild high.
-      first_defeat_bonus: FIRST_DEFEAT_BONUS the first time this user ever
-        beats the bot at this Elo bin (1100+), else 0.
+      first_defeat_bonus: first_defeat_bonus(bot_elo) the first time this
+        user ever beats the bot at this Elo bin (1100+), else 0.
 
     No payout for sub-1 Elo gains; idempotent if called twice with the same
     bot_elo on the same day (the bonus is once-ever per bin). Caller is
@@ -230,13 +242,13 @@ async def award_bot_defeat(
     stats["max_elo_defeated"] = max(int(stats.get("max_elo_defeated", 0)), bot_elo)
     stats["total_elo_defeated"] = int(stats.get("total_elo_defeated", 0)) + bot_elo
     bins = stats.setdefault("bonus_bins", set())
-    first_defeat_bonus = 0
+    bin_bonus = 0
     if bot_elo >= FIRST_DEFEAT_BONUS_MIN_ELO and bot_elo not in bins:
         bins.add(bot_elo)
-        first_defeat_bonus = FIRST_DEFEAT_BONUS
+        bin_bonus = first_defeat_bonus(bot_elo)
     await save_chess_user_stats(user_id)
-    if first_defeat_bonus > 0:
-        await add_balance(user_id, first_defeat_bonus)
+    if bin_bonus > 0:
+        await add_balance(user_id, bin_bonus)
 
     prior = _todays_highwater(user, today)
     if bot_elo <= prior:
@@ -263,4 +275,4 @@ async def award_bot_defeat(
             guild_id, RECORD_CATEGORY, bot_elo, user_id, holder_name,
         )
 
-    return payout, record_broken, first_defeat_bonus
+    return payout, record_broken, bin_bonus

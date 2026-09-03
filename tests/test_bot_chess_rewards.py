@@ -144,7 +144,7 @@ async def test_payout_splits_across_low_and_high_threshold(db):
     payout, _, bonus = await br.award_bot_defeat(
         user_id=5020, guild_id=42, holder_name="A", bot_elo=win_elo,
     )
-    assert bonus == br.FIRST_DEFEAT_BONUS  # first-ever 1200 win
+    assert bonus == br.first_defeat_bonus(1200)  # first-ever 1200 win
     expected = (
         br.LOW_ELO_THRESHOLD * br.COINS_PER_NEW_ELO_LOW
         + (win_elo - br.LOW_ELO_THRESHOLD) * br.COINS_PER_NEW_ELO
@@ -163,7 +163,7 @@ async def test_payout_above_threshold_only_uses_high_rate(db):
     )
     assert payout == 300 * br.COINS_PER_NEW_ELO
     # Balance also gains the first-ever-1500 defeat bonus alongside the bounty.
-    assert bonus == br.FIRST_DEFEAT_BONUS
+    assert bonus == br.first_defeat_bonus(1500)
     assert await get_balance(5021) == bal + payout + bonus
 
 
@@ -183,7 +183,7 @@ async def test_payout_delta_straddles_threshold(db):
     expected = low_gain * br.COINS_PER_NEW_ELO_LOW + high_gain * br.COINS_PER_NEW_ELO
     assert payout == expected
     # 1300 is a first-ever 1100+ bin defeat, so the bonus lands too.
-    assert bonus == br.FIRST_DEFEAT_BONUS
+    assert bonus == br.first_defeat_bonus(1300)
     assert await get_balance(5022) == bal + expected + bonus
 
 
@@ -255,18 +255,30 @@ async def test_ranks_accumulate_max_and_total(db):
 
 @_aio
 async def test_first_defeat_bonus_once_per_bin(db):
-    """Each 1100+ bin pays FIRST_DEFEAT_BONUS exactly once, ever — including
+    """Each 1100+ bin pays its first_defeat_bonus exactly once, ever — including
     a lower bin beaten after a higher one (which earns no daily bounty)."""
     _, _, b1 = await br.award_bot_defeat(user_id=5201, guild_id=42, holder_name="A", bot_elo=1200)
     _, _, b2 = await br.award_bot_defeat(user_id=5201, guild_id=42, holder_name="A", bot_elo=1200)
     bal_before = await get_balance(5201)
     p3, _, b3 = await br.award_bot_defeat(user_id=5201, guild_id=42, holder_name="A", bot_elo=1100)
-    assert b1 == br.FIRST_DEFEAT_BONUS
+    assert b1 == br.first_defeat_bonus(1200)
     assert b2 == 0
     # 1100 is below today's highwater (no bounty) but a fresh bin (bonus).
-    assert p3 == 0 and b3 == br.FIRST_DEFEAT_BONUS
-    assert await get_balance(5201) == bal_before + br.FIRST_DEFEAT_BONUS
+    assert p3 == 0 and b3 == br.first_defeat_bonus(1100)
+    assert await get_balance(5201) == bal_before + br.first_defeat_bonus(1100)
     assert br.claimed_bonus_bins(5201) == {1100, 1200}
+
+
+def test_first_defeat_bonus_scales_5k_per_bin_from_50k():
+    """50k at the 1100 bin, +5k for every 100 Elo above it; nothing below."""
+    assert br.first_defeat_bonus(1000) == 0
+    assert br.first_defeat_bonus(1100) == 50_000
+    assert br.first_defeat_bonus(1200) == 55_000
+    assert br.first_defeat_bonus(2000) == 95_000
+    assert br.first_defeat_bonus(3200) == 155_000
+    ladder = br.bonus_bin_ladder()
+    steps = [br.first_defeat_bonus(b) - br.first_defeat_bonus(a) for a, b in zip(ladder, ladder[1:])]
+    assert set(steps) == {br.FIRST_DEFEAT_BONUS_STEP}
 
 
 @_aio
@@ -294,7 +306,7 @@ async def test_concurrent_first_defeat_bonus_claimed_once(db, monkeypatch):
         br.award_bot_defeat(user_id=5203, guild_id=42, holder_name="A", bot_elo=1200),
         br.award_bot_defeat(user_id=5203, guild_id=42, holder_name="A", bot_elo=1200),
     )
-    assert sorted(r[2] for r in results) == [0, br.FIRST_DEFEAT_BONUS]
+    assert sorted(r[2] for r in results) == [0, br.first_defeat_bonus(1200)]
     assert br.chess_ranks(5203) == (1200, 2400)
 
 

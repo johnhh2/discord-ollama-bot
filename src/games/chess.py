@@ -40,7 +40,7 @@ from src.games.bot_chess_rewards import (
     award_bot_defeat, rank_badges, RECORD_CATEGORY as _BOT_CHESS_RECORD,
     RANK_MAX_EMOJI, RANK_TOTAL_EMOJI, chess_elo_balance, chess_ranks,
     spend_chess_elo, refund_chess_elo,
-    FIRST_DEFEAT_BONUS, FIRST_DEFEAT_BONUS_MIN_ELO,
+    FIRST_DEFEAT_BONUS_MIN_ELO, first_defeat_bonus,
     bonus_bin_ladder, claimed_bonus_bins, suggested_bot_elo,
 )
 from src.cogs.lottery_cog import (
@@ -572,11 +572,16 @@ def _bonus_list_embed(uid: int) -> discord.Embed:
     tiers: dict[str, list[str]] = {}
     for elo in ladder:
         mark = "✅" if elo in claimed else "⬜"
-        tiers.setdefault(chess_bot.engine_label_for_elo(elo), []).append(f"{mark} {elo}")
+        tiers.setdefault(chess_bot.engine_label_for_elo(elo), []).append(
+            f"{mark} {elo} ({first_defeat_bonus(elo) // 1000}k)"
+        )
     rows = "\n".join(f"**{tier}** — " + " · ".join(cells) for tier, cells in tiers.items())
     desc = (
         f"Your first-ever win against the bot at each Elo bin from "
-        f"{FIRST_DEFEAT_BONUS_MIN_ELO} up pays **{FIRST_DEFEAT_BONUS:,} 🪙** — "
+        f"{FIRST_DEFEAT_BONUS_MIN_ELO} up pays a bonus — "
+        f"**{first_defeat_bonus(ladder[0]):,} 🪙** at {ladder[0]}, "
+        f"**+{first_defeat_bonus(ladder[1]) - first_defeat_bonus(ladder[0]):,} 🪙** per bin above it, "
+        f"up to **{first_defeat_bonus(ladder[-1]):,} 🪙** at {ladder[-1]} — "
         f"once per bin, never resets.\n"
         f"Claimed: **{len(claimed & set(ladder))}/{len(ladder)}**\n\n{rows}"
     )
@@ -602,7 +607,7 @@ class _BotLadderView(discord.ui.View):
         self._fired = False
         label = f"Play {chess_bot.engine_name_with_elo(elo)}"
         if bonus:
-            label += f" · +{FIRST_DEFEAT_BONUS:,} 🪙 first win"
+            label += f" · +{first_defeat_bonus(elo):,} 🪙 first win"
         self.add_item(_PlayBotButton(label=label))
         self.add_item(_BonusListButton())
 
@@ -991,7 +996,7 @@ class ChessCog(commands.Cog):
         claimed = len(claimed_bonus_bins(uid) & set(ladder))
         elo, bonus = suggested_bot_elo(uid)
         if bonus:
-            why = f"your first win there pays **+{FIRST_DEFEAT_BONUS:,} 🪙**"
+            why = f"your first win there pays **+{first_defeat_bonus(elo):,} 🪙**"
         elif max_elo <= 0:
             why = "the bottom rung — work your way up"
         else:
@@ -1000,7 +1005,8 @@ class ChessCog(commands.Cog):
             f"{tickets}\n"
             f"{RANK_MAX_EMOJI} **Highest bot defeated:** {best}\n"
             f"🎉 **First-win bonuses:** {claimed}/{len(ladder)} claimed · "
-            f"{FIRST_DEFEAT_BONUS:,} 🪙 each, once ever per Elo bin ({FIRST_DEFEAT_BONUS_MIN_ELO}+)\n\n"
+            f"{first_defeat_bonus(ladder[0]):,}–{first_defeat_bonus(ladder[-1]):,} 🪙 each, "
+            f"once ever per Elo bin ({FIRST_DEFEAT_BONUS_MIN_ELO}+)\n\n"
             f"**Suggested next challenge:** {chess_bot.engine_name_with_elo(elo)} — {why}.\n"
             f"Or pick any Elo with `!chessbot <elo>` ({chess_bot.ELO_MIN}–{chess_bot.ELO_MAX})."
         )
