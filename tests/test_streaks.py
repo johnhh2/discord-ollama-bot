@@ -1,12 +1,17 @@
 """Daily command-usage streak (src/streaks.py) + the !streaks admin command."""
 
+import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 
 import src.state as _state
 import src.persistence as _persistence
-from src.streaks import effective_streak, update_command_streak
+import src.economy as _economy
+import src.events as _events
+from src.streaks import effective_streak, get_command_streak_entry, update_command_streak
 
-from tests.fakes.discord import FakeCtx, FakeGuild, FakeMember
+from tests.fakes.discord import FakeChannel, FakeCtx, FakeGuild, FakeMember
 
 pytestmark = pytest.mark.asyncio
 
@@ -125,3 +130,88 @@ async def test_streaks_rejects_dm():
     ctx.guild = None
     await _run_streaks(ctx)
     assert "server" in ctx.sent_embeds[0].description
+
+
+# ── 5am CT day boundary, through the real listener and clock ─────────────────
+# The tests above hand `update_command_streak` a date string, so they can't
+# catch the listener drifting to calendar days. These drive
+# EventsCog.on_command_completion with a stepped America/Chicago clock.
+
+_CT = ZoneInfo("America/Chicago")
+
+
+def _at_ct(y, m, d, hh, mm=0):
+    return datetime.datetime(y, m, d, hh, mm, tzinfo=_CT)
+
+
+class _StubBot:
+    def __init__(self):
+        self.user = type("U", (), {"id": 999_999_999})()
+        self.cogs = {}
+
+
+async def _complete_command_at(monkeypatch, uid: int, when: datetime.datetime):
+    monkeypatch.setattr(_economy, "_ct_now", lambda: when)
+    cog = _events.EventsCog(bot=_StubBot())
+    ctx = FakeCtx(
+        author=FakeMember(uid=uid, display_name="runner"),
+        guild=FakeGuild(gid=1),
+        channel=FakeChannel(ch_id=100),
+    )
+    ctx.command.cog = None  # stats bucketing reads ctx.command.cog
+    await cog.on_command_completion(ctx)
+
+
+def _live_streak_at(monkeypatch, uid_key: str, when: datetime.datetime) -> int:
+    monkeypatch.setattr(_economy, "_ct_now", lambda: when)
+    return effective_streak(get_command_streak_entry(uid_key), _economy._ct_today())
+
+
+async def test_streak_day_rolls_at_5am_ct_not_midnight(db, monkeypatch):
+    uid = 7100
+    await _complete_command_at(monkeypatch, uid, _at_ct(2026, 9, 1, 15))
+    assert _state.command_streak[str(uid)] == {"date": "2026-09-01", "count": 1}
+
+    # Past midnight but before 5am CT: still gameplay day 09-01, no bump.
+    await _complete_command_at(monkeypatch, uid, _at_ct(2026, 9, 2, 0, 30))
+    await _complete_command_at(monkeypatch, uid, _at_ct(2026, 9, 2, 4, 59))
+    assert _state.command_streak[str(uid)] == {"date": "2026-09-01", "count": 1}
+
+    # 05:00 exactly: the day rolls and the streak extends.
+    await _complete_command_at(monkeypatch, uid, _at_ct(2026, 9, 2, 5, 0))
+    assert _state.command_streak[str(uid)] == {"date": "2026-09-02", "count": 2}
+
+    # Any later command that day is a no-op.
+    await _complete_command_at(monkeypatch, uid, _at_ct(2026, 9, 2, 14))
+    await _complete_command_at(monkeypatch, uid, _at_ct(2026, 9, 2, 23, 59))
+    assert _state.command_streak[str(uid)] == {"date": "2026-09-02", "count": 2}
+
+
+async def test_missed_day_breaks_the_streak_at_5am_ct_exactly(db, monkeypatch):
+    """Last extended on gameplay day D: alive all through D+1 (the user has
+    until 5am to keep it), broken from 05:00 CT on D+2 — never mid-day."""
+    _state.command_streak["7101"] = {"date": "2026-09-02", "count": 6}
+
+    assert _live_streak_at(monkeypatch, "7101", _at_ct(2026, 9, 3, 5, 0)) == 6
+    assert _live_streak_at(monkeypatch, "7101", _at_ct(2026, 9, 3, 12)) == 6
+    assert _live_streak_at(monkeypatch, "7101", _at_ct(2026, 9, 3, 23, 59)) == 6
+    assert _live_streak_at(monkeypatch, "7101", _at_ct(2026, 9, 4, 4, 59)) == 6
+    assert _live_streak_at(monkeypatch, "7101", _at_ct(2026, 9, 4, 5, 0)) == 0
+
+    # The next command after the break restarts at 1.
+    await _complete_command_at(monkeypatch, 7101, _at_ct(2026, 9, 4, 13))
+    assert _state.command_streak["7101"] == {"date": "2026-09-04", "count": 1}
+
+
+async def test_pre_5am_command_counts_for_the_previous_gameplay_day(db, monkeypatch):
+    """The user-visible consequence of the 5am rule: a 1am command belongs to
+    the day before, so skipping the following gameplay day still breaks the
+    streak even though the calendar days look consecutive."""
+    uid = 7102
+    await _complete_command_at(monkeypatch, uid, _at_ct(2026, 9, 1, 20))
+    await _complete_command_at(monkeypatch, uid, _at_ct(2026, 9, 2, 1, 0))   # gameplay 09-01
+    assert _state.command_streak[str(uid)] == {"date": "2026-09-01", "count": 1}
+
+    # Nothing between 09-02 05:00 and 09-03 05:00 → gameplay day 09-02 missed.
+    await _complete_command_at(monkeypatch, uid, _at_ct(2026, 9, 3, 13))
+    assert _state.command_streak[str(uid)] == {"date": "2026-09-03", "count": 1}
