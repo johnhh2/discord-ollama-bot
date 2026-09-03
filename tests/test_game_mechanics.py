@@ -4,11 +4,11 @@ To make these meaningfully testable, three small helpers were extracted from
 their callsites in src/games/:
 
 - drop_in_column   (ttt_c4.py)   — Connect 4 gravity
-- advance_player   (race.py)     — race position clamping
+- settle_tick      (race.py)     — race movement + photo finish
 - dealer_play      (blackjack.py) — dealer hits on ≤16
 
 Each test pins the *contract* of the helper so a future refactor that
-changes gravity direction, finish-line clamping, or the dealer's stand
+changes gravity direction, photo-finish ranking, or the dealer's stand
 threshold fails loudly.
 
 Chess special moves (castling, en-passant, promotion, check/checkmate) and
@@ -18,7 +18,7 @@ real Discord gateway.
 """
 
 from src.games.ttt_c4 import drop_in_column, check_c4_winner
-from src.games.race import advance_player
+from src.games.race import settle_tick
 from src.games.blackjack import dealer_play, hand_value, new_deck
 from src.config import RACE_TRACK_LEN
 
@@ -94,31 +94,57 @@ class TestC4WinnerAfterDrop:
 
 # ── Race ──────────────────────────────────────────────────────────────────────
 
-class TestAdvancePlayer:
-    def test_advance_within_track(self):
-        assert advance_player(pos=0, delta=2) == 2
-        assert advance_player(pos=5, delta=3) == 8
+class TestSettleTick:
+    A, B, C = 1, 2, 3
 
-    def test_clamp_at_finish(self):
-        assert advance_player(pos=RACE_TRACK_LEN - 1, delta=5) == RACE_TRACK_LEN
+    def test_advance_within_track(self):
+        pos = {self.A: 0, self.B: 5}
+        assert settle_tick(pos, {self.A: 2, self.B: 3}) == []
+        assert pos == {self.A: 2, self.B: 8}
+
+    def test_lone_crosser_is_drawn_on_the_line(self):
+        pos = {self.A: RACE_TRACK_LEN - 1, self.B: 4}
+        assert settle_tick(pos, {self.A: 3, self.B: 1}) == [self.A]
+        assert pos == {self.A: RACE_TRACK_LEN, self.B: 5}
 
     def test_already_at_finish_stays_at_finish(self):
-        assert advance_player(pos=RACE_TRACK_LEN, delta=10) == RACE_TRACK_LEN
+        pos = {self.A: RACE_TRACK_LEN}
+        assert settle_tick(pos, {self.A: 3}) == [self.A]
+        assert pos[self.A] == RACE_TRACK_LEN
 
-    def test_zero_delta_is_no_op(self):
-        assert advance_player(pos=7, delta=0) == 7
+    def test_photo_finish_furthest_past_the_line_wins(self):
+        """Both cross this tick, but A would have run 2 squares further.
+        A is the sole winner; B is drawn one square short of the line."""
+        pos = {self.A: RACE_TRACK_LEN - 1, self.B: RACE_TRACK_LEN - 2}
+        assert settle_tick(pos, {self.A: 3, self.B: 2}) == [self.A]
+        assert pos[self.A] == RACE_TRACK_LEN
+        assert pos[self.B] == RACE_TRACK_LEN - 1
+
+    def test_photo_finish_loser_never_advances_past_the_short_square(self):
+        """A horse already one short that loses the photo finish stays put."""
+        pos = {self.A: RACE_TRACK_LEN - 1, self.B: RACE_TRACK_LEN - 1}
+        assert settle_tick(pos, {self.A: 1, self.B: 3}) == [self.B]
+        assert pos[self.A] == RACE_TRACK_LEN - 1
+
+    def test_same_distance_past_the_line_still_ties(self):
+        pos = {self.A: RACE_TRACK_LEN - 2, self.B: RACE_TRACK_LEN - 1}
+        assert settle_tick(pos, {self.A: 3, self.B: 2}) == [self.A, self.B]
+        assert pos == {self.A: RACE_TRACK_LEN, self.B: RACE_TRACK_LEN}
+
+    def test_three_way_photo_finish_ranks_all_crossers(self):
+        pos = {self.A: 17, self.B: 18, self.C: 19}
+        # raw: A=20, B=21, C=21 -> B and C tie, A loses the photo finish
+        assert settle_tick(pos, {self.A: 3, self.B: 3, self.C: 2}) == [self.B, self.C]
+        assert pos == {self.A: RACE_TRACK_LEN - 1, self.B: RACE_TRACK_LEN, self.C: RACE_TRACK_LEN}
+
+    def test_winners_follow_positions_order(self):
+        pos = {self.C: 19, self.A: 19}
+        assert settle_tick(pos, {self.C: 2, self.A: 2}) == [self.C, self.A]
 
     def test_custom_finish_overrides_default(self):
-        assert advance_player(pos=8, delta=5, finish=10) == 10
-
-    def test_finish_detection_predicate(self):
-        """Race winner check: positions[uid] >= finish.
-        Pin both sides of the boundary."""
-        not_yet = advance_player(pos=RACE_TRACK_LEN - 2, delta=1)
-        assert not_yet < RACE_TRACK_LEN
-
-        crossed = advance_player(pos=RACE_TRACK_LEN - 2, delta=2)
-        assert crossed >= RACE_TRACK_LEN
+        pos = {self.A: 8, self.B: 7}
+        assert settle_tick(pos, {self.A: 3, self.B: 3}, finish=10) == [self.A]
+        assert pos == {self.A: 10, self.B: 9}
 
 
 # ── Blackjack dealer rule ─────────────────────────────────────────────────────

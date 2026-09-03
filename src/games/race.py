@@ -21,9 +21,29 @@ from src.config import (
 from src import state
 
 
-def advance_player(pos: int, delta: int, finish: int = RACE_TRACK_LEN) -> int:
-    """Move a racer forward by `delta`, clamping to the finish line."""
-    return min(pos + delta, finish)
+def settle_tick(
+    positions: dict[int, int], rolls: dict[int, int], finish: int = RACE_TRACK_LEN,
+) -> list[int]:
+    """Apply one tick of `rolls` to `positions` in place; return the winners.
+
+    Horses that would run past the line this tick are ranked by how far past
+    it they'd have gone: the furthest wins and is drawn on the line, the rest
+    are drawn one square short so the board shows the photo finish. Clamping
+    every crosser to the line made any shared crossing tick a tie; now only
+    horses that would have run the exact same distance past the line tie.
+    """
+    raw = {uid: positions[uid] + rolls[uid] for uid in positions}
+    crossers = [uid for uid, at in raw.items() if at >= finish]
+    if not crossers:
+        positions.update(raw)
+        return []
+    furthest = max(raw[uid] for uid in crossers)
+    for uid, at in raw.items():
+        if at >= finish:
+            positions[uid] = finish if at == furthest else finish - 1
+        else:
+            positions[uid] = at
+    return [uid for uid in crossers if raw[uid] == furthest]
 
 
 async def _run_race(channel, cid: int, race_msg: discord.Message):
@@ -51,14 +71,9 @@ async def _run_race_loop(cid: int, race_msg: discord.Message, game: dict):
         if cid not in state.active_race_games:
             break
 
-        # Advance each player
-        for uid in game["players"]:
-            game["positions"][uid] = advance_player(
-                game["positions"][uid], random.randint(1, 3),
-            )
-
-        # Check for winners
-        winners = [uid for uid in game["players"] if game["positions"][uid] >= RACE_TRACK_LEN]
+        # Advance each player; a photo finish is settled inside settle_tick.
+        rolls = {uid: random.randint(1, 3) for uid in game["players"]}
+        winners = settle_tick(game["positions"], rolls)
         board = _render_race(game)
 
         if winners:
