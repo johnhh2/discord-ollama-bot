@@ -69,6 +69,20 @@ async def test_profile_level_line_shows_global_level_without_lvl_hint(db):
     assert "!lvl" not in desc
 
 
+async def test_profile_hides_global_level_when_equal_to_server_level(db):
+    """XP in only one guild → global level matches, so the global part is hidden."""
+    cog = ProfileCog(bot=_StubBot())
+    member = FakeMember(uid=9109, display_name="Gil")
+    ctx = FakeCtx(author=member, guild=FakeGuild(gid=42))
+    _state.leveling.setdefault("42", {})["9109"] = {"xp": 150, "level": 1}
+
+    await cog.cmd_profile.callback(cog, ctx, target=None)
+
+    desc = _profile_desc(ctx)
+    assert "Level **2**" in desc
+    assert "Global level" not in desc
+
+
 async def test_profile_counts_records_held_in_guild(db):
     from src.persistence import save_records
 

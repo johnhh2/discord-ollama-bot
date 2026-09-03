@@ -65,11 +65,12 @@ class ProfileCog(commands.Cog):
                     int(g.get(str(uid), {}).get("xp", 0) or 0)
                     for g in state.leveling.values()
                 )
-                lines.append(
-                    f"📊 Level **{display_level(lvl_rec.get('level', 0))}** "
-                    f"— {lvl_rec.get('xp', 0):,} XP · "
-                    f"🌐 Global level **{display_level(level_from_xp(global_xp))}**"
-                )
+                level = display_level(lvl_rec.get("level", 0))
+                global_level = display_level(level_from_xp(global_xp))
+                line = f"📊 Level **{level}** — {lvl_rec.get('xp', 0):,} XP"
+                if global_level != level:
+                    line += f" · 🌐 Global level **{global_level}**"
+                lines.append(line)
 
         streak = effective_streak(get_command_streak_entry(str(uid)), _ct_today())
         if streak:
