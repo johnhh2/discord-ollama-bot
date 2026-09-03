@@ -2087,3 +2087,134 @@ async def test_bot_reply_does_not_fire_for_pvp_game(db, _stub_chess_helpers, mon
     assert pick_called == [], "pick_move should not be called in PvP games"
     # Black's turn now, as expected for a PvP move.
     assert _state.active_chess_games[1200]["current_id"] == black.id
+
+
+# -- Bot users: Maia-tier floor + one bot game per gameplay day (5am CT) -----
+
+def _bot_member(uid: int) -> FakeMember:
+    m = FakeMember(uid=uid, display_name=f"OtherBot{uid}")
+    m.bot = True
+    return m
+
+
+@_aio
+async def test_bot_author_cannot_play_sub_maia(db, _stub_chess_helpers, _allow_chess_channel):
+    """A bot user asking for a sub-Maia Elo is refused; no game starts and
+    the refusal doesn't burn the bot's daily slot."""
+    cog = _make_bot_cog()
+    ctx = _ctx_for(_bot_member(3100), channel_id=1300)
+
+    await cog.cmd_chessbot.callback(cog, ctx, "1000")
+
+    assert 1300 not in _state.active_chess_games
+    assert "Maia" in ctx.sent_embeds[-1].title
+    assert str(chess_bot.MAIA_ELO_MIN) in ctx.sent_embeds[-1].description
+    assert 3100 not in cog._bot_chess_day_by_uid
+
+
+@_aio
+async def test_bot_author_floor_checks_rounded_bin(db, _stub_chess_helpers, _allow_chess_channel):
+    """The floor applies to the bin the game would actually run at: 1049
+    rounds down to 1000 (refused), 1051 rounds up to 1100 (allowed)."""
+    cog = _make_bot_cog()
+    ctx = _ctx_for(_bot_member(3101), channel_id=1301)
+    await cog.cmd_chessbot.callback(cog, ctx, "1049")
+    assert 1301 not in _state.active_chess_games
+
+    ctx2 = _ctx_for(_bot_member(3102), channel_id=1302)
+    await cog.cmd_chessbot.callback(cog, ctx2, "1051")
+    assert _state.active_chess_games[1302]["elo"] == 1100
+
+
+@_aio
+async def test_bot_author_one_bot_game_per_gameplay_day(
+    db, _stub_chess_helpers, _allow_chess_channel, monkeypatch,
+):
+    """A bot user's second bot game on the same gameplay day is refused with
+    the cooldown embed; the 5am CT rollover (a new _ct_today) allows it."""
+    import src.games.chess as _chess_mod
+    monkeypatch.setattr(_chess_mod, "_ct_today", lambda: "2026-09-02")
+    cog = _make_bot_cog()
+    member = _bot_member(3103)
+
+    ctx1 = _ctx_for(member, channel_id=1303)
+    await cog.cmd_chessbot.callback(cog, ctx1, "1100")
+    assert _state.active_chess_games[1303]["elo"] == 1100
+    assert cog._bot_chess_day_by_uid[3103] == "2026-09-02"
+
+    ctx2 = _ctx_for(member, channel_id=1304)
+    await cog.cmd_chessbot.callback(cog, ctx2, "1500")
+    assert 1304 not in _state.active_chess_games
+    assert "Cooldown" in ctx2.sent_embeds[-1].title
+    assert "<t:" in ctx2.sent_embeds[-1].description
+
+    monkeypatch.setattr(_chess_mod, "_ct_today", lambda: "2026-09-03")
+    ctx3 = _ctx_for(member, channel_id=1305)
+    await cog.cmd_chessbot.callback(cog, ctx3, "1500")
+    assert _state.active_chess_games[1305]["elo"] == 1500
+    assert cog._bot_chess_day_by_uid[3103] == "2026-09-03"
+
+
+@_aio
+async def test_bot_author_cooldown_is_per_bot(db, _stub_chess_helpers, _allow_chess_channel):
+    """One bot's game doesn't consume another bot's daily slot."""
+    cog = _make_bot_cog()
+    await cog.cmd_chessbot.callback(cog, _ctx_for(_bot_member(3104), channel_id=1306), "1100")
+
+    ctx = _ctx_for(_bot_member(3105), channel_id=1307)
+    await cog.cmd_chessbot.callback(cog, ctx, "1100")
+    assert _state.active_chess_games[1307]["elo"] == 1100
+
+
+@_aio
+async def test_bot_author_gated_on_chess_mention_path(db, _stub_chess_helpers):
+    """`!chess @Bot 800` from a bot user hits the same floor as !chessbot."""
+    cog = _make_bot_cog()
+    bot_member = FakeMember(uid=cog.bot.user.id, display_name="TheBot")
+    ctx = _ctx_for(_bot_member(3106), channel_id=1308, mentions=[bot_member])
+
+    await cog.cmd_chess.callback(cog, ctx, "800")
+
+    assert 1308 not in _state.active_chess_games
+    assert "Maia" in ctx.sent_embeds[-1].title
+
+
+@_aio
+async def test_human_author_unaffected_by_bot_floor_and_cooldown(
+    db, _stub_chess_helpers, _allow_chess_channel,
+):
+    """Humans can still play sub-Maia bots and start several games a day."""
+    cog = _make_bot_cog()
+    human = FakeMember(uid=3107)
+    await cog.cmd_chessbot.callback(cog, _ctx_for(human, channel_id=1309), "500")
+    assert _state.active_chess_games[1309]["elo"] == 500
+    await cog.cmd_chessbot.callback(cog, _ctx_for(human, channel_id=1310), "600")
+    assert _state.active_chess_games[1310]["elo"] == 600
+    assert cog._bot_chess_day_by_uid == {}
+
+
+@_aio
+async def test_ladder_suggests_maia_floor_for_bot_author(db, _stub_chess_helpers, _allow_chess_channel):
+    """A fresh bot user's ladder menu offers 1100 (never a sub-Maia bin) and
+    states the bot rules."""
+    cog = _make_bot_cog()
+    ctx = _ctx_for(_bot_member(3108), channel_id=1311)
+
+    await cog.cmd_chessbot.callback(cog, ctx)
+
+    view = ctx.sent_views[-1]
+    assert isinstance(view, _BotLadderView)
+    assert view.elo == chess_bot.MAIA_ELO_MIN
+    desc = ctx.sent_embeds[-1].description
+    assert f"({chess_bot.MAIA_ELO_MIN}" in desc
+    assert "one game per day" in desc
+    assert "don't earn lottery tickets" in desc
+
+
+def test_suggested_bot_elo_min_elo_floors_first_game(db):
+    """suggested_bot_elo honours min_elo for a user with no defeats yet, and
+    the floored bin still carries its first-win bonus."""
+    from src.games.bot_chess_rewards import suggested_bot_elo
+    elo, bonus = suggested_bot_elo(4_000_001, min_elo=chess_bot.MAIA_ELO_MIN)
+    assert elo == chess_bot.MAIA_ELO_MIN
+    assert bonus is True

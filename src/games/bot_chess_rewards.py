@@ -169,14 +169,15 @@ def next_unclaimed_bonus_bin(user_id: int) -> int | None:
     return None
 
 
-def suggested_bot_elo(user_id: int) -> tuple[int, bool]:
+def suggested_bot_elo(user_id: int, *, min_elo: int = ELO_MIN) -> tuple[int, bool]:
     """The bot Elo the !chessbot ladder menu offers: one bin above the user's
-    highest defeat (ELO_MIN for a first game, never past the top bin) — unless
+    highest defeat (`min_elo` for a first game, never past the top bin) — unless
     a lower bonus bin is still unclaimed, in which case that first win is the
-    better next target. Returns (elo, carries_first_defeat_bonus)."""
+    better next target. `min_elo` floors the suggestion (bot users are
+    held to the Maia tier). Returns (elo, carries_first_defeat_bonus)."""
     max_elo, _ = chess_ranks(user_id)
     top = round_elo_to_bin(ELO_MAX)
-    step_up = min(top, max(ELO_MIN, round_elo_to_bin(max_elo) + 100))
+    step_up = min(top, max(min_elo, round_elo_to_bin(max_elo) + 100))
     bonus_bin = next_unclaimed_bonus_bin(user_id)
     elo = step_up if bonus_bin is None else min(step_up, bonus_bin)
     carries_bonus = (

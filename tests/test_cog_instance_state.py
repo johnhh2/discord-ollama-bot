@@ -108,3 +108,20 @@ async def test_state_module_no_longer_exposes_crime_active_users():
 async def test_state_module_no_longer_exposes_soundboard_timestamps():
     import src.state as _state
     assert not hasattr(_state, "_soundboard_timestamps")
+
+
+# -- ChessCog._bot_chess_day_by_uid -------------------------------------------
+
+async def test_chess_cog_starts_with_empty_bot_day_dict():
+    from src.games.chess import ChessCog
+    cog = ChessCog(bot=None)
+    assert cog._bot_chess_day_by_uid == {}
+
+
+async def test_chess_cog_bot_day_dict_is_per_instance_not_class_var():
+    from src.games.chess import ChessCog
+    cog_a = ChessCog(bot=None)
+    cog_b = ChessCog(bot=None)
+    cog_a._bot_chess_day_by_uid[42] = "2026-09-02"
+    assert 42 not in cog_b._bot_chess_day_by_uid
+    assert getattr(ChessCog, "_bot_chess_day_by_uid", None) is None

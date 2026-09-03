@@ -132,6 +132,13 @@ def _sales_not_started(now_cst) -> bool:
     return now_cst < TICKET_SALES_START_CT
 
 
+def _bots_refused_embed():
+    """Bot accounts are shut out of every lottery function: buying
+    tickets, the free chess-win tickets, and the draw itself
+    (LotteryCog._is_bot_user)."""
+    return emb("🎰 Lottery", "Bots can't play the lottery.", C_GREY)
+
+
 class LotteryCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -150,6 +157,26 @@ class LotteryCog(commands.Cog):
 
     def _lock(self, guild_id: int) -> asyncio.Lock:
         return self._guild_locks.setdefault(guild_id, asyncio.Lock())
+
+    def _is_bot_user(self, guild, uid: int) -> bool:
+        """True when `uid` is a bot account. Bots are shut out of every
+        lottery function: buying tickets (buy_daily_ticket / !lottery), the
+        free chess-win tickets (award_chess_tickets) and the draw
+        (_eligible_players). Resolved from the guild's member cache, then
+        the client's user cache; an id neither knows is treated as human."""
+        user = guild.get_member(uid) if guild is not None else None
+        if user is None:
+            get_user = getattr(self.bot, "get_user", None)
+            user = get_user(uid) if get_user is not None else None
+        return bool(getattr(user, "bot", False))
+
+    def _eligible_players(self, guild, players: dict) -> dict:
+        """The draw's candidate pool: `players` minus bot accounts. Tickets
+        a bot already holds stay in the pot's totals but can never win."""
+        return {
+            pid: n for pid, n in players.items()
+            if not self._is_bot_user(guild, int(pid))
+        }
 
     @tasks.loop(minutes=1)
     async def lottery_scheduler(self):
@@ -218,9 +245,12 @@ class LotteryCog(commands.Cog):
                 await save_lottery(guild.id, lottery)
                 await announce_new_lottery(channel, lottery["prize_pool"], now)
 
-        if drew and players and pool > 0:
-            player_ids = list(players.keys())
-            weights = [players[pid] for pid in player_ids]
+        eligible = self._eligible_players(guild, players) if drew else {}
+        if drew and players and pool > 0 and not eligible:
+            logging.warning("[lottery] guild %s: every entrant is a bot, nobody drawn", guild.id)
+        if drew and eligible and pool > 0:
+            player_ids = list(eligible.keys())
+            weights = [eligible[pid] for pid in player_ids]
             winner_id = random.choices(player_ids, weights=weights, k=1)[0]
             winner = await self.bot.fetch_user(int(winner_id))
             new_bal_record = await add_balance(int(winner_id), pool, guild_id=guild.id, holder_name=winner.display_name)
@@ -318,6 +348,9 @@ class LotteryCog(commands.Cog):
         results up after 5 minutes) and the !lottery confirm prompt.
         """
         uid = member.id
+        if getattr(member, "bot", False):
+            await channel.send(embed=_bots_refused_embed(), silent=silent)
+            return
         await _ensure_user(uid)
 
         cfg = get_guild_cfg(guild.id)
@@ -392,10 +425,12 @@ class LotteryCog(commands.Cog):
         disabled).
 
         Called from the chess endgame path (src/games/chess.py) after a
-        human wins a game.
+        human wins a game. Bot accounts get nothing (_is_bot_user).
         """
         ceiling = chess_ticket_ceiling(bot_elo)
         if ceiling <= 0:
+            return 0
+        if self._is_bot_user(guild, uid):
             return 0
         cfg = get_guild_cfg(guild.id)
         if not cfg.get("lottery_channel"):
@@ -431,6 +466,9 @@ class LotteryCog(commands.Cog):
 
     @commands.command(name="lottery")
     async def cmd_lottery(self, ctx: commands.Context):
+        if ctx.author.bot:
+            await ctx.send(embed=_bots_refused_embed())
+            return
         uid = ctx.author.id
         await _ensure_user(uid)
 

@@ -13,6 +13,7 @@ import discord
 from discord.ext import commands
 
 from src.helpers import (
+    C_ORANGE,
     emb, C_RED, C_GOLD, C_BLUE, C_GREEN, C_GREY, C_PURPLE,
     _delete_after, send_ephemeral, announce_record, parse_int_amount,
     log_bot_permission_error,
@@ -20,7 +21,8 @@ from src.helpers import (
 from src.confirm_view import confirm_prompt
 from src.config import EPHEMERAL_DELETE_AFTER
 from src.economy import (
-    add_balance, record_gambling_event, _ct_now, next_lottery_draw_dt,
+    add_balance, record_gambling_event, _ct_now, _ct_today, next_daily_reset_ts,
+    next_lottery_draw_dt,
 )
 from src.permissions import check_chess_channel, requires_perm, is_admin, is_silenced
 from src.artifacts import has_chessthreats_unlock
@@ -668,6 +670,10 @@ class _BonusListButton(discord.ui.Button):
 class ChessCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # Gameplay day (_ct_today) of each *bot* user's last game against the
+        # chess bot: bots get one per day, resetting at 5am CT. In-memory,
+        # like HangmanCog's cooldown dict.
+        self._bot_chess_day_by_uid: dict[int, str] = {}
 
     async def resume_pending_bot_turns(self):
         """Scan loaded chess games for any where it's the bot's turn and
@@ -861,9 +867,37 @@ class ChessCog(commands.Cog):
 
     async def _start_bot_chess(self, ctx: commands.Context, elo: int):
         """Bot-vs-human game: skip _setup_pvp_game entirely. No wagers, no
-        confirmation, no opponent balance. Human always plays White (v1)."""
+        confirmation, no opponent balance. Human always plays White (v1).
+
+        Bot users (other bots driving this one) are held to the Maia tier
+        and up (Elo >= MAIA_ELO_MIN) and one bot game per gameplay day,
+        resetting at 5am CT. This is the single chokepoint for
+        `!chessbot <elo>`, `!chess @Bot <elo>` and the ladder menu's Play
+        button."""
         uid = ctx.author.id
         bot_user = self.bot.user
+
+        if ctx.author.bot:
+            if elo < chess_bot.MAIA_ELO_MIN:
+                await ctx.send(embed=emb(
+                    "❌ Bots Play Maia and Up",
+                    f"Bots can't play sub-Maia bots: pick an Elo of "
+                    f"**{chess_bot.MAIA_ELO_MIN}** or higher.",
+                    C_RED,
+                ))
+                return
+            # Gate-and-claim with no await in between (see the concurrency
+            # notes in CLAUDE.md): two concurrent starts can't both pass.
+            today = _ct_today()
+            if self._bot_chess_day_by_uid.get(uid) == today:
+                await ctx.send(embed=emb(
+                    "♟️ Cooldown",
+                    f"Bots get one game against the chess bot per day. "
+                    f"You can start another <t:{next_daily_reset_ts()}:R>.",
+                    C_ORANGE,
+                ))
+                return
+            self._bot_chess_day_by_uid[uid] = today
 
         white_id, black_id = uid, bot_user.id
         white_name = ctx.author.display_name
@@ -993,11 +1027,18 @@ class ChessCog(commands.Cog):
         if ctx.guild is not None and not get_guild_cfg(ctx.guild.id).get("lottery_channel"):
             tickets += "This server has no lottery, so wins here can't grant tickets.\n"
 
+        if ctx.author.bot:
+            # Bots are shut out of the lottery (LotteryCog._is_bot_user).
+            tickets = "🎟️ Bots don't earn lottery tickets.\n"
+
         max_elo, _ = chess_ranks(uid)
         best = chess_bot.engine_name_with_elo(max_elo) if max_elo > 0 else "none yet"
         ladder = bonus_bin_ladder()
         claimed = len(claimed_bonus_bins(uid) & set(ladder))
-        elo, bonus = suggested_bot_elo(uid)
+        # Bot users are floored at the Maia tier (see _start_bot_chess), so
+        # never suggest, or offer a Play button for, a sub-Maia bin.
+        floor = chess_bot.MAIA_ELO_MIN if ctx.author.bot else chess_bot.ELO_MIN
+        elo, bonus = suggested_bot_elo(uid, min_elo=floor)
         if bonus:
             why = f"your first win there pays **+{first_defeat_bonus(elo):,} 🪙**"
         elif max_elo <= 0:
@@ -1011,8 +1052,10 @@ class ChessCog(commands.Cog):
             f"{first_defeat_bonus(ladder[0]):,}–{first_defeat_bonus(ladder[-1]):,} 🪙 each, "
             f"once ever per Elo bin ({FIRST_DEFEAT_BONUS_MIN_ELO}+)\n\n"
             f"**Suggested next challenge:** {chess_bot.engine_name_with_elo(elo)} — {why}.\n"
-            f"Or pick any Elo with `!chessbot <elo>` ({chess_bot.ELO_MIN}–{chess_bot.ELO_MAX})."
+            f"Or pick any Elo with `!chessbot <elo>` ({floor}–{chess_bot.ELO_MAX})."
         )
+        if ctx.author.bot:
+            desc += "\n🤖 Bots play Maia and up, one game per day (resets 5am CT)."
         view = _BotLadderView(self, ctx, elo=elo, bonus=bonus)
         view.message = await send_ephemeral(
             ctx, embed=emb("🤖 Chess vs the Bot", desc, C_BLUE), view=view,

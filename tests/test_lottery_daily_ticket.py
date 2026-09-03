@@ -555,3 +555,96 @@ def test_lottery_period_key_flips_at_the_first_of_month_draw():
     assert key(2026, 12, 20, 12, 0) == "2026-12"
     assert key(2027, 1, 1, 17, 0) == "2026-12"
     assert key(2027, 1, 1, 18, 0) == "2027-01"
+
+
+# -- Bots are shut out of every lottery function ------------------------------
+
+def _bot_ctx(uid, guild_id=GUILD_ID):
+    """A !lottery ctx whose author is a bot account, present in the guild's
+    member cache (what _is_bot_user consults first)."""
+    ctx = _lottery_ctx(uid=uid, guild_id=guild_id)
+    ctx.author.bot = True
+    ctx.guild.members.append(ctx.author)
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_bot_user_cannot_buy_daily_ticket(db, monkeypatch):
+    """buy_daily_ticket backs both the dailies reaction and !lottery: a bot
+    member is refused before any charge, ticket, or gate row."""
+    _pin_clock(monkeypatch)
+    ctx = _bot_ctx(uid=9260)
+    await _economy.add_balance(ctx.author.id, 5_000)
+    cog = _make_cog()
+
+    await cog.buy_daily_ticket(ctx.author, ctx.channel, ctx.guild)
+
+    assert await _economy.get_balance(ctx.author.id) == 5_000
+    assert (await _persistence.load_lottery(GUILD_ID))["players"] == {}
+    assert _state.lottery_ticket_grants.get((GUILD_ID, ctx.author.id)) is None
+    assert any("Bots" in (e.description or "") for e in _channel_embeds(ctx) if e is not None)
+
+
+@pytest.mark.asyncio
+async def test_cmd_lottery_refuses_bot_author(db, monkeypatch):
+    """!lottery from a bot account: refusal only -- no info embed, no confirm
+    prompt, no purchase."""
+    _pin_clock(monkeypatch)
+    ctx = _bot_ctx(uid=9261)
+    await _economy.add_balance(ctx.author.id, 5_000)
+    cog = _make_cog()
+
+    await cog.cmd_lottery.callback(cog, ctx)
+
+    assert "Bots" in ctx.sent_embeds[-1].description
+    assert not any(t.startswith("\U0001f3b0 Current Lottery") for t in _all_titles(ctx))
+    assert await _economy.get_balance(ctx.author.id) == 5_000
+    assert (await _persistence.load_lottery(GUILD_ID))["players"] == {}
+
+
+@pytest.mark.asyncio
+async def test_bot_chess_win_grants_no_tickets(db, monkeypatch):
+    """A bot account beating a 1500 chess bot earns no free tickets, and its
+    monthly gate row is never created."""
+    _pin_clock(monkeypatch)
+    ctx = _bot_ctx(uid=9262)
+    cog = _make_cog()
+
+    assert await cog.award_chess_tickets(ctx.guild, ctx.author.id, 1500) == 0
+    assert (await _persistence.load_lottery(GUILD_ID))["players"] == {}
+    assert _state.lottery_ticket_grants.get((GUILD_ID, ctx.author.id)) is None
+
+
+@pytest.mark.asyncio
+async def test_bot_lookup_falls_back_to_client_user_cache(db, monkeypatch):
+    """When the guild member cache misses, the client's user cache decides;
+    an id neither knows counts as human."""
+    _pin_clock(monkeypatch)
+    ctx = _lottery_ctx(uid=9263)  # deliberately NOT in guild.members
+    cog = _make_cog()
+    cog.bot = SimpleNamespace(
+        user=None, guilds=[],
+        get_user=lambda uid: SimpleNamespace(id=uid, bot=True) if uid == 9263 else None,
+    )
+
+    assert cog._is_bot_user(ctx.guild, 9263) is True
+    assert cog._is_bot_user(ctx.guild, 9264) is False
+    assert await cog.award_chess_tickets(ctx.guild, 9263, 1500) == 0
+    assert (await _persistence.load_lottery(GUILD_ID))["players"] == {}
+
+
+@pytest.mark.asyncio
+async def test_draw_pool_excludes_bot_entrants(db):
+    """Tickets a bot already holds stay in the pot but can never win: the
+    draw's candidate pool drops bot accounts, and is empty when only bots
+    entered."""
+    guild = FakeGuild(gid=GUILD_ID)
+    human = FakeMember(uid=9265)
+    robot = FakeMember(uid=9266)
+    robot.bot = True
+    guild.members.extend([human, robot])
+    cog = _make_cog()
+
+    players = {"9265": 3, "9266": 40, "9267": 1}
+    assert cog._eligible_players(guild, players) == {"9265": 3, "9267": 1}
+    assert cog._eligible_players(guild, {"9266": 40}) == {}
