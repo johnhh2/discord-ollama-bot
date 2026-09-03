@@ -16,17 +16,23 @@ from src.persistence import (
     try_set_record,
 )
 from src.dailies import keep_in_dailies_channel
+from src.gambling.play_again import PlayAgainView
 from src import state
 
 
 async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str = "heads",
-                    record_exclude: int = 0):
+                    record_exclude: int = 0, play_again: bool = False):
     """Charge amount×n and flip n coins on `side`, announcing in `channel`.
 
     Extracted from cmd_flip so the dailies-channel reaction claim can flip a
     player's claim (daily reward + scratchoff winnings) without a
     commands.Context. Inputs are
     assumed validated (amount >= 1, n >= 1, side in heads/tails).
+
+    `play_again` attaches "Flip Again" (same stake) and "Double" (2× the
+    per-coin stake, same n and side) buttons to the result (`PlayAgainView`).
+    `!flip` passes True; the dailies claim keeps the default so the daily
+    stake stays a one-shot.
 
     `record_exclude` shrinks the stake considered for the "biggest flip payout"
     record (payouts are untouched). The dailies claim passes its property
@@ -39,6 +45,23 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
     # shop_charge only uses ctx.send, so the channel satisfies it.
     if not await shop_charge(channel, uid, total_cost):
         return
+
+    # Built only after the charge lands so a declined bet never leaves an
+    # orphan view (and its timeout task) behind.
+    view = None
+    if play_again:
+        async def _replay(stake: int):
+            await play_flip(author, channel, guild, stake, n, side, play_again=True)
+
+        def _stake_label(per_coin: int) -> str:
+            return f"{per_coin:,} 🪙" if n == 1 else f"{n} × {per_coin:,} 🪙"
+        view = PlayAgainView(
+            author, guild, replay=_replay, emoji="🪙",
+            options=[(f"Flip Again · {_stake_label(amount)}", amount),
+                     (f"Double · {_stake_label(amount * 2)}", amount * 2)],
+            not_yours="Not your flip — run `!flip` for your own.",
+        )
+    send_kwargs = {"view": view} if view is not None else {}
 
     heads = 0
     rigged_used = 0
@@ -81,9 +104,9 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
     if n == 1:
         face = "Heads" if heads == 1 else "Tails"
         if wins:
-            msg = await channel.send(embed=emb(f"🪙 {face}!", f"**{author.display_name}** won **{amount:,} 🪙**! Balance: {new_bal:,} 🪙", C_GREEN), silent=True)
+            msg = await channel.send(embed=emb(f"🪙 {face}!", f"**{author.display_name}** won **{amount:,} 🪙**! Balance: {new_bal:,} 🪙", C_GREEN), silent=True, **send_kwargs)
         else:
-            msg = await channel.send(embed=emb(f"🪙 {face}!", f"**{author.display_name}** lost **{amount:,} 🪙**. Balance: {new_bal:,} 🪙", C_RED), silent=True)
+            msg = await channel.send(embed=emb(f"🪙 {face}!", f"**{author.display_name}** lost **{amount:,} 🪙**. Balance: {new_bal:,} 🪙", C_RED), silent=True, **send_kwargs)
     else:
         color = C_GREEN if net >= 0 else C_RED
         sign = "+" if net >= 0 else "-"
@@ -92,7 +115,9 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
             f"**{author.display_name}** — {heads} heads / {tails} tails\n"
             f"Wins: **{wins}/{n}** • Net: **{sign}{abs(net):,} 🪙** • Balance: {new_bal:,} 🪙"
         )
-        msg = await channel.send(embed=emb(title, desc, color), silent=True)
+        msg = await channel.send(embed=emb(title, desc, color), silent=True, **send_kwargs)
+    if view is not None:
+        view.message = msg  # on_timeout strips the buttons from it
 
     # Big results in the dailies channel stay pinned until the 5am reset.
     await keep_in_dailies_channel(guild, channel, msg, net)
@@ -131,7 +156,7 @@ class FlipCog(commands.Cog):
         if side not in ("heads", "tails"):
             await ctx.send("Side must be `heads` or `tails`.")
             return
-        await play_flip(ctx.author, ctx.channel, ctx.guild, amount, n, side)
+        await play_flip(ctx.author, ctx.channel, ctx.guild, amount, n, side, play_again=True)
 
 
 async def setup(bot):

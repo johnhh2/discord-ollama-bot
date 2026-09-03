@@ -21,6 +21,7 @@ from src.persistence import (
 from src.guild_config import get_guild_cfg
 from src.artifacts import get_slot_reel
 from src.dailies import keep_in_dailies_channel
+from src.gambling.play_again import PlayAgainView
 from src.config import (
     SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
@@ -80,13 +81,18 @@ def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
 
 
 
-async def play_slots(author, channel, guild, amount: int, record_exclude: int = 0):
+async def play_slots(author, channel, guild, amount: int, record_exclude: int = 0,
+                     roll_again: bool = False):
     """Spin the slots for `author` betting `amount`, announcing in `channel`.
 
     Extracted from cmd_slots so the dailies-channel reaction claim can bet a
     player's claim (daily reward + scratchoff winnings) without a
     commands.Context. `amount` is
     assumed validated (>= SLOT_MIN_BET).
+
+    `roll_again` attaches a "Roll Again" button to the result that re-spins
+    the same bet (`PlayAgainView`). `!slots` passes True; the dailies claim
+    keeps the default so the daily stake stays a one-shot.
 
     `record_exclude` shrinks the bet considered for the slots records
     (payouts are untouched): non-jackpot record offers use
@@ -109,6 +115,25 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
     # shop_charge only uses ctx.send, so the channel satisfies it.
     if not await shop_charge(channel, uid, amount):
         return
+
+    # Built only after the charge lands so a declined bet never leaves an
+    # orphan view (and its timeout task) behind.
+    view = None
+    if roll_again:
+        async def _replay(stake: int):
+            await play_slots(author, channel, guild, stake, roll_again=True)
+        view = PlayAgainView(
+            author, guild, replay=_replay, emoji="🎰",
+            options=[(f"Roll Again · {amount:,} 🪙", amount)],
+            not_yours="Not your spin — run `!slots` for your own.",
+        )
+
+    async def _send_result(title: str, desc: str, color):
+        if view is None:
+            return await channel.send(embed=emb(title, desc, color), silent=True)
+        msg = await channel.send(embed=emb(title, desc, color), view=view, silent=True)
+        view.message = msg
+        return msg
 
     # Jackpot contribution (2% of every bet, rounded up)
     contrib = max(1, int(amount * SLOT_JACKPOT_CONTRIB))
@@ -154,7 +179,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
                 f"*(Jackpot reset to {SLOT_JACKPOT_SEED:,} 🪙)*")
         if first_time_slots:
             desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
-        msg = await channel.send(embed=emb("🎰 PROGRESSIVE JACKPOT!", desc, C_GOLD), silent=True)
+        msg = await _send_result("🎰 PROGRESSIVE JACKPOT!", desc, C_GOLD)
         try:
             await msg.pin()
         except Exception:
@@ -184,7 +209,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
                 f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
         if first_time_slots:
             desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
-        await channel.send(embed=emb("🎰 Money Back!", desc, C_GOLD), silent=True)
+        await _send_result("🎰 Money Back!", desc, C_GOLD)
         return
 
     if mult == 0:
@@ -194,7 +219,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
                 f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
         if first_time_slots:
             desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
-        msg = await channel.send(embed=emb("🎰 No Win", desc, C_RED), silent=True)
+        msg = await _send_result("🎰 No Win", desc, C_RED)
         await keep_in_dailies_channel(guild, channel, msg, -amount)
         return
 
@@ -227,7 +252,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
             f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
     if first_time_slots:
         desc += "\n\n📊 Use `!slotsrewards` to see all payouts!"
-    msg = await channel.send(embed=emb("🎰 Winner!", desc, C_GREEN), silent=True)
+    msg = await _send_result("🎰 Winner!", desc, C_GREEN)
     await keep_in_dailies_channel(guild, channel, msg, winnings - amount)
     if new_slots_record:
         await announce_record(channel, "slots_non_jackpot", author.display_name, record_winnings, holder_id=uid)
@@ -278,7 +303,7 @@ class SlotsCog(commands.Cog):
             await ctx.send(embed=emb("❌ Minimum Bet", f"Minimum bet is **{SLOT_MIN_BET:,} 🪙**.", C_RED))
             return
 
-        await play_slots(ctx.author, ctx.channel, ctx.guild, amount)
+        await play_slots(ctx.author, ctx.channel, ctx.guild, amount, roll_again=True)
 
 
     @commands.command(name="slotsrewards", aliases=["slotrewards", "slotreward"])

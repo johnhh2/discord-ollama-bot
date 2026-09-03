@@ -11,13 +11,16 @@ parts NOT covered there:
 - Jackpot win resets state.slot_jackpot to SLOT_JACKPOT_SEED.
 """
 import random
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 import src.state as _state
 import src.persistence as _persistence
 import src.economy as _economy
-from src.gambling.slots import SlotsCog, apply_jackpot_bonus
+from src.gambling.slots import SlotsCog, apply_jackpot_bonus, play_slots
+from src.gambling.play_again import PlayAgainView
 from src.config import (
     SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_JACKPOT_BONUS_MIN_BET,
     SLOT_JACKPOT_BONUS_MAX_BET, SLOT_JACKPOT_BONUS_MAX_MULT, SLOT_MIN_BET,
@@ -369,3 +372,114 @@ async def test_slots_godmode_user_doesnt_record_gambling(db, monkeypatch):
     await cog.cmd_slots.callback(cog, ctx, amount="1000")
 
     assert (42, "12") not in _state.gambling_today_by_user
+
+
+# ── Roll Again button ─────────────────────────────────────────────────────────
+#
+# A hand-typed !slots result carries one "Roll Again" button that re-spins the
+# same bet. The dailies 🎰 claim goes through play_slots' default and gets no
+# button — the daily stake is a one-shot. The view's own contract (owner-only,
+# one replay per set, blocklist gate, timeout) is pinned in
+# test_play_again_view.py.
+
+
+class _FakeInteraction:
+    def __init__(self, user):
+        self.user = user
+        self.response = SimpleNamespace(
+            send_message=AsyncMock(), defer=AsyncMock(), edit_message=AsyncMock(),
+        )
+
+
+def _result_views(ctx) -> list:
+    """Every view play_slots attached to a message in ctx.channel, in order.
+    Filtered rather than `[-1]` because record announcements can follow the
+    result message."""
+    return [c.kwargs["view"] for c in ctx.channel.send.call_args_list
+            if c.kwargs.get("view") is not None]
+
+
+def _force_loss(monkeypatch):
+    monkeypatch.setattr(random, "random", lambda: 0.01)  # house branch
+    monkeypatch.setattr(random, "sample", lambda seq, k: ["🎰", "🍋", "🔔"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["loss", "money_back", "win", "jackpot"])
+async def test_slots_command_offers_roll_again_on_every_outcome(db, monkeypatch, outcome):
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=20)
+    await _economy.add_balance(20, 100_000)
+    if outcome == "loss":
+        _force_loss(monkeypatch)
+    elif outcome == "money_back":
+        monkeypatch.setattr(random, "random", lambda: 0.01)
+        monkeypatch.setattr(random, "sample", lambda seq, k: ["🍒", "🍋", "🔔"])
+    elif outcome == "win":
+        _state.rigged_slots[20] = "🍒"
+    else:
+        _state.rigged_slots[20] = "7️⃣"
+
+    await cog.cmd_slots.callback(cog, ctx, amount="1000")
+
+    views = _result_views(ctx)
+    assert len(views) == 1
+    view = views[0]
+    assert isinstance(view, PlayAgainView)
+    assert view.message is not None          # on_timeout strips the button
+    assert [b.stake for b in view.children] == [1000]
+    assert view.children[0].label == "Roll Again · 1,000 🪙"
+    view.stop()
+
+
+@pytest.mark.asyncio
+async def test_slots_declined_bet_offers_no_roll_again(db, monkeypatch):
+    """Insufficient funds sends only the refusal — no result, no button."""
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=21)
+    await _economy.add_balance(21, 500)
+    _force_loss(monkeypatch)
+
+    await cog.cmd_slots.callback(cog, ctx, amount="1000")
+
+    assert _result_views(ctx) == []
+
+
+@pytest.mark.asyncio
+async def test_play_slots_default_has_no_roll_again(db, monkeypatch):
+    """play_slots' default (the dailies 🎰 claim path) attaches no button."""
+    ctx = _ctx(uid=22)
+    await _economy.add_balance(22, 100_000)
+    _force_loss(monkeypatch)
+
+    await play_slots(ctx.author, ctx.channel, ctx.guild, 1000)
+
+    assert ctx.channel.send.await_count == 1
+    assert _result_views(ctx) == []
+
+
+@pytest.mark.asyncio
+async def test_roll_again_click_respins_same_bet_and_offers_another(db, monkeypatch):
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=23)
+    await _economy.add_balance(23, 100_000)
+    _force_loss(monkeypatch)
+
+    await cog.cmd_slots.callback(cog, ctx, amount="1000")
+    first = _result_views(ctx)[0]
+    bal_after_first = await _economy.get_balance(23)
+    jackpot_after_first = _state.slot_jackpot
+
+    interaction = _FakeInteraction(ctx.author)
+    await first.children[0].callback(interaction)
+
+    # Button dropped from the first result, bet charged again, pot fed again.
+    interaction.response.edit_message.assert_awaited_once_with(view=None)
+    assert await _economy.get_balance(23) == bal_after_first - 1000
+    assert _state.slot_jackpot == jackpot_after_first + max(1, int(1000 * SLOT_JACKPOT_CONTRIB))
+    views = _result_views(ctx)
+    assert len(views) == 2
+    assert views[1] is not first
+    assert [b.stake for b in views[1].children] == [1000]
+    for v in views:
+        v.stop()
