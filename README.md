@@ -52,7 +52,7 @@ flowchart LR
 
 ### ♟️ A chess bot that plays like a human
 `!chess @TheBot 1400` (or `!chessbot 1400`) gives you an opponent that actually plays like a 1400 — not a crippled engine that alternates brilliancies and free queens.
-A bare `!chessbot` shows your ladder instead: this week's free lottery tickets, your best defeat, first-win bonus progress, and a Play button for the suggested next Elo.
+A bare `!chessbot` shows your ladder instead: this lottery's free tickets, your best defeat, first-win bonus progress, and a Play button for the suggested next Elo.
 
 | Requested Elo | Engine behind the board |
 |---|---|
@@ -67,7 +67,7 @@ PvP works too, with SAN/UCI move input, board rendering, threat analysis (`!ches
 ### 🎰 Economy & casino
 - `!daily` rewards with streaks (5am CT reset, DST-aware), `!savings` with compounding interest, `!pay`, `!graph` for balance history
 - `!assets` real estate — 36 unique bot-wide properties (10k–2m 🪙) paying 1.1% of their price per day, banked automatically with your daily claim, with a cross-server player marketplace (`!assets sell <name> <price>`; lowball listings get an instant 75%-of-value bank buyback offer), one named upgrade per property (+35–75% revenue), and renameable businesses (`!assets rename`)
-- `!slots` with a progressive jackpot, `!blackjack`, `!flip`, `!scratchoff`, and a monthly `!lottery` drawn on the 1st of each month at 6pm CT (one 1,000-coin ticket per user per server per day — bought from the dailies-channel 🎟️ button or a `!lottery` confirm prompt — plus up to 2 free tickets a week for beating a 600+ Elo chess bot — a global weekly cap shared across servers)
+- `!slots` with a progressive jackpot, `!blackjack`, `!flip`, `!scratchoff`, and a monthly `!lottery` drawn on the 1st of each month at 6pm CT (one 1,000-coin ticket per user per server per day — bought from the dailies-channel 🎟️ button or a `!lottery` confirm prompt — plus up to 2 free tickets per lottery for beating a 600+ Elo chess bot — a global monthly cap shared across servers that resets with each draw)
 - Crime layer: `!steal`, `!mug`, `!bankheist` co-op heists, `!jail` / `!bail` / `!jailbreak`, and purchasable insurance
 - `!bounty <coins> [duration] <condition>` — escrowed rewards anyone can claim, with author accept/reject via DM and a community-vote contest path
 - `!leaderboard`, `!records`, `!economy` server overview

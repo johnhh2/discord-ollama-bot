@@ -20,7 +20,7 @@ from src.helpers import (
 from src.confirm_view import confirm_prompt
 from src.config import EPHEMERAL_DELETE_AFTER
 from src.economy import (
-    add_balance, record_gambling_event, next_lottery_week_reset_ts,
+    add_balance, record_gambling_event, _ct_now, next_lottery_draw_dt,
 )
 from src.permissions import check_chess_channel, requires_perm, is_admin, is_silenced
 from src.artifacts import has_chessthreats_unlock
@@ -44,7 +44,7 @@ from src.games.bot_chess_rewards import (
     bonus_bin_ladder, claimed_bonus_bins, suggested_bot_elo,
 )
 from src.cogs.lottery_cog import (
-    CHESS_TICKET_BOT_TIERS, CHESS_TICKET_WEEKLY_CAP, chess_tickets_granted_this_week,
+    CHESS_TICKET_BOT_TIERS, CHESS_TICKET_MONTHLY_CAP, chess_tickets_granted_this_lottery,
 )
 from src import state
 
@@ -921,7 +921,7 @@ class ChessCog(commands.Cog):
         if await check_chess_channel(ctx):
             return
 
-        # No Elo: the ladder menu (weekly ticket progress, suggested next
+        # No Elo: the ladder menu (monthly ticket progress, suggested next
         # challenge, first-win bonuses) rather than a game at a default Elo.
         if not args:
             if await _start_blocked(ctx):
@@ -972,17 +972,20 @@ class ChessCog(commands.Cog):
 
     async def _send_bot_ladder(self, ctx: commands.Context):
         """`!chessbot` / `!chess @Bot` with no Elo: where the invoker stands on
-        the bot ladder — this week's free lottery tickets, their best defeat,
+        the bot ladder — this lottery's free tickets, their best defeat,
         first-win bonus progress — plus a Play button for the suggested next
         Elo and a button listing the bonus bins."""
         uid = ctx.author.id
-        got = chess_tickets_granted_this_week(uid)
+        got = chess_tickets_granted_this_lottery(uid)
         ticket_min_elo = CHESS_TICKET_BOT_TIERS[0][0]
+        # The ticket window follows the lottery schedule: it resets at the
+        # 1st-of-month 6pm CT draw.
+        draw_ts = int(next_lottery_draw_dt(_ct_now()).timestamp())
         tickets = (
-            f"🎟️ **Weekly lottery tickets:** {got}/{CHESS_TICKET_WEEKLY_CAP} claimed this week "
-            f"· resets <t:{next_lottery_week_reset_ts()}:R>\n"
+            f"🎟️ **Monthly lottery tickets:** {got}/{CHESS_TICKET_MONTHLY_CAP} claimed this lottery "
+            f"· resets with the draw <t:{draw_ts}:R>\n"
         )
-        if got < CHESS_TICKET_WEEKLY_CAP:
+        if got < CHESS_TICKET_MONTHLY_CAP:
             tickets += (
                 f"Beat a {ticket_min_elo}+ Elo bot to claim the rest "
                 f"(counted across all servers).\n"
@@ -1448,7 +1451,7 @@ class ChessCog(commands.Cog):
             "**Game commands**\n"
             "`!chess @user [wager]` — Play another player. Optional wager in 🪙; winner takes the pot.\n"
             f"`!chessbot <elo>` — Play the bot at that strength ({chess_bot.ELO_MIN}–{chess_bot.ELO_MAX}: Sub-Maia, Maia, Stockfish).\n"
-            "`!chessbot` — Your bot ladder: weekly free-ticket progress, suggested next Elo, first-win bonuses.\n"
+            "`!chessbot` — Your bot ladder: monthly free-ticket progress, suggested next Elo, first-win bonuses.\n"
             "`!stop` — Forfeit the game (run it inside the game's thread). Wager goes to the opponent.\n"
             "\n"
             "**Replay finished games**\n"
@@ -1887,9 +1890,9 @@ class ChessCog(commands.Cog):
                 except Exception as e:
                     logging.error(f"bot_chess_rewards.award_bot_defeat failed: {e}", exc_info=True)
 
-            # Free weekly lottery ticket(s) for beating a 600+ Elo bot — the
-            # cog tops the winner up to the weekly ceiling (2, shared across
-            # all servers) and grants nothing for PvP or sub-600 wins. A bot
+            # Free monthly lottery ticket(s) for beating a 600+ Elo bot — the
+            # cog tops the winner up to the per-lottery ceiling (2, shared
+            # across all servers) and grants nothing for PvP or sub-600 wins. A bot
             # game with no bot_user reference can't confirm the winner is
             # human, so skip.
             is_human_win = (
@@ -1904,9 +1907,9 @@ class ChessCog(commands.Cog):
                         guild, winner_id, ticket_elo,
                     )
                     if free_tickets == 1:
-                        payout_line += " 🎟️ **+1** free lottery ticket (weekly chess bonus)."
+                        payout_line += " 🎟️ **+1** free lottery ticket (monthly chess bonus)."
                     elif free_tickets > 1:
-                        payout_line += f" 🎟️ **+{free_tickets}** free lottery tickets (weekly chess bonus)."
+                        payout_line += f" 🎟️ **+{free_tickets}** free lottery tickets (monthly chess bonus)."
                 except Exception as e:
                     logging.error(f"lottery award_chess_tickets failed: {e}", exc_info=True)
 

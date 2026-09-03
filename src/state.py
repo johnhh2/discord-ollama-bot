@@ -78,12 +78,14 @@ rigged_scratch: dict = {}
 rigged_steal: dict = {}
 gambler_streak: dict = {}
 # Lottery ticket-grant gates, keyed (guild_id, user_id):
-# {"daily_day": str|None, "chess_week": str|None, "chess_tickets": int}.
+# {"daily_day": str|None, "chess_period": str|None, "chess_tickets": int}.
 # daily_day is the gameplay-day the user last bought their once-a-day 1,000 🪙
-# ticket in that guild; chess_week/chess_tickets count the free chess-win
-# tickets granted there in the current ISO week. The chess ceiling is global:
-# the gate sums a user's rows across all guilds for the week (cumulative
-# weekly ceiling — see chess_ticket_ceiling in src/cogs/lottery_cog.py).
+# ticket in that guild; chess_period/chess_tickets count the free chess-win
+# tickets granted there in the current lottery (lottery_period_key — the
+# window rolls with the 1st-of-month 6pm CT draw). The chess ceiling is
+# global: the gate sums a user's rows across all guilds for the period
+# (cumulative monthly ceiling — see chess_ticket_ceiling in
+# src/cogs/lottery_cog.py).
 # Gate checks claim
 # these synchronously (see CLAUDE.md concurrency rules). Source of truth is
 # the lottery_ticket_grants table; loaded at boot.

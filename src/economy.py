@@ -370,30 +370,6 @@ def lottery_month_key(now_ct: datetime.datetime) -> int:
     return now_ct.year * 100 + now_ct.month
 
 
-def lottery_week_key() -> str:
-    """ISO year-week key ("2026-W35") of the current gameplay-day in CT.
-
-    Gates the free weekly chess-win lottery tickets. Derived from _ct_today()
-    so the week rolls with the 5am gameplay-day boundary, not midnight.
-    """
-    iso = _ct_today_date().isocalendar()
-    return f"{iso[0]}-W{iso[1]:02d}"
-
-
-def next_lottery_week_reset_ts() -> int:
-    """Unix timestamp of the next lottery_week_key() rollover: the coming
-    Monday at the 5am CT daily reset. ISO weeks start on Monday, and the key
-    follows the gameplay-day, so the boundary is 5am rather than midnight.
-    For Discord `<t:...:R>` timestamps."""
-    today = _ct_today_date()
-    next_monday = today + datetime.timedelta(days=7 - today.weekday())
-    reset = datetime.datetime.combine(
-        next_monday, datetime.time(DAILY_RESET_HOUR, 0),
-        tzinfo=ZoneInfo("America/Chicago"),
-    )
-    return int(reset.timestamp())
-
-
 def next_lottery_draw_dt(now_ct: datetime.datetime) -> datetime.datetime:
     """Next lottery draw: the upcoming 1st of the month at 6pm CT.
 
@@ -407,6 +383,23 @@ def next_lottery_draw_dt(now_ct: datetime.datetime) -> datetime.datetime:
     if now_ct.month == 12:
         return datetime.datetime(now_ct.year + 1, 1, 1, 18, 0, tzinfo=ct)
     return datetime.datetime(now_ct.year, now_ct.month + 1, 1, 18, 0, tzinfo=ct)
+
+
+def lottery_period_key(now_ct: datetime.datetime) -> str:
+    """Key ("2026-09") of the lottery currently taking tickets: the year and
+    month it opened in.
+
+    Each lottery opens with the 1st-of-month 6pm CT draw and runs until the
+    next one, so the key flips at the draw rather than at midnight or the 5am
+    daily reset — a chess win on the 1st before 6pm still counts against
+    (and pays into) the outgoing pot. Gates the free monthly chess-win
+    lottery tickets. Distinct from lottery_month_key, whose calendar-month
+    int drives the scheduler's once-per-month draw/post markers.
+    """
+    draw = next_lottery_draw_dt(now_ct)
+    if draw.month == 1:
+        return f"{draw.year - 1}-12"
+    return f"{draw.year}-{draw.month - 1:02d}"
 
 
 def next_daily_reset_ts() -> int:

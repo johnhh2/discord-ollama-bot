@@ -146,6 +146,20 @@ def _translate(sql: str) -> str:
         out,
         flags=re.IGNORECASE,
     )
+    # `ALTER TABLE foo CHANGE COLUMN [IF EXISTS] old new <definition>` — a
+    # MariaDB in-place rename that restates the column definition. SQLite
+    # has RENAME COLUMN (3.25+) but no CHANGE COLUMN and no IF EXISTS on a
+    # rename, so emit a sentinel for FakeCursor.execute, which can check the
+    # old column is still there (the IF EXISTS no-op on a migration retry)
+    # before renaming. The restated type is advisory in SQLite anyway.
+    m_rename = re.match(
+        r"\s*ALTER\s+TABLE\s+(\w+)\s+CHANGE\s+COLUMN\s+(IF\s+EXISTS\s+)?(\w+)\s+(\w+)\b",
+        out,
+        flags=re.IGNORECASE,
+    )
+    if m_rename:
+        table, if_exists, old, new = m_rename.groups()
+        return f"--RENAME-COL {table} {old} {new}{' IF-EXISTS' if if_exists else ''}"
     # Inline `INDEX idx_x (col)` inside CREATE TABLE — SQLite doesn't support this
     # form. Strip the line; tests don't rely on these indexes for correctness.
     out = re.sub(r",\s*INDEX\s+\w+\s*\([^)]*\)", "", out, flags=re.IGNORECASE)
@@ -221,6 +235,17 @@ class FakeCursor:
         m_pk = re.match(r"^--REBUILD-PK (\w+) \(([^)]+)\)$", translated)
         if m_pk:
             self._rebuild_pk(m_pk.group(1), m_pk.group(2))
+            return
+        # Rename-column sentinel (CHANGE COLUMN [IF EXISTS]): with IF EXISTS,
+        # a missing source column is a no-op, as in MariaDB.
+        m_rc = re.match(r"^--RENAME-COL (\w+) (\w+) (\w+)( IF-EXISTS)?$", translated)
+        if m_rc:
+            table, old, new, if_exists = m_rc.groups()
+            if if_exists:
+                self._cur.execute(f"PRAGMA table_info({table})")
+                if old not in {row[1] for row in self._cur.fetchall()}:
+                    return
+            self._cur.execute(f"ALTER TABLE {table} RENAME COLUMN {old} TO {new}")
             return
         if params is None:
             params = ()

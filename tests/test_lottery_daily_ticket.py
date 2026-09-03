@@ -4,9 +4,10 @@ Tickets now come from exactly two places:
 - one 1,000 🪙 daily ticket per user per server, from the dailies 🎟️ button
   (buy_daily_ticket — the reaction path itself is covered in test_dailies.py)
   or the confirm prompt !lottery shows while today's ticket is unbought
-- up to 2 free tickets per ISO week for beating a 600+ Elo chess bot (a
+- up to 2 free tickets per lottery for beating a 600+ Elo chess bot (a
   global cap — wins in any server count against it; PvP and sub-600 wins
-  grant nothing)
+  grant nothing). The window follows the lottery schedule: it resets at the
+  1st-of-month 6pm CT draw (lottery_period_key).
 
 Gates live in state.lottery_ticket_grants (lottery_ticket_grants table),
 claimed synchronously per the CLAUDE.md concurrency rules.
@@ -29,8 +30,9 @@ from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild
 
 TODAY = "2026-10-02"
 YESTERDAY = "2026-10-01"
-WEEK = "2026-W40"
-LAST_WEEK = "2026-W39"
+# lottery_period_key for NOW_CT: the lottery that opened at the 10/1 draw.
+PERIOD = "2026-10"
+LAST_PERIOD = "2026-09"
 # A mid-month noon — well clear of the 1st-of-month lock/draw windows and
 # past the one-time TICKET_SALES_START_CT launch gate (9/1/2026).
 NOW_CT = datetime.datetime(2026, 10, 2, 12, 0, tzinfo=ZoneInfo("America/Chicago"))
@@ -39,10 +41,9 @@ PRE_LAUNCH_NOW_CT = datetime.datetime(2026, 8, 15, 12, 0, tzinfo=ZoneInfo("Ameri
 GUILD_ID = 77
 
 
-def _pin_clock(monkeypatch, today=TODAY, now=NOW_CT, week=WEEK):
+def _pin_clock(monkeypatch, today=TODAY, now=NOW_CT):
     monkeypatch.setattr("src.cogs.lottery_cog._ct_today", lambda: today)
     monkeypatch.setattr("src.cogs.lottery_cog._ct_now", lambda: now)
-    monkeypatch.setattr("src.cogs.lottery_cog.lottery_week_key", lambda: week)
 
 
 def _make_cog() -> LotteryCog:
@@ -133,7 +134,7 @@ async def test_daily_ticket_gate_rolls_over_next_day(db, monkeypatch):
     await _economy.add_balance(uid, 5_000)
     cog = _make_cog()
     _state.lottery_ticket_grants[(GUILD_ID, uid)] = {
-        "daily_day": YESTERDAY, "chess_week": None, "chess_tickets": 0,
+        "daily_day": YESTERDAY, "chess_period": None, "chess_tickets": 0,
     }
 
     await cog.buy_daily_ticket(ctx.author, ctx.channel, ctx.guild)
@@ -242,7 +243,7 @@ async def test_daily_ticket_paused_before_september_relaunch(db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chess_tickets_paused_before_september_relaunch(db, monkeypatch):
-    """Free chess tickets are held back too, without burning the weekly gates."""
+    """Free chess tickets are held back too, without burning the monthly gates."""
     _pin_clock(monkeypatch, now=PRE_LAUNCH_NOW_CT)
     ctx = _lottery_ctx(uid=9241)
     cog = _make_cog()
@@ -368,11 +369,11 @@ async def test_cmd_lottery_shows_ticket_counts(db, monkeypatch):
     assert "**Your Tickets:** 3 / 3 total" in info.description
 
 
-# ── weekly chess-win tickets ──────────────────────────────────────────────────
+# ── monthly chess-win tickets ─────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_low_elo_chess_win_grants_nothing(db, monkeypatch):
-    """Sub-600 bot wins are worth no tickets and don't touch the weekly gate."""
+    """Sub-600 bot wins are worth no tickets and don't touch the monthly gate."""
     _pin_clock(monkeypatch)
     ctx = _lottery_ctx(uid=9220)
     uid = ctx.author.id
@@ -398,7 +399,7 @@ async def test_pvp_chess_win_grants_nothing(db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_chess_bot_tier_ceilings(db, monkeypatch):
-    """A 600+ win tops up to 2 at once; the week is then capped."""
+    """A 600+ win tops up to 2 at once; the lottery is then capped."""
     _pin_clock(monkeypatch)
     ctx = _lottery_ctx(uid=9222)
     uid = ctx.author.id
@@ -427,8 +428,8 @@ async def test_chess_wins_top_up_not_stack(db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_chess_weekly_cap_is_global_across_guilds(db, monkeypatch):
-    """Tickets won in one server count against the weekly cap everywhere —
+async def test_chess_monthly_cap_is_global_across_guilds(db, monkeypatch):
+    """Tickets won in one server count against the monthly cap everywhere —
     a second server's 600+ win grants nothing more."""
     _pin_clock(monkeypatch)
     ctx_a = _lottery_ctx(uid=9226, guild_id=77)
@@ -444,24 +445,48 @@ async def test_chess_weekly_cap_is_global_across_guilds(db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_chess_tickets_reset_on_new_week(db, monkeypatch):
+async def test_chess_tickets_reset_on_new_lottery(db, monkeypatch):
     _pin_clock(monkeypatch)
     ctx = _lottery_ctx(uid=9224)
     uid = ctx.author.id
     cog = _make_cog()
     _state.lottery_ticket_grants[(GUILD_ID, uid)] = {
-        "daily_day": None, "chess_week": LAST_WEEK, "chess_tickets": 2,
+        "daily_day": None, "chess_period": LAST_PERIOD, "chess_tickets": 2,
     }
 
     assert await cog.award_chess_tickets(ctx.guild, uid, 1200) == 2
     row = _state.lottery_ticket_grants[(GUILD_ID, uid)]
-    assert row["chess_week"] == WEEK
+    assert row["chess_period"] == PERIOD
+    assert row["chess_tickets"] == 2
+
+
+@pytest.mark.asyncio
+async def test_chess_tickets_follow_the_draw_boundary(db, monkeypatch):
+    """The window matches the lottery schedule: a win on the 1st before the
+    6pm CT draw still counts against the outgoing lottery's ceiling (and pays
+    into its pot); the draw itself opens a fresh ceiling."""
+    ct = ZoneInfo("America/Chicago")
+    ctx = _lottery_ctx(uid=9227)
+    uid = ctx.author.id
+    cog = _make_cog()
+    _state.lottery_ticket_grants[(GUILD_ID, uid)] = {
+        "daily_day": None, "chess_period": PERIOD, "chess_tickets": 2,
+    }
+
+    _pin_clock(monkeypatch, now=datetime.datetime(2026, 11, 1, 10, 0, tzinfo=ct))
+    assert await cog.award_chess_tickets(ctx.guild, uid, 1500) == 0
+    assert (await _persistence.load_lottery(GUILD_ID))["players"] == {}
+
+    _pin_clock(monkeypatch, now=datetime.datetime(2026, 11, 1, 18, 30, tzinfo=ct))
+    assert await cog.award_chess_tickets(ctx.guild, uid, 1500) == 2
+    row = _state.lottery_ticket_grants[(GUILD_ID, uid)]
+    assert row["chess_period"] == "2026-11"
     assert row["chess_tickets"] == 2
 
 
 @pytest.mark.asyncio
 async def test_chess_tickets_skipped_when_lottery_disabled(db, monkeypatch):
-    """No lottery channel → no grant, and the weekly gate isn't burned."""
+    """No lottery channel → no grant, and the monthly gate isn't burned."""
     _pin_clock(monkeypatch)
     ctx = _lottery_ctx(uid=9225)
     _state.guild_settings[str(GUILD_ID)] = {}
@@ -487,40 +512,46 @@ async def test_ticket_grants_survive_reboot(db, monkeypatch):
     await _persistence.init_db_state()
 
     row = _state.lottery_ticket_grants[(GUILD_ID, uid)]
-    assert row == {"daily_day": TODAY, "chess_week": WEEK, "chess_tickets": 2}
+    assert row == {"daily_day": TODAY, "chess_period": PERIOD, "chess_tickets": 2}
 
 
 @pytest.mark.asyncio
-async def test_chess_tickets_granted_this_week_sums_across_guilds(db, monkeypatch):
-    """The !chessbot ladder's count: this week's grants in every guild,
-    ignoring stale weeks and other users."""
-    from src.cogs.lottery_cog import chess_tickets_granted_this_week
+async def test_chess_tickets_granted_this_lottery_sums_across_guilds(db, monkeypatch):
+    """The !chessbot ladder's count: this lottery's grants in every guild,
+    ignoring stale periods and other users."""
+    from src.cogs.lottery_cog import chess_tickets_granted_this_lottery
     _pin_clock(monkeypatch)
     uid = 9230
-    _state.lottery_ticket_grants[(77, uid)] = {"daily_day": None, "chess_week": WEEK, "chess_tickets": 1}
-    _state.lottery_ticket_grants[(88, uid)] = {"daily_day": None, "chess_week": WEEK, "chess_tickets": 1}
-    _state.lottery_ticket_grants[(99, uid)] = {"daily_day": None, "chess_week": LAST_WEEK, "chess_tickets": 2}
-    _state.lottery_ticket_grants[(77, 9231)] = {"daily_day": None, "chess_week": WEEK, "chess_tickets": 2}
+    _state.lottery_ticket_grants[(77, uid)] = {"daily_day": None, "chess_period": PERIOD, "chess_tickets": 1}
+    _state.lottery_ticket_grants[(88, uid)] = {"daily_day": None, "chess_period": PERIOD, "chess_tickets": 1}
+    _state.lottery_ticket_grants[(99, uid)] = {"daily_day": None, "chess_period": LAST_PERIOD, "chess_tickets": 2}
+    _state.lottery_ticket_grants[(77, 9231)] = {"daily_day": None, "chess_period": PERIOD, "chess_tickets": 2}
 
-    assert chess_tickets_granted_this_week(uid) == 2
-    assert chess_tickets_granted_this_week(9232) == 0
+    assert chess_tickets_granted_this_lottery(uid) == 2
+    assert chess_tickets_granted_this_lottery(9232) == 0
 
 
-def test_next_lottery_week_reset_is_monday_5am_ct(monkeypatch):
-    """The weekly chess-ticket window rolls with the gameplay-day: the coming
-    Monday at 5am CT, so a Monday 3am caller is still in last week."""
-    from src import economy
+def test_lottery_period_key_flips_at_the_first_of_month_draw():
+    """The chess-ticket window is the lottery itself: a new period opens at
+    the 1st-of-month 6pm CT draw — not at midnight, not at the 5am reset —
+    and December's pot (drawn 1/1) rolls the year."""
+    from src.economy import lottery_period_key
     ct = ZoneInfo("America/Chicago")
-    monday_5am = int(datetime.datetime(2026, 10, 5, 5, 0, tzinfo=ct).timestamp())
 
-    # Friday noon -> the coming Monday.
-    monkeypatch.setattr(economy, "_ct_now", lambda: datetime.datetime(2026, 10, 2, 12, 0, tzinfo=ct))
-    assert economy.next_lottery_week_reset_ts() == monday_5am
-    # Monday 3am is still Sunday's gameplay-day -> later that morning.
-    monkeypatch.setattr(economy, "_ct_now", lambda: datetime.datetime(2026, 10, 5, 3, 0, tzinfo=ct))
-    assert economy.next_lottery_week_reset_ts() == monday_5am
-    # Monday 6am -> the following Monday.
-    monkeypatch.setattr(economy, "_ct_now", lambda: datetime.datetime(2026, 10, 5, 6, 0, tzinfo=ct))
-    assert economy.next_lottery_week_reset_ts() == int(
-        datetime.datetime(2026, 10, 12, 5, 0, tzinfo=ct).timestamp()
-    )
+    def key(*args):
+        return lottery_period_key(datetime.datetime(*args, tzinfo=ct))
+
+    # Mid-month: the lottery that opened on the 1st.
+    assert key(2026, 10, 15, 12, 0) == "2026-10"
+    # The 1st before the draw — past midnight and the 5am reset — is still
+    # last month's pot.
+    assert key(2026, 11, 1, 0, 30) == "2026-10"
+    assert key(2026, 11, 1, 5, 30) == "2026-10"
+    assert key(2026, 11, 1, 17, 59) == "2026-10"
+    # The draw opens the new period.
+    assert key(2026, 11, 1, 18, 0) == "2026-11"
+    assert key(2026, 11, 1, 18, 30) == "2026-11"
+    # Year rollover.
+    assert key(2026, 12, 20, 12, 0) == "2026-12"
+    assert key(2027, 1, 1, 17, 0) == "2026-12"
+    assert key(2027, 1, 1, 18, 0) == "2027-01"

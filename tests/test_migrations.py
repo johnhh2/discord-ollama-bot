@@ -262,3 +262,66 @@ async def test_0055_collapses_per_guild_insurance_to_global(tmp_path, fake_cur):
     applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
     assert applied == [2]
     assert await _rows("insurance") == [(0, 10, 2_000.0), (0, 11, 500.0)]
+
+
+@pytest.mark.asyncio
+async def test_0063_chess_ticket_period_rename_keeps_september_grants(tmp_path, fake_cur):
+    """The real 0063 data migration: chess_week is renamed to chess_period in
+    place (data kept), every ISO-week key — all from the September 2026
+    lottery, the first with free grants — folds into its "2026-09" period,
+    NULL gates stay NULL, and a re-run (CHANGE COLUMN IF EXISTS on a column
+    that's already gone) is a no-op."""
+    _write(tmp_path, "0001_ticket_grants.sql", """
+        CREATE TABLE lottery_ticket_grants (
+            guild_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            daily_day TEXT NULL,
+            chess_week TEXT NULL,
+            chess_tickets INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (guild_id, user_id)
+        );
+    """)
+    applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+    assert applied == [1]
+
+    seed = [
+        (1, 10, "2026-09-02", "2026-W36", 2),
+        (2, 10, None, "2026-W37", 1),
+        (1, 11, "2026-09-02", None, 0),
+    ]
+    for row in seed:
+        await fake_cur.execute(
+            "INSERT INTO lottery_ticket_grants"
+            " (guild_id, user_id, daily_day, chess_week, chess_tickets)"
+            " VALUES (%s,%s,%s,%s,%s)", row,
+        )
+
+    # Ship the REAL 0063 file as the next migration in this sandbox.
+    real_sql = (Path(__file__).parent.parent / "migrations" / "0063_chess_ticket_monthly_period.sql").read_text(encoding="utf-8")
+    _write(tmp_path, "0002_chess_ticket_monthly_period.sql", real_sql)
+    _migrations._done = False
+    applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+    assert applied == [2]
+
+    async def _rows():
+        await fake_cur.execute(
+            "SELECT guild_id, user_id, daily_day, chess_period, chess_tickets"
+            " FROM lottery_ticket_grants ORDER BY user_id, guild_id"
+        )
+        return await fake_cur.fetchall()
+
+    expected = [
+        (1, 10, "2026-09-02", "2026-09", 2),
+        (2, 10, None, "2026-09", 1),
+        (1, 11, "2026-09-02", None, 0),
+    ]
+    assert await _rows() == expected
+
+    # Retry-safety: force the runner to re-execute 0002's statements
+    # (simulating a crash after a partial apply) — the rename is skipped
+    # and no week keys remain to fold.
+    await fake_cur.execute("DELETE FROM schema_migrations WHERE version=2")
+    _migrations._done = False
+    applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+    assert applied == [2]
+    assert await _rows() == expected

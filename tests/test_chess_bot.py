@@ -26,7 +26,7 @@ from src.games.chess import ChessCog, _initial_pgn, _BotLadderView
 from src.games.bot_chess_rewards import (
     first_defeat_bonus, bonus_bin_ladder, suggested_bot_elo,
 )
-from src.economy import lottery_week_key
+from src.economy import _ct_now, lottery_period_key
 
 from tests.fakes.discord import FakeMember, FakeGuild, FakeCtx, FakeMessage
 
@@ -1195,20 +1195,20 @@ def _bonus_button(view: _BotLadderView):
 
 
 @_aio
-async def test_ladder_counts_this_weeks_tickets_across_guilds(db, _stub_chess_helpers, _allow_chess_channel):
+async def test_ladder_counts_this_lotterys_tickets_across_guilds(db, _stub_chess_helpers, _allow_chess_channel):
     cog = _make_bot_cog()
     challenger = FakeMember(uid=2060)
     ctx = _ctx_for(challenger, channel_id=1060)
-    week = lottery_week_key()
-    _state.lottery_ticket_grants[(42, 2060)] = {"daily_day": None, "chess_week": week, "chess_tickets": 1}
-    _state.lottery_ticket_grants[(43, 2060)] = {"daily_day": None, "chess_week": week, "chess_tickets": 1}
-    _state.lottery_ticket_grants[(44, 2060)] = {"daily_day": None, "chess_week": "2000-W01", "chess_tickets": 2}
-    _state.lottery_ticket_grants[(42, 2061)] = {"daily_day": None, "chess_week": week, "chess_tickets": 2}
+    period = lottery_period_key(_ct_now())
+    _state.lottery_ticket_grants[(42, 2060)] = {"daily_day": None, "chess_period": period, "chess_tickets": 1}
+    _state.lottery_ticket_grants[(43, 2060)] = {"daily_day": None, "chess_period": period, "chess_tickets": 1}
+    _state.lottery_ticket_grants[(44, 2060)] = {"daily_day": None, "chess_period": "2000-01", "chess_tickets": 2}
+    _state.lottery_ticket_grants[(42, 2061)] = {"daily_day": None, "chess_period": period, "chess_tickets": 2}
 
     await cog.cmd_chessbot.callback(cog, ctx)
 
     desc = ctx.sent_embeds[-1].description
-    assert "**Weekly lottery tickets:** 2/2" in desc
+    assert "**Monthly lottery tickets:** 2/2" in desc
     assert "Highest bot defeated:** none yet" in desc
 
 

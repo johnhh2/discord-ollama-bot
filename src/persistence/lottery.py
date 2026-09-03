@@ -27,22 +27,22 @@ async def save_lottery_ticket_grant(guild_id: int, user_id: int, row: dict):
     """Mirror one state.lottery_ticket_grants entry to DB.
 
     Whole-row upsert (like save_property_owner) so a call site can't silently
-    drop a gate field. `row` is {"daily_day", "chess_week", "chess_tickets"};
+    drop a gate field. `row` is {"daily_day", "chess_period", "chess_tickets"};
     the first two may be None.
     """
     async with with_cursor() as cur:
         await cur.execute(
             "INSERT INTO lottery_ticket_grants"
-            " (guild_id, user_id, daily_day, chess_week, chess_tickets)"
+            " (guild_id, user_id, daily_day, chess_period, chess_tickets)"
             " VALUES (%s,%s,%s,%s,%s)"
             " ON DUPLICATE KEY UPDATE daily_day=VALUES(daily_day),"
-            " chess_week=VALUES(chess_week),"
+            " chess_period=VALUES(chess_period),"
             " chess_tickets=VALUES(chess_tickets)",
             (
                 guild_id,
                 user_id,
                 row.get("daily_day"),
-                row.get("chess_week"),
+                row.get("chess_period"),
                 int(row.get("chess_tickets") or 0),
             ),
         )

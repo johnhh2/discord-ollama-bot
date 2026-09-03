@@ -426,13 +426,13 @@ async def _init_db_state_inner(state, run_migrations):
         # ── lottery_ticket_grants ─────────────────────────────────────────
         try:
             await cur.execute(
-                "SELECT guild_id, user_id, daily_day, chess_week, chess_tickets"
+                "SELECT guild_id, user_id, daily_day, chess_period, chess_tickets"
                 " FROM lottery_ticket_grants"
             )
             state.lottery_ticket_grants = {
                 (int(r[0]), int(r[1])): {
                     "daily_day": r[2],
-                    "chess_week": r[3],
+                    "chess_period": r[3],
                     "chess_tickets": int(r[4] or 0),
                 }
                 for r in await cur.fetchall()
