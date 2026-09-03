@@ -1,6 +1,7 @@
 import asyncio
 import functools
 
+import discord
 from discord.ext import commands
 
 from src import state
@@ -34,7 +35,7 @@ def requires_perm(func):
     return wrapper
 
 
-async def _wrong_channel_reply(ctx_or_msg, text: str) -> None:
+async def _wrong_channel_reply(ctx_or_msg, text: str, *, title: str = "❌ Wrong Channel") -> None:
     """Send a ❌ Wrong Channel embed and delete both the trigger and the reply after 10 s."""
     if isinstance(ctx_or_msg, commands.Context):
         message = ctx_or_msg.message
@@ -42,9 +43,21 @@ async def _wrong_channel_reply(ctx_or_msg, text: str) -> None:
     else:
         message = ctx_or_msg
         reply_fn = ctx_or_msg.reply
-    reply = await reply_fn(embed=emb("❌ Wrong Channel", text, C_RED), mention_author=False)
+    reply = await reply_fn(embed=emb(title, text, C_RED), mention_author=False)
     asyncio.create_task(_delete_after(message, 10.0))
     asyncio.create_task(_delete_after(reply, 10.0))
+
+
+def gate_channel_ids(channel) -> tuple:
+    """The ids a channel gate tests: the channel's own, plus its parent's when
+    it's a thread. A thread lives inside its parent channel and inherits the
+    parent's allow/deny status — that's what lets `!slots` run inside a
+    `!session` thread opened from a game channel (the thread's own id is
+    never in `game_channels`), and keeps a thread under a blacklisted
+    channel blacklisted. Every channel gate should test against this rather
+    than `ctx.channel.id` alone."""
+    parent_id = getattr(channel, "parent_id", None) if isinstance(channel, discord.Thread) else None
+    return (channel.id, parent_id) if parent_id else (channel.id,)
 
 
 async def check_channel(ctx: commands.Context, *config_keys: str, label: str = "These") -> bool:
@@ -55,7 +68,7 @@ async def check_channel(ctx: commands.Context, *config_keys: str, label: str = "
     allowed: set = set()
     for key in config_keys:
         allowed |= set(cfg.get(key, []))
-    if allowed and ctx.channel.id not in allowed:
+    if allowed and allowed.isdisjoint(gate_channel_ids(ctx.channel)):
         names = " ".join(f"<#{cid}>" for cid in allowed)
         await _wrong_channel_reply(ctx, f"{label} commands are only allowed in: {names}")
         return True
@@ -77,7 +90,7 @@ async def check_puzzle_channel(ctx: commands.Context) -> bool:
 async def check_chess_channel(ctx: commands.Context) -> bool:
     cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
     chess_channels = cfg.get("chess_channels", []) or cfg.get("game_channels", [])
-    if chess_channels and ctx.channel.id not in chess_channels:
+    if chess_channels and not any(cid in chess_channels for cid in gate_channel_ids(ctx.channel)):
         names = " ".join(f"<#{cid}>" for cid in chess_channels)
         await _wrong_channel_reply(ctx, f"Chess is only allowed in: {names}")
         return True

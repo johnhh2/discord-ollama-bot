@@ -79,6 +79,10 @@ from src.persistence.chess import (  # noqa: F401
     count_pvp_wins_in_guild,
 )
 from src.persistence.ai import save_ai_threads, save_channel_prompts  # noqa: F401
+from src.persistence.gambling_threads import (  # noqa: F401
+    save_gambling_thread,
+    delete_gambling_thread,
+)
 from src.persistence.quotes import (  # noqa: F401
     save_quote_log,
     save_saved_quotes,

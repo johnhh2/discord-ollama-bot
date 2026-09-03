@@ -317,7 +317,7 @@ async def _bust(author, channel, guild, game: dict, display: str) -> None:
     await retire_blackjack_buttons(game)
     amount = game["amount"]
     if uid not in state.godmode_users:
-        await record_gambling_event(guild.id if guild else None, uid, lost=amount)
+        await record_gambling_event(guild.id if guild else None, uid, lost=amount, channel_id=channel.id)
     await channel.send(embed=emb(
         "💥 Bust!",
         display + _doubled_note(game)
@@ -352,7 +352,7 @@ async def _stand(author, channel, guild, game: dict) -> None:
         bj_winnings = amount * 2
         new_bal_record = await shop_payout(uid, bj_winnings, guild_id=gid, holder_name=uid_name)
         if uid not in state.godmode_users:
-            await record_gambling_event(gid, uid, gained=amount)  # net: paid `amount` via shop_charge, received 2x
+            await record_gambling_event(gid, uid, gained=amount, channel_id=channel.id)  # net: paid `amount` via shop_charge, received 2x
         new_bj_record = await try_set_record(gid, "blackjack", bj_winnings, uid, uid_name,
                        player_hand=format_hand(player), player_score=pval,
                        dealer_score=dval)
@@ -362,7 +362,7 @@ async def _stand(author, channel, guild, game: dict) -> None:
         color, result = C_GOLD, f"🤝 Push! Bet returned. Balance: {await get_balance(uid):,} 🪙"
     else:
         if uid not in state.godmode_users:
-            await record_gambling_event(gid, uid, lost=amount)
+            await record_gambling_event(gid, uid, lost=amount, channel_id=channel.id)
         color, result = C_RED, f"❌ Dealer wins. **{uid_name}** loses **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙"
 
     await channel.send(embed=emb("🃏 Blackjack", display + f"\n\n{result}", color), silent=True)
@@ -431,7 +431,7 @@ class BlackjackCog(commands.Cog):
                 gid = ctx.guild.id if ctx.guild else None
                 new_bal_record = await shop_payout(uid, winnings, guild_id=gid, holder_name=username)
                 if uid not in state.godmode_users:
-                    await record_gambling_event(gid, uid, gained=max(0, winnings - amount))
+                    await record_gambling_event(gid, uid, gained=max(0, winnings - amount), channel_id=ctx.channel.id)
                 new_bj_record = await try_set_record(gid, "blackjack", winnings, uid, username,
                                player_hand=format_hand(player), player_score=pval,
                                dealer_score=dval)

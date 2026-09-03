@@ -299,7 +299,7 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1) -> int:
         # the payout and a concurrent invocation sees it immediately.
         user["scratch_won_today"] = int(user.get("scratch_won_today", 0) or 0) + payout
         if payout > 0:
-            await record_gambling_event(guild.id if guild else None, uid, gained=payout)
+            await record_gambling_event(guild.id if guild else None, uid, gained=payout, channel_id=channel.id)
         await save_economy(uid=uid)
 
         # Award 10 XP per scratchoff played

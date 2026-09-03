@@ -58,6 +58,7 @@ class FakeGuild:
         self.members = []
         self.roles = []
         self.channels = []
+        self.threads = []
         # Tests that drive role/channel creation can set side_effects on these.
         self.create_role = AsyncMock()
         self.create_text_channel = AsyncMock()
@@ -88,6 +89,13 @@ class FakeGuild:
         for c in self.channels:
             if c.id == ch_id:
                 return c
+        return None
+
+    def get_thread(self, thread_id: int):
+        """Cached (unarchived) threads only, like discord.Guild.get_thread."""
+        for t in self.threads:
+            if t.id == thread_id:
+                return t
         return None
 
 
@@ -145,9 +153,14 @@ class FakeThread(_discord.Thread):
     parent guild we don't have). Set `history_messages` to a list of
     FakeMessage to make `.history(limit=N)` async-iterable for cmd_reverse.
     """
-    def __init__(self, thread_id: int = 200, name: str = "test-thread"):
+    def __init__(self, thread_id: int = 200, name: str = "test-thread",
+                 parent_id: "int | None" = None, archived: bool = False):
         self.id = thread_id
         self.name = name
+        # gate_channel_ids reads parent_id off threads; the thread listeners
+        # in src/gambling/session.py read archived.
+        self.parent_id = parent_id
+        self.archived = archived
         self.send = AsyncMock(return_value=FakeMessage())
         self.edit = AsyncMock()
         self.delete = AsyncMock()
@@ -232,6 +245,8 @@ class FakeCtx:
         self.sent_messages: list[str] = []
         self.sent_views: list[Any] = []
         self._send_mock = AsyncMock(side_effect=self._record_send)
+        # ctx.reply (used by _wrong_channel_reply) records like send.
+        self.reply = AsyncMock(side_effect=self._record_send)
 
     async def _record_send(self, content=None, *, embed=None, view=None, **kwargs):
         if embed is not None:

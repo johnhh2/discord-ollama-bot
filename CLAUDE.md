@@ -368,6 +368,55 @@ them per game.
 Coverage: [tests/test_game_threads.py](tests/test_game_threads.py) and the
 "Game threads" block of [tests/test_chess.py](tests/test_chess.py).
 
+## Gambling threads (!session)
+
+`!session` (alias `!thread`) opens a public thread off a game channel and
+registers it in `state.gambling_threads` (mirrored to the `gambling_threads`
+table, loaded at boot). Anyone can play in it; the owner only matters for
+closing. Logic lives in `src/gambling/session.py`.
+
+- **Allowlist gate.** `GamblingSessionCog.bot_check` refuses every command
+  inside a registered thread except the roots in `GAMBLING_THREAD_COMMANDS`
+  (`slots`, `flip`, `scratchoff`, `scratches`, `blackjack`, `race`, `stop`),
+  replying with the list and raising `GamblingThreadOnly` (swallowed by
+  `on_command_error` like `PermissionDenied`). Only games that don't open a
+  thread of their own belong on the list — Discord can't nest threads. Keep
+  `GAMBLING_THREAD_COMMAND_LINES` (the thread's opening message) in step
+  with it.
+- **Threads inherit their parent channel's gate status.** `gate_channel_ids`
+  in `src/permissions.py` returns a thread's own id plus its `parent_id`;
+  `check_channel`, `check_chess_channel` and the command whitelist/blacklist
+  in `EventsCog.bot_check` all test against that. That's what lets `!slots`
+  run in a thread whose id is never in `game_channels` — a new channel gate
+  must go through it too, not compare `ctx.channel.id` directly.
+- **Closing.** `!stop` by the owner or an admin goes through
+  `close_gambling_thread` (called from `cmd_stop` before the blackjack
+  branch): a running race keeps the table open; otherwise every live
+  blackjack hand at the table *stands* — never a forfeit, never a refund (a
+  refund would let a colluding owner rescue bad hands) — the row is dropped,
+  and `cmd_stop` archives the thread. Archiving or deleting the thread by
+  other means drops the row via the thread listeners; a delete refunds live
+  hands, as chess does for its threads.
+- **The thread names itself after the table's leader** — "X gained Y coins",
+  or "X lost Y coins" when nobody is up (`leader_title`; it starts as
+  `NEW_THREAD_NAME`). Results arrive by hook, not by polling:
+  `record_gambling_event` in `src/economy.py` takes a `channel_id` and calls
+  every `economy.GAMBLING_RESULT_HOOKS` entry with the signed net; the cog
+  registers its tally handler on construction. **A game that can run in a
+  thread must pass `channel_id=` at every `record_gambling_event` call**
+  (flip, slots, scratchoff, blackjack, race do) or its results are invisible
+  to the thread name. The tally persists in `tally_json`.
+- **Renames are rate-limited by Discord** (two name edits per channel per
+  ten minutes) so they're coalesced: the first is immediate, later ones
+  collapse into one delayed rename `RENAME_MIN_INTERVAL` after the last,
+  which applies whatever the tally says when it fires. Never `await
+  thread.edit(name=...)` inline on a result path — discord.py sleeps out the
+  429, which would stall the game. `close_gambling_thread` rides the final
+  name on `cmd_stop`'s archive edit only when that budget allows.
+- One open thread per owner per guild. A row whose thread is gone from the
+  guild cache (deleted, or archived while the bot was down) is stale and is
+  dropped on the owner's next `!session`.
+
 ## Concurrency: per-user command races
 
 Discord users can fire several invocations of the same command before the first finishes (spam-typing, multi-device, scripted clients). Because asyncio is cooperative, a coroutine only loses control at an `await` — so a sequence like *check counter → await network/DB → mutate counter* is racey: two invocations both pass the check before either mutates, and the user gets the resource twice. This bot has had four of these bugs in one month (`!scratchoff`, `!daily`, `!bail`, `!shop insurance`, `!shop unoreverse`). The pattern is easy to introduce and easy to miss in code review.

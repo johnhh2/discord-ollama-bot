@@ -193,7 +193,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
         gid = guild.id if guild else None
         new_bal_record = await shop_payout(uid, prize, guild_id=gid, holder_name=author.display_name)
         if uid not in state.godmode_users:
-            await record_gambling_event(gid, uid, gained=max(0, prize - amount))
+            await record_gambling_event(gid, uid, gained=max(0, prize - amount), channel_id=channel.id)
         # Record offer uses the record-eligible bet's bonus multiplier — the
         # player is still PAID `prize`, but an auto-staked property-revenue
         # bet can't buy the 4x bonus its way into the record books.
@@ -238,7 +238,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
 
     if mult == 0:
         if uid not in state.godmode_users:
-            await record_gambling_event(guild.id if guild else None, uid, lost=amount)
+            await record_gambling_event(guild.id if guild else None, uid, lost=amount, channel_id=channel.id)
         desc = (f"{display}\n\n**{author.display_name}** lost **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙\n"
                 f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
         msg = await _send_result("🎰 No Win", desc, C_RED)
@@ -249,7 +249,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
     gid = guild.id if guild else None
     new_bal_record = await shop_payout(uid, winnings, guild_id=gid, holder_name=author.display_name)
     if uid not in state.godmode_users:
-        await record_gambling_event(gid, uid, gained=max(0, winnings - amount))
+        await record_gambling_event(gid, uid, gained=max(0, winnings - amount), channel_id=channel.id)
     # Record offer excludes any auto-staked property revenue from the bet
     # (payout above is untouched — see the record_exclude docstring note).
     record_winnings = max(0, amount - record_exclude) * mult

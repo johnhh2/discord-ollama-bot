@@ -13,6 +13,7 @@ from src.persistence._helpers import _load_json
 from src.persistence.history import (
     load_today_crime_row, load_today_gambling_row, load_today_levelups_row,
 )
+from src.persistence.gambling_threads import parse_tally
 
 
 async def init_db_state():
@@ -576,6 +577,24 @@ async def _init_db_state_inner(state, run_migrations):
                 }
         except Exception as e:
             logging.error(f"[init_db_state] ai_threads failed: {e}", exc_info=True)
+            raise
+
+        # ── gambling_threads (!session) ──────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT thread_id, owner_id, guild_id, parent_id, created_at, tally_json "
+                "FROM gambling_threads"
+            )
+            for tid, owner_id, guild_id, parent_id, created_at, tally_json in await cur.fetchall():
+                state.gambling_threads[int(tid)] = {
+                    "owner_id": int(owner_id),
+                    "guild_id": int(guild_id),
+                    "parent_id": int(parent_id),
+                    "created_at": int(created_at),
+                    "tally": parse_tally(tally_json),
+                }
+        except Exception as e:
+            logging.error(f"[init_db_state] gambling_threads failed: {e}", exc_info=True)
             raise
 
         # ── quote_log ─────────────────────────────────────────────────────

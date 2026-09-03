@@ -661,7 +661,19 @@ async def record_crime_event(guild_id: int, uid: int, *, gained: int = 0, lost: 
     rec["lost"] += int(lost)
 
 
-async def record_gambling_event(guild_id: int, uid: int, *, gained: int = 0, lost: int = 0):
+# Called after a gambling result is recorded with a `channel_id`, as
+# `await hook(channel_id, guild_id, uid, net)` with net signed (gained −
+# lost). src/gambling/session.py registers one so a gambling thread can
+# rename itself after its biggest winner/loser on the result itself —
+# nothing polls gambling_history. A hook that raises is logged and skipped:
+# it must never eat a payout message.
+GAMBLING_RESULT_HOOKS: list = []
+
+
+async def record_gambling_event(
+    guild_id: int, uid: int, *, gained: int = 0, lost: int = 0,
+    channel_id: int | None = None,
+):
     """Atomically write the current bucket's gambling delta for `uid` in
     `guild_id` to gambling_history AND bump the in-memory cache.
 
@@ -669,9 +681,24 @@ async def record_gambling_event(guild_id: int, uid: int, *, gained: int = 0, los
     semantics: refunds and pushes record nothing). Persists synchronously.
     Bucket rollover is detected and the cache is reset accordingly. A
     falsy `guild_id` (DM context) is a no-op — gambling P/L is per-server.
+
+    `channel_id` is where the result landed; when given, every
+    GAMBLING_RESULT_HOOKS entry is told about it (the gambling-thread
+    tally). Games that can run inside a gambling thread pass it.
     """
     if gained == 0 and lost == 0 or not guild_id:
         return
+    await _record_gambling_delta(guild_id, uid, gained=gained, lost=lost)
+    if channel_id is None:
+        return
+    for hook in list(GAMBLING_RESULT_HOOKS):
+        try:
+            await hook(int(channel_id), int(guild_id), int(uid), int(gained) - int(lost))
+        except Exception:
+            logging.exception("[gambling] result hook %r failed", getattr(hook, "__qualname__", hook))
+
+
+async def _record_gambling_delta(guild_id: int, uid: int, *, gained: int, lost: int):
     today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
     if state._gambling_bucket != bucket:

@@ -45,6 +45,7 @@ from src.invites import _wait_for_confirmations, _send_invite
 from src.games.ttt_c4 import build_ttt_display, build_c4_display
 from src.games.hangman import build_hangman_display
 from src.games.blackjack import retire_blackjack_buttons
+from src.gambling.session import close_gambling_thread
 from src.games import chess_engine, chess_render
 from src.chess_shop import equipped_cosmetics
 from src.games.chess import (
@@ -753,6 +754,7 @@ class AICog(commands.Cog):
         cid = ctx.channel.id
         stopped: list[str] = []
         close_thread = False
+        thread_name: str | None = None  # a gambling thread's final leader name
         # Fire-and-forget board edits that must land before a game thread
         # is archived (nothing can be edited in an archived thread).
         board_edits: list[asyncio.Task] = []
@@ -774,6 +776,17 @@ class AICog(commands.Cog):
                 ai_thread["invited_ids"].discard(uid)
                 await save_ai_threads()
                 stopped.append(f"{label} (left group)")
+
+        # Gambling thread (!session) — the owner (or an admin) closes the
+        # table: every live hand in here stands, then the thread archives.
+        # A running race keeps it open (see close_gambling_thread). Runs
+        # before the blackjack branch so the owner's own hand stands too
+        # instead of forfeiting.
+        gambling = await close_gambling_thread(ctx)
+        if gambling is not None:
+            stopped.extend(gambling.lines)
+            close_thread = close_thread or gambling.close
+            thread_name = gambling.name
 
         # Puzzle: only the host (or an admin) can cancel.
         if cid in state.active_puzzles and (state.active_puzzles[cid]["user_id"] == uid or is_admin(ctx)):
@@ -845,7 +858,12 @@ class AICog(commands.Cog):
                 stopped.append("🏇 Race (forfeited)")
 
         if not stopped:
-            await ctx.send(embed=emb("⏹️ Nothing to Stop", "No active game or roleplay.", C_GREY))
+            session = state.gambling_threads.get(cid)
+            if session is not None and session["owner_id"] != uid:
+                nothing = f"Only <@{session['owner_id']}> or an admin can close this gambling thread."
+            else:
+                nothing = "No active game or roleplay."
+            await ctx.send(embed=emb("⏹️ Nothing to Stop", nothing, C_GREY))
             return
 
         await ctx.send(embed=emb("⏹️ Stopped", "\n".join(stopped), C_GREY))
@@ -853,13 +871,17 @@ class AICog(commands.Cog):
         if close_thread and isinstance(ctx.channel, discord.Thread):
             if board_edits:
                 await asyncio.gather(*board_edits, return_exceptions=True)
+            close_kwargs: dict = {"archived": True, "locked": True}
+            if thread_name:
+                close_kwargs["name"] = thread_name  # one edit: rename + archive
             try:
-                await ctx.channel.edit(archived=True, locked=True)
+                await ctx.channel.edit(**close_kwargs)
             except discord.Forbidden:
-                # Locking needs Manage Threads; archiving our own thread
-                # doesn't — retry without the lock before giving up.
+                # Locking needs Manage Threads; archiving (and renaming) our
+                # own thread doesn't — retry without the lock before giving up.
+                close_kwargs.pop("locked", None)
                 try:
-                    await ctx.channel.edit(archived=True)
+                    await ctx.channel.edit(**close_kwargs)
                 except Exception:
                     log_bot_permission_error(ctx, "Manage Threads")
             except Exception:

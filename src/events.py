@@ -16,6 +16,7 @@ from src.economy import (
 )
 from src.permissions import (
     _wrong_channel_reply,
+    gate_channel_ids,
     get_command_perm,
     is_silenced,
 )
@@ -505,14 +506,17 @@ class EventsCog(commands.Cog):
         if ctx.command and ctx.command.name == "quote":
             return True
 
+        # A thread inherits its parent channel's status (gate_channel_ids).
+        channel_ids = gate_channel_ids(ctx.channel)
+
         # Check blacklist first (deny)
         command_blacklist = cfg.get("command_blacklist", [])
-        if ctx.channel.id in command_blacklist:
+        if any(cid in command_blacklist for cid in channel_ids):
             return False
 
         # Check whitelist (allow only if specified)
         command_whitelist = cfg.get("command_whitelist", [])
-        if command_whitelist and ctx.channel.id not in command_whitelist:
+        if command_whitelist and not any(cid in command_whitelist for cid in channel_ids):
             return False
 
         return True
@@ -530,7 +534,8 @@ class EventsCog(commands.Cog):
             return
         from src.level_unlocks import LevelLocked
         from src.permissions import PermissionDenied
-        if isinstance(error, (LevelLocked, PermissionDenied)):
+        from src.gambling.session import GamblingThreadOnly
+        if isinstance(error, (LevelLocked, PermissionDenied, GamblingThreadOnly)):
             return  # gate already sent its own message (or is hidden-silent)
         if isinstance(error, commands.CheckFailure):
             cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}

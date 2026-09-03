@@ -92,9 +92,9 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
         new_bal_record = await shop_payout(uid, total_winnings, guild_id=gid, holder_name=author.display_name)
     if uid not in state.godmode_users:
         if net >= 0:
-            await record_gambling_event(gid, uid, gained=net)
+            await record_gambling_event(gid, uid, gained=net, channel_id=channel.id)
         else:
-            await record_gambling_event(gid, uid, lost=-net)
+            await record_gambling_event(gid, uid, lost=-net, channel_id=channel.id)
     new_flip_record = False
     record_winnings_per = max(0, amount - record_exclude) * 2
     if wins and record_winnings_per > 0:

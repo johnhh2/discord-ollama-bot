@@ -46,6 +46,7 @@ _TABLE_PKS = {
     "chess_unlocks": ("user_id", "item_id"),
     "chess_equipped": ("user_id",),
     "ai_threads": ("thread_id",),
+    "gambling_threads": ("thread_id",),
     "leveling": ("guild_id", "user_id"),
     "gambler_streak": ("user_id",),
     "command_streak": ("user_id",),

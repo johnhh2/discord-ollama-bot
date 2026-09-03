@@ -29,7 +29,8 @@ from tests.fakes.discord import FakeCtx, FakeGuild, FakeMember, FakeThread
 
 class _RecordingChannel:
     """Bare channel fake that records every send's (args, kwargs)."""
-    def __init__(self, guild=None):
+    def __init__(self, guild=None, ch_id: int = 100):
+        self.id = ch_id  # games report results with channel_id=channel.id
         self.guild = guild
         self.sent: list[tuple[tuple, dict]] = []
 

@@ -28,6 +28,7 @@ EXTENSIONS = [
     "src.gambling.flip",
     "src.gambling.scratchoff",
     "src.gambling.slots",
+    "src.gambling.session",
     "src.cogs.economy_cog",
     "src.cogs.assets_cog",
     "src.cogs.shop_cog",

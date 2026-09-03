@@ -166,6 +166,11 @@ channel_histories: dict = defaultdict(lambda: deque(maxlen=HISTORY_LIMIT))
 # Value: {kind, owner_id, invited_ids: set, system_prompt: str|None,
 #         character_prompt: str|None, history: list, guild_id: int|None}
 ai_threads: dict = {}
+# !session gambling threads — keyed by thread_id.
+# Value: {owner_id: int, guild_id: int, parent_id: int, created_at: int}
+# Source of truth is the gambling_threads table; loaded at boot. Logic lives
+# in src/gambling/session.py.
+gambling_threads: dict = {}
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 bot_start_time = time.monotonic()
