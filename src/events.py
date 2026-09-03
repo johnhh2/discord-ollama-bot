@@ -35,7 +35,7 @@ from src.config import (
     DAILY_REWARD,
 )
 from src import state
-from src.games.blackjack import draw_card, hand_value, build_blackjack_display, _blackjack_stand
+from src.games.blackjack import blackjack_hit, blackjack_stand, blackjack_double
 from src.games.hangman import _process_hangman_guess
 from src.leveling import grant_xp as _grant_xp
 from src.streaks import bump_streak
@@ -932,41 +932,25 @@ class EventsCog(commands.Cog):
     # ── Interceptors (return True if message consumed) ────────────────────────
 
     async def _handle_blackjack_input(self, message: discord.Message) -> bool:
-        """Intercept hit/stand from a player with an active blackjack game."""
+        """Intercept hit/stand/double from a player with an active blackjack game."""
         uid = message.author.id
         content_lower = message.content.strip().lower()
-        if content_lower not in ("!hit", "!stand", "hit", "stand"):
+        if content_lower not in ("!hit", "!stand", "!double", "hit", "stand", "double"):
             return False
-        if uid not in state.active_blackjack_games:
-            return False
-        game = state.active_blackjack_games[uid]
-        if game.get("channel_id") != message.channel.id:
+        game = state.active_blackjack_games.get(uid)
+        if game is None or game.get("channel_id") != message.channel.id:
             return False
         if game.get("pending"):
             return False  # claimed but bet not charged yet — not playable
+        # The same actions the Hit/Stand buttons run; each retires the
+        # buttons under the previous turn so the typed word doesn't leave a
+        # live set behind.
         if content_lower in ("!hit", "hit"):
-            card = draw_card(game["deck"])
-            game["player_hand"].append(card)
-            pval = hand_value(game["player_hand"])
-            display = build_blackjack_display(
-                game["player_hand"], game["dealer_hand"], pval, hide_dealer=True,
-                username=message.author.display_name,
-            )
-            if pval > 21:
-                del state.active_blackjack_games[uid]
-                await message.channel.send(embed=emb(
-                    "💥 Bust!",
-                    display + f"\n\n**{message.author.display_name}** loses **{game['amount']:,} 🪙**. Balance: {await get_balance(uid):,} 🪙",
-                    C_RED,
-                ), silent=True)
-            elif pval == 21:
-                await _blackjack_stand(message, uid, game)
-            else:
-                await message.channel.send(embed=emb(
-                    "🃏 Blackjack", display + "\n\n`!hit` to draw or `!stand` to hold.", C_BLUE,
-                ), silent=True)
+            await blackjack_hit(message.author, message.channel, message.guild)
+        elif content_lower in ("!double", "double"):
+            await blackjack_double(message.author, message.channel, message.guild)
         else:
-            await _blackjack_stand(message, uid, game)
+            await blackjack_stand(message.author, message.channel, message.guild)
         return True
 
     async def _handle_puzzle_answer(self, message: discord.Message) -> bool:

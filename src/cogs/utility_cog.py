@@ -403,7 +403,7 @@ class UtilityCog(commands.Cog):
                 "`!slots <amount>` — 3-reel slot machine with progressive jackpot\n"
                 "`!scratches` — Use all 3 daily scratchoffs at once\n"
                 "`!scratchoff` — Single scratchoff (3 attempts/day)\n"
-                "`!blackjack <amount>` — Interactive blackjack (type `hit` / `stand`)"
+                "`!blackjack <amount>` — Interactive blackjack (Hit / Stand / Double Down buttons, or type `hit` / `stand` / `double`)"
             ),
             inline=False
         )

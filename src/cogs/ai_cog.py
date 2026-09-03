@@ -44,6 +44,7 @@ from src.invites import _wait_for_confirmations, _send_invite
 # the cmd_stop coverage.
 from src.games.ttt_c4 import build_ttt_display, build_c4_display
 from src.games.hangman import build_hangman_display
+from src.games.blackjack import retire_blackjack_buttons
 from src.games import chess_engine, chess_render
 from src.chess_shop import equipped_cosmetics
 from src.games.chess import (
@@ -765,9 +766,9 @@ class AICog(commands.Cog):
 
         # Blackjack: forfeit drops the wager.
         if uid in state.active_blackjack_games:
-            amount = state.active_blackjack_games[uid]["amount"]
-            del state.active_blackjack_games[uid]
-            stopped.append(f"🃏 Blackjack (forfeited {amount:,} 🪙)")
+            game = state.active_blackjack_games.pop(uid)
+            await retire_blackjack_buttons(game)  # the hand's Hit/Stand set is dead now
+            stopped.append(f"🃏 Blackjack (forfeited {game['amount']:,} 🪙)")
 
         # Hangman: only the host stops it; reveal the word.
         if cid in state.active_hangman_games and state.active_hangman_games[cid]["user_id"] == uid:

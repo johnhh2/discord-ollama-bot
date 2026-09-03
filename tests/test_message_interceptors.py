@@ -5,8 +5,8 @@ xp/ragebait/mock/tax/curse/auto_daily). This file covers the *interceptor*
 half of on_message — the three short-circuit handlers that consume the
 message and the dispatcher logic that runs them in order:
 
-- _handle_blackjack_input — `hit`/`stand`/`!hit`/`!stand` while a
-  blackjack game is active for the author in this channel.
+- _handle_blackjack_input — `hit`/`stand`/`double` (with or without the
+  `!`) while a blackjack game is active for the author in this channel.
 - _handle_puzzle_answer — bare-text answer matching state.active_puzzles.
 - _handle_hangman_guess — single-letter free-text guess.
 
@@ -156,21 +156,22 @@ async def test_blackjack_hit_to_bust_removes_game_and_charges(db, cog):
 
 
 async def test_blackjack_stand_triggers_dealer_play(db, cog, monkeypatch):
-    """`stand` routes to _blackjack_stand which plays out the dealer's hand
-    and pays out. Stub _blackjack_stand to confirm we got there."""
+    """`stand` routes to blackjack_stand (shared with the Stand button), which
+    plays out the dealer's hand and pays out. Stub it to confirm we got there
+    with the author's own channel."""
     player = FakeMember(uid=5003)
     guild = FakeGuild(gid=42)
     channel = _Channel(ch_id=802)
     _state.active_blackjack_games[player.id] = _make_bj_game(channel_id=802)
 
     stand_calls = []
-    async def _stub_stand(message, uid, game):
-        stand_calls.append((uid, game["amount"]))
-    monkeypatch.setattr(_events, "_blackjack_stand", _stub_stand)
+    async def _stub_stand(author, ch, g):
+        stand_calls.append((author.id, ch.id, g.id))
+    monkeypatch.setattr(_events, "blackjack_stand", _stub_stand)
 
     await cog.on_message(_Msg(player, "stand", guild, channel))
 
-    assert stand_calls == [(player.id, 100)]
+    assert stand_calls == [(player.id, 802, 42)]
 
 
 async def test_blackjack_with_bang_prefix_also_intercepts(db, cog, monkeypatch):
@@ -181,13 +182,32 @@ async def test_blackjack_with_bang_prefix_also_intercepts(db, cog, monkeypatch):
     _state.active_blackjack_games[player.id] = _make_bj_game(channel_id=803)
 
     stand_calls = []
-    async def _stub_stand(message, uid, game):
-        stand_calls.append(uid)
-    monkeypatch.setattr(_events, "_blackjack_stand", _stub_stand)
+    async def _stub_stand(author, ch, g):
+        stand_calls.append(author.id)
+    monkeypatch.setattr(_events, "blackjack_stand", _stub_stand)
 
     await cog.on_message(_Msg(player, "!stand", guild, channel))
 
     assert stand_calls == [player.id]
+
+
+async def test_blackjack_typed_double_routes_to_double_down(db, cog, monkeypatch):
+    """`double` is the typed form of the Double Down button — same action."""
+    player = FakeMember(uid=5007)
+    guild = FakeGuild(gid=42)
+    channel = _Channel(ch_id=804)
+    _state.active_blackjack_games[player.id] = _make_bj_game(channel_id=804)
+
+    double_calls = []
+    async def _stub_double(author, ch, g):
+        double_calls.append((author.id, ch.id))
+    monkeypatch.setattr(_events, "blackjack_double", _stub_double)
+
+    msg = _Msg(player, "double", guild, channel)
+    await cog.on_message(msg)
+
+    assert double_calls == [(player.id, 804)]
+    assert msg not in cog.bot.process_commands_calls   # consumed
 
 
 async def test_blackjack_hit_in_other_channel_does_not_intercept(db, cog):

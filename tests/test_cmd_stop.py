@@ -355,6 +355,31 @@ async def test_stop_blackjack_drops_wager(db, _stub_edit_board):
     assert user.id not in _state.active_blackjack_games
 
 
+async def test_stop_blackjack_retires_its_hit_stand_buttons(db, _stub_edit_board):
+    """The forfeited hand's Hit/Stand set must stop taking clicks and vanish
+    from its message — otherwise a click after !stop lands on nothing (or on
+    the player's next hand)."""
+    from src.games.blackjack import BlackjackView
+    from tests.fakes.discord import FakeMessage
+
+    cog = AICog(bot=None)
+    user = FakeMember(uid=3002)
+    ctx = _ctx(user, channel_id=701)
+    view = BlackjackView(user, ctx.channel, ctx.guild)
+    view.message = FakeMessage()
+    _state.active_blackjack_games[user.id] = {
+        "amount": 500, "channel_id": 701,
+        "deck": [], "player_hand": [], "dealer_hand": [],
+        "view": view,
+    }
+
+    await cog.cmd_stop.callback(cog, ctx)
+
+    assert user.id not in _state.active_blackjack_games
+    assert view.is_finished()
+    view.message.edit.assert_awaited_once_with(view=None)
+
+
 # ── Hangman (host can stop; word revealed in summary) ─────────────────────────
 
 async def test_stop_hangman_by_host_clears_game(db, _stub_edit_board):
