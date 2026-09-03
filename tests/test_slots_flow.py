@@ -19,6 +19,7 @@ import pytest
 import src.state as _state
 import src.persistence as _persistence
 import src.economy as _economy
+import src.gambling.slots as slots_mod
 from src.gambling.slots import SlotsCog, apply_jackpot_bonus, play_slots
 from src.gambling.play_again import PlayAgainView
 from src.config import (
@@ -483,3 +484,138 @@ async def test_roll_again_click_respins_same_bet_and_offers_another(db, monkeypa
     assert [b.stake for b in views[1].children] == [1000]
     for v in views:
         v.stop()
+
+
+# ── Sub-max-bet jackpot-bonus note ────────────────────────────────────────────
+#
+# A bet under SLOT_JACKPOT_BONUS_MAX_BET gets a footnote saying it forfeits
+# part of the progressive bonus — once per user per bot restart (the seen-set
+# is in-memory on purpose).
+
+
+def _result_desc(ctx) -> str:
+    """Description of the first message sent — the spin result (a forced loss
+    sets no record, so nothing follows it)."""
+    return ctx.channel.send.call_args_list[0].kwargs["embed"].description
+
+
+def _stop_views(ctx):
+    for v in _result_views(ctx):
+        v.stop()
+
+
+@pytest.mark.asyncio
+async def test_sub_max_bet_note_shows_once_per_boot_per_user(db, monkeypatch):
+    monkeypatch.setattr(slots_mod, "_jackpot_bonus_noted", set())
+    cog = SlotsCog(bot=_StubBot())
+    _force_loss(monkeypatch)
+    for uid in (30, 31):
+        await _economy.add_balance(uid, 100_000)
+
+    ctx = _ctx(uid=30)
+    await cog.cmd_slots.callback(cog, ctx, amount=str(SLOT_JACKPOT_BONUS_MAX_BET - 1))
+    first = _result_desc(ctx)
+    assert f"Bets under **{SLOT_JACKPOT_BONUS_MAX_BET:,} 🪙**" in first
+    assert f"**{SLOT_JACKPOT_BONUS_MAX_MULT:.0f}x** progressive jackpot bonus" in first
+    # The note brings a second button that jumps straight to the full-bonus bet.
+    view = _result_views(ctx)[0]
+    assert [b.stake for b in view.children] == [SLOT_JACKPOT_BONUS_MAX_BET - 1, SLOT_JACKPOT_BONUS_MAX_BET]
+    assert view.children[1].label == f"Standard · {SLOT_JACKPOT_BONUS_MAX_BET:,} 🪙"
+    _stop_views(ctx)
+
+    # Same user, same boot: no repeat, and back to the single button.
+    ctx = _ctx(uid=30)
+    await cog.cmd_slots.callback(cog, ctx, amount="500")
+    assert "Bets under" not in _result_desc(ctx)
+    assert [b.stake for b in _result_views(ctx)[0].children] == [500]
+    _stop_views(ctx)
+
+    # Another user gets their own.
+    ctx = _ctx(uid=31)
+    await cog.cmd_slots.callback(cog, ctx, amount="500")
+    assert "Bets under" in _result_desc(ctx)
+    assert [b.stake for b in _result_views(ctx)[0].children] == [500, SLOT_JACKPOT_BONUS_MAX_BET]
+    _stop_views(ctx)
+
+
+@pytest.mark.asyncio
+async def test_full_bonus_button_spins_at_max_bet(db, monkeypatch):
+    monkeypatch.setattr(slots_mod, "_jackpot_bonus_noted", set())
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=35)
+    await _economy.add_balance(35, 100_000)
+    _force_loss(monkeypatch)
+
+    await cog.cmd_slots.callback(cog, ctx, amount="500")
+    first = _result_views(ctx)[0]
+    bal_after_first = await _economy.get_balance(35)
+
+    await first.children[1].callback(_FakeInteraction(ctx.author))   # Standard
+
+    assert await _economy.get_balance(35) == bal_after_first - SLOT_JACKPOT_BONUS_MAX_BET
+    views = _result_views(ctx)
+    assert len(views) == 2
+    # The max-bet result has no note (bet isn't under the threshold) and so
+    # only the plain Roll Again.
+    assert [b.stake for b in views[1].children] == [SLOT_JACKPOT_BONUS_MAX_BET]
+    assert "Bets under" not in ctx.channel.send.call_args_list[-1].kwargs["embed"].description
+    _stop_views(ctx)
+
+
+@pytest.mark.asyncio
+async def test_dailies_path_gets_the_note_but_no_buttons(db, monkeypatch):
+    """play_slots' default (the dailies 🎰 claim) still shows the footnote
+    but never a button — the daily stake is a one-shot."""
+    monkeypatch.setattr(slots_mod, "_jackpot_bonus_noted", set())
+    ctx = _ctx(uid=36)
+    await _economy.add_balance(36, 100_000)
+    _force_loss(monkeypatch)
+
+    await play_slots(ctx.author, ctx.channel, ctx.guild, 500)
+
+    assert "Bets under" in _result_desc(ctx)
+    assert _result_views(ctx) == []
+
+
+@pytest.mark.asyncio
+async def test_max_bet_or_more_gets_no_note_and_keeps_it_pending(db, monkeypatch):
+    monkeypatch.setattr(slots_mod, "_jackpot_bonus_noted", set())
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=32)
+    await _economy.add_balance(32, 100_000)
+    _force_loss(monkeypatch)
+
+    await cog.cmd_slots.callback(cog, ctx, amount=str(SLOT_JACKPOT_BONUS_MAX_BET))
+
+    assert "Bets under" not in _result_desc(ctx)
+    assert 32 not in slots_mod._jackpot_bonus_noted   # a later small bet still gets it
+    _stop_views(ctx)
+
+
+@pytest.mark.asyncio
+async def test_first_spin_hint_and_bonus_note_stack(db, monkeypatch):
+    """A brand-new player betting small sees both footnotes on one result."""
+    monkeypatch.setattr(slots_mod, "_jackpot_bonus_noted", set())
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=33)
+    await _economy.add_balance(33, 100_000)
+    _force_loss(monkeypatch)
+
+    await cog.cmd_slots.callback(cog, ctx, amount="500")
+
+    desc = _result_desc(ctx)
+    assert "!slotsrewards" in desc
+    assert "Bets under" in desc
+    _stop_views(ctx)
+
+
+@pytest.mark.asyncio
+async def test_declined_bet_does_not_consume_the_note(db, monkeypatch):
+    monkeypatch.setattr(slots_mod, "_jackpot_bonus_noted", set())
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=34)
+    await _economy.add_balance(34, 100)   # can't cover the bet
+
+    await cog.cmd_slots.callback(cog, ctx, amount="500")
+
+    assert 34 not in slots_mod._jackpot_bonus_noted
