@@ -18,8 +18,8 @@ Effect payload keys (all optional) are read by the systems they modify:
     steal_boost_pct           — relative % increase to !steal success chance
     crime_catch_reduction_pct — relative % cut to being jailed after a crime
                                 (steal/mug; bank heists excluded)
-    scratchoffs_per_50_streak — extra daily scratchoffs per 50 days of the
-                                owner's live daily streak (src/streaks.py)
+    scratchoffs_at_25_streak  — extra daily scratchoffs while the owner's
+                                live daily streak (src/streaks.py) is 25+ days
     property_accrual_cap_bonus        — flat increase to the unredeemed
                                 property-revenue cap (src/properties.py)
     property_revenue_pct_per_property — % property-revenue boost per
@@ -34,6 +34,9 @@ from src.config import (
     SLOT_REEL, SCRATCHOFF_MAX_DAILY,
 )
 from src import state
+
+# Live daily streak (days) at which the streak artifact's extra ticket unlocks.
+STREAK_SCRATCHOFF_MIN_STREAK = 25
 
 ARTIFACTS: list[dict] = [
     {
@@ -88,9 +91,9 @@ ARTIFACTS: list[dict] = [
         "id": "streak_scratchoffs",
         "level": 35,
         "cost": ARTIFACT_STREAK_SCRATCH_COST,
-        "effect": "Grants +1 daily scratchoff for every 50 days in your daily streak",
+        "effect": "Grants +1 daily scratchoff while your daily streak is 25+ days",
         "max": 1,
-        "scratchoffs_per_50_streak": 1,
+        "scratchoffs_at_25_streak": 1,
     },
     {
         "id": "property_cap_deed",
@@ -163,14 +166,15 @@ def bail_cost(uid: int, base_cost: int) -> int:
 def scratchoff_daily_cap(uid: int) -> int:
     """Daily scratchoff ticket cap for this user (base + artifact extras)."""
     cap = SCRATCHOFF_MAX_DAILY + _owned_total(uid, "extra_scratchoffs")
-    per_50 = _owned_total(uid, "scratchoffs_per_50_streak")
-    if per_50:
+    at_25 = _owned_total(uid, "scratchoffs_at_25_streak")
+    if at_25:
         # Local imports: src.streaks/src.economy pull in the persistence
         # layer, which this module must not require at import time.
         from src.streaks import get_command_streak_entry, effective_streak
         from src.economy import _ct_today
         streak = effective_streak(get_command_streak_entry(str(uid)), _ct_today())
-        cap += per_50 * (streak // 50)
+        if streak >= STREAK_SCRATCHOFF_MIN_STREAK:
+            cap += at_25
     return cap
 
 

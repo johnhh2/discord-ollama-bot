@@ -237,7 +237,7 @@ async def test_crime_catch_reduction():
     assert crime_catch_chance(uid, 0.25) == pytest.approx(0.2)  # steal tier 1
 
 
-async def test_streak_scratchoffs_scale_with_command_streak():
+async def test_streak_scratchoffs_unlock_at_25_day_streak():
     from src.artifacts import scratchoff_daily_cap
     from src.economy import _ct_today
 
@@ -248,12 +248,12 @@ async def test_streak_scratchoffs_scale_with_command_streak():
     assert scratchoff_daily_cap(uid) == 3
 
     _state.user_artifacts[uid] = {"streak_scratchoffs": 1}
-    assert scratchoff_daily_cap(uid) == 5  # 120 // 50 = +2
+    assert scratchoff_daily_cap(uid) == 4  # flat +1, doesn't scale past 25
 
-    # Below 50 days the artifact grants nothing yet.
-    _state.command_streak[str(uid)] = {"date": today, "count": 49}
+    # Below 25 days the artifact grants nothing yet.
+    _state.command_streak[str(uid)] = {"date": today, "count": 24}
     assert scratchoff_daily_cap(uid) == 3
-    _state.command_streak[str(uid)] = {"date": today, "count": 50}
+    _state.command_streak[str(uid)] = {"date": today, "count": 25}
     assert scratchoff_daily_cap(uid) == 4
 
     # A dead streak (last bump before yesterday) counts as 0.
@@ -261,7 +261,7 @@ async def test_streak_scratchoffs_scale_with_command_streak():
     assert scratchoff_daily_cap(uid) == 3
 
     # Stacks with the flat 4th-ticket artifact.
-    _state.command_streak[str(uid)] = {"date": today, "count": 55}
+    _state.command_streak[str(uid)] = {"date": today, "count": 30}
     _state.user_artifacts[uid]["extra_scratchoff"] = 1
     assert scratchoff_daily_cap(uid) == 5
 
