@@ -123,7 +123,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
         async def _replay(stake: int):
             await play_slots(author, channel, guild, stake, roll_again=True)
         view = PlayAgainView(
-            author, guild, replay=_replay, emoji="🎰",
+            author, guild, replay=_replay,
             options=[(f"Roll Again · {amount:,} 🪙", amount)],
             not_yours="Not your spin — run `!slots` for your own.",
         )

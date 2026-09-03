@@ -31,7 +31,7 @@ class _FakeInteraction:
 def _view():
     replay = AsyncMock()
     view = PlayAgainView(
-        OWNER, FakeGuild(gid=42), replay=replay, emoji="🎰",
+        OWNER, FakeGuild(gid=42), replay=replay,
         options=[("Again · 100 🪙", 100), ("Double · 200 🪙", 200)],
         not_yours="Not yours.",
     )

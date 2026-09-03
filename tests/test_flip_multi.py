@@ -63,10 +63,10 @@ async def test_flip_n_consumes_one_rigged_per_coin_and_settles_net(db, monkeypat
     assert rec.get("lost", 0) == 0
 
 
-# ── Flip Again / Double buttons ───────────────────────────────────────────────
+# ── Flip Again / 2x buttons ───────────────────────────────────────────────────
 #
 # A hand-typed !flip result carries two buttons: "Flip Again" (same stake) and
-# "Double" (2× the per-coin stake, same n and side). The dailies 🪙 claim goes
+# "2x" (double the per-coin stake, same n and side). The dailies 🪙 claim goes
 # through play_flip's default and gets none. The view's own contract is pinned
 # in test_play_again_view.py.
 
@@ -98,7 +98,7 @@ async def test_flip_offers_again_and_double_buttons(db, monkeypatch):
     view = views[0]
     assert isinstance(view, PlayAgainView)
     assert view.message is not None
-    assert [b.label for b in view.children] == ["Flip Again · 1,000 🪙", "Double · 2,000 🪙"]
+    assert [b.label for b in view.children] == ["Flip Again · 1,000 🪙", "2x · 2,000 🪙"]
     assert [b.stake for b in view.children] == [1000, 2000]
     view.stop()
 
@@ -113,7 +113,7 @@ async def test_flip_multi_coin_buttons_show_per_coin_stake(db, monkeypatch):
     await cog.cmd_flip.callback(cog, ctx, amount="1000", n=5)
 
     view = _result_views(ctx)[0]
-    assert [b.label for b in view.children] == ["Flip Again · 5 × 1,000 🪙", "Double · 5 × 2,000 🪙"]
+    assert [b.label for b in view.children] == ["Flip Again · 5 × 1,000 🪙", "2x · 5 × 2,000 🪙"]
     assert [b.stake for b in view.children] == [1000, 2000]
     view.stop()
 
@@ -144,7 +144,7 @@ async def test_play_flip_default_has_no_buttons(db, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_flip_double_click_flips_double_same_n_and_side(db, monkeypatch):
-    """Double on a `!flip 1000 2 tails` result charges 2 × 2,000, keeps n and
+    """2x on a `!flip 1000 2 tails` result charges 2 × 2,000, keeps n and
     side, and offers a fresh pair scaled to the new stake."""
     cog = FlipCog(bot=_StubBot())
     ctx = _ctx(uid=84)
@@ -157,7 +157,7 @@ async def test_flip_double_click_flips_double_same_n_and_side(db, monkeypatch):
     assert bal_after_first == 100_000 - 2 * 1000
 
     interaction = _FakeInteraction(ctx.author)
-    await first.children[1].callback(interaction)   # Double
+    await first.children[1].callback(interaction)   # 2x
 
     interaction.response.edit_message.assert_awaited_once_with(view=None)
     assert await _economy.get_balance(84) == bal_after_first - 2 * 2000

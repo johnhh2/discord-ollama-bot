@@ -2,7 +2,7 @@
 
 `!slots` and `!flip` attach a `PlayAgainView` to their result embed: one or
 more buttons that re-run the game for the same player at a given stake
-("Roll Again", "Flip Again", "Double"). The buttons vanish from the message
+("Roll Again", "Flip Again", "2x"). The buttons vanish from the message
 after PLAY_AGAIN_TIMEOUT seconds, or as soon as one is clicked — the replay
 posts a fresh result with its own buttons, so the chain continues until the
 player stops, runs dry, or lets a set expire.
@@ -33,7 +33,7 @@ _STYLES = (discord.ButtonStyle.primary, discord.ButtonStyle.success, discord.But
 class PlayAgainView(discord.ui.View):
     def __init__(
         self, author, guild, *, replay: Callable[[int], Awaitable[None]],
-        options: list[tuple[str, int]], emoji: str, not_yours: str,
+        options: list[tuple[str, int]], not_yours: str,
         timeout: float = PLAY_AGAIN_TIMEOUT,
     ):
         """`replay(stake)` runs the game once more at that stake (and attaches
@@ -49,7 +49,7 @@ class PlayAgainView(discord.ui.View):
         self.message: discord.Message | None = None
         self._fired = False
         for (label, stake), style in zip(options, _STYLES):
-            self.add_item(_PlayAgainButton(label=label, stake=stake, emoji=emoji, style=style))
+            self.add_item(_PlayAgainButton(label=label, stake=stake, style=style))
 
     async def on_timeout(self):
         if self._fired or self.message is None:
@@ -61,8 +61,8 @@ class PlayAgainView(discord.ui.View):
 
 
 class _PlayAgainButton(discord.ui.Button):
-    def __init__(self, *, label: str, stake: int, emoji: str, style: discord.ButtonStyle):
-        super().__init__(label=label, emoji=emoji, style=style)
+    def __init__(self, *, label: str, stake: int, style: discord.ButtonStyle):
+        super().__init__(label=label, style=style)
         self.stake = stake
 
     async def callback(self, interaction: discord.Interaction):

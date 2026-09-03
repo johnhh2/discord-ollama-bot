@@ -29,7 +29,7 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
     commands.Context. Inputs are
     assumed validated (amount >= 1, n >= 1, side in heads/tails).
 
-    `play_again` attaches "Flip Again" (same stake) and "Double" (2× the
+    `play_again` attaches "Flip Again" (same stake) and "2x" (double the
     per-coin stake, same n and side) buttons to the result (`PlayAgainView`).
     `!flip` passes True; the dailies claim keeps the default so the daily
     stake stays a one-shot.
@@ -56,9 +56,9 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
         def _stake_label(per_coin: int) -> str:
             return f"{per_coin:,} 🪙" if n == 1 else f"{n} × {per_coin:,} 🪙"
         view = PlayAgainView(
-            author, guild, replay=_replay, emoji="🪙",
+            author, guild, replay=_replay,
             options=[(f"Flip Again · {_stake_label(amount)}", amount),
-                     (f"Double · {_stake_label(amount * 2)}", amount * 2)],
+                     (f"2x · {_stake_label(amount * 2)}", amount * 2)],
             not_yours="Not your flip — run `!flip` for your own.",
         )
     send_kwargs = {"view": view} if view is not None else {}
