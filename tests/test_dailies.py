@@ -770,3 +770,51 @@ async def test_settings_dailies_channel_usage_message(db):
 
     assert "dailies_channel" not in _state.guild_settings.get("42", {})
     assert "Usage" in ctx.sent_embeds[-1].description
+
+
+# ── daily streak ──────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_reaction_claim_counts_toward_daily_streak(db, monkeypatch):
+    """A dailies click is a day of activity for the streak, same as a command:
+    the first click of the day extends it, later clicks are no-ops."""
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _state.command_streak["1"] = {"date": "2026-05-01", "count": 4}
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(_payload(message_id=777, member=member))
+    assert _state.command_streak["1"] == {"date": TODAY, "count": 5}
+
+    await cog.on_raw_reaction_add(_payload(message_id=777, member=member))
+    assert _state.command_streak["1"] == {"date": TODAY, "count": 5}
+
+
+@pytest.mark.asyncio
+async def test_reaction_ticket_click_counts_toward_daily_streak(db, monkeypatch):
+    """🎟️ skips the claim but is still a dailies click, so it keeps the streak."""
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _state.guild_settings["42"]["lottery_channel"] = 600
+    _state.economy["users"]["1"]["balance"] = 2_000
+    _add_lottery_cog(bot, monkeypatch)
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_TICKETS_EMOJI))
+
+    assert _state.command_streak["1"] == {"date": TODAY, "count": 1}
+    assert _state.economy["users"]["1"]["daily_date"] is None   # still no claim
+
+
+@pytest.mark.asyncio
+async def test_reaction_first_click_of_the_day_sets_the_streak_record(db, monkeypatch):
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _state.command_streak["1"] = {"date": "2026-05-01", "count": 7}
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(_payload(message_id=777, member=member))
+
+    rec = (await _persistence.load_records(42))["command_streak"]
+    assert rec["value"] == 8
+    assert rec["holder_id"] == 1
+    titles = [m.embed.title for m in channel.sent if m.embed is not None]
+    assert "🏆 New Record!" in titles

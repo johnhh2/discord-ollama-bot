@@ -39,6 +39,7 @@ from src.config import SLOT_MIN_BET
 from src.dailies import DAILIES_KEEP_MIN
 from src.cogs.lottery_cog import DAILY_TICKET_PRICE
 from src.events import _auto_daily
+from src.streaks import bump_streak
 from src import state
 
 
@@ -241,6 +242,10 @@ class DailiesCog(commands.Cog):
             channel = self.bot.get_channel(payload.channel_id) or await self.bot.fetch_channel(payload.channel_id)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             return
+        # A dailies click counts toward the daily streak exactly like a
+        # command would (no-op after the day's first). Counted before the
+        # run so a Discord hiccup mid-dailies can't cost the user the day.
+        await bump_streak(member.id, member.display_name, guild.id, channel, _ct_today())
         await self._run_dailies(member, channel, guild, gamble=emoji)
 
     async def _run_dailies(self, member, channel, guild, gamble: str | None = None):

@@ -1447,7 +1447,7 @@ class EconomyCog(commands.Cog):
                 fmt("highest_balance", "Highest Balance"),
                 fmt(CRIME_RECORD_CATEGORY, "Crime Payout",
                     lambda rec: f"\n  ↳ {format_crime_record_detail(rec)}"),
-                fmt("command_streak", "Command Streak",
+                fmt("command_streak", "Streak",
                     unit="day" if (r.get("command_streak") or {}).get("value") == 1 else "days"),
             ]),
             ("🎰 Gambling", [

@@ -2,7 +2,7 @@
 
 Aggregates the global economy (wallet, savings, artifacts, real estate),
 per-guild bits (lottery tickets, level), the chess-only ranks (max /
-cumulative bot Elo defeated), and the daily command streak. Read-only:
+cumulative bot Elo defeated), and the daily streak. Read-only:
 never materializes economy/leveling rows for the target beyond what
 get_balance already does.
 """
@@ -74,7 +74,7 @@ class ProfileCog(commands.Cog):
 
         streak = effective_streak(get_command_streak_entry(str(uid)), _ct_today())
         if streak:
-            lines.append(f"🔥 Command streak: **{streak:,}** day{'' if streak == 1 else 's'}")
+            lines.append(f"🔥 Streak: **{streak:,}** day{'' if streak == 1 else 's'}")
 
         artifacts = owned_artifact_count(uid)
         props = owned_properties(uid)

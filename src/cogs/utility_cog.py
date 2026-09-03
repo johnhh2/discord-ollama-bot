@@ -839,7 +839,7 @@ class UtilityCog(commands.Cog):
 
         embed = discord.Embed(title=f"🔥 Streaks — {ctx.guild.name}", color=C_GOLD)
         embed.add_field(
-            name="⌨️ Command streaks (any command, daily)",
+            name="🔥 Streaks (any command or dailies click, daily)",
             value=_fmt(_active_rows(state.command_streak)), inline=False,
         )
         embed.add_field(

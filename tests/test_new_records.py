@@ -345,7 +345,7 @@ async def test_records_embed_renders_units_for_the_new_categories(db):
     # Artifacts are a bare count, streaks are days (singular at 1), and the
     # scratchoff day is coins like every other economy record.
     assert "**Artifacts Owned:** 5 — **collector**" in desc
-    assert "**Command Streak:** 1 day — **newbie**" in desc
+    assert "**Streak:** 1 day — **newbie**" in desc
     assert "**Scratchoff Day Payout:** 300,000 🪙 — **lucky**" in desc
 
 
@@ -359,7 +359,7 @@ async def test_records_embed_pluralizes_multi_day_streaks(db):
     ctx = FakeCtx(author=FakeMember(uid=1), guild=FakeGuild(gid=GID))
     await cog.cmd_records.callback(cog, ctx)
 
-    assert "**Command Streak:** 42 days — **veteran**" in ctx.sent_embeds[-1].description
+    assert "**Streak:** 42 days — **veteran**" in ctx.sent_embeds[-1].description
 
 
 async def test_records_embed_renders_chess_categories(db):

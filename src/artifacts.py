@@ -19,7 +19,7 @@ Effect payload keys (all optional) are read by the systems they modify:
     crime_catch_reduction_pct — relative % cut to being jailed after a crime
                                 (steal/mug; bank heists excluded)
     scratchoffs_per_50_streak — extra daily scratchoffs per 50 days of the
-                                owner's live command streak (src/streaks.py)
+                                owner's live daily streak (src/streaks.py)
     property_accrual_cap_bonus        — flat increase to the unredeemed
                                 property-revenue cap (src/properties.py)
     property_revenue_pct_per_property — % property-revenue boost per
@@ -88,7 +88,7 @@ ARTIFACTS: list[dict] = [
         "id": "streak_scratchoffs",
         "level": 35,
         "cost": ARTIFACT_STREAK_SCRATCH_COST,
-        "effect": "Grants +1 daily scratchoff for every 50 days in your daily command streak",
+        "effect": "Grants +1 daily scratchoff for every 50 days in your daily streak",
         "max": 1,
         "scratchoffs_per_50_streak": 1,
     },

@@ -39,7 +39,7 @@ RECORD_LABELS = {
     "total_artifacts": "most artifacts owned",
     "total_assets": "most properties owned",
     "highest_property_value": "highest property portfolio value",
-    "command_streak": "longest daily command streak",
+    "command_streak": "longest daily streak",
     "scratchoff_day": "biggest scratchoff day payout",
     "crime": "biggest crime payout",
 }
