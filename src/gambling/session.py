@@ -342,8 +342,9 @@ class GamblingSessionCog(commands.Cog):
             "tally": {},
         }
         await persistence.save_gambling_thread(thread.id)
+        # No confirmation in the channel: Discord's own "started a thread"
+        # system line already points at it.
         await thread.send(embed=opening_embed(ctx.author))
-        await ctx.send(embed=emb("🎰 Gambling Thread", f"Opened {thread.mention}.", C_GOLD))
 
     # ── thread listeners ─────────────────────────────────────────────────────
 

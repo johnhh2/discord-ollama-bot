@@ -167,8 +167,9 @@ async def test_session_opens_thread_lists_commands_and_persists(db):
     assert positions == sorted(positions)
     assert "Anyone can play" in opening
     assert "<@1001>" in opening
-    # …and the channel gets a pointer to it.
-    assert f"<#{THREAD_ID}>" in ctx.sent_embeds[-1].description
+    # No standalone "opened a thread" message in the channel — Discord's own
+    # system line already points at the thread.
+    assert not ctx.sent_embeds and not ctx.sent_messages
 
 
 async def test_session_refused_inside_a_thread():
