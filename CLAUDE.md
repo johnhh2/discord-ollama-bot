@@ -276,7 +276,7 @@ Rules when touching this system:
    (which always banks with the claim) joins the stake only for users who
    opted in with `!daily property` (per-user `daily_gamble_property` column,
    default off). When staked, the property portion is passed as
-   `record_exclude` to `play_flip`/`play_slots`, which shrink the record
+   `record_exclude` to `play_flip`/`play_slots`/`play_bot_race`, which shrink the record
    *offer* (never the payout) — auto-staked property income mustn't hand
    owners the gambling records. A hand-typed `!flip`/`!slots` keeps
    `record_exclude=0`. Preserve this split if you add another auto-staked

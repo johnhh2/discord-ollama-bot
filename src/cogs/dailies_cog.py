@@ -2,9 +2,9 @@
 embed. Reacting to the embed immediately runs the player's dailies (daily
 coin reward + all remaining scratchoffs) right there in the channel:
 🗓️ just claims; 🪙 also coin-flips the claim (daily reward + scratchoff
-winnings); 🎰 also bets it on slots. 🎟️ is the exception: it only buys the
-player's once-a-day lottery ticket for this server, without claiming
-anything.
+winnings); 🎰 also bets it on slots; 🏇 also races the bot for it (a coin
+flip with a track). 🎟️ is the exception: it only buys the player's
+once-a-day lottery ticket for this server, without claiming anything.
 
 Configured per-guild with `!settings dailies-channel #channel` — the channel id,
 claim-message id, and last-reset day all live in the guild_settings JSON blob
@@ -15,7 +15,7 @@ Cleanliness rules:
   everything except the claim embed.
 - Any other message posted in the channel — user chatter, command invocations,
   claim results, this bot's own sends — is deleted after 5 minutes. Exception:
-  scratchoff/flip/slots results where 10k+ was won or lost (tracked in
+  scratchoff/flip/slots/race results where 10k+ was won or lost (tracked in
   cfg["dailies_keep_ids"] via src/dailies.py) stay up until the reset.
 - At the 5am CT daily reset the claim embed is reposted, which clears all
   claim reactions so players can click again. The repost doubles as a purge
@@ -34,6 +34,7 @@ from src.guild_config import get_guild_cfg
 from src.gambling.scratchoff import play_scratchoffs
 from src.gambling.flip import play_flip
 from src.gambling.slots import play_slots
+from src.games.race import play_bot_race
 from src.artifacts import scratchoff_daily_cap
 from src.config import SLOT_MIN_BET
 from src.dailies import DAILIES_KEEP_MIN
@@ -46,10 +47,14 @@ from src import state
 DAILIES_CLAIM_EMOJI = "🗓️"   # :calendar_spiral: — claim dailies
 DAILIES_FLIP_EMOJI = "🪙"    # :coin: — claim, then coin-flip the whole claim
 DAILIES_SLOTS_EMOJI = "🎰"   # :slot_machine: — claim, then bet the whole claim on slots
+DAILIES_RACE_EMOJI = "🏇"    # :horse_racing: — claim, then race the bot for the whole claim
 DAILIES_TICKETS_EMOJI = "🎟️"  # :tickets: — only buy today's lottery ticket
 # Tuple order is the order reactions are added to (and shown on) the claim
-# embed — 🎟️ stays last.
-DAILIES_ALL_EMOJIS = (DAILIES_CLAIM_EMOJI, DAILIES_FLIP_EMOJI, DAILIES_SLOTS_EMOJI, DAILIES_TICKETS_EMOJI)
+# embed — 🏇 sits right before 🎟️, which stays last.
+DAILIES_ALL_EMOJIS = (
+    DAILIES_CLAIM_EMOJI, DAILIES_FLIP_EMOJI, DAILIES_SLOTS_EMOJI,
+    DAILIES_RACE_EMOJI, DAILIES_TICKETS_EMOJI,
+)
 DAILIES_TITLE = "🗓️ Claim your dailies"
 # How long non-claim messages (results, user chatter) survive in the channel.
 DAILIES_MESSAGE_TTL = 300.0
@@ -91,9 +96,10 @@ def _dailies_body() -> str:
         f"{DAILIES_CLAIM_EMOJI} claim dailies\n"
         f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip the daily reward + all scratchoff winnings\n"
         f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet the daily reward + all scratchoff winnings on slots\n"
+        f"{DAILIES_RACE_EMOJI} claim dailies, then race the bot for the daily reward + all scratchoff winnings (a win doubles it)\n"
         f"{DAILIES_TICKETS_EMOJI} buy today's lottery ticket — {DAILY_TICKET_PRICE:,} 🪙, 1 per day\n\n"
         "Property revenue banks with your claim but isn't gambled — "
-        "`!daily property` opts it into the 🪙/🎰 stake."
+        "`!daily property` opts it into the 🪙/🎰/🏇 stake."
     )
 
 
@@ -251,11 +257,12 @@ class DailiesCog(commands.Cog):
     async def _run_dailies(self, member, channel, guild, gamble: str | None = None):
         """Run all of the member's dailies in `channel`, then optionally bet
         everything the claim paid out — the daily reward plus the scratchoff
-        winnings (🪙 → coin flip, 🎰 → slots). 🎟️ instead skips the dailies
-        entirely and just buys the day's lottery ticket.
+        winnings (🪙 → coin flip, 🎰 → slots, 🏇 → a race against the bot).
+        🎟️ instead skips the dailies entirely and just buys the day's lottery
+        ticket.
 
         The daily reward counts toward the stake even on a 0-match scratchoff
-        day, so clicking 🪙/🎰 always gambles something as long as the claim
+        day, so clicking 🪙/🎰/🏇 always gambles something as long as the claim
         actually paid out. Extension point: future daily claims go here. Every
         step is already idempotent per gameplay-day (each has its own daily
         gate), so a second click just reports the daily limit — and pays out
@@ -290,6 +297,11 @@ class DailiesCog(commands.Cog):
             await play_flip(member, channel, guild, stake, record_exclude=record_exclude)
         elif gamble == DAILIES_SLOTS_EMOJI and stake >= SLOT_MIN_BET:
             await play_slots(member, channel, guild, stake, record_exclude=record_exclude)
+        elif gamble == DAILIES_RACE_EMOJI:
+            # The bot's lane is its guild member (nickname) when cached, else
+            # the client user — play_bot_race reads only .id / .display_name.
+            bot_lane = getattr(guild, "me", None) or self.bot.user
+            await play_bot_race(member, channel, guild, stake, bot_lane, record_exclude=record_exclude)
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):

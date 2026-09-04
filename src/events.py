@@ -369,9 +369,9 @@ async def _auto_daily(author, channel) -> tuple[int, int]:
     prop_note = ""
     if prop_rev:
         prop_note = (
-            "\n*Property revenue joins your dailies 🪙/🎰 stake — `!daily property` to leave it out.*"
+            "\n*Property revenue joins your dailies 🪙/🎰/🏇 stake — `!daily property` to leave it out.*"
             if user_data.get("daily_gamble_property", False)
-            else "\n*Property revenue isn't part of the dailies 🪙/🎰 stake — `!daily property` to include it.*"
+            else "\n*Property revenue isn't part of the dailies 🪙/🎰/🏇 stake — `!daily property` to include it.*"
         )
     await channel.send(embed=emb(
         "🪙 Daily Reward",

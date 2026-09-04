@@ -3,6 +3,7 @@
 Covers the react-to-claim flow end to end against the fake DB:
 - refresh_dailies_channel posts / keeps / reposts the claim embed correctly
 - the 🪙 reaction runs the daily reward + all scratchoffs, capped per day
+- 🪙 / 🎰 / 🏇 then gamble the whole claim (flip, slots, a race against the bot)
 - the 5am rollover tick reposts (clearing reactions)
 - every non-claim message in the channel is scheduled for deletion
 - the !settings dailies-channel subcommand wires the config
@@ -21,7 +22,8 @@ from src.config import DAILY_REWARD
 from src.cogs.dailies_cog import (
     DailiesCog, refresh_dailies_channel, DAILIES_TITLE,
     DAILIES_CLAIM_EMOJI, DAILIES_FLIP_EMOJI, DAILIES_SLOTS_EMOJI,
-    DAILIES_TICKETS_EMOJI, DAILIES_ALL_EMOJIS, _delete_unless_kept,
+    DAILIES_RACE_EMOJI, DAILIES_TICKETS_EMOJI, DAILIES_ALL_EMOJIS,
+    _delete_unless_kept,
 )
 from src.cogs.lottery_cog import LotteryCog, DAILY_TICKET_PRICE, TICKET_POOL_SHARE
 from src.cogs.settings_cog import SettingsCog
@@ -62,6 +64,7 @@ class FakeDailiesChannel:
             embed=embed,
             add_reaction=AsyncMock(),
             delete=AsyncMock(),
+            edit=AsyncMock(),   # the race board is edited in place
         )
         self.messages[msg.id] = msg
         self.sent.append(msg)
@@ -75,7 +78,9 @@ class FakeDailiesChannel:
 
 class _StubBot:
     def __init__(self, channel=None, guild=None):
-        self.user = SimpleNamespace(id=999_999_999, bot=True)
+        # display_name: the bot's lane in a dailies 🏇 race (FakeGuild has no
+        # `me`, so play_bot_race falls back to the client user).
+        self.user = SimpleNamespace(id=999_999_999, bot=True, display_name="Bot")
         self.cogs: dict = {}
         self._channel = channel
         self._guild = guild
@@ -137,17 +142,20 @@ async def test_refresh_posts_claim_embed_and_reaction(db, monkeypatch):
     assert len(channel.sent) == 1
     claim = channel.sent[0]
     assert claim.embed.title == DAILIES_TITLE
-    assert claim.add_reaction.await_count == 4
+    assert claim.add_reaction.await_count == 5
     for emoji in DAILIES_ALL_EMOJIS:
         claim.add_reaction.assert_any_await(emoji)
     # The 🎟️ ticket reaction must be added (and thus displayed) last.
     assert claim.add_reaction.await_args_list[-1].args == (DAILIES_TICKETS_EMOJI,)
     assert DAILIES_ALL_EMOJIS[-1] == DAILIES_TICKETS_EMOJI
+    # 🏇 sits right before the ticket.
+    assert DAILIES_ALL_EMOJIS[-2] == DAILIES_RACE_EMOJI
     assert "10,000 🪙 or more" in claim.embed.description  # big-result notice
     # The emoji legend sits at the bottom of the claim embed.
     assert f"{DAILIES_CLAIM_EMOJI} claim dailies" in claim.embed.description
     assert f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip" in claim.embed.description
     assert f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet" in claim.embed.description
+    assert f"{DAILIES_RACE_EMOJI} claim dailies, then race the bot" in claim.embed.description
     assert f"{DAILIES_TICKETS_EMOJI} buy today's lottery ticket" in claim.embed.description
     assert cfg["dailies_message_id"] == claim.id
     assert cfg["dailies_reset_day"] == TODAY
@@ -392,6 +400,79 @@ async def _give_property_with_pending_revenue(uid: int, pid: str = "car_wash"):
     _state.economy["users"][str(uid)]["property_paid_at"] = now - 86400.0
 
 
+def _script_race(monkeypatch, human: int = 3, bot: int = 1):
+    """Make the dailies race instant and scripted (default: the player wins)."""
+    monkeypatch.setattr("src.games.race.RACE_TICK_SECONDS", 0)
+    monkeypatch.setattr(
+        "src.games.race._tick_rolls",
+        lambda players: {players[0]: human, players[1]: bot},
+    )
+
+
+@pytest.mark.asyncio
+async def test_reaction_race_gambles_whole_claim_and_keeps_big_results(db, monkeypatch):
+    """🏇 claims dailies, then races the bot for the whole claim — daily
+    reward plus the total scratchoff winnings. The bot is the house, so a
+    win doubles the stake; a 10k+ result joins the keep list alongside the
+    10k scratch card. The daily stake is a one-shot: no Race Again buttons."""
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _pin_no_natural_matches(monkeypatch)
+    _state.rigged_scratch[1] = 3   # third card → 10,000 🪙 total winnings
+    _script_race(monkeypatch, human=3, bot=1)
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_RACE_EMOJI))
+
+    user = _state.economy["users"]["1"]
+    assert user["scratch_used"] == 3
+    stake = DAILY_REWARD + 10_000
+    # daily + 10k scratch − stake + 2x race payout
+    assert user["balance"] == stake * 2
+    race_msgs = [m for m in channel.sent if m.embed is not None and m.embed.title == "🏇 Race Starting!"]
+    assert len(race_msgs) == 1
+    final = race_msgs[0].edit.await_args.kwargs
+    assert final["embed"].title == "🏁 Race Finished!"
+    assert f"🏆 **player** wins **{stake * 2:,} 🪙**!" in final["embed"].description
+    assert final["embed"].description.splitlines()[-1].startswith("🏆 **player**")
+    assert "view" not in final
+    scratch_msgs = [m for m in channel.sent if m.embed is not None and m.embed.title == "🎫 Scratchoff"]
+    assert _state.guild_settings["42"]["dailies_keep_ids"] == [
+        scratch_msgs[2].id, race_msgs[0].id,
+    ]
+    assert _state.active_race_games == {}
+
+
+@pytest.mark.asyncio
+async def test_reaction_race_loss_forfeits_the_claim(db, monkeypatch):
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _pin_no_natural_matches(monkeypatch)   # all three cards miss
+    _script_race(monkeypatch, human=1, bot=3)
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_RACE_EMOJI))
+
+    assert _state.economy["users"]["1"]["balance"] == 0
+    race_msgs = [m for m in channel.sent if m.embed is not None and m.embed.title == "🏇 Race Starting!"]
+    desc = race_msgs[0].edit.await_args.kwargs["embed"].description
+    assert f"🤖 **Bot** wins — **player** lost **{DAILY_REWARD:,} 🪙**." in desc
+
+
+def _spy_race(monkeypatch):
+    """Wrap the dailies cog's play_bot_race binding, recording stake/exclude."""
+    import src.cogs.dailies_cog as _dailies_mod
+    real_race = _dailies_mod.play_bot_race
+    seen = {}
+
+    async def _wrapped(member, channel, guild, stake, bot_lane, record_exclude=0):
+        seen["stake"], seen["exclude"] = stake, record_exclude
+        return await real_race(member, channel, guild, stake, bot_lane, record_exclude=record_exclude)
+
+    monkeypatch.setattr("src.cogs.dailies_cog.play_bot_race", _wrapped)
+    return seen
+
+
 def _spy_flip(monkeypatch):
     """Wrap the dailies cog's play_flip binding, recording stake/exclude."""
     import src.cogs.dailies_cog as _dailies_mod
@@ -447,6 +528,30 @@ async def test_reaction_flip_includes_property_revenue_when_opted_in(db, monkeyp
 
     assert seen == {"stake": DAILY_REWARD + rev, "exclude": rev}
     assert _state.economy["users"]["1"]["balance"] == (DAILY_REWARD + rev) * 2
+
+
+@pytest.mark.asyncio
+async def test_reaction_race_property_revenue_follows_the_same_opt_in(db, monkeypatch):
+    """🏇 stakes exactly what 🪙 would: property revenue stays out unless the
+    owner opted in, and then rides as record_exclude so auto-staked income
+    can't set the race record."""
+    from src.properties import daily_revenue
+    from src.persistence import load_records
+    bot, guild, channel, member = await _claim_setup(monkeypatch)
+    _pin_no_natural_matches(monkeypatch)
+    _script_race(monkeypatch, human=3, bot=1)
+    await _give_property_with_pending_revenue(1)
+    _state.economy["users"]["1"]["daily_gamble_property"] = True
+    rev = daily_revenue(20_000)
+    seen = _spy_race(monkeypatch)
+    cog = _make_cog(bot)
+
+    await cog.on_raw_reaction_add(
+        _payload(message_id=777, member=member, emoji=DAILIES_RACE_EMOJI))
+
+    assert seen == {"stake": DAILY_REWARD + rev, "exclude": rev}
+    assert _state.economy["users"]["1"]["balance"] == (DAILY_REWARD + rev) * 2
+    assert (await load_records(42))["race"]["value"] == DAILY_REWARD * 2
 
 
 def _add_lottery_cog(bot, monkeypatch, today=TODAY):

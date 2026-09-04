@@ -72,13 +72,13 @@ PvP works too, with SAN/UCI move input, board rendering, threat analysis (`!ches
 - Crime layer: `!steal`, `!mug`, `!bankheist` co-op heists, `!jail` / `!bail` / `!jailbreak`, and purchasable insurance
 - `!bounty <coins> [duration] <condition>` — escrowed rewards anyone can claim, with author accept/reject via DM and a community-vote contest path
 - `!leaderboard`, `!records`, `!economy` server overview
-- Optional dailies channel (`!settings dailies-channel`) — a self-cleaning channel with a single "Claim your dailies" embed; reacting 🗓️ instantly claims the daily reward and all scratchoffs (🪙 also coin-flips the whole claim — daily reward + scratchoff winnings — and 🎰 bets it on slots; 🎟️ only buys the day's remaining half-price lottery tickets, without claiming), results auto-delete after 5 minutes (results with 10k+ won or lost stay until the reset), and the claim reactions reset at 5am CT
+- Optional dailies channel (`!settings dailies-channel`) — a self-cleaning channel with a single "Claim your dailies" embed; reacting 🗓️ instantly claims the daily reward and all scratchoffs (🪙 also coin-flips the whole claim — daily reward + scratchoff winnings — 🎰 bets it on slots and 🏇 races the bot for it; 🎟️ only buys the day's remaining half-price lottery tickets, without claiming), results auto-delete after 5 minutes (results with 10k+ won or lost stay until the reset), and the claim reactions reset at 5am CT
 
 ### 🛒 Shop with real consequences
 Coins buy actual Discord effects: nicknames, role creation/colors, channel renames and locks, mutes, mock/curse/ragebait text effects, taxing another user, UNO-reverse cards, and insurance against all of the above. Prices are centrally tuned in [src/config.py](src/config.py).
 
 ### 🎮 Games & progression
-- `!hangman` (~7.5k-word list, rarity-weighted payouts), `!ttt`, `!c4`, `!race`, `!puzzle`
+- `!hangman` (~7.5k-word list, rarity-weighted payouts), `!ttt`, `!c4`, `!race` (multiplayer with a shared pot, or `!race @Bot [amount]` — a coin flip with a track, playable with no coins at all), `!puzzle`
 - Chess, hangman, tic-tac-toe and Connect 4 each play out in their own thread under the channel they were started from; the thread is renamed with the result (`👑 X won against Y`) and closed when the game ends
 - Per-guild XP and levels (`!lvl`, `!levels`) with commands gated behind level thresholds
 

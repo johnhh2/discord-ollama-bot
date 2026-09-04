@@ -14,7 +14,7 @@ ban may have landed since the result was posted). The channel and level
 gates ran on the original command; a replay reuses that verdict — same
 user, same channel, within the timeout.
 
-The dailies flip/slots claims never attach one: a daily stake is a one-shot.
+The dailies flip/slots/race claims never attach one: a daily stake is a one-shot.
 """
 from __future__ import annotations
 

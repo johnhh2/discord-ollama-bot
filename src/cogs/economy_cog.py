@@ -288,15 +288,15 @@ class EconomyCog(commands.Cog):
         prop_note = ""
         if prop_rev:
             prop_note = (
-                "\n*Property revenue joins your dailies 🪙/🎰 stake — `!daily property` to leave it out.*"
+                "\n*Property revenue joins your dailies 🪙/🎰/🏇 stake — `!daily property` to leave it out.*"
                 if user_data.get("daily_gamble_property", False)
-                else "\n*Property revenue isn't part of the dailies 🪙/🎰 stake — `!daily property` to include it.*"
+                else "\n*Property revenue isn't part of the dailies 🪙/🎰/🏇 stake — `!daily property` to include it.*"
             )
         await ctx.send(embed=emb("🪙 Daily Reward", f"**{ctx.author.display_name}** claimed **+{DAILY_REWARD:,} 🪙**{prop_str}! Balance: **{await get_balance(uid):,} 🪙**{ins_str}{lapse_str}{prop_note}", C_GREEN))
 
     @cmd_daily.command(name="property")
     async def cmd_daily_property(self, ctx: commands.Context):
-        """Toggle whether property revenue joins the dailies 🪙/🎰 stake.
+        """Toggle whether property revenue joins the dailies 🪙/🎰/🏇 stake.
         Off by default: revenue always banks with the claim either way."""
         uid = ctx.author.id
         await _ensure_user(uid)
@@ -306,13 +306,13 @@ class EconomyCog(commands.Cog):
         await save_economy(uid=uid)
         if enabled:
             body = (
-                "Property revenue is now **included** in your dailies 🪙/🎰 stake — "
+                "Property revenue is now **included** in your dailies 🪙/🎰/🏇 stake — "
                 "reacting gambles the daily reward + property revenue + scratchoff winnings. "
                 "Run `!daily property` again to leave it out."
             )
         else:
             body = (
-                "Property revenue is now **left out** of your dailies 🪙/🎰 stake (the default) — "
+                "Property revenue is now **left out** of your dailies 🪙/🎰/🏇 stake (the default) — "
                 "it still banks with your claim, but only the daily reward + scratchoff winnings "
                 "are gambled. Run `!daily property` again to include it."
             )
@@ -1459,6 +1459,7 @@ class EconomyCog(commands.Cog):
                 fmt("blackjack", "Blackjack Payout",
                     lambda rec: f"\n  ↳ Hand: {rec.get('player_hand', '?')} ({rec.get('player_score', '?')}) • Dealer: {rec.get('dealer_score', '?')}"),
                 fmt("flip", "Flip Payout"),
+                fmt("race", "Race Payout"),
                 fmt("scratchoff_day", "Scratchoff Day Payout"),
             ]),
             ("🎮 Games", [

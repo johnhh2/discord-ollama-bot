@@ -400,6 +400,7 @@ class UtilityCog(commands.Cog):
             name="💰 Gambling",
             value=(
                 "`!flip <amount>` — 50/50 coinflip\n"
+                "`!race @Bot [amount]` — Race the bot: a coin flip with a track (a win doubles the bet)\n"
                 "`!slots <amount>` — 3-reel slot machine with progressive jackpot\n"
                 "`!scratches` — Use all 3 daily scratchoffs at once\n"
                 "`!scratchoff` — Single scratchoff (3 attempts/day)\n"

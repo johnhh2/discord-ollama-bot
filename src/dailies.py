@@ -1,7 +1,7 @@
 """Dailies-channel keep list.
 
 The dailies channel (src/cogs/dailies_cog.py) deletes every non-claim message
-after 5 minutes. Big gambling results are the exception: any scratchoff, flip,
+after 5 minutes. Big gambling results are the exception: any scratchoff, flip, race,
 or slots result posted there where DAILIES_KEEP_MIN+ coins were won or lost is
 recorded in the guild's cfg["dailies_keep_ids"] and survives until the 5am CT
 reset repost purges the channel.
