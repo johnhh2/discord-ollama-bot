@@ -119,6 +119,8 @@ async def test_insurance_delete_and_replace(db):
     assert 1 in _state.insurance
     assert 2 not in _state.insurance
     assert _state.insurance[1]["protected_from"] == ["nickname", "curse"]
+    # An entry saved without a tier (pre-0065 shape) comes back on the default.
+    assert _state.insurance[1]["tier"] == "basic"
 
 
 # ── lottery ───────────────────────────────────────────────────────────────────

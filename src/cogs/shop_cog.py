@@ -18,6 +18,8 @@ from src.helpers import (
 from src.economy import (
     add_balance, get_balance, is_insured, get_insurance_expiry,
     extend_insurance, next_daily_reset_ts,
+    get_insurance_tier, set_insurance_tier, insurance_switch_cost,
+    insurance_tier_cost, insurance_tier_info,
 )
 from src.leveling import (
     _ensure_lvl_record, _xp_cost, level_from_xp, display_level, record_levelup,
@@ -33,7 +35,7 @@ from src.persistence import (
     save_user_artifact, try_set_record, save_leveling,
 )
 from src.artifacts import ARTIFACTS, owned_qty, owned_artifact_count
-from src.confirm_view import confirm_prompt, confirm_purchase
+from src.confirm_view import confirm_purchase, confirm_choice
 from src.guild_config import get_guild_cfg
 from src.ai import (
     keep_typing,
@@ -42,7 +44,8 @@ from src.ai import (
 from src.config import (
     SHOP_NICKNAME_SELF_COST, SHOP_NICKNAME_REMOVE_COST, SHOP_NICKNAME_OTHER_COST,
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_ASSIGN_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
-    SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_LOCK_COST, SHOP_RENAME_COST, SHOP_CHANNEL_COST, SHOP_CHANNEL_DELETE_COST, SHOP_INSURANCE_COST, SHOP_TAX_COST,
+    SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_LOCK_COST, SHOP_RENAME_COST, SHOP_CHANNEL_COST, SHOP_CHANNEL_DELETE_COST, SHOP_TAX_COST,
+    SHOP_INSURANCE_TIERS, SHOP_INSURANCE_DEFAULT_TIER,
     SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST, SHOP_UNOREVERSE_COST,
     SHOP_INSURANCE_DURATION_SECS, SHOP_INSURANCE_MAX_DAYS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
     SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_TAX_PER_MESSAGE,
@@ -319,7 +322,8 @@ class ShopCog(commands.Cog):
 
         # Fun & Social (sorted by cost)
         fun_items = [
-            (SHOP_INSURANCE_COST, f"`!shop insurance [days|sub|unsub]` — Protection in every server, prepaid or subscribed (renews at the 5am reset) — **{SHOP_INSURANCE_COST:,} 🪙/day**"),
+            (min(t["cost"] for t in SHOP_INSURANCE_TIERS.values()),
+             f"`!shop insurance [tier] [days|sub|unsub]` — Refunds 50–100% of crime losses and blocks mock/tax/nickname/role effects, in every server — **from {min(t['cost'] for t in SHOP_INSURANCE_TIERS.values()):,} 🪙/day**"),
             (SHOP_TAX_COST,      f"`!shop tax @user` — Apply a per-message tax to a user for 24h — **{SHOP_TAX_COST:,} 🪙**"),
             (SHOP_MOCK_COST,      f"`!shop mock @user` — Mock someone's next {SHOP_MOCK_MESSAGES} messages — **{SHOP_MOCK_COST:,} 🪙**"),
         ]
@@ -1286,6 +1290,14 @@ class ShopCog(commands.Cog):
         await cog.create_bounty(ctx, args)
 
     # ── !shop insurance ───────────────────────────────────────────────────────
+    # Three tiers (SHOP_INSURANCE_TIERS). Every purchase or subscribe opens
+    # the tier picker — three buttons, one per tier, so the buyer sees every
+    # price/coverage before committing. The user has ONE tier at a time
+    # (policy and subscription agree — set_insurance_tier); switching moves
+    # the remaining coverage with them, charging the daily difference on it
+    # for an upgrade (insurance_switch_cost) and nothing for a downgrade.
+    INSURANCE_PROTECTS_STR = "mock, ragebait, nickname changes, role assignments, tax, and spellcheck"
+
     def _rollback_insurance_days(self, key: int, days: int):
         """Undo a stamped-but-unpaid insurance extension. A concurrent purchase
         may have extended on top of our stamp, so subtract our duration rather
@@ -1306,198 +1318,342 @@ class ShopCog(commands.Cog):
         sweep's charge lands while it still holds and extends from it."""
         return expiry is None or expiry < next_daily_reset_ts()
 
+    @staticmethod
+    def _insurance_tier_lines() -> str:
+        """One line per tier: price, refund share, daily refund cap."""
+        return "\n".join(
+            f"**{name.title()}** — **{info['cost']:,} 🪙/day** · refunds **{info['refund_pct']}%** "
+            f"of what crime takes from you, up to {info['refund_cap']:,} 🪙 per robbery"
+            for name, info in SHOP_INSURANCE_TIERS.items()
+        )
+
+    def _insurance_status_lines(self, uid: int) -> str:
+        """The buyer's current coverage + subscription, for prompts and info."""
+        exp = get_insurance_expiry(uid)
+        tier = get_insurance_tier(uid)
+        sub_tier = state.insurance_subs.get(uid)
+        coverage = f"**{tier.title()}**, expires <t:{exp}:R>" if exp and tier else "none"
+        sub = (
+            f"**{sub_tier.title()}** — renews daily at the 5am reset" if sub_tier
+            else "none — `!shop insurance sub` to auto-renew"
+        )
+        return f"**Current coverage:** {coverage}\n**Subscription:** {sub}"
+
+    def _insurance_switch_note(self, uid: int) -> str:
+        """Explain what picking a different tier does to active coverage."""
+        if get_insurance_expiry(uid) is None:
+            return ""
+        return (
+            "\n\nPicking another tier moves your remaining coverage with you: an upgrade "
+            "charges the daily difference on it now (already in the button prices), a "
+            "downgrade is free but refunds nothing."
+        )
+
+    def _insurance_info_embed(self, uid: int) -> discord.Embed:
+        return emb(
+            "🛡️ Insurance",
+            "Usage: `!shop insurance [tier] [days]` to prepay (1 day by default, up to "
+            f"{SHOP_INSURANCE_MAX_DAYS} total), `!shop insurance [tier] sub` to auto-renew "
+            "daily at the 5am reset, `!shop insurance unsub` to stop. Every prompt shows all "
+            "three tiers, so the tier word is optional.\n\n"
+            + self._insurance_tier_lines()
+            + f"\n\nCrime still goes through — the insurer pays the refund into your wallet "
+            f"and the thief keeps their take. Every tier also blocks {self.INSURANCE_PROTECTS_STR} "
+            "outright, in every server.\n\n"
+            + self._insurance_status_lines(uid),
+            C_PURPLE,
+        )
+
+    async def _pick_insurance_tier(self, ctx: commands.Context, *, title: str, description: str,
+                                   days: int, preferred: str) -> str | None:
+        """Show the three tier buttons (plus Cancel). Each label carries what
+        that tier costs right now: `days` × its premium plus any upgrade
+        surcharge on the buyer's remaining coverage; with days=0 (a sub that
+        needs no starter day) it shows the daily premium instead. Returns the
+        picked tier name, or None on Cancel / timeout."""
+        uid = ctx.author.id
+        choices = []
+        for name, info in SHOP_INSURANCE_TIERS.items():
+            if uid in state.godmode_users:
+                label = f"{name.title()} — free"
+            elif days > 0:
+                total = info["cost"] * days + insurance_switch_cost(uid, name)
+                label = f"{name.title()} — {total:,} 🪙"
+            else:
+                switch = insurance_switch_cost(uid, name)
+                label = f"{name.title()} — {info['cost']:,} 🪙/day" + (f" (+{switch:,} now)" if switch else "")
+            choices.append({"label": label, "value": name, "default": name == preferred})
+        return await confirm_choice(
+            ctx, title=title, description=description, choices=choices, payer=ctx.author,
+        )
+
     @cmd_shop.command(name="insurance")
     @_shop_subcommand(None)
-    async def shop_insurance(self, ctx: commands.Context, arg: str = None):
+    async def shop_insurance(self, ctx: commands.Context, *args: str):
         uid = ctx.author.id
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
         # Insurance is bot-wide: one policy per user, valid in every server
         # (the purchase itself still happens in a server).
-        key = uid
-        protects_str = "ragebait, mock, nickname, role assignments, crime (steal/mug/bankheist), tax, and spellcheck"
-
-        if arg and arg.lower() in ("sub", "subscribe"):
-            if key in state.insurance_subs:
-                await ctx.send(embed=emb(
-                    "🛡️ Already Subscribed",
-                    f"You're already subscribed — **{SHOP_INSURANCE_COST:,} 🪙** is charged at the 5am reset each day. `!shop insurance unsub` to cancel.",
-                    C_GOLD,
-                ))
-                return
-            sub_exp = get_insurance_expiry(uid)
-            if sub_exp is None:
-                first_day_str = f" The first day (**{SHOP_INSURANCE_COST:,} 🪙**) is charged now so coverage starts immediately."
-            elif self._sub_needs_first_day(sub_exp):
-                first_day_str = (
-                    f" Your current coverage runs out before the next 5am charge, so the first day "
-                    f"(**{SHOP_INSURANCE_COST:,} 🪙**) is charged now to keep it continuous."
-                )
+        # Args come in any order: a tier name, a day count, sub/unsub. Anything
+        # else ("info", "status", a typo) is an info request.
+        tier_arg: str | None = None
+        days: int | None = None
+        action: str | None = None
+        for raw in args:
+            word = raw.lower()
+            if word in SHOP_INSURANCE_TIERS:
+                tier_arg = word
+            elif word in ("sub", "subscribe"):
+                action = "sub"
+            elif word in ("unsub", "unsubscribe"):
+                action = "unsub"
+            elif word.isdigit():
+                days = int(word)
             else:
-                first_day_str = ""
-            if not await confirm_prompt(
-                ctx, title="🛡️ Insurance Subscription",
-                description=(
-                    f"Subscribe to insurance — **{SHOP_INSURANCE_COST:,} 🪙** is charged at the 5am reset "
-                    "each day (whether or not you log on), adding 24h of coverage valid in every server."
-                    + first_day_str
-                    + f"\n\n**Protects against:** {protects_str}"
-                    + "\n**Current coverage:** " + (f"expires <t:{sub_exp}:R>" if sub_exp else "none")
-                ),
-                payer=ctx.author,
-            ):
+                await ctx.send(embed=self._insurance_info_embed(uid))
                 return
-            # The confirm wait is a long await — a concurrent subscribe may
-            # have landed during the prompt.
-            if key in state.insurance_subs:
-                await ctx.send(embed=emb(
-                    "🛡️ Already Subscribed",
-                    f"You're already subscribed — **{SHOP_INSURANCE_COST:,} 🪙** is charged at the 5am reset each day. `!shop insurance unsub` to cancel.",
-                    C_GOLD,
-                ))
-                return
-            # Claim the sub synchronously before any await so two concurrent
-            # subscribes can't both buy the starter day.
-            state.insurance_subs.add(key)
-            start_str = ""
-            cur_exp = get_insurance_expiry(uid)
-            if self._sub_needs_first_day(cur_exp):
-                # Not covered, or covered only until some point before the
-                # next 5am sweep — charge the first day now (stacked on any
-                # remaining coverage) so the subscription protects without a
-                # gap until the sweep takes over.
-                cost = 0 if uid in state.godmode_users else SHOP_INSURANCE_COST
-                expires_at = extend_insurance(uid, 1)
-                if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST:,}"):
-                    state.insurance_subs.discard(key)
-                    self._rollback_insurance_days(key, 1)
-                    return
-                await save_insurance()
-                if cur_exp is None:
-                    start_str = f" First day charged now — covered against {protects_str} (expires <t:{expires_at}:R>)."
-                else:
-                    start_str = (
-                        f" Your coverage would have run out <t:{cur_exp}:R>, before the first 5am charge, "
-                        f"so the first day was charged now — covered until <t:{expires_at}:f>."
-                    )
-            await save_insurance_subs()
-            await ctx.send(embed=emb(
-                "🛡️ Insurance Subscribed",
-                f"**{SHOP_INSURANCE_COST:,} 🪙** is now charged at the 5am reset each day, adding 24h of coverage.{start_str} "
-                f"Cancel anytime with `!shop insurance unsub`.",
-                C_GREEN,
-            ))
-            return
 
-        if arg and arg.lower() in ("unsub", "unsubscribe"):
-            if key not in state.insurance_subs:
-                await ctx.send(embed=emb(
-                    "🛡️ Not Subscribed",
-                    "You don't have an insurance subscription. `!shop insurance sub` to start one.",
-                    C_GOLD,
-                ))
-                return
-            state.insurance_subs.discard(key)
-            await save_insurance_subs()
-            exp = get_insurance_expiry(uid)
-            tail = f" Your current coverage still runs out <t:{exp}:R>." if exp else ""
-            await ctx.send(embed=emb(
-                "🛡️ Insurance Unsubscribed",
-                f"You'll no longer be charged the daily premium.{tail}",
-                C_GREEN,
-            ))
-            return
+        if action == "unsub":
+            await self._insurance_unsubscribe(ctx)
+        elif action == "sub":
+            await self._insurance_subscribe(ctx, tier_arg)
+        else:
+            await self._insurance_prepay(ctx, tier_arg, days if days is not None else 1)
 
-        # Prepay: `!shop insurance [days]` (default 1) at SHOP_INSURANCE_COST/day,
-        # stacking on top of any active coverage.
-        days = 1
-        if arg is not None:
-            try:
-                days = int(arg)
-            except ValueError:
-                # Non-numeric arg ("status", "info", a typo…) — treat it as an
-                # info request: usage plus the caller's own coverage state.
-                info_exp = get_insurance_expiry(uid)
-                await ctx.send(embed=emb(
-                    "🛡️ Insurance",
-                    f"Usage: `!shop insurance [days|sub|unsub]` — prepay coverage at **{SHOP_INSURANCE_COST:,} 🪙/day** "
-                    f"(up to {SHOP_INSURANCE_MAX_DAYS} days), or subscribe to auto-renew daily at the 5am reset.\n\n"
-                    "**Your coverage:** " + (f"expires <t:{info_exp}:R>" if info_exp else "none") + "\n"
-                    "**Subscription:** " + ("active — renews daily at the 5am reset"
-                                            if key in state.insurance_subs else "none"),
-                    C_PURPLE,
-                ))
-                return
-            if not 1 <= days <= SHOP_INSURANCE_MAX_DAYS:
-                await ctx.send(embed=emb(
-                    "🛡️ Insurance",
-                    f"You can prepay between 1 and {SHOP_INSURANCE_MAX_DAYS} days.",
-                    C_RED,
-                ))
-                return
-        now = time.time()
-        current_exp = get_insurance_expiry(uid)
-        remaining = max(0.0, (current_exp or now) - now)
-        if remaining + days * SHOP_INSURANCE_DURATION_SECS > SHOP_INSURANCE_MAX_DAYS * SHOP_INSURANCE_DURATION_SECS:
-            buyable = int((SHOP_INSURANCE_MAX_DAYS * SHOP_INSURANCE_DURATION_SECS - remaining) // SHOP_INSURANCE_DURATION_SECS)
+    async def _insurance_unsubscribe(self, ctx: commands.Context):
+        uid = ctx.author.id
+        if uid not in state.insurance_subs:
             await ctx.send(embed=emb(
-                "🛡️ Coverage Capped",
-                f"Total coverage can't exceed **{SHOP_INSURANCE_MAX_DAYS} days**. "
-                + (f"You can prepay up to **{buyable}** more day{'s' if buyable != 1 else ''} right now." if buyable > 0
-                   else "Come back when some of your current coverage has run down."),
+                "🛡️ Not Subscribed",
+                "You don't have an insurance subscription. `!shop insurance sub` to start one.",
                 C_GOLD,
             ))
             return
+        state.insurance_subs.pop(uid, None)
+        await save_insurance_subs()
+        exp = get_insurance_expiry(uid)
+        tail = f" Your current coverage still runs out <t:{exp}:R>." if exp else ""
+        await ctx.send(embed=emb(
+            "🛡️ Insurance Unsubscribed",
+            f"You'll no longer be charged the daily premium.{tail}",
+            C_GREEN,
+        ))
 
-        cost = 0 if uid in state.godmode_users else SHOP_INSURANCE_COST * days
-        day_label = f"{days} day{'s' if days != 1 else ''}"
-        # Projection only — the authoritative expiry is stamped (and the cap
-        # re-checked) after the confirm, since coverage can drift during it.
-        projected_exp = int(max(now, current_exp or now) + days * SHOP_INSURANCE_DURATION_SECS)
-        if not await confirm_purchase(
-            ctx, title="🛡️ Insurance",
-            description=(
-                f"Prepay **{day_label}** of protection at **{SHOP_INSURANCE_COST:,} 🪙/day**.\n\n"
-                f"**Protects against:** {protects_str}\n"
-                "**Current coverage:** " + (f"expires <t:{current_exp}:R>" if current_exp else "none") + "\n"
-                f"**New coverage:** expires <t:{projected_exp}:R>\n"
-                "**Subscription:** " + ("active — renews daily at the 5am reset"
-                                        if key in state.insurance_subs
-                                        else "none — `!shop insurance sub` to auto-renew")
-            ),
-            cost=cost, payer=ctx.author,
-        ):
-            return
-        # The confirm wait is a long await — re-check the coverage cap, since
-        # a concurrent purchase (or sub renewal) may have extended coverage
-        # during the prompt.
+    def _insurance_cap_error(self, uid: int, days: int, *, drifted: bool = False) -> discord.Embed | None:
+        """The SHOP_INSURANCE_MAX_DAYS check on total remaining coverage, as an
+        embed to send, or None when `days` more fit."""
         now = time.time()
         current_exp = get_insurance_expiry(uid)
         remaining = max(0.0, (current_exp or now) - now)
-        if remaining + days * SHOP_INSURANCE_DURATION_SECS > SHOP_INSURANCE_MAX_DAYS * SHOP_INSURANCE_DURATION_SECS:
-            await ctx.send(embed=emb(
+        if remaining + days * SHOP_INSURANCE_DURATION_SECS <= SHOP_INSURANCE_MAX_DAYS * SHOP_INSURANCE_DURATION_SECS:
+            return None
+        if drifted:
+            return emb(
                 "🛡️ Coverage Capped",
                 f"Total coverage can't exceed **{SHOP_INSURANCE_MAX_DAYS} days** — your coverage "
-                "changed while confirming. You were not charged.",
+                "changed while you were choosing. You were not charged.",
                 C_GOLD,
+            )
+        buyable = int((SHOP_INSURANCE_MAX_DAYS * SHOP_INSURANCE_DURATION_SECS - remaining) // SHOP_INSURANCE_DURATION_SECS)
+        return emb(
+            "🛡️ Coverage Capped",
+            f"Total coverage can't exceed **{SHOP_INSURANCE_MAX_DAYS} days**. "
+            + (f"You can prepay up to **{buyable}** more day{'s' if buyable != 1 else ''} right now." if buyable > 0
+               else "Come back when some of your current coverage has run down."),
+            C_GOLD,
+        )
+
+    async def _insurance_prepay(self, ctx: commands.Context, tier_arg: str | None, days: int):
+        """`!shop insurance [tier] [days]`: prepay `days` at the picked tier,
+        stacking on any active coverage (which moves to that tier)."""
+        uid = ctx.author.id
+        key = uid
+        if not 1 <= days <= SHOP_INSURANCE_MAX_DAYS:
+            await ctx.send(embed=emb(
+                "🛡️ Insurance",
+                f"You can prepay between 1 and {SHOP_INSURANCE_MAX_DAYS} days.",
+                C_RED,
             ))
             return
+        if (err := self._insurance_cap_error(uid, days)) is not None:
+            await ctx.send(embed=err)
+            return
 
-        # Stamp the extension synchronously before shop_charge (see CLAUDE.md
-        # on per-user command races); roll back our days if the charge fails.
-        expires_at = extend_insurance(uid, days)
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_INSURANCE_COST * days:,}"):
+        day_label = f"{days} day{'s' if days != 1 else ''}"
+        preferred = tier_arg or get_insurance_tier(uid) or SHOP_INSURANCE_DEFAULT_TIER
+        chosen = await self._pick_insurance_tier(
+            ctx, title="🛡️ Insurance",
+            description=(
+                f"Prepay **{day_label}** of insurance — pick a tier:\n\n"
+                + self._insurance_tier_lines()
+                + f"\n\nCrime still goes through; the insurer refunds your wallet and the thief keeps "
+                f"their take. Every tier also blocks {self.INSURANCE_PROTECTS_STR} outright, in every server.\n\n"
+                + self._insurance_status_lines(uid)
+                + self._insurance_switch_note(uid)
+            ),
+            days=days, preferred=preferred,
+        )
+        if not chosen:
+            return
+        # The picker wait is a long await — re-check the coverage cap, since a
+        # concurrent purchase (or sub renewal) may have extended coverage
+        # during the prompt.
+        if (err := self._insurance_cap_error(uid, days, drifted=True)) is not None:
+            await ctx.send(embed=err)
+            return
+
+        # Stamp the extension (and the tier) synchronously before shop_charge
+        # (see CLAUDE.md on per-user command races); roll both back if the
+        # charge fails. The switch surcharge is priced off the coverage as it
+        # stands right now, before our own days land on it.
+        prev_tier = get_insurance_tier(uid)
+        switch = insurance_switch_cost(uid, chosen)
+        cost = 0 if uid in state.godmode_users else insurance_tier_cost(chosen) * days + switch
+        expires_at = extend_insurance(uid, days, tier=chosen)
+        set_insurance_tier(uid, chosen)
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{cost:,}"):
             self._rollback_insurance_days(key, days)
+            if prev_tier is not None:
+                set_insurance_tier(uid, prev_tier)
             return
         await save_insurance()
+        if key in state.insurance_subs:
+            await save_insurance_subs()
+
+        info = insurance_tier_info(chosen)
+        switch_str = ""
+        if prev_tier is not None and prev_tier != chosen:
+            if switch > 0:
+                switch_str = f" Includes **{switch:,} 🪙** to move your remaining coverage up to {chosen.title()}."
+            else:
+                switch_str = f" Your remaining coverage moved down to {chosen.title()} (no refund on the difference)."
         sub_str = " Your subscription keeps extending it daily at the 5am reset." if key in state.insurance_subs else ""
         await ctx.send(embed=emb(
             "🛡️ Insurance Purchased",
-            f"**{days} day{'s' if days != 1 else ''}** of protection against {protects_str}, "
-            f"in every server! (expires <t:{expires_at}:R>){sub_str}",
+            f"**{day_label}** of **{chosen.title()}** insurance — **{info['refund_pct']}%** of crime losses "
+            f"refunded (up to {info['refund_cap']:,} 🪙 per robbery), plus protection from "
+            f"{self.INSURANCE_PROTECTS_STR}, in every server! (expires <t:{expires_at}:R>){switch_str}{sub_str}",
             C_GREEN,
         ))
+
+    async def _insurance_subscribe(self, ctx: commands.Context, tier_arg: str | None):
+        """`!shop insurance [tier] sub`: subscribe at the picked tier (or move
+        an existing subscription — and the coverage with it — to that tier)."""
+        uid = ctx.author.id
+        key = uid
+        cur_sub_tier = state.insurance_subs.get(key)
+        sub_exp = get_insurance_expiry(uid)
+        if sub_exp is None:
+            first_day_str = "\n\nThe first day is charged now so coverage starts immediately."
+        elif self._sub_needs_first_day(sub_exp):
+            first_day_str = (
+                "\n\nYour current coverage runs out before the next 5am charge, so the first "
+                "day is charged now to keep it continuous."
+            )
+        else:
+            first_day_str = ""
+        already_str = (
+            f"\n\nYou're subscribed at **{cur_sub_tier.title()}** — picking another tier switches "
+            "the subscription (and your coverage) to it; the new premium starts at the next 5am reset."
+            if cur_sub_tier else ""
+        )
+        preferred = tier_arg or get_insurance_tier(uid) or SHOP_INSURANCE_DEFAULT_TIER
+        chosen = await self._pick_insurance_tier(
+            ctx, title="🛡️ Insurance Subscription",
+            description=(
+                "Subscribe to insurance — the tier's premium is charged at the 5am reset each "
+                "day (whether or not you log on), adding 24h of coverage valid in every server. "
+                "Pick a tier:\n\n"
+                + self._insurance_tier_lines()
+                + first_day_str
+                + already_str
+                + f"\n\nEvery tier also blocks {self.INSURANCE_PROTECTS_STR} outright.\n\n"
+                + self._insurance_status_lines(uid)
+                + self._insurance_switch_note(uid)
+            ),
+            days=1 if self._sub_needs_first_day(sub_exp) else 0, preferred=preferred,
+        )
+        if not chosen:
+            return
+        # The picker wait is a long await — a concurrent subscribe may have
+        # landed during the prompt.
+        if state.insurance_subs.get(key) == chosen:
+            await ctx.send(embed=emb(
+                "🛡️ Already Subscribed",
+                f"You're already subscribed at **{chosen.title()}** — **{insurance_tier_cost(chosen):,} 🪙** "
+                "is charged at the 5am reset each day. `!shop insurance unsub` to cancel.",
+                C_GOLD,
+            ))
+            return
+        # Claim the sub synchronously before any await so two concurrent
+        # subscribes can't both buy the starter day; remember what to restore.
+        prev_sub_tier = state.insurance_subs.get(key)
+        prev_tier = get_insurance_tier(uid)
+        state.insurance_subs[key] = chosen
+        switch = insurance_switch_cost(uid, chosen)
+        cur_exp = get_insurance_expiry(uid)
+        bridged = self._sub_needs_first_day(cur_exp)
+        expires_at = None
+        charge = switch
+        if bridged:
+            # Not covered, or covered only until some point before the next
+            # 5am sweep — charge the first day now (stacked on any remaining
+            # coverage) so the subscription protects without a gap until the
+            # sweep takes over.
+            expires_at = extend_insurance(uid, 1, tier=chosen)
+            charge += insurance_tier_cost(chosen)
+        set_insurance_tier(uid, chosen)
+        cost = 0 if uid in state.godmode_users else charge
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{cost:,}"):
+            if prev_sub_tier is None:
+                state.insurance_subs.pop(key, None)
+            else:
+                state.insurance_subs[key] = prev_sub_tier
+            if bridged:
+                self._rollback_insurance_days(key, 1)
+            if prev_tier is not None:
+                set_insurance_tier(uid, prev_tier)
+            return
+        await save_insurance()
+        await save_insurance_subs()
+
+        info = insurance_tier_info(chosen)
+        premium = insurance_tier_cost(chosen)
+        if bridged:
+            if cur_exp is None:
+                start_str = (
+                    f" First day charged now — **{info['refund_pct']}%** of crime losses refunded "
+                    f"(up to {info['refund_cap']:,} 🪙 per robbery), plus protection from {self.INSURANCE_PROTECTS_STR} "
+                    f"(expires <t:{expires_at}:R>)."
+                )
+            else:
+                start_str = (
+                    f" Your coverage would have run out <t:{cur_exp}:R>, before the first 5am charge, "
+                    f"so the first day was charged now — covered until <t:{expires_at}:f>."
+                )
+        else:
+            start_str = ""
+        switch_str = ""
+        if prev_tier is not None and prev_tier != chosen:
+            if switch > 0:
+                switch_str = f" **{switch:,} 🪙** charged to move your remaining coverage up to {chosen.title()}."
+            else:
+                switch_str = f" Your remaining coverage moved down to {chosen.title()} (no refund on the difference)."
+        if prev_sub_tier is not None:
+            title = "🛡️ Subscription Switched"
+            body = (
+                f"Your subscription is now **{chosen.title()}** — **{premium:,} 🪙** is charged at the 5am "
+                f"reset each day from now on.{switch_str}{start_str}"
+            )
+        else:
+            title = "🛡️ Insurance Subscribed"
+            body = (
+                f"**{chosen.title()}** — **{premium:,} 🪙** is now charged at the 5am reset each day, adding "
+                f"24h of coverage.{switch_str}{start_str} Cancel anytime with `!shop insurance unsub`."
+            )
+        await ctx.send(embed=emb(title, body, C_GREEN))
 
     # ── !shop rolecolor ───────────────────────────────────────────────────────
     @cmd_shop.command(name="rolecolor")

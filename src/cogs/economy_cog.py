@@ -14,7 +14,7 @@ from src.helpers import (
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
-    add_guild_house, is_insured, get_insurance_expiry, sweep_insurance_subs, _ct_now, _ct_today, do_daily_reset, _ensure_user,
+    add_guild_house, insurance_refund, sweep_insurance_subs, _ct_now, _ct_today, do_daily_reset, _ensure_user,
     next_daily_reset_ts, get_savings_value, add_savings, remove_savings,
     savings_growth, SAVINGS_DAILY_PCT,
     seize_from_savings, record_crime_event, CRIME_ELIGIBLE_NET_WORTH,
@@ -161,6 +161,20 @@ def _jail_body(name: str, jail_until_ts: float, reason: str | None) -> str:
     if reason:
         body += f"\nReason: {reason}"
     return body
+
+
+def _insurance_refund_line(victim_name: str, refunded: int) -> str:
+    """Trailing line for a crime result embed when the victim's insurance
+    paid out. Empty when nothing was refunded."""
+    if refunded <= 0:
+        return ""
+    return f"\n🛡️ **{victim_name}**'s insurance refunded them **{refunded:,} 🪙**."
+
+
+def _robbed_ping(victim_id: int, verb: str, refunded: int) -> str:
+    """The one explicit victim ping a successful crime sends."""
+    tail = f" Insurance refunded **{refunded:,} 🪙**." if refunded > 0 else ""
+    return f"🚨 <@{victim_id}> — you've been {verb}!{tail}"
 
 
 class _StealTierView(discord.ui.View):
@@ -473,10 +487,6 @@ class EconomyCog(commands.Cog):
         if thief_id in self._crime_active:
             return emb("⏳ Already Running", "You already have a crime in progress — wait for it to finish.", C_RED)
 
-        if await is_insured(victim_id, "steal"):
-            _exp = get_insurance_expiry(victim_id)
-            return emb("🛡️ Protected", f"**{target.display_name}** has insurance — you can't rob them! (expires <t:{_exp}:R>)", C_GOLD)
-
         return None
 
     async def _send_steal_picker(self, ctx: commands.Context, target):
@@ -551,15 +561,10 @@ class EconomyCog(commands.Cog):
         if thief_id in self._crime_active:
             await ctx.send(embed=emb("⏳ Already Running", "You already have a crime in progress — wait for it to finish.", C_RED))
             return
-        # Claim synchronously at the gate: the insurance/balance lookups below
-        # yield, so two rapid invocations could otherwise both pass the check.
+        # Claim synchronously at the gate: the balance lookups below yield,
+        # so two rapid invocations could otherwise both pass the check.
         self._crime_active.add(thief_id)
         try:
-            if await is_insured(victim_id, "steal"):
-                _exp = get_insurance_expiry(victim_id)
-                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance — you can't rob them! (expires <t:{_exp}:R>)", C_GOLD))
-                return
-
             steal_chance, steal_pct, jail_chance, fee, jail_days = STEAL_TIERS[tier_num - 1]
             steal_chance = steal_success_chance(thief_id, steal_chance)
             jail_chance = crime_catch_chance(thief_id, jail_chance)
@@ -614,6 +619,7 @@ class EconomyCog(commands.Cog):
 
             # Resolve outcome
             stolen = 0
+            refunded = 0
             if success:
                 # Re-read the victim's balance: the ~5s chase animation yielded,
                 # so it may have dropped (gambling, another steal). Crediting the
@@ -628,12 +634,18 @@ class EconomyCog(commands.Cog):
                     gid = ctx.guild.id if ctx.guild else 0
                     stolen = steal_amount
                     await add_balance(thief_id, steal_amount, guild_id=gid or None, holder_name=ctx.author.display_name)
+                    # Insurance doesn't stop the robbery — the insurer refunds
+                    # the victim's wallet (minted) and the thief keeps it all.
+                    refunded = await insurance_refund(
+                        victim_id, steal_amount, guild_id=gid or None, holder_name=target.display_name,
+                    )
                     await record_crime_event(gid, thief_id, gained=steal_amount)
-                    await record_crime_event(gid, victim_id, lost=steal_amount)
+                    await record_crime_event(gid, victim_id, lost=steal_amount - refunded)
                     result_embed = emb(
                         "🦹 Successful Robbery!",
                         f"**{ctx.author.display_name}** stole **{steal_amount:,} 🪙** from **{target.display_name}**!\n"
-                        f"Your balance: **{await get_balance(thief_id):,} 🪙**",
+                        f"Your balance: **{await get_balance(thief_id):,} 🪙**"
+                        + _insurance_refund_line(target.display_name, refunded),
                         C_GREEN,
                     )
             else:
@@ -669,7 +681,7 @@ class EconomyCog(commands.Cog):
                     )
 
             if stolen > 0:
-                await ctx.send(f"🚨 <@{victim_id}> — you've been robbed!")
+                await ctx.send(_robbed_ping(victim_id, "robbed", refunded))
             await msg.edit(embed=result_embed)
 
             await try_set_crime_record(
@@ -871,7 +883,12 @@ class EconomyCog(commands.Cog):
             )
             await record_crime_event(gid, p.id, gained=cut)
             cuts.append((p, cut))
-        await record_crime_event(gid, target.id, lost=seized)
+        # The crew keeps every cut; the victim's insurer (if any) refunds
+        # their share of the seized amount into their wallet — minted.
+        refunded = await insurance_refund(
+            target.id, seized, guild_id=gid or None, holder_name=target.display_name,
+        )
+        await record_crime_event(gid, target.id, lost=seized - refunded)
 
         jailed = await self._roll_participant_jail(
             participants, target.display_name, intended_per_person=share,
@@ -896,6 +913,7 @@ class EconomyCog(commands.Cog):
             header + "\n\n"
             f"The crew cracked **{target.display_name}**'s savings for **{seized:,} 🪙**!\n\n"
             f"{cut_lines}"
+            + _insurance_refund_line(target.display_name, refunded)
             + self._format_caught_line(jailed),
             C_GREEN,
         )
@@ -933,15 +951,6 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb(
                 "🛡️ Off-Limits",
                 f"**{target.display_name}** isn't in the crime system yet — they're below Level 10 and have never held more than {CRIME_ELIGIBLE_NET_WORTH:,} 🪙 across wallet + savings.",
-                C_GOLD,
-            ))
-            return
-
-        if await is_insured(target.id, "steal"):
-            _exp = get_insurance_expiry(target.id)
-            await ctx.send(embed=emb(
-                "🛡️ Protected",
-                f"**{target.display_name}** has insurance — their savings are off-limits! (expires <t:{_exp}:R>)",
                 C_GOLD,
             ))
             return
@@ -1267,9 +1276,9 @@ class EconomyCog(commands.Cog):
         if uid in self._crime_active:
             await ctx.send(embed=emb("⏳ Already Running", "You already have a crime in progress — wait for it to finish.", C_RED))
             return
-        # Claim synchronously at the gate: the eligibility/insurance/charge
-        # awaits below yield, so two rapid invocations could otherwise both
-        # pass the check (and both get charged).
+        # Claim synchronously at the gate: the eligibility/charge awaits
+        # below yield, so two rapid invocations could otherwise both pass
+        # the check (and both get charged).
         self._crime_active.add(uid)
         try:
             if target.id == uid:
@@ -1294,11 +1303,6 @@ class EconomyCog(commands.Cog):
                 return
             if parsed <= 0:
                 await ctx.send(embed=emb("❌ Invalid Amount", "Amount must be positive.", C_RED))
-                return
-
-            if await is_insured(target.id, "steal"):
-                _exp = get_insurance_expiry(target.id)
-                await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance and can't be mugged (expires <t:{_exp}:R>).", C_GOLD))
                 return
 
             target_bal = await get_balance(target.id)
@@ -1357,10 +1361,16 @@ class EconomyCog(commands.Cog):
             if actual_steal > 0 and not await deduct_balance(target.id, actual_steal):
                 actual_steal = 0
             # Attacker paid `parsed` upfront (muggers' fee, charged via shop_charge);
-            # victim loses `actual_steal`. Neither gains.
+            # victim loses `actual_steal`. Neither gains — but the victim's
+            # insurer refunds their share of it (minted; the muggers' take is
+            # already gone).
             gid = ctx.guild.id if ctx.guild else 0
+            refunded = await insurance_refund(
+                target.id, actual_steal, guild_id=gid or None, holder_name=target.display_name,
+            )
+            refund_line = _insurance_refund_line(target.display_name, refunded)
             await record_crime_event(gid, uid, lost=parsed)
-            await record_crime_event(gid, target.id, lost=actual_steal)
+            await record_crime_event(gid, target.id, lost=actual_steal - refunded)
 
             if jailed:
                 jail_until_ts = time.time() + 86400
@@ -1372,7 +1382,7 @@ class EconomyCog(commands.Cog):
                     "🔪 Mugged — but Caught!",
                     f"**{ctx.author.display_name}** paid muggers **{parsed:,} 🪙** to take **{actual_steal:,} 🪙** from **{target.display_name}**!\n"
                     f"The muggers kept it all.\n"
-                    f"**{target.display_name}**'s balance: **{await get_balance(target.id):,} 🪙**\n\n"
+                    f"**{target.display_name}**'s balance: **{await get_balance(target.id):,} 🪙**{refund_line}\n\n"
                     f"🚔 A witness called the cops — **{ctx.author.display_name}** is jailed until <t:{int(jail_until_ts)}:F> (<t:{int(jail_until_ts)}:R>)!",
                     C_RED,
                 )
@@ -1381,11 +1391,11 @@ class EconomyCog(commands.Cog):
                     "🔪 Mugged!",
                     f"**{ctx.author.display_name}** paid muggers **{parsed:,} 🪙** to take **{actual_steal:,} 🪙** from **{target.display_name}**!\n"
                     f"The muggers kept it all.\n"
-                    f"**{target.display_name}**'s balance: **{await get_balance(target.id):,} 🪙**",
+                    f"**{target.display_name}**'s balance: **{await get_balance(target.id):,} 🪙**{refund_line}",
                     C_ORANGE,
                 )
             if actual_steal > 0:
-                await ctx.send(f"🚨 <@{target.id}> — you've been mugged!")
+                await ctx.send(_robbed_ping(target.id, "mugged", refunded))
             await msg.edit(embed=result_embed)
 
             # Getting caught doesn't undo the take — the victim is out the

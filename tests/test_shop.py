@@ -18,6 +18,11 @@ from src.economy import add_balance, get_balance
 from src.helpers import shop_charge
 
 from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild
+from src.config import SHOP_INSURANCE_TIERS
+
+# The basic tier's premium — what every pre-tier policy cost, and what the
+# picker auto-selects in tests (see conftest's confirm_choice stub).
+SHOP_INSURANCE_COST = SHOP_INSURANCE_TIERS["basic"]["cost"]
 
 
 pytestmark = pytest.mark.asyncio
@@ -91,7 +96,6 @@ async def test_shop_charge_zero_cost_is_free(db):
 async def test_shop_insurance_purchase_persists_to_state_and_db(db):
     """Buying insurance: deducts balance, sets state.insurance, writes to DB."""
     from src.cogs.shop_cog import ShopCog
-    from src.config import SHOP_INSURANCE_COST
 
     cog = ShopCog(bot=None)
     uid = 6001
@@ -128,7 +132,6 @@ async def test_shop_insurance_purchase_persists_to_state_and_db(db):
 
 async def test_shop_insurance_insufficient_funds(db):
     from src.cogs.shop_cog import ShopCog
-    from src.config import SHOP_INSURANCE_COST
 
     cog = ShopCog(bot=None)
     uid = 6002
@@ -183,7 +186,7 @@ async def test_concurrent_shop_insurance_purchases_lose_no_days(monkeypatch):
     expiry — not overwrite it with its own now+24h.
     """
     from src.cogs.shop_cog import ShopCog
-    from src.config import SHOP_INSURANCE_COST, SHOP_INSURANCE_DURATION_SECS
+    from src.config import SHOP_INSURANCE_DURATION_SECS
 
     cog = ShopCog(bot=None)
     uid = 6010
@@ -231,7 +234,7 @@ async def test_shop_insurance_prepay_days_stack(db):
     """`!shop insurance 3` charges 3× the daily premium and grants 3 days;
     a follow-up prepay extends from the current expiry."""
     from src.cogs.shop_cog import ShopCog
-    from src.config import SHOP_INSURANCE_COST, SHOP_INSURANCE_DURATION_SECS
+    from src.config import SHOP_INSURANCE_DURATION_SECS
 
     cog = ShopCog(bot=None)
     uid = 6020
@@ -255,7 +258,7 @@ async def test_shop_insurance_prepay_respects_max_days_cap(db):
     """Prepaying past SHOP_INSURANCE_MAX_DAYS of total coverage is refused
     without charging."""
     from src.cogs.shop_cog import ShopCog
-    from src.config import SHOP_INSURANCE_COST, SHOP_INSURANCE_DURATION_SECS, SHOP_INSURANCE_MAX_DAYS
+    from src.config import SHOP_INSURANCE_DURATION_SECS, SHOP_INSURANCE_MAX_DAYS
 
     cog = ShopCog(bot=None)
     uid = 6021
@@ -275,7 +278,6 @@ async def test_shop_insurance_subscribe_charges_first_day_and_persists(db):
     """`!shop insurance sub` with no active coverage charges one day up front,
     grants it, and persists the subscription row."""
     from src.cogs.shop_cog import ShopCog
-    from src.config import SHOP_INSURANCE_COST
 
     cog = ShopCog(bot=None)
     uid = 6022
@@ -308,7 +310,6 @@ async def test_shop_insurance_subscribe_charges_first_day_and_persists(db):
 
 async def test_shop_insurance_subscribe_insufficient_funds_rolls_back(db):
     from src.cogs.shop_cog import ShopCog
-    from src.config import SHOP_INSURANCE_COST
 
     cog = ShopCog(bot=None)
     uid = 6023
@@ -327,7 +328,7 @@ async def test_shop_insurance_subscribe_bridges_coverage_ending_before_sweep(db,
     the first day now, stacked on the current expiry — otherwise the user
     lapses from that expiry until the sweep's first charge."""
     from src.cogs.shop_cog import ShopCog
-    from src.config import SHOP_INSURANCE_COST, SHOP_INSURANCE_DURATION_SECS
+    from src.config import SHOP_INSURANCE_DURATION_SECS
 
     now = int(_time.time())
     monkeypatch.setattr(_shop_cog, "next_daily_reset_ts", lambda *a, **k: now + 7200)
@@ -350,7 +351,6 @@ async def test_shop_insurance_subscribe_no_charge_when_coverage_reaches_sweep(db
     """Coverage that already outlasts the next 5am sweep needs no starter
     day — the sweep charges then and extends from the existing expiry."""
     from src.cogs.shop_cog import ShopCog
-    from src.config import SHOP_INSURANCE_COST
 
     now = int(_time.time())
     monkeypatch.setattr(_shop_cog, "next_daily_reset_ts", lambda *a, **k: now + 7200)
@@ -373,7 +373,6 @@ async def test_shop_insurance_subscribe_bridge_insufficient_funds_rolls_back(db,
     """An unaffordable bridge day leaves the sub unclaimed and the existing
     coverage exactly as it was."""
     from src.cogs.shop_cog import ShopCog
-    from src.config import SHOP_INSURANCE_COST
 
     now = int(_time.time())
     monkeypatch.setattr(_shop_cog, "next_daily_reset_ts", lambda *a, **k: now + 7200)
@@ -396,12 +395,12 @@ async def test_renew_insurance_subs_charges_and_extends():
     coverage extends 24h from the current expiry; an unaffordable renewal
     lapses without touching the subscription."""
     from src.economy import renew_insurance_subs, _ensure_user
-    from src.config import SHOP_INSURANCE_COST, SHOP_INSURANCE_DURATION_SECS
+    from src.config import SHOP_INSURANCE_DURATION_SECS
 
     uid = 6024
     await _ensure_user(uid)
     _state.economy["users"][str(uid)]["balance"] = SHOP_INSURANCE_COST + 100
-    _state.insurance_subs.add(uid)
+    _state.insurance_subs[uid] = "basic"
     existing_expiry = int(_time.time() + 3600)
     _state.insurance[uid] = {"expires_at": existing_expiry, "protected_from": ["steal"]}
 
@@ -410,8 +409,10 @@ async def test_renew_insurance_subs_charges_and_extends():
     assert lapsed == 0
     assert _state.economy["users"][str(uid)]["balance"] == 100
     assert _state.insurance[uid]["expires_at"] == existing_expiry + SHOP_INSURANCE_DURATION_SECS
-    assert "steal" in _state.insurance[uid]["protected_from"]
+    assert "tax" in _state.insurance[uid]["protected_from"]
     assert "mock" in _state.insurance[uid]["protected_from"]
+    # Crime is refunded, not blocked — it's no longer a protected_from key.
+    assert "steal" not in _state.insurance[uid]["protected_from"]
 
     # Second renewal: can't afford — coverage untouched, sub retained.
     charged, lapsed = await renew_insurance_subs(uid)
@@ -1203,12 +1204,11 @@ async def test_shop_mock_declined_confirm_no_charge(db, monkeypatch):
 
 async def test_shop_insurance_prepay_declined_confirm_no_charge(db, monkeypatch):
     from src.cogs.shop_cog import ShopCog
-    from src.config import SHOP_INSURANCE_COST
 
     cog = ShopCog(bot=None)
     uid = 9103
     await add_balance(uid, SHOP_INSURANCE_COST * 3)
-    monkeypatch.setattr(_shop_cog, "confirm_purchase", _no_confirm)
+    monkeypatch.setattr(_shop_cog, "confirm_choice", _no_confirm)  # tier picker cancelled
 
     ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
     await cog.shop_insurance.callback(cog, ctx, "2")
@@ -1219,12 +1219,11 @@ async def test_shop_insurance_prepay_declined_confirm_no_charge(db, monkeypatch)
 
 async def test_shop_insurance_sub_declined_confirm_no_sub(db, monkeypatch):
     from src.cogs.shop_cog import ShopCog
-    from src.config import SHOP_INSURANCE_COST
 
     cog = ShopCog(bot=None)
     uid = 9104
     await add_balance(uid, SHOP_INSURANCE_COST * 3)
-    monkeypatch.setattr(_shop_cog, "confirm_prompt", _no_confirm)
+    monkeypatch.setattr(_shop_cog, "confirm_choice", _no_confirm)  # tier picker cancelled
 
     ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
     await cog.shop_insurance.callback(cog, ctx, "sub")

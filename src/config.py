@@ -129,7 +129,6 @@ SHOP_RENAME_COST          = 30_000
 SHOP_LOCK_COST            = 100_000
 SHOP_CHANNEL_COST         = 40_000
 SHOP_CHANNEL_DELETE_COST  = 75_000
-SHOP_INSURANCE_COST       = 1_000  # per day (prepay or subscription renewal)
 SHOP_TAX_COST             = 1_000
 SHOP_MOCK_COST            = 1_500
 SHOP_RAGEBAIT_COST        = 2_500
@@ -151,6 +150,21 @@ ARTIFACT_PROPERTY_CAP_COST   = 300_000
 ARTIFACT_PROPERTY_BOOST_COST = 1_000_000
 
 # Shop effect parameters
+#
+# Insurance tiers (`!shop insurance`). Every tier blocks the non-crime effects
+# (mock, ragebait, nickname, role, tax, spellcheck) outright; crime
+# (steal/mug/bankheist) still goes through, and the insurer refunds
+# `refund_pct` of each loss to the victim's wallet — minted, not taken from
+# the thief — up to `refund_cap` per incident. Keys are what users type;
+# order is cheapest → dearest (the tier picker renders in this order).
+SHOP_INSURANCE_TIERS = {
+    "basic":    {"cost": 1_000, "refund_pct": 50,  "refund_cap": 100_000},
+    "standard": {"cost": 3_000, "refund_pct": 75,  "refund_cap": 200_000},
+    "premium":  {"cost": 6_000, "refund_pct": 100, "refund_cap": 400_000},
+}
+# Tier every pre-tier policy and subscription was backfilled to (migration
+# 0065) and the fallback when a stored tier is missing or unknown.
+SHOP_INSURANCE_DEFAULT_TIER  = "basic"
 SHOP_INSURANCE_DURATION_SECS = 86_400  # 24 hours (one prepaid/renewed day)
 SHOP_INSURANCE_MAX_DAYS      = 30      # cap on total remaining prepaid coverage
 SHOP_MOCK_MESSAGES           = 5

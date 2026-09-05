@@ -14,6 +14,11 @@ from src.cogs.economy_cog import EconomyCog
 from src.config import DAILY_REWARD
 
 from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild
+from src.config import SHOP_INSURANCE_TIERS
+
+# The basic tier's premium — what every pre-tier policy cost, and what the
+# picker auto-selects in tests (see conftest's confirm_choice stub).
+SHOP_INSURANCE_COST = SHOP_INSURANCE_TIERS["basic"]["cost"]
 
 
 pytestmark = pytest.mark.asyncio
@@ -344,7 +349,7 @@ async def test_daily_claim_does_not_charge_insurance(db):
 
     uid = 8101
     await _economy.add_balance(uid, 5000)
-    _state.insurance_subs.add(uid)
+    _state.insurance_subs[uid] = "basic"
     expiry = int(_t.time() + 3600)
     _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
 
@@ -362,12 +367,12 @@ async def test_insurance_sweep_charges_and_extends_once_per_day(db):
     """The sweep deducts one premium and extends coverage 24h; a same-day
     second run is a no-op."""
     import time as _t
-    from src.config import SHOP_INSURANCE_COST, SHOP_INSURANCE_DURATION_SECS
+    from src.config import SHOP_INSURANCE_DURATION_SECS
     from src.economy import sweep_insurance_subs, _ct_today
 
     uid = 8102
     await _economy.add_balance(uid, 5000)
-    _state.insurance_subs.add(uid)
+    _state.insurance_subs[uid] = "basic"
     expiry = int(_t.time() + 3600)
     _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
     _state.economy["last_insurance_sweep"] = "2020-01-01"
@@ -394,7 +399,7 @@ async def test_insurance_sweep_first_run_stamps_without_charging(db):
 
     uid = 8103
     await _economy.add_balance(uid, 5000)
-    _state.insurance_subs.add(uid)
+    _state.insurance_subs[uid] = "basic"
     expiry = int(_t.time() + 3600)
     _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
     assert _state.economy.get("last_insurance_sweep") is None
@@ -415,7 +420,7 @@ async def test_insurance_sweep_lapse_keeps_sub_and_tallies(db):
 
     uid = 8104
     await _economy._ensure_user(uid)  # exists, balance 0 — can't pay
-    _state.insurance_subs.add(uid)
+    _state.insurance_subs[uid] = "basic"
     expiry = int(_t.time() + 3600)
     _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
     _state.economy["last_insurance_sweep"] = "2020-01-01"
@@ -480,7 +485,7 @@ async def test_auto_daily_ignores_insurance_subscription(db):
 
     uid = 8105
     await _economy.add_balance(uid, 5000)
-    _state.insurance_subs.add(uid)
+    _state.insurance_subs[uid] = "basic"
     expiry = int(_t.time() + 3600)
     _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"]}
 

@@ -320,9 +320,54 @@ Rules when touching this system:
     silently drop a column (listing, upgrade, custom name). Keep it that
     way when adding fields.
 
+## Insurance: tiers, and crime is refunded rather than blocked
+
+Insurance comes in three tiers (`SHOP_INSURANCE_TIERS` in `src/config.py`):
+basic 50% for 1k/day (100k cap), standard 75% for 3k/day (200k cap),
+premium 100% for 6k/day (400k cap). Every tier still blocks the non-crime
+effects outright (`INSURANCE_PROTECTS` — mock, ragebait, nickname, role,
+tax, spellcheck; `is_insured` gates those as before). Crime is different:
+`!steal`, `!mug` and `!bankheist` **go through** against an insured target.
+The thief/crew keeps the full take; after the loss lands, the crime calls
+`insurance_refund(victim, loss)` (`src/economy.py`), which pays the tier's
+`refund_pct` of the loss into the victim's **wallet** (a heist refund does
+not go back into savings). The coins are minted by the "insurance company"
+— nothing is clawed back from the thief — so insured crime is net-positive
+for the economy by design.
+
+- **The cap is per incident.** Each robbery refunds `min(loss × pct, cap)`
+  on its own — no daily or lifetime tally, no state beyond the policy row.
+  Keep in mind what that permits: a colluding thief and an insured victim
+  mint up to one cap per successful crime, bounded only by the crimes'
+  own odds, cooldowns and jail rolls. If that ever needs reining in, add
+  the tally here (a per-user day + amount pair, claimed synchronously
+  before `add_balance`), not in the crime commands.
+- **Every crime that moves coins off a victim must call `insurance_refund`**
+  after its debit and show the result (`_insurance_refund_line` in the
+  result embed, `_robbed_ping` for the victim ping). Record the victim's
+  `record_crime_event(... lost=)` **net** of the refund — it's what their
+  wallet actually lost; the thief's `gained` stays gross.
+- **One tier per user.** The policy (`state.insurance[uid]["tier"]`) and the
+  subscription (`state.insurance_subs[uid]`, a dict uid → tier) must agree;
+  change both through `set_insurance_tier`. Switching tiers moves the
+  remaining coverage with the user: an upgrade charges the daily difference
+  on it now (`insurance_switch_cost`, ceil'd), a downgrade is free but
+  refunds nothing. Never let a cheap tier's days silently become an
+  expensive tier's.
+- **Every purchase prompt shows all three tiers as buttons**
+  (`confirm_choice` in `src/confirm_view.py`; `ShopCog._pick_insurance_tier`).
+  A tier word in the command only pre-highlights a button. Tests get the
+  highlighted choice back from conftest's `confirm_choice` stub.
+- **Migration 0065** backfilled every existing policy and subscription to
+  `basic` (they were all bought at 1k/day); a NULL `insurance_tier` reads as
+  the default tier. Admin grants (`!effects add … insurance`) are premium.
+- Coverage: [tests/test_insurance_tiers.py](tests/test_insurance_tiers.py)
+  and the refund tests in [tests/test_money_flows.py](tests/test_money_flows.py).
+
 ## Insurance subscriptions: charged by the 5am sweep, not the daily claim
 
-Subscription premiums (`!shop insurance sub`) are charged once per
+Subscription premiums (`!shop insurance [tier] sub`, at the subscription's
+tier) are charged once per
 gameplay-day by `sweep_insurance_subs` (`src/economy.py`), driven from
 EconomyCog's minute loop — at the first tick after the 5am CT rollover, or at
 boot if the bot was down at 5am. Charging is independent of user activity:

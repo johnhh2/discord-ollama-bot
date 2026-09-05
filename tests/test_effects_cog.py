@@ -214,6 +214,7 @@ async def test_effects_add_insurance_permanent(db):
     await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "add", "insurance")
     entry = _state.insurance[target.id]
     assert "tax" in entry["protected_from"]
+    assert entry["tier"] == "premium"  # admin grants are the full-refund tier
 
 
 @_aio

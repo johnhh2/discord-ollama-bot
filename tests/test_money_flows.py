@@ -249,49 +249,90 @@ async def test_steal_caught_no_jail_just_fee(db, monkeypatch):
     assert _state.economy["users"][str(thief.id)].get("jail_until", 0) == 0
 
 
-async def test_steal_blocked_by_insurance_no_money_moves(db, monkeypatch):
-    """Insured victim → thief sees the protected embed; no balance changes."""
+async def test_bankheist_lobby_opens_against_insured_target(db, monkeypatch):
+    """No more shield at the door — !bankheist against an insured target
+    opens the lobby like any other."""
     cog = EconomyCog(bot=_StubBot())
-    thief = FakeMember(uid=103)
-    victim = FakeMember(uid=203)
+    host = FakeMember(uid=117, display_name="host")
+    victim = FakeMember(uid=217, display_name="victim")
+    await _economy.add_balance(host.id, 5000)
+    await _economy.add_balance(victim.id, 10_000)
+    _grant_level(victim.id, 9)
+    _state.insurance[victim.id] = {
+        "expires_at": time.time() + 3600,
+        "protected_from": ["mock"],
+        "tier": "premium",
+    }
+    opened = {}
+
+    async def _fake_send(content=None, *, embed=None, view=None, **kwargs):
+        opened["embed"] = embed
+        raise RuntimeError("stop at the lobby send")  # don't run the reaction loop
+
+    ctx = _make_ctx(host, victim, content="!bankheist @victim")
+    ctx.send = _fake_send
+    with pytest.raises(RuntimeError):
+        await cog.cmd_bankheist.callback(cog, ctx, target=victim)
+
+    assert "Bank Heist" in opened["embed"].title
+    assert "Protected" not in (opened["embed"].title or "")
+
+
+async def test_steal_insured_victim_refunded_thief_keeps_all(db, monkeypatch):
+    """Insurance no longer stops a robbery. The thief keeps the whole take;
+    the victim's insurer refunds the tier's share (basic: 50%) into their
+    wallet — minted, so the two sides no longer sum to zero — and both the
+    result embed and the victim ping say so."""
+    cog = EconomyCog(bot=_StubBot())
+    thief = FakeMember(uid=103, display_name="thief")
+    victim = FakeMember(uid=203, display_name="victim")
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
     _grant_level(victim.id, 9)
     _state.insurance[victim.id] = {
         "expires_at": time.time() + 3600,
-        "protected_from": ["steal"],
+        "protected_from": ["mock"],
+        "tier": "basic",
     }
+    monkeypatch.setattr(random, "random", lambda: 0.05)  # tier 1 success
+    monkeypatch.setattr(random, "randint", lambda a, b: a)
 
     ctx = _make_ctx(thief, victim)
     await cog.cmd_steal.callback(cog, ctx, target=victim)
 
-    assert await _economy.get_balance(thief.id) == 5000
-    assert await _economy.get_balance(victim.id) == 10_000
-    assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
+    assert await _economy.get_balance(thief.id) == 5000 + 1000
+    assert await _economy.get_balance(victim.id) == 10_000 - 1000 + 500
+    assert await _read_db_balance(victim.id) == 9500
+    assert any("Insurance refunded **500 🪙**" in m for m in ctx.sent_messages)
+    assert not any("Protected" in (e.title or "") for e in ctx.sent_embeds)
+    # The victim's recorded crime loss is what their wallet actually lost.
+    assert _state.crime_today_by_user[(42, str(victim.id))]["lost"] == 500
+    assert _state.crime_today_by_user[(42, str(thief.id))]["gained"] == 1000
 
 
-async def test_steal_blocked_by_insurance_bought_in_another_server(db, monkeypatch):
-    """Insurance is bot-wide (migration 0055): a policy protects the holder
-    in EVERY server, not just where it was bought. Steal attempted from a
-    different guild than the test default must still hit the shield."""
+async def test_steal_insurance_refund_applies_from_any_server(db, monkeypatch):
+    """Insurance is bot-wide (migration 0055): the refund lands whichever
+    server the robbery happens in, not just where the policy was bought."""
     cog = EconomyCog(bot=_StubBot())
-    thief = FakeMember(uid=113)
-    victim = FakeMember(uid=213)
+    thief = FakeMember(uid=113, display_name="thief")
+    victim = FakeMember(uid=213, display_name="victim")
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
     _grant_level(victim.id, 9, gid=99)
     _state.insurance[victim.id] = {
         "expires_at": time.time() + 3600,
-        "protected_from": ["steal"],
+        "protected_from": ["mock"],
+        "tier": "standard",
     }
+    monkeypatch.setattr(random, "random", lambda: 0.05)
+    monkeypatch.setattr(random, "randint", lambda a, b: a)
 
     ctx = _make_ctx(thief, victim)
     ctx.guild = FakeGuild(gid=99)  # a different server than any "purchase"
     await cog.cmd_steal.callback(cog, ctx, target=victim)
 
-    assert await _economy.get_balance(thief.id) == 5000
-    assert await _economy.get_balance(victim.id) == 10_000
-    assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
+    assert await _economy.get_balance(thief.id) == 6000
+    assert await _economy.get_balance(victim.id) == 10_000 - 1000 + 750  # 75%
 
 
 async def test_steal_self_target_rejected(db):
@@ -415,25 +456,32 @@ async def test_mug_caught_jails_thief_for_one_day(db, monkeypatch):
     assert await _read_db_jail_reason(thief.id) == "Mugged victim for 1,000 coins"
 
 
-async def test_mug_blocked_by_insurance_no_charge(db, monkeypatch):
+async def test_mug_insured_victim_refunded_muggers_still_paid(db, monkeypatch):
+    """A mug against an insured target goes through: the attacker still pays
+    the muggers, the victim still loses the amount, and their insurer
+    refunds the tier's share (standard: 75%)."""
     cog = EconomyCog(bot=_StubBot())
-    thief = FakeMember(uid=302)
-    victim = FakeMember(uid=402)
+    thief = FakeMember(uid=302, display_name="thief")
+    victim = FakeMember(uid=402, display_name="victim")
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 10_000)
     _grant_level(victim.id, 12)
     _state.insurance[victim.id] = {
         "expires_at": time.time() + 3600,
-        "protected_from": ["steal"],
+        "protected_from": ["mock"],
+        "tier": "standard",
     }
+    monkeypatch.setattr(random, "random", lambda: 0.99)  # no jail
+    monkeypatch.setattr(random, "randint", lambda a, b: a)
 
     ctx = FakeCtx(author=thief, guild=FakeGuild(gid=42))
     ctx.bot = _StubBot()
     await cog.cmd_mug.callback(cog, ctx, target=victim, amount="500")
 
-    # Insurance check happens before shop_charge — no money moves.
-    assert await _economy.get_balance(thief.id) == 5000
-    assert await _economy.get_balance(victim.id) == 10_000
+    assert await _economy.get_balance(thief.id) == 4500
+    assert await _economy.get_balance(victim.id) == 10_000 - 500 + 375
+    assert any("Insurance refunded **375 🪙**" in m for m in ctx.sent_messages)
+    assert _state.crime_today_by_user[(42, str(victim.id))]["lost"] == 125
 
 
 async def test_mug_target_too_poor_relative_to_thief(db, monkeypatch):
@@ -1114,47 +1162,60 @@ async def test_crime_eligible_does_not_latch_below_threshold(db):
     assert _state.economy["users"][str(uid)]["crime_eligible"] is True
 
 
-async def test_mug_blocked_by_insurance_no_money_moves(db):
-    """!mug against an insured target: protected embed, thief keeps their
-    stake, victim untouched. Shares the "steal" insurance key with !steal
-    and !bankheist."""
+async def test_mug_refund_capped_per_incident(db, monkeypatch):
+    """The tier's refund cap applies to each robbery on its own: a 500k mug
+    against a premium (100%, 400k cap) victim refunds exactly the cap."""
     cog = EconomyCog(bot=_StubBot())
-    thief = FakeMember(uid=114)
-    victim = FakeMember(uid=214)
-    await _economy.add_balance(thief.id, 5000)
-    await _economy.add_balance(victim.id, 10_000)
+    thief = FakeMember(uid=114, display_name="thief")
+    victim = FakeMember(uid=214, display_name="victim")
+    await _economy.add_balance(thief.id, 600_000)
+    await _economy.add_balance(victim.id, 1_000_000)
     _grant_level(victim.id, 9)
     _state.insurance[victim.id] = {
         "expires_at": time.time() + 3600,
-        "protected_from": ["steal"],
+        "protected_from": ["mock"],
+        "tier": "premium",
     }
+    monkeypatch.setattr(random, "random", lambda: 0.99)
+    monkeypatch.setattr(random, "randint", lambda a, b: a)
 
-    ctx = _make_ctx(thief, victim, content="!mug @victim 100")
-    await cog.cmd_mug.callback(cog, ctx, target=victim, amount="100")
+    ctx = _make_ctx(thief, victim, content="!mug @victim 500000")
+    await cog.cmd_mug.callback(cog, ctx, target=victim, amount="500000")
 
-    assert await _economy.get_balance(thief.id) == 5000
-    assert await _economy.get_balance(victim.id) == 10_000
-    assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
+    assert await _economy.get_balance(thief.id) == 100_000
+    assert await _economy.get_balance(victim.id) == 1_000_000 - 500_000 + 400_000
+    assert any("Insurance refunded **400,000 🪙**" in m for m in ctx.sent_messages)
 
 
-async def test_bankheist_blocked_by_insurance_no_lobby(db):
-    """!bankheist against an insured target must stop at the shield before
-    any lobby opens — no heist state, no reactions to claim."""
+async def test_bankheist_insured_victim_refunded_crew_keeps_cuts(db, monkeypatch):
+    """A heist against an insured target opens and resolves normally: the
+    crew splits the full seized amount, and the victim's insurer refunds
+    their share (premium: all of it) into their WALLET — the savings stay
+    drained."""
     cog = EconomyCog(bot=_StubBot())
-    host = FakeMember(uid=115)
-    victim = FakeMember(uid=215)
-    await _economy.add_balance(host.id, 5000)
-    await _economy.add_balance(victim.id, 10_000)
+    host = FakeMember(uid=115, display_name="host")
+    j1 = FakeMember(uid=116, display_name="j1")
+    victim = FakeMember(uid=215, display_name="victim")
+    await _economy._ensure_user(host.id)
+    await _economy._ensure_user(j1.id)
+    _seed_savings(victim.id, 10_000)  # 20% = 2000 → 1000 each
     _grant_level(victim.id, 9)
     _state.insurance[victim.id] = {
         "expires_at": time.time() + 3600,
-        "protected_from": ["steal"],
+        "protected_from": ["mock"],
+        "tier": "premium",
     }
+    monkeypatch.setattr(random, "random", lambda: 0.0)  # success (and jail rolls)
 
     ctx = _make_ctx(host, victim, content="!bankheist @victim")
-    await cog.cmd_bankheist.callback(cog, ctx, target=victim)
+    result = await cog._bankheist_resolve(ctx, _make_hstate(host, victim, [j1]))
 
-    assert cog._active_heists == {}  # lobby never opened
-    assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
-    assert await _economy.get_balance(host.id) == 5000
-    assert await _economy.get_balance(victim.id) == 10_000
+    assert "Successful" in result.title
+    assert await _economy.get_balance(host.id) == 1000
+    assert await _economy.get_balance(j1.id) == 1000
+    assert await _economy.get_balance(victim.id) == 2000  # refund → wallet
+    remaining = await _economy.get_savings_value(victim.id)
+    assert 7999 <= remaining <= 8001                       # savings still drained
+    assert "insurance refunded them **2,000 🪙**" in result.description
+
+

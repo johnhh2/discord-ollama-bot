@@ -22,8 +22,8 @@ bot_settings: dict = {"vram_text": "16GB"}
 guild_settings: dict = {}
 # Insurance is bot-wide (migration 0055): one policy per user, protecting them
 # in every server. Stored in shop_effects under the sentinel guild_id=0.
-insurance: dict = {}            # uid -> {expires_at, protected_from}
-insurance_subs: set = set()     # uid — insurance auto-renews via the daily 5am sweep (sweep_insurance_subs)
+insurance: dict = {}            # uid -> {expires_at, protected_from, tier}
+insurance_subs: dict = {}       # uid -> tier — insurance auto-renews via the daily 5am sweep (sweep_insurance_subs)
 # Shop effects are scoped per server: every key below is a (guild_id, user_id)
 # int tuple. A user can hold one of each effect per guild, and an effect only
 # fires in the guild it was bought in. Source of truth is the shop_effects

@@ -255,10 +255,13 @@ class EffectsCog(commands.Cog):
         """Construct the state dict for an admin-granted effect."""
         now = time.time()
         if effect == "insurance":
+            # An admin grant is the strongest policy — full crime refunds —
+            # the nearest thing to the old "insured users can't be robbed".
             from src.economy import INSURANCE_PROTECTS
             return {
                 "expires_at": expires_at if expires_at is not None else now + 10 * 365 * 86_400,
                 "protected_from": list(INSURANCE_PROTECTS),
+                "tier": "premium",
             }
         if effect == "tax":
             # Admin grant: the admin becomes the master (receives the coins).

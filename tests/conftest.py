@@ -74,7 +74,7 @@ def reset_bot_state(monkeypatch):
     # these (or set them to fresh values themselves), so this is additive-safe.
     monkeypatch.setattr(_state, "bot_admins", set())
     monkeypatch.setattr(_state, "godmode_users", set())
-    monkeypatch.setattr(_state, "insurance_subs", set())
+    monkeypatch.setattr(_state, "insurance_subs", {})
     monkeypatch.setattr(_state, "command_perms", {})
     monkeypatch.setattr(_state, "user_perm_overrides", {})
     monkeypatch.setattr(_state, "blocklist", {})
@@ -225,7 +225,18 @@ def reset_bot_state(monkeypatch):
     import src.cogs.lottery_cog as _lottery_cog_mod
     import src.games.chess as _chess_game_mod
     monkeypatch.setattr(_shop_cog_mod, "confirm_purchase", _auto_confirm)
-    monkeypatch.setattr(_shop_cog_mod, "confirm_prompt", _auto_confirm)
+
+    # The insurance tier picker (confirm_choice) auto-picks the highlighted
+    # default choice — the tier the command was given, else the buyer's
+    # current tier, else the cheapest — so `!shop insurance premium 3` buys
+    # premium in tests without a button click. Tests exercising a different
+    # click, or cancel, monkeypatch this per-test.
+    async def _auto_choice(*args, choices=None, **kwargs):
+        for choice in choices or []:
+            if choice.get("default"):
+                return choice["value"]
+        return choices[0]["value"] if choices else None
+    monkeypatch.setattr(_shop_cog_mod, "confirm_choice", _auto_choice)
     monkeypatch.setattr(_chess_game_mod, "confirm_prompt", _auto_confirm)
     monkeypatch.setattr(_bounty_cog_mod, "confirm_purchase", _auto_confirm)
     monkeypatch.setattr(_assets_cog_mod, "confirm_purchase", _auto_confirm)

@@ -166,9 +166,9 @@ async def test_shop_subcommand_decorator_does_not_inject_phantom_ctx_param():
     the command dies at dispatch with MissingRequiredArgument."""
     cog = ShopCog(bot=None)
     assert list(cog.shop_removenickname.params) == []
-    # shop_insurance takes one optional user arg (days | sub | unsub) — a
-    # phantom ctx would surface as ["ctx", "arg"] here.
-    assert list(cog.shop_insurance.params) == ["arg"]
+    # shop_insurance takes free-order words (tier | days | sub | unsub) as
+    # `*args` — a phantom ctx would surface as ["ctx", "args"] here.
+    assert list(cog.shop_insurance.params) == ["args"]
 
 
 async def test_shop_subcommand_decorator_preserves_varargs_signature():

@@ -172,19 +172,22 @@ async def _init_db_state_inner(state, run_migrations):
 
         # ── shop_effects: insurance ───────────────────────────────────────
         # Insurance lives in shop_effects (effect_type='insurance') since
-        # migration 0032: protected_from in history_json, expiry in expires_at.
-        # Bot-wide since 0055 — keyed by user alone (rows sit at guild_id=0).
+        # migration 0032: protected_from in history_json, expiry in expires_at,
+        # tier in insurance_tier (0065; NULL = the default tier). Bot-wide
+        # since 0055 — keyed by user alone (rows sit at guild_id=0).
+        from src.config import SHOP_INSURANCE_DEFAULT_TIER
         try:
             await cur.execute(
-                "SELECT user_id, expires_at, history_json"
+                "SELECT user_id, expires_at, history_json, insurance_tier"
                 " FROM shop_effects WHERE effect_type='insurance'"
             )
             now = _time.time()
-            for uid, expires_at, protected_json in await cur.fetchall():
+            for uid, expires_at, protected_json, tier in await cur.fetchall():
                 if expires_at and expires_at > now:
                     state.insurance[int(uid)] = {
                         "expires_at": expires_at,
                         "protected_from": json.loads(protected_json) if protected_json else [],
+                        "tier": tier or SHOP_INSURANCE_DEFAULT_TIER,
                     }
         except Exception as e:
             logging.error(f"[init_db_state] shop_effects.insurance failed: {e}", exc_info=True)
@@ -192,16 +195,16 @@ async def _init_db_state_inner(state, run_migrations):
 
         # ── shop_effects: insurance subscriptions ─────────────────────────
         # effect_type='insurance_sub', no expiry — charged once per
-        # gameplay-day by the 5am sweep (src.economy.sweep_insurance_subs),
-        # whether or not the subscriber logs on. Bot-wide like insurance
-        # itself.
+        # gameplay-day by the 5am sweep (src.economy.sweep_insurance_subs)
+        # at the row's insurance_tier, whether or not the subscriber logs
+        # on. Bot-wide like insurance itself.
         try:
             await cur.execute(
-                "SELECT user_id FROM shop_effects"
+                "SELECT user_id, insurance_tier FROM shop_effects"
                 " WHERE effect_type='insurance_sub'"
             )
-            for (uid,) in await cur.fetchall():
-                state.insurance_subs.add(int(uid))
+            for uid, tier in await cur.fetchall():
+                state.insurance_subs[int(uid)] = tier or SHOP_INSURANCE_DEFAULT_TIER
         except Exception as e:
             logging.error(f"[init_db_state] shop_effects.insurance_sub failed: {e}", exc_info=True)
             raise

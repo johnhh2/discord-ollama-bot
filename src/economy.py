@@ -1,3 +1,4 @@
+import math
 import time
 import datetime
 import logging
@@ -184,24 +185,90 @@ async def announce_new_lottery(
     await channel.send(embed=embed)
 
 
-# Everything a bought/renewed insurance day protects against. Single source
-# of truth for `!shop insurance` and the subscription renewal below.
-INSURANCE_PROTECTS = ["ragebait", "mock", "nickname", "role", "steal", "tax", "spellcheck"]
+# Everything a bought/renewed insurance day blocks outright. Single source of
+# truth for `!shop insurance` and the subscription renewal below. Crime
+# (steal/mug/bankheist) is deliberately NOT here: insurance no longer stops a
+# robbery, it refunds part of the loss — see insurance_refund.
+INSURANCE_PROTECTS = ["ragebait", "mock", "nickname", "role", "tax", "spellcheck"]
 
 
-def extend_insurance(uid: int, days: int) -> int:
+def insurance_tier_info(tier: str | None) -> dict:
+    """The {cost, refund_pct, refund_cap} block for `tier`, falling back to
+    the default tier for None / unknown names (a stored tier that a later
+    catalog edit removed must still price and refund as *something*)."""
+    from src.config import SHOP_INSURANCE_TIERS, SHOP_INSURANCE_DEFAULT_TIER
+    return SHOP_INSURANCE_TIERS.get(tier or "", SHOP_INSURANCE_TIERS[SHOP_INSURANCE_DEFAULT_TIER])
+
+
+def insurance_tier_cost(tier: str | None) -> int:
+    """Daily premium for `tier`."""
+    return int(insurance_tier_info(tier)["cost"])
+
+
+def get_insurance_tier(uid: int) -> str | None:
+    """The user's current tier: the active policy's, else the subscription's
+    (a lapsed subscriber still has a tier to renew at), else None."""
+    key = int(uid)
+    entry = state.insurance.get(key)
+    if entry and entry.get("expires_at", 0) > time.time():
+        return entry.get("tier")
+    return state.insurance_subs.get(key)
+
+
+def set_insurance_tier(uid: int, tier: str) -> None:
+    """Move the user's policy AND subscription to `tier`. A user has one tier
+    at a time — the two records must never disagree, or the sweep would renew
+    a premium policy as basic (or vice versa). Synchronous; the caller saves
+    (save_insurance / save_insurance_subs) whichever records exist."""
+    key = int(uid)
+    if key in state.insurance:
+        state.insurance[key]["tier"] = tier
+    if key in state.insurance_subs:
+        state.insurance_subs[key] = tier
+
+
+def insurance_switch_cost(uid: int, new_tier: str) -> int:
+    """Coins owed *now* to move the user's active coverage to `new_tier`: the
+    remaining coverage re-priced at the daily difference, rounded up to the
+    coin. 0 when uncovered, already on that tier, or downgrading (a downgrade
+    is free but refunds nothing — that's the user's call, not an exploit: the
+    way back up costs the full difference again)."""
+    from src.config import SHOP_INSURANCE_DURATION_SECS
+    expiry = get_insurance_expiry(uid)
+    if expiry is None:
+        return 0
+    cur = get_insurance_tier(uid)
+    diff = insurance_tier_cost(new_tier) - insurance_tier_cost(cur)
+    if cur is None or cur == new_tier or diff <= 0:
+        return 0
+    remaining_days = max(0.0, expiry - time.time()) / SHOP_INSURANCE_DURATION_SECS
+    return int(math.ceil(remaining_days * diff))
+
+
+def extend_insurance(uid: int, days: int, tier: str | None = None) -> int:
     """Extend the user's bot-wide insurance by `days` × 24h, from the current
     expiry when coverage is still active (so renewals keep coverage
     continuous), else from now. Synchronous on purpose — callers stamp before
     their first await (see CLAUDE.md on per-user command races). Returns the
-    new expiry ts. Caller is responsible for save_insurance()."""
-    from src.config import SHOP_INSURANCE_DURATION_SECS
+    new expiry ts. Caller is responsible for save_insurance().
+
+    `tier` sets the policy's tier (the whole remaining coverage moves to it —
+    price the switch with insurance_switch_cost first); None keeps the
+    current tier, falling back to the subscription's, then the default."""
+    from src.config import SHOP_INSURANCE_DURATION_SECS, SHOP_INSURANCE_DEFAULT_TIER
     key = int(uid)
     now = time.time()
     existing = state.insurance.get(key)
-    base = existing["expires_at"] if existing and existing.get("expires_at", 0) > now else now
+    active = existing is not None and existing.get("expires_at", 0) > now
+    base = existing["expires_at"] if active else now
+    if tier is None:
+        tier = (existing.get("tier") if active else None) or state.insurance_subs.get(key) or SHOP_INSURANCE_DEFAULT_TIER
     expires_at = int(base + days * SHOP_INSURANCE_DURATION_SECS)
-    state.insurance[key] = {"expires_at": expires_at, "protected_from": list(INSURANCE_PROTECTS)}
+    state.insurance[key] = {
+        "expires_at": expires_at,
+        "protected_from": list(INSURANCE_PROTECTS),
+        "tier": tier,
+    }
     return expires_at
 
 
@@ -210,22 +277,44 @@ async def renew_insurance_subs(uid: int) -> tuple[int, int]:
 
     Called only from sweep_insurance_subs, inside the synchronously-claimed
     last_insurance_sweep window — that's what makes it once-per-gameplay-day.
-    Deducts one day's premium and extends the bot-wide coverage by 24h. A
-    renewal the user can't afford is skipped (coverage lapses until they can
-    pay again); the subscription itself stays.
+    Deducts one day's premium at the subscription's tier and extends the
+    bot-wide coverage by 24h. A renewal the user can't afford is skipped
+    (coverage lapses until they can pay again); the subscription itself stays.
 
     Returns (total_charged, lapsed_count) — each 0 or one premium/lapse now
     that insurance is global, but callers still read both.
     """
-    from src.config import SHOP_INSURANCE_COST
-    if int(uid) not in state.insurance_subs:
+    tier = state.insurance_subs.get(int(uid))
+    if tier is None:
         return 0, 0
+    cost = insurance_tier_cost(tier)
     free = uid in state.godmode_users
-    if free or await deduct_balance(uid, SHOP_INSURANCE_COST):
-        extend_insurance(uid, 1)
+    if free or await deduct_balance(uid, cost):
+        extend_insurance(uid, 1, tier=tier)
         await save_insurance()
-        return 0 if free else SHOP_INSURANCE_COST, 0
+        return 0 if free else cost, 0
     return 0, 1
+
+
+async def insurance_refund(uid: int, loss: int, *, guild_id: int | None = None, holder_name: str | None = None) -> int:
+    """Pay the insured share of a crime loss back into `uid`'s wallet.
+
+    The refund is the tier's refund_pct of `loss`, capped at the tier's
+    refund_cap **per incident** — every robbery is covered on its own; there
+    is no daily or lifetime tally, and no state beyond the policy row. The
+    coins are minted by the "insurance company": the thief keeps the full
+    take. Returns the amount refunded (0 when uninsured or expired)."""
+    if loss <= 0:
+        return 0
+    entry = state.insurance.get(int(uid))
+    if not entry or entry.get("expires_at", 0) <= time.time():
+        return 0
+    info = insurance_tier_info(entry.get("tier"))
+    refund = min(int(loss) * int(info["refund_pct"]) // 100, int(info["refund_cap"]))
+    if refund <= 0:
+        return 0
+    await add_balance(uid, refund, guild_id=guild_id, holder_name=holder_name)
+    return refund
 
 
 async def sweep_insurance_subs() -> None:

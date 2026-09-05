@@ -120,28 +120,32 @@ async def save_insurance():
     under the sentinel guild_id=0. protected_from is stored as history_json and
     the expiry as expires_at. The old standalone shop_insurance table was
     dropped in migration 0032."""
+    from src.config import SHOP_INSURANCE_DEFAULT_TIER
     async with with_transaction() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='insurance'")
         for uid, entry in state.insurance.items():
             await cur.execute(
-                "INSERT INTO shop_effects (guild_id, user_id, effect_type, expires_at, history_json)"
-                " VALUES (0,%s,'insurance',%s,%s)",
+                "INSERT INTO shop_effects (guild_id, user_id, effect_type, expires_at, history_json, insurance_tier)"
+                " VALUES (0,%s,'insurance',%s,%s,%s)",
                 (int(uid), entry["expires_at"],
-                 json.dumps(entry.get("protected_from", []))),
+                 json.dumps(entry.get("protected_from", [])),
+                 entry.get("tier") or SHOP_INSURANCE_DEFAULT_TIER),
             )
 
 
 async def save_insurance_subs():
     """Persist insurance subscriptions (shop_effects, effect_type='insurance_sub',
     bot-wide under the sentinel guild_id=0). A subscription row has no expiry —
-    it lives until the user unsubscribes."""
+    it lives until the user unsubscribes — and carries the tier the 5am sweep
+    renews at (insurance_tier)."""
+    from src.config import SHOP_INSURANCE_DEFAULT_TIER
     async with with_transaction() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='insurance_sub'")
-        for uid in state.insurance_subs:
+        for uid, tier in state.insurance_subs.items():
             await cur.execute(
-                "INSERT INTO shop_effects (guild_id, user_id, effect_type)"
-                " VALUES (0,%s,'insurance_sub')",
-                (int(uid),),
+                "INSERT INTO shop_effects (guild_id, user_id, effect_type, insurance_tier)"
+                " VALUES (0,%s,'insurance_sub',%s)",
+                (int(uid), tier or SHOP_INSURANCE_DEFAULT_TIER),
             )
 
 
