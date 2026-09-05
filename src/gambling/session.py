@@ -20,7 +20,8 @@ coins"). It starts as NEW_THREAD_NAME. Results reach it through
 `record_gambling_event` at outcome time, and the thread-eligible ones pass
 their `channel_id`, so the tally updates on the result itself — nothing
 polls gambling_history. Discord only allows two name changes per channel
-per ten minutes, so renames are coalesced (see RENAME_MIN_INTERVAL).
+per ten minutes, so renames are budgeted (see RENAME_BUDGET / RENAME_WINDOW)
+and the name can lag the table during a hot streak.
 
 Registry: `state.gambling_threads` {thread_id: {owner_id, guild_id,
 parent_id, created_at, tally: {uid: {net, name}}}}, mirrored row-for-row
@@ -70,18 +71,23 @@ GAMBLING_THREAD_COMMAND_LINES: tuple[str, ...] = (
     "`!stop` — close the thread (owner or admin)",
 )
 
-# A day idle and Discord archives the thread; on_thread_update then drops
-# the registry row, so a revived thread is an ordinary one.
-GAMBLING_THREAD_AUTO_ARCHIVE_MINUTES = 1440
+# An hour idle and Discord archives the thread (gambling tables are
+# short-lived — the chess/AI threads keep their own longer windows);
+# on_thread_update then drops the registry row, so a revived thread is an
+# ordinary one. Discord only accepts 60, 1440, 4320 or 10080 here.
+GAMBLING_THREAD_AUTO_ARCHIVE_MINUTES = 60
 
 NEW_THREAD_NAME = "New Gambling Thread"
 THREAD_NAME_MAX = 100
 
 # Discord allows two name changes per channel per ten minutes, and a busy
-# table changes leader far more often than that. The first rename goes out
-# at once; while the budget is spent, one delayed rename waits this long
-# after the previous one and then applies whatever the tally says by then.
-RENAME_MIN_INTERVAL = 300.0
+# table changes leader far more often than that. Renames are budgeted to
+# exactly that: the first two go out at once; while the budget is spent,
+# one delayed rename waits for the oldest slot to free and then applies
+# whatever the tally says by then. A rename never runs on the result path
+# itself — discord.py would sleep out a 429 there and stall the game.
+RENAME_BUDGET = 2
+RENAME_WINDOW = 600.0
 
 
 class GamblingThreadOnly(commands.CheckFailure):
@@ -104,7 +110,8 @@ def opening_embed(owner) -> discord.Embed:
         "🎰 Gambling Thread",
         "Only these commands work in here:\n" + _command_list()
         + "\n\nAnyone can play. The thread renames itself after whoever is up the most"
-        " — or, if nobody is, down the most."
+        " — or, if nobody is, down the most. Discord allows two renames every"
+        " 10 minutes, so the name can lag the table."
         + f"\n{owner.mention} or an admin closes the table with `!stop`.",
         C_GOLD,
     )
@@ -129,6 +136,18 @@ def leader_title(row: dict) -> str | None:
     name = entry.get("name") or str(uid)
     suffix = f" {verb} {amount:,} coins"
     return name[:THREAD_NAME_MAX - len(suffix)] + suffix
+
+
+def _rename_delay(row: dict) -> float:
+    """Seconds until the next rename fits Discord's budget (0 = right now).
+    `_rename_times` holds when this thread's recent renames landed; entries
+    older than the window are trimmed as a side effect."""
+    now = time.monotonic()
+    recent = sorted(t for t in row.get("_rename_times", ()) if now - t < RENAME_WINDOW)
+    row["_rename_times"] = recent
+    if len(recent) < RENAME_BUDGET:
+        return 0.0
+    return max(0.0, recent[0] + RENAME_WINDOW - now)
 
 
 async def _try_create_gambling_thread(ctx: commands.Context, name: str):
@@ -194,7 +213,8 @@ async def close_gambling_thread(ctx: commands.Context) -> CloseResult | None:
     final = leader_title(row)
     if (
         final == getattr(ctx.channel, "name", None)
-        or time.monotonic() - row.get("_renamed_at", 0.0) < RENAME_MIN_INTERVAL
+        or final == row.get("_last_title")
+        or _rename_delay(row) > 0
     ):
         final = None
     await persistence.delete_gambling_thread(cid)
@@ -261,17 +281,16 @@ class GamblingSessionCog(commands.Cog):
         self._schedule_rename(channel_id)
 
     def _schedule_rename(self, thread_id: int) -> None:
-        """Rename now if the budget allows, else queue one delayed rename;
-        a queued rename reads the tally when it fires, so later results
-        need no task of their own."""
+        """Rename now if the budget allows, else queue one delayed rename.
+        A queued rename reads the tally when it fires (and checks again
+        after it lands), so later results need no task of their own."""
         row = state.gambling_threads.get(thread_id)
         if row is None:
             return
         task = row.get("_rename_task")
-        if task is not None and not task.done():
+        if task is not None and not task.done() and task is not asyncio.current_task():
             return
-        delay = max(0.0, row.get("_renamed_at", 0.0) + RENAME_MIN_INTERVAL - time.monotonic())
-        row["_rename_task"] = asyncio.create_task(self._rename_after(thread_id, delay))
+        row["_rename_task"] = asyncio.create_task(self._rename_after(thread_id, _rename_delay(row)))
 
     async def _rename_after(self, thread_id: int, delay: float) -> None:
         if delay > 0:
@@ -281,14 +300,21 @@ class GamblingSessionCog(commands.Cog):
             return  # closed while we waited
         title = leader_title(row)
         thread = self._thread(thread_id)
-        if title is None or thread is None or thread.name == title:
+        # _last_title covers the moment between our edit and the gateway
+        # echoing the new name back into thread.name.
+        if title is None or thread is None or title in (thread.name, row.get("_last_title")):
             return
         try:
             await thread.edit(name=title)
         except discord.HTTPException as e:
             log.warning("session: rename of thread %s failed (%s)", thread_id, type(e).__name__)
             return
-        row["_renamed_at"] = time.monotonic()
+        row["_last_title"] = title
+        row.setdefault("_rename_times", []).append(time.monotonic())
+        # Results that landed while the edit was in flight: line up the next
+        # one (it waits for a budget slot if both are spent).
+        if leader_title(row) != title:
+            self._schedule_rename(thread_id)
 
     # ── !session ─────────────────────────────────────────────────────────────
 

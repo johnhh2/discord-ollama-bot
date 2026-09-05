@@ -407,12 +407,18 @@ closing. Logic lives in `src/gambling/session.py`.
   (flip, slots, scratchoff, blackjack, race do) or its results are invisible
   to the thread name. The tally persists in `tally_json`.
 - **Renames are rate-limited by Discord** (two name edits per channel per
-  ten minutes) so they're coalesced: the first is immediate, later ones
-  collapse into one delayed rename `RENAME_MIN_INTERVAL` after the last,
-  which applies whatever the tally says when it fires. Never `await
+  ten minutes — `RENAME_BUDGET` / `RENAME_WINDOW`) so they're budgeted: the
+  first two go out at once, later ones collapse into one delayed rename
+  that waits for the oldest slot to free and applies whatever the tally
+  says when it fires; a rename re-checks the tally after it lands and
+  queues a follow-up if results arrived mid-flight. The name therefore
+  lags the table during a hot streak — expected, not a bug. Never `await
   thread.edit(name=...)` inline on a result path — discord.py sleeps out the
   429, which would stall the game. `close_gambling_thread` rides the final
   name on `cmd_stop`'s archive edit only when that budget allows.
+- Gambling threads auto-archive after an hour idle
+  (`GAMBLING_THREAD_AUTO_ARCHIVE_MINUTES = 60`); the chess and AI threads
+  keep their own longer windows.
 - One open thread per owner per guild. A row whose thread is gone from the
   guild cache (deleted, or archived while the bot was down) is stale and is
   dropped on the owner's next `!session`.

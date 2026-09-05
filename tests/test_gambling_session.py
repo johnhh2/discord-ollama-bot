@@ -11,7 +11,6 @@ non-owner refused, admin allowed, final name on the archive edit), the
 archive/delete listeners, and the boot-time load.
 """
 import asyncio
-import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -25,7 +24,7 @@ import src.permissions as _permissions
 import src.gambling.session as _session
 from src.gambling.session import (
     GamblingSessionCog, GamblingThreadOnly, GAMBLING_THREAD_COMMAND_LINES,
-    NEW_THREAD_NAME, RENAME_MIN_INTERVAL, leader_title,
+    GAMBLING_THREAD_AUTO_ARCHIVE_MINUTES, NEW_THREAD_NAME, leader_title,
 )
 from src.cogs.ai_cog import AICog
 from src.events import EventsCog
@@ -158,6 +157,9 @@ async def test_session_opens_thread_lists_commands_and_persists(db):
     kwargs = ctx.channel.create_thread.call_args.kwargs
     assert kwargs["type"] == discord.ChannelType.public_thread
     assert kwargs["name"] == NEW_THREAD_NAME
+    # Gambling tables are short-lived: an hour idle archives them (the
+    # chess/AI threads keep their own longer windows).
+    assert kwargs["auto_archive_duration"] == GAMBLING_THREAD_AUTO_ARCHIVE_MINUTES == 60
 
     # The thread's first message lists every allowed command, in order.
     thread = ctx.guild.threads[0]
@@ -366,29 +368,53 @@ async def test_results_elsewhere_and_zero_nets_leave_the_thread_alone():
     thread.edit.assert_not_awaited()
 
 
-async def test_renames_are_coalesced_to_discords_name_budget():
+async def test_renames_spend_discords_two_per_ten_minutes_then_queue_one():
     cog, thread, _ = _table()
     row = _state.gambling_threads[THREAD_ID]
 
+    # Two leader changes go out at once.
     await _result(1001, 500)
-    assert thread.edit.await_count == 1
     thread.name = "Alice gained 500 coins"
-
-    # Bob overtakes inside the budget window: no second edit yet, one
-    # delayed rename is queued, and further results don't queue more.
     await _result(1002, 900)
-    assert thread.edit.await_count == 1
+    thread.name = "Bob gained 900 coins"
+    assert [c.kwargs["name"] for c in thread.edit.await_args_list] == [
+        "Alice gained 500 coins", "Bob gained 900 coins",
+    ]
+
+    # The third inside the window is queued, and further results don't
+    # queue more.
+    await _result(1001, 1000)
+    assert thread.edit.await_count == 2
     task = row["_rename_task"]
     assert not task.done()
-    await _result(1001, 1000)
+    await _result(1002, 1000)
     assert row["_rename_task"] is task
 
     # When it fires it applies the tally as it stands then, not the one
     # that queued it.
     task.cancel()
     await cog._rename_after(THREAD_ID, 0.0)
-    thread.edit.assert_awaited_with(name="Alice gained 1,500 coins")
-    assert thread.edit.await_count == 2
+    thread.edit.assert_awaited_with(name="Bob gained 1,900 coins")
+    assert thread.edit.await_count == 3
+
+
+async def test_result_landing_mid_rename_queues_a_follow_up():
+    cog, thread, _ = _table()
+    row = _state.gambling_threads[THREAD_ID]
+
+    async def _edit(*, name):
+        thread.name = name
+        # A result lands while the edit is in flight.
+        row["tally"].setdefault(1002, {"net": 0, "name": "Bob"})["net"] = 900
+    thread.edit = AsyncMock(side_effect=_edit)
+
+    await _result(1001, 500)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert [c.kwargs["name"] for c in thread.edit.await_args_list] == [
+        "Alice gained 500 coins", "Bob gained 900 coins",
+    ]
 
 
 async def test_rename_is_skipped_when_the_name_already_matches():
@@ -480,10 +506,12 @@ async def test_stop_rides_the_final_name_on_the_archive_when_budget_allows(db):
     ctx = _thread_ctx(owner, guild=guild, thread=thread)
     row = _state.gambling_threads[THREAD_ID]
 
-    await _result(1002, 400)                   # immediate rename → "Bob gained 400 coins"
+    await _result(1002, 400)                   # → "Bob gained 400 coins"
     thread.name = "Bob gained 400 coins"
+    await _result(1001, 900)                   # → "Alice gained 900 coins"; budget spent
+    thread.name = "Alice gained 900 coins"
     thread.edit.reset_mock()
-    await _result(1001, 900)                   # inside the window: queued
+    await _result(1002, 1000)                  # Bob 1,400 — queued
     pending = row["_rename_task"]
     assert not pending.done()
 
@@ -495,12 +523,11 @@ async def test_stop_rides_the_final_name_on_the_archive_when_budget_allows(db):
     assert THREAD_ID not in _state.gambling_threads
 
     # Same close with the budget free: rename and archive in one edit.
-    _state.gambling_threads[THREAD_ID] = {**_row(1001), "tally": {1001: {"net": 900, "name": "Alice"}}}
-    _state.gambling_threads[THREAD_ID]["_renamed_at"] = time.monotonic() - RENAME_MIN_INTERVAL - 1
+    _state.gambling_threads[THREAD_ID] = {**_row(1001), "tally": {1001: {"net": 950, "name": "Alice"}}}
     thread.edit.reset_mock()
     await AICog(bot=None).cmd_stop.callback(AICog(bot=None), ctx)
     assert ctx.channel.edit.call_args.kwargs == {
-        "archived": True, "locked": True, "name": "Alice gained 900 coins",
+        "archived": True, "locked": True, "name": "Alice gained 950 coins",
     }
 
 
