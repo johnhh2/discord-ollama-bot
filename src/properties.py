@@ -8,11 +8,15 @@ table). The catalog below is the full board — 36 properties from 10k to 2m.
 Economics:
   - Revenue is 1.1% of purchase price per day, derived (never hand-typed):
     daily = cost * 11 // 1000. One invariant for the whole catalog.
-  - Revenue accrues per property from max(last payout, acquisition) and is
-    banked automatically with the owner's daily claim (!daily or the dailies
-    channel). Accrual is capped at PROPERTY_ACCRUAL_CAP_BASE (plus artifact
-    bonuses) — or one full day's portfolio revenue when that's larger, so
-    claiming daily always pays out in full.
+  - Revenue is counted in gameplay days (5am CT rollover), not real time:
+    every daily claim (!daily or the dailies channel) banks one full day of
+    portfolio revenue, however long since the last claim. A skipped day
+    isn't lost — it goes to the missed-day bank, one full day's revenue per
+    skipped claim, capped at PROPERTY_ACCRUAL_CAP_BASE (plus artifact
+    bonuses — or one full day's portfolio revenue when that's larger, so a
+    single skipped day always banks in full). The next claim pays today's
+    rent plus the bank; today's rent is never capped, so the two together
+    can exceed it.
   - A user owns at most PROPERTY_MAX_OWNED properties.
   - Owners can list a property for sale at any price; listings are global,
     so a deed listed in one server can be bought from any other.
@@ -28,7 +32,7 @@ from src import state
 # ── Tuning ───────────────────────────────────────────────────────────────────
 
 PROPERTY_MAX_OWNED = 5
-# Unredeemed revenue accrues up to this many coins (or one day's full
+# The missed-day bank holds up to this many coins (or one day's full
 # portfolio revenue, if greater). Artifacts add to it.
 PROPERTY_ACCRUAL_CAP_BASE = 10_000
 # Marketplace fee on player-to-player sales, paid by the seller out of the
@@ -241,9 +245,10 @@ def portfolio_daily_revenue(uid: int, *, boosted: bool = True) -> int:
 
 
 def accrual_cap(uid: int) -> int:
-    """Max unredeemed revenue: base 10k + artifact bonuses — or one full
-    day's (boosted) portfolio revenue when that's greater, so a daily
-    claimer always collects everything they earned."""
+    """Max the missed-day bank holds: base 10k + artifact bonuses — or one
+    full day's (boosted) portfolio revenue when that's greater, so a single
+    skipped day never loses coins to the cap. Only banked (skipped) days are
+    capped; today's own rent never is."""
     from src.artifacts import property_accrual_cap_bonus
     return max(
         PROPERTY_ACCRUAL_CAP_BASE + property_accrual_cap_bonus(uid),
@@ -251,48 +256,94 @@ def accrual_cap(uid: int) -> int:
     )
 
 
-def pending_property_revenue(uid: int, now: float = None) -> int:
-    """Accrued, uncollected revenue for `uid` — artifact-boosted and capped.
+def _rent_due(uid: int, now: float) -> tuple[int, int]:
+    """(today's rent, skipped-day rent) owed to `uid`, in base coins — before
+    artifact boosts and the bank cap. Pure read.
 
-    Pure read: mutates nothing. Each property accrues from
-    max(user's last payout, that property's acquisition), so a freshly
-    bought deed never pays backdated rent.
+    Revenue is counted in gameplay days (5am CT rollover), never in elapsed
+    seconds. A deed earns one day's revenue for every gameplay day from its
+    first unpaid day through today. The first unpaid day is the day after
+    the owner's last payout (property_paid_at) — or the deed's acquisition
+    day, if that's later. Today's day is "today's rent", paid in full by the
+    next claim; every earlier one is a skipped day that goes to the bank.
+    Hence a daily claimer's bank is always 0, nothing ever pays backdated
+    rent, and a deed bought after today's claim starts earning tomorrow.
     """
     props = owned_properties(uid)
     if not props:
-        return 0
-    if now is None:
-        now = time.time()
+        return 0, 0
+    from src.economy import gameplay_day
+    today = gameplay_day(now)
     user = state.economy["users"].get(str(uid), {})
     paid_at = float(user.get("property_paid_at", 0.0) or 0.0)
-    base = 0.0
+    last_paid_day = gameplay_day(paid_at) if paid_at > 0 else None
+    today_rent = 0
+    skipped_rent = 0
     for p in props:
         row = state.property_owners[p["id"]]
-        since = max(paid_at, float(row["acquired_at"]))
-        days = max(0.0, (now - since) / 86400.0)
-        base += property_daily_revenue(p["id"], row) * days
+        first_unpaid = gameplay_day(float(row["acquired_at"]))
+        if last_paid_day is not None:
+            first_unpaid = max(first_unpaid, last_paid_day + 1)
+        days = today - first_unpaid + 1
+        if days <= 0:
+            continue
+        rev = property_daily_revenue(p["id"], row)
+        today_rent += rev
+        skipped_rent += rev * (days - 1)
+    return today_rent, skipped_rent
+
+
+def pending_property_revenue(uid: int, now: float = None) -> int:
+    """The missed-day bank: revenue for gameplay days the owner skipped —
+    artifact-boosted and capped at accrual_cap. Always 0 for a daily
+    claimer; every skipped claim adds one full day of portfolio revenue.
+    Pure read: mutates nothing.
+    """
+    if now is None:
+        now = time.time()
+    _, skipped = _rent_due(uid, now)
+    if skipped <= 0:
+        return 0
     from src.artifacts import property_revenue_boosted
-    boosted = property_revenue_boosted(uid, int(base), len(props))
+    boosted = property_revenue_boosted(uid, skipped, owned_property_count(uid))
     return min(boosted, accrual_cap(uid))
 
 
-async def bank_property_revenue(uid: int, now: float = None) -> int:
-    """Bank the user's pending revenue: stamp property_paid_at and add the
-    coins. Returns the amount banked (0 for non-owners / nothing pending).
+def claimable_property_revenue(uid: int, now: float = None) -> int:
+    """What the next daily claim banks right now: today's full rent (never
+    capped) plus the missed-day bank (capped). 0 once today has been paid.
+    Pure read: mutates nothing.
+    """
+    if now is None:
+        now = time.time()
+    today_rent, _ = _rent_due(uid, now)
+    from src.artifacts import property_revenue_boosted
+    today = property_revenue_boosted(uid, today_rent, owned_property_count(uid))
+    return today + pending_property_revenue(uid, now)
 
-    The read + stamp happen synchronously before the add_balance await, so a
-    concurrent second claim sees a fresh timestamp and accrues ~0 (see
-    CLAUDE.md on per-user command races). Callers are responsible for the
+
+async def bank_property_revenue(uid: int, now: float = None) -> int:
+    """Settle property revenue with today's daily claim: stamp
+    property_paid_at and add today's rent plus the missed-day bank. Returns
+    the amount banked (0 when nothing is due).
+
+    The stamp lands synchronously before the add_balance await, so a
+    concurrent second claim computes today as already paid and banks 0 (see
+    CLAUDE.md on per-user command races). It lands even when nothing is due
+    — for a non-owner too — so a deed bought later today starts earning
+    tomorrow instead of counting today as a skipped day. Callers own the
     daily-claim gate; this only guards the revenue itself.
     """
     if now is None:
         now = time.time()
-    amount = pending_property_revenue(uid, now)
-    if amount <= 0:
+    amount = claimable_property_revenue(uid, now)
+    user = state.economy["users"].get(str(uid))
+    if user is None:
         return 0
-    user = state.economy["users"][str(uid)]
     prior_paid_at = user.get("property_paid_at", 0.0)
     user["property_paid_at"] = now                       # claim, sync
+    if amount <= 0:
+        return 0
     user["property_revenue_total"] = int(user.get("property_revenue_total", 0) or 0) + amount
     from src.economy import add_balance
     try:

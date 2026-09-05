@@ -111,8 +111,11 @@ class AssetsCog(commands.Cog):
         banked = int(state.economy["users"].get(str(uid), {}).get("property_revenue_total", 0) or 0)
         lines.append("")
         lines.append(f"**Portfolio value:** {portfolio_value(uid):,} 🪙 ({len(props)}/{PROPERTY_MAX_OWNED} properties)")
-        lines.append(f"**Daily revenue:** {portfolio_daily_revenue(uid):,} 🪙/day")
-        lines.append(f"**Unredeemed revenue:** {pending:,} / {cap:,} 🪙 — banked with your daily claim")
+        lines.append(f"**Daily revenue:** {portfolio_daily_revenue(uid):,} 🪙/day — one full day with every daily claim")
+        lines.append(
+            f"**Missed-day bank:** {pending:,} / {cap:,} 🪙 — a day's revenue per skipped claim, "
+            "paid on top of your next one"
+        )
         lines.append(f"**Revenue banked (lifetime):** {banked:,} 🪙")
         lines.append("")
         lines.append(_SUBCOMMANDS_HELP)

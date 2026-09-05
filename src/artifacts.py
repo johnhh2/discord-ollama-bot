@@ -99,7 +99,7 @@ ARTIFACTS: list[dict] = [
         "id": "property_cap_deed",
         "level": 40,
         "cost": ARTIFACT_PROPERTY_CAP_COST,
-        "effect": "Your unredeemed property revenue cap is 5,000 🪙 higher",
+        "effect": "Your missed-day property revenue bank holds 5,000 🪙 more",
         "max": 1,
         "property_accrual_cap_bonus": 5_000,
     },

@@ -336,6 +336,20 @@ def _ct_today_date() -> datetime.date:
     return now_ct.date()
 
 
+def gameplay_day(ts: float) -> int:
+    """Ordinal of the gameplay day (5am CT rollover) that Unix time `ts`
+    falls in. Consecutive days differ by exactly 1, so the difference of two
+    values counts the 5am resets between them — the unit property revenue
+    is paid in. Same boundary as _ct_today(): that one keys stored rows,
+    this one is for day arithmetic.
+    """
+    ts_ct = datetime.datetime.fromtimestamp(ts, ZoneInfo("America/Chicago"))
+    day = ts_ct.date()
+    if ts_ct.hour < DAILY_RESET_HOUR:
+        day -= datetime.timedelta(days=1)
+    return day.toordinal()
+
+
 def _calendar_today_date() -> datetime.date:
     """Calendar date in CT (rolls at midnight, NOT at the 5am gameplay
     boundary). Used by graph series whose disk rows are keyed by calendar

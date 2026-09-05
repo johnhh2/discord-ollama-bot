@@ -267,10 +267,18 @@ Rules when touching this system:
    synchronously-claimed `daily_date` window, which is what makes it
    once-per-gameplay-day and race-safe. Don't add a payout loop or a
    standalone collect command without moving that gate with it.
-3. **Accrual is capped** at `max(10k + cap artifacts, one day's boosted
-   portfolio revenue)` — a daily claimer never loses coins to the cap; a
-   lapsed claimer accrues at most the cap. Per-property accrual starts at
-   `max(property_paid_at, acquired_at)` so purchases never pay backdated rent.
+3. **Revenue is counted in gameplay days, not real time.** Every claim
+   banks one full day of portfolio revenue however long since the last one
+   (`claimable_property_revenue`); a skipped day adds one full day to the
+   missed-day bank (`pending_property_revenue`), which is capped at
+   `max(10k + cap artifacts, one day's boosted portfolio revenue)`. Today's
+   rent is never capped, so a claim after a skipped day can exceed the cap.
+   Day arithmetic goes through `economy.gameplay_day` (the `_ct_today`
+   boundary). A deed's first payable day is `max(day after
+   property_paid_at, acquisition day)` — no backdated rent, and a deed
+   bought after today's claim starts tomorrow. `bank_property_revenue`
+   stamps `property_paid_at` on every claim, owner or not, so that rule
+   holds.
 4. **Property revenue stays out of the dailies stake by default.** The
    dailies buttons stake the daily reward + scratchoffs; property revenue
    (which always banks with the claim) joins the stake only for users who

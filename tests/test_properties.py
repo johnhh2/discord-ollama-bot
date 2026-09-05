@@ -3,7 +3,9 @@ daily-claim payout integration, unique-deed buy races, the cross-server
 marketplace, and record wiring.
 """
 import asyncio
+import datetime
 import time
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -16,7 +18,7 @@ from src.properties import (
     PROPERTIES, PROPERTY_MAX_OWNED, PROPERTY_SALE_FEE_PCT,
     PROPERTY_ACCRUAL_CAP_BASE,
     find_property, daily_revenue, owned_property_count, portfolio_daily_revenue, accrual_cap, pending_property_revenue,
-    bank_property_revenue,
+    bank_property_revenue, claimable_property_revenue,
 )
 from src.cogs.assets_cog import AssetsCog
 
@@ -37,12 +39,13 @@ def _set_level(uid: int, display_level: int, gid: int = GID):
     _state.leveling.setdefault(str(gid), {})[str(uid)] = {"level": display_level - 1}
 
 
-async def _give_property(uid: int, pid: str, acquired_days_ago: float = 10.0):
+async def _give_property(uid: int, pid: str, acquired_days_ago: float = 10.0, acquired_at: float = None):
     """Directly install ownership (bypassing the shop) for revenue tests."""
     await _economy._ensure_user(uid)
-    now = time.time()
+    if acquired_at is None:
+        acquired_at = time.time() - acquired_days_ago * DAY
     row = {
-        "owner_id": uid, "acquired_at": now - acquired_days_ago * DAY,
+        "owner_id": uid, "acquired_at": acquired_at,
         "list_price": None, "listed_at": None,
         "upgraded": False, "custom_name": None,
     }
@@ -85,31 +88,97 @@ async def test_find_property_matches_name_and_id():
     assert find_property("no such place") is None
 
 
-# ── revenue accrual ──────────────────────────────────────────────────────────
+# ── revenue: gameplay days, not real time ────────────────────────────────────
 
-async def test_pending_revenue_accrues_daily_and_caps(db):
+CT = ZoneInfo("America/Chicago")
+# Fixed instants so the day math doesn't depend on when the suite runs: noon
+# CT sits mid-gameplay-day; 05:30 CT is just after the 5am rollover.
+NOON = datetime.datetime(2026, 6, 15, 12, 0, tzinfo=CT).timestamp()
+JUST_AFTER_RESET = datetime.datetime(2026, 6, 15, 5, 30, tzinfo=CT).timestamp()
+
+
+async def test_each_claim_pays_one_full_day_whatever_the_clock_says(db):
+    """Revenue is per gameplay day: a claim an hour after yesterday's (across
+    the 5am reset) still pays a full day and leaves the bank empty; once
+    today is paid, nothing more is due until the next reset."""
     uid = 9001
-    await _give_property(uid, "car_wash", acquired_days_ago=100.0)  # 20k → 220/day
-
-    now = time.time()
+    rev = daily_revenue(20_000)
+    await _give_property(uid, "car_wash", acquired_at=NOON - 100 * DAY)   # 20k → 220/day
     user = _state.economy["users"][str(uid)]
-    # Paid yesterday → one day accrued.
-    user["property_paid_at"] = now - DAY
-    assert pending_property_revenue(uid, now) == daily_revenue(20_000)
+    user["property_paid_at"] = JUST_AFTER_RESET - 3600      # 04:30 — the previous gameplay day
+    assert claimable_property_revenue(uid, JUST_AFTER_RESET) == rev
+    assert pending_property_revenue(uid, JUST_AFTER_RESET) == 0
+    # Paid at 05:30; 23 hours later (04:30) is still the same gameplay day.
+    user["property_paid_at"] = JUST_AFTER_RESET
+    assert claimable_property_revenue(uid, JUST_AFTER_RESET + 23 * 3600) == 0
+    assert pending_property_revenue(uid, JUST_AFTER_RESET + 23 * 3600) == 0
 
-    # Never paid since acquisition → accrual is capped at the base cap.
-    user["property_paid_at"] = 0.0
-    assert pending_property_revenue(uid, now) == PROPERTY_ACCRUAL_CAP_BASE
+
+async def test_skipped_days_fill_the_bank_one_full_day_each(db):
+    uid = 9002
+    rev = daily_revenue(20_000)
+    await _give_property(uid, "car_wash", acquired_at=NOON - 100 * DAY)
+    user = _state.economy["users"][str(uid)]
+    # Claimed yesterday → bank empty; today's rent is what the claim pays.
+    user["property_paid_at"] = NOON - DAY
+    assert pending_property_revenue(uid, NOON) == 0
+    assert claimable_property_revenue(uid, NOON) == rev
+    # Last claimed three days ago → two skipped days in the bank, paid on
+    # top of today's rent by the next claim.
+    user["property_paid_at"] = NOON - 3 * DAY
+    assert pending_property_revenue(uid, NOON) == 2 * rev
+    assert claimable_property_revenue(uid, NOON) == 3 * rev
+
+
+async def test_bank_caps_skipped_days_but_not_todays_rent(db):
+    uid = 9101
+    rev = daily_revenue(20_000)
+    await _give_property(uid, "car_wash", acquired_at=NOON - 100 * DAY)
+    user = _state.economy["users"][str(uid)]
+    user["property_paid_at"] = 0.0                    # never paid: 100 skipped days
+    assert 100 * rev > PROPERTY_ACCRUAL_CAP_BASE
+    assert pending_property_revenue(uid, NOON) == PROPERTY_ACCRUAL_CAP_BASE
+    # Today's rent rides on top of the full bank — together they exceed the cap.
+    assert claimable_property_revenue(uid, NOON) == PROPERTY_ACCRUAL_CAP_BASE + rev
 
 
 async def test_pending_revenue_never_backdates_before_acquisition(db):
-    uid = 9002
-    await _give_property(uid, "car_wash", acquired_days_ago=1.0)
+    uid = 9102
+    rev = daily_revenue(20_000)
+    # Last payout long ago, deed bought yesterday → yesterday is its only
+    # skipped day; the 49 days before it were never owned.
+    await _give_property(uid, "car_wash", acquired_at=NOON - DAY)
     user = _state.economy["users"][str(uid)]
-    # paid_at long before acquisition — accrual starts at acquisition.
-    user["property_paid_at"] = time.time() - 50 * DAY
-    now = time.time()
-    assert pending_property_revenue(uid, now) == daily_revenue(20_000)
+    user["property_paid_at"] = NOON - 50 * DAY
+    assert pending_property_revenue(uid, NOON) == rev
+    assert claimable_property_revenue(uid, NOON) == 2 * rev
+
+
+async def test_deed_bought_after_todays_claim_starts_earning_tomorrow(db):
+    uid = 9103
+    rev = daily_revenue(20_000)
+    await _give_property(uid, "car_wash", acquired_at=NOON)
+    user = _state.economy["users"][str(uid)]
+    user["property_paid_at"] = NOON - 3600                # today's claim, an hour before buying
+    assert claimable_property_revenue(uid, NOON) == 0
+    assert pending_property_revenue(uid, NOON) == 0
+    # Tomorrow: one day's rent and an empty bank — today wasn't skipped.
+    assert claimable_property_revenue(uid, NOON + DAY) == rev
+    assert pending_property_revenue(uid, NOON + DAY) == 0
+
+
+async def test_daily_claim_stamps_non_owners_too(db):
+    """A claim with no deeds still marks today paid, so a deed bought later
+    the same day starts tomorrow instead of counting today as skipped."""
+    uid = 9104
+    rev = daily_revenue(20_000)
+    await _economy._ensure_user(uid)
+    assert await bank_property_revenue(uid, NOON - 3600) == 0
+    assert _state.economy["users"][str(uid)]["property_paid_at"] == NOON - 3600
+    await _give_property(uid, "car_wash", acquired_at=NOON)
+    assert claimable_property_revenue(uid, NOON) == 0
+    assert claimable_property_revenue(uid, NOON + DAY) == rev
+    assert pending_property_revenue(uid, NOON + DAY) == 0
 
 
 async def test_accrual_cap_uses_daily_revenue_when_larger(db):
@@ -117,8 +186,8 @@ async def test_accrual_cap_uses_daily_revenue_when_larger(db):
     # Space Port: 2m → 22,000/day > 10k base cap.
     await _give_property(uid, "space_port")
     assert accrual_cap(uid) == daily_revenue(2_000_000)
-    # A big portfolio's cap is one full day of revenue — a daily claimer
-    # never loses coins to the cap.
+    # A big portfolio's cap is one full day of revenue — a single skipped
+    # day always banks in full.
     await _give_property(uid, "skyscraper")
     assert accrual_cap(uid) == daily_revenue(2_000_000) + daily_revenue(1_600_000)
 
@@ -493,7 +562,7 @@ async def test_portfolio_shows_daily_and_banked_revenue(db):
     assert "**Car Wash** (0/1)" in desc
     assert f"**Daily revenue:** {rev:,} 🪙/day" in desc
     assert f"**Revenue banked (lifetime):** {rev:,} 🪙" in desc
-    assert "**Unredeemed revenue:**" in desc
+    assert "**Missed-day bank:**" in desc
 
 
 # ── upgrades ─────────────────────────────────────────────────────────────────
@@ -524,11 +593,11 @@ async def test_upgrade_boosts_revenue_and_value(db):
     assert up_name == "Piercing Booth"
     assert property_daily_revenue("tattoo_parlor", row) == base_rev * (100 + up_boost) // 100
     assert property_value("tattoo_parlor", row) == 68_000 + up_cost
-    # Pending accrual uses the boosted rate.
+    # Today's rent uses the boosted rate.
     user = _state.economy["users"][str(uid)]
     now = time.time()
     user["property_paid_at"] = now - DAY
-    assert pending_property_revenue(uid, now) == base_rev * (100 + up_boost) // 100
+    assert claimable_property_revenue(uid, now) == base_rev * (100 + up_boost) // 100
 
 
 async def test_upgrade_command_charges_and_persists(db):
