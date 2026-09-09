@@ -25,6 +25,7 @@ from src.persistence import (
     insert_issue,
 )
 from src.guild_config import get_guild_cfg
+from src.discord_retry import is_transient_server_error
 from src.ai import (
     check_ollama_connected, keep_typing,
     stream_ollama, finalize, respond, ollama_complete,
@@ -563,6 +564,29 @@ class EventsCog(commands.Cog):
                     or ctx.command.qualified_name
                 usage = f"{prefix}{typed} {ctx.command.signature}".rstrip()
                 await ctx.send(f"❌ Usage: `{usage}`")
+            return
+        # A 503 from Discord's edge proxy is Discord's outage, not a bug in
+        # the command — and the send has already been retried (see
+        # src/discord_retry.py). Tell the user to try again and log a
+        # warning; no audit-log entry, no "⚠️ Command Error" report, no
+        # traceback. The reply is best-effort: if Discord is still down it
+        # fails too, and that must not surface as a second error.
+        original = getattr(error, "original", error)
+        if is_transient_server_error(original):
+            cmd_name = ctx.command.qualified_name if ctx.command is not None else "?"
+            logging.warning(
+                "discord_transient_error cmd=%s user=%s: %s", cmd_name, ctx.author.id, original,
+            )
+            if ctx.command is not None:
+                from src.metrics import command_invocations
+                command_invocations.labels(command=cmd_name, outcome="error").inc()
+            try:
+                await ctx.send(
+                    "⚠️ Discord returned a server error. Please try again in a moment.",
+                    silent=False,
+                )
+            except (discord.HTTPException, aiohttp.ClientError, OSError):
+                pass
             return
         state.audit_log.append({
             "time": time.time(),

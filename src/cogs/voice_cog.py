@@ -4,6 +4,7 @@ import time
 import discord
 from discord.ext import commands
 
+from src.discord_retry import send_dm
 from src.helpers import emb, MemberConverter, C_GREEN, C_RED, C_GREY, C_GOLD
 from src.permissions import requires_perm
 from src.persistence import (
@@ -320,7 +321,7 @@ class VoiceCog(commands.Cog):
                     continue
 
             try:
-                await user.send(embed=emb(
+                await send_dm(user, embed=emb(
                     "🔔 Voice Channel Active",
                     f"**{member.display_name}** just joined **{channel.name}** "
                     f"in **{channel.guild.name}**.",

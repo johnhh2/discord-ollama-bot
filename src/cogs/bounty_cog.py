@@ -47,6 +47,7 @@ import time
 import discord
 from discord.ext import commands, tasks
 
+from src.discord_retry import send_dm
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_GREY,
     parse_int_amount, parse_duration,
@@ -205,7 +206,7 @@ class BountyCog(commands.Cog):
         """DM `embed` to a user and seed `reactions`. None if DMs are closed."""
         try:
             user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
-            dm = await user.send(embed=embed)
+            dm = await send_dm(user, embed=embed)
             for r in reactions:
                 await dm.add_reaction(r)
             return dm

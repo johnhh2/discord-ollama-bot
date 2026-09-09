@@ -10,6 +10,7 @@ import aiohttp
 import discord
 from discord.ext import commands
 
+from src.discord_retry import send_dm
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_BLUE, C_GREY,
     send_ephemeral, toggle_member_role, get_memory_mb, format_uptime, _log_audit,
@@ -1657,7 +1658,7 @@ class UtilityCog(commands.Cog):
             # leading the user to the admin-only bug-report channel.
             body = f"Your {label} has been marked **completed**."
         try:
-            await user.send(embed=emb("✅ Resolved", body, C_GREEN))
+            await send_dm(user, embed=emb("✅ Resolved", body, C_GREEN))
         except (discord.Forbidden, discord.HTTPException) as e:
             logging.info(f"[notify-complete] could not DM reporter {reporter_id}: {e}")
 

@@ -569,6 +569,32 @@ Then `asyncio.gather(invoke(), invoke())` actually interleaves at the yield, exp
 
 Module-local imports (e.g. `from src.economy import add_balance` at the top of `src/cogs/economy_cog.py`) create a binding the conftest stubs don't reach — patch `src.cogs.economy_cog.add_balance`, not just `src.economy.add_balance`.
 
+## Discord 503s: retried on the bot's own send paths, reported as a hiccup
+
+discord.py retries 500/502/504/524 five times internally but raises
+`DiscordServerError` on the *first* 503 — the code Discord's edge proxy
+returns when it can't reach a backend ("upstream connect error ..."). One
+such blip on one reply used to file a "⚠️ Command Error" report against
+whatever command was replying. `src/discord_retry.py` handles it:
+
+- **`SilentContext.send` (every `ctx.send`) and `send_dm` retry a 503**
+  on a short increasing schedule (`RETRY_DELAYS_SECS`: 1 s, then 3 s, three
+  attempts). Only 503 — the library already covers the other 5xx, and a 4xx
+  is the bot's own fault. Keep the schedule short: the user is waiting in
+  chat, and a command that sleeps holds whatever it holds (`_crime_active`
+  slots, blackjack hands, chess placeholders — see Concurrency above).
+- **Sends with `file=`/`files=` are never retried.** discord.py closes every
+  `File` when a send returns, so a second call would fail on closed handles.
+- **Proactive DMs go through `send_dm(user, ...)`**, not `user.send(...)`
+  (bounty, bug-report resolution and voice pings do). `Forbidden` and every
+  other error propagate unchanged, so existing `except` clauses still apply.
+- **`on_command_error` treats a 503 that survived the retries as Discord's
+  outage**: a warning log line, a best-effort "try again" reply, no
+  audit-log entry, no bug report, no traceback. Any other 5xx still takes
+  the bug-report path.
+
+Coverage: [tests/test_discord_retry.py](tests/test_discord_retry.py).
+
 ## Docker
 
 ```bash

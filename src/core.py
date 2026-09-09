@@ -7,6 +7,7 @@ import discord
 from discord.ext import commands
 
 from src.config import DISCORD_TOKEN
+from src.discord_retry import send_with_retry
 
 # Login-time 429 backoff. discord.py's internal 5-retry-then-raise is fine for
 # normal usage but turns container restart policies into a tight crash-loop
@@ -60,10 +61,16 @@ class SilentContext(commands.Context):
 
     channel.send / member.send / user.send are unaffected (different code
     paths), so proactive announcements and DMs naturally stay loud.
+
+    The send also retries a transient 503 from Discord's edge (1 s, then
+    3 s) unless it carries an attachment — see src/discord_retry.py.
     """
     async def send(self, content=None, **kwargs):
         kwargs.setdefault("silent", True)
-        return await super().send(content, **kwargs)
+        parent_send = super().send  # bind here: zero-arg super() can't resolve inside the retry closure
+        cmd = getattr(self, "command", None)
+        what = f"ctx.send cmd={getattr(cmd, 'qualified_name', None) or '?'}"
+        return await send_with_retry(parent_send, content, what=what, **kwargs)
 
 
 class Bot(commands.Bot):
