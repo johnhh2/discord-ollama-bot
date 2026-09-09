@@ -1127,7 +1127,9 @@ _FEATURE_REQUEST_HINT_TITLE = "📖 Feature Requests"
 _FEATURE_REQUEST_HINT_BODY = (
     "Submit feature ideas with **`!featurerequest <description>`**.\n\n"
     "A bot admin will react ✅ to accept (an internal feature ticket is then "
-    "created and tracked here) or ❌ to reject."
+    "created and tracked here) or ❌ to reject.\n\n"
+    "React 👀 on any request to watch it — you'll get a DM when it's "
+    "completed or rejected, even if it isn't yours."
 )
 
 

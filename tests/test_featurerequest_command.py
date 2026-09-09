@@ -67,7 +67,7 @@ async def test_featurerequest_no_channel_configured_warns(db):
 
 async def test_featurerequest_happy_path_persists_and_reacts(db):
     """Configured channel → embed posted, row persisted with kind/status
-    open, and ✅/❌ reactions seeded in that order."""
+    open, and ✅/❌/👀 reactions seeded in that order."""
     posted = FakeMessage(message_id=6000)
     posted.channel = FakeTextChannel(ch_id=8888)
     log_chan = FakeTextChannel(ch_id=8888)
@@ -88,7 +88,7 @@ async def test_featurerequest_happy_path_persists_and_reacts(db):
     assert row["description"] == "please add X"
     assert row["feature_issue_id"] is None
     reactions = [c.args[0] for c in posted.add_reaction.await_args_list]
-    assert reactions == ["✅", "❌"]
+    assert reactions == ["✅", "❌", "👀"]
 
 
 async def test_featurerequest_empty_description_shows_usage(db):

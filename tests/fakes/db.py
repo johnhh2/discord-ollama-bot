@@ -78,6 +78,7 @@ _TABLE_PKS = {
     "daily_counters": ("day", "counter"),
     "lottery_ticket_grants": ("guild_id", "user_id"),
     "property_owners": ("property_id",),
+    "feature_request_watchers": ("message_id", "user_id"),
 }
 
 

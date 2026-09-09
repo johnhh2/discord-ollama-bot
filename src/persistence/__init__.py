@@ -189,6 +189,9 @@ from src.persistence.feature_requests import (  # noqa: F401
     get_feature_request_by_feature_id,
     update_feature_request_status,
     link_feature_to_request,
+    add_feature_request_watcher,
+    remove_feature_request_watcher,
+    list_feature_request_watchers,
 )
 from src.persistence.init import init_db_state  # noqa: F401
 

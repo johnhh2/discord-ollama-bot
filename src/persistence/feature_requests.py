@@ -91,3 +91,40 @@ async def link_feature_to_request(message_id: int, feature_issue_id: int) -> Non
             "UPDATE feature_requests SET feature_issue_id=%s WHERE message_id=%s",
             (feature_issue_id, message_id),
         )
+
+
+# ── 👀 watchers ──────────────────────────────────────────────────────────────
+# Users following a request they didn't file. The requester is notified on
+# completion / rejection without a row; these rows extend the same DMs to
+# anyone who reacted 👀. Keyed by the request embed's message_id so the raw
+# reaction handlers can add/remove straight from the payload.
+
+async def add_feature_request_watcher(message_id: int, user_id: int) -> None:
+    """Idempotent: re-watching an already-watched request is a no-op."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "INSERT INTO feature_request_watchers (message_id, user_id)"
+            " VALUES (%s,%s)"
+            " ON DUPLICATE KEY UPDATE user_id=VALUES(user_id)",
+            (message_id, user_id),
+        )
+
+
+async def remove_feature_request_watcher(message_id: int, user_id: int) -> None:
+    async with with_cursor() as cur:
+        await cur.execute(
+            "DELETE FROM feature_request_watchers WHERE message_id=%s AND user_id=%s",
+            (message_id, user_id),
+        )
+
+
+async def list_feature_request_watchers(message_id: int) -> list[int]:
+    """User ids watching the request, in the order they started watching."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT user_id FROM feature_request_watchers WHERE message_id=%s"
+            " ORDER BY created_at, user_id",
+            (message_id,),
+        )
+        rows = await cur.fetchall()
+    return [int(r[0]) for r in rows]
