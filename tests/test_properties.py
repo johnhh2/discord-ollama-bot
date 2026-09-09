@@ -197,7 +197,7 @@ async def test_cap_artifact_raises_accrual_cap(db):
     await _give_property(uid, "car_wash")
     assert accrual_cap(uid) == PROPERTY_ACCRUAL_CAP_BASE
     _give_artifact(uid, "property_cap_deed")
-    assert accrual_cap(uid) == PROPERTY_ACCRUAL_CAP_BASE + 5_000
+    assert accrual_cap(uid) == PROPERTY_ACCRUAL_CAP_BASE + 10_000
 
 
 async def test_mogul_artifact_boosts_by_5pct_per_property(db):
@@ -209,6 +209,21 @@ async def test_mogul_artifact_boosts_by_5pct_per_property(db):
     _give_artifact(uid, "property_mogul")
     # 2 properties → +10%.
     assert portfolio_daily_revenue(uid) == int(base * 1.1)
+
+
+async def test_mogul_artifact_caps_at_25pct(db):
+    """+5% per deed tops out at +25% — the ownership cap's worth — and never
+    climbs past it however many deeds the boost is asked about."""
+    from src.artifacts import property_revenue_boosted, property_revenue_pct
+    uid = 9008
+    _give_artifact(uid, "property_mogul")
+    assert property_revenue_pct(uid, PROPERTY_MAX_OWNED) == 25
+    assert property_revenue_pct(uid, PROPERTY_MAX_OWNED + 3) == 25
+    assert property_revenue_boosted(uid, 1_000, PROPERTY_MAX_OWNED + 3) == 1_250
+    # Below the cap it's still linear.
+    assert property_revenue_pct(uid, 3) == 15
+    # Without the artifact there's no boost at any count.
+    assert property_revenue_pct(9009, PROPERTY_MAX_OWNED) == 0
 
 
 async def test_bank_property_revenue_pays_and_stamps(db):
@@ -626,6 +641,37 @@ async def test_upgrade_rolls_back_on_insufficient_funds(db):
     await AssetsCog.assets_upgrade.callback(cog, _ctx(uid), name="Tattoo Parlor")
     assert _state.property_owners["tattoo_parlor"]["upgraded"] is False
     assert await get_balance(uid) == 10
+
+
+async def test_upgrade_discount_artifact_charges_less_but_folds_full_cost(db):
+    """The level-45 artifact takes 20% off what !assets upgrade charges; the
+    deed's value still absorbs the full catalog cost, so the discount can't
+    be flipped to the bank for a profit."""
+    from src.properties import PROPERTY_UPGRADES, property_value
+    from src.artifacts import property_upgrade_cost
+    uid = 9074
+    _set_level(uid, 50)
+    await _give_property(uid, "tattoo_parlor")   # 68k
+    _, up_cost, _ = PROPERTY_UPGRADES["tattoo_parlor"]
+    _give_artifact(uid, "property_upgrade_discount")
+    discounted = up_cost - up_cost * 20 // 100
+    assert property_upgrade_cost(uid, up_cost) == discounted
+    await add_balance(uid, discounted + 1_000)
+
+    cog = AssetsCog(bot=None)
+    ctx = _ctx(uid)
+    # The listing shows the discounted price.
+    await AssetsCog.assets_upgrade.callback(cog, ctx, name=None)
+    assert f"{discounted:,} 🪙" in ctx.sent_embeds[-1].description
+
+    await AssetsCog.assets_upgrade.callback(cog, ctx, name="Tattoo Parlor")
+    row = _state.property_owners["tattoo_parlor"]
+    assert row["upgraded"] is True
+    assert await get_balance(uid) == 1_000
+    assert property_value("tattoo_parlor", row) == 68_000 + up_cost
+    # A discounted upgrade isn't affordable at the full price — no artifact,
+    # no discount.
+    assert property_upgrade_cost(9075, up_cost) == up_cost
 
 
 async def test_upgrade_value_feeds_property_record(db):

@@ -24,6 +24,10 @@ Economics:
 Artifact hooks (see src/artifacts.py):
     property_accrual_cap_bonus       — flat increase to the accrual cap
     property_revenue_pct_per_property — % revenue boost per property owned
+                                        (capped by property_revenue_pct_cap)
+    property_upgrade_discount_pct    — % off the upgrade price charged in
+                                        !assets upgrade; property_value still
+                                        folds in the upgrade's full cost
 """
 import time
 

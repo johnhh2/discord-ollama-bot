@@ -348,8 +348,8 @@ async def build_series_economy() -> SeriesData:
     now = _time.time()
     live_wallet = sum(u.get("balance", 0) for u in state.economy["users"].values())
     live_savings = int(sum(
-        e["amount"] * savings_growth(e["deposited_at"], now)
-        for u in state.economy["users"].values()
+        e["amount"] * savings_growth(e["deposited_at"], now, int(uid_str))
+        for uid_str, u in state.economy["users"].items()
         for e in u.get("savings", [])
     ))
     # Every owned deed's book value (upgrades included), regardless of owner.
@@ -924,7 +924,7 @@ async def build_admin_series(
         for uid_str, user in state.economy["users"].items():
             wallet = user.get("balance", 0)
             savings = int(sum(
-                e["amount"] * savings_growth(e["deposited_at"], now)
+                e["amount"] * savings_growth(e["deposited_at"], now, int(uid_str))
                 for e in user.get("savings", [])
             ))
             if field == "wallet":

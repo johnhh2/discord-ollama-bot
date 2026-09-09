@@ -339,7 +339,11 @@ Rules when touching this system:
    value: owners have paid for them. A bought upgrade folds its cost into
    `property_value` (records, snapshots, bank buyback) and its boost into
    that deed's `property_daily_revenue`; both travel with the deed on a
-   market sale, as does the owner's custom name (`!assets rename`).
+   market sale, as does the owner's custom name (`!assets rename`). The
+   upgrade-discount artifact (`artifacts.property_upgrade_cost`) only
+   shrinks the price `!assets upgrade` charges — the **full** catalog cost
+   still folds into `property_value`, so the bank buyback (75% of value)
+   can't turn the discount into a profit.
 9. **The bank buyback is the guaranteed exit.** Listing at ≤75% of value
    triggers a confirm-gated instant bank purchase at 75% of value
    (`PROPERTY_BANK_BUYBACK_PCT`), deleting the row (deed reverts to
@@ -350,6 +354,40 @@ Rules when touching this system:
     mirrors `state.property_owners[pid]` in one shot so a call site can't
     silently drop a column (listing, upgrade, custom name). Keep it that
     way when adding fields.
+
+## Artifacts (!artifacts): permanent per-user effects
+
+The catalog is `ARTIFACTS` in `src/artifacts.py`; every effect is read
+through a helper there (`bail_cost`, `scratchoff_daily_cap`,
+`property_revenue_boosted`, …), never by poking the payload dict from a
+command. Ownership is global per user (`state.user_artifacts`), and since
+migration 0067 the first purchase time is kept too
+(`state.user_artifact_acquired_at`, written by the `!artifacts buy` claim
+block and `save_user_artifact`'s first insert only).
+
+- **Effects that change a rate must not act retroactively.** The savings
+  artifact raises the daily rate from `SAVINGS_DAILY_MULT` to
+  `ARTIFACT_SAVINGS_DAILY_MULT` (both in `src/config.py`) **from its
+  acquisition instant** — `savings_growth(deposited_at, now, uid)` is
+  piecewise in time, the same way the 2026-08-26 rate cut was grandfathered.
+  Applying the boost to a deposit's whole history would let a 200k artifact
+  re-price months of interest. Every savings read path passes the
+  depositor's `uid`; a row with no acquisition time (pre-0067) gets **no**
+  boost rather than a retroactive one. Add a new time-dependent artifact
+  the same way: a boundary from `artifact_acquired_at`, fail-safe to "no
+  effect" when it's missing.
+- **The mogul boost is capped.** `property_revenue_pct` is +5% per owned
+  deed up to `property_revenue_pct_cap` (25%, which is exactly
+  `PROPERTY_MAX_OWNED` deeds). Keep the cap in the payload so the catalog
+  copy and the math can't drift.
+- **Level and cost live in the catalog, not the tests.** Levels 5–50 in
+  5-step increments; two artifacts may share a level (both property deeds
+  sit at 40). Existing tests assert on the 🔒 markers by level, not by list
+  index — `!artifacts buy <n>` numbers shift whenever an entry is inserted.
+
+Coverage: [tests/test_artifacts.py](tests/test_artifacts.py), the artifact
+blocks of [tests/test_properties.py](tests/test_properties.py) and the
+savings tests in [tests/test_economy_flows.py](tests/test_economy_flows.py).
 
 ## Shop edits touch bot-created roles and channels only
 

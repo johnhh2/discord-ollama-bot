@@ -67,6 +67,84 @@ async def test_savings_rate_change_grandfathers_old_interest(db, monkeypatch):
     assert abs(value - expected) < 0.01
 
 
+def _give_savings_artifact(uid: int, acquired_at: float):
+    _state.user_artifacts.setdefault(uid, {})["savings_rate_boost"] = 1
+    _state.user_artifact_acquired_at.setdefault(uid, {})["savings_rate_boost"] = acquired_at
+
+
+async def test_savings_artifact_boosts_rate_from_purchase_only(db, monkeypatch):
+    """The savings artifact switches a deposit to 0.8%/day at the instant it
+    was bought. The 0.6% days before that are kept as earned — nothing is
+    re-priced."""
+    uid = 8007
+    await _economy.add_balance(uid, 1000)
+    t0 = _economy.SAVINGS_RATE_CHANGE_TS + 86400.0
+    times = [t0]
+    monkeypatch.setattr(_economy.time, "time", lambda: times[0])
+    await _economy.add_savings(uid, 100)
+
+    # Ten days in, buy the artifact; read ten days after that.
+    _give_savings_artifact(uid, t0 + 10 * 86400.0)
+    times[0] = t0 + 20 * 86400.0
+    value = await _economy.get_savings_value(uid)
+    expected = 100 * (1.006 ** 10) * (1.008 ** 10)
+    assert abs(value - expected) < 0.01
+    # Before the purchase instant nothing is boosted.
+    assert _economy.savings_growth(t0, t0 + 5 * 86400.0, uid) == pytest.approx(1.006 ** 5)
+    # The display rate follows the artifact.
+    assert _economy.user_savings_daily_pct(uid) == "0.80%"
+    assert _economy.user_savings_daily_pct(8008) == "0.60%"
+
+
+async def test_savings_artifact_bought_before_deposit_boosts_whole_deposit(db, monkeypatch):
+    uid = 8009
+    await _economy.add_balance(uid, 1000)
+    t0 = _economy.SAVINGS_RATE_CHANGE_TS + 86400.0
+    _give_savings_artifact(uid, t0 - 86400.0)
+    times = [t0]
+    monkeypatch.setattr(_economy.time, "time", lambda: times[0])
+    await _economy.add_savings(uid, 100)
+    times[0] = t0 + 30 * 86400.0
+    value = await _economy.get_savings_value(uid)
+    assert abs(value - 100 * (1.008 ** 30)) < 0.01
+
+
+async def test_savings_artifact_without_uid_or_timestamp_is_base_rate(db):
+    """A read path that forgets the uid, or a row with no acquisition time,
+    sees the base rate — the fail-safe direction."""
+    uid = 8010
+    t0 = _economy.SAVINGS_RATE_CHANGE_TS + 86400.0
+    _state.user_artifacts[uid] = {"savings_rate_boost": 1}   # no timestamp
+    assert _economy.savings_growth(t0, t0 + 10 * 86400.0, uid) == pytest.approx(1.006 ** 10)
+    _give_savings_artifact(uid, t0)
+    assert _economy.savings_growth(t0, t0 + 10 * 86400.0) == pytest.approx(1.006 ** 10)
+    assert _economy.savings_growth(t0, t0 + 10 * 86400.0, uid) == pytest.approx(1.008 ** 10)
+
+
+async def test_withdraw_uses_boosted_value(db, monkeypatch):
+    """remove_savings values deposits at the owner's rate, so the boosted
+    interest is withdrawable — and the leftover principal keeps compounding
+    at the boosted rate."""
+    uid = 8011
+    await _economy.add_balance(uid, 1000)
+    t0 = _economy.SAVINGS_RATE_CHANGE_TS + 86400.0
+    _give_savings_artifact(uid, t0)
+    times = [t0]
+    monkeypatch.setattr(_economy.time, "time", lambda: times[0])
+    await _economy.add_savings(uid, 1000)
+    times[0] = t0 + 100 * 86400.0
+    boosted_value = int(1000 * (1.008 ** 100))
+    base_value = int(1000 * (1.006 ** 100))
+    assert boosted_value > base_value
+    # More than the base-rate value, less than the boosted one: only the
+    # boosted valuation can cover it.
+    ok = await _economy.remove_savings(uid, base_value + 1)
+    assert ok is True
+    assert await _economy.get_balance(uid) == base_value + 1
+    remaining = await _economy.get_savings_value(uid)
+    assert abs(remaining - (boosted_value - (base_value + 1))) < 1.5
+
+
 async def test_savings_insufficient_funds_returns_false(db, monkeypatch):
     uid = 8002
     await _economy.add_balance(uid, 50)

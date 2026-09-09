@@ -7,7 +7,11 @@ from zoneinfo import ZoneInfo
 import discord
 
 from src import state
-from src.config import OLLAMA_MODEL, DAILY_RESET_HOUR, LOTTERY_SEED_POOL
+from src.config import (
+    OLLAMA_MODEL, DAILY_RESET_HOUR, LOTTERY_SEED_POOL,
+    SAVINGS_DAILY_MULT, ARTIFACT_SAVINGS_DAILY_MULT,
+)
+from src.artifacts import savings_boost_since
 from src.persistence import (
     save_economy, save_insurance, try_set_record,
     load_balance_history, save_balance_history,
@@ -551,11 +555,13 @@ def next_daily_reset_ts(now_ct: "datetime.datetime | None" = None) -> int:
 
 
 # ── Savings interest ─────────────────────────────────────────────────────────
-# 0.6% compound per day — a bit over half the property revenue rate
-# (1.1% of cost per day, see PROPERTY_DAILY_REVENUE_PERMILLE).
-SAVINGS_DAILY_MULT = 1.006
-# User-facing rate string — keeps help copy in lockstep with the math.
+# 0.6% compound per day (SAVINGS_DAILY_MULT, src/config.py) — a bit over
+# half the property revenue rate (1.1% of cost per day, see
+# PROPERTY_DAILY_REVENUE_PERMILLE). The savings artifact lifts a user to
+# ARTIFACT_SAVINGS_DAILY_MULT (0.8%) from the instant it's bought.
+# User-facing rate strings — keep help copy in lockstep with the math.
 SAVINGS_DAILY_PCT = f"{(SAVINGS_DAILY_MULT - 1.0) * 100:.2f}%"
+ARTIFACT_SAVINGS_DAILY_PCT = f"{(ARTIFACT_SAVINGS_DAILY_MULT - 1.0) * 100:.2f}%"
 # Deposits accrued 1%/day before the 2026-08-26 rate cut. Interest earned
 # before the changeover is kept: the growth factor switches rate at the
 # boundary instead of recomputing history at the new rate.
@@ -563,16 +569,38 @@ _LEGACY_SAVINGS_DAILY_MULT = 1.01
 SAVINGS_RATE_CHANGE_TS = 1787702400.0  # 2026-08-26 00:00:00 UTC
 
 
-def savings_growth(deposited_at: float, now: float | None = None) -> float:
+def savings_growth(deposited_at: float, now: float | None = None,
+                   uid: int | None = None) -> float:
     """Compound growth factor for one savings deposit from deposited_at to now.
-    The single formula for savings value — every read path must use it."""
+    The single formula for savings value — every read path must use it, and
+    pass the depositor's `uid` so their savings artifact counts.
+
+    The rate is piecewise in time: the legacy 1%/day up to the 2026-08-26
+    cut, the base rate after it, and the artifact's boosted rate from the
+    moment the artifact was bought (savings_boost_since). Each boundary
+    switches the rate going forward; interest already earned is never
+    recomputed — so buying the artifact can't re-price a deposit's past.
+    """
     if now is None:
         now = time.time()
     if now <= deposited_at:
         return 1.0
     legacy_days = max(0.0, (min(now, SAVINGS_RATE_CHANGE_TS) - deposited_at) / 86400.0)
-    new_days = max(0.0, (now - max(deposited_at, SAVINGS_RATE_CHANGE_TS)) / 86400.0)
-    return (_LEGACY_SAVINGS_DAILY_MULT ** legacy_days) * (SAVINGS_DAILY_MULT ** new_days)
+    boost_since = savings_boost_since(uid) if uid is not None else None
+    base_start = max(deposited_at, SAVINGS_RATE_CHANGE_TS)
+    boost_start = now if boost_since is None else max(base_start, boost_since)
+    base_days = max(0.0, (min(now, boost_start) - base_start) / 86400.0)
+    boost_days = max(0.0, (now - boost_start) / 86400.0)
+    return (
+        (_LEGACY_SAVINGS_DAILY_MULT ** legacy_days)
+        * (SAVINGS_DAILY_MULT ** base_days)
+        * (ARTIFACT_SAVINGS_DAILY_MULT ** boost_days)
+    )
+
+
+def user_savings_daily_pct(uid: int) -> str:
+    """The daily rate this user's savings accrue at right now, for display."""
+    return ARTIFACT_SAVINGS_DAILY_PCT if savings_boost_since(uid) is not None else SAVINGS_DAILY_PCT
 
 
 async def get_savings_value(uid: int) -> float:
@@ -582,7 +610,7 @@ async def get_savings_value(uid: int) -> float:
     now = time.time()
     total = 0.0
     for entry in deposits:
-        total += entry["amount"] * savings_growth(entry["deposited_at"], now)
+        total += entry["amount"] * savings_growth(entry["deposited_at"], now, uid)
     return total
 
 
@@ -605,13 +633,13 @@ async def remove_savings(uid: int, amount: int) -> bool:
     user = state.economy["users"][str(uid)]
     deposits = user.get("savings", [])
     now = time.time()
-    current_value = int(sum(e["amount"] * savings_growth(e["deposited_at"], now) for e in deposits))
+    current_value = int(sum(e["amount"] * savings_growth(e["deposited_at"], now, uid) for e in deposits))
     if current_value < amount:
         return False
     remaining = float(amount)
     new_deposits = []
     for entry in deposits:
-        factor = savings_growth(entry["deposited_at"], now)
+        factor = savings_growth(entry["deposited_at"], now, uid)
         val = entry["amount"] * factor
         if remaining <= 0:
             new_deposits.append(entry)
@@ -641,14 +669,14 @@ async def seize_from_savings(uid: int, max_amount: int) -> int:
     user = state.economy["users"][str(uid)]
     deposits = user.get("savings", [])
     now = time.time()
-    current_value = int(sum(e["amount"] * savings_growth(e["deposited_at"], now) for e in deposits))
+    current_value = int(sum(e["amount"] * savings_growth(e["deposited_at"], now, uid) for e in deposits))
     if current_value <= 0:
         return 0
     seized = min(max_amount, current_value)
     remaining = float(seized)
     new_deposits = []
     for entry in deposits:
-        factor = savings_growth(entry["deposited_at"], now)
+        factor = savings_growth(entry["deposited_at"], now, uid)
         val = entry["amount"] * factor
         if remaining <= 0:
             new_deposits.append(entry)
@@ -682,7 +710,7 @@ async def snapshot_balances():
     for uid_str, user in state.economy["users"].items():
         wallet = user.get("balance", 0)
         deps = user.get("savings", [])
-        savings = int(sum(e["amount"] * savings_growth(e["deposited_at"], now) for e in deps))
+        savings = int(sum(e["amount"] * savings_growth(e["deposited_at"], now, int(uid_str)) for e in deps))
         snapshot[uid_str] = {
             "wallet": wallet, "savings": savings,
             # Property book value + lifetime revenue banked — feeds

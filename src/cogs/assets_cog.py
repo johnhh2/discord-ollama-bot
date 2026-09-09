@@ -30,6 +30,7 @@ from src.properties import (
     pending_property_revenue, property_value, property_daily_revenue,
     bank_buyback_offer,
 )
+from src.artifacts import property_upgrade_cost
 from src.confirm_view import confirm_prompt, confirm_purchase
 from src.persistence import save_property_owner, delete_property_owner, try_set_record
 from src import state
@@ -464,15 +465,28 @@ class AssetsCog(commands.Cog):
                 ))
                 return
             lines = []
+            discounted = False
             for p in props:
                 row = _owner_row(p["id"])
                 up_name, up_cost, up_boost = PROPERTY_UPGRADES[p["id"]]
                 if row.get("upgraded"):
                     lines.append(f"{_fmt_prop(p, row)} — ⭐ **{up_name}** owned (+{up_boost}% revenue)")
+                    continue
+                # The upgrade-discount artifact cuts the price shown and
+                # charged; the full catalog cost still folds into the value.
+                price = property_upgrade_cost(uid, up_cost)
+                if price != up_cost:
+                    discounted = True
+                    price_str = f"~~{up_cost:,}~~ {price:,} 🪙"
                 else:
-                    lines.append(f"{_fmt_prop(p, row)} — **{up_name}**: {up_cost:,} 🪙 for +{up_boost}% revenue")
+                    price_str = f"{up_cost:,} 🪙"
+                lines.append(f"{_fmt_prop(p, row)} — **{up_name}**: {price_str} for +{up_boost}% revenue")
             lines.append("")
-            lines.append("Each property has one upgrade; its cost adds to the property's value. `!assets upgrade <name>` to buy.")
+            lines.append(
+                "Each property has one upgrade; its full cost adds to the property's value"
+                + (" (your artifact discount doesn't change that)" if discounted else "")
+                + ". `!assets upgrade <name>` to buy."
+            )
             await send_ephemeral(ctx, embed=emb("⭐ Property Upgrades", "\n".join(lines), C_PURPLE))
             return
 
@@ -485,13 +499,23 @@ class AssetsCog(commands.Cog):
         if row is None or row["owner_id"] != uid:
             await ctx.send(embed=emb("❌ Not Yours", f"You don't own {_fmt_prop(prop)}.", C_RED))
             return
-        up_name, up_cost, up_boost = PROPERTY_UPGRADES[pid]
+        up_name, full_cost, up_boost = PROPERTY_UPGRADES[pid]
         if row.get("upgraded"):
             await ctx.send(embed=emb("⭐ Already Upgraded", f"{_fmt_prop(prop, row)} already has its **{up_name}**.", C_PURPLE))
             return
+        # Charge the artifact-discounted price; property_value still folds in
+        # the full catalog cost, so the discount can't be sold back to the bank.
+        up_cost = property_upgrade_cost(uid, full_cost)
+        discount_note = (
+            f" — your artifact takes it from {full_cost:,} 🪙 to {up_cost:,} 🪙"
+            if up_cost != full_cost else ""
+        )
         if not await confirm_purchase(
             ctx, title="⭐ Build Upgrade",
-            description=f"Build the **{up_name}** on {_fmt_prop(prop, row)} — **+{up_boost}%** revenue, cost folds into its value.",
+            description=(
+                f"Build the **{up_name}** on {_fmt_prop(prop, row)} — **+{up_boost}%** revenue, "
+                f"its full cost folds into the value{discount_note}."
+            ),
             cost=up_cost, payer=ctx.author,
         ):
             return

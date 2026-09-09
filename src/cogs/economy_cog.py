@@ -16,7 +16,7 @@ from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
     add_guild_house, insurance_refund, sweep_insurance_subs, _ct_now, _ct_today, do_daily_reset, _ensure_user,
     next_daily_reset_ts, get_savings_value, add_savings, remove_savings,
-    savings_growth, SAVINGS_DAILY_PCT,
+    savings_growth, SAVINGS_DAILY_PCT, user_savings_daily_pct,
     seize_from_savings, record_crime_event, CRIME_ELIGIBLE_NET_WORTH,
     _maybe_latch_crime_eligible,
 )
@@ -1545,13 +1545,17 @@ class EconomyCog(commands.Cog):
         if action is None or action not in ("add", "remove"):
             value = await get_savings_value(uid)
             deposits = state.economy["users"][str(uid)].get("savings", [])
+            # The user's own rate: the savings artifact lifts it above the
+            # base SAVINGS_DAILY_PCT the generic help quotes.
+            rate_pct = user_savings_daily_pct(uid)
+            rate_note = " (boosted by your artifact)" if rate_pct != SAVINGS_DAILY_PCT else ""
             if not deposits:
                 desc = (
                     f"**{ctx.author.display_name}** has no savings yet.\n\n"
                     "**Usage:**\n"
                     "`!deposit <amount>` — put coins in (`!savings +<amount>` works too)\n"
                     "`!withdraw <amount>` — take coins out (`!savings -<amount>` works too)\n\n"
-                    f"*Savings earn **{SAVINGS_DAILY_PCT} compound interest per day**.*"
+                    f"*Savings earn **{rate_pct} compound interest per day**{rate_note}.*"
                 )
             elif show_principals:
                 now = time.time()
@@ -1559,7 +1563,7 @@ class EconomyCog(commands.Cog):
                 interest = int(value) - principal
                 deposit_lines = []
                 for e in deposits:
-                    e_val = int(e["amount"] * savings_growth(e["deposited_at"], now))
+                    e_val = int(e["amount"] * savings_growth(e["deposited_at"], now, uid))
                     e_principal = int(e["amount"])
                     e_interest = e_val - e_principal
                     # <t:...:d> renders in the viewer's timezone — naive
@@ -1587,7 +1591,7 @@ class EconomyCog(commands.Cog):
                     "`!deposit <amount>` — put coins in\n"
                     "`!withdraw <amount>` — take coins out\n"
                     "`!savings principals` — show deposit breakdown\n\n"
-                    f"*{SAVINGS_DAILY_PCT} compound interest per day, compounded on each deposit separately.*"
+                    f"*{rate_pct} compound interest per day{rate_note}, compounded on each deposit separately.*"
                 )
             await send_ephemeral(ctx, embed=emb("🐷 Piggy Bank", desc, C_GREEN))
             return
@@ -1689,11 +1693,11 @@ class EconomyCog(commands.Cog):
         total_savings = 0
         users_with_savings = 0
         jailed = 0
-        for u in users.values():
+        for uid_str, u in users.items():
             deps = u.get("savings", [])
             if deps:
                 users_with_savings += 1
-                total_savings += int(sum(e["amount"] * savings_growth(e["deposited_at"], now) for e in deps))
+                total_savings += int(sum(e["amount"] * savings_growth(e["deposited_at"], now, int(uid_str)) for e in deps))
             if u.get("jail_until", 0) > now:
                 jailed += 1
 

@@ -49,6 +49,11 @@ active_chess_games: dict = {}
 # Global (not guild-scoped), like the economy. Source of truth is the
 # user_artifacts table; loaded at boot. Catalog lives in src/artifacts.py.
 user_artifacts: dict = {}
+# When each artifact was first bought: {uid: {artifact_id: unix ts}}. Rows
+# from before migration 0067 have no timestamp and are simply absent here.
+# Read by effects that must not act retroactively (the savings-rate boost
+# switches rate at this instant — src/economy.py savings_growth).
+user_artifact_acquired_at: dict = {}
 # Real-estate ownership (!assets): {property_id: {owner_id, acquired_at,
 # list_price, listed_at}}. Bot-wide and guild-free — every property is a
 # unique deed with at most one owner across all servers; list_price is None

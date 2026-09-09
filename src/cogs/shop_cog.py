@@ -490,13 +490,21 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🏺 Already Owned", "You already own that artifact.", C_PURPLE))
             return
         owned[art["id"]] = prior + 1
+        # A first purchase stamps its acquisition time in the same
+        # synchronous block — effects that switch on at purchase (the
+        # savings-rate boost) read it as their boundary, so it must never
+        # predate the coins leaving the wallet by more than this instant.
+        acquired = state.user_artifact_acquired_at.setdefault(uid, {})
+        if not prior:
+            acquired[art["id"]] = time.time()
         if not await shop_charge(ctx, uid, cost, cost_label=f"{art['cost']:,}"):
             if prior:
                 owned[art["id"]] = prior
             else:
                 owned.pop(art["id"], None)
+                acquired.pop(art["id"], None)
             return
-        await save_user_artifact(uid, art["id"], prior + 1)
+        await save_user_artifact(uid, art["id"], prior + 1, acquired.get(art["id"]))
         await ctx.send(embed=emb("🏺 Artifact Acquired", f"Its power is now yours: {art['effect'].lower()}.", C_GREEN))
 
         # Artifacts are global but records are per-guild: the "most artifacts

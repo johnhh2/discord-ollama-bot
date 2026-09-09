@@ -2,7 +2,9 @@
 
 Artifacts are permanent, nameless per-user purchases — they're listed by
 their effect only (see !artifacts). Ownership lives in state.user_artifacts
-({uid: {artifact_id: quantity}}, source of truth: user_artifacts table).
+({uid: {artifact_id: quantity}}, source of truth: user_artifacts table);
+first-purchase times in state.user_artifact_acquired_at ({uid: {artifact_id:
+unix ts}}, the table's acquired_at column, absent for pre-0067 rows).
 
 Each catalog entry:
     id      — stable key stored in the DB; never rename once shipped
@@ -22,21 +24,37 @@ Effect payload keys (all optional) are read by the systems they modify:
                                 live daily streak (src/streaks.py) is 25+ days
     property_accrual_cap_bonus        — flat increase to the unredeemed
                                 property-revenue cap (src/properties.py)
+    savings_rate_boost        — the owner's savings accrue at
+                                ARTIFACT_SAVINGS_DAILY_MULT instead of
+                                SAVINGS_DAILY_MULT from the purchase instant
+                                on (src/economy.py savings_growth)
+    property_upgrade_discount_pct — % off any property upgrade the owner
+                                buys; the upgrade's full catalog cost still
+                                folds into the deed's value
     property_revenue_pct_per_property — % property-revenue boost per
                                 property the owner holds
+    property_revenue_pct_cap  — ceiling on the per-property boost above
 """
 from src.config import (
     ARTIFACT_SLOTS_BLANK_COST, ARTIFACT_CHESSTHREATS_COST,
     ARTIFACT_BAIL_DISCOUNT_COST, ARTIFACT_EXTRA_SCRATCH_COST,
     ARTIFACT_STEAL_BOOST_COST, ARTIFACT_CRIME_CATCH_COST,
     ARTIFACT_STREAK_SCRATCH_COST,
-    ARTIFACT_PROPERTY_CAP_COST, ARTIFACT_PROPERTY_BOOST_COST,
+    ARTIFACT_PROPERTY_CAP_COST, ARTIFACT_SAVINGS_BOOST_COST,
+    ARTIFACT_UPGRADE_DISCOUNT_COST, ARTIFACT_PROPERTY_BOOST_COST,
+    SAVINGS_DAILY_MULT, ARTIFACT_SAVINGS_DAILY_MULT,
     SLOT_REEL, SCRATCHOFF_MAX_DAILY,
 )
 from src import state
 
 # Live daily streak (days) at which the streak artifact's extra ticket unlocks.
 STREAK_SCRATCHOFF_MIN_STREAK = 25
+
+
+def _daily_pct(mult: float) -> str:
+    """1.008 -> '0.80%' — keeps the catalog copy in lockstep with the math."""
+    return f"{(mult - 1.0) * 100:.2f}%"
+
 
 ARTIFACTS: list[dict] = [
     {
@@ -99,17 +117,37 @@ ARTIFACTS: list[dict] = [
         "id": "property_cap_deed",
         "level": 40,
         "cost": ARTIFACT_PROPERTY_CAP_COST,
-        "effect": "Your missed-day property revenue bank holds 5,000 🪙 more",
+        "effect": "Your missed-day property revenue bank holds 10,000 🪙 more",
         "max": 1,
-        "property_accrual_cap_bonus": 5_000,
+        "property_accrual_cap_bonus": 10_000,
+    },
+    {
+        "id": "savings_rate_boost",
+        "level": 40,
+        "cost": ARTIFACT_SAVINGS_BOOST_COST,
+        "effect": (
+            f"Your savings earn {_daily_pct(ARTIFACT_SAVINGS_DAILY_MULT)} "
+            f"compound interest per day instead of {_daily_pct(SAVINGS_DAILY_MULT)}"
+        ),
+        "max": 1,
+        "savings_rate_boost": 1,
+    },
+    {
+        "id": "property_upgrade_discount",
+        "level": 45,
+        "cost": ARTIFACT_UPGRADE_DISCOUNT_COST,
+        "effect": "Property upgrades cost you 20% less",
+        "max": 1,
+        "property_upgrade_discount_pct": 20,
     },
     {
         "id": "property_mogul",
         "level": 50,
         "cost": ARTIFACT_PROPERTY_BOOST_COST,
-        "effect": "Your property revenue is 5% higher for every property you own",
+        "effect": "Your property revenue increases by 5% for each property you own (up to 25%)",
         "max": 1,
         "property_revenue_pct_per_property": 5,
+        "property_revenue_pct_cap": 25,
     },
 ]
 
@@ -122,6 +160,14 @@ def artifacts_at_level(level: int) -> list[dict]:
 
 def owned_qty(uid: int, artifact_id: str) -> int:
     return state.user_artifacts.get(uid, {}).get(artifact_id, 0)
+
+
+def artifact_acquired_at(uid: int, artifact_id: str) -> float | None:
+    """Unix time the user first bought this artifact, or None when it isn't
+    owned or the row predates migration 0067 (no timestamp recorded)."""
+    if owned_qty(uid, artifact_id) <= 0:
+        return None
+    return state.user_artifact_acquired_at.get(uid, {}).get(artifact_id)
 
 
 def owned_artifact_count(uid: int) -> int:
@@ -190,13 +236,47 @@ def crime_catch_chance(uid: int, base: float) -> float:
     return base * (1 - pct / 100)
 
 
+def savings_boost_since(uid: int) -> float | None:
+    """Unix time from which the user's savings accrue at the boosted rate, or
+    None for no boost. Deliberately None when the artifact row carries no
+    acquisition time: without a boundary the boost could only be applied to
+    the deposit's whole history, which is exactly the retroactive re-pricing
+    the timestamp exists to prevent."""
+    if _owned_total(uid, "savings_rate_boost") <= 0:
+        return None
+    since = [
+        artifact_acquired_at(uid, art["id"])
+        for art in ARTIFACTS if art.get("savings_rate_boost")
+    ]
+    known = [ts for ts in since if ts is not None]
+    return min(known) if known else None
+
+
+def property_upgrade_cost(uid: int, base_cost: int) -> int:
+    """What this buyer pays for a property upgrade after artifact discounts.
+    Only the charge shrinks — the full catalog cost still folds into the
+    deed's value (src/properties.py property_value)."""
+    pct = min(_owned_total(uid, "property_upgrade_discount_pct"), 100)
+    return base_cost - base_cost * pct // 100
+
+
 def property_accrual_cap_bonus(uid: int) -> int:
     """Flat coins added to the unredeemed property-revenue cap."""
     return _owned_total(uid, "property_accrual_cap_bonus")
 
 
-def property_revenue_boosted(uid: int, base: int, owned_count: int) -> int:
-    """Property revenue after artifact boosts. The per-property bonus scales
-    with holdings: +10%/property × 5 properties = +50% at the ownership cap."""
+def property_revenue_pct(uid: int, owned_count: int) -> int:
+    """The artifact % boost on property revenue for a holder of
+    `owned_count` deeds: +5% per property, capped at +25% (the cap lands at
+    PROPERTY_MAX_OWNED, so a holder at the ownership limit sees the full
+    boost and nothing past it)."""
     pct = _owned_total(uid, "property_revenue_pct_per_property") * owned_count
-    return int(base * (1 + pct / 100))
+    cap = _owned_total(uid, "property_revenue_pct_cap")
+    if cap:
+        pct = min(pct, cap)
+    return pct
+
+
+def property_revenue_boosted(uid: int, base: int, owned_count: int) -> int:
+    """Property revenue after artifact boosts (see property_revenue_pct)."""
+    return int(base * (1 + property_revenue_pct(uid, owned_count) / 100))

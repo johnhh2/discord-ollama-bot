@@ -2,6 +2,7 @@
 rollback on failed charge, the concurrent-buy race, and the slots-reel effect.
 """
 import asyncio
+import time
 
 import pytest
 
@@ -27,6 +28,18 @@ async def _read_db_artifact(uid: int, artifact_id: str) -> int | None:
         async with conn.cursor() as cur:
             await cur.execute(
                 "SELECT quantity FROM user_artifacts WHERE user_id=? AND artifact_id=?",
+                (uid, artifact_id),
+            )
+            row = await cur.fetchone()
+    return row[0] if row else None
+
+
+async def _read_db_acquired_at(uid: int, artifact_id: str) -> float | None:
+    pool = await _persistence.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT acquired_at FROM user_artifacts WHERE user_id=? AND artifact_id=?",
                 (uid, artifact_id),
             )
             row = await cur.fetchone()
@@ -79,12 +92,34 @@ async def test_buy_artifact_deducts_and_persists(db):
     await add_balance(uid, ARTIFACT_SLOTS_BLANK_COST + 500)
 
     ctx = _ctx(uid)
+    before = time.time()
     await _invoke(cog, ctx, "buy", "1")
 
     assert await get_balance(uid) == 500
     assert _state.user_artifacts[uid][BLANK_ART_ID] == 1
     assert await _read_db_artifact(uid, BLANK_ART_ID) == 1
     assert "Artifact Acquired" in ctx.sent_embeds[-1].title
+    # The purchase instant is kept, in memory and in the row.
+    acquired = _state.user_artifact_acquired_at[uid][BLANK_ART_ID]
+    assert before <= acquired <= time.time()
+    assert await _read_db_acquired_at(uid, BLANK_ART_ID) == pytest.approx(acquired)
+
+
+async def test_acquired_at_survives_reload(db):
+    """init_db_state reads the acquisition time back; a pre-0067 row (NULL)
+    simply has none."""
+    from src.persistence.artifacts import save_user_artifact
+    from src.persistence.init import init_db_state
+    await save_user_artifact(7010, BLANK_ART_ID, 1, 1_800_000_000.0)
+    await save_user_artifact(7011, BLANK_ART_ID, 1)            # legacy row
+    # A quantity re-save never moves the acquisition time.
+    await save_user_artifact(7010, BLANK_ART_ID, 1, 1_900_000_000.0)
+
+    await init_db_state()
+    assert _state.user_artifacts[7010][BLANK_ART_ID] == 1
+    assert _state.user_artifact_acquired_at[7010][BLANK_ART_ID] == 1_800_000_000.0
+    assert _state.user_artifacts[7011][BLANK_ART_ID] == 1
+    assert BLANK_ART_ID not in _state.user_artifact_acquired_at.get(7011, {})
 
 
 async def test_buy_artifact_twice_blocked(db):
@@ -114,8 +149,10 @@ async def test_buy_insufficient_funds_rolls_back_claim(db):
 
     assert "Insufficient Funds" in ctx.sent_embeds[-1].title
     assert await get_balance(uid) == 100
-    # The synchronous claim was rolled back — user owns nothing.
+    # The synchronous claim was rolled back — user owns nothing, and the
+    # acquisition stamp went with it.
     assert _state.user_artifacts.get(uid, {}).get(BLANK_ART_ID, 0) == 0
+    assert BLANK_ART_ID not in _state.user_artifact_acquired_at.get(uid, {})
     assert await _read_db_artifact(uid, BLANK_ART_ID) is None
 
 
@@ -264,6 +301,76 @@ async def test_streak_scratchoffs_unlock_at_25_day_streak():
     _state.command_streak[str(uid)] = {"date": today, "count": 30}
     _state.user_artifacts[uid]["extra_scratchoff"] = 1
     assert scratchoff_daily_cap(uid) == 5
+
+
+async def test_catalog_levels_costs_and_order():
+    """The shipped ladder: levels never decrease down the list (the !artifacts
+    numbering reads as a progression) and the tuned prices hold."""
+    from src.config import (
+        ARTIFACT_CRIME_CATCH_COST, ARTIFACT_STREAK_SCRATCH_COST,
+        ARTIFACT_PROPERTY_CAP_COST, ARTIFACT_SAVINGS_BOOST_COST,
+        ARTIFACT_UPGRADE_DISCOUNT_COST, ARTIFACT_PROPERTY_BOOST_COST,
+    )
+    by_id = {a["id"]: a for a in ARTIFACTS}
+    levels = [a["level"] for a in ARTIFACTS]
+    assert levels == sorted(levels)
+    assert len(by_id) == len(ARTIFACTS)
+
+    assert (by_id["crime_catch_reducer"]["level"], ARTIFACT_CRIME_CATCH_COST) == (30, 200_000)
+    assert (by_id["streak_scratchoffs"]["level"], ARTIFACT_STREAK_SCRATCH_COST) == (35, 200_000)
+    assert (by_id["property_cap_deed"]["level"], ARTIFACT_PROPERTY_CAP_COST) == (40, 150_000)
+    assert by_id["property_cap_deed"]["property_accrual_cap_bonus"] == 10_000
+    assert "10,000" in by_id["property_cap_deed"]["effect"]
+    assert (by_id["savings_rate_boost"]["level"], ARTIFACT_SAVINGS_BOOST_COST) == (40, 200_000)
+    assert (by_id["property_upgrade_discount"]["level"], ARTIFACT_UPGRADE_DISCOUNT_COST) == (45, 300_000)
+    assert by_id["property_upgrade_discount"]["property_upgrade_discount_pct"] == 20
+    assert (by_id["property_mogul"]["level"], ARTIFACT_PROPERTY_BOOST_COST) == (50, 500_000)
+    assert by_id["property_mogul"]["effect"] == (
+        "Your property revenue increases by 5% for each property you own (up to 25%)"
+    )
+    assert by_id["property_mogul"]["property_revenue_pct_cap"] == 25
+    for art in ARTIFACTS:
+        assert art["cost"] > 0 and art["max"] >= 1
+
+
+async def test_savings_artifact_copy_matches_rates():
+    """The savings artifact's blurb quotes both rates from the constants the
+    math uses, so a rate change can't leave stale copy behind."""
+    from src.economy import SAVINGS_DAILY_PCT, ARTIFACT_SAVINGS_DAILY_PCT
+    art = next(a for a in ARTIFACTS if a["id"] == "savings_rate_boost")
+    assert SAVINGS_DAILY_PCT == "0.60%"
+    assert ARTIFACT_SAVINGS_DAILY_PCT == "0.80%"
+    assert ARTIFACT_SAVINGS_DAILY_PCT in art["effect"]
+    assert SAVINGS_DAILY_PCT in art["effect"]
+
+
+async def test_savings_boost_since_needs_owned_row_with_timestamp():
+    from src.artifacts import savings_boost_since, artifact_acquired_at
+
+    uid = 8011
+    assert savings_boost_since(uid) is None
+    # Owned but no acquisition time (a hand-inserted / pre-0067 row): no
+    # boost — never a retroactive one.
+    _state.user_artifacts[uid] = {"savings_rate_boost": 1}
+    assert artifact_acquired_at(uid, "savings_rate_boost") is None
+    assert savings_boost_since(uid) is None
+    _state.user_artifact_acquired_at[uid] = {"savings_rate_boost": 1_800_000_000.0}
+    assert savings_boost_since(uid) == 1_800_000_000.0
+    # A timestamp without ownership means nothing.
+    _state.user_artifacts[uid] = {}
+    assert artifact_acquired_at(uid, "savings_rate_boost") is None
+    assert savings_boost_since(uid) is None
+
+
+async def test_property_upgrade_cost_discount():
+    from src.artifacts import property_upgrade_cost
+
+    uid = 8012
+    assert property_upgrade_cost(uid, 50_000) == 50_000
+    _state.user_artifacts[uid] = {"property_upgrade_discount": 1}
+    assert property_upgrade_cost(uid, 50_000) == 40_000
+    # Odd costs round in the buyer's favor (floor of the discount).
+    assert property_upgrade_cost(uid, 10_001) == 8_001
 
 
 # ── chessthreats unlock ───────────────────────────────────────────────────────

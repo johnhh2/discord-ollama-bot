@@ -333,10 +333,13 @@ async def _init_db_state_inner(state, run_migrations):
 
         # ── user_artifacts ────────────────────────────────────────────────
         try:
-            await cur.execute("SELECT user_id, artifact_id, quantity FROM user_artifacts")
+            await cur.execute("SELECT user_id, artifact_id, quantity, acquired_at FROM user_artifacts")
             state.user_artifacts = {}
+            state.user_artifact_acquired_at = {}
             for r in await cur.fetchall():
                 state.user_artifacts.setdefault(int(r[0]), {})[r[1]] = int(r[2])
+                if r[3] is not None:
+                    state.user_artifact_acquired_at.setdefault(int(r[0]), {})[r[1]] = float(r[3])
         except Exception as e:
             logging.error(f"[init_db_state] user_artifacts failed: {e}", exc_info=True)
             raise

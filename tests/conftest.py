@@ -89,6 +89,7 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "active_ragebaits", {})
     monkeypatch.setattr(_state, "active_events", {})
     monkeypatch.setattr(_state, "user_artifacts", {})
+    monkeypatch.setattr(_state, "user_artifact_acquired_at", {})
     monkeypatch.setattr(_state, "property_owners", {})
     monkeypatch.setattr(_state, "lottery_ticket_grants", {})
     monkeypatch.setattr(_state, "rigged_slots", {})
