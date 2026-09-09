@@ -16,6 +16,7 @@ import pytest
 import src.state as _state
 import src.persistence as _persistence
 from src.cogs.utility_cog import UtilityCog
+from src.helpers import C_GREY
 
 from tests.fakes.discord import (
     FakeCtx, FakeMember, FakeGuild, FakeTextChannel, FakeMessage,
@@ -87,8 +88,9 @@ async def test_bugreport_no_channel_configured(db):
 
 
 async def test_bugreport_happy_path_persists_and_reacts(db):
-    """When configured, the command posts the embed to internal_issue_channel,
-    inserts an issues row, and seeds ❌ ⚙️ ✅ 🛑 reactions."""
+    """When configured, the command posts the embed to internal_issue_channel
+    (grey — a fresh, not-started issue), inserts an issues row, and seeds
+    ❌ ⚙️ ✅ 🛑 reactions."""
     _state.bot_settings["internal_issue_channel"] = "9000"
     posted = _make_posted_message(message_id=5000, channel_id=9000)
     log_chan = FakeTextChannel(ch_id=9000)
@@ -100,6 +102,7 @@ async def test_bugreport_happy_path_persists_and_reacts(db):
     await cog.cmd_bugreport.callback(cog, ctx, report="repro: do X, get Y")
 
     assert log_chan.send.await_count == 1
+    assert log_chan.send.await_args.kwargs["embed"].color.value == C_GREY
     row = await _persistence.get_issue_by_message(5000)
     assert row is not None
     assert row["kind"] == "bug"
