@@ -923,3 +923,57 @@ async def test_reaction_first_click_of_the_day_sets_the_streak_record(db, monkey
     assert rec["holder_id"] == 1
     titles = [m.embed.title for m in channel.sent if m.embed is not None]
     assert "🏆 New Record!" in titles
+
+
+# ── early clicks: the claim id is recorded before the buttons are seeded ─────
+
+@pytest.mark.asyncio
+async def test_refresh_records_claim_id_before_seeding_reactions(db, monkeypatch):
+    """Players click 🪙 the moment it appears, a second before 🎟️ lands.
+    on_raw_reaction_add keys on dailies_message_id, so it must already be
+    set when the first add_reaction goes out — it used to be recorded only
+    after all five had landed, and the early click was ignored."""
+    _pin_today(monkeypatch)
+    _state.guild_settings["42"] = {"dailies_channel": 500}
+    channel = FakeDailiesChannel(500)
+    bot = _StubBot(channel=channel)
+    seen: list = []
+    orig_send = channel.send
+
+    async def _send(*a, **kw):
+        msg = await orig_send(*a, **kw)
+
+        async def _add(emoji):
+            seen.append(_state.guild_settings["42"].get("dailies_message_id") == msg.id)
+        msg.add_reaction = AsyncMock(side_effect=_add)
+        return msg
+    channel.send = _send
+
+    await refresh_dailies_channel(bot, 42)
+
+    assert seen == [True] * len(DAILIES_ALL_EMOJIS)
+    assert _state.guild_settings["42"]["dailies_reset_day"] == TODAY
+
+
+@pytest.mark.asyncio
+async def test_refresh_leaves_day_unstamped_when_seeding_fails(db, monkeypatch):
+    """A seeding failure keeps the old retry: the day isn't stamped, so the
+    next minute tick reposts. The half-seeded embed's id is still recorded
+    so clicks on it work in the meantime."""
+    _pin_today(monkeypatch)
+    _state.guild_settings["42"] = {"dailies_channel": 500}
+    channel = FakeDailiesChannel(500)
+    bot = _StubBot(channel=channel)
+    orig_send = channel.send
+
+    async def _send(*a, **kw):
+        msg = await orig_send(*a, **kw)
+        msg.add_reaction = AsyncMock(side_effect=discord.Forbidden(_Resp(), "no Add Reactions"))
+        return msg
+    channel.send = _send
+
+    await refresh_dailies_channel(bot, 42)
+
+    cfg = _state.guild_settings["42"]
+    assert cfg["dailies_message_id"] == channel.sent[0].id
+    assert cfg.get("dailies_reset_day") != TODAY

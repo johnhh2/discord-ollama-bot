@@ -199,6 +199,37 @@ each other forever. Interceptors and AI routing stay open to bots as before.
 
 Regression coverage: [tests/test_blocklist_enforcement.py](tests/test_blocklist_enforcement.py).
 
+## Reaction buttons: listen first, seed last
+
+Discord throttles `add_reaction` to roughly four calls a second per channel,
+so a message with five buttons takes over a second to finish appearing, and
+players click the first one while the rest are still on their way. A click in
+that window used to be ignored everywhere. Helpers live in
+[src/reactions.py](src/reactions.py); the module docstring has the history.
+
+- **Never `bot.wait_for("reaction_add")`.** It only listens while the
+  `wait_for` is pending — after seeding, and not between two calls. Use
+  `ReactionCollector`: enter it *before* seeding, seed inside the block, and
+  pull `(emoji, user)` pairs off `next(timeout=...)`. Every reaction on the
+  message is queued from the moment the collector starts, so early clicks and
+  clicks that land while the loop is busy (a lobby editing its embed) wait
+  instead of vanishing. It listens on the raw event, so the message needn't
+  stay in discord.py's message cache. Bots are dropped; filter everything
+  else at dequeue time.
+- **Persistent listeners (`on_raw_reaction_add`) key on state — write that
+  state before the first `add_reaction`.** The game dict, the `state` entry,
+  `cfg["dailies_message_id"]`, the bounty/claim row: whatever the handler
+  looks up must exist before seeding. `!bounty`, `!event`, the dailies embed
+  and the bounty DMs/polls all once seeded first and registered second.
+- **Seed with `seed_reactions(message, emojis, what=...)`**, not a hand-rolled
+  loop. It's best-effort and never raises: a transient failure is skipped, a
+  permission or missing-message error stops the loop; the return says whether
+  every emoji landed. Order is preserved (number emojis, 🎟️ last on dailies).
+
+Coverage: [tests/test_reactions.py](tests/test_reactions.py), plus the
+early-click tests in `test_money_flows.py` (bankheist), `test_dailies.py`,
+`test_bounty.py` and `test_schedulers.py` (`!event`).
+
 ## Schema migrations
 
 Schema changes ship as numbered SQL files in [migrations/](migrations/). The bot applies pending migrations at boot, before loading state — there is no manual `mysql < schema.sql` step in production.

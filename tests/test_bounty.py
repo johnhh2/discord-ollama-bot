@@ -766,3 +766,104 @@ async def test_bounty_declined_confirm_no_escrow(db, monkeypatch):
 
     assert await get_balance(author_id) == 10_000
     assert not _state.active_bounties
+
+
+# ── early clicks: state is registered before the buttons are seeded ──────────
+# on_raw_reaction_add keys on the cache / DB row; each site used to seed its
+# reactions first and register second, so a click during seeding was lost.
+
+async def test_create_registers_bounty_before_seeding_claim_reaction(db, monkeypatch):
+    """A 🙋 the instant it appears needs the cache entry and the DB row —
+    the claim insert goes against bounty["id"]."""
+    cog, bot, channel = _make_cog()
+    await add_balance(11, 50_000)
+    ctx = _ctx(11, channel)
+    seen: dict = {}
+
+    async def _seed(message, emojis, *, what):
+        seen["cached"] = message.id in _state.active_bounties
+        seen["row"] = await _persistence.get_bounty_by_message(message.id)
+        seen["emojis"] = list(emojis)
+        return True
+    monkeypatch.setattr("src.cogs.bounty_cog.seed_reactions", _seed)
+
+    await cog.create_bounty(ctx, ("10k", "wash", "my", "car"))
+
+    assert seen["cached"] is True
+    assert seen["row"]["status"] == "open"
+    assert seen["emojis"] == [CLAIM_EMOJI]
+
+
+async def test_create_keeps_bounty_open_when_seeding_fails(db, monkeypatch):
+    """The bounty is posted and escrowed by the time the 🙋 is seeded; a
+    seeding failure is logged, not fatal (the handler matches the emoji,
+    not the bot's own reaction)."""
+    cog, bot, channel = _make_cog()
+    await add_balance(12, 50_000)
+    ctx = _ctx(12, channel)
+    monkeypatch.setattr("src.cogs.bounty_cog.seed_reactions", AsyncMock(return_value=False))
+
+    await cog.create_bounty(ctx, ("10k", "do", "a", "thing"))
+
+    assert await get_balance(12) == 40_000
+    mid = next(iter(_state.active_bounties))
+    assert _bounty(mid)["status"] == "open"
+    assert (await _persistence.get_bounty_by_message(mid))["status"] == "open"
+
+
+async def test_claim_dm_id_is_persisted_before_its_buttons_are_seeded(db, monkeypatch):
+    """The author can hit ✅ on the claim DM the moment it appears; the
+    handler resolves the DM by its persisted id."""
+    cog, bot, channel = _make_cog()
+    seen: dict = {}
+
+    async def _seed(message, emojis, *, what):
+        if what == "bounty claim DM":
+            seen["found"] = await _persistence.get_claim_by_dm(message.id)
+        return True
+    monkeypatch.setattr("src.cogs.bounty_cog.seed_reactions", _seed)
+    mid, author = await _open_bounty(cog, channel)
+
+    await cog._handle_claim_reaction(_bounty(mid), 45)
+
+    assert seen["found"] is not None
+    assert seen["found"][1]["status"] == "pending"
+
+
+async def test_contest_dm_id_is_persisted_before_its_buttons_are_seeded(db, monkeypatch):
+    cog, bot, channel = _make_cog()
+    seen: dict = {}
+
+    async def _seed(message, emojis, *, what):
+        if what == "bounty contest DM":
+            seen["found"] = await _persistence.get_claim_by_contest(message.id)
+        return True
+    monkeypatch.setattr("src.cogs.bounty_cog.seed_reactions", _seed)
+    mid, author = await _open_bounty(cog, channel)
+    await cog._handle_claim_reaction(_bounty(mid), 46)
+    claim = _only_claim(mid)
+
+    await cog._resolve_claim(_bounty(mid), claim, accepted=False)
+
+    assert seen["found"] is not None
+    assert seen["found"][1]["status"] == "contesting"
+
+
+async def test_poll_claim_is_polling_before_vote_buttons_are_seeded(db, monkeypatch):
+    """A ✅ vote cast while ❌ is still being added must count: the vote
+    handler matches on poll_message_id + status == polling."""
+    cog, bot, channel = _make_cog()
+    seen: dict = {}
+
+    async def _seed(message, emojis, *, what):
+        if what == "bounty poll":
+            found = cog._find_polling_claim(message.id)
+            seen["polling"] = found is not None and found[1]["status"] == "polling"
+            seen["emojis"] = list(emojis)
+        return True
+    monkeypatch.setattr("src.cogs.bounty_cog.seed_reactions", _seed)
+
+    mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=47)
+
+    assert seen["polling"] is True
+    assert seen["emojis"] == ["✅", "❌"]

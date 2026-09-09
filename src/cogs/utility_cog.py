@@ -11,6 +11,7 @@ import discord
 from discord.ext import commands
 
 from src.discord_retry import send_dm
+from src.reactions import seed_reactions
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_BLUE, C_GREY,
     send_ephemeral, toggle_member_role, get_memory_mb, format_uptime, _log_audit,
@@ -1038,11 +1039,8 @@ class UtilityCog(commands.Cog):
         except Exception as e:
             logging.error(f"[featurerequest] failed to persist row: {e}", exc_info=True)
 
-        for emoji in _FEATURE_REQUEST_REACTIONS:
-            try:
-                await request_msg.add_reaction(emoji)
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+        # Seed last — the row above is what the reaction listener keys on.
+        await seed_reactions(request_msg, _FEATURE_REQUEST_REACTIONS, what="feature request")
 
         # When the user filed from the feature-request channel itself, the
         # posted embed is its own confirmation — skip the redundant ack.
@@ -1229,7 +1227,9 @@ class UtilityCog(commands.Cog):
             desc_lines.append(f"\n{seeded_footer}")
 
         try:
-            report_msg = await channel.send(embed=emb(title, "\n".join(desc_lines), C_RED))
+            report_msg = await channel.send(embed=emb(
+                title, "\n".join(desc_lines), _ISSUE_STATUS_TO_COLOR["not_started"],
+            ))
         except (discord.Forbidden, discord.HTTPException):
             await ctx.send(embed=emb(title, f"Could not post the {meta['title'].lower()} — please try again later.", C_RED))
             return
@@ -1251,11 +1251,7 @@ class UtilityCog(commands.Cog):
             # uptime via the message cache even without a DB row. (Persistence
             # only matters across restarts.)
 
-        for emoji in _ISSUE_STATUS_EMOJIS:
-            try:
-                await report_msg.add_reaction(emoji)
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+        await seed_reactions(report_msg, _ISSUE_STATUS_EMOJIS, what=f"issue:{kind}")
 
         await ctx.send(embed=emb(title, meta["ack"], C_GREEN))
 
@@ -1663,7 +1659,9 @@ class UtilityCog(commands.Cog):
             f"**Description:**\n{(request['description'] or '')[:1500]}",
         ]
         try:
-            issue_msg = await issue_chan.send(embed=emb(title, "\n".join(desc_lines), C_RED))
+            issue_msg = await issue_chan.send(embed=emb(
+                title, "\n".join(desc_lines), _ISSUE_STATUS_TO_COLOR["not_started"],
+            ))
         except (discord.Forbidden, discord.HTTPException) as e:
             logging.error(f"[featurerequest] could not post linked feature issue: {e}")
             return None
@@ -1681,11 +1679,7 @@ class UtilityCog(commands.Cog):
             logging.error(f"[featurerequest] failed to insert spawned feature issue row: {e}", exc_info=True)
             return None
 
-        for em in _ISSUE_STATUS_EMOJIS:
-            try:
-                await issue_msg.add_reaction(em)
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+        await seed_reactions(issue_msg, _ISSUE_STATUS_EMOJIS, what="feature issue")
         return issue_id
 
     async def _refresh_feature_request_for_issue(
@@ -1929,9 +1923,12 @@ _ISSUE_EMOJI_TO_STATUS: dict[str, str] = {
     "✅": "completed",
     "🛑": "rejected",
 }
+# Untouched issues (not_started, and the legacy 'open') are grey so they
+# read differently from a red rejected one at a glance — red is reserved
+# for rejected. Fresh issue posts take their color from here too.
 _ISSUE_STATUS_TO_COLOR: dict[str, int] = {
-    "open":        C_RED,
-    "not_started": C_RED,
+    "open":        C_GREY,
+    "not_started": C_GREY,
     "completed":   C_GREEN,
     "wip":         C_GOLD,
     "rejected":    C_RED,

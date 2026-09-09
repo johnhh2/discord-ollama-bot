@@ -350,3 +350,24 @@ def test_tax_expiry_check_fires_after_duration():
     # Boundary: at exactly the duration the strict `>` is False, so not expired.
     exactly_at = activated_at + SHOP_TAX_DURATION_SECS
     assert not ((exactly_at - activated_at) > SHOP_TAX_DURATION_SECS)
+
+
+@pytest.mark.asyncio
+async def test_event_registers_before_seeding_its_reaction(db, monkeypatch):
+    """A 🪙 click the instant the reaction appears must find the event —
+    the state entry used to be written only after add_reaction returned."""
+    from tests.fakes.discord import FakeCtx
+
+    cog = EconomyCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=2010))
+    seen: dict = {}
+
+    async def _seed(message, emojis, *, what):
+        seen["registered"] = message.id in _state.active_events
+        seen["emojis"] = list(emojis)
+        return True
+    monkeypatch.setattr("src.cogs.economy_cog.seed_reactions", _seed)
+
+    await cog.cmd_event.callback(cog, ctx, "100")
+
+    assert seen == {"registered": True, "emojis": ["🪙"]}

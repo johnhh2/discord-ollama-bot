@@ -264,3 +264,52 @@ class FakeCtx:
     @property
     def send_mock(self) -> AsyncMock:
         return self._send_mock
+
+
+class FakeListenerBot:
+    """Just enough of commands.Bot for src.reactions.ReactionCollector:
+    `add_listener` / `remove_listener` bookkeeping plus a `dispatch` that
+    awaits every listener registered for an event, so a test can hand a raw
+    reaction payload (see `raw_reaction`) straight to whatever is listening.
+    `users` is the get_user/fetch_user lookup for DM-style payloads that
+    carry no member."""
+
+    def __init__(self, user_id: int = 999_999):
+        self.user = FakeMember(uid=user_id, display_name="bot")
+        self.user.bot = True
+        self.listeners: dict[str, list] = {}
+        self.users: dict[int, Any] = {}
+
+    def add_listener(self, func, name):
+        self.listeners.setdefault(name, []).append(func)
+
+    def remove_listener(self, func, name):
+        try:
+            self.listeners.get(name, []).remove(func)
+        except ValueError:
+            pass
+
+    async def dispatch(self, event: str, *args):
+        for func in list(self.listeners.get("on_" + event, [])):
+            await func(*args)
+
+    def get_user(self, uid: int):
+        return self.users.get(uid)
+
+    async def fetch_user(self, uid: int):
+        user = self.users.get(uid)
+        if user is None:
+            raise _discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "Unknown User")
+        return user
+
+
+def raw_reaction(message_id: int, emoji: str, user, *, guild_id: "int | None" = 1,
+                 channel_id: int = 100, member: bool = True):
+    """Duck-typed discord.RawReactionActionEvent for `user` reacting `emoji`
+    on `message_id`. `member=False` mimics a DM payload (no Member attached),
+    which makes ReactionCollector fall back to bot.get_user/fetch_user."""
+    return SimpleNamespace(
+        message_id=message_id, emoji=emoji, user_id=user.id,
+        guild_id=guild_id, channel_id=channel_id,
+        member=user if member else None,
+    )

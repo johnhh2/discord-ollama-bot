@@ -5,11 +5,14 @@ import logging
 from discord.ext import commands
 
 from src.helpers import emb, C_BLUE
+from src.reactions import ReactionCollector, seed_reactions
 
 # How long an open-ended invite (_send_invite) keeps listening for ✅.
 # Without a bound, every invite with a no-show invitee leaked a permanent
 # gateway listener for the life of the process.
 INVITE_LISTEN_SECS = 3600.0
+
+ACCEPT_EMOJI = "✅"
 
 
 def _window_text(seconds: float) -> str:
@@ -46,33 +49,29 @@ async def _wait_for_confirmations(
         embed=emb(
             title,
             f"{mentions}\n{ctx.author.mention} is inviting you. "
-            f"React ✅ within {_window_text(timeout)} to join!",
+            f"React {ACCEPT_EMOJI} within {_window_text(timeout)} to join!",
             C_BLUE,
         ),
         silent=False,
     )
-    await invite_msg.add_reaction("✅")
-
-    def check(reaction, user):
-        return (
-            reaction.message.id == invite_msg.id
-            and str(reaction.emoji) == "✅"
-            and user.id in invited_ids
-        )
 
     confirmed_ids: set = set()
-    deadline = asyncio.get_running_loop().time() + timeout
-    while True:
-        remaining = deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
-            break
-        try:
-            _, user = await ctx.bot.wait_for("reaction_add", check=check, timeout=remaining)
-            confirmed_ids.add(user.id)
-            if confirmed_ids == invited_ids:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    # Listen before seeding the ✅: an invitee who clicks it the instant it
+    # appears must not be ignored (see src/reactions.py).
+    async with ReactionCollector(ctx.bot, invite_msg) as reactions:
+        await seed_reactions(invite_msg, [ACCEPT_EMOJI], what="invite")
+        while confirmed_ids != invited_ids:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
                 break
-        except asyncio.TimeoutError:
-            break
+            try:
+                emoji, user = await reactions.next(timeout=remaining)
+            except asyncio.TimeoutError:
+                break
+            if emoji == ACCEPT_EMOJI and user.id in invited_ids:
+                confirmed_ids.add(user.id)
     try:
         await invite_msg.delete()
     except Exception:
@@ -99,34 +98,32 @@ async def _send_invite(
         content=mentions,
         embed=emb(
             title,
-            f"{mentions}\n{ctx.author.mention} is inviting you. React ✅ to join!",
+            f"{mentions}\n{ctx.author.mention} is inviting you. React {ACCEPT_EMOJI} to join!",
             C_BLUE,
         ),
         silent=False,
     )
-    await invite_msg.add_reaction("✅")
-
-    def check(reaction, user):
-        return (
-            reaction.message.id == invite_msg.id
-            and str(reaction.emoji) == "✅"
-            and user.id in invited_ids
-        )
 
     async def _listen():
         reacted: set = set()
-        deadline = asyncio.get_running_loop().time() + INVITE_LISTEN_SECS
-        while reacted != invited_ids:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                break
-            try:
-                _, user = await ctx.bot.wait_for("reaction_add", check=check, timeout=remaining)
-            except asyncio.TimeoutError:
-                break
-            except asyncio.CancelledError:
-                break
-            if user.id not in reacted:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + INVITE_LISTEN_SECS
+        # The collector is live before the ✅ is seeded, so a click on it the
+        # moment it appears is queued for the loop below.
+        async with ReactionCollector(ctx.bot, invite_msg) as reactions:
+            await seed_reactions(invite_msg, [ACCEPT_EMOJI], what="invite")
+            while reacted != invited_ids:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                try:
+                    emoji, user = await reactions.next(timeout=remaining)
+                except asyncio.TimeoutError:
+                    break
+                except asyncio.CancelledError:
+                    break
+                if emoji != ACCEPT_EMOJI or user.id not in invited_ids or user.id in reacted:
+                    continue
                 reacted.add(user.id)
                 if on_join:
                     try:

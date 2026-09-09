@@ -16,6 +16,7 @@ from src.permissions import (
     is_silenced,
 )
 from src.invites import _wait_for_confirmations
+from src.reactions import seed_reactions
 from src.games.game_threads import (
     _refuse_in_thread, _try_create_game_thread, _add_thread_members,
     _close_game_thread,
@@ -108,12 +109,10 @@ async def _add_initial_reactions(channel, msg_id: int, game_type: str) -> None:
         msg = await channel.fetch_message(msg_id)
     except (discord.NotFound, discord.HTTPException):
         return
+    # The game dict and its board_msg_id are registered by the caller before
+    # this runs, so a click on 1️⃣ while 9️⃣ is still being added is a move.
     emojis = NUM_EMOJIS_TTT if game_type == "ttt" else NUM_EMOJIS_C4
-    for e in emojis:
-        try:
-            await msg.add_reaction(e)
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return
+    await seed_reactions(msg, emojis, what=f"{game_type} board")
 
 
 async def _fetch_board_msg(channel, game: dict):

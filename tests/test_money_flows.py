@@ -11,6 +11,7 @@ suite; the *outcome* is what matters, not the frame timing.
 import asyncio
 import random
 import time
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -19,7 +20,9 @@ import src.persistence as _persistence
 import src.economy as _economy
 from src.cogs.economy_cog import EconomyCog
 
-from tests.fakes.discord import FakeCtx, FakeChannel, FakeMember, FakeGuild, FakeMessage
+from tests.fakes.discord import (
+    FakeCtx, FakeChannel, FakeListenerBot, FakeMember, FakeGuild, FakeMessage, raw_reaction,
+)
 
 
 pytestmark = pytest.mark.asyncio
@@ -839,13 +842,31 @@ async def test_bankheist_bot_target_rejected(db):
     assert ctx.sent_messages == ["You can't rob the house."]
 
 
-async def test_bankheist_lobby_rejects_jailed_joiner(db):
-    """The lobby's reaction predicate applies the host's jail gate to joiners.
-    Pre-fix it checked bot / target / host / duplicate only, so a jailed
-    player took a full share with nothing at stake — a second jail roll
-    costs nothing while already inside."""
-    from types import SimpleNamespace
+def _lobby_ctx(cog, host, victim, *clicks):
+    """A !bankheist ctx whose lobby message delivers each of `clicks` —
+    (emoji, user) pairs — while the bot is still seeding the first button,
+    i.e. before the lobby's reactions have finished appearing. Returns the
+    ctx and a dict that receives the heist state once the lobby exists."""
+    ctx = _make_ctx(host, victim, content="!bankheist @victim")
+    ctx.bot = FakeListenerBot()
+    lobby = FakeMessage(message_id=77)
+    ctx._send_mock = AsyncMock(return_value=lobby)
+    captured: dict = {}
 
+    async def _add(emoji):
+        if not captured:
+            captured["hstate"] = cog._active_heists[ctx.channel.id]
+            for click_emoji, user in clicks:
+                await ctx.bot.dispatch("raw_reaction_add", raw_reaction(lobby.id, click_emoji, user))
+    lobby.add_reaction = AsyncMock(side_effect=_add)
+    return ctx, captured
+
+
+async def test_bankheist_lobby_rejects_jailed_joiner(db):
+    """The lobby applies the host's jail gate to joiners. Pre-fix it checked
+    bot / target / host / duplicate only, so a jailed player took a full
+    share with nothing at stake — a second jail roll costs nothing while
+    already inside."""
     cog = EconomyCog(bot=_StubBot())
     host = FakeMember(uid=860, display_name="host")
     victim = FakeMember(uid=861, display_name="victim")
@@ -856,26 +877,44 @@ async def test_bankheist_lobby_rejects_jailed_joiner(db):
         "balance": 0, "savings": [], "jail_until": time.time() + 3600,
     }
     # `free` has no economy row at all — never jailed, must still be let in.
+    ctx, captured = _lobby_ctx(
+        cog, host, victim, ("2️⃣", jailed), ("2️⃣", free), ("❌", host),  # host cancels — nothing resolves
+    )
 
-    ctx = _make_ctx(host, victim, content="!bankheist @victim")
-    verdicts: dict = {}
-
-    class _LobbyBot(_StubBot):
-        async def wait_for(self, event, check=None, timeout=None):
-            lobby = cog._active_heists[ctx.channel.id]["message"]
-
-            def rx(emoji):
-                return SimpleNamespace(message=lobby, emoji=emoji)
-
-            verdicts["jailed"] = check(rx("2️⃣"), jailed)
-            verdicts["free"] = check(rx("2️⃣"), free)
-            return rx("❌"), host  # host cancels — nothing resolves
-
-    ctx.bot = _LobbyBot()
     await cog.cmd_bankheist.callback(cog, ctx, target=victim)
 
-    assert verdicts == {"jailed": False, "free": True}
+    hstate = captured["hstate"]
+    assert hstate["slots"][1] is free
+    assert jailed not in hstate["slots"]
+    assert hstate["cancelled"] is True
     assert ctx.channel.id not in cog._active_heists
+
+
+async def test_bankheist_lobby_counts_a_join_that_lands_during_seeding(db, monkeypatch):
+    """The five lobby buttons take over a second to appear. A joiner who
+    clicks 2️⃣ while 🚀 is still being added (and a host who hits 🚀 right
+    after) used to be ignored: `wait_for` only started listening once
+    seeding had finished. The collector queues both."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=870, display_name="host")
+    victim = FakeMember(uid=871, display_name="victim")
+    joiner = FakeMember(uid=872, display_name="joiner")
+    _grant_level(victim.id, 9)
+    resolved: dict = {}
+
+    async def _resolve(ctx_arg, hstate):
+        resolved["hstate"] = hstate
+    monkeypatch.setattr(cog, "_bankheist_resolve", _resolve)
+    ctx, captured = _lobby_ctx(cog, host, victim, ("2️⃣", joiner), ("🚀", host))
+
+    await cog.cmd_bankheist.callback(cog, ctx, target=victim)
+
+    hstate = resolved["hstate"]
+    assert hstate is captured["hstate"]
+    assert hstate["slots"][1] is joiner
+    assert hstate["started"] is True
+    assert ctx.channel.id not in cog._active_heists
+    assert ctx.bot.listeners["on_raw_reaction_add"] == []
 
 
 async def test_bankheist_chance_formula_party_size_and_levels(db):

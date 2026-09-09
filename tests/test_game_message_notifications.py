@@ -12,7 +12,6 @@ announce_record's holder ping, the raw-channel gambling result sends
 SilentContext's silent default and carry its mentions in content, since
 embed mentions never notify).
 """
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -24,7 +23,7 @@ from src.gambling.flip import play_flip
 from src.games.chess import _bump_board
 from src.invites import _wait_for_confirmations
 
-from tests.fakes.discord import FakeCtx, FakeGuild, FakeMember, FakeThread
+from tests.fakes.discord import FakeCtx, FakeGuild, FakeListenerBot, FakeMember, FakeThread
 
 
 class _RecordingChannel:
@@ -205,12 +204,7 @@ async def test_invite_send_is_loud_with_content_mentions(db):
     so the invite must override SilentContext's silent default AND put the
     mentions in content (embed mentions never notify)."""
     ctx = FakeCtx(author=FakeMember(uid=1, display_name="host"), guild=FakeGuild(gid=42))
-
-    class _Bot:
-        async def wait_for(self, *a, **kw):
-            raise asyncio.TimeoutError
-
-    ctx.bot = _Bot()
+    ctx.bot = FakeListenerBot()   # nobody reacts → the short timeout elapses
     invitee = FakeMember(uid=2, display_name="guest")
 
     await _wait_for_confirmations(ctx, [invitee], timeout=0.01)

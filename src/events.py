@@ -26,6 +26,7 @@ from src.persistence import (
 )
 from src.guild_config import get_guild_cfg
 from src.discord_retry import is_transient_server_error
+from src.reactions import seed_reactions
 from src.ai import (
     check_ollama_connected, keep_typing,
     stream_ollama, finalize, respond, ollama_complete,
@@ -171,11 +172,8 @@ async def _log_command_error(bot, ctx: commands.Context, error: Exception):
     except Exception as e:
         logging.error(f"[error-report] failed to persist issue row: {e}", exc_info=True)
 
-    for emoji in _ERROR_REPORT_REACTIONS:
-        try:
-            await report_msg.add_reaction(emoji)
-        except (discord.Forbidden, discord.HTTPException, aiohttp.ClientError, OSError):
-            pass
+    # Seed last — the issue row above is what the triage listener keys on.
+    await seed_reactions(report_msg, _ERROR_REPORT_REACTIONS, what="error report")
 
 
 async def _collect_recent_history(ctx: commands.Context) -> list[str]:

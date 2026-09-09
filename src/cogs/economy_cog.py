@@ -36,6 +36,7 @@ from src.jail_reasons import format_steal_reason, format_mug_reason, format_bank
 from src.artifacts import bail_cost, steal_success_chance, crime_catch_chance
 from src.properties import bank_property_revenue
 from src.confirm_view import confirm_purchase
+from src.reactions import ReactionCollector, seed_reactions
 from src import state
 
 
@@ -1001,17 +1002,12 @@ class EconomyCog(commands.Cog):
             lobby_msg = await ctx.send(embed=self._bankheist_render(hstate, gid, savings_value))
             hstate["message"] = lobby_msg
 
-            for emoji in self.BANKHEIST_JOIN_EMOJIS:
-                await lobby_msg.add_reaction(emoji)
-            await lobby_msg.add_reaction(self.BANKHEIST_START_EMOJI)
-            await lobby_msg.add_reaction(self.BANKHEIST_CANCEL_EMOJI)
-
-            def check(reaction, user):
-                if reaction.message.id != lobby_msg.id:
+            def wanted(emoji_s: str, user) -> bool:
+                """Which reactions the lobby acts on. Evaluated when the
+                reaction is dequeued, so the slot check sees the current
+                crew. (The collector already drops bots.)"""
+                if user.id == target.id:
                     return False
-                if user.bot or user.id == target.id:
-                    return False
-                emoji_s = str(reaction.emoji)
                 if emoji_s in self.BANKHEIST_JOIN_EMOJIS:
                     if user.id == host.id:
                         return False
@@ -1025,54 +1021,64 @@ class EconomyCog(commands.Cog):
                     return user.id == host.id
                 return False
 
-            while True:
-                if all(s is not None for s in slots):
-                    break  # auto-start when full
+            # Listen before seeding: the five buttons take over a second to
+            # appear, and under wait_for a joiner who clicked 2️⃣ while 🚀 was
+            # still being added was ignored — as was a join that landed while
+            # the lobby was editing its embed after the previous one. The
+            # collector queues both (see src/reactions.py).
+            async with ReactionCollector(ctx.bot, lobby_msg) as reactions:
+                await seed_reactions(
+                    lobby_msg,
+                    [*self.BANKHEIST_JOIN_EMOJIS, self.BANKHEIST_START_EMOJI, self.BANKHEIST_CANCEL_EMOJI],
+                    what="bankheist lobby",
+                )
+                while True:
+                    if all(s is not None for s in slots):
+                        break  # auto-start when full
 
-                elapsed = asyncio.get_running_loop().time() - hstate["opened_at"]
-                time_left = self.BANKHEIST_LOBBY_TIMEOUT - elapsed
-                if time_left <= 0:
-                    break
+                    elapsed = asyncio.get_running_loop().time() - hstate["opened_at"]
+                    time_left = self.BANKHEIST_LOBBY_TIMEOUT - elapsed
+                    if time_left <= 0:
+                        break
 
-                if not hstate["warned"] and time_left <= self.BANKHEIST_LAST_CALL:
-                    hstate["warned"] = True
-                    try:
-                        await lobby_msg.edit(embed=self._bankheist_render(
-                            hstate, gid, savings_value, last_call=True,
-                        ))
-                    except Exception:
-                        pass
-                    wait_for_timeout = time_left
-                else:
-                    time_until_warning = max(0.0, time_left - self.BANKHEIST_LAST_CALL)
-                    wait_for_timeout = time_until_warning if not hstate["warned"] else time_left
-                    if wait_for_timeout <= 0:
+                    if not hstate["warned"] and time_left <= self.BANKHEIST_LAST_CALL:
+                        hstate["warned"] = True
+                        try:
+                            await lobby_msg.edit(embed=self._bankheist_render(
+                                hstate, gid, savings_value, last_call=True,
+                            ))
+                        except Exception:
+                            pass
                         wait_for_timeout = time_left
+                    else:
+                        time_until_warning = max(0.0, time_left - self.BANKHEIST_LAST_CALL)
+                        wait_for_timeout = time_until_warning if not hstate["warned"] else time_left
+                        if wait_for_timeout <= 0:
+                            wait_for_timeout = time_left
 
-                try:
-                    reaction, user = await ctx.bot.wait_for(
-                        "reaction_add", check=check, timeout=wait_for_timeout,
-                    )
-                except asyncio.TimeoutError:
-                    continue  # loop re-evaluates time_left / warning state
-
-                emoji_s = str(reaction.emoji)
-                if emoji_s == self.BANKHEIST_CANCEL_EMOJI:
-                    hstate["cancelled"] = True
-                    break
-                if emoji_s == self.BANKHEIST_START_EMOJI:
-                    hstate["started"] = True
-                    break
-                # Slot reaction — fill the matching index.
-                slot_idx = self.BANKHEIST_JOIN_EMOJIS.index(emoji_s) + 1
-                if slots[slot_idx] is None:
-                    slots[slot_idx] = user
                     try:
-                        await lobby_msg.edit(embed=self._bankheist_render(
-                            hstate, gid, savings_value, last_call=hstate["warned"],
-                        ))
-                    except Exception:
-                        pass
+                        emoji_s, user = await reactions.next(timeout=wait_for_timeout)
+                    except asyncio.TimeoutError:
+                        continue  # loop re-evaluates time_left / warning state
+                    if not wanted(emoji_s, user):
+                        continue
+
+                    if emoji_s == self.BANKHEIST_CANCEL_EMOJI:
+                        hstate["cancelled"] = True
+                        break
+                    if emoji_s == self.BANKHEIST_START_EMOJI:
+                        hstate["started"] = True
+                        break
+                    # Slot reaction — fill the matching index.
+                    slot_idx = self.BANKHEIST_JOIN_EMOJIS.index(emoji_s) + 1
+                    if slots[slot_idx] is None:
+                        slots[slot_idx] = user
+                        try:
+                            await lobby_msg.edit(embed=self._bankheist_render(
+                                hstate, gid, savings_value, last_call=hstate["warned"],
+                            ))
+                        except Exception:
+                            pass
 
             # Lobby phase is over — clear the join/start/cancel reactions so
             # nobody can react after the fact. Best-effort: in DMs the bot
@@ -1811,8 +1817,10 @@ class EconomyCog(commands.Cog):
             f"React with 🪙 to receive **{amount:,} 🪙**!{duration_str}",
             C_GOLD,
         ))
-        await event_msg.add_reaction("🪙")
+        # Register before seeding: on_reaction_add keys on this dict, and a
+        # click on 🪙 the instant it appears must find the event.
         state.active_events[event_msg.id] = {"amount": amount, "rewarded": set()}
+        await seed_reactions(event_msg, ["🪙"], what="coin event")
 
         if target_channel != ctx.channel:
             await ctx.send(embed=emb("✅ Event Started", f"Event posted in {target_channel.mention}.", C_GREEN))

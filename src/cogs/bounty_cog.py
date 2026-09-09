@@ -48,6 +48,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src.discord_retry import send_dm
+from src.reactions import seed_reactions
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_GREY,
     parse_int_amount, parse_duration,
@@ -202,17 +203,24 @@ class BountyCog(commands.Cog):
         except (discord.HTTPException, discord.NotFound) as ex:
             logging.warning("[bounty] failed to clear claim reaction %s: %s", bounty["message_id"], ex)
 
-    async def _dm(self, user_id: int, embed: discord.Embed, reactions: list[str]) -> discord.Message | None:
-        """DM `embed` to a user and seed `reactions`. None if DMs are closed."""
+    async def _dm(self, user_id: int, embed: discord.Embed) -> discord.Message | None:
+        """DM `embed` to a user. None if DMs are closed. A DM that wants the
+        ✅/❌ buttons gets them from `_seed_decision` *after* its id is
+        persisted — on_raw_reaction_add resolves the DM by that id, and the
+        recipient clicks ✅ the moment it appears."""
         try:
             user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
-            dm = await send_dm(user, embed=embed)
-            for r in reactions:
-                await dm.add_reaction(r)
-            return dm
+            return await send_dm(user, embed=embed)
         except (discord.Forbidden, discord.HTTPException) as ex:
             logging.warning("[bounty] DM to %s failed: %s", user_id, ex)
             return None
+
+    @staticmethod
+    async def _seed_decision(dm: "discord.Message | None", what: str) -> None:
+        """Seed ✅/❌ on a decision DM once its id is persisted (no-op when
+        the DM couldn't be sent)."""
+        if dm is not None:
+            await seed_reactions(dm, [ACCEPT_EMOJI, REJECT_EMOJI], what=what)
 
     # ── State helpers ─────────────────────────────────────────────────────────
     def _cached_bounty(self, message_id: int) -> "dict | None":
@@ -341,7 +349,6 @@ class BountyCog(commands.Cog):
         }
         try:
             msg = await ctx.send(embed=render_bounty_embed({**bounty, "message_id": 0}))
-            await msg.add_reaction(CLAIM_EMOJI)
         except discord.HTTPException as ex:
             if uid not in state.godmode_users:
                 await add_balance(uid, amount)   # full refund — nothing happened
@@ -355,6 +362,11 @@ class BountyCog(commands.Cog):
             author_id=uid, amount=amount, condition=condition, expires_at=expires_at,
         )
         state.active_bounties[msg.id] = bounty
+        # Seed last: a 🙋 the instant it appears needs the row and cache
+        # entry above (the claim inserts against bounty["id"]). A seeding
+        # failure is logged, not fatal — the bounty is posted and escrowed,
+        # and the handler matches the emoji, not the bot's own reaction.
+        await seed_reactions(msg, [CLAIM_EMOJI], what="bounty")
 
     # ── Reaction dispatch ─────────────────────────────────────────────────────
     @commands.Cog.listener()
@@ -534,9 +546,9 @@ class BountyCog(commands.Cog):
                 f"React {ACCEPT_EMOJI} to **accept** (pays them) or {REJECT_EMOJI} to **reject**.\n"
                 f"This claim expires <t:{int(claim_exp)}:R>.",
                 C_GOLD),
-            [ACCEPT_EMOJI, REJECT_EMOJI],
         )
         await self._persist_claim(claim, dm_message_id=(dm.id if dm else None), claim_expires_at=claim_exp)
+        await self._seed_decision(dm, what="bounty claim DM")
         await self._persist_bounty(live, claim_log=log)
         await self._refresh_embed(live)
 
@@ -579,12 +591,12 @@ class BountyCog(commands.Cog):
                 f"React {ACCEPT_EMOJI} to **contest** (starts a community vote) or {REJECT_EMOJI} to **drop it**.\n"
                 f"This offer expires <t:{int(contest_exp)}:R>.",
                 C_GOLD),
-            [ACCEPT_EMOJI, REJECT_EMOJI],
         )
         await self._persist_claim(
             claim, status="contesting",
             contest_message_id=(dm.id if dm else None), contest_expires_at=contest_exp,
         )
+        await self._seed_decision(dm, what="bounty contest DM")
         await self._persist_bounty(live, claim_log=log)
         await self._refresh_embed(live)
 
@@ -609,8 +621,6 @@ class BountyCog(commands.Cog):
             poll_msg = await channel.send(
                 embed=render_poll_embed(bounty, claimant_id, poll_exp, yes=0, no=0),
             )
-            await poll_msg.add_reaction(ACCEPT_EMOJI)
-            await poll_msg.add_reaction(REJECT_EMOJI)
         except discord.HTTPException as ex:
             logging.warning("[bounty] failed to start poll for claim %s: %s", claim["id"], ex)
             # Couldn't poll — the claim simply dies; bounty stays open.
@@ -619,11 +629,15 @@ class BountyCog(commands.Cog):
 
         log = list(bounty.get("claim_log") or [])
         log.append(f"🗳️ <@{claimant_id}> contested — community vote started")
+        # The vote handler matches on poll_message_id + status, so the claim
+        # goes to `polling` before the ✅/❌ buttons are seeded — a vote cast
+        # on ✅ while ❌ is still being added counts.
         await self._persist_claim(
             claim, status="polling",
             poll_message_id=poll_msg.id, poll_channel_id=channel.id, poll_expires_at=poll_exp,
             poll_votes={"yes": [], "no": []},
         )
+        await seed_reactions(poll_msg, [ACCEPT_EMOJI, REJECT_EMOJI], what="bounty poll")
         await self._persist_bounty(bounty, claim_log=log)
         await self._refresh_embed(bounty)
 
@@ -680,7 +694,7 @@ class BountyCog(commands.Cog):
         if payout_frac <= 0:
             await self._reject_claim(bounty, claim, note=f"🗳️ Vote failed ({yes}✅/{no}❌) for <@{claimant_id}>")
             await self._dm(claimant_id, emb(
-                "🎯 Bounty Vote", f"The community vote failed ({yes}✅/{no}❌). No payout.", C_RED), [])
+                "🎯 Bounty Vote", f"The community vote failed ({yes}✅/{no}❌). No payout.", C_RED))
             return
         await self._award_bounty(bounty, claim, payout_frac=payout_frac, note=f"🗳️ Vote passed ({yes}✅/{no}❌)")
 
@@ -716,7 +730,7 @@ class BountyCog(commands.Cog):
             f"Your claim was accepted! **{payout:,} 🪙**"
             + (f" ({pct}% of the bounty)" if payout_frac < 1.0 else "")
             + " has been paid to you.",
-            C_GREEN), [])
+            C_GREEN))
 
     async def _void_siblings(self, bounty: dict, winner_claim_id: int, log: list):
         """Void every non-terminal claim other than the winner. A sibling with a
@@ -814,12 +828,12 @@ class BountyCog(commands.Cog):
                 f"React {ACCEPT_EMOJI} to **contest** (community vote) or {REJECT_EMOJI} to **drop it**.\n"
                 f"This offer expires <t:{int(contest_exp)}:R>.",
                 C_GOLD),
-            [ACCEPT_EMOJI, REJECT_EMOJI],
         )
         await self._persist_claim(
             claim, status="contesting",
             contest_message_id=(dm.id if dm else None), contest_expires_at=contest_exp,
         )
+        await self._seed_decision(dm, what="bounty contest DM")
         await self._persist_bounty(bounty, claim_log=log)
         await self._refresh_embed(bounty)
 

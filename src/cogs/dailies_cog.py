@@ -41,6 +41,7 @@ from src.dailies import DAILIES_KEEP_MIN
 from src.cogs.lottery_cog import DAILY_TICKET_PRICE
 from src.events import _auto_daily
 from src.streaks import bump_streak
+from src.reactions import seed_reactions
 from src import state
 
 
@@ -151,12 +152,16 @@ async def refresh_dailies_channel(bot, guild_id: int):
             # Posted by the 5am reset / boot sweep — nobody asked for it, and
             # it pings nobody, so it must not push-notify channel subscribers.
             claim_msg = await channel.send(embed=emb(DAILIES_TITLE, _dailies_body(), C_GOLD), silent=True)
-            for emoji in DAILIES_ALL_EMOJIS:
-                await claim_msg.add_reaction(emoji)
         except (discord.Forbidden, discord.HTTPException):
             logging.warning("[dailies] guild=%s failed to post claim embed", guild_id)
             return
+        # Record the id before seeding: on_raw_reaction_add keys on it, and
+        # players click 🪙 the moment it appears — a second before 🎟️ lands.
+        # A seeding failure leaves the day unstamped so the next minute tick
+        # reposts, as before; clicks on the half-seeded embed still work.
         cfg["dailies_message_id"] = claim_msg.id
+        if not await seed_reactions(claim_msg, DAILIES_ALL_EMOJIS, what=f"dailies guild={guild_id}"):
+            return
 
     cfg["dailies_reset_day"] = today
     await save_guild_settings()
