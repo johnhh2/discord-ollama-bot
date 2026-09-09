@@ -1262,6 +1262,7 @@ async def test_shop_lockchannel_taken_during_confirm_no_charge(db, monkeypatch):
 
     guild = FakeGuild(gid=42)
     channel_id = 777001
+    _state.guild_settings[str(guild.id)] = {"bot_channels": [channel_id]}
 
     class _FakeChannel:
         id = channel_id
@@ -1316,3 +1317,70 @@ async def test_shop_unoreverse_effect_expired_during_confirm_no_charge(db, monke
 
     assert await get_balance(uid) == SHOP_UNOREVERSE_COST + 500
     assert (42, target_uid) not in _state.active_mocks
+
+
+# ── Ragebait: the effect is saved before the opener is posted ────────────────
+
+async def _run_ragebait(monkeypatch, *, save):
+    """Drive !shop ragebait with the AI, typing indicator and message posting
+    stubbed out. Returns (buyer_uid, target_uid, posted_texts, cost)."""
+    from src.cogs.shop_cog import ShopCog
+    from src.config import SHOP_RAGEBAIT_COST
+
+    cog = ShopCog(bot=None)
+    buyer_uid, target_uid = 8101, 8102
+    await add_balance(buyer_uid, SHOP_RAGEBAIT_COST + 1000)
+    target = FakeMember(uid=target_uid, display_name="target")
+
+    class _StubConverter:
+        async def convert(self, ctx, arg):
+            return target
+
+    async def _stream(session, messages, placeholder, **kwargs):
+        return "you type slowly"
+
+    async def _typing(channel):
+        return None
+
+    posted: list[str] = []
+
+    async def _finalize(placeholder, channel, text):
+        posted.append(text)
+
+    monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+    monkeypatch.setattr(_shop_cog, "stream_ollama", _stream)
+    monkeypatch.setattr(_shop_cog, "keep_typing", _typing)
+    monkeypatch.setattr(_shop_cog, "finalize", _finalize)
+    monkeypatch.setattr(_shop_cog, "save_ragebait", save)
+
+    ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=FakeGuild(gid=42))
+    await cog.shop_ragebait.callback(cog, ctx, f"<@{target_uid}>")
+    return buyer_uid, target_uid, posted, SHOP_RAGEBAIT_COST
+
+
+async def test_shop_ragebait_save_failure_refunds_without_posting(db, monkeypatch):
+    """Pre-fix the order was post → activate → save, so a failed save refunded
+    a buyer whose opener had already landed and whose effect stayed live in
+    memory until reboot."""
+    async def _save_fails():
+        raise RuntimeError("db down")
+
+    buyer, target, posted, cost = await _run_ragebait(monkeypatch, save=_save_fails)
+
+    assert await get_balance(buyer) == cost + 1000
+    assert (42, target) not in _state.active_ragebaits
+    assert posted == []
+
+
+async def test_shop_ragebait_posts_opener_after_saving(db, monkeypatch):
+    saved: list[dict] = []
+
+    async def _save_ok():
+        saved.append(dict(_state.active_ragebaits))
+
+    buyer, target, posted, cost = await _run_ragebait(monkeypatch, save=_save_ok)
+
+    assert await get_balance(buyer) == 1000
+    assert (42, target) in _state.active_ragebaits
+    assert posted == [f"<@{target}> you type slowly"]
+    assert (42, target) in saved[0]  # the effect was in state when it was saved

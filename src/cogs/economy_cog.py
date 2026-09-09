@@ -154,6 +154,12 @@ def _crime_public_only_error(ctx) -> discord.Embed | None:
     return None
 
 
+def _is_jailed(uid: int) -> bool:
+    """Sync jail read for places that can't await (the heist lobby's
+    reaction predicate). A user with no economy row has never been jailed."""
+    return time.time() < state.economy["users"].get(str(uid), {}).get("jail_until", 0)
+
+
 def _jail_body(name: str, jail_until_ts: float, reason: str | None) -> str:
     """Render the standard 'in jail' embed body. Omits the Reason line
     when reason is None/empty (legacy jails written before jail_reason existed)."""
@@ -698,7 +704,8 @@ class EconomyCog(commands.Cog):
     # auto-starts at 60s with a 10s last-call warning. On success, seizes 20%
     # of the target's savings via seize_from_savings and splits evenly among
     # participants (host gets the integer-division remainder). Failure is a
-    # no-op for everyone — savings are only at risk on success.
+    # no-op for everyone — savings are only at risk on success. Jail gates
+    # both ends: a jailed host can't open a lobby, a jailed player can't join.
 
     BANKHEIST_JOIN_EMOJIS = ["2️⃣", "3️⃣", "4️⃣"]
     BANKHEIST_START_EMOJI = "🚀"
@@ -1007,6 +1014,11 @@ class EconomyCog(commands.Cog):
                 emoji_s = str(reaction.emoji)
                 if emoji_s in self.BANKHEIST_JOIN_EMOJIS:
                     if user.id == host.id:
+                        return False
+                    # Same gate as the host: a jailed player can't join the
+                    # crew. They'd take a full share with nothing at stake —
+                    # another jail roll costs nothing while already inside.
+                    if _is_jailed(user.id):
                         return False
                     return user.id not in {m.id for m in slots if m is not None}
                 if emoji_s in (self.BANKHEIST_START_EMOJI, self.BANKHEIST_CANCEL_EMOJI):

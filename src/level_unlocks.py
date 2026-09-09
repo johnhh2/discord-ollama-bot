@@ -66,7 +66,7 @@ UNLOCKS: dict[str, dict] = {
     "roleunassign":  {"level": 5, "enabled": _shop_item_enabled("unassignrole"), "usage": "`!roleunassign [@user] <name>` — remove a role"},
     "roledelete":  {"level": 5, "enabled": _shop_item_enabled("deleterole"), "usage": "`!roledelete <name>` — permanently delete a role"},
     "rolerename":  {"level": 5, "enabled": _always,                       "usage": "`!rolerename <old> <new>` — rename a role"},
-    "rolecolor":   {"level": 5, "enabled": _shop_item_enabled("rolecolor"),  "usage": "`!rolecolor @role <hex>` — change a role's color"},
+    "rolecolor":   {"level": 5, "enabled": _shop_item_enabled("rolecolor"),  "usage": "`!rolecolor @role <hex>` — change a bot-created role's color"},
     "roleup":      {"level": 5, "enabled": _shop_item_enabled("roleup"),     "usage": "`!roleup <name>` — move role up one position"},
     "roledown":    {"level": 5, "enabled": _shop_item_enabled("roledown"),   "usage": "`!roledown <name>` — move role down one position"},
 
@@ -89,11 +89,11 @@ UNLOCKS: dict[str, dict] = {
     # Level 20 — channel family (advertised: channelcreate). channellock/channelunlock gated separately at 25.
     "channelcreate": {"level": 20, "enabled": _shop_item_enabled("createchannel"), "usage": "`!channelcreate <name>` — create a channel", "reward": True},
     "channeldelete": {"level": 20, "enabled": _shop_item_enabled("deletechannel"), "usage": "`!channeldelete <name>` — delete a bot-created channel"},
-    "channelrename": {"level": 20, "enabled": _shop_item_enabled("renamechannel"), "usage": "`!channelrename <old> <new>` — rename a channel"},
-    "rolechannel":   {"level": 20, "enabled": _shop_item_enabled("rolechannel"), "usage": "`!rolechannel @role <name>` — create a role-locked channel"},
+    "channelrename": {"level": 20, "enabled": _shop_item_enabled("renamechannel"), "usage": "`!channelrename <old> <new>` — rename a bot-created channel"},
+    "rolechannel":   {"level": 20, "enabled": _shop_item_enabled("rolechannel"), "usage": "`!rolechannel @role <name>` — restrict a bot-created channel to a role"},
 
     # Level 25 — channel locking
-    "channellock":   {"level": 25, "enabled": _always,                    "usage": "`!channellock <name>` — lock a channel against changes", "reward": True},
+    "channellock":   {"level": 25, "enabled": _always,                    "usage": "`!channellock <name>` — lock a bot-created channel against changes", "reward": True},
     "channelunlock": {"level": 25, "enabled": _always,                    "usage": "`!channelunlock <name>` — unlock a channel (lock owner only)"},
 
     # Real-estate tier unlocks (levels 15/20/25). The keys are deliberately

@@ -176,6 +176,7 @@ async def _init_db_state_inner(state, run_migrations):
         # tier in insurance_tier (0065; NULL = the default tier). Bot-wide
         # since 0055 — keyed by user alone (rows sit at guild_id=0).
         from src.config import SHOP_INSURANCE_DEFAULT_TIER
+        from src.economy import INSURANCE_PROTECTS
         try:
             await cur.execute(
                 "SELECT user_id, expires_at, history_json, insurance_tier"
@@ -184,9 +185,14 @@ async def _init_db_state_inner(state, run_migrations):
             now = _time.time()
             for uid, expires_at, protected_json, tier in await cur.fetchall():
                 if expires_at and expires_at > now:
+                    # history_json is the protected list as of purchase. Union
+                    # it with the current constant so a policy bought before a
+                    # category existed (mute, curse) covers it too — every
+                    # tier blocks every non-crime effect.
+                    stored = json.loads(protected_json) if protected_json else []
                     state.insurance[int(uid)] = {
                         "expires_at": expires_at,
-                        "protected_from": json.loads(protected_json) if protected_json else [],
+                        "protected_from": list(dict.fromkeys([*stored, *INSURANCE_PROTECTS])),
                         "tier": tier or SHOP_INSURANCE_DEFAULT_TIER,
                     }
         except Exception as e:

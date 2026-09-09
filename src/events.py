@@ -825,8 +825,12 @@ class EventsCog(commands.Cog):
         key = (message.guild.id, uid)
         if not (key in state.active_curses and not message.content.startswith("!")):
             return
+        if await is_insured(uid, "curse"):
+            return
         # Consume the charge synchronously before the send (see _handle_mock).
-        curse = state.active_curses[key]
+        curse = state.active_curses.get(key)
+        if curse is None:
+            return
         curse["remaining"] -= 1
         if curse["remaining"] <= 0:
             del state.active_curses[key]

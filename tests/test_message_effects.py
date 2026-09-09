@@ -412,6 +412,25 @@ async def test_mock_skips_when_target_is_insured(db, cog):
     channel.send.assert_not_awaited()
 
 
+async def test_curse_skips_when_target_is_insured(db, cog):
+    """Same rule as mock: a policy bought after the curse landed stops it."""
+    target = FakeMember(uid=3011)
+    guild = FakeGuild(gid=42)
+    channel = _Channel(ch_id=711)
+
+    _state.insurance[target.id] = {
+        "expires_at": time.time() + 3600,
+        "protected_from": ["curse"],
+    }
+    _state.active_curses[(42, target.id)] = {
+        "remaining": 3, "cursed_by": 9, "channel_id": 711,
+    }
+    await cog.on_message(_Msg(target, "hello", guild, channel))
+
+    assert _state.active_curses[(42, target.id)]["remaining"] == 3
+    channel.send.assert_not_awaited()
+
+
 async def test_ragebait_skips_when_target_is_insured(db, cog):
     target = FakeMember(uid=4010, display_name="target")
     guild = FakeGuild(gid=42)

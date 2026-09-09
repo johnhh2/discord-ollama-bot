@@ -839,6 +839,45 @@ async def test_bankheist_bot_target_rejected(db):
     assert ctx.sent_messages == ["You can't rob the house."]
 
 
+async def test_bankheist_lobby_rejects_jailed_joiner(db):
+    """The lobby's reaction predicate applies the host's jail gate to joiners.
+    Pre-fix it checked bot / target / host / duplicate only, so a jailed
+    player took a full share with nothing at stake — a second jail roll
+    costs nothing while already inside."""
+    from types import SimpleNamespace
+
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=860, display_name="host")
+    victim = FakeMember(uid=861, display_name="victim")
+    jailed = FakeMember(uid=862, display_name="jailed")
+    free = FakeMember(uid=863, display_name="free")
+    _grant_level(victim.id, 9)
+    _state.economy["users"][str(jailed.id)] = {
+        "balance": 0, "savings": [], "jail_until": time.time() + 3600,
+    }
+    # `free` has no economy row at all — never jailed, must still be let in.
+
+    ctx = _make_ctx(host, victim, content="!bankheist @victim")
+    verdicts: dict = {}
+
+    class _LobbyBot(_StubBot):
+        async def wait_for(self, event, check=None, timeout=None):
+            lobby = cog._active_heists[ctx.channel.id]["message"]
+
+            def rx(emoji):
+                return SimpleNamespace(message=lobby, emoji=emoji)
+
+            verdicts["jailed"] = check(rx("2️⃣"), jailed)
+            verdicts["free"] = check(rx("2️⃣"), free)
+            return rx("❌"), host  # host cancels — nothing resolves
+
+    ctx.bot = _LobbyBot()
+    await cog.cmd_bankheist.callback(cog, ctx, target=victim)
+
+    assert verdicts == {"jailed": False, "free": True}
+    assert ctx.channel.id not in cog._active_heists
+
+
 async def test_bankheist_chance_formula_party_size_and_levels(db):
     """The chance table: base by party size + 0–10% for host, 0–3% per joiner.
     Bonus scales linearly from level 1 (0%) to level 100 (cap)."""

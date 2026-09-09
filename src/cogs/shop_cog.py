@@ -187,6 +187,44 @@ class ShopCog(commands.Cog):
             return ch if isinstance(ch, discord.TextChannel) else None
         return None
 
+    @staticmethod
+    def _is_bot_channel(guild: discord.Guild, channel) -> bool:
+        """True if the shop created this channel (guild cfg `bot_channels`).
+
+        Every shop command that edits a channel — rename, restrict, lock,
+        delete — gates on this. Roles gate on `state.bot_roles` the same way.
+        Without the gate, coins bought edits to #general."""
+        return channel.id in get_guild_cfg(guild.id).get("bot_channels", [])
+
+    @staticmethod
+    async def _rollback_created_role(guild: discord.Guild, role: discord.Role) -> bool:
+        """Delete a role !shop rolecreate just made but couldn't assign, and
+        drop it from the tracked set. Returns False if Discord refused the
+        delete — the role then stays tracked so !shop roledelete can take it."""
+        try:
+            await role.delete(reason="shop: rolecreate could not assign the role")
+        except Exception:
+            return False
+        state.bot_roles.discard(role.id)
+        state.bot_role_ranks.pop((guild.id, role.id), None)
+        try:
+            await save_bot_roles()
+        except Exception:
+            pass
+        return True
+
+    @staticmethod
+    async def _restore_overwrites(channel: discord.TextChannel, applied: list[tuple]) -> None:
+        """Undo the permission overwrites a failed !shop rolechannel already
+        applied. `applied` is [(target, overwrite_before), …] in the order they
+        were set. Best-effort: an empty prior overwrite means there was none,
+        so the row is deleted rather than written back empty."""
+        for who, before in reversed(applied):
+            try:
+                await channel.set_permissions(who, overwrite=None if before.is_empty() else before)
+            except Exception:
+                pass
+
     def _role_section_lines(self, shop_items: dict, uid: int, gid: int) -> list[str]:
         """Cost-sorted, level-aware, shop_items-gated lines for the Roles menu.
 
@@ -211,7 +249,7 @@ class ShopCog(commands.Cog):
         if shop_items.get("roledown", True):
             items.append((SHOP_ROLE_MOVE_COST, L("roledown", f"`!shop roledown <role name>` — Move a bot-created role down one position — **{SHOP_ROLE_MOVE_COST:,} 🪙**")))
         if shop_items.get("rolecolor", True):
-            items.append((SHOP_ROLECOLOR_COST, L("rolecolor", f"`!shop rolecolor @role <color>` — Change a role's color — **{SHOP_ROLECOLOR_COST:,} 🪙**")))
+            items.append((SHOP_ROLECOLOR_COST, L("rolecolor", f"`!shop rolecolor @role <color>` — Change a bot-created role's color — **{SHOP_ROLECOLOR_COST:,} 🪙**")))
         if shop_items.get("renamerole", True):
             items.append((SHOP_RENAME_COST, L("rolerename", f"`!shop rolerename @role | <new name>` — Rename a bot-created role — **{SHOP_RENAME_COST:,} 🪙**")))
         if shop_items.get("lockrole", True):
@@ -241,9 +279,9 @@ class ShopCog(commands.Cog):
         if shop_items.get("renamechannel", True):
             items.append((SHOP_RENAME_COST, L("channelrename", f"`!shop channelrename <channel> <new name>` — Rename a bot-created channel — **{SHOP_RENAME_COST:,} 🪙**")))
         if shop_items.get("lockchannel", True):
-            items.append((SHOP_LOCK_COST, L("channellock", f"`!shop channellock #channel` — Lock a channel against changes — **{SHOP_LOCK_COST:,} 🪙**")))
+            items.append((SHOP_LOCK_COST, L("channellock", f"`!shop channellock #channel` — Lock a bot-created channel against changes — **{SHOP_LOCK_COST:,} 🪙**")))
         if shop_items.get("rolechannel", True):
-            items.append((SHOP_ROLECHANNEL_COST, L("rolechannel", f"`!shop rolechannel @role #channel` — Restrict a channel to a role — **{SHOP_ROLECHANNEL_COST:,} 🪙**")))
+            items.append((SHOP_ROLECHANNEL_COST, L("rolechannel", f"`!shop rolechannel @role #channel` — Restrict a bot-created channel to a role — **{SHOP_ROLECHANNEL_COST:,} 🪙**")))
         if not items:
             return []
         items.sort(key=lambda x: x[0])
@@ -591,25 +629,51 @@ class ShopCog(commands.Cog):
             return
         try:
             new_role = await ctx.guild.create_role(name=name, hoist=True)
-            await target.add_roles(new_role)
-            state.bot_roles.add(new_role.id)
-            # New roles go to the bottom of the rank ladder for this guild
-            # (max rank + 1 — lowest priority). Operators promote them via
-            # !shop roleup.
-            existing_ranks = [r for (g, _r), r in state.bot_role_ranks.items() if g == ctx.guild.id]
-            new_rank = (max(existing_ranks) + 1) if existing_ranks else 1
-            state.bot_role_ranks[(ctx.guild.id, new_role.id)] = new_rank
-            await save_bot_roles()
-            await ctx.send(embed=emb("✅ Role Created", f"Role **{name}** created and assigned to **{target.display_name}** — rank **#{new_rank}**. Give it a color with `!shop rolecolor @{name} <hex>`.", C_GREEN))
         except discord.Forbidden:
             if cost > 0:
                 await add_balance(uid, cost)
             log_bot_permission_error(ctx, "manage roles")
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to manage roles.", C_RED))
+            return
         except Exception as e:
             if cost > 0:
                 await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
+            return
+        # Track the role the moment it exists, before the assign. The assign
+        # can fail on its own (target left during the confirm prompt, role
+        # hierarchy) and used to leave a live role the shop had never
+        # registered — invisible to !shop roledelete for good.
+        # New roles go to the bottom of the rank ladder for this guild
+        # (max rank + 1 — lowest priority). Operators promote them via
+        # !shop roleup.
+        existing_ranks = [r for (g, _r), r in state.bot_role_ranks.items() if g == ctx.guild.id]
+        new_rank = (max(existing_ranks) + 1) if existing_ranks else 1
+        state.bot_roles.add(new_role.id)
+        state.bot_role_ranks[(ctx.guild.id, new_role.id)] = new_rank
+        try:
+            await save_bot_roles()
+            await target.add_roles(new_role)
+        except Exception as e:
+            # Nothing the buyer paid for applied: take the role back down and
+            # refund. If Discord refuses the delete the role stays tracked, so
+            # !shop roledelete can still remove it.
+            removed = await self._rollback_created_role(ctx.guild, new_role)
+            if cost > 0:
+                await add_balance(uid, cost)
+            if isinstance(e, discord.Forbidden):
+                log_bot_permission_error(ctx, "manage roles")
+                why = "I don't have permission to assign it"
+            else:
+                why = f"I couldn't assign it to **{target.display_name}** ({e})"
+            tail = (
+                "The role was removed and you were refunded."
+                if removed else
+                "I couldn't remove the role either — it's tracked, so `!shop roledelete` can. You were refunded."
+            )
+            await ctx.send(embed=emb("❌ Role Not Assigned", f"Role **{name}** was created but {why}. {tail}", C_RED))
+            return
+        await ctx.send(embed=emb("✅ Role Created", f"Role **{name}** created and assigned to **{target.display_name}** — rank **#{new_rank}**. Give it a color with `!shop rolecolor @{name} <hex>`.", C_GREEN))
 
     # ── !shop assignrole ──────────────────────────────────────────────────────
     @cmd_shop.command(name="roleassign", aliases=["assignrole"])
@@ -905,7 +969,7 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Name", "Channel name must be at least 2 characters.", C_RED))
             return
         target_channel = self._resolve_channel_strict(ctx.guild, args[0])
-        if target_channel is None or not isinstance(target_channel, discord.TextChannel):
+        if target_channel is None or not self._is_bot_channel(ctx.guild, target_channel):
             await ctx.send(embed=emb("❌ Not Found", "Could not find that bot-created channel. Use a #mention or channel ID.", C_RED))
             return
         if target_channel.id in state.locked_channels and state.locked_channels[target_channel.id] != uid and uid not in state.godmode_users:
@@ -999,8 +1063,8 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Not Found", "Could not find that role. Use a @mention or role ID.", C_RED))
             return
         target_channel = self._resolve_channel_strict(ctx.guild, args[1])
-        if target_channel is None or not isinstance(target_channel, discord.TextChannel):
-            await ctx.send(embed=emb("❌ Not Found", "Could not find that channel. Use a #mention or channel ID.", C_RED))
+        if target_channel is None or not self._is_bot_channel(ctx.guild, target_channel):
+            await ctx.send(embed=emb("❌ Not Found", "Could not find that bot-created channel. Use a #mention or channel ID.", C_RED))
             return
         if target_channel.id in state.locked_channels and state.locked_channels[target_channel.id] != uid and uid not in state.godmode_users:
             await ctx.send(embed=emb("🔒 Locked", f"**{target_channel.name}** is locked — only its owner can change its permissions.", C_RED))
@@ -1014,20 +1078,31 @@ class ShopCog(commands.Cog):
             return
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLECHANNEL_COST:,}"):
             return
+        # Three overwrites, in this order so the bot keeps access before
+        # @everyone loses it. Each is its own HTTP call, so a failure on the
+        # second or third used to leave the earlier ones in place while the
+        # full price went back. Remember what each target had and restore it.
+        applied: list[tuple] = []
         try:
-            await target_channel.set_permissions(ctx.guild.me, read_messages=True, send_messages=True)
-            await target_channel.set_permissions(role, read_messages=True)
-            await target_channel.set_permissions(ctx.guild.default_role, read_messages=False)
-            await ctx.send(embed=emb("✅ Channel Restricted", f"{target_channel.mention} is now only visible to **{role.name}**.", C_GREEN))
-        except discord.Forbidden:
-            if cost > 0:
-                await add_balance(uid, cost)
-            log_bot_permission_error(ctx, "manage channel permissions")
-            await ctx.send(embed=emb("❌ No Permission", "I don't have permission to manage that channel's permissions.", C_RED))
+            for who, perms in (
+                (ctx.guild.me, {"read_messages": True, "send_messages": True}),
+                (role, {"read_messages": True}),
+                (ctx.guild.default_role, {"read_messages": False}),
+            ):
+                before = target_channel.overwrites_for(who)
+                await target_channel.set_permissions(who, **perms)
+                applied.append((who, before))
         except Exception as e:
+            await self._restore_overwrites(target_channel, applied)
             if cost > 0:
                 await add_balance(uid, cost)
-            await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
+            if isinstance(e, discord.Forbidden):
+                log_bot_permission_error(ctx, "manage channel permissions")
+                await ctx.send(embed=emb("❌ No Permission", "I don't have permission to manage that channel's permissions.", C_RED))
+            else:
+                await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
+            return
+        await ctx.send(embed=emb("✅ Channel Restricted", f"{target_channel.mention} is now only visible to **{role.name}**.", C_GREEN))
 
     # ── !shop lockchannel ─────────────────────────────────────────────────────
     @cmd_shop.command(name="channellock", aliases=["lockchannel"])
@@ -1041,8 +1116,8 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop channellock #channel`", C_PURPLE))
             return
         target_channel = self._resolve_channel_strict(ctx.guild, args[0])
-        if target_channel is None:
-            await ctx.send(embed=emb("❌ Not Found", "Could not find that channel. Use a #mention or channel ID.", C_RED))
+        if target_channel is None or not self._is_bot_channel(ctx.guild, target_channel):
+            await ctx.send(embed=emb("❌ Not Found", "Could not find that bot-created channel. Use a #mention or channel ID.", C_RED))
             return
         if target_channel.id in state.locked_channels:
             await ctx.send(embed=emb("❌ Already Locked", f"{target_channel.mention} is already locked.", C_RED))
@@ -1219,22 +1294,39 @@ class ShopCog(commands.Cog):
                     {"role": "system", "content": ragebait_system},
                     {"role": "user", "content": prompt},
                 ], placeholder, user_id=uid)
-            if not full_response:
-                # AI disabled or token budget denied — stream_ollama already
-                # edited the placeholder with the reason. Refund; don't
-                # activate the effect or post a bare mention.
-                if cost > 0:
-                    await add_balance(uid, cost)
-                return
-            await finalize(placeholder, ctx.channel, f"{target.mention} {full_response}")
-            state.active_ragebaits[(gid, target.id)] = {"remaining": SHOP_RAGEBAIT_MESSAGES, "history": [], "channel_id": ctx.channel.id}
-            await save_ragebait()
         except Exception as e:
             if cost > 0:
                 await add_balance(uid, cost)
             await placeholder.edit(content=f"⚠️ {e}")
+            return
         finally:
             typing_task.cancel()
+        if not full_response:
+            # AI disabled or token budget denied — stream_ollama already
+            # edited the placeholder with the reason. Refund; don't
+            # activate the effect or post a bare mention.
+            if cost > 0:
+                await add_balance(uid, cost)
+            return
+        # Activate and persist before posting the opener. A failed save then
+        # refunds with nothing posted — it used to run post → activate → save,
+        # so the refund went out with the message landed and the effect live.
+        key = (gid, target.id)
+        state.active_ragebaits[key] = {"remaining": SHOP_RAGEBAIT_MESSAGES, "history": [], "channel_id": ctx.channel.id}
+        try:
+            await save_ragebait()
+        except Exception as e:
+            state.active_ragebaits.pop(key, None)
+            if cost > 0:
+                await add_balance(uid, cost)
+            await placeholder.edit(content=f"⚠️ {e}")
+            return
+        try:
+            await finalize(placeholder, ctx.channel, f"{target.mention} {full_response}")
+        except Exception:
+            # The effect is live and saved — the buyer got what they paid for,
+            # and the streamed text already sits in the placeholder. No refund.
+            pass
 
     # ── !shop mock ────────────────────────────────────────────────────────────
     @cmd_shop.command(name="mock")
@@ -1296,7 +1388,7 @@ class ShopCog(commands.Cog):
     # (policy and subscription agree — set_insurance_tier); switching moves
     # the remaining coverage with them, charging the daily difference on it
     # for an upgrade (insurance_switch_cost) and nothing for a downgrade.
-    INSURANCE_PROTECTS_STR = "mock, ragebait, nickname changes, role assignments, tax, and spellcheck"
+    INSURANCE_PROTECTS_STR = "mock, ragebait, curses, mutes, nickname changes, role assignments, tax, and spellcheck"
 
     def _rollback_insurance_days(self, key: int, days: int):
         """Undo a stamped-but-unpaid insurance extension. A concurrent purchase
@@ -1669,8 +1761,8 @@ class ShopCog(commands.Cog):
             return
         color_str = args[-1]
         role = self._resolve_role_strict(ctx.guild, args[0])
-        if role is None:
-            await ctx.send(embed=emb("❌ Not Found", "Could not find that role. Use a @mention or role ID.", C_RED))
+        if role is None or role.id not in state.bot_roles:
+            await ctx.send(embed=emb("❌ Not Found", "Could not find that bot-created role. Use a @mention or role ID.", C_RED))
             return
         if role.id in state.locked_roles and state.locked_roles[role.id] != uid and uid not in state.godmode_users:
             await ctx.send(embed=emb("🔒 Locked", f"**{role.name}** is locked — only its owner can change its color.", C_RED))
@@ -1718,6 +1810,21 @@ class ShopCog(commands.Cog):
             return
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
+        if target.id == uid:
+            await ctx.send(embed=emb("❌ Self Mute", "You can't mute yourself!", C_RED))
+            return
+        if self.bot and self.bot.user and target.id == self.bot.user.id:
+            await ctx.send(embed=emb("❌ Invalid Target", "You can't mute the bot.", C_RED))
+            return
+        if target.guild_permissions.administrator:
+            # Discord refuses to time out administrators (the owner included);
+            # say so up front instead of charging and refunding on the 403.
+            await ctx.send(embed=emb("❌ Can't Mute", f"**{target.display_name}** is a server administrator — Discord doesn't allow timing them out.", C_RED))
+            return
+        if await is_insured(target.id, "mute"):
+            _exp = get_insurance_expiry(target.id)
+            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against mutes (expires <t:{_exp}:R>).", C_GOLD))
             return
         cost = 0 if uid in state.godmode_users else SHOP_MUTE_COST
         if not await confirm_purchase(
@@ -1836,6 +1943,13 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
         gid = ctx.guild.id
+        if self.bot and self.bot.user and target.id == self.bot.user.id:
+            await ctx.send(embed=emb("❌ Invalid Target", "You can't curse the bot.", C_RED))
+            return
+        if await is_insured(target.id, "curse"):
+            _exp = get_insurance_expiry(target.id)
+            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against curses (expires <t:{_exp}:R>).", C_GOLD))
+            return
         cost = 0 if uid in state.godmode_users else SHOP_CURSE_COST
         if not await confirm_purchase(
             ctx, title="🔮 Curse",

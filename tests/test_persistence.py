@@ -118,7 +118,12 @@ async def test_insurance_delete_and_replace(db):
     await _persistence.init_db_state()
     assert 1 in _state.insurance
     assert 2 not in _state.insurance
-    assert _state.insurance[1]["protected_from"] == ["nickname", "curse"]
+    # Stored order is kept; the current INSURANCE_PROTECTS is folded in on
+    # load so old policies cover categories added after they were bought.
+    from src.economy import INSURANCE_PROTECTS
+    protected = _state.insurance[1]["protected_from"]
+    assert protected[:2] == ["nickname", "curse"]
+    assert set(protected) == {"nickname", "curse", *INSURANCE_PROTECTS}
     # An entry saved without a tier (pre-0065 shape) comes back on the default.
     assert _state.insurance[1]["tier"] == "basic"
 

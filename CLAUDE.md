@@ -320,13 +320,30 @@ Rules when touching this system:
     silently drop a column (listing, upgrade, custom name). Keep it that
     way when adding fields.
 
+## Shop edits touch bot-created roles and channels only
+
+Every `!shop` command that edits a role or channel gates on the tracked set:
+`state.bot_roles` for roles, the guild cfg's `bot_channels` list for channels
+(`ShopCog._is_bot_channel`). That covers `rolecolor`, `rolerename`,
+`channelrename`, `rolechannel` and `channellock`, not just the deletes —
+without it, `rolechannel` + `channelrename` hid and renamed `#general` for
+80k coins. A new shop command that edits Discord state must gate the same
+way. The two multi-step buys roll back what applied before refunding:
+`rolecreate` registers the role the moment it exists and deletes it if the
+assign fails; `rolechannel` restores each prior overwrite if a later
+`set_permissions` call fails.
+
 ## Insurance: tiers, and crime is refunded rather than blocked
 
 Insurance comes in three tiers (`SHOP_INSURANCE_TIERS` in `src/config.py`):
 basic 50% for 1k/day (100k cap), standard 75% for 3k/day (200k cap),
 premium 100% for 6k/day (400k cap). Every tier still blocks the non-crime
 effects outright (`INSURANCE_PROTECTS` — mock, ragebait, nickname, role,
-tax, spellcheck; `is_insured` gates those as before). Crime is different:
+tax, spellcheck, mute, curse; `is_insured` gates those as before). A policy
+row stores that list as of purchase and `init_db_state` unions it with the
+current constant on load, so a new shop effect aimed at another user goes in
+`INSURANCE_PROTECTS` **and** gets an `is_insured` check in its command (mute
+and curse once had neither). Crime is different:
 `!steal`, `!mug` and `!bankheist` **go through** against an insured target.
 The thief/crew keeps the full take; after the loss lands, the crime calls
 `insurance_refund(victim, loss)` (`src/economy.py`), which pays the tier's

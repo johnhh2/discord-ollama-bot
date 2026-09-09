@@ -189,7 +189,10 @@ async def announce_new_lottery(
 # truth for `!shop insurance` and the subscription renewal below. Crime
 # (steal/mug/bankheist) is deliberately NOT here: insurance no longer stops a
 # robbery, it refunds part of the loss — see insurance_refund.
-INSURANCE_PROTECTS = ["ragebait", "mock", "nickname", "role", "tax", "spellcheck"]
+# A policy row stores a snapshot of this list at purchase; init_db_state
+# unions the stored list with this one on load, so a name added here covers
+# existing policies from the next boot (mute and curse were added that way).
+INSURANCE_PROTECTS = ["ragebait", "mock", "nickname", "role", "tax", "spellcheck", "mute", "curse"]
 
 
 def insurance_tier_info(tier: str | None) -> dict:
