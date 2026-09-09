@@ -19,28 +19,31 @@ coins"). It starts as NEW_THREAD_NAME. Results reach it through
 `economy.GAMBLING_RESULT_HOOKS`: every gambling game already calls
 `record_gambling_event` at outcome time, and the thread-eligible ones pass
 their `channel_id`, so the tally updates on the result itself — nothing
-polls gambling_history. Discord only allows two name changes per channel
-per ten minutes, so renames are budgeted (see RENAME_BUDGET / RENAME_WINDOW)
-and the name can lag the table during a hot streak.
+polls gambling_history. The *name* is another matter: Discord only allows
+two name changes per channel per ten minutes, so a result just marks its
+thread for the rename sweep, which brings a thread's name up to date at
+most once every RENAME_INTERVAL seconds and only when there have been
+results since its last check. The name can lag the table by up to five
+minutes.
 
 Registry: `state.gambling_threads` {thread_id: {owner_id, guild_id,
 parent_id, created_at, tally: {uid: {net, name}}}}, mirrored row-for-row
 to the gambling_threads table so a reboot keeps the gate, the tally and
-`!stop` working. The row goes when the owner (or an admin) closes the
+`!stop` working (the underscore keys — the sweep's bookkeeping — are
+in-memory only). The row goes when the owner (or an admin) closes the
 table with `!stop` (`close_gambling_thread`, called from AICog.cmd_stop,
 which then archives the thread), or when the thread is archived or deleted
 out from under us.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from types import SimpleNamespace
 from typing import NamedTuple
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from src import state
 # Looked up through the package at call time (not bound at import) so the
@@ -81,13 +84,18 @@ NEW_THREAD_NAME = "New Gambling Thread"
 THREAD_NAME_MAX = 100
 
 # Discord allows two name changes per channel per ten minutes, and a busy
-# table changes leader far more often than that. Renames are budgeted to
-# exactly that: the first two go out at once; while the budget is spent,
-# one delayed rename waits for the oldest slot to free and then applies
-# whatever the tally says by then. A rename never runs on the result path
-# itself — discord.py would sleep out a 429 there and stall the game.
-RENAME_BUDGET = 2
-RENAME_WINDOW = 600.0
+# table changes leader far more often than that. So the name is brought up
+# to date by a sweep, never on the result path: a result only marks its
+# thread dirty, and the once-a-minute sweep renames a dirty thread when its
+# previous rename is at least RENAME_INTERVAL ago — one edit per thread per
+# five minutes, inside the budget however hot the table runs. A thread
+# nobody has gambled in since its last check is left alone, so a name a
+# moderator set by hand sticks until the next result. The first name lands
+# within a sweep of the first result; after that the name can lag the
+# table by up to five minutes — expected. discord.py sleeps out a 429, so
+# an inline `thread.edit(name=...)` on a result path would stall the game.
+RENAME_INTERVAL = 300.0
+RENAME_SWEEP_SECONDS = 60
 
 
 class GamblingThreadOnly(commands.CheckFailure):
@@ -110,8 +118,8 @@ def opening_embed(owner) -> discord.Embed:
         "🎰 Gambling Thread",
         "Only these commands work in here:\n" + _command_list()
         + "\n\nAnyone can play. The thread renames itself after whoever is up the most"
-        " — or, if nobody is, down the most. Discord allows two renames every"
-        " 10 minutes, so the name can lag the table."
+        " — or, if nobody is, down the most. The name updates at most once every"
+        " 5 minutes, so it can lag the table."
         + f"\n{owner.mention} or an admin closes the table with `!stop`.",
         C_GOLD,
     )
@@ -138,16 +146,12 @@ def leader_title(row: dict) -> str | None:
     return name[:THREAD_NAME_MAX - len(suffix)] + suffix
 
 
-def _rename_delay(row: dict) -> float:
-    """Seconds until the next rename fits Discord's budget (0 = right now).
-    `_rename_times` holds when this thread's recent renames landed; entries
-    older than the window are trimmed as a side effect."""
-    now = time.monotonic()
-    recent = sorted(t for t in row.get("_rename_times", ()) if now - t < RENAME_WINDOW)
-    row["_rename_times"] = recent
-    if len(recent) < RENAME_BUDGET:
-        return 0.0
-    return max(0.0, recent[0] + RENAME_WINDOW - now)
+def _rename_ready(row: dict) -> bool:
+    """This thread's name may change now: its previous rename (`_renamed_at`,
+    monotonic; absent on a thread never renamed) is at least RENAME_INTERVAL
+    ago."""
+    last = row.get("_renamed_at")
+    return last is None or time.monotonic() - last >= RENAME_INTERVAL
 
 
 async def _try_create_gambling_thread(ctx: commands.Context, name: str):
@@ -193,8 +197,8 @@ async def close_gambling_thread(ctx: commands.Context) -> CloseResult | None:
     payout would otherwise land in an archived thread. Otherwise every live
     blackjack hand stands (the closer's included: standing never does worse
     than a forfeit), the registry row goes, and the caller archives — with
-    the final leader name riding the same edit when Discord's rename budget
-    allows (otherwise the name just lags the last result).
+    the final leader name riding the same edit when this thread's rename
+    interval has passed (otherwise the name keeps its last update).
     """
     cid = ctx.channel.id
     row = state.gambling_threads.get(cid)
@@ -207,14 +211,11 @@ async def close_gambling_thread(ctx: commands.Context) -> CloseResult | None:
         )
     settled = await _stand_live_hands(ctx.channel, ctx.guild)  # results land in the tally
     state.gambling_threads.pop(cid, None)
-    task = row.get("_rename_task")
-    if task is not None and not task.done():
-        task.cancel()
     final = leader_title(row)
     if (
         final == getattr(ctx.channel, "name", None)
         or final == row.get("_last_title")
-        or _rename_delay(row) > 0
+        or not _rename_ready(row)
     ):
         final = None
     await persistence.delete_gambling_thread(cid)
@@ -229,7 +230,13 @@ class GamblingSessionCog(commands.Cog):
         self.bot = bot
         economy.GAMBLING_RESULT_HOOKS.append(self._on_gambling_result)
 
+    async def cog_load(self):
+        # Started here (not __init__) so tests constructing the cog directly
+        # don't spawn the sweep — only bot.add_cog does.
+        self._rename_sweep.start()
+
     def cog_unload(self):
+        self._rename_sweep.cancel()
         try:
             economy.GAMBLING_RESULT_HOOKS.remove(self._on_gambling_result)
         except ValueError:
@@ -267,54 +274,79 @@ class GamblingSessionCog(commands.Cog):
 
     async def _on_gambling_result(self, channel_id: int, guild_id: int, uid: int, net: int) -> None:
         """economy.GAMBLING_RESULT_HOOKS entry: fold a result into its
-        thread's tally and line up a rename. Results anywhere else are
-        ignored."""
+        thread's tally and queue the thread for the rename sweep. Results
+        anywhere else are ignored."""
         row = state.gambling_threads.get(channel_id)
         if row is None or net == 0:
             return
         entry = row.setdefault("tally", {}).setdefault(uid, {"net": 0, "name": None})
         entry["net"] += int(net)
+        row["_dirty"] = True
         name = self._display_name(channel_id, guild_id, uid)
         if name:
             entry["name"] = name
         await persistence.save_gambling_thread(channel_id)
-        self._schedule_rename(channel_id)
 
-    def _schedule_rename(self, thread_id: int) -> None:
-        """Rename now if the budget allows, else queue one delayed rename.
-        A queued rename reads the tally when it fires (and checks again
-        after it lands), so later results need no task of their own."""
-        row = state.gambling_threads.get(thread_id)
-        if row is None:
-            return
-        task = row.get("_rename_task")
-        if task is not None and not task.done() and task is not asyncio.current_task():
-            return
-        row["_rename_task"] = asyncio.create_task(self._rename_after(thread_id, _rename_delay(row)))
+    @tasks.loop(seconds=RENAME_SWEEP_SECONDS)
+    async def _rename_sweep(self):
+        # tasks.loop stops permanently on an unhandled exception — one
+        # Discord hiccup must not end thread renames until the next reboot.
+        try:
+            await self.sweep_renames()
+        except Exception:
+            log.exception("session: rename sweep failed")
 
-    async def _rename_after(self, thread_id: int, delay: float) -> None:
-        if delay > 0:
-            await asyncio.sleep(delay)
-        row = state.gambling_threads.get(thread_id)
-        if row is None:
-            return  # closed while we waited
-        title = leader_title(row)
+    @_rename_sweep.before_loop
+    async def _before_rename_sweep(self):
+        # wait_until_ready gates only the gateway; init_db_state, which
+        # loads state.gambling_threads, finishes later inside on_ready.
+        await self.bot.wait_until_ready()
+        await persistence.init_done.wait()
+        # Rows that survived a reboot: when their last rename landed is
+        # unknown, so count it as just now — the first post-boot rename
+        # waits a full interval rather than risk a third edit inside
+        # Discord's ten-minute window.
+        now = time.monotonic()
+        for row in state.gambling_threads.values():
+            row.setdefault("_renamed_at", now)
+
+    async def sweep_renames(self) -> None:
+        """One pass over the open tables: a thread with results since its
+        last check gets its name brought up to date, provided its previous
+        rename is at least RENAME_INTERVAL ago; otherwise it stays queued
+        for a later sweep. Threads without new results are left alone — a
+        fresh table keeps NEW_THREAD_NAME until the first result, and a name
+        set by hand sticks until the next one."""
+        for thread_id, row in list(state.gambling_threads.items()):
+            if not row.get("_dirty") or not _rename_ready(row):
+                continue
+            try:
+                await self._rename(thread_id, row)
+            except Exception:
+                log.exception("session: rename of thread %s failed", thread_id)
+
+    async def _rename(self, thread_id: int, row: dict) -> None:
         thread = self._thread(thread_id)
+        if thread is None:
+            return  # not in the cache — stays queued; `!session` drops a stale row
+        # Checked: results landing during the edit queue the thread again.
+        row["_dirty"] = False
+        title = leader_title(row)
         # _last_title covers the moment between our edit and the gateway
         # echoing the new name back into thread.name.
-        if title is None or thread is None or title in (thread.name, row.get("_last_title")):
+        if title is None or title in (thread.name, row.get("_last_title")):
             return
+        # The slot is spent whether or not the edit lands: a failed rename
+        # (a 403, a 429 that outlived discord.py's retries) is tried again
+        # an interval later, not every sweep.
+        row["_renamed_at"] = time.monotonic()
         try:
             await thread.edit(name=title)
         except discord.HTTPException as e:
             log.warning("session: rename of thread %s failed (%s)", thread_id, type(e).__name__)
+            row["_dirty"] = True
             return
         row["_last_title"] = title
-        row.setdefault("_rename_times", []).append(time.monotonic())
-        # Results that landed while the edit was in flight: line up the next
-        # one (it waits for a budget slot if both are spent).
-        if leader_title(row) != title:
-            self._schedule_rename(thread_id)
 
     # ── !session ─────────────────────────────────────────────────────────────
 
@@ -375,12 +407,8 @@ class GamblingSessionCog(commands.Cog):
     # ── thread listeners ─────────────────────────────────────────────────────
 
     async def _forget(self, thread_id: int) -> bool:
-        row = state.gambling_threads.pop(thread_id, None)
-        if row is None:
+        if state.gambling_threads.pop(thread_id, None) is None:
             return False
-        task = row.get("_rename_task")
-        if task is not None and not task.done():
-            task.cancel()
         await persistence.delete_gambling_thread(thread_id)
         return True
 

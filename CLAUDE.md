@@ -477,15 +477,24 @@ closing. Logic lives in `src/gambling/session.py`.
   (flip, slots, scratchoff, blackjack, race do) or its results are invisible
   to the thread name. The tally persists in `tally_json`.
 - **Renames are rate-limited by Discord** (two name edits per channel per
-  ten minutes — `RENAME_BUDGET` / `RENAME_WINDOW`) so they're budgeted: the
-  first two go out at once, later ones collapse into one delayed rename
-  that waits for the oldest slot to free and applies whatever the tally
-  says when it fires; a rename re-checks the tally after it lands and
-  queues a follow-up if results arrived mid-flight. The name therefore
-  lags the table during a hot streak — expected, not a bug. Never `await
-  thread.edit(name=...)` inline on a result path — discord.py sleeps out the
-  429, which would stall the game. `close_gambling_thread` rides the final
-  name on `cmd_stop`'s archive edit only when that budget allows.
+  ten minutes), so the name is brought up to date by a sweep, never on the
+  result path: `_on_gambling_result` only marks the row `_dirty`, and
+  `sweep_renames` (a once-a-minute `tasks.loop`, started in `cog_load`)
+  renames a dirty thread when its previous rename is at least
+  `RENAME_INTERVAL` (five minutes) old — one edit per thread per five
+  minutes, inside the budget however hot the table runs. A thread with no
+  results since its last check is left alone (a name a moderator set by
+  hand sticks until the next result). A failed edit spends the slot and is
+  retried an interval later, not every sweep. Rows loaded at boot count as
+  renamed at boot (`_before_rename_sweep`) — when their last rename landed
+  is unknown, and a third edit inside Discord's window would 429. The
+  first name lands within a minute of the first result; after that the
+  name can lag the table by up to five minutes — expected, not a bug.
+  Never `await thread.edit(name=...)` inline on a result path — discord.py
+  sleeps out the 429, which would stall the game. `close_gambling_thread`
+  rides the final name on `cmd_stop`'s archive edit only when that
+  interval has passed. `_dirty`, `_renamed_at` and `_last_title` are
+  in-memory only — not in `tally_json`.
 - Gambling threads auto-archive after an hour idle
   (`GAMBLING_THREAD_AUTO_ARCHIVE_MINUTES = 60`); the chess and AI threads
   keep their own longer windows.

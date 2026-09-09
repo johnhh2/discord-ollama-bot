@@ -4,13 +4,15 @@ Covers: opening a thread (registry + DB row + the opening command list),
 refusals (inside a thread, a second thread per owner, no create_thread),
 the in-thread command allowlist gate (for anyone, not just the owner),
 thread inheritance of the parent channel's game-channel / command-whitelist
-status, the result hook that names the thread after its biggest winner or
-loser (and coalesces renames to Discord's budget), `!stop` closing the
-table (standing other players' live hands, keeping it open during a race,
+status, the result hook that tallies the table and the rename sweep that
+names the thread after its biggest winner or loser (at most once every
+RENAME_INTERVAL, only after new results), `!stop` closing the table
+(standing other players' live hands, keeping it open during a race,
 non-owner refused, admin allowed, final name on the archive edit), the
 archive/delete listeners, and the boot-time load.
 """
 import asyncio
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -24,7 +26,8 @@ import src.permissions as _permissions
 import src.gambling.session as _session
 from src.gambling.session import (
     GamblingSessionCog, GamblingThreadOnly, GAMBLING_THREAD_COMMAND_LINES,
-    GAMBLING_THREAD_AUTO_ARCHIVE_MINUTES, NEW_THREAD_NAME, leader_title,
+    GAMBLING_THREAD_AUTO_ARCHIVE_MINUTES, NEW_THREAD_NAME, RENAME_INTERVAL,
+    leader_title,
 )
 from src.cogs.ai_cog import AICog
 from src.events import EventsCog
@@ -48,12 +51,13 @@ class _FakeResp:
 
 
 class _StubBot:
-    """Just the two lookups the rename hook uses."""
-    def __init__(self, guild, thread):
-        self._guild, self._thread = guild, thread
+    """Just the two lookups the tally hook and the rename sweep use."""
+    def __init__(self, guild, *threads):
+        self._guild = guild
+        self._threads = {t.id: t for t in threads}
 
     def get_channel(self, cid):
-        return self._thread if cid == self._thread.id else None
+        return self._threads.get(cid)
 
     def get_guild(self, gid):
         return self._guild if gid == self._guild.id else None
@@ -70,16 +74,6 @@ def _record_wrong_channel(monkeypatch):
     monkeypatch.setattr(_session, "_wrong_channel_reply", _stub)
     monkeypatch.setattr(_permissions, "_wrong_channel_reply", _stub)
     return calls
-
-
-@pytest.fixture(autouse=True)
-def _cancel_rename_tasks():
-    """A queued (delayed) rename would otherwise outlive its test."""
-    yield
-    for row in _state.gambling_threads.values():
-        task = row.get("_rename_task")
-        if task is not None and not task.done():
-            task.cancel()
 
 
 def _row(owner_id: int) -> dict:
@@ -129,7 +123,11 @@ async def _result(uid: int, net: int, channel_id: int = THREAD_ID) -> None:
         await _economy.record_gambling_event(GUILD_ID, uid, gained=net, channel_id=channel_id)
     else:
         await _economy.record_gambling_event(GUILD_ID, uid, lost=-net, channel_id=channel_id)
-    await asyncio.sleep(0)  # let an immediate rename task run
+
+
+def _interval_passes(row: dict) -> None:
+    """Five minutes later: the thread's last rename ages past RENAME_INTERVAL."""
+    row["_renamed_at"] -= RENAME_INTERVAL
 
 
 async def _db_rows() -> dict[int, str]:
@@ -326,19 +324,27 @@ async def test_leader_title_rules():
     assert len(long) == 100 and long.endswith(" gained 5 coins")
 
 
-async def test_result_hook_tallies_and_renames_after_top_gainer():
+async def test_result_hook_tallies_and_queues_the_thread_for_the_sweep():
     cog, thread, _ = _table()
 
     await _result(1001, 500)
 
-    assert _state.gambling_threads[THREAD_ID]["tally"] == {1001: {"net": 500, "name": "Alice"}}
+    row = _state.gambling_threads[THREAD_ID]
+    assert row["tally"] == {1001: {"net": 500, "name": "Alice"}}
+    # Nothing on the result path itself — the sweep does the renaming.
+    assert row["_dirty"] is True
+    thread.edit.assert_not_awaited()
+
+    await cog.sweep_renames()
     thread.edit.assert_awaited_once_with(name="Alice gained 500 coins")
+    assert row["_dirty"] is False
 
 
-async def test_result_hook_falls_back_to_biggest_loser_when_nobody_is_up():
+async def test_sweep_falls_back_to_biggest_loser_when_nobody_is_up():
     cog, thread, _ = _table()
 
     await _result(1001, -200)
+    await cog.sweep_renames()
     thread.edit.assert_awaited_once_with(name="Alice lost 200 coins")
 
 
@@ -362,73 +368,165 @@ async def test_results_elsewhere_and_zero_nets_leave_the_thread_alone():
 
     await _result(1001, 500, channel_id=555)          # another channel
     await _economy.record_gambling_event(GUILD_ID, 1001, gained=0, channel_id=THREAD_ID)
-    await asyncio.sleep(0)
+    await cog.sweep_renames()
 
-    assert _state.gambling_threads[THREAD_ID]["tally"] == {}
+    row = _state.gambling_threads[THREAD_ID]
+    assert row["tally"] == {} and not row.get("_dirty")
     thread.edit.assert_not_awaited()
 
 
-async def test_renames_spend_discords_two_per_ten_minutes_then_queue_one():
+async def test_a_thread_renames_at_most_once_per_interval():
+    """Discord allows two name edits per ten minutes: one rename per
+    RENAME_INTERVAL keeps a hot table inside that for good."""
     cog, thread, _ = _table()
     row = _state.gambling_threads[THREAD_ID]
 
-    # Two leader changes go out at once.
     await _result(1001, 500)
+    await cog.sweep_renames()
     thread.name = "Alice gained 500 coins"
+    assert thread.edit.await_count == 1
+
+    # A new leader inside the interval stays queued: sweeps rename nothing…
     await _result(1002, 900)
-    thread.name = "Bob gained 900 coins"
-    assert [c.kwargs["name"] for c in thread.edit.await_args_list] == [
-        "Alice gained 500 coins", "Bob gained 900 coins",
-    ]
+    await cog.sweep_renames()
+    await cog.sweep_renames()
+    assert thread.edit.await_count == 1
+    assert row["_dirty"] is True
 
-    # The third inside the window is queued, and further results don't
-    # queue more.
-    await _result(1001, 1000)
-    assert thread.edit.await_count == 2
-    task = row["_rename_task"]
-    assert not task.done()
+    # …and once the interval has passed, one rename applies the tally as
+    # it stands then, not the one that queued it.
     await _result(1002, 1000)
-    assert row["_rename_task"] is task
-
-    # When it fires it applies the tally as it stands then, not the one
-    # that queued it.
-    task.cancel()
-    await cog._rename_after(THREAD_ID, 0.0)
+    _interval_passes(row)
+    await cog.sweep_renames()
     thread.edit.assert_awaited_with(name="Bob gained 1,900 coins")
-    assert thread.edit.await_count == 3
+    assert thread.edit.await_count == 2
+    assert row["_dirty"] is False
 
 
-async def test_result_landing_mid_rename_queues_a_follow_up():
+async def test_sweep_leaves_threads_without_new_results_alone():
+    """No gambling since the last check → no rename, however long ago the
+    last one was: a fresh table keeps NEW_THREAD_NAME, and a name set by
+    hand sticks until the next result."""
+    cog, thread, _ = _table()
+    row = _state.gambling_threads[THREAD_ID]
+
+    await cog.sweep_renames()
+    thread.edit.assert_not_awaited()
+
+    await _result(1001, 500)
+    await cog.sweep_renames()
+    _interval_passes(row)
+    thread.name = "renamed by a mod"
+    await cog.sweep_renames()
+    assert thread.edit.await_count == 1
+
+    await _result(1001, 1)                            # the next result brings it back
+    await cog.sweep_renames()
+    thread.edit.assert_awaited_with(name="Alice gained 501 coins")
+
+
+async def test_result_landing_mid_rename_queues_the_thread_again():
     cog, thread, _ = _table()
     row = _state.gambling_threads[THREAD_ID]
 
     async def _edit(*, name):
         thread.name = name
-        # A result lands while the edit is in flight.
-        row["tally"].setdefault(1002, {"net": 0, "name": "Bob"})["net"] = 900
+        await _result(1002, 900)                      # lands while the edit is in flight
     thread.edit = AsyncMock(side_effect=_edit)
 
     await _result(1001, 500)
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+    await cog.sweep_renames()
+    assert [c.kwargs["name"] for c in thread.edit.await_args_list] == ["Alice gained 500 coins"]
+    assert row["_dirty"] is True
 
-    assert [c.kwargs["name"] for c in thread.edit.await_args_list] == [
-        "Alice gained 500 coins", "Bob gained 900 coins",
-    ]
+    _interval_passes(row)
+    thread.edit = AsyncMock()
+    await cog.sweep_renames()
+    thread.edit.assert_awaited_once_with(name="Bob gained 900 coins")
 
 
 async def test_rename_is_skipped_when_the_name_already_matches():
     cog, thread, _ = _table()
     thread.name = "Alice gained 500 coins"
     await _result(1001, 500)
+    await cog.sweep_renames()
     thread.edit.assert_not_awaited()
+    row = _state.gambling_threads[THREAD_ID]
+    assert row["_dirty"] is False and "_renamed_at" not in row  # no slot spent
 
 
-async def test_rename_failure_is_logged_not_raised():
+async def test_rename_failure_is_logged_and_retried_an_interval_later():
     cog, thread, _ = _table()
+    row = _state.gambling_threads[THREAD_ID]
     thread.edit = AsyncMock(side_effect=discord.HTTPException(_FakeResp(429), "slow down"))
-    await _result(1001, 500)  # the hook runs inside record_gambling_event
-    assert _state.gambling_threads[THREAD_ID]["tally"][1001]["net"] == 500
+
+    await _result(1001, 500)
+    await cog.sweep_renames()                          # doesn't raise
+    assert row["tally"][1001]["net"] == 500
+    assert row["_dirty"] is True                       # still queued…
+    await cog.sweep_renames()
+    assert thread.edit.await_count == 1                # …but the failed edit spent the slot
+
+    _interval_passes(row)
+    thread.edit = AsyncMock()
+    await cog.sweep_renames()
+    thread.edit.assert_awaited_once_with(name="Alice gained 500 coins")
+
+
+async def test_sweep_survives_one_broken_table_and_skips_uncached_threads():
+    guild = FakeGuild(gid=GUILD_ID)
+    guild.members = [FakeMember(uid=1001, display_name="Alice"), FakeMember(uid=1002, display_name="Bob")]
+    broken = FakeThread(thread_id=THREAD_ID, name=NEW_THREAD_NAME, parent_id=PARENT_ID)
+    broken.guild = guild
+    broken.edit = AsyncMock(side_effect=RuntimeError("not an HTTPException"))
+    fine = FakeThread(thread_id=779, name=NEW_THREAD_NAME, parent_id=PARENT_ID)
+    fine.guild = guild
+    guild.threads += [broken, fine]
+    _state.gambling_threads[THREAD_ID] = _row(1001)
+    _state.gambling_threads[778] = _row(1001)          # archived while the bot was down: not cached
+    _state.gambling_threads[779] = _row(1002)
+    cog = GamblingSessionCog(bot=_StubBot(guild, broken, fine))
+
+    await _result(1001, 500)
+    await _result(1001, 5, channel_id=778)
+    await _result(1002, 700, channel_id=779)
+    await cog.sweep_renames()
+
+    fine.edit.assert_awaited_once_with(name="Bob gained 700 coins")
+    assert _state.gambling_threads[778]["_dirty"] is True
+
+
+async def test_loop_start_counts_loaded_rows_as_just_renamed():
+    """Rows that survived a reboot: when their last rename landed is
+    unknown, so the first post-boot rename waits a full interval rather
+    than risk a third edit inside Discord's window."""
+    cog, thread, _ = _table()
+    cog.bot.wait_until_ready = AsyncMock()
+    _persistence.init_done.set()
+    row = _state.gambling_threads[THREAD_ID]
+
+    await cog._before_rename_sweep()
+
+    assert abs(row["_renamed_at"] - time.monotonic()) < 5
+    await _result(1001, 500)
+    await cog.sweep_renames()
+    thread.edit.assert_not_awaited()
+    _interval_passes(row)
+    await cog.sweep_renames()
+    thread.edit.assert_awaited_once_with(name="Alice gained 500 coins")
+
+
+async def test_cog_load_starts_the_sweep_and_unload_cancels_it():
+    never_ready = asyncio.Event()
+    cog = GamblingSessionCog(bot=SimpleNamespace(wait_until_ready=never_ready.wait))
+    try:
+        await cog.cog_load()
+        assert cog._rename_sweep.is_running()
+    finally:
+        cog.cog_unload()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert not cog._rename_sweep.is_running()
 
 
 async def test_a_raising_hook_never_breaks_the_result_path():
@@ -500,30 +598,27 @@ async def test_stop_by_owner_stands_their_own_hand_instead_of_forfeiting(db):
     assert "forfeited" not in ctx.sent_embeds[-1].description
 
 
-async def test_stop_rides_the_final_name_on_the_archive_when_budget_allows(db):
+async def test_stop_rides_the_final_name_on_the_archive_when_the_interval_allows(db):
     cog, thread, guild = _table()
     owner = guild.get_member(1001)
     ctx = _thread_ctx(owner, guild=guild, thread=thread)
-    row = _state.gambling_threads[THREAD_ID]
 
-    await _result(1002, 400)                   # → "Bob gained 400 coins"
+    await _result(1002, 400)
+    await cog.sweep_renames()                  # → "Bob gained 400 coins"; the slot is spent
     thread.name = "Bob gained 400 coins"
-    await _result(1001, 900)                   # → "Alice gained 900 coins"; budget spent
-    thread.name = "Alice gained 900 coins"
     thread.edit.reset_mock()
-    await _result(1002, 1000)                  # Bob 1,400 — queued
-    pending = row["_rename_task"]
-    assert not pending.done()
+    await _result(1001, 900)                   # Alice 900 — queued
 
-    # Budget spent: the archive goes out without a name; the queue is dropped.
+    # Inside the interval: the archive goes out without a name.
     await AICog(bot=None).cmd_stop.callback(AICog(bot=None), ctx)
-    await asyncio.sleep(0)
-    assert pending.cancelled()
     assert ctx.channel.edit.call_args.kwargs == {"archived": True, "locked": True}
     assert THREAD_ID not in _state.gambling_threads
 
-    # Same close with the budget free: rename and archive in one edit.
-    _state.gambling_threads[THREAD_ID] = {**_row(1001), "tally": {1001: {"net": 950, "name": "Alice"}}}
+    # Same close once the interval has passed: rename and archive in one edit.
+    _state.gambling_threads[THREAD_ID] = {
+        **_row(1001), "tally": {1001: {"net": 950, "name": "Alice"}},
+        "_renamed_at": time.monotonic() - RENAME_INTERVAL,
+    }
     thread.edit.reset_mock()
     await AICog(bot=None).cmd_stop.callback(AICog(bot=None), ctx)
     assert ctx.channel.edit.call_args.kwargs == {
