@@ -5,7 +5,8 @@ parts NOT covered there:
 
 - apply_jackpot_bonus: scaling math (extracted helper, pure function).
 - Jackpot accumulation: every spin adds bet // SLOT_JACKPOT_CONTRIB_DIVISOR
-  to state.slot_jackpot and persists; a bet under the divisor adds nothing.
+  to state.slot_jackpot and persists; a bet under the divisor adds nothing,
+  and the pool stops at SLOT_JACKPOT_CAP.
 - Rigging: state.rigged_slots forces a guaranteed three-of-a-kind and
   decrements (single-use per entry).
 - Jackpot win resets state.slot_jackpot to SLOT_JACKPOT_SEED.
@@ -23,7 +24,7 @@ import src.gambling.slots as slots_mod
 from src.gambling.slots import SlotsCog, apply_jackpot_bonus, play_slots
 from src.gambling.play_again import PlayAgainView
 from src.config import (
-    SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB_DIVISOR, SLOT_JACKPOT_BONUS_MIN_BET,
+    SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB_DIVISOR, SLOT_JACKPOT_CAP, SLOT_JACKPOT_BONUS_MIN_BET,
     SLOT_JACKPOT_BONUS_MAX_BET, SLOT_JACKPOT_BONUS_MAX_MULT, SLOT_MIN_BET,
     SLOT_MULT_3CHERRY,
 )
@@ -145,6 +146,52 @@ async def test_slots_bet_under_divisor_feeds_nothing_to_jackpot(db, monkeypatch)
 
     assert _state.slot_jackpot == 4_321
     assert await _read_jackpot() == 4_321
+
+
+@pytest.mark.asyncio
+async def test_slots_jackpot_contribution_stops_at_cap(db, monkeypatch):
+    """The pool tops out at SLOT_JACKPOT_CAP: a contribution that would cross
+    it lands exactly on the cap, and further spins add nothing."""
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=1)
+    await _economy.add_balance(1, 100_000)
+    monkeypatch.setattr(random, "random", lambda: 0.99)
+    monkeypatch.setattr(random, "choice", lambda seq: "⬛")
+    monkeypatch.setattr(random, "sample", lambda seq, k: ["⬛", "⬛", "⬛"])
+
+    bet = 1000
+    contrib = bet // SLOT_JACKPOT_CONTRIB_DIVISOR
+    assert contrib > 1
+    _state.slot_jackpot = SLOT_JACKPOT_CAP - 1
+    await _persistence.save_jackpot(_state.slot_jackpot)
+
+    await cog.cmd_slots.callback(cog, ctx, amount=str(bet))
+    assert _state.slot_jackpot == SLOT_JACKPOT_CAP
+    assert await _read_jackpot() == SLOT_JACKPOT_CAP
+
+    await cog.cmd_slots.callback(cog, ctx, amount=str(bet))
+    assert _state.slot_jackpot == SLOT_JACKPOT_CAP
+    assert await _read_jackpot() == SLOT_JACKPOT_CAP
+
+
+@pytest.mark.asyncio
+async def test_slots_jackpot_already_over_cap_is_left_alone(db, monkeypatch):
+    """A pool that grew past the cap before it existed isn't clamped down —
+    it just stops growing until someone wins it."""
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=1)
+    await _economy.add_balance(1, 100_000)
+    monkeypatch.setattr(random, "random", lambda: 0.99)
+    monkeypatch.setattr(random, "choice", lambda seq: "⬛")
+    monkeypatch.setattr(random, "sample", lambda seq, k: ["⬛", "⬛", "⬛"])
+
+    over = SLOT_JACKPOT_CAP + 50_000
+    _state.slot_jackpot = over
+    await _persistence.save_jackpot(over)
+
+    await cog.cmd_slots.callback(cog, ctx, amount="1000")
+    assert _state.slot_jackpot == over
+    assert await _read_jackpot() == over
 
 
 @pytest.mark.asyncio

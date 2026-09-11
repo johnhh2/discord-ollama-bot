@@ -59,6 +59,7 @@ SLOT_REEL = (
 )
 SLOT_JACKPOT_SEED = 5_000
 SLOT_JACKPOT_CONTRIB_DIVISOR = 150   # pool gains bet // 150 per spin (~0.67%, rounded down, no minimum)
+SLOT_JACKPOT_CAP = 100_000           # contributions stop once the pool reaches this
 SLOT_HOUSE_CHANCE = 0.055
 
 # Prize pool every fresh monthly lottery starts with (the guild-house drain
