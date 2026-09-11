@@ -137,6 +137,10 @@ SHOP_CURSE_COST           = 10_000
 SHOP_UNOREVERSE_COST      = 10_000
 SHOP_SPELLCHECK_COST      = 10_000  # per day
 SHOP_XP_COST_PER_XP       = 100     # coins per XP for !shop buyxp
+# Catch-up discount: XP that only brings you up to your best level in another
+# server is this much cheaper. Levels above that best are full price.
+SHOP_XP_CATCHUP_DISCOUNT_PCT = 50
+SHOP_XP_CATCHUP_COST_PER_XP  = SHOP_XP_COST_PER_XP * (100 - SHOP_XP_CATCHUP_DISCOUNT_PCT) // 100
 
 # Artifact costs (see src/artifacts.py for the catalog)
 ARTIFACT_SLOTS_BLANK_COST   = 15_000

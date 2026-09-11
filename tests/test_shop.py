@@ -800,7 +800,7 @@ async def test_shop_removenickname_works_while_self_insured(db):
 # the confirm before charging.
 
 from src.leveling import _ensure_lvl_record, _xp_cost, xp_for_level  # noqa: E402
-from src.config import SHOP_XP_COST_PER_XP  # noqa: E402
+from src.config import SHOP_XP_COST_PER_XP, SHOP_XP_CATCHUP_COST_PER_XP  # noqa: E402
 
 
 def _seed_level(gid: int, uid: int, internal_level: int, extra_xp: int = 0) -> dict:
@@ -956,6 +956,115 @@ async def test_shop_buyxp_lvl_target_not_above_current_rejected(db, monkeypatch)
     assert rec["level"] == 3
     assert await get_balance(uid) == 10_000_000
     assert any("pick a higher target" in (e.description or "") for e in ctx.sent_embeds)
+    assert (42, uid) not in cog._buyxp_active
+
+
+# ── Catch-up discount: half price up to your best level in another server ────
+
+def _capturing_confirm(seen: dict):
+    async def _confirm(ctx, **kwargs):
+        seen.update(kwargs)
+        return True
+    return _confirm
+
+
+async def test_shop_buyxp_half_price_below_best_level_in_another_server(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    uid = 9031
+    _seed_level(77, uid, 6)        # lvl 7 in another server
+    rec = _seed_level(42, uid, 3)  # lvl 4 here — the whole band is catch-up
+    cost = _xp_cost(3) * SHOP_XP_CATCHUP_COST_PER_XP
+    assert cost == _xp_cost(3) * SHOP_XP_COST_PER_XP // 2
+    await add_balance(uid, cost)   # full price would be unaffordable
+    seen: dict = {}
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _capturing_confirm(seen))
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx)
+
+    assert seen["cost"] == cost
+    assert "lvl **7** in another server" in seen["description"]
+    assert rec["level"] == 4
+    assert await get_balance(uid) == 0
+    assert any("saved you" in (e.description or "") for e in ctx.sent_embeds)
+
+
+async def test_shop_buyxp_catchup_discount_stops_at_best_level_elsewhere(db, monkeypatch):
+    # lvl 4 elsewhere (internal 3), lvl 2 here (internal 1), buying up to
+    # display lvl 6 (internal 5): bands 1 and 2 are catch-up, 3 and 4 are
+    # full price. Discounting everything would let two servers leapfrog
+    # each other at half price forever.
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    uid = 9032
+    _seed_level(77, uid, 3)
+    rec = _seed_level(42, uid, 1)
+    catchup_xp = xp_for_level(3) - xp_for_level(1)
+    full_xp = xp_for_level(5) - xp_for_level(3)
+    cost = catchup_xp * SHOP_XP_CATCHUP_COST_PER_XP + full_xp * SHOP_XP_COST_PER_XP
+    await add_balance(uid, cost)
+    seen: dict = {}
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _capturing_confirm(seen))
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx, "lvl", "6")
+
+    assert seen["cost"] == cost
+    assert f"**{catchup_xp:,} XP** at {SHOP_XP_CATCHUP_COST_PER_XP}" in seen["description"]
+    assert f"**{full_xp:,} XP** at {SHOP_XP_COST_PER_XP}" in seen["description"]
+    assert rec["level"] == 5
+    assert await get_balance(uid) == 0
+
+
+async def test_shop_buyxp_no_discount_at_or_above_best_level_elsewhere(db, monkeypatch):
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    uid = 9033
+    _seed_level(77, uid, 3)        # same level elsewhere
+    _seed_level(78, uid, 1)        # lower elsewhere
+    rec = _seed_level(42, uid, 3)
+    cost = _xp_cost(3) * SHOP_XP_COST_PER_XP
+    await add_balance(uid, cost)
+    seen: dict = {}
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _capturing_confirm(seen))
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx)
+
+    assert seen["cost"] == cost
+    assert "another server" not in seen["description"]
+    assert rec["level"] == 4
+    assert await get_balance(uid) == 0
+    assert not any("saved you" in (e.description or "") for e in ctx.sent_embeds)
+
+
+async def test_shop_buyxp_requotes_if_discount_changes_during_confirm(db, monkeypatch):
+    # The other server's record is reset while the buttons are up, so the
+    # discounted quote no longer holds. No charge, no XP.
+    from src.cogs.shop_cog import ShopCog
+
+    cog = ShopCog(bot=None)
+    uid = 9034
+    other = _seed_level(77, uid, 6)
+    rec = _seed_level(42, uid, 3)
+    await add_balance(uid, 10_000_000)
+
+    async def _reset_elsewhere_mid_confirm(*a, **k):
+        other["xp"] = 0
+        other["level"] = 0
+        return True
+    monkeypatch.setattr(_shop_cog, "confirm_purchase", _reset_elsewhere_mid_confirm)
+
+    ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
+    await cog.shop_buyxp.callback(cog, ctx)
+
+    assert await get_balance(uid) == 10_000_000
+    assert rec["level"] == 3
+    assert any("Price Changed" in (e.title or "") for e in ctx.sent_embeds)
     assert (42, uid) not in cog._buyxp_active
 
 

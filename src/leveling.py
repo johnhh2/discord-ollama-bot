@@ -112,6 +112,26 @@ def _ensure_lvl_record(guild_id: int, uid: int) -> dict:
     return guild_data[ukey]
 
 
+def best_level_elsewhere(guild_id: int, uid: int) -> int:
+    """Highest internal level the user holds in any *other* guild (0 if none).
+
+    Backs the !shop buyxp catch-up discount: XP up to this level is cheaper,
+    so someone who already earned lvl 20 in one server isn't charged full
+    price to reach lvl 20 in another. Levels above it stay full price, or
+    two servers could leapfrog each other at the discount forever.
+    """
+    gkey = str(guild_id)
+    ukey = str(uid)
+    best = 0
+    for g, users in state.leveling.items():
+        if g == gkey:
+            continue
+        rec = users.get(ukey)
+        if rec and rec.get("level", 0) > best:
+            best = rec["level"]
+    return best
+
+
 def _day_reset(rec: dict, key_today: str, key_day_ts: str):
     """Reset daily counter when the 5am-CT bot day rolls over.
 

@@ -23,7 +23,7 @@ from src.economy import (
 )
 from src.leveling import (
     _ensure_lvl_record, _xp_cost, level_from_xp, display_level, record_levelup,
-    xp_for_level,
+    xp_for_level, best_level_elsewhere,
 )
 from src.permissions import (
     _wrong_channel_reply,
@@ -51,7 +51,7 @@ from src.config import (
     SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_TAX_PER_MESSAGE,
     SHOP_TAX_DURATION_SECS,
     SHOP_SPELLCHECK_COST, SHOP_SPELLCHECK_DURATION_SECS,
-    SHOP_XP_COST_PER_XP,
+    SHOP_XP_COST_PER_XP, SHOP_XP_CATCHUP_DISCOUNT_PCT, SHOP_XP_CATCHUP_COST_PER_XP,
     BOUNTY_MIN_AMOUNT,
 )
 from src import state
@@ -377,7 +377,8 @@ class ShopCog(commands.Cog):
         # Leveling — variable price, quoted (and confirmed) at purchase time.
         if _si.get("buyxp", True):
             sections["✨ Leveling"] = [
-                f"`!shop buyxp [lvl <x>]` — Buy your next level's worth of XP, or every level up to lvl x — **{SHOP_XP_COST_PER_XP} 🪙/XP** (price scales with level)"
+                f"`!shop buyxp [lvl <x>]` — Buy your next level's worth of XP, or every level up to lvl x — **{SHOP_XP_COST_PER_XP} 🪙/XP** "
+                f"(price scales with level; 🏷️ **{SHOP_XP_CATCHUP_DISCOUNT_PCT}% off** levels below your best in another server)"
             ]
 
         # Artifacts — permanent per-user upgrades, listed in their own menu.
@@ -2155,6 +2156,11 @@ class ShopCog(commands.Cog):
     # granting whole bands always lands exactly on the target display level
     # with in-band progress preserved. No argument buys one band (next level);
     # `lvl <x>` / `lvl<x>` buys every band up to display level x.
+    #
+    # Catch-up discount: bands below the user's best level in another server
+    # cost SHOP_XP_CATCHUP_COST_PER_XP instead. Only those bands — discounting
+    # everything whenever you're behind somewhere would let two servers
+    # leapfrog each other at half price forever.
     @cmd_shop.command(name="buyxp", aliases=["xp"])
     @_shop_subcommand("buyxp")
     async def shop_buyxp(self, ctx: commands.Context, *args: str):
@@ -2196,8 +2202,18 @@ class ShopCog(commands.Cog):
                     return
                 target_internal = target_display - 1
             levels = target_internal - quoted_level
-            xp_amount = xp_for_level(target_internal) - xp_for_level(quoted_level)
-            cost = xp_amount * SHOP_XP_COST_PER_XP
+
+            def _quote() -> tuple[int, int, int, int]:
+                """(xp, discounted xp, cost, best internal level elsewhere)."""
+                best = best_level_elsewhere(gid, uid)
+                xp = xp_for_level(target_internal) - xp_for_level(quoted_level)
+                catchup_top = min(target_internal, best)
+                catchup = max(0, xp_for_level(catchup_top) - xp_for_level(quoted_level))
+                price = ((xp - catchup) * SHOP_XP_COST_PER_XP
+                         + catchup * SHOP_XP_CATCHUP_COST_PER_XP)
+                return xp, catchup, price, best
+
+            xp_amount, catchup_xp, cost, best_elsewhere = _quote()
             godmode = uid in state.godmode_users
 
             if not godmode and await get_balance(uid) < cost:
@@ -2215,10 +2231,28 @@ class ShopCog(commands.Cog):
             xp_in_level = projected_xp - xp_for_level(projected_level)
             xp_band = _xp_cost(projected_level)
             level_note = f" (**{levels}** levels)" if levels > 1 else ""
+            catchup_note = (
+                f"🏷️ **{SHOP_XP_CATCHUP_DISCOUNT_PCT}% off** — you're lvl "
+                f"**{display_level(best_elsewhere)}** in another server"
+            )
+            if catchup_xp == xp_amount:
+                price_line = (
+                    f"Buy **{xp_amount:,} XP** at {SHOP_XP_CATCHUP_COST_PER_XP} 🪙/XP"
+                    f"{level_note} ({catchup_note})."
+                )
+            elif catchup_xp:
+                price_line = (
+                    f"Buy **{xp_amount:,} XP**{level_note}: "
+                    f"**{catchup_xp:,} XP** at {SHOP_XP_CATCHUP_COST_PER_XP} 🪙/XP "
+                    f"({catchup_note}) + **{xp_amount - catchup_xp:,} XP** "
+                    f"at {SHOP_XP_COST_PER_XP} 🪙/XP."
+                )
+            else:
+                price_line = f"Buy **{xp_amount:,} XP** at {SHOP_XP_COST_PER_XP} 🪙/XP{level_note}."
             confirmed = await confirm_purchase(
                 ctx, title="✨ Buy XP",
                 description=(
-                    f"Buy **{xp_amount:,} XP** at {SHOP_XP_COST_PER_XP} 🪙/XP{level_note}.\n"
+                    f"{price_line}\n"
                     f"After purchase, you will be lvl **{display_level(projected_level)}** "
                     f"with **{xp_in_level:,}/{xp_band:,}** xp."
                 ),
@@ -2228,11 +2262,12 @@ class ShopCog(commands.Cog):
                 return
 
             # The confirm wait is a long await — the quoted price is stale if
-            # the user levelled meanwhile (organic XP). Re-quote, don't charge.
-            if rec["level"] != quoted_level:
+            # the user levelled meanwhile (organic XP) or their best level in
+            # another server moved the discount. Re-quote, don't charge.
+            if rec["level"] != quoted_level or _quote()[2] != cost:
                 await ctx.send(embed=emb(
                     "⚠️ Price Changed",
-                    "Your level changed while confirming — run it again for a fresh quote. You were not charged.",
+                    "Your quote changed while confirming — run it again for a fresh one. You were not charged.",
                     C_GREY,
                 ))
                 return
@@ -2257,9 +2292,11 @@ class ShopCog(commands.Cog):
                         await _save(uid=uid)
             await save_leveling(guild_id=gid, uid=uid)
 
+            saved = catchup_xp * (SHOP_XP_COST_PER_XP - SHOP_XP_CATCHUP_COST_PER_XP)
+            saved_line = f"\n🏷️ Catch-up discount saved you **{saved:,} 🪙**." if saved else ""
             await ctx.send(embed=emb(
                 "✨ XP Purchased",
-                f"+**{xp_amount:,} XP** — you are now **Level {display_level(new_level)}**.",
+                f"+**{xp_amount:,} XP** — you are now **Level {display_level(new_level)}**.{saved_line}",
                 C_GREEN,
             ))
 
