@@ -55,11 +55,11 @@ SLOT_REEL = (
     ["🔔"] * 4 +
     ["🎰"] * 3 +
     ["7️⃣"] * 1 +
-    ["⬛"] * 5
+    ["⬛"] * 4
 )
 SLOT_JACKPOT_SEED = 5_000
 SLOT_JACKPOT_CONTRIB = 0.02
-SLOT_HOUSE_CHANCE = 0.05
+SLOT_HOUSE_CHANCE = 0.055
 
 # Prize pool every fresh monthly lottery starts with (the guild-house drain
 # and per-player bonuses stack on top).

@@ -223,9 +223,9 @@ def test_slots_house_edge_is_positive_at_10k_bet():
     is reproducible.
 
     Models the production reel logic from cmd_slots:
-    - 5% chance of a forced loss (random.sample of distinct non-blank
+    - SLOT_HOUSE_CHANCE of a house spin (random.sample of distinct non-blank
       symbols, guaranteed no match)
-    - 95% chance of three independent random.choice(SLOT_REEL) draws
+    - otherwise three independent random.choice(SLOT_REEL) draws
 
     Excludes the progressive jackpot from the EV calculation: in the
     long-run steady state, the progressive pot is funded by all spins
@@ -280,6 +280,55 @@ def test_slots_house_edge_is_positive_at_10k_bet():
     # Surface the value so it shows up in test output if --tb=short or -v.
     print(f"\n[slots EV] bet={bet:,} spins={spins:,} "
           f"avg_gross={avg_return:,.2f} house_edge={house_edge:+.4%}")
+
+
+def _ordinary_line_rtp(reel: list[str]) -> float:
+    """Exact expected return of one spin on `reel`, ignoring the 7️⃣7️⃣7️⃣ line.
+
+    Mirrors play_slots: SLOT_HOUSE_CHANCE of a house spin (three distinct
+    non-blank symbols — never a triple, a cherry among them 3/5 of the time
+    for money back), otherwise three independent draws from the reel.
+    """
+    from src.config import (
+        SLOT_HOUSE_CHANCE, SLOT_MULT_3BAR, SLOT_MULT_3BELL, SLOT_MULT_3LEMON,
+        SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
+    )
+    n = len(reel)
+    p = {sym: reel.count(sym) / n for sym in set(reel)}
+    pc = p["🍒"]
+    normal = (
+        SLOT_MULT_3BAR * p["🎰"] ** 3
+        + SLOT_MULT_3BELL * p["🔔"] ** 3
+        + SLOT_MULT_3LEMON * p["🍋"] ** 3
+        + SLOT_MULT_3CHERRY * pc ** 3
+        + SLOT_MULT_2CHERRY * 3 * pc ** 2 * (1 - pc)
+        + SLOT_MULT_1CHERRY * 3 * pc * (1 - pc) ** 2
+    )
+    house = SLOT_MULT_1CHERRY * 3 / 5
+    return (1 - SLOT_HOUSE_CHANCE) * normal + SLOT_HOUSE_CHANCE * house
+
+
+def test_slots_ordinary_lines_pay_artifact_owners_about_1k_per_hour():
+    """Design target for the reel/house-chance constants.
+
+    A blank-remover owner spinning 1,000 🪙 every 3 seconds (1,200 spins an
+    hour, 1.2M wagered) should net about +1,000 🪙 an hour from the ordinary
+    lines alone — a small reward for the time spent, scaling with the bet —
+    with the 7️⃣7️⃣7️⃣ line and the progressive as upside on top. Without the
+    artifact the same reel must keep a house edge.
+    """
+    from src.config import SLOT_REEL
+
+    base = list(SLOT_REEL)
+    with_artifact = list(SLOT_REEL)
+    with_artifact.remove("⬛")
+
+    hourly = (_ordinary_line_rtp(with_artifact) - 1.0) * 1_000 * 1_200
+    assert 0 < hourly < 2_000, (
+        f"artifact reel ordinary-line return is {hourly:+,.0f} 🪙/hour at 1k "
+        f"bets; target is about +1,000"
+    )
+    assert _ordinary_line_rtp(base) < 1.0
 
 
 @pytest.mark.asyncio

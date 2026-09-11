@@ -174,7 +174,7 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
         await save_rigged_slots()
         reels = [sym, sym, sym]
     else:
-        if random.random() < SLOT_HOUSE_CHANCE: # 5% back to house
+        if random.random() < SLOT_HOUSE_CHANCE: # house spin: three distinct symbols, never a triple
             symbol_types = [s for s in dict.fromkeys(SLOT_REEL) if s != "⬛"]  # unique non-blank symbols
             reels = random.sample(symbol_types, 3)
         else: # normal (reel adjusted by owned artifacts)

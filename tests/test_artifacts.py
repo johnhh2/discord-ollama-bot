@@ -429,7 +429,7 @@ async def test_chessthreats_admin_bypasses_artifact():
 async def test_slot_reel_without_artifact_is_unchanged():
     reel = get_slot_reel(8001)
     assert reel == list(SLOT_REEL)
-    assert reel.count("⬛") == 5
+    assert reel.count("⬛") == 4
 
 
 async def test_slot_reel_with_artifact_drops_one_blank():
