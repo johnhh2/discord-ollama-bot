@@ -51,15 +51,14 @@ async def test_profile_shows_chess_ranks(db):
     assert "First-defeat bonuses" not in desc
 
 
-async def test_profile_level_line_shows_global_level_without_lvl_hint(db):
-    """The level line drops the !lvl hint and adds the cross-guild global level."""
+async def test_profile_level_line_shows_highest_level_across_servers(db):
+    """The level line drops the !lvl hint and adds the highest level held in any server."""
     cog = ProfileCog(bot=_StubBot())
     member = FakeMember(uid=9107, display_name="Eve")
     ctx = FakeCtx(author=member, guild=FakeGuild(gid=42))
-    # 150 XP here (level 1 → display 2); 100 XP elsewhere → 250 global
-    # (level 2 → display 3, thresholds at 100 / 202 / 309 XP).
+    # Level 1 here (display 2); level 2 in another server (display 3).
     _state.leveling.setdefault("42", {})["9107"] = {"xp": 150, "level": 1}
-    _state.leveling.setdefault("77", {})["9107"] = {"xp": 100, "level": 0}
+    _state.leveling.setdefault("77", {})["9107"] = {"xp": 250, "level": 2}
 
     await cog.cmd_profile.callback(cog, ctx, target=None)
 
@@ -67,6 +66,27 @@ async def test_profile_level_line_shows_global_level_without_lvl_hint(db):
     assert "Level **2**" in desc
     assert "Global level **3**" in desc
     assert "!lvl" not in desc
+
+
+async def test_profile_global_level_is_not_summed_xp(db):
+    """Lower or equal levels elsewhere never raise the global level.
+
+    Summed XP here would be 400 (level 3 → display 4); the global level is
+    the highest single-server level, which equals this server's, so the
+    global part is hidden.
+    """
+    cog = ProfileCog(bot=_StubBot())
+    member = FakeMember(uid=9110, display_name="Hal")
+    ctx = FakeCtx(author=member, guild=FakeGuild(gid=42))
+    _state.leveling.setdefault("42", {})["9110"] = {"xp": 150, "level": 1}
+    _state.leveling.setdefault("77", {})["9110"] = {"xp": 150, "level": 1}
+    _state.leveling.setdefault("78", {})["9110"] = {"xp": 100, "level": 0}
+
+    await cog.cmd_profile.callback(cog, ctx, target=None)
+
+    desc = _profile_desc(ctx)
+    assert "Level **2**" in desc
+    assert "Global level" not in desc
 
 
 async def test_profile_hides_global_level_when_equal_to_server_level(db):

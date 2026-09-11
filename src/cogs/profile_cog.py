@@ -20,7 +20,7 @@ from src.games.bot_chess_rewards import (
     chess_ranks,
 )
 from src.helpers import emb, C_BLUE, C_GREY, OptionalMember
-from src.leveling import display_level, level_from_xp
+from src.leveling import best_level_elsewhere, display_level
 from src.persistence import load_lottery, load_records
 from src.properties import owned_properties, portfolio_value
 from src.streaks import effective_streak, get_command_streak_entry
@@ -61,12 +61,13 @@ class ProfileCog(commands.Cog):
 
             lvl_rec = state.leveling.get(str(ctx.guild.id), {}).get(str(uid))
             if lvl_rec is not None:
-                global_xp = sum(
-                    int(g.get(str(uid), {}).get("xp", 0) or 0)
-                    for g in state.leveling.values()
-                )
                 level = display_level(lvl_rec.get("level", 0))
-                global_level = display_level(level_from_xp(global_xp))
+                # Highest level held in any one server — not a level derived
+                # from summed XP — so it's the level !shop buyxp's catch-up
+                # discount reaches in this server.
+                global_level = display_level(max(
+                    lvl_rec.get("level", 0), best_level_elsewhere(ctx.guild.id, uid),
+                ))
                 line = f"📊 Level **{level}** — {lvl_rec.get('xp', 0):,} XP"
                 if global_level != level:
                     line += f" · 🌐 Global level **{global_level}**"
