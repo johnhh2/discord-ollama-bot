@@ -33,7 +33,7 @@ from src.config import (
     DAILY_REWARD, DAILY_RESET_HOUR,
 )
 from src.jail_reasons import format_steal_reason, format_mug_reason, format_bankheist_reason
-from src.artifacts import bail_cost, steal_success_chance, crime_catch_chance
+from src.artifacts import bail_cost, steal_success_chance, crime_catch_chance, has_heist_partner
 from src.properties import bank_property_revenue
 from src.confirm_view import confirm_purchase
 from src.reactions import ReactionCollector, seed_reactions
@@ -159,6 +159,28 @@ def _is_jailed(uid: int) -> bool:
     """Sync jail read for places that can't await (the heist lobby's
     reaction predicate). A user with no economy row has never been jailed."""
     return time.time() < state.economy["users"].get(str(uid), {}).get("jail_until", 0)
+
+
+class _NpcCrewMember:
+    """Silas — the stand-in accomplice the heist-partner artifact supplies.
+
+    Quacks like a Member for the roster and chance code (display_name,
+    mention, id); `is_npc` marks the paths that must treat him differently:
+    he has no wallet (his cut goes to the guild's house pot), can't be
+    jailed, and never holds a record. His level is fixed, not looked up."""
+    is_npc = True
+    id = 0
+    bot = False
+    display_name = "Silas"
+    mention = "**Silas**"
+    level = 1
+
+
+SILAS = _NpcCrewMember()
+
+
+def _is_npc(member) -> bool:
+    return bool(getattr(member, "is_npc", False))
 
 
 def _jail_body(name: str, jail_until_ts: float, reason: str | None) -> str:
@@ -707,6 +729,14 @@ class EconomyCog(commands.Cog):
     # participants (host gets the integer-division remainder). Failure is a
     # no-op for everyone — savings are only at risk on success. Jail gates
     # both ends: a jailed host can't open a lobby, a jailed player can't join.
+    #
+    # Silas: a host who owns the heist-partner artifact gets SILAS (Lv 1, an
+    # NPC) in slot 4 whenever fewer than three players have joined. `slots`
+    # only ever holds real members — he's appended by _bankheist_joiners at
+    # read time — so "lobby full" still means four humans. A 4️⃣ click while
+    # 2️⃣ or 3️⃣ is open lands in the first open slot instead; only the third
+    # joiner takes his place. He counts for party size and takes an equal
+    # cut (paid to the guild house pot), but can't be jailed.
 
     BANKHEIST_JOIN_EMOJIS = ["2️⃣", "3️⃣", "4️⃣"]
     BANKHEIST_START_EMOJI = "🚀"
@@ -716,17 +746,33 @@ class EconomyCog(commands.Cog):
     BANKHEIST_SEIZE_PCT = 0.20
 
     @staticmethod
-    def _bankheist_chance(host, joiners: list, guild_id: int) -> float:
+    def _crew_level(member, guild_id: int) -> int:
+        """A crew member's display level — fixed for an NPC, looked up for
+        a real member."""
+        if _is_npc(member):
+            return int(member.level)
+        from src.level_unlocks import user_display_level
+        return user_display_level(member.id, guild_id)
+
+    def _bankheist_joiners(self, hstate: dict) -> list:
+        """The crew besides the host: every filled slot, plus Silas while the
+        host's artifact is active and fewer than three players have joined."""
+        joiners = [m for m in hstate["slots"][1:] if m is not None]
+        if hstate.get("silas") and len(joiners) < len(self.BANKHEIST_JOIN_EMOJIS):
+            joiners.append(SILAS)
+        return joiners
+
+    @classmethod
+    def _bankheist_chance(cls, host, joiners: list, guild_id: int) -> float:
         """Compute success chance from party size + per-player display level.
         Host: 0–10% bonus linear over levels 1→100 (level 1 = 0%, level 100 = 10%).
-        Each joiner: 0–3% bonus on the same scale."""
-        from src.level_unlocks import user_display_level
+        Each joiner: 0–3% bonus on the same scale (Silas is Lv 1: +0%)."""
         party_size = 1 + len(joiners)
         base = {1: 0.01, 2: 0.10, 3: 0.15, 4: 0.25}[party_size]
-        host_lvl = user_display_level(host.id, guild_id)
+        host_lvl = cls._crew_level(host, guild_id)
         bonus = min(0.10, max(0.0, (host_lvl - 1) / 99.0) * 0.10)
         for j in joiners:
-            jl = user_display_level(j.id, guild_id)
+            jl = cls._crew_level(j, guild_id)
             bonus += min(0.03, max(0.0, (jl - 1) / 99.0) * 0.03)
         return min(0.95, base + bonus)
 
@@ -737,27 +783,33 @@ class EconomyCog(commands.Cog):
 
         When `include_open_slots` is False, unfilled slots are omitted
         (used in result embeds where 'open —' is no longer meaningful)."""
-        from src.level_unlocks import user_display_level
         chance = self._bankheist_chance(host, joiners, guild_id)
         pot = int(savings_value * self.BANKHEIST_SEIZE_PCT)
-        host_lvl = user_display_level(host.id, guild_id)
+        host_lvl = self._crew_level(host, guild_id)
 
         # Per-player bonus inline labels — keep in sync with _bankheist_chance().
         host_bonus_pct = round(min(0.10, max(0.0, (host_lvl - 1) / 99.0) * 0.10) * 100, 1)
         crew_lines = [
             f"  👑 {host.display_name}  (Lv {host_lvl}) (+{host_bonus_pct}%; up to 10%)"
         ]
-        # joiners is filled left-to-right in slot 2/3/4 — render each with its emoji.
+        # Players fill slots 2/3/4 left-to-right; Silas (if along) always
+        # renders on the last line, since that's the slot he holds.
+        humans = [j for j in joiners if not _is_npc(j)]
+        npcs = [j for j in joiners if _is_npc(j)]
+        last = len(self.BANKHEIST_JOIN_EMOJIS) - 1
         for i, emoji in enumerate(self.BANKHEIST_JOIN_EMOJIS):
-            member = joiners[i] if i < len(joiners) else None
+            member = humans[i] if i < len(humans) else None
+            if member is None and i == last and npcs:
+                member = npcs[0]
             if member is None:
                 if include_open_slots:
                     crew_lines.append(f"  {emoji} — open —")
                 continue
-            lvl = user_display_level(member.id, guild_id)
+            lvl = self._crew_level(member, guild_id)
             joiner_bonus_pct = round(min(0.03, max(0.0, (lvl - 1) / 99.0) * 0.03) * 100, 1)
+            tag = " 🎩 your artifact's accomplice" if _is_npc(member) else ""
             crew_lines.append(
-                f"  {emoji} {member.display_name}  (Lv {lvl}) (+{joiner_bonus_pct}%; up to 3%)"
+                f"  {emoji} {member.display_name}  (Lv {lvl}) (+{joiner_bonus_pct}%; up to 3%){tag}"
             )
 
         return (
@@ -771,7 +823,7 @@ class EconomyCog(commands.Cog):
         """Build the lobby embed reflecting current slot occupants and chance."""
         host = hstate["host"]
         target = hstate["target"]
-        joiners = [m for m in hstate["slots"][1:] if m is not None]
+        joiners = self._bankheist_joiners(hstate)
 
         deadline_ts = int(hstate["opened_at_wall"] + self.BANKHEIST_LOBBY_TIMEOUT)
         body = (
@@ -779,8 +831,10 @@ class EconomyCog(commands.Cog):
             + "\n\n"
             f"React 2️⃣–4️⃣ to join. Host: 🚀 to start, ❌ to cancel.\n"
             f"{target.display_name} cannot join.\n"
-            f"Auto-starts <t:{deadline_ts}:R>."
         )
+        if hstate.get("silas"):
+            body += "🎩 Silas rides along in 4️⃣ until a third player takes his place.\n"
+        body += f"Auto-starts <t:{deadline_ts}:R>."
         if last_call:
             body += f"\n\n⚠️ **Last call** — auto-starting <t:{deadline_ts}:R>!"
         return emb(f"🏦 Bank Heist — targeting {target.display_name}", body, C_ORANGE)
@@ -797,6 +851,8 @@ class EconomyCog(commands.Cog):
         jailed: list = []
         jail_until_ts = time.time() + self.BANKHEIST_PARTICIPANT_JAIL_SECONDS
         for p in participants:
+            if _is_npc(p):
+                continue  # Silas has no record to jail — and no roll to spend
             if random.random() < self.BANKHEIST_PARTICIPANT_JAIL_CHANCE:
                 await _ensure_user(p.id)
                 pdata = state.economy["users"][str(p.id)]
@@ -825,7 +881,7 @@ class EconomyCog(commands.Cog):
         trailing line on the result embed."""
         host = hstate["host"]
         target = hstate["target"]
-        joiners = [m for m in hstate["slots"][1:] if m is not None]
+        joiners = self._bankheist_joiners(hstate)
         participants = [host] + joiners
         gid = ctx.guild.id if ctx.guild else 0
 
@@ -883,13 +939,20 @@ class EconomyCog(commands.Cog):
         gid = ctx.guild.id if ctx.guild else 0
         cuts: list[tuple] = []
         for p in participants:
-            cut = share + (remainder if p.id == host.id else 0)
-            await add_balance(
-                p.id, cut,
-                guild_id=gid or None,
-                holder_name=p.display_name,
-            )
-            await record_crime_event(gid, p.id, gained=cut)
+            cut = share + (remainder if p is host else 0)
+            if _is_npc(p):
+                # Silas has no wallet: his equal cut goes to the guild's
+                # house pot, so the artifact dilutes the take like any
+                # fourth crew member would rather than being a free boost.
+                if gid:
+                    await add_guild_house(gid, cut)
+            else:
+                await add_balance(
+                    p.id, cut,
+                    guild_id=gid or None,
+                    holder_name=p.display_name,
+                )
+                await record_crime_event(gid, p.id, gained=cut)
             cuts.append((p, cut))
         # The crew keeps every cut; the victim's insurer (if any) refunds
         # their share of the seized amount into their wallet — minted.
@@ -909,11 +972,15 @@ class EconomyCog(commands.Cog):
         # them; holder_id stays the host's. The value is `seized` — the whole
         # pot — which is the same "taken off the victim" measure !steal and
         # !mug compete on, rather than any one player's cut.
+        # Silas is listed in the crew (he split the cut) with no user id.
         await try_set_crime_record(
             ctx.channel, ctx.guild, seized, host.id,
             ", ".join(p.display_name for p, _ in cuts),
             "bankheist", target.display_name,
-            crew=[{"id": p.id, "name": p.display_name, "cut": cut} for p, cut in cuts],
+            crew=[
+                {"id": None if _is_npc(p) else p.id, "name": p.display_name, "cut": cut}
+                for p, cut in cuts
+            ],
         )
 
         return emb(
@@ -994,6 +1061,9 @@ class EconomyCog(commands.Cog):
             "warned": False,
             "started": False,
             "cancelled": False,
+            # Silas rides along (see _bankheist_joiners) — decided once at
+            # open, so buying the artifact mid-lobby doesn't change the crew.
+            "silas": has_heist_partner(host.id),
         }
         self._active_heists[ch_id] = hstate
 
@@ -1071,6 +1141,11 @@ class EconomyCog(commands.Cog):
                         break
                     # Slot reaction — fill the matching index.
                     slot_idx = self.BANKHEIST_JOIN_EMOJIS.index(emoji_s) + 1
+                    if slot_idx == len(slots) - 1 and hstate["silas"] and None in slots[1:-1]:
+                        # Silas holds 4️⃣ until 2️⃣ and 3️⃣ are taken: a click
+                        # on his slot lands in the first open one instead,
+                        # so only the third joiner ever takes his place.
+                        slot_idx = slots.index(None, 1)
                     if slots[slot_idx] is None:
                         slots[slot_idx] = user
                         try:

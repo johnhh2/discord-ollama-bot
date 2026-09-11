@@ -290,6 +290,35 @@ async def test_solo_bankheist_still_records_a_one_person_crew(db, monkeypatch):
     assert rec["crew"] == [{"id": 9510, "name": "loner", "cut": 2_000}]
 
 
+async def test_bankheist_with_silas_lists_him_in_the_crew_without_an_id(db, monkeypatch):
+    """Silas split the cut, so the record names him — but he's an NPC, so his
+    crew entry carries no user id and the holder id stays the host's."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=9520, display_name="solo")
+    target = FakeMember(uid=9521, display_name="target")
+    _seed_savings(target.id, 10_000)  # 20% = 2,000 → 1,000 each
+
+    monkeypatch.setattr(random, "random", lambda: 0.0)
+
+    ctx = _make_ctx(host, content="!bankheist @target")
+    hstate = _make_hstate(host, target, [])
+    hstate["silas"] = True
+    await cog._bankheist_resolve(ctx, hstate)
+
+    rec = await _crime_record()
+    assert rec["value"] == 2_000
+    assert rec["holder_id"] == host.id
+    assert rec["holder_name"] == "solo, Silas"
+    assert rec["crew"] == [
+        {"id": 9520, "name": "solo", "cut": 1_000},
+        {"id": None, "name": "Silas", "cut": 1_000},
+    ]
+    body = next(
+        e.description for e in _announced(ctx.channel) if e.title == "🏆 New Record!"
+    )
+    assert "crew: solo, Silas — 1,000 🪙 each" in body
+
+
 async def test_failed_bankheist_sets_no_crime_record(db, monkeypatch):
     cog = EconomyCog(bot=_StubBot())
     host = FakeMember(uid=9520, display_name="host")

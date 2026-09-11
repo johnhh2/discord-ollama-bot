@@ -31,6 +31,9 @@ Effect payload keys (all optional) are read by the systems they modify:
     property_upgrade_discount_pct — % off any property upgrade the owner
                                 buys; the upgrade's full catalog cost still
                                 folds into the deed's value
+    heist_npc_partner         — Silas, a Lv 1 accomplice, holds the last
+                                bankheist slot for a host with fewer than
+                                three joiners (src/cogs/economy_cog.py)
     property_revenue_pct_per_property — % property-revenue boost per
                                 property the owner holds
     property_revenue_pct_cap  — ceiling on the per-property boost above
@@ -41,7 +44,8 @@ from src.config import (
     ARTIFACT_STEAL_BOOST_COST, ARTIFACT_CRIME_CATCH_COST,
     ARTIFACT_STREAK_SCRATCH_COST,
     ARTIFACT_PROPERTY_CAP_COST, ARTIFACT_SAVINGS_BOOST_COST,
-    ARTIFACT_UPGRADE_DISCOUNT_COST, ARTIFACT_PROPERTY_BOOST_COST,
+    ARTIFACT_UPGRADE_DISCOUNT_COST, ARTIFACT_HEIST_PARTNER_COST,
+    ARTIFACT_PROPERTY_BOOST_COST,
     SAVINGS_DAILY_MULT, ARTIFACT_SAVINGS_DAILY_MULT,
     SLOT_REEL, SCRATCHOFF_MAX_DAILY,
 )
@@ -139,6 +143,14 @@ ARTIFACTS: list[dict] = [
         "effect": "Property upgrades cost you 20% less",
         "max": 1,
         "property_upgrade_discount_pct": 20,
+    },
+    {
+        "id": "silas_heist_partner",
+        "level": 45,
+        "cost": ARTIFACT_HEIST_PARTNER_COST,
+        "effect": "Silas (Lv 1) joins any bank heist you host, holding the 4️⃣ slot until a third player takes it",
+        "max": 1,
+        "heist_npc_partner": 1,
     },
     {
         "id": "property_mogul",
@@ -250,6 +262,11 @@ def savings_boost_since(uid: int) -> float | None:
     ]
     known = [ts for ts in since if ts is not None]
     return min(known) if known else None
+
+
+def has_heist_partner(uid: int) -> bool:
+    """Whether Silas rides along on this host's bank heists."""
+    return _owned_total(uid, "heist_npc_partner") > 0
 
 
 def property_upgrade_cost(uid: int, base_cost: int) -> int:

@@ -380,10 +380,22 @@ block and `save_user_artifact`'s first insert only).
   deed up to `property_revenue_pct_cap` (25%, which is exactly
   `PROPERTY_MAX_OWNED` deeds). Keep the cap in the payload so the catalog
   copy and the math can't drift.
+- **Silas is an NPC, never a Member.** The heist-partner artifact puts
+  `SILAS` (`_NpcCrewMember` in `src/cogs/economy_cog.py`, Lv 1) in the
+  host's 4️⃣ slot while fewer than three players have joined. He lives only
+  in `_bankheist_joiners(hstate)` — `hstate["slots"]` holds real members
+  only, so "lobby full" still means four humans, and a 4️⃣ click while 2️⃣ or
+  3️⃣ is open is redirected to the first open slot; only the third joiner
+  replaces him. He counts for party size and takes an equal cut, paid to
+  the guild house pot (`add_guild_house`), and is skipped by the jail roll,
+  `add_balance` and `record_crime_event`; the crime record lists him with
+  `id: None`. Any new per-participant side effect must branch on `_is_npc`
+  first — his `id` is 0, not a user.
 - **Level and cost live in the catalog, not the tests.** Levels 5–50 in
   5-step increments; two artifacts may share a level (both property deeds
-  sit at 40). Existing tests assert on the 🔒 markers by level, not by list
-  index — `!artifacts buy <n>` numbers shift whenever an entry is inserted.
+  sit at 40, Silas and the upgrade discount at 45). Existing tests assert
+  on the 🔒 markers by level, not by list index — `!artifacts buy <n>`
+  numbers shift whenever an entry is inserted.
 
 Coverage: [tests/test_artifacts.py](tests/test_artifacts.py), the artifact
 blocks of [tests/test_properties.py](tests/test_properties.py) and the

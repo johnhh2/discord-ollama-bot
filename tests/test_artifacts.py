@@ -309,7 +309,8 @@ async def test_catalog_levels_costs_and_order():
     from src.config import (
         ARTIFACT_CRIME_CATCH_COST, ARTIFACT_STREAK_SCRATCH_COST,
         ARTIFACT_PROPERTY_CAP_COST, ARTIFACT_SAVINGS_BOOST_COST,
-        ARTIFACT_UPGRADE_DISCOUNT_COST, ARTIFACT_PROPERTY_BOOST_COST,
+        ARTIFACT_UPGRADE_DISCOUNT_COST, ARTIFACT_HEIST_PARTNER_COST,
+        ARTIFACT_PROPERTY_BOOST_COST,
     )
     by_id = {a["id"]: a for a in ARTIFACTS}
     levels = [a["level"] for a in ARTIFACTS]
@@ -324,6 +325,9 @@ async def test_catalog_levels_costs_and_order():
     assert (by_id["savings_rate_boost"]["level"], ARTIFACT_SAVINGS_BOOST_COST) == (40, 200_000)
     assert (by_id["property_upgrade_discount"]["level"], ARTIFACT_UPGRADE_DISCOUNT_COST) == (45, 300_000)
     assert by_id["property_upgrade_discount"]["property_upgrade_discount_pct"] == 20
+    assert (by_id["silas_heist_partner"]["level"], ARTIFACT_HEIST_PARTNER_COST) == (45, 250_000)
+    assert by_id["silas_heist_partner"]["heist_npc_partner"] == 1
+    assert "Silas" in by_id["silas_heist_partner"]["effect"]
     assert (by_id["property_mogul"]["level"], ARTIFACT_PROPERTY_BOOST_COST) == (50, 500_000)
     assert by_id["property_mogul"]["effect"] == (
         "Your property revenue increases by 5% for each property you own (up to 25%)"
@@ -371,6 +375,15 @@ async def test_property_upgrade_cost_discount():
     assert property_upgrade_cost(uid, 50_000) == 40_000
     # Odd costs round in the buyer's favor (floor of the discount).
     assert property_upgrade_cost(uid, 10_001) == 8_001
+
+
+async def test_has_heist_partner():
+    from src.artifacts import has_heist_partner
+
+    uid = 8013
+    assert has_heist_partner(uid) is False
+    _state.user_artifacts[uid] = {"silas_heist_partner": 1}
+    assert has_heist_partner(uid) is True
 
 
 # ── chessthreats unlock ───────────────────────────────────────────────────────

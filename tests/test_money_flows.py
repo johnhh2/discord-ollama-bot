@@ -948,6 +948,153 @@ async def test_bankheist_chance_formula_party_size_and_levels(db):
     )
 
 
+# ── Silas: the heist-partner artifact ────────────────────────────────────────
+
+def _give_silas(uid: int):
+    _state.user_artifacts.setdefault(uid, {})["silas_heist_partner"] = 1
+
+
+async def test_silas_rides_along_in_slot_four_while_crew_is_short(db):
+    """With the artifact, Silas (Lv 1) is the crew's last member until three
+    players have joined: he counts for party size, adds no level bonus, and
+    always renders on the 4️⃣ line."""
+    from src.cogs.economy_cog import SILAS
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=880, display_name="host")
+    target = FakeMember(uid=881, display_name="target")
+    j1 = FakeMember(uid=882, display_name="j1")
+    j2 = FakeMember(uid=883, display_name="j2")
+    j3 = FakeMember(uid=884, display_name="j3")
+
+    hstate = _make_hstate(host, target, [])
+    hstate["silas"] = True
+    assert cog._bankheist_joiners(hstate) == [SILAS]
+    # Solo host: 1% → a two-person party's 10%, Silas being level 1 (+0%).
+    assert cog._bankheist_chance(host, cog._bankheist_joiners(hstate), 42) == pytest.approx(0.10)
+
+    hstate = _make_hstate(host, target, [j1])
+    hstate["silas"] = True
+    joiners = cog._bankheist_joiners(hstate)
+    assert joiners == [j1, SILAS]
+    assert cog._bankheist_chance(host, joiners, 42) == pytest.approx(0.15)
+    header = cog._bankheist_header(host, target, joiners, 42, 10_000)
+    assert "2️⃣ j1  (Lv 1)" in header
+    assert "3️⃣ — open —" in header
+    assert "4️⃣ Silas  (Lv 1) (+0.0%; up to 3%)" in header
+    lobby = cog._bankheist_render(hstate, 42, 10_000)
+    assert "Silas rides along in 4️⃣" in lobby.description
+
+    hstate = _make_hstate(host, target, [j1, j2])
+    hstate["silas"] = True
+    assert cog._bankheist_joiners(hstate) == [j1, j2, SILAS]
+    assert cog._bankheist_chance(host, cog._bankheist_joiners(hstate), 42) == pytest.approx(0.25)
+
+    # Three players: a full human crew, Silas steps aside.
+    hstate = _make_hstate(host, target, [j1, j2, j3])
+    hstate["silas"] = True
+    assert cog._bankheist_joiners(hstate) == [j1, j2, j3]
+
+    # Without the artifact nothing changes.
+    hstate = _make_hstate(host, target, [])
+    assert cog._bankheist_joiners(hstate) == []
+    assert cog._bankheist_chance(host, [], 42) == pytest.approx(0.01)
+    assert "Silas" not in cog._bankheist_render(hstate, 42, 10_000).description
+
+
+async def test_silas_resolve_success_house_takes_his_cut_and_he_dodges_jail(db, monkeypatch):
+    """Silas splits the pot like any crew member — his cut goes to the guild
+    house pot, not a wallet — and the jail roll skips him."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=885, display_name="host")
+    target = FakeMember(uid=886, display_name="target")
+    await _economy._ensure_user(host.id)
+    _seed_savings(target.id, 10_001)  # 20% = 2000 → 1000 each
+    monkeypatch.setattr(random, "random", lambda: 0.0)  # succeed; jail everyone
+
+    hstate = _make_hstate(host, target, [])
+    hstate["silas"] = True
+    ctx = _make_ctx(host, target, content="!bankheist @target")
+    result = await cog._bankheist_resolve(ctx, hstate)
+
+    assert "Successful" in result.title
+    assert await _economy.get_balance(host.id) == 1_000
+    assert _economy.get_guild_house_balance(42) == 1_000
+    assert "Silas: **1,000 🪙**" in result.description
+    # Host went down; Silas never appears on the caught line.
+    caught = result.description.split("Caught:")[1]
+    assert host.mention in caught
+    assert "Silas" not in caught
+    assert _state.economy["users"][str(host.id)]["jail_until"] > time.time()
+    assert "0" not in _state.economy["users"]  # no phantom row for id 0
+
+
+async def test_silas_lobby_fourth_slot_click_lands_in_first_open_slot(db, monkeypatch):
+    """Silas holds 4️⃣ until 2️⃣ and 3️⃣ are taken: the first two 4️⃣ clicks
+    fill those, the third replaces him, and the lobby then auto-starts with
+    a full human crew."""
+    from src.cogs.economy_cog import SILAS
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=887, display_name="host")
+    victim = FakeMember(uid=888, display_name="victim")
+    a, b, c = (FakeMember(uid=889 + i, display_name=n) for i, n in enumerate("abc"))
+    _grant_level(victim.id, 9)
+    _give_silas(host.id)
+    resolved: dict = {}
+
+    async def _resolve(ctx_arg, hstate):
+        resolved["hstate"] = hstate
+    monkeypatch.setattr(cog, "_bankheist_resolve", _resolve)
+    ctx, captured = _lobby_ctx(cog, host, victim, ("4️⃣", a), ("4️⃣", b), ("4️⃣", c))
+
+    await cog.cmd_bankheist.callback(cog, ctx, target=victim)
+
+    hstate = resolved["hstate"]
+    assert hstate["silas"] is True
+    assert hstate["slots"] == [host, a, b, c]
+    assert SILAS not in cog._bankheist_joiners(hstate)
+    assert ctx.channel.id not in cog._active_heists
+
+
+async def test_silas_lobby_starts_short_handed_with_silas(db, monkeypatch):
+    """A host who starts with one joiner in 3️⃣ takes Silas along in 4️⃣."""
+    from src.cogs.economy_cog import SILAS
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=892, display_name="host")
+    victim = FakeMember(uid=893, display_name="victim")
+    joiner = FakeMember(uid=894, display_name="joiner")
+    _grant_level(victim.id, 9)
+    _give_silas(host.id)
+    resolved: dict = {}
+
+    async def _resolve(ctx_arg, hstate):
+        resolved["hstate"] = hstate
+    monkeypatch.setattr(cog, "_bankheist_resolve", _resolve)
+    ctx, _captured = _lobby_ctx(cog, host, victim, ("3️⃣", joiner), ("🚀", host))
+
+    await cog.cmd_bankheist.callback(cog, ctx, target=victim)
+
+    hstate = resolved["hstate"]
+    assert hstate["slots"] == [host, None, joiner, None]
+    assert cog._bankheist_joiners(hstate) == [joiner, SILAS]
+
+
+async def test_lobby_without_silas_fourth_slot_click_is_direct(db):
+    """No artifact, no redirect: a 4️⃣ click fills 4️⃣ as it always has."""
+    cog = EconomyCog(bot=_StubBot())
+    host = FakeMember(uid=895, display_name="host")
+    victim = FakeMember(uid=896, display_name="victim")
+    joiner = FakeMember(uid=897, display_name="joiner")
+    _grant_level(victim.id, 9)
+    ctx, captured = _lobby_ctx(cog, host, victim, ("4️⃣", joiner), ("❌", host))
+
+    await cog.cmd_bankheist.callback(cog, ctx, target=victim)
+
+    hstate = captured["hstate"]
+    assert hstate["silas"] is False
+    assert hstate["slots"] == [host, None, None, joiner]
+    assert cog._bankheist_joiners(hstate) == [joiner]
+
+
 async def test_bankheist_resolve_success_splits_loot_evenly(db, monkeypatch):
     """4-player success path: 20% of victim savings drained, split among
     host + 3 joiners. Host gets the integer-division remainder."""
