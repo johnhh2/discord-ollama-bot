@@ -23,7 +23,7 @@ from src.artifacts import get_slot_reel
 from src.dailies import keep_in_dailies_channel
 from src.gambling.play_again import PlayAgainView
 from src.config import (
-    SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_HOUSE_CHANCE,
+    SLOT_REEL, SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB_DIVISOR, SLOT_HOUSE_CHANCE,
     SLOT_MIN_BET, SLOT_MULT_JACKPOT, SLOT_MULT_3BAR, SLOT_MULT_3BELL,
     SLOT_MULT_3LEMON, SLOT_MULT_3CHERRY, SLOT_MULT_2CHERRY, SLOT_MULT_1CHERRY,
     SLOT_JACKPOT_BONUS_MIN_BET, SLOT_JACKPOT_BONUS_MAX_BET, SLOT_JACKPOT_BONUS_MAX_MULT,
@@ -163,10 +163,14 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
         view.message = msg
         return msg
 
-    # Jackpot contribution (2% of every bet, rounded up)
-    contrib = max(1, int(amount * SLOT_JACKPOT_CONTRIB))
-    state.slot_jackpot += contrib
-    await save_jackpot(state.slot_jackpot)
+    # Jackpot contribution: one coin per SLOT_JACKPOT_CONTRIB_DIVISOR bet,
+    # rounded down, so a bet under the divisor feeds nothing. There is
+    # deliberately no minimum — the old max(1, …) made a 25-coin bet feed
+    # 4%, double the intended rate.
+    contrib = amount // SLOT_JACKPOT_CONTRIB_DIVISOR
+    if contrib:
+        state.slot_jackpot += contrib
+        await save_jackpot(state.slot_jackpot)
 
     # Spin (or use rigged result)
     if uid in state.rigged_slots:
@@ -308,7 +312,7 @@ class SlotsCog(commands.Cog):
             ), inline=False)
             embed.add_field(name="Other", value=(
                 "❌ **No Match** — 0x (Lose bet)\n\n"
-                f"**Progressive Jackpot:** Grows by {SLOT_JACKPOT_CONTRIB:.0%} of every bet!\n"
+                f"**Progressive Jackpot:** Grows by 1 🪙 for every {SLOT_JACKPOT_CONTRIB_DIVISOR} 🪙 bet!\n"
                 f"**Current Jackpot: {state.slot_jackpot:,} 🪙**"
             ), inline=False)
             await send_ephemeral(ctx, embed=embed)
@@ -348,7 +352,7 @@ class SlotsCog(commands.Cog):
         jackpot = state.slot_jackpot
         embed.add_field(name="Other", value=
             "❌ **No Match** — 0x (Lose bet)\n\n"
-            f"**Progressive Jackpot:** Grows by 2% of every bet!\n"
+            f"**Progressive Jackpot:** Grows by 1 🪙 for every {SLOT_JACKPOT_CONTRIB_DIVISOR} 🪙 bet!\n"
             f"**Current Jackpot: {jackpot:,} 🪙**",
             inline=False)
 

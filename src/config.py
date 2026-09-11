@@ -58,7 +58,7 @@ SLOT_REEL = (
     ["⬛"] * 4
 )
 SLOT_JACKPOT_SEED = 5_000
-SLOT_JACKPOT_CONTRIB = 0.02
+SLOT_JACKPOT_CONTRIB_DIVISOR = 150   # pool gains bet // 150 per spin (~0.67%, rounded down, no minimum)
 SLOT_HOUSE_CHANCE = 0.055
 
 # Prize pool every fresh monthly lottery starts with (the guild-house drain

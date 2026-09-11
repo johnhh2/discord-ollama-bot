@@ -4,8 +4,8 @@ eval_slots is well covered by the original suite. This file pins the
 parts NOT covered there:
 
 - apply_jackpot_bonus: scaling math (extracted helper, pure function).
-- Jackpot accumulation: every spin adds SLOT_JACKPOT_CONTRIB × bet
-  to state.slot_jackpot and persists.
+- Jackpot accumulation: every spin adds bet // SLOT_JACKPOT_CONTRIB_DIVISOR
+  to state.slot_jackpot and persists; a bet under the divisor adds nothing.
 - Rigging: state.rigged_slots forces a guaranteed three-of-a-kind and
   decrements (single-use per entry).
 - Jackpot win resets state.slot_jackpot to SLOT_JACKPOT_SEED.
@@ -23,7 +23,7 @@ import src.gambling.slots as slots_mod
 from src.gambling.slots import SlotsCog, apply_jackpot_bonus, play_slots
 from src.gambling.play_again import PlayAgainView
 from src.config import (
-    SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB, SLOT_JACKPOT_BONUS_MIN_BET,
+    SLOT_JACKPOT_SEED, SLOT_JACKPOT_CONTRIB_DIVISOR, SLOT_JACKPOT_BONUS_MIN_BET,
     SLOT_JACKPOT_BONUS_MAX_BET, SLOT_JACKPOT_BONUS_MAX_MULT, SLOT_MIN_BET,
     SLOT_MULT_3CHERRY,
 )
@@ -120,9 +120,31 @@ async def test_slots_spin_adds_to_jackpot_and_persists(db, monkeypatch):
     bet = 1000
     await cog.cmd_slots.callback(cog, ctx, amount=str(bet))
 
-    expected_contrib = max(1, int(bet * SLOT_JACKPOT_CONTRIB))
+    expected_contrib = bet // SLOT_JACKPOT_CONTRIB_DIVISOR
+    assert expected_contrib > 0
     assert _state.slot_jackpot == starting_jackpot + expected_contrib
     assert await _read_jackpot() == starting_jackpot + expected_contrib
+
+
+@pytest.mark.asyncio
+async def test_slots_bet_under_divisor_feeds_nothing_to_jackpot(db, monkeypatch):
+    """The contribution rounds down with no minimum: a bet below
+    SLOT_JACKPOT_CONTRIB_DIVISOR leaves the pool (and its DB row) untouched."""
+    cog = SlotsCog(bot=_StubBot())
+    ctx = _ctx(uid=1)
+    await _economy.add_balance(1, 100_000)
+
+    _state.slot_jackpot = 4_321
+    await _persistence.save_jackpot(4_321)
+    monkeypatch.setattr(random, "random", lambda: 0.99)
+    monkeypatch.setattr(random, "choice", lambda seq: "⬛")
+    monkeypatch.setattr(random, "sample", lambda seq, k: ["⬛", "⬛", "⬛"])
+
+    bet = SLOT_JACKPOT_CONTRIB_DIVISOR - 1
+    await cog.cmd_slots.callback(cog, ctx, amount=str(bet))
+
+    assert _state.slot_jackpot == 4_321
+    assert await _read_jackpot() == 4_321
 
 
 @pytest.mark.asyncio
@@ -229,7 +251,7 @@ def test_slots_house_edge_is_positive_at_10k_bet():
 
     Excludes the progressive jackpot from the EV calculation: in the
     long-run steady state, the progressive pot is funded by all spins
-    (2% contribution) and paid back to players when the jackpot hits,
+    (per-spin contribution) and paid back to players when the jackpot hits,
     so it nets out near zero. We check the underlying eval_slots-driven
     EV, which is the actual house edge.
     """
@@ -348,9 +370,9 @@ async def test_slots_rigged_jackpot_pays_progressive_pot_and_resets(db, monkeypa
     bal_before = await _economy.get_balance(4)
     await cog.cmd_slots.callback(cog, ctx, amount=str(bet))
 
-    # Jackpot accumulates the 2% contribution BEFORE the jackpot check fires
-    # (line ordering in cmd_slots), so the pre-bonus pot is 50_000 + contrib.
-    expected_pot = 50_000 + max(1, int(bet * SLOT_JACKPOT_CONTRIB))
+    # Jackpot accumulates the per-spin contribution BEFORE the jackpot check
+    # fires (line ordering in cmd_slots), so the pre-bonus pot is 50_000 + contrib.
+    expected_pot = 50_000 + bet // SLOT_JACKPOT_CONTRIB_DIVISOR
     expected_prize = int(expected_pot * SLOT_JACKPOT_BONUS_MAX_MULT)
 
     assert await _economy.get_balance(4) == bal_before - bet + expected_prize
@@ -526,7 +548,7 @@ async def test_roll_again_click_respins_same_bet_and_offers_another(db, monkeypa
     # Button dropped from the first result, bet charged again, pot fed again.
     interaction.response.edit_message.assert_awaited_once_with(view=None)
     assert await _economy.get_balance(23) == bal_after_first - 1000
-    assert _state.slot_jackpot == jackpot_after_first + max(1, int(1000 * SLOT_JACKPOT_CONTRIB))
+    assert _state.slot_jackpot == jackpot_after_first + 1000 // SLOT_JACKPOT_CONTRIB_DIVISOR
     views = _result_views(ctx)
     assert len(views) == 2
     assert views[1] is not first
