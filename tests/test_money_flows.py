@@ -1070,7 +1070,7 @@ async def test_bankheist_active_heist_blocks_second_in_same_channel(db):
 
 
 async def test_bankheist_resolve_success_jails_everyone_when_rolls_low(db, monkeypatch):
-    """With random.random() = 0, every roll is below 0.25 → every participant
+    """With random.random() = 0, every roll is below 0.50 → every participant
     gets jailed and shows up in the Caught: line."""
     cog = EconomyCog(bot=_StubBot())
     host = FakeMember(uid=870, display_name="host")
@@ -1108,7 +1108,7 @@ async def test_bankheist_resolve_jailing_skipped_when_rolls_high(db, monkeypatch
     target = FakeMember(uid=882, display_name="target")
     _seed_savings(target.id, 10_000)
 
-    # 0.99 fails the chance roll AND fails every jail roll (>= 0.25).
+    # 0.99 fails the chance roll AND fails every jail roll (>= 0.50).
     monkeypatch.setattr(random, "random", lambda: 0.99)
 
     hstate = _make_hstate(host, target, [j1])
@@ -1132,9 +1132,9 @@ async def test_bankheist_resolve_jail_rolls_independent_per_player(db, monkeypat
     target = FakeMember(uid=893, display_name="target")
     _seed_savings(target.id, 10_000)
 
-    # 1st = chance roll (0.0 → success); 2nd = host jail (0.5 → free);
+    # 1st = chance roll (0.0 → success); 2nd = host jail (0.75 → free);
     # 3rd = j1 jail (0.0 → jailed); 4th = j2 jail (0.99 → free).
-    rolls = iter([0.0, 0.5, 0.0, 0.99])
+    rolls = iter([0.0, 0.75, 0.0, 0.99])
     monkeypatch.setattr(random, "random", lambda: next(rolls))
 
     hstate = _make_hstate(host, target, [j1, j2])

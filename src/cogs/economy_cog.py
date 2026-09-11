@@ -785,11 +785,11 @@ class EconomyCog(commands.Cog):
             body += f"\n\n⚠️ **Last call** — auto-starting <t:{deadline_ts}:R>!"
         return emb(f"🏦 Bank Heist — targeting {target.display_name}", body, C_ORANGE)
 
-    BANKHEIST_PARTICIPANT_JAIL_CHANCE = 0.25
+    BANKHEIST_PARTICIPANT_JAIL_CHANCE = 0.50
     BANKHEIST_PARTICIPANT_JAIL_SECONDS = 86400  # 1 day
 
     async def _roll_participant_jail(self, participants: list, target_name: str, intended_per_person: int = 0) -> list:
-        """For each participant, roll 25% to be jailed for 1 day. Returns the
+        """For each participant, roll 50% to be jailed for 1 day. Returns the
         list of jailed Members (for embed display). Mutates state and persists.
 
         `intended_per_person` is recorded as the participant's bail_amount for
@@ -821,7 +821,7 @@ class EconomyCog(commands.Cog):
         touch reactions or the lobby loop. Tests call this directly.
 
         After the loot split (or on failure / empty vault), every participant
-        rolls 25% to get jailed for 1 day. Caught players are listed in a
+        rolls 50% to get jailed for 1 day. Caught players are listed in a
         trailing line on the result embed."""
         host = hstate["host"]
         target = hstate["target"]
