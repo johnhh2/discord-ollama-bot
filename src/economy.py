@@ -844,6 +844,66 @@ async def _record_gambling_delta(guild_id: int, uid: int, *, gained: int, lost: 
     rec["lost"] += int(lost)
 
 
+# ── Biggest gambling loss ────────────────────────────────────────────────────
+#
+# One per-guild record row every HOUSE game competes for: the net a single
+# bet (or one !flip batch) cost the player. Flip, slots, blackjack and the
+# bot race offer to it on a losing outcome. Deliberately left out: lottery
+# tickets (booked as "lost" at purchase, before the draw) and PvP wagers —
+# chess, the multiplayer race, tic-tac-toe / Connect 4 — where the coins went
+# to another player, not the house. The payout records skip those too.
+GAMBLING_LOSS_RECORD = "gambling_loss"
+
+GAMBLING_LOSS_GAME_LABELS = {
+    "flip": "Flip",
+    "slots": "Slots",
+    "blackjack": "Blackjack",
+    "race": "Race",
+}
+
+
+def format_loss_record_detail(rec: dict) -> str:
+    """Render the 'which game, what bet' line for a gambling-loss record.
+
+    Shared by the !records entry and the announce_record detail line so the
+    two can't drift. `rec` is a record dict (or the meta kwargs about to be
+    stored); everything past `game` is optional, so a row written before a
+    field existed still renders.
+    """
+    parts = [GAMBLING_LOSS_GAME_LABELS.get(rec.get("game"), "Gamble")]
+    bet = rec.get("bet")
+    if bet is not None:
+        coins = int(rec.get("coins") or 1)
+        parts.append(f"Bet: {coins} × {bet:,} 🪙" if coins > 1 else f"Bet: {bet:,} 🪙")
+    if rec.get("symbols"):
+        parts.append(f"Symbols: {rec['symbols']}")
+    if rec.get("player_hand"):
+        hand = f"Hand: {rec['player_hand']} ({rec.get('player_score', '?')})"
+        dealer = rec.get("dealer_score")
+        parts.append(hand + (f" • Dealer: {dealer}" if dealer is not None else ""))
+    return " • ".join(parts)
+
+
+async def try_set_loss_record(
+    guild_id: int | None, uid: int, holder_name: str, loss: int, *, game: str, **meta,
+) -> bool:
+    """Offer `loss` — what one losing bet cost the player, net — to the
+    biggest-gambling-loss record in `guild_id`. Returns whether it took the
+    record; the caller announces after its result embed, with
+    `format_loss_record_detail({"game": game, **meta})` as the detail line.
+
+    Godmode users play for free, so nothing they "lose" competes — the same
+    rule the gambling P/L graph applies. Callers that honour `record_exclude`
+    pass the shrunken stake here, as they do for the payout records: an
+    auto-staked property cheque mustn't set this one either.
+    """
+    if not guild_id or loss <= 0 or uid in state.godmode_users:
+        return False
+    return await try_set_record(
+        guild_id, GAMBLING_LOSS_RECORD, loss, uid, holder_name, game=game, **meta,
+    )
+
+
 async def snapshot_all(ping_ms: float | None = None):
     """Run the periodic graph-data snapshots. Called by the GraphCog scheduler
     every 6 hours and once on boot.

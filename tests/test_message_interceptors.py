@@ -151,8 +151,11 @@ async def test_blackjack_hit_to_bust_removes_game_and_charges(db, cog):
 
     assert player.id not in _state.active_blackjack_games
     channel.send.assert_awaited()
-    embed = channel.send.call_args.kwargs["embed"]
-    assert "Bust" in embed.title
+    # The bust is followed by the biggest-loss record announcement (first
+    # loss in this guild), so look for the bust embed rather than the last one.
+    titles = [c.kwargs["embed"].title for c in channel.send.call_args_list
+              if c.kwargs.get("embed") is not None]
+    assert any("Bust" in t for t in titles)
 
 
 async def test_blackjack_stand_triggers_dealer_play(db, cog, monkeypatch):

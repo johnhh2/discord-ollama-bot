@@ -8,6 +8,7 @@ from src.helpers import (
 )
 from src.economy import (
     get_balance, get_total_balance, record_gambling_event,
+    try_set_loss_record, format_loss_record_detail, GAMBLING_LOSS_RECORD,
 )
 from src.permissions import (
     check_game_channel, is_silenced,
@@ -316,14 +317,24 @@ async def _bust(author, channel, guild, game: dict, display: str) -> None:
     state.active_blackjack_games.pop(uid, None)
     await retire_blackjack_buttons(game)
     amount = game["amount"]
+    gid = guild.id if guild else None
     if uid not in state.godmode_users:
-        await record_gambling_event(guild.id if guild else None, uid, lost=amount, channel_id=channel.id)
+        await record_gambling_event(gid, uid, lost=amount, channel_id=channel.id)
+    loss_meta = {
+        "game": "blackjack", "bet": amount,
+        "player_hand": format_hand(game["player_hand"]),
+        "player_score": hand_value(game["player_hand"]),
+    }
+    new_loss_record = await try_set_loss_record(gid, uid, author.display_name, amount, **loss_meta)
     await channel.send(embed=emb(
         "💥 Bust!",
         display + _doubled_note(game)
         + f"\n\n**{author.display_name}** loses **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙",
         C_RED,
     ), silent=True)
+    if new_loss_record:
+        await announce_record(channel, GAMBLING_LOSS_RECORD, author.display_name, amount,
+                              detail=format_loss_record_detail(loss_meta), holder_id=uid)
 
 
 async def _stand(author, channel, guild, game: dict) -> None:
@@ -347,6 +358,8 @@ async def _stand(author, channel, guild, game: dict) -> None:
 
     new_bj_record = False
     new_bal_record = False
+    new_loss_record = False
+    loss_meta: dict = {}
     bj_winnings = 0
     if dval > 21 or pval > dval:
         bj_winnings = amount * 2
@@ -363,6 +376,11 @@ async def _stand(author, channel, guild, game: dict) -> None:
     else:
         if uid not in state.godmode_users:
             await record_gambling_event(gid, uid, lost=amount, channel_id=channel.id)
+        loss_meta = {
+            "game": "blackjack", "bet": amount,
+            "player_hand": format_hand(player), "player_score": pval, "dealer_score": dval,
+        }
+        new_loss_record = await try_set_loss_record(gid, uid, uid_name, amount, **loss_meta)
         color, result = C_RED, f"❌ Dealer wins. **{uid_name}** loses **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙"
 
     await channel.send(embed=emb("🃏 Blackjack", display + f"\n\n{result}", color), silent=True)
@@ -370,6 +388,9 @@ async def _stand(author, channel, guild, game: dict) -> None:
         await announce_record(channel, "blackjack", uid_name, bj_winnings, holder_id=uid)
     if new_bal_record:
         await announce_record(channel, "highest_balance", uid_name, await get_total_balance(uid), holder_id=uid)
+    if new_loss_record:
+        await announce_record(channel, GAMBLING_LOSS_RECORD, uid_name, amount,
+                              detail=format_loss_record_detail(loss_meta), holder_id=uid)
 
 
 

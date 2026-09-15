@@ -10,6 +10,7 @@ from src.helpers import (
 )
 from src.economy import (
     get_balance, get_total_balance, _ensure_user, record_gambling_event,
+    try_set_loss_record, format_loss_record_detail, GAMBLING_LOSS_RECORD,
 )
 from src.permissions import (
     is_admin, check_game_channel,
@@ -243,12 +244,20 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
         return
 
     if mult == 0:
+        gid = guild.id if guild else None
         if uid not in state.godmode_users:
-            await record_gambling_event(guild.id if guild else None, uid, lost=amount, channel_id=channel.id)
+            await record_gambling_event(gid, uid, lost=amount, channel_id=channel.id)
+        # Biggest gambling loss, on the record-eligible bet (see record_exclude).
+        record_loss = max(0, amount - record_exclude)
+        loss_meta = {"game": "slots", "bet": record_loss, "symbols": display}
+        new_loss_record = await try_set_loss_record(gid, uid, author.display_name, record_loss, **loss_meta)
         desc = (f"{display}\n\n**{author.display_name}** lost **{amount:,} 🪙**. Balance: {await get_balance(uid):,} 🪙\n"
                 f"Progressive Jackpot: **{state.slot_jackpot:,} 🪙**")
         msg = await _send_result("🎰 No Win", desc, C_RED)
         await keep_in_dailies_channel(guild, channel, msg, -amount)
+        if new_loss_record:
+            await announce_record(channel, GAMBLING_LOSS_RECORD, author.display_name, record_loss,
+                                  detail=format_loss_record_detail(loss_meta), holder_id=uid)
         return
 
     winnings = amount * mult

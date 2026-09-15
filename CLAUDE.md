@@ -281,6 +281,10 @@ It is wrong for a **global per-user stat**: one number that reads the same from 
 4. **Backfilling an existing category** — a migration can't see Discord membership, so it joins `leveling` the same way. Keep it raise-only (guard every write on the new value being strictly greater) so a re-run is a no-op and no record is ever lowered. See [migrations/0046_sync_artifact_record_across_guilds.sql](migrations/0046_sync_artifact_record_across_guilds.sql) for the shape: a `ROW_NUMBER()` pick of one candidate per guild, then an `ON DUPLICATE KEY UPDATE` that only takes the row if it beats what's there.
 5. **Ties** — categories in `UID_TIEBREAK_CATEGORIES` (currently `command_streak`) break ties on the lower user id. A backfill for one of those needs the same rule in SQL, or the migration and `_beats` will disagree about who holds a tied record.
 
+### Biggest gambling loss
+
+`gambling_loss` is a per-guild event record every **house** game competes for. Flip, slots, blackjack and the bot race call `try_set_loss_record` (`src/economy.py`) on a losing outcome with the net that one bet (or one `!flip` batch) cost the player, then announce it after the result embed with `format_loss_record_detail` as the detail line — the same formatter `!records` uses. Honour `record_exclude` exactly as the payout records do (the offer shrinks, the loss doesn't), and note the helper drops godmode losses itself. Lottery tickets and PvP wagers (chess, the multiplayer race, tic-tac-toe / Connect 4) stay out: those coins went to the pool or another player, not the house, and the payout records skip them too. A new house game must offer to it on every losing outcome. Coverage: [tests/test_gambling_loss_record.py](tests/test_gambling_loss_record.py).
+
 ## Real estate (!assets): unique global deeds
 
 Every property in `src/properties.py` is a **unique bot-wide deed** — at most

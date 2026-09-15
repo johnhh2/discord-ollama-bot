@@ -18,7 +18,7 @@ from src.economy import (
     next_daily_reset_ts, get_savings_value, add_savings, remove_savings,
     savings_growth, SAVINGS_DAILY_PCT, user_savings_daily_pct,
     seize_from_savings, record_crime_event, CRIME_ELIGIBLE_NET_WORTH,
-    _maybe_latch_crime_eligible,
+    _maybe_latch_crime_eligible, GAMBLING_LOSS_RECORD, format_loss_record_detail,
 )
 from src.permissions import (
     requires_perm,
@@ -1564,6 +1564,8 @@ class EconomyCog(commands.Cog):
                 fmt("flip", "Flip Payout"),
                 fmt("race", "Race Payout"),
                 fmt("scratchoff_day", "Scratchoff Day Payout"),
+                fmt(GAMBLING_LOSS_RECORD, "Biggest Loss",
+                    lambda rec: f"\n  ↳ {format_loss_record_detail(rec)}"),
             ]),
             ("🎮 Games", [
                 fmt("hangman_payout", "Hangman Payout",

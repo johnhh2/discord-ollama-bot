@@ -42,6 +42,7 @@ RECORD_LABELS = {
     "highest_property_value": "highest property portfolio value",
     "command_streak": "longest daily streak",
     "scratchoff_day": "biggest scratchoff day payout",
+    "gambling_loss": "biggest gambling loss",
     "crime": "biggest crime payout",
 }
 

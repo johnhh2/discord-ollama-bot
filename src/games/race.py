@@ -11,7 +11,8 @@ from src.helpers import (
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_total_balance,
-    record_gambling_event,
+    record_gambling_event, try_set_loss_record, format_loss_record_detail,
+    GAMBLING_LOSS_RECORD,
 )
 from src.permissions import (
     check_game_channel,
@@ -199,6 +200,12 @@ async def play_bot_race(author, channel, guild, amount: int, bot_lane, *,
     record_payout = max(0, amount - record_exclude) * 2
     if won and record_payout > 0:
         new_race_record = await try_set_record(gid, "race", record_payout, uid, author.display_name)
+    # Biggest gambling loss, on the same record-eligible stake.
+    record_loss = max(0, amount - record_exclude)
+    loss_meta = {"game": "race", "bet": record_loss}
+    new_loss_record = False
+    if net < 0:
+        new_loss_record = await try_set_loss_record(gid, uid, author.display_name, record_loss, **loss_meta)
 
     you = author.display_name
     bal_line = f" Balance: {await get_balance(uid):,} 🪙" if amount else ""
@@ -244,6 +251,9 @@ async def play_bot_race(author, channel, guild, amount: int, bot_lane, *,
         await announce_record(channel, "race", author.display_name, record_payout, holder_id=uid)
     if new_bal_record:
         await announce_record(channel, "highest_balance", author.display_name, await get_total_balance(uid), holder_id=uid)
+    if new_loss_record:
+        await announce_record(channel, GAMBLING_LOSS_RECORD, author.display_name, record_loss,
+                              detail=format_loss_record_detail(loss_meta), holder_id=uid)
 
 
 

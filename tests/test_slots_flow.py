@@ -573,7 +573,11 @@ async def test_play_slots_default_has_no_roll_again(db, monkeypatch):
 
     await play_slots(ctx.author, ctx.channel, ctx.guild, 1000)
 
-    assert ctx.channel.send.await_count == 1
+    # One result embed (a first loss also posts the biggest-loss record
+    # announcement after it) and no buttons on anything.
+    results = [c for c in ctx.channel.send.call_args_list
+               if c.kwargs["embed"].title == "🎰 No Win"]
+    assert len(results) == 1
     assert _result_views(ctx) == []
 
 

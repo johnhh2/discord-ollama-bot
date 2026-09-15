@@ -138,7 +138,11 @@ async def test_play_flip_default_has_no_buttons(db, monkeypatch):
 
     await play_flip(ctx.author, ctx.channel, ctx.guild, 1000)
 
-    assert ctx.channel.send.await_count == 1
+    # One result embed (a first loss also posts the biggest-loss record
+    # announcement after it) and no buttons on anything.
+    results = [c for c in ctx.channel.send.call_args_list
+               if c.kwargs["embed"].title.startswith("🪙")]
+    assert len(results) == 1
     assert _result_views(ctx) == []
 
 
@@ -165,8 +169,11 @@ async def test_flip_double_click_flips_double_same_n_and_side(db, monkeypatch):
     assert len(views) == 2
     assert [b.stake for b in views[1].children] == [2000, 4000]
     assert views[1].children[0].label == "Flip Again · 2 × 2,000 🪙"
-    # Same side carried over: with random → heads, tails still loses.
-    assert "0/2" in ctx.channel.send.call_args_list[-1].kwargs["embed"].description
+    # Same side carried over: with random → heads, tails still loses. (The
+    # last send is the biggest-loss record announcement, so find the result.)
+    flips = [c.kwargs["embed"] for c in ctx.channel.send.call_args_list
+             if c.kwargs["embed"].title.startswith("🪙 Flipped")]
+    assert "0/2" in flips[-1].description
     for v in views:
         v.stop()
 

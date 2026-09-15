@@ -7,6 +7,7 @@ from src.helpers import (
 )
 from src.economy import (
     get_balance, get_total_balance, record_gambling_event,
+    try_set_loss_record, format_loss_record_detail, GAMBLING_LOSS_RECORD,
 )
 from src.permissions import (
     check_game_channel,
@@ -99,6 +100,14 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
     record_winnings_per = max(0, amount - record_exclude) * 2
     if wins and record_winnings_per > 0:
         new_flip_record = await try_set_record(gid, "flip", record_winnings_per, uid, author.display_name)
+    # Biggest gambling loss: the batch's net, on the record-eligible stake
+    # (n - 2·wins coins' worth — the same number as -net for a plain !flip).
+    record_bet = max(0, amount - record_exclude)
+    record_loss = record_bet * (n - 2 * wins)
+    loss_meta = {"game": "flip", "bet": record_bet, "coins": n}
+    new_loss_record = False
+    if net < 0:
+        new_loss_record = await try_set_loss_record(gid, uid, author.display_name, record_loss, **loss_meta)
     new_bal = await get_balance(uid)
 
     if n == 1:
@@ -126,6 +135,9 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
         await announce_record(channel, "flip", author.display_name, record_winnings_per, holder_id=author.id)
     if new_bal_record:
         await announce_record(channel, "highest_balance", author.display_name, await get_total_balance(uid), holder_id=author.id)
+    if new_loss_record:
+        await announce_record(channel, GAMBLING_LOSS_RECORD, author.display_name, record_loss,
+                              detail=format_loss_record_detail(loss_meta), holder_id=author.id)
 
 
 class FlipCog(commands.Cog):
