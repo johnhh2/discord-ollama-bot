@@ -7,9 +7,12 @@ The Bedrock pong carries player *counts* only, never names — so the monitor
 posts anonymous "a player joined — 3/10" notices, not per-gamertag events.
 Count deltas also feed the persistent player stats (mc_player_events +
 mc_daily_player_stats, migration 0041): joins/leaves, daily peak concurrent,
-and accumulated player-seconds, all count-based approximations. Named
-join/leave and console commands would need docker-socket access
-(deliberately not mounted).
+and accumulated player-seconds, all count-based approximations. The pong
+also carries the server version: a change between two pongs posts a "server
+updated" alert, with the last version seen persisted (mc_server_versions,
+migration 0068) so the comparison survives the bot restarting alongside the
+server. Named join/leave and console commands would need docker-socket
+access (deliberately not mounted).
 """
 import asyncio
 import collections
@@ -28,7 +31,7 @@ import src.persistence as persistence
 from src.config import (
     MC_SERVER_HOST, MC_SERVER_PORT, MC_POLL_SECONDS, MC_SERVER_SHOW_IP,
 )
-from src.helpers import emb, C_GREEN, C_RED, C_GREY
+from src.helpers import emb, C_GREEN, C_RED, C_GREY, C_BLUE, C_ORANGE
 from src.guild_config import get_guild_cfg
 from src.permissions import requires_perm
 
@@ -107,6 +110,22 @@ class MonitorState:
     online: bool | None = None
     count: int = 0
     fail_streak: int = 0
+    # Last version string a pong carried. Kept across offline stretches (an
+    # update is a restart, so the new version first shows up on the
+    # up-transition) and seeded from mc_server_versions at boot, so the
+    # update alert always compares against the last version actually seen.
+    version: str | None = None
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    """Numeric prefix of a Bedrock version string, for ordering: "1.21.51" →
+    (1, 21, 51); anything unparsable contributes nothing ("" → ())."""
+    parts = []
+    for piece in version.split("."):
+        if not piece.isdigit():
+            break
+        parts.append(int(piece))
+    return tuple(parts)
 
 
 def _ct_date_iso(ts: float) -> str:
@@ -155,18 +174,30 @@ def _mc_events(prev: MonitorState, status: "McStatus | None") -> tuple[MonitorSt
     """Fold one poll result into the monitor state.
 
     Pure — returns (next_state, events); the loop owns all I/O. Events:
-    "came_online", "went_offline", "count_up", "count_down".
+    "came_online", "went_offline", "count_up", "count_down",
+    "version_changed".
     """
     if status is None:
         streak = prev.fail_streak + 1
         if prev.online and streak >= MC_OFFLINE_AFTER_FAILURES:
-            return MonitorState(online=False, count=0, fail_streak=streak), ["went_offline"]
+            return MonitorState(online=False, count=0, fail_streak=streak,
+                                version=prev.version), ["went_offline"]
         # Not enough failures yet, or we never saw it up (don't alert on a
         # server that was already down when the bot booted).
-        return MonitorState(online=prev.online, count=prev.count, fail_streak=streak), []
+        return MonitorState(online=prev.online, count=prev.count,
+                            fail_streak=streak, version=prev.version), []
 
     events = []
-    if prev.online is False:
+    # A version change is a restart, so it stands in for the up-transition
+    # and for any player-count change the restart caused: one "updated"
+    # embed (carrying the current count) rather than an online / players-
+    # left notice followed by it. The version is compared independently of
+    # online-ness: with a baseline restored from disk, the first pong after
+    # a boot can already announce an update. A pong with an empty version
+    # keeps the last known one.
+    if prev.version and status.version and status.version != prev.version:
+        events.append("version_changed")
+    elif prev.online is False:
         events.append("came_online")
     elif prev.online is True:
         if status.players > prev.count:
@@ -174,7 +205,8 @@ def _mc_events(prev: MonitorState, status: "McStatus | None") -> tuple[MonitorSt
         elif status.players < prev.count:
             events.append("count_down")
     # prev.online is None → first confirmed sighting; baseline silently.
-    return MonitorState(online=True, count=status.players, fail_streak=0), events
+    return MonitorState(online=True, count=status.players, fail_streak=0,
+                        version=status.version or prev.version), events
 
 
 class MinecraftCog(commands.Cog):
@@ -304,6 +336,14 @@ class MinecraftCog(commands.Cog):
         except Exception:
             logger.exception("[minecraft] failed to persist player stats")
 
+        # Version baseline for the update alert (migration 0068): the first
+        # version seen, then every change.
+        if status is not None and status.version and status.version != prev.version:
+            try:
+                await persistence.record_mc_server_version(int(now), status.version)
+            except Exception:
+                logger.exception("[minecraft] failed to persist server version")
+
         # Track when the current online stretch began. `not prev.online`
         # covers both a real up-transition (False) and first sighting (None);
         # a value restored from disk in before_loop is kept.
@@ -398,6 +438,10 @@ class MinecraftCog(commands.Cog):
             await self._restore_samples()
         except Exception:
             logger.exception("[minecraft] failed to restore persisted samples")
+        try:
+            await self._restore_version()
+        except Exception:
+            logger.exception("[minecraft] failed to restore server version")
 
     async def _restore_samples(self):
         """Reload the 7-day stats window from mc_ping_samples after a boot."""
@@ -425,6 +469,18 @@ class MinecraftCog(commands.Cog):
                     break
                 run_start = s.ts
             self._online_since = run_start
+
+    async def _restore_version(self):
+        """Seed the update-alert baseline from mc_server_versions.
+
+        A server update is a restart, and when the whole stack restarts
+        together the bot comes back with no version to compare against —
+        without this the update that most likely just happened would
+        baseline silently.
+        """
+        if self._monitor.version is not None:
+            return  # gateway reconnect, not a fresh boot
+        self._monitor.version = await persistence.load_mc_server_version()
 
     def _event_payloads(self, events: list[str], prev: MonitorState,
                         status: "McStatus | None") -> list[dict]:
@@ -460,6 +516,22 @@ class MinecraftCog(commands.Cog):
                     f"{who} left the Minecraft server — "
                     f"**{status.players}/{status.max_players}** online",
                     C_RED,
+                )})
+            elif ev == "version_changed":
+                old, new = _version_key(prev.version), _version_key(status.version)
+                rollback = bool(old and new and new < old)
+                title = ("⬇️ Minecraft Server Rolled Back" if rollback
+                         else "⬆️ Minecraft Server Updated")
+                what = "rolled back" if rollback else "updated"
+                # This embed replaces the "back online" one when the monitor
+                # saw the server go down for the update.
+                lead = "is back up," if prev.online is False else "was"
+                payloads.append({"embed": emb(
+                    title,
+                    f"{_server_label()} {lead} {what}: "
+                    f"**{prev.version}** → **{status.version}** — "
+                    f"**{status.players}/{status.max_players}** online",
+                    C_ORANGE if rollback else C_BLUE,
                 )})
         return payloads
 

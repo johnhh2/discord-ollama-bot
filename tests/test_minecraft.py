@@ -682,6 +682,207 @@ async def test_restore_samples_stale_gap_leaves_online_since_unset(monkeypatch):
     assert cog._last_seen_online == float(rows[0][0])
 
 
+# ── Server update alerts (migration 0068) ────────────────────────────────────
+
+def _versioned(version, players=3):
+    st = _status(players=players)
+    st.version = version
+    return st
+
+
+async def test_first_sighting_baselines_version_silently():
+    nxt, events = _mc_events(MonitorState(), _versioned("1.21.51"))
+    assert events == []
+    assert nxt.version == "1.21.51"
+
+
+async def test_version_change_while_online_emits_event_once():
+    st = MonitorState(online=True, count=3, version="1.21.51")
+    nxt, events = _mc_events(st, _versioned("1.21.60"))
+    assert events == ["version_changed"]
+    assert nxt.version == "1.21.60"
+    _, again = _mc_events(nxt, _versioned("1.21.60"))
+    assert again == []
+
+
+async def test_version_survives_offline_gap_and_replaces_came_online():
+    """An update is a restart: the new version shows up on the up-transition,
+    so the baseline must outlive the offline stretch — and the update event
+    stands in for came_online rather than joining it."""
+    st = MonitorState(online=True, count=2, version="1.21.51")
+    st, _ = _mc_events(st, None)
+    st, events = _mc_events(st, None)
+    assert events == ["went_offline"]
+    assert st.version == "1.21.51"
+    nxt, events = _mc_events(st, _versioned("1.21.60", players=0))
+    assert events == ["version_changed"]
+    assert nxt.online is True and nxt.version == "1.21.60"
+
+
+async def test_version_change_replaces_count_change():
+    """A restart finished inside one poll interval: the kicked players are
+    part of the update, not a separate "players left" notice."""
+    st = MonitorState(online=True, count=3, version="1.21.51")
+    nxt, events = _mc_events(st, _versioned("1.21.60", players=0))
+    assert events == ["version_changed"]
+    assert nxt.count == 0
+
+
+async def test_empty_version_keeps_baseline():
+    st = MonitorState(online=True, count=3, version="1.21.51")
+    nxt, events = _mc_events(st, _versioned(""))
+    assert events == []
+    assert nxt.version == "1.21.51"
+
+
+async def test_restored_baseline_announces_update_on_first_poll():
+    """Bot booted with a persisted version: the first pong baselines
+    online-ness silently but still reports the changed version."""
+    nxt, events = _mc_events(MonitorState(version="1.21.51"), _versioned("1.21.60"))
+    assert events == ["version_changed"]
+    assert nxt.online is True
+
+
+async def test_version_key_orders_numeric_prefix():
+    assert mc_mod._version_key("1.21.51") == (1, 21, 51)
+    assert mc_mod._version_key("1.21.60") > mc_mod._version_key("1.21.51")
+    assert mc_mod._version_key("1.21.51-beta") == (1, 21)
+    assert mc_mod._version_key("") == ()
+
+
+def _update_channel(monkeypatch):
+    channel = FakeTextChannel(ch_id=555)
+    bot = _FakeBot(guilds=[FakeGuild(gid=1)], channels={555: channel})
+    _state.guild_settings["1"] = {"minecraft_channel": 555}
+    return channel, _make_cog(monkeypatch, bot=bot)
+
+
+async def test_monitor_posts_update_embed(monkeypatch):
+    channel, cog = _update_channel(monkeypatch)
+    cog._monitor = MonitorState(online=True, count=3, version="1.21.51")
+
+    async def _fake_fetch():
+        return _versioned("1.21.60")
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+    await _tick(cog)
+
+    channel.send.assert_called_once()
+    embed = channel.send.call_args.kwargs["embed"]
+    assert embed.title == "⬆️ Minecraft Server Updated"
+    assert embed.description == (
+        "The Minecraft server was updated: **1.21.51** → **1.21.60** — "
+        "**3/10** online")
+    assert embed.color.value == mc_mod.C_BLUE
+
+
+async def test_monitor_posts_rollback_embed(monkeypatch):
+    channel, cog = _update_channel(monkeypatch)
+    cog._monitor = MonitorState(online=True, count=3, version="1.21.60")
+
+    async def _fake_fetch():
+        return _versioned("1.21.51")
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+    await _tick(cog)
+
+    embed = channel.send.call_args.kwargs["embed"]
+    assert embed.title == "⬇️ Minecraft Server Rolled Back"
+    assert "**1.21.60** → **1.21.51**" in embed.description
+    assert embed.color.value == mc_mod.C_ORANGE
+
+
+async def test_update_after_restart_posts_only_the_update(monkeypatch):
+    """No "Server Online" embed ahead of the update: the update embed says
+    the server is back up itself."""
+    channel, cog = _update_channel(monkeypatch)
+    cog._monitor = MonitorState(online=False, fail_streak=3, version="1.21.51")
+
+    async def _fake_fetch():
+        return _versioned("1.21.60", players=0)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+    await _tick(cog)
+
+    channel.send.assert_called_once()
+    embed = channel.send.call_args.kwargs["embed"]
+    assert embed.title == "⬆️ Minecraft Server Updated"
+    assert embed.description == (
+        "The Minecraft server is back up, updated: **1.21.51** → **1.21.60** — "
+        "**0/10** online")
+
+
+async def test_rollback_after_restart_says_back_up(monkeypatch):
+    channel, cog = _update_channel(monkeypatch)
+    cog._monitor = MonitorState(online=False, fail_streak=3, version="1.21.60")
+
+    async def _fake_fetch():
+        return _versioned("1.21.51", players=0)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+    await _tick(cog)
+
+    channel.send.assert_called_once()
+    embed = channel.send.call_args.kwargs["embed"]
+    assert embed.title == "⬇️ Minecraft Server Rolled Back"
+    assert "is back up, rolled back: **1.21.60** → **1.21.51**" in embed.description
+
+
+async def test_monitor_persists_first_and_changed_versions_only(monkeypatch):
+    saved = []
+
+    async def _spy(ts, version):
+        saved.append(version)
+    monkeypatch.setattr(_persistence, "record_mc_server_version", _spy)
+
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+    results = iter([
+        _versioned("1.21.51"), _versioned("1.21.51"), None, _versioned("1.21.60"),
+    ])
+
+    async def _fake_fetch():
+        return next(results)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+    for _ in range(4):
+        await _tick(cog)
+
+    assert saved == ["1.21.51", "1.21.60"]
+
+
+async def test_restore_version_seeds_baseline_for_first_poll(monkeypatch):
+    async def _fake_load():
+        return "1.21.51"
+    monkeypatch.setattr(_persistence, "load_mc_server_version", _fake_load)
+
+    channel, cog = _update_channel(monkeypatch)
+    await cog._restore_version()
+    assert cog._monitor.version == "1.21.51"
+
+    async def _fake_fetch():
+        return _versioned("1.21.60")
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+    await _tick(cog)
+
+    # Online-ness baselines silently; only the update is announced.
+    channel.send.assert_called_once()
+    assert channel.send.call_args.kwargs["embed"].title == "⬆️ Minecraft Server Updated"
+
+
+async def test_restore_version_keeps_live_baseline(monkeypatch):
+    async def _fake_load():
+        return "1.21.51"
+    monkeypatch.setattr(_persistence, "load_mc_server_version", _fake_load)
+
+    cog = _make_cog(monkeypatch, bot=_FakeBot(guilds=[]))
+    cog._monitor = MonitorState(online=True, count=1, version="1.21.60")
+    await cog._restore_version()               # reconnect: not a fresh boot
+    assert cog._monitor.version == "1.21.60"
+
+
+async def test_mc_server_versions_roundtrip(db):
+    from src.persistence import record_mc_server_version, load_mc_server_version
+    assert await load_mc_server_version() is None
+    await record_mc_server_version(1000, "1.21.51")
+    await record_mc_server_version(2000, "1.21.60")
+    assert await load_mc_server_version() == "1.21.60"
+
+
 # ── Player tracking: events + daily rollup (migration 0041) ──────────────────
 
 async def test_mc_player_events_roundtrip(db):

@@ -163,6 +163,7 @@ def reset_bot_state(monkeypatch):
         "record_mc_player_event", "prune_mc_player_events",
         "upsert_mc_daily_player_stats", "prune_mc_daily_player_stats",
         "save_mc_daily_ping_stats", "prune_mc_daily_ping_stats",
+        "record_mc_server_version",
         "bump_daily_counter", "prune_daily_counters",
     ]
     for fn_name in save_fn_names:
@@ -178,6 +179,10 @@ def reset_bot_state(monkeypatch):
         return []
     monkeypatch.setattr(_persistence, "load_mc_ping_samples", _empty_rows)
     monkeypatch.setattr(_persistence, "load_mc_daily_ping_stats", _empty_rows)
+
+    async def _no_version(*args, **kwargs):
+        return None
+    monkeypatch.setattr(_persistence, "load_mc_server_version", _no_version)
 
     # Also stub save_economy and save_insurance in src.economy (which imports them directly)
     monkeypatch.setattr(_economy, "save_economy", _noop)

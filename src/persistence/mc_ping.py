@@ -147,3 +147,27 @@ async def prune_mc_daily_ping_stats(before_date_iso: str):
             "DELETE FROM mc_daily_ping_stats WHERE stat_date < %s",
             (before_date_iso,),
         )
+
+
+# ── Server version history (migration 0068) ──────────────────────────────────
+# One row per version the monitor has seen the server report. The latest row
+# is the update-alert baseline across bot restarts.
+
+
+async def record_mc_server_version(ts: int, version: str):
+    async with with_cursor() as cur:
+        await cur.execute(
+            "INSERT INTO mc_server_versions (ts, version) VALUES (%s,%s)"
+            " ON DUPLICATE KEY UPDATE version=VALUES(version)",
+            (ts, version),
+        )
+
+
+async def load_mc_server_version() -> "str | None":
+    """The most recently recorded server version, or None before the first."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT version FROM mc_server_versions ORDER BY ts DESC LIMIT 1"
+        )
+        row = await cur.fetchone()
+    return row[0] if row else None

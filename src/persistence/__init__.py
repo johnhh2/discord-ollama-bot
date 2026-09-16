@@ -138,6 +138,8 @@ from src.persistence.mc_ping import (  # noqa: F401
     save_mc_daily_ping_stats,
     load_mc_daily_ping_stats,
     prune_mc_daily_ping_stats,
+    record_mc_server_version,
+    load_mc_server_version,
 )
 from src.persistence.daily_counters import (  # noqa: F401
     bump_daily_counter,

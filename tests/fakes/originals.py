@@ -49,9 +49,11 @@ _PERSISTENCE_SAVE_NAMES = [
     "record_mc_player_event", "prune_mc_player_events",
     "upsert_mc_daily_player_stats", "prune_mc_daily_player_stats",
     "save_mc_daily_ping_stats", "prune_mc_daily_ping_stats",
+    "record_mc_server_version",
     # Loads stubbed to empty rows for the monitor's rollup (not save_*, but
     # the same stub-and-restore lifecycle applies).
     "load_mc_ping_samples", "load_mc_daily_ping_stats",
+    "load_mc_server_version",
     "bump_daily_counter", "prune_daily_counters",
 ]
 
