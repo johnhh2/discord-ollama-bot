@@ -19,7 +19,6 @@ def _rendering_embed():
     return emb("📊 Rendering graph…", "Crunching the data — this usually takes a few seconds.", C_BLUE)
 
 
-# Title prefix used for combined renders.
 def _combined_title(specs, group: str) -> str:
     if len(specs) == 1:
         return f"{specs[0].name.capitalize()} — Last 2 Weeks"
@@ -31,9 +30,8 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
     """Shared subcommand body. Resolves tokens (entry_spec is always
     prepended), validates grouping, builds each series, renders, sends.
     """
-    # Always include the entry alias so e.g. `!graph balance economy` works
-    # whether the user typed `balance` first or `economy` first. We dedupe in
-    # parse_tokens.
+    # Prepend the entry alias so `!graph balance economy` works in either
+    # order; parse_tokens dedupes.
     full_tokens = (entry_spec.name,) + tuple(tokens)
 
     parsed = await parse_tokens(ctx, full_tokens)
@@ -41,12 +39,11 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
         await ctx.send(embed=emb("📊 Invalid Combination", parsed.error, C_GOLD))
         return
 
-    # Send a placeholder so the user gets immediate feedback; matplotlib
-    # rendering is heavy enough (~hundreds of ms to seconds) that the wait
-    # is otherwise silent. Final result replaces this message via edit().
+    # Placeholder first: matplotlib rendering takes hundreds of ms to
+    # seconds. The final result replaces it via edit().
     placeholder = await ctx.send(embed=_rendering_embed())
 
-    # Build each series. Pass kwargs based on what the spec accepts.
+    # build() takes only what its spec accepts, positionally: member, guild, bot.
     serieses = []
     for spec in parsed.specs:
         kwargs = {}
@@ -60,7 +57,6 @@ async def _build_and_render(ctx, tokens: tuple[str, ...], entry_spec: SeriesSpec
         data = await spec.build(*args, **kwargs)
         serieses.append(data)
 
-    # If there's no data at all, bail with a friendly note.
     if all(not s.x_points for s in serieses):
         await placeholder.edit(embed=emb("📊 No Data", "No history recorded yet — data is captured every 30 minutes.", C_GOLD))
         return
@@ -314,9 +310,10 @@ def _strip_all(tokens: tuple[str, ...]) -> tuple[str, ...]:
 
 
 async def _admin_route(ctx, tokens: tuple[str, ...], *, field: str):
-    """Gate on bot-admin and dispatch to `_admin_handler`. Used by the new
-    short-form subcommands (`!graph wallet|savings|total`) and the `all` arg
-    on `!graph balance|economy`.
+    """Gate on bot-admin and dispatch to `_admin_handler`. Used by the `all`
+    arg on `!graph balance|economy|assets` — everyone-tier commands, so the
+    command_perms.json gate that covers `!graph wallet|savings|total` and
+    `!graph admin` doesn't apply.
     """
     if not is_admin(ctx):
         await ctx.send(embed=emb("❌ No Permission", "", C_RED))
@@ -325,7 +322,8 @@ async def _admin_route(ctx, tokens: tuple[str, ...], *, field: str):
 
 
 async def _admin_handler(ctx, tokens: tuple[str, ...], *, field: str):
-    """Shared body for `!graph admin wallet` and `!graph admin savings`."""
+    """Shared body for every per-user breakout: `!graph admin …`, the
+    short forms, and the `all` arg. Does no permission check of its own."""
     parsed = await parse_admin_tokens(ctx, tokens)
     if parsed.error:
         await ctx.send(embed=emb("📊 Invalid Arguments", parsed.error, C_GOLD))

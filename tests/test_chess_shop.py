@@ -160,7 +160,6 @@ async def test_buy_success_unlocks_and_spends(db):
     assert has_chess_unlock(uid, "pieces:fantasy")
     assert chess_elo_balance(uid) == 5_000
     assert ctx.sent_embeds[-1].title == "♟️ Unlocked"
-    # Persisted: unlock row + spent Elo both hit the DB.
     assert await _read_db_unlocks(uid) == {"pieces:fantasy"}
     assert await _read_db_elo_spent(uid) == 5_000
 

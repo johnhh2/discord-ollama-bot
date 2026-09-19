@@ -89,7 +89,6 @@ async def test_scratches_role_grant_announced_after_third_card(db, monkeypatch):
     # Pin "today" so the test is deterministic regardless of clock/DST.
     monkeypatch.setattr("src.gambling.scratchoff._ct_today", lambda: today)
 
-    # Enable the Gamblers role for this guild.
     guild_id = 42
     _state.guild_settings[str(guild_id)] = {"gambler_role_enabled": True}
 
@@ -97,15 +96,14 @@ async def test_scratches_role_grant_announced_after_third_card(db, monkeypatch):
     # to 3 and trips the role grant.
     _state.gambler_streak[str(1)] = {"date": yesterday, "count": 2}
 
-    # Fund + reset the user so all 3 attempts are available.
+    # Reset the user so all 3 attempts are available.
     await _economy._ensure_user(1)
     _state.economy["users"]["1"]["scratch_date"] = today
     _state.economy["users"]["1"]["scratch_used"] = 0
 
-    # Everything (card embeds and the role announcement) posts via
-    # ctx.channel.send since the play_scratchoffs extraction; classify by
-    # payload shape — cards are embeds, the announcement is plain content.
-    # One ordered list is what proves ordering.
+    # Card embeds and the role announcement both post via ctx.channel.send;
+    # classify by payload shape — cards are embeds, the announcement is plain
+    # content. One ordered list is what proves ordering.
     author = FakeMember(uid=1, display_name="player")
     guild = FakeGuild(gid=guild_id)
     channel = FakeChannel(ch_id=100)
@@ -128,7 +126,6 @@ async def test_scratches_role_grant_announced_after_third_card(db, monkeypatch):
 
     # Stub out the role-acquisition machinery: real toggle_member_role would
     # call discord.Member.add_roles, which our FakeMember doesn't implement.
-    # We only care that the announcement send() lands at the right point.
     class _StubRole:
         pass
 
@@ -151,15 +148,12 @@ async def test_scratches_role_grant_announced_after_third_card(db, monkeypatch):
     # discord.py Context.invoke().
     await cog.cmd_scratchoff.callback(cog, ctx, count=3)
 
-    # Three card embeds, one role announcement, all in this list.
     card_indices = [i for i, (kind, _) in enumerate(events) if kind == "card"]
     role_indices = [i for i, (kind, _) in enumerate(events) if kind == "role_announce"]
 
     assert len(card_indices) == 3, f"expected 3 cards, got events={events}"
     assert len(role_indices) == 1, f"expected 1 role announcement, got events={events}"
 
-    # The fix: announcement must come after the third (final) card, not between
-    # the 2nd and 3rd cards as the previous version did.
     assert role_indices[0] > card_indices[2], (
         f"role announcement landed mid-sequence: events={events}"
     )
@@ -169,12 +163,10 @@ async def test_scratches_role_grant_announced_after_third_card(db, monkeypatch):
 async def test_concurrent_scratchoff_invocations_cap_at_three(monkeypatch):
     """Spamming !scratchoff in rapid succession must not exceed the daily cap.
 
-    Previously, the command checked `scratch_used` at the top, then awaited
-    Discord I/O before incrementing the counter inside the per-card loop.
-    Three concurrent invocations could each pass the gate, run their full
-    loops, and the user would end up with 9 cards instead of 3. The fix
-    reserves the attempt counter synchronously before any await yields the
-    event loop.
+    The race: `scratch_used` was checked at the top but incremented inside
+    the per-card loop, after Discord I/O — three concurrent invocations each
+    passed the gate and drew 9 cards instead of 3. The command now reserves
+    the attempt count synchronously before any await.
 
     Forces real event-loop yielding inside the loop body via patched
     add_balance — without that, the conftest noop stubs return synchronously
@@ -188,9 +180,8 @@ async def test_concurrent_scratchoff_invocations_cap_at_three(monkeypatch):
     _state.economy["users"]["1"]["scratch_used"] = 0
     _state.economy["users"]["1"]["balance"] = 0
 
-    # Force the per-card await to yield to the event loop so concurrent
-    # gather() callers can interleave at exactly the spot where the unfixed
-    # code raced. add_balance is the first await inside the per-card loop.
+    # add_balance is the first await inside the per-card loop — exactly where
+    # the unfixed code let concurrent gather() callers interleave.
     async def _yielding_add_balance(*args, **kwargs):
         await asyncio.sleep(0)
 
@@ -226,9 +217,6 @@ async def test_concurrent_scratchoff_invocations_cap_at_three(monkeypatch):
 
     cog = ScratchoffCog(bot=_StubBot())
 
-    # Three concurrent invocations of `!scratchoff 3` (the alias `!scratches`
-    # uses count=3). asyncio.gather() lets all three start before any of them
-    # complete, exposing the race.
     await asyncio.gather(
         cog.cmd_scratchoff.callback(cog, ctx, count=3),
         cog.cmd_scratchoff.callback(cog, ctx, count=3),

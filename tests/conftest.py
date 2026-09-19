@@ -2,8 +2,7 @@
 Shared fixtures for src/ package tests.
 
 Tests import directly from src.<module> (state/persistence/economy/etc.).
-There is no longer a `src` re-export wall — patching `state.X` is the only
-source of truth.
+`src` re-exports nothing — patching `state.X` is the only source of truth.
 """
 import pytest
 import pytest_asyncio
@@ -44,14 +43,11 @@ def reset_bot_state(monkeypatch):
     Uses in-place mutation rather than rebinding so test files that did
     `from src.state import economy` keep their reference live.
     """
-    # The on_message gate (src/persistence/__init__.py:init_done) starts unset
-    # in production and is .set() by init_db_state. Tests that drive on_message
-    # directly don't go through init_db_state, so default to set per-test so
-    # those tests don't hang on the await.
-    #
-    # asyncio.Event binds to the running loop on first use, so the module-level
-    # Event from import time is stale across pytest-asyncio's per-test loops.
-    # Replace it with a fresh Event each test (and re-set it).
+    # The on_message gate (src/persistence/__init__.py:init_done) is only
+    # .set() by init_db_state, which tests driving on_message directly never
+    # run — default it to set or they hang on the await. A fresh Event per
+    # test: asyncio.Event binds to the running loop on first use, so the
+    # import-time one is stale across pytest-asyncio's per-test loops.
     import asyncio as _asyncio_for_event
     _fresh_event = _asyncio_for_event.Event()
     _fresh_event.set()

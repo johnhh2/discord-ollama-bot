@@ -197,7 +197,6 @@ class TestPgnHelpers:
         pgn = _initial_pgn("A", "B", None)
         for san in ["e4", "e5", "Nf3", "Nc6"]:
             pgn = _append_san_to_pgn(pgn, san)
-        # Move numbering 1. and 2. both present.
         assert "1. e4 e5" in pgn
         assert "2. Nf3 Nc6" in pgn
 
@@ -269,12 +268,12 @@ class TestCapturesSummary:
 
     def test_single_pawn_capture(self):
         from src.games.chess import _captures_summary
-        # 1.e4 d5 2.exd5 — white captured one black pawn. Black queen
-        # didn't recapture (it's white's turn now).
+        # 1.e4 d5 2.exd5 — white captured one black pawn; black hasn't
+        # recaptured yet.
         b = chess.Board()
         for san in ("e4", "d5", "exd5"):
             b.push_san(san)
-        # White has captured one black pawn → glyph ♟, no '+N'.
+        # One capture → the glyph alone, no '+N'.
         assert _captures_summary(b, chess.WHITE) == "♟"
         assert _captures_summary(b, chess.BLACK) == ""
 
@@ -285,15 +284,13 @@ class TestCapturesSummary:
         b = chess.Board()
         for san in ("e4", "d5", "exd5", "Qxd5"):
             b.push_san(san)
-        # Each side has one pawn capture.
         assert _captures_summary(b, chess.WHITE) == "♟"
         assert _captures_summary(b, chess.BLACK) == "♙"
 
     def test_higher_value_pieces_sort_first(self):
         from src.games.chess import _captures_summary
-        # Construct a board by removing black queen, rook, and pawn from
-        # the starting position — equivalent to white having captured
-        # all three.
+        # Removing black's queen, a rook and a pawn from the start position
+        # is equivalent to white having captured all three.
         b = chess.Board()
         b.remove_piece_at(chess.D8)  # black queen
         b.remove_piece_at(chess.A8)  # black rook
@@ -317,13 +314,9 @@ class TestCapturesSummary:
         That should NOT change the opponent's captured-from count, because
         the helper measures based on the OPPONENT'S remaining pieces."""
         from src.games.chess import _captures_summary
-        # Realistic line: white plays a pawn from the starting position
-        # through to a8 promotion without any captures by either side.
-        # 1.a4 a5 2.h4 h5 ... we need black to not block the a-file. The
-        # standard "rook-pawn race" doesn't promote without captures, so
-        # we cheat slightly: hand-edit the board to remove black's a-pawn
-        # and a-rook so the white pawn has a clear runway. That counts as
-        # 2 captured black pieces for the test setup.
+        # No pawn promotes from the start position without a capture, so
+        # remove black's a-pawn and a-rook to clear the a-file. That counts
+        # as 2 captured black pieces for the test setup.
         b = chess.Board()
         b.remove_piece_at(chess.A7)  # treat as if white had captured this pawn
         b.remove_piece_at(chess.A8)  # treat as if white had captured this rook
@@ -332,9 +325,7 @@ class TestCapturesSummary:
         # Now walk a pawn from a2 → a8 with promotion. No further captures.
         for san in ("a4", "h6", "a5", "h5", "a6", "h4", "a7", "Rh6", "a8=Q"):
             b.push_san(san)
-        # Captures unchanged: still 1 rook + 1 pawn taken from black.
-        # White's promotion turned a white pawn into a white queen — no
-        # impact on what black has lost.
+        # Unchanged: the promotion added a white queen, not a black loss.
         assert _captures_summary(b, chess.WHITE) == "♜,♟"
 
     def test_many_captures_top_two_plus_count(self):
@@ -502,7 +493,6 @@ class TestCapturesBlock:
         The helper must not raise on weird inputs."""
         from src.games.chess import _movetext_only
         out = _movetext_only("not a pgn at all")
-        # Garbage parses to an empty game terminator; just confirm no crash + a string out.
         assert isinstance(out, str)
         assert len(out) <= 50  # no header leakage
 
@@ -740,16 +730,13 @@ async def test_checkmate_creates_report_and_deletes_active_game(db, _stub_chess_
     ctx_w.guild.members.append(black)
     ctx_b = _ctx_for(black, channel_id=703, guild=ctx_w.guild)
 
-    # Fool's mate: f3, e5, g4, Qh4#
     await cog.cmd_move_chess.callback(cog, ctx_w, "f3")
     await cog.cmd_move_chess.callback(cog, ctx_b, "e5")
     await cog.cmd_move_chess.callback(cog, ctx_w, "g4")
     await cog.cmd_move_chess.callback(cog, ctx_b, "Qh4#")
 
-    # Game removed from active state.
     assert 703 not in _state.active_chess_games
 
-    # chess_reports row created with black as winner.
     report = await load_chess_report(1)
     assert report is not None
     assert report["winner_id"] == black.id
@@ -764,10 +751,10 @@ async def test_checkmate_headline_uses_pgn_name_when_guild_cache_misses(
     """Regression: when a human wins a PvP game, the game-over headline must
     show the player's display name, not the raw 18-digit Discord user id.
 
-    Previously, the headline did `guild.get_member(winner_id).display_name`
-    which silently returned None for members missing from the cache (common
-    without the privileged members intent), falling through to str(uid).
-    Fix: prefer the [White]/[Black] PGN-header names captured at game start.
+    `guild.get_member(winner_id)` returns None for members missing from the
+    cache (common without the privileged members intent), which fell through
+    to str(uid) — so the headline prefers the [White]/[Black] PGN-header
+    names captured at game start.
     """
     cog = ChessCog(bot=None)
     white = FakeMember(uid=999_888_001, display_name="WhitePlayer")
@@ -790,9 +777,7 @@ async def test_checkmate_headline_uses_pgn_name_when_guild_cache_misses(
     ]
     assert game_over_embeds, "expected a game-over embed"
     desc = game_over_embeds[-1].description or ""
-    # Raw uid must NOT appear in the headline.
     assert str(black.id) not in desc, f"raw uid leaked: {desc!r}"
-    # Display name (from PGN header) DOES appear.
     assert "BlackPlayer" in desc
 
 
@@ -1043,9 +1028,7 @@ async def test_chess_view_strips_pgn_headers_in_embed(db):
     await cog._cmd_view(ctx, (str(rid),))
 
     desc = ctx.sent_embeds[0].description
-    # Movetext present.
     assert "1. e4 e5 2. Nf3 Nc6 3. Bb5 1-0" in desc
-    # Headers absent.
     assert "[Event" not in desc
     assert "Test Event Headerline" not in desc
     assert "[Site" not in desc
@@ -1081,10 +1064,8 @@ async def test_chess_pgn_returns_full_headered_pgn(db):
 
     assert len(ctx.sent_embeds) == 1
     desc = ctx.sent_embeds[0].description
-    # Headers present (this is the point of the pgn subcommand).
     assert "[Event" in desc
     assert '[White "Alice"]' in desc
-    # Movetext also there.
     assert "1. e4 e5" in desc
 
 
@@ -1130,7 +1111,6 @@ async def test_cmd_chess_dispatches_pgn_subcommand(db):
 
     await cog.cmd_chess.callback(cog, ctx, "pgn", str(rid))
 
-    # Got the pgn embed (with headers), not a new game state.
     assert 810 not in _state.active_chess_games
     assert len(ctx.sent_embeds) == 1
     assert "PGN" in ctx.sent_embeds[0].title
@@ -1147,7 +1127,6 @@ async def test_chess_bare_shows_help_menu(db):
 
     await cog.cmd_chess.callback(cog, ctx)
 
-    # No game created — went to help.
     assert 900 not in _state.active_chess_games
     assert len(ctx.sent_embeds) == 1
     e = ctx.sent_embeds[0]
@@ -1243,7 +1222,6 @@ async def test_chessthreats_with_hanging_pieces_sends_image(db, _stub_chess_edit
 
     await cog.cmd_chessthreats.callback(cog, ctx)
 
-    # Embed sent + file attached.
     assert len(ctx.sent_embeds) == 1
     embed = ctx.sent_embeds[0]
     assert "Chess Threats" in embed.title
@@ -1270,7 +1248,6 @@ async def test_chessthreats_no_hanging_pieces_shows_zero(db, _stub_chess_edit_bo
     await cog.cmd_chessthreats.callback(cog, ctx)
 
     assert len(ctx.sent_embeds) == 1
-    # Empty starting position has no hanging pieces.
     assert "**0** hanging" in ctx.sent_embeds[0].description
 
 

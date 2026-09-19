@@ -22,7 +22,7 @@ async def save_gambler_streak():
             if isinstance(entry, dict):
                 date_str = entry.get("date", "")
                 count = int(entry.get("count", 1))
-            else:
+            else:  # legacy format: a bare date string
                 date_str = entry
                 count = 1
             if not date_str:

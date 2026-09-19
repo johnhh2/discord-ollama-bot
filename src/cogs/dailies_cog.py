@@ -65,13 +65,11 @@ async def _delete_unless_kept(message: discord.Message, delay: float):
     """Delete `message` after `delay` — unless it turns out to be the claim
     embed or a kept big-win scratchoff result (dailies_keep_ids).
 
-    The exemption checks run at deletion time, not schedule time: the gateway
+    The exemptions are checked at deletion time, not schedule time: the gateway
     can deliver MESSAGE_CREATE for a freshly posted claim embed (or a big-win
     result) before refresh_dailies_channel / play_scratchoffs has recorded its
-    id (the send HTTP round-trips interleave with the dispatch), so an
-    up-front id check races and schedules the message itself for deletion. By
-    the time the TTL expires the config has long settled, so re-checking here
-    is authoritative.
+    id, so an up-front check races and schedules the message itself for
+    deletion. By the time the TTL expires the config has long settled.
     """
     await asyncio.sleep(delay)
     cfg = state.guild_settings.get(str(message.guild.id))
@@ -107,12 +105,11 @@ def _dailies_body() -> str:
 async def refresh_dailies_channel(bot, guild_id: int):
     """Bring a guild's dailies channel to its canonical state.
 
-    Purges everything except the current claim embed; if the claim embed is
-    missing or stale (a new gameplay-day has started since it was posted), the
-    old one is purged too and a fresh embed + 🪙 reaction is posted — which is
-    how claim reactions get reset at 5am CT. Idempotent and safe to call from
-    boot, the minute loop, and the settings command. No-op when the guild has
-    no dailies channel configured.
+    Purges everything except the current claim embed; if that embed is missing
+    or stale (a new gameplay-day started since it was posted), it is purged too
+    and a fresh embed + reactions posted — which is how claim reactions get
+    reset at 5am CT. Idempotent, so boot, the minute loop and the settings
+    command can all call it. No-op when the guild has no dailies channel.
     """
     cfg = get_guild_cfg(guild_id)
     ch_id = cfg.get("dailies_channel")
@@ -157,8 +154,8 @@ async def refresh_dailies_channel(bot, guild_id: int):
             return
         # Record the id before seeding: on_raw_reaction_add keys on it, and
         # players click 🪙 the moment it appears — a second before 🎟️ lands.
-        # A seeding failure leaves the day unstamped so the next minute tick
-        # reposts, as before; clicks on the half-seeded embed still work.
+        # A seeding failure leaves the day unstamped, so the next minute tick
+        # reposts; clicks on the half-seeded embed still work.
         cfg["dailies_message_id"] = claim_msg.id
         if not await seed_reactions(claim_msg, DAILIES_ALL_EMOJIS, what=f"dailies guild={guild_id}"):
             return
@@ -266,19 +263,15 @@ class DailiesCog(commands.Cog):
         🎟️ instead skips the dailies entirely and just buys the day's lottery
         ticket.
 
-        The daily reward counts toward the stake even on a 0-match scratchoff
-        day, so clicking 🪙/🎰/🏇 always gambles something as long as the claim
-        actually paid out. Extension point: future daily claims go here. Every
-        step is already idempotent per gameplay-day (each has its own daily
-        gate), so a second click just reports the daily limit — and pays out
-        nothing, so the gamble is skipped too. Result messages need no
-        explicit cleanup — on_message below schedules deletion for everything
-        posted in the dailies channel.
+        Extension point for future daily claims: every step is idempotent per
+        gameplay-day (each has its own daily gate), so a second click reports
+        the daily limit and pays out nothing — which skips the gamble too.
+        Result messages need no explicit cleanup; on_message below schedules
+        deletion for everything posted in the dailies channel.
         """
         if gamble == DAILIES_TICKETS_EMOJI:
-            # 🎟️ only buys the daily lottery ticket — it must NOT claim the
-            # daily reward or burn scratchoffs, so players can grab their
-            # ticket without touching the rest of their dailies.
+            # Deliberately claims no daily reward and burns no scratchoffs —
+            # 🎟️ buys the ticket and nothing else.
             lottery_cog = self.bot.get_cog("LotteryCog")
             if lottery_cog is not None:
                 await lottery_cog.buy_daily_ticket(member, channel, guild, silent=True)

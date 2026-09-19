@@ -1,8 +1,5 @@
 """Tier F: leveling — voice-tick gating, scratch XP, _announce_levelup.
 
-`!prestige` was listed in the gap analysis but doesn't exist in production
-(no cmd_prestige) — skipped. The remaining bits:
-
 - _do_voice_tick: skips bots, 1-person channels, private channels;
   awards voice XP only when not muted/deafened; awards stream XP only
   when self_stream is True.
@@ -37,7 +34,6 @@ async def test_grant_xp_scratch_grants_unconditionally(db, monkeypatch):
     xp2, _ = await grant_xp(uid=1, source="scratch", guild_id=42)
     xp3, _ = await grant_xp(uid=1, source="scratch", guild_id=42)
 
-    # Three calls in immediate succession — each grants XP_SCRATCH.
     assert xp1 == XP_SCRATCH
     assert xp2 == XP_SCRATCH
     assert xp3 == XP_SCRATCH
@@ -103,7 +99,6 @@ async def test_voice_tick_grants_to_unmuted_in_busy_channel(db, monkeypatch):
 
     await cog._do_voice_tick()
 
-    # Both got voice XP.
     assert _state.leveling["42"]["1"]["xp"] > 0
     assert _state.leveling["42"]["2"]["xp"] > 0
 
@@ -196,7 +191,6 @@ async def test_voice_tick_grants_stream_xp_when_streaming(db, monkeypatch):
     # Got voice XP AND stream XP (counters for both bumped).
     assert rec["voice_today"] == 1
     assert rec["stream_today"] == 1
-    # XP is the sum of XP_VOICE + XP_STREAM (currently 10 + 15 = 25).
     from src.leveling import XP_VOICE, XP_STREAM
     assert rec["xp"] == XP_VOICE + XP_STREAM
 
@@ -214,7 +208,7 @@ class _BotWithChannel:
 
 async def test_announce_levelup_awards_coin_reward_even_without_channel(db):
     """The coin reward fires regardless of whether a levelup_channel is
-    configured (line 269 in leveling_cog.py)."""
+    configured."""
     cog = LevelingCog.__new__(LevelingCog)
     cog.bot = _BotWithChannel({})
 

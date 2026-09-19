@@ -50,7 +50,6 @@ async def test_shop_charge_deducts_and_persists(db):
     ok = await shop_charge(ctx, uid, 30, cost_label="30")
     assert ok is True
     assert await get_balance(uid) == 70
-    # Persisted: read straight from SQLite.
     assert await _read_db_balance(uid) == 70
 
 
@@ -63,7 +62,6 @@ async def test_shop_charge_insufficient_funds_no_deduction(db):
     assert ok is False
     assert await get_balance(uid) == 10
     assert await _read_db_balance(uid) == 10
-    # Sent the "Insufficient Funds" embed
     assert len(ctx.sent_embeds) == 1
     assert "Insufficient Funds" in ctx.sent_embeds[0].title
 
@@ -104,17 +102,14 @@ async def test_shop_insurance_purchase_persists_to_state_and_db(db):
     ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
     await cog.shop_insurance.callback(cog, ctx)
 
-    # Balance deducted
     assert await get_balance(uid) == 1000
     assert await _read_db_balance(uid) == 1000
 
-    # In-memory state populated
     assert uid in _state.insurance
     entry = _state.insurance[uid]
     assert "nickname" in entry["protected_from"]
     assert "tax" in entry["protected_from"]
 
-    # Persisted to DB — read the insurance row from shop_effects directly
     pool = await _persistence.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
@@ -140,7 +135,6 @@ async def test_shop_insurance_insufficient_funds(db):
     ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
     await cog.shop_insurance.callback(cog, ctx)
 
-    # Balance untouched (refunded effectively — or never deducted)
     assert await get_balance(uid) == SHOP_INSURANCE_COST - 1
     assert uid not in _state.insurance
 
@@ -158,7 +152,6 @@ async def test_shop_removenickname_refunds_on_forbidden(db):
     await add_balance(uid, starting_balance)
 
     member = FakeMember(uid=uid)
-    # Make the .edit raise Forbidden — simulates Discord rejecting the change.
     member.edit = AsyncMock(side_effect=discord.Forbidden(
         response=type("R", (), {"status": 403, "reason": "no"})(),
         message="forbidden",
@@ -167,11 +160,9 @@ async def test_shop_removenickname_refunds_on_forbidden(db):
 
     await cog.shop_removenickname.callback(cog, ctx)
 
-    # Balance should have been deducted then refunded back to starting.
+    # Deducted, then refunded back to the starting balance.
     assert await get_balance(uid) == starting_balance
-    # The DB row should also reflect the final (refunded) balance.
     assert await _read_db_balance(uid) == starting_balance
-    # An error embed was sent.
     assert any("No Permission" in (e.title or "") for e in ctx.sent_embeds)
 
 
@@ -391,8 +382,8 @@ async def test_shop_insurance_subscribe_bridge_insufficient_funds_rolls_back(db,
 
 
 async def test_renew_insurance_subs_charges_and_extends():
-    """The daily-claim hook: a subscribed user is charged one premium and
-    coverage extends 24h from the current expiry; an unaffordable renewal
+    """The 5am sweep's per-user step: a subscribed user is charged one premium
+    and coverage extends 24h from the current expiry; an unaffordable renewal
     lapses without touching the subscription."""
     from src.economy import renew_insurance_subs, _ensure_user
     from src.config import SHOP_INSURANCE_DURATION_SECS
@@ -471,8 +462,6 @@ async def test_concurrent_shop_unoreverse_charges_once(monkeypatch):
 
     async def _invoke():
         ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
-        # MemberConverter().convert reads ctx.message.content; stub by
-        # invoking with a positional arg the cog parses directly.
         await cog.shop_unoreverse.callback(cog, ctx, f"<@{target_uid}>")
 
     # Stub MemberConverter so the test doesn't need a real Bot.
@@ -482,27 +471,22 @@ async def test_concurrent_shop_unoreverse_charges_once(monkeypatch):
 
     monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
 
-    # Must not raise — pre-fix code raised KeyError on the second .pop(uid).
     await asyncio.gather(_invoke(), _invoke())
 
     assert charge_count[0] == 1, (
         f"shop_unoreverse double-charged: charged {charge_count[0]}× across 2 "
         f"concurrent invocations (expected 1)"
     )
-    # The effect should be on the target, not the original uid.
     assert (42, target_uid) in _state.active_mocks
     assert (42, uid) not in _state.active_mocks
 
 
 # ── Insurance is honored at purchase time ────────────────────────────────────
 #
-# Insurance's purchase message claims protection from ragebait, mock, nickname,
-# role assignments, steal, and tax. Pre-audit, three shop commands ignored it:
-# shop_tax (charged the buyer; tax silently no-op'd at runtime), shop_mock
-# (mock effect applied to insured user and runtime handler didn't check),
-# and shop_unassignrole (roles could be stripped despite "role" protection).
-# These tests pin the fix: a buyer hitting an insured target must NOT be
-# charged and the effect must NOT be applied.
+# Insurance protects against ragebait, mock, nickname, role assignments and tax
+# (crime is refunded instead — see INSURANCE_PROTECTS). These tests pin it: a
+# buyer hitting an insured target must not be charged and the effect must not
+# be applied.
 
 
 def _insure(uid: int, against: list[str]):
@@ -537,11 +521,8 @@ async def test_shop_tax_refuses_against_insured_target(db, monkeypatch):
     ctx.invoked_with = "tax"
     await cog.shop_tax.callback(cog, ctx, f"<@{target_uid}>")
 
-    # Buyer's balance untouched.
     assert await get_balance(buyer_uid) == SHOP_TAX_COST + 1000
-    # No tax activated against the insured target.
     assert target_uid not in _state.active_taxes
-    # User saw the "Protected" embed.
     assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
 
 
@@ -570,14 +551,11 @@ async def test_shop_spellcheck_purchase_charges_per_day_and_persists(db, monkeyp
     ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=FakeGuild(gid=42))
     await cog.shop_spellcheck.callback(cog, ctx, f"<@{target_uid}>", "3")
 
-    # Charged 3 days' worth.
     assert await get_balance(buyer_uid) == SHOP_SPELLCHECK_COST * 5 - SHOP_SPELLCHECK_COST * 3
-    # Effect activated with the day count.
     assert (42, target_uid) in _state.active_spellchecks
     assert _state.active_spellchecks[(42, target_uid)]["days"] == 3
     assert _state.active_spellchecks[(42, target_uid)]["started_by"] == buyer_uid
 
-    # Persisted to shop_effects with remaining == days.
     pool = await _persistence.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
@@ -786,7 +764,6 @@ async def test_shop_removenickname_works_while_self_insured(db):
     ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=42))
     await cog.shop_removenickname.callback(cog, ctx)
 
-    # Charged, edit attempted, success embed sent.
     assert await get_balance(uid) == starting - SHOP_NICKNAME_REMOVE_COST
     ctx.author.edit.assert_awaited_once()
     assert not any("Protected" in (e.title or "") for e in ctx.sent_embeds)
@@ -830,10 +807,8 @@ async def test_shop_buyxp_charges_and_grants_exactly_one_level(db, monkeypatch):
     # Exactly one level up, in-band progress preserved.
     assert rec["level"] == 4
     assert rec["xp"] == xp_for_level(4) + 50
-    # Charged and persisted.
     assert await get_balance(uid) == 500
     assert await _read_db_balance(uid) == 500
-    # Leveling row persisted.
     import json
     pool = await _persistence.get_pool()
     async with pool.acquire() as conn:

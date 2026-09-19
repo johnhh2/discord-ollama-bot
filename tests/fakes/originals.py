@@ -1,15 +1,12 @@
-"""Snapshot the real save_*/load_* refs at import time.
+"""Snapshot the real save_*/load_* refs at import time, before any test runs.
 
 The autouse `reset_bot_state` fixture in tests/conftest.py replaces every
 `save_*` function on `src.persistence` (and a few mirrors on `src.economy`)
-with no-op stubs, because most existing tests don't want to touch the DB.
-The opt-in `db` fixture wants to put them back.
+with no-op stubs, because most tests don't want to touch the DB. The opt-in
+`db` fixture puts these originals back.
 
-We capture the originals here, at module import time, before any test runs.
-Importing this module is what actually performs the snapshot — keep it cheap
-(no DB calls).
-
-Each entry is `(target_module, attr_name, real_callable)`.
+Importing this module is what performs the snapshot — keep it cheap (no DB
+calls). Each entry of `ALL` is `(target_module, attr_name, real_callable)`.
 """
 import src.economy as _economy
 import src.leveling as _leveling
@@ -66,8 +63,7 @@ for _name in _PERSISTENCE_SAVE_NAMES:
 # try_set_record is also stubbed (returns False) on persistence + economy.
 ALL.append((_persistence, "try_set_record", _persistence.try_set_record))
 
-# Mirrors on src.economy (it imports save_economy/save_insurance/try_set_record/
-# save_balance_history/save_bot_stats_history directly).
+# Mirrors on src.economy, which imports these names directly.
 for _name in ("save_economy", "save_insurance", "try_set_record",
               "save_balance_history", "save_bot_stats_history",
               "upsert_crime_delta", "upsert_gambling_delta",

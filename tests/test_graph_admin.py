@@ -62,8 +62,8 @@ async def test_parse_single_integer_sets_top_n(patch_member_converter):
 
 async def test_parse_mentions_sets_members(patch_member_converter):
     await graph_series.parse_admin_tokens(_stub_ctx(), ("100", "200"))
-    # Both digit-strings; the parser tries integer first. So this would set
-    # top_n then fail on the second digit. Test the actual mention path:
+    # Both tokens are digits, so they take the integer branch — this only
+    # checks the parser doesn't raise. The mention path is tested below.
 
 
 async def test_parse_explicit_mentions(monkeypatch):
@@ -190,7 +190,6 @@ async def test_build_admin_series_resolves_uids_to_display_names(monkeypatch):
     monkeypatch.setattr(gs, "load_balance_history", _load)
     _state.economy["users"].clear()
 
-    # Stub bot: get_user returns objects with display_name.
     users_by_id = {
         100: SimpleNamespace(display_name="alice", name="alice_raw"),
         200: SimpleNamespace(display_name="bob",   name="bob_raw"),
@@ -298,15 +297,12 @@ async def test_build_admin_series_total_field_sums_wallet_and_savings(monkeypatc
 
     data = await gs.build_admin_series("total", top_n=3)
 
-    # Each user's last y-value should equal wallet + savings.
     by_label_last = {seg.label: seg.y_values[-1] for seg in data.segments}
     assert by_label_last[next(l for l in by_label_last if "1" in l)] == 150
     assert by_label_last[next(l for l in by_label_last if "2" in l)] == 800
     assert by_label_last[next(l for l in by_label_last if "3" in l)] == 700
 
     # Top-N ranking: user 2 (800) > user 3 (700) > user 1 (150).
-    # The segments themselves can be in any order; verify ranking via the
-    # picked set + position of the top one.
     top_label = data.segments[0].label
     assert "2" in top_label, f"expected user 2 first, got {top_label}"
 
@@ -363,5 +359,4 @@ async def test_build_admin_series_explicit_member_with_no_history_omitted(monkey
     data = await gs.build_admin_series(
         "wallet", members=[_stub_member(99, "ghost")],
     )
-    # No data for ghost → no segments.
     assert data.segments == []

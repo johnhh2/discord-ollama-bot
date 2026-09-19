@@ -125,9 +125,9 @@ def render_bounty_embed(bounty: dict) -> discord.Embed:
 
 
 def _poll_vote_counts(votes: "dict | None") -> tuple[int, int]:
-    """(yes, no) from a tracked-vote dict. A both-ways voter previously added
-    1 to each side, dragging the ratio toward 50% — which is a payout
-    threshold. Their votes cancel: they count for neither side."""
+    """(yes, no) from a tracked-vote dict. A both-ways voter counts for
+    neither side — one on each would drag the ratio toward 50%, which is a
+    payout threshold."""
     yes_set = set((votes or {}).get("yes", []))
     no_set = set((votes or {}).get("no", []))
     both = yes_set & no_set
@@ -176,7 +176,6 @@ class BountyCog(commands.Cog):
 
     # ── Message helpers ───────────────────────────────────────────────────────
     async def _refresh_embed(self, bounty: dict):
-        """Re-render the channel embed for a bounty from its current row."""
         try:
             channel = self.bot.get_channel(bounty["channel_id"]) or await self.bot.fetch_channel(bounty["channel_id"])
             msg = await channel.fetch_message(bounty["message_id"])
@@ -251,7 +250,6 @@ class BountyCog(commands.Cog):
             state.active_bounties[bounty["message_id"]] = bounty
 
     async def _persist_claim(self, claim: dict, **fields):
-        """Patch claim-level fields and persist them."""
         claim.update(fields)
         await update_claim(claim["id"], **fields)
 
@@ -298,10 +296,9 @@ class BountyCog(commands.Cog):
             ))
             return
 
-        # Optional leading duration: the 2nd token is the expiry only if it
-        # parses as a duration AND there's still condition text after it. This
-        # mirrors `!shop spellcheck @user [days]`. A condition that genuinely
-        # starts with a duration-like word can be reordered to avoid the clash.
+        # Optional leading duration: the 2nd token is the expiry only if it parses
+        # as a duration AND condition text follows (as in `!shop spellcheck @user
+        # [days]`). A condition starting with a duration-like word can be reordered.
         rest = list(args[1:])
         expires_at = None
         duration_secs = parse_duration(rest[0])
@@ -462,7 +459,6 @@ class BountyCog(commands.Cog):
         await self._refresh_poll_embed(bounty, claim)
 
     async def _refresh_poll_embed(self, bounty: dict, claim: dict):
-        """Re-render a live poll's embed with the current tracked tally."""
         yes, no = _poll_vote_counts(claim.get("poll_votes"))
         try:
             channel = self.bot.get_channel(claim["poll_channel_id"]) or await self.bot.fetch_channel(claim["poll_channel_id"])
@@ -513,10 +509,9 @@ class BountyCog(commands.Cog):
             await self._clear_claim_reaction(live)
             return
 
-        # A non-author claim. One claim per user per bounty, ever — a prior
-        # claim (even rejected/voided) blocks a new one. The cache only holds
-        # active claims, so also guard against the UNIQUE constraint by catching
-        # insert failure below for the post-reboot / terminal-claim case.
+        # One claim per user per bounty, ever — even a rejected/voided one
+        # blocks a new claim. After a reboot the cache holds only active
+        # claims, so the UNIQUE failure caught below covers terminal ones.
         if self._claim_for_user(live, user_id) is not None:
             return
         try:
@@ -642,14 +637,13 @@ class BountyCog(commands.Cog):
         await self._refresh_embed(bounty)
 
     async def _tally_poll(self, bounty: dict, claim: dict):
-        """Settle a closed poll from the tracked votes (recorded reaction by
-        reaction while the poll ran), reward each eligible voter, and pay out.
+        """Settle a closed poll from the tracked votes, reward each eligible
+        voter, and pay out.
 
-        The tracked set is authoritative — the message's reactions aren't
-        trusted to still be accurate at close (a moderator can clear them, the
-        message can be deleted). A best-effort reaction scan is unioned in only
-        to catch votes cast while the bot was offline; a vote retracted while
-        the bot was online was already removed from the tracked set."""
+        The tracked set is authoritative (see `_handle_poll_vote`). A
+        best-effort reaction scan is unioned in only to catch votes cast while
+        the bot was offline; a vote retracted while the bot was online was
+        already removed from the tracked set."""
         author_id, claimant_id = bounty["author_id"], claim["claimant_id"]
         votes = claim.get("poll_votes") or {}
         yes_voters: set[int] = set(votes.get("yes", []))
@@ -671,16 +665,14 @@ class BountyCog(commands.Cog):
             logging.warning("[bounty] poll tally fetch failed for claim %s: %s", claim["id"], ex)
 
         voters = yes_voters | no_voters
-        # A both-ways reactor previously added 1 to each side, dragging the
-        # ratio toward 50% — which is a payout threshold. Their votes cancel:
-        # count them for the reward but for neither side of the tally.
+        # Both-ways reactors cancel out, as in _poll_vote_counts: they get the
+        # voter reward but count for neither side of the tally.
         both_ways = yes_voters & no_voters
         yes = len(yes_voters - both_ways)
         no = len(no_voters - both_ways)
 
-        # Reward each unique eligible voter once, regardless of how they voted or
-        # the poll's outcome. Freshly minted, capped at one payout per voter even
-        # if they reacted with both emojis.
+        # Each eligible voter is paid once — freshly minted — however they voted
+        # and whatever the outcome, even if they reacted with both emojis.
         if voters and BOUNTY_POLL_VOTER_REWARD > 0:
             for voter_id in voters:
                 await add_balance(voter_id, BOUNTY_POLL_VOTER_REWARD)
@@ -774,7 +766,7 @@ class BountyCog(commands.Cog):
         """An open bounty hit its deadline: refund the author 90%, void all
         in-flight claims (cancelling polls), mark expired."""
         log = list(bounty.get("claim_log") or [])
-        bounty["status"] = "expired"
+        bounty["status"] = "expired"  # claim sync, before await
         refund = await self._refund_author(bounty, BOUNTY_AUTHOR_REFUND_FRACTION)
         log.append(f"⌛ Bounty expired unclaimed — refunded {refund:,} 🪙 (90%) to the author")
         # Void any in-flight claims (and their polls). winner_claim_id=-1 → none.

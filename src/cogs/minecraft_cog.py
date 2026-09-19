@@ -189,12 +189,11 @@ def _mc_events(prev: MonitorState, status: "McStatus | None") -> tuple[MonitorSt
 
     events = []
     # A version change is a restart, so it stands in for the up-transition
-    # and for any player-count change the restart caused: one "updated"
-    # embed (carrying the current count) rather than an online / players-
-    # left notice followed by it. The version is compared independently of
-    # online-ness: with a baseline restored from disk, the first pong after
-    # a boot can already announce an update. A pong with an empty version
-    # keeps the last known one.
+    # and any player-count change it caused: one "updated" embed (carrying
+    # the current count), not an online / players-left notice plus it.
+    # Compared independently of online-ness — with a baseline restored from
+    # disk, the first pong after a boot can already announce an update. A
+    # pong with an empty version keeps the last known one.
     if prev.version and status.version and status.version != prev.version:
         events.append("version_changed")
     elif prev.online is False:
@@ -282,8 +281,8 @@ class MinecraftCog(commands.Cog):
         uptime = _uptime_pct(self._samples, now)
         if uptime is not None:
             pct, window_start = uptime
-            # Label the real coverage when the window is still filling
-            # (samples only live in memory, so a reboot restarts it).
+            # Label the real coverage while the window is still filling
+            # (mc_ping_samples covers under 7 days, with 6h of slack).
             if now - window_start < MC_UPTIME_WINDOW_SECS - 6 * 3_600:
                 value = f"{pct:.1f}% since <t:{int(window_start)}:R>"
             else:

@@ -274,7 +274,7 @@ async def test_issue_delete_soft_deletes_nth_row(db):
     ctx = _admin_ctx(command="issues")
     await cog.cmd_issues.callback(cog, ctx, filt="all")
     cached_before = list(cog._issues_listing_by_user[ctx.author.id])
-    target_id = cached_before[0]  # 1st row in listing
+    target_id = cached_before[0]
 
     await cog.cmd_issue.callback(cog, ctx, kind="delete", rest="1")
 
@@ -283,9 +283,7 @@ async def test_issue_delete_soft_deletes_nth_row(db):
     cached_after = cog._issues_listing_by_user[ctx.author.id]
     assert target_id not in cached_after
     assert len(cached_after) == len(cached_before) - 1
-    # Make sure the surviving order matches the original listing minus index 0.
     assert cached_after == cached_before[1:]
-    # Sanity: the remaining ids weren't deleted.
     for surviving in cached_after:
         srow = await _persistence.get_issue_by_id(surviving)
         assert srow["deleted"] is False
@@ -303,7 +301,6 @@ async def test_issue_delete_out_of_range_rejects(db):
 
     await cog.cmd_issue.callback(cog, ctx, kind="delete", rest="99")
 
-    # No row deleted, cache untouched.
     for iid in cached:
         row = await _persistence.get_issue_by_id(iid)
         assert row["deleted"] is False

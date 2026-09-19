@@ -161,7 +161,7 @@ class BlackjackView(discord.ui.View):
         try:
             await self.message.edit(view=None)
         except discord.HTTPException:
-            pass
+            pass  # cosmetic: the view already refuses clicks
 
     async def on_timeout(self):
         if self._fired or self.message is None:

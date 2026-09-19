@@ -77,7 +77,6 @@ async def insert_issue(
 
 
 async def get_issue_by_message(message_id: int) -> dict | None:
-    """Fetch the issue row for a given embed message_id, or None."""
     async with with_cursor() as cur:
         await cur.execute(
             f"SELECT {_ISSUE_COLS} FROM issues WHERE message_id=%s",  # nosec B608 - _ISSUE_COLS is a literal
@@ -88,7 +87,6 @@ async def get_issue_by_message(message_id: int) -> dict | None:
 
 
 async def get_issue_by_id(issue_id: int) -> dict | None:
-    """Fetch an issue row by its primary-key id, or None."""
     async with with_cursor() as cur:
         await cur.execute(
             f"SELECT {_ISSUE_COLS} FROM issues WHERE id=%s",  # nosec B608 - _ISSUE_COLS is a literal
@@ -101,7 +99,6 @@ async def get_issue_by_id(issue_id: int) -> dict | None:
 async def update_issue_status(
     message_id: int, status: str, resolved_by: int | None
 ) -> None:
-    """Set the status on the issue row keyed by message_id."""
     resolved_at = datetime.datetime.fromtimestamp(time.time(), tz=datetime.timezone.utc)
     async with with_cursor() as cur:
         await cur.execute(

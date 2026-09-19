@@ -108,7 +108,6 @@ async def test_hidden_denied_command_is_silent():
     )
     ok = await check_command_permission(ctx)
     assert ok is False
-    # No "No Permission" embed — silent denial.
     assert ctx.sent_embeds == []
 
 
@@ -166,7 +165,6 @@ async def test_override_does_not_revoke_env_bot_admin():
     """Removing/missing an override row never demotes someone in BOT_ADMIN_IDS."""
     _set_perm("godmode", "bot_admin")
     _state.bot_admins.add(100)
-    # No override row — the env-driven bot_admin must still pass.
     ctx = FakeCtx(
         author=FakeMember(uid=100, administrator=False),
         guild=FakeGuild(gid=42),
@@ -180,7 +178,6 @@ async def test_override_does_not_revoke_discord_server_admin():
     """A user with Discord administrator role keeps server_admin access even if no
     override exists. Overrides are additive only — they cannot demote."""
     _set_perm("admincmd", "server_admin")
-    # No override row for this user — they only have Discord administrator.
     ctx = FakeCtx(
         author=FakeMember(uid=100, administrator=True),
         guild=FakeGuild(gid=42),
@@ -193,8 +190,7 @@ async def test_override_does_not_revoke_discord_server_admin():
 async def test_override_in_dm_context_is_ignored():
     """ctx.guild is None → no override lookup. The bot_admin tier still gates."""
     _set_perm("godmode", "bot_admin")
-    # Pretend the override existed for some guild_id; in a DM ctx.guild is None
-    # so no key match is even attempted.
+    # An override exists for guild 42, but a DM has no guild to match it on.
     _state.user_perm_overrides[(42, 100)] = "bot_admin"
     ctx = FakeCtx(
         author=FakeMember(uid=100, administrator=False),

@@ -53,7 +53,6 @@ class TestApplyJackpotBonus:
         )
 
     def test_above_max_bet_clamps_at_max_multiplier(self):
-        # Bets above the max-bet cap don't keep scaling.
         big = apply_jackpot_bonus(10_000, SLOT_JACKPOT_BONUS_MAX_BET * 100)
         assert big == int(10_000 * SLOT_JACKPOT_BONUS_MAX_MULT)
 
@@ -97,7 +96,7 @@ async def _read_jackpot() -> int:
 
 
 def _ctx(uid: int = 1, balance: int = 100_000):
-    """Build a slots-friendly FakeCtx and pre-fund the user."""
+    """A slots-ready FakeCtx; callers fund the user themselves."""
     author = FakeMember(uid=uid, display_name="player")
     ctx = FakeCtx(author=author, guild=FakeGuild(gid=42))
     ctx.bot = _StubBot()
@@ -204,7 +203,6 @@ async def test_slots_min_bet_below_threshold_rejected(db):
 
     await cog.cmd_slots.callback(cog, ctx, amount=str(SLOT_MIN_BET - 1))
 
-    # Balance untouched, jackpot untouched.
     assert await _economy.get_balance(2) == 100_000
     assert _state.slot_jackpot == starting_jackpot
 
@@ -224,11 +222,9 @@ async def test_slots_rigged_forces_three_of_a_kind_and_decrements(db, monkeypatc
     bal_before = await _economy.get_balance(3)
     await cog.cmd_slots.callback(cog, ctx, amount=str(bet))
 
-    # Three cherries pays 3CHERRY multiplier.
     expected_winnings = bet * SLOT_MULT_3CHERRY
     # Balance: -bet (charged via shop_charge) + winnings.
     assert await _economy.get_balance(3) == bal_before - bet + expected_winnings
-    # Rigging entry consumed.
     assert 3 not in _state.rigged_slots
 
 
@@ -269,7 +265,6 @@ async def test_unrig_clears_all_rigs_for_target_only(db):
     assert 5 not in _state.rigged_scratch
     assert 5 not in _state.rigged_steal
     assert await _count_rig_rows(5) == 0
-    # Bystander untouched, in memory and in the DB.
     assert _state.rigged_flips[6] == 1
     assert await _count_rig_rows(6) == 1
     assert ctx.sent_embeds[-1].title == "🧹 Rigs Cleared"
@@ -287,20 +282,13 @@ async def test_unrig_with_no_active_rigs_reports_not_rigged(db):
 
 
 def test_slots_house_edge_is_positive_at_10k_bet():
-    """Simulate many slot spins at a 10k bet; verify expected gross return
-    is below the bet (house edge > 0). Uses a fixed seed so the result
-    is reproducible.
+    """Monte-Carlo of cmd_slots' reel logic on a fixed seed: SLOT_HOUSE_CHANCE
+    of a house spin (random.sample of distinct non-blank symbols, so never a
+    match), otherwise three independent random.choice(SLOT_REEL) draws.
 
-    Models the production reel logic from cmd_slots:
-    - SLOT_HOUSE_CHANCE of a house spin (random.sample of distinct non-blank
-      symbols, guaranteed no match)
-    - otherwise three independent random.choice(SLOT_REEL) draws
-
-    Excludes the progressive jackpot from the EV calculation: in the
-    long-run steady state, the progressive pot is funded by all spins
-    (per-spin contribution) and paid back to players when the jackpot hits,
-    so it nets out near zero. We check the underlying eval_slots-driven
-    EV, which is the actual house edge.
+    The progressive is left out of the EV — it is funded by every spin's
+    contribution and paid back when it hits, so it nets out near zero. What's
+    left is the eval_slots house edge itself.
     """
     import random as _random
     from src.gambling.slots import eval_slots
@@ -322,10 +310,8 @@ def test_slots_house_edge_is_positive_at_10k_bet():
         label, mult = eval_slots(reels, bet)
 
         if label == "jackpot":
-            # Production pays progressive pot here; for a steady-state EV
-            # estimate we treat the jackpot as paying SLOT_MULT_JACKPOT × bet
-            # (the table multiplier). The progressive pot is funded by
-            # spin contributions and is approximately EV-neutral.
+            # Production pays the progressive pot; the table multiplier
+            # stands in for it (see the docstring).
             total_gross += bet * SLOT_MULT_JACKPOT
         elif label == "1cherry":
             total_gross += bet  # money back
@@ -335,7 +321,6 @@ def test_slots_house_edge_is_positive_at_10k_bet():
     avg_return = total_gross / spins
     house_edge = 1.0 - avg_return / bet
 
-    # Sanity: house must keep some edge.
     assert avg_return < bet, (
         f"Slots EV at {bet:,} bet is {avg_return:,.2f} (house edge "
         f"{house_edge:+.4%}); expected < bet."
@@ -423,10 +408,8 @@ async def test_slots_rigged_jackpot_pays_progressive_pot_and_resets(db, monkeypa
     expected_prize = int(expected_pot * SLOT_JACKPOT_BONUS_MAX_MULT)
 
     assert await _economy.get_balance(4) == bal_before - bet + expected_prize
-    # Pot reset to seed.
     assert _state.slot_jackpot == SLOT_JACKPOT_SEED
     assert await _read_jackpot() == SLOT_JACKPOT_SEED
-    # Rigging entry consumed.
     assert 4 not in _state.rigged_slots
 
 

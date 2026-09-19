@@ -524,6 +524,7 @@ async def test_cog_load_starts_the_sweep_and_unload_cancels_it():
         assert cog._rename_sweep.is_running()
     finally:
         cog.cog_unload()
+    # cog_unload only requests the cancel — yield until it lands.
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     assert not cog._rename_sweep.is_running()

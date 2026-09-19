@@ -25,9 +25,8 @@ from src.persistence import save_chess_user_stats, save_economy, try_set_record
 from src.games.chess_bot import ELO_MIN, ELO_MAX, round_elo_to_bin
 
 
-# Per-elo-point payout. Sub-Maia tier (Elo 100-1000) pays COINS_PER_NEW_ELO_LOW;
-# Maia/Stockfish tier (Elo 1100+) pays double via COINS_PER_NEW_ELO. Boundary
-# matches the engine-tier handoff in chess_bot.py (MAIA_ELO_MIN = 1100).
+# Coins per new Elo point: the low rate below LOW_ELO_THRESHOLD, double from it
+# up. The boundary is the engine-tier handoff in chess_bot.py (MAIA_ELO_MIN).
 COINS_PER_NEW_ELO = 10
 COINS_PER_NEW_ELO_LOW = 5
 LOW_ELO_THRESHOLD = 1100
@@ -36,8 +35,7 @@ LOW_ELO_THRESHOLD = 1100
 def _payout_for_range(prior: int, new_high: int) -> int:
     """Coins owed for raising the daily highwater from `prior` to `new_high`.
     Elo gained below LOW_ELO_THRESHOLD pays COINS_PER_NEW_ELO_LOW; at/above
-    pays COINS_PER_NEW_ELO (which is double — the full-Maia tier earns 2x
-    the sub-Maia rate per Elo point)."""
+    pays COINS_PER_NEW_ELO."""
     if new_high <= prior:
         return 0
     low_end = min(new_high, LOW_ELO_THRESHOLD)
@@ -45,15 +43,13 @@ def _payout_for_range(prior: int, new_high: int) -> int:
     high_gain = max(0, new_high - max(prior, LOW_ELO_THRESHOLD))
     return low_gain * COINS_PER_NEW_ELO_LOW + high_gain * COINS_PER_NEW_ELO
 
-# Record category for !records. Matches the snake_case convention used by
-# existing categories (see RECORD_LABELS in src/helpers.py).
+# Record category for !records (display label: RECORD_LABELS in src/helpers.py).
 RECORD_CATEGORY = "highest_bot_chess_elo_defeated"
 
-# One-time first-defeat bonus, per Elo bin at/above the Maia boundary: the
-# first time a user EVER beats the bot at a given bin (1100, 1200, ...) they
-# earn first_defeat_bonus(bin) once — the base at 1100, one step more for
-# every bin above it. Unlike the daily highwater above, claimed bins never
-# reset — they persist in chess_user_stats.bonus_bins.
+# One-time first-defeat bonus, per Elo bin at/above the Maia boundary (1100,
+# 1200, ...): first_defeat_bonus(bin), paid the first time a user EVER beats
+# the bot there. Unlike the daily highwater above, claimed bins never reset —
+# they persist in chess_user_stats.bonus_bins.
 FIRST_DEFEAT_BONUS_MIN_ELO = 1100
 FIRST_DEFEAT_BONUS_BASE = 50_000
 FIRST_DEFEAT_BONUS_STEP = 5_000
@@ -225,10 +221,10 @@ async def award_bot_defeat(
       first_defeat_bonus: first_defeat_bonus(bot_elo) the first time this
         user ever beats the bot at this Elo bin (1100+), else 0.
 
-    No payout for sub-1 Elo gains; idempotent if called twice with the same
-    bot_elo on the same day (the bonus is once-ever per bin). Caller is
-    responsible for not invoking this on losses, draws, or human-vs-human
-    games.
+    A repeat call with the same bot_elo on the same day pays nothing more
+    (the bonus is once-ever per bin), but total_elo_defeated grows on every
+    call. Caller is responsible for not invoking this on losses, draws, or
+    human-vs-human games.
     """
     if bot_elo <= 0:
         return 0, False, 0
@@ -268,8 +264,8 @@ async def award_bot_defeat(
         if payout > 0:
             await add_balance(user_id, payout)
 
-    # Try to set the per-guild record. try_set_record short-circuits on
-    # guild_id=None and on non-improving values, so this is safe to always call.
+    # try_set_record ignores non-improving values, so offer every win. The
+    # category is a global per-user stat: it mirrors into the holder's other guilds.
     record_broken = False
     if guild_id is not None:
         record_broken = await try_set_record(

@@ -123,11 +123,9 @@ async def test_status_reaction_updates_db_and_rerenders_embed(db):
     payload = _FakePayload(emoji="⚙️", user_id=7, channel_id=9000, message_id=5000)
     await cog.on_raw_reaction_add(payload)
 
-    # DB row updated
     row = await _persistence.get_issue_by_message(5000)
     assert row["status"] == "wip"
     assert row["resolved_by"] == 7
-    # Embed edited with the WIP status footer
     issue_msg.edit.assert_awaited_once()
     new_embed = issue_msg.edit.await_args.kwargs["embed"]
     assert "Status:" in new_embed.description
@@ -325,17 +323,13 @@ async def test_feature_request_accept_spawns_linked_feature_issue(db):
     )
     await cog.on_raw_reaction_add(payload)
 
-    # 1. request status moved to 'accepted'
     request = await _persistence.get_feature_request_by_message(6000)
     assert request["status"] == "accepted"
     assert request["resolved_by"] == 7
-    # 2. spawned feature issue exists in DB with kind='feature'
     spawned_row = await _persistence.get_issue_by_message(7777)
     assert spawned_row is not None
     assert spawned_row["kind"] == "feature"
-    # 3. feature_issue_id link recorded on the request
     assert request["feature_issue_id"] == spawned_row["id"]
-    # 4. request embed re-rendered
     fr_msg.edit.assert_awaited()
 
 
@@ -380,8 +374,8 @@ async def test_feature_issue_status_change_mirrors_to_request_embed(db):
     cfg = get_guild_cfg(guild_id)
     cfg["feature_request_channel"] = "8888"
 
-    # Set up: a feature_request already accepted + linked to a kind='feature'
-    # issue. (We skip the accept flow and wire it up directly.)
+    # A feature_request already accepted + linked to a kind='feature' issue,
+    # wired up directly rather than through the accept flow.
     await _persistence.insert_feature_request(
         guild_id=guild_id, channel_id=8888, message_id=6010,
         reporter_id=50, description="linked",
@@ -412,7 +406,6 @@ async def test_feature_issue_status_change_mirrors_to_request_embed(db):
     await cog.on_raw_reaction_add(payload)
 
     feature_msg.edit.assert_awaited()
-    # The request embed should also have been re-edited with the WIP label.
     fr_msg.edit.assert_awaited()
     last_edit = fr_msg.edit.await_args.kwargs["embed"]
     assert "Work in progress" in last_edit.description

@@ -81,10 +81,8 @@ def _stub_respond_and_costs(monkeypatch):
         return False
     monkeypatch.setattr(_ai_cog, "check_ai_channel", _stub_check_ai_channel)
 
-    # ai_cog.py captures `save_ai_threads` at import time via
-    # `from src.persistence import save_ai_threads`. Conftest patches
-    # `_persistence.save_ai_threads` but that doesn't update the bound
-    # reference in ai_cog. Stub directly here.
+    # ai_cog binds `save_ai_threads` at import, so conftest's patch of
+    # `_persistence.save_ai_threads` never reaches it — stub it here.
     async def _stub_save_ai_threads(*a, **kw):
         return None
     monkeypatch.setattr(_ai_cog, "save_ai_threads", _stub_save_ai_threads)
@@ -127,9 +125,7 @@ async def test_ask_in_text_channel_creates_thread_and_seeds_state(_stub_respond_
 
     await cog.cmd_ask.callback(cog, ctx, question="What is AI?")
 
-    # ctx.message.create_thread was called.
     ctx.message.create_thread.assert_awaited_once()
-    # The new thread is registered in ai_threads with the right metadata.
     threads = list(_state.ai_threads.values())
     assert len(threads) == 1
     t = threads[0]
@@ -171,11 +167,9 @@ async def test_ask_skips_thread_creation_when_user_is_out_of_tokens(_stub_respon
     finally:
         _ai._user_token_buckets.clear()
 
-    # No thread, no respond() call, no coin deduction.
     ctx.message.create_thread.assert_not_awaited()
     assert _state.ai_threads == {}
     assert _stub_respond_and_costs == []
-    # User was told why.
     assert any(
         getattr(m, "title", "") == "⏳ AI Rate Limit"
         for m in ctx.sent_embeds
@@ -189,10 +183,8 @@ async def test_ask_with_no_question_replies_usage(_stub_respond_and_costs):
 
     await cog.cmd_ask.callback(cog, ctx, question=None)
 
-    # No thread, no respond() call.
     assert _state.ai_threads == {}
     assert _stub_respond_and_costs == []
-    # Ctx received the usage message.
     assert any("Usage" in m for m in ctx.sent_messages)
 
 
@@ -223,7 +215,6 @@ async def test_story_creates_thread_with_story_kind_and_default_prompt(_stub_res
     assert t["owner_id"] == author.id
     # Default !story uses STORY_SYSTEM_PROMPT (not a custom alias).
     assert t["system_prompt"] == _ai_cog.STORY_SYSTEM_PROMPT
-    # respond() was called with the same prompt as system_prompt.
     call = _stub_respond_and_costs[0]
     assert call["system_prompt"] == _ai_cog.STORY_SYSTEM_PROMPT
 
@@ -234,7 +225,6 @@ async def test_story_with_no_prompt_emits_usage_with_alias_hint(monkeypatch, _st
     author = FakeMember(uid=2002)
     ctx = _make_ctx_with_text_channel(author)
 
-    # Seed a story_alias on this guild.
     monkeypatch.setattr(
         _ai_cog, "get_guild_cfg",
         lambda gid: {"story_aliases": {"fanfic": "edgy prompt", "scifi": "hard scifi"}},
@@ -242,9 +232,7 @@ async def test_story_with_no_prompt_emits_usage_with_alias_hint(monkeypatch, _st
 
     await cog.cmd_story.callback(cog, ctx, prompt=None)
 
-    # No thread created.
     assert _state.ai_threads == {}
-    # Sent message includes the usage line + alias names.
     sent = " ".join(ctx.sent_messages)
     assert "Usage:" in sent
     assert "!fanfic" in sent and "!scifi" in sent
@@ -272,7 +260,6 @@ async def test_story_alias_listener_routes_to_story_with_custom_prompt(monkeypat
     err = dpy_commands.CommandNotFound("fanfic")
     await cog.on_command_error(ctx, err)
 
-    # Thread created with the custom prompt.
     assert len(_state.ai_threads) == 1
     t = list(_state.ai_threads.values())[0]
     assert t["kind"] == "story"
@@ -312,7 +299,6 @@ async def test_story_alias_listener_ignores_non_command_not_found(monkeypatch, _
         lambda gid: {"story_aliases": {"fanfic": "some prompt"}},
     )
 
-    # Listener should ignore CheckFailure et al.
     await cog.on_command_error(ctx, dpy_commands.CheckFailure("perms"))
 
     assert _state.ai_threads == {}
@@ -332,7 +318,6 @@ async def test_roleplay_creates_thread_with_character_prompt(_stub_respond_and_c
     t = threads[0]
     assert t["kind"] == "roleplay"
     assert t["character_prompt"] == "Sherlock Holmes"
-    # roleplay system_prompt embeds the character.
     assert "Sherlock Holmes" in t["system_prompt"]
     assert "stay in character" in t["system_prompt"].lower()
 
@@ -392,9 +377,8 @@ async def test_continue_in_thread_uses_stored_system_prompt(_stub_respond_and_co
 
     await cog.cmd_continue.callback(cog, ctx)
 
-    # respond() was called with the thread's stored system prompt — NOT the
-    # default STORY_SYSTEM_PROMPT. This is the regression Phase 3 of round-1
-    # fixed (cmd_continue used to hardcode FANFIC_SYSTEM_PROMPT).
+    # The thread's stored prompt, not the default STORY_SYSTEM_PROMPT —
+    # cmd_continue once hardcoded FANFIC_SYSTEM_PROMPT.
     call = _stub_respond_and_costs[0]
     assert call["system_prompt"] == "the edgy custom prompt"
     assert call["content"] == "Continue the story."
@@ -519,7 +503,6 @@ async def test_invite_adds_user_to_thread_and_invited_ids(monkeypatch, _stub_res
 
     assert alice.id in _state.ai_threads[700]["invited_ids"]
     thread.add_user.assert_awaited_once_with(alice)
-    # "Joined" embed was posted.
     assert any("Joined" in (e.title or "") for e in ctx.sent_embeds)
 
 
@@ -614,7 +597,6 @@ async def test_message_in_ai_thread_routes_to_respond_for_invited_user(monkeypat
 
     await cog.on_message(msg)
 
-    # respond() was called with the thread channel + user content.
     assert respond_calls == [(800, invited.id, "hello AI")]
     # process_commands fires regardless (tail of _handle_ai_routing).
     assert msg in bot.process_commands_calls
@@ -670,7 +652,6 @@ async def test_message_in_ai_thread_from_uninvited_user_does_not_route(monkeypat
 
     await cog.on_message(msg)
 
-    # respond() NOT called for the uninvited user.
     assert respond_calls == []
     # The dispatcher still tail-calls process_commands.
     assert msg in bot.process_commands_calls

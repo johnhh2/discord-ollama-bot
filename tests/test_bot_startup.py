@@ -1,24 +1,18 @@
 """Bot-startup smoke test against a real discord.py commands.Bot.
 
-This is the closest we can get to "does the bot boot?" without a Discord
-gateway connection. We:
-  1. Build a real `commands.Bot` via `create_bot()`.
-  2. Call `_load_extensions(bot)` so every cog's `setup()` runs.
-  3. Assert no exception, and assert every command we expect is actually
-     registered on the bot.
+The closest we get to "does the bot boot?" without a gateway connection:
+build a real `commands.Bot` via `create_bot()`, run every cog's `setup()`
+through `_load_extensions(bot)`, then assert the expected commands are
+registered.
 
 What this catches that direct cog-instantiation tests miss:
-- CommandRegistrationError: two cogs (or two declarative aliases inside
-  one cog) try to register the same command name. ShopCog's
-  _SHOP_TOP_ALIASES has 25 names; if any collide with a top-level
-  command in another cog, the bot would crash during setup.
-- Command import errors: a cog file that fails to import (NameError,
-  missing module, etc.) would raise here. Round-2's leveling/persistence/
-  shop split had ~18 importer rewrites; this is the gate that catches
-  any one we missed.
+- CommandRegistrationError: two cogs — or two declarative aliases inside one
+  cog — claiming the same command name. ShopCog's _SHOP_TOP_ALIASES alone
+  has 25 names.
+- A cog file that fails to import (NameError, missing module).
 - decorator-order regressions on @requires_perm: discord.py's command
-  introspection reads `__wrapped__` to resolve converters; if the
-  decorator order broke, register-time validation would fail.
+  introspection reads `__wrapped__` to resolve converters, so a broken
+  order fails register-time validation.
 """
 import pytest
 
@@ -32,22 +26,15 @@ pytestmark = pytest.mark.asyncio
 async def loaded_bot():
     """Build a real commands.Bot and load every cog. Yields the bot.
 
-    NOTE: discord.py's Bot() constructor does not open a network
-    connection; only .run() / .start() does. So we can construct
-    and load extensions safely in a test.
+    `Bot()` opens no network connection — only `.run()` / `.start()` does —
+    so constructing one and loading extensions is safe in a test.
 
-    discord.py's bot.load_extension('src.X') REBINDS sys.modules['src.X']
-    to a freshly-imported module object. Anything that imported src.X at
-    test-collection time (e.g. `import src.events as _events` at the top
-    of test_schedulers.py) is left holding the OLD module reference, while
-    new `from src.X import Y` statements after our fixture get the NEW
-    module's symbols. Module-private state (like
-    src.events._SOUNDBOARD_TIMESTAMPS) ends up bifurcated.
-
-    Cleanup snapshots sys.modules['src.*'] BEFORE loading and restores it
-    after. Combined with cancelling the leveling voice-tick loop (which
-    would otherwise raise about a missing client session), this keeps
-    the test isolated from the rest of the suite.
+    `load_extension('src.X')` rebinds `sys.modules['src.X']` to a freshly
+    imported module object: anything that imported src.X at collection time
+    (e.g. `import src.events as _events` in test_schedulers.py) keeps the old
+    reference, and module-private state such as
+    src.events._SOUNDBOARD_TIMESTAMPS ends up bifurcated. Hence the
+    snapshot-and-restore below.
     """
     import sys
     snapshot = {k: sys.modules[k] for k in list(sys.modules) if k.startswith("src.")}
@@ -70,19 +57,13 @@ async def loaded_bot():
 async def test_bot_loads_every_extension_without_error(loaded_bot):
     """If any setup() function raised, the fixture would have errored out
     before reaching this assertion. Reaching here is the test."""
-    # The fixture already loaded EXTENSIONS; just confirm the count.
     assert loaded_bot.cogs, "no cogs registered after _load_extensions"
 
 
 async def test_bot_loads_every_named_extension(loaded_bot):
-    """Every entry in EXTENSIONS must produce at least one registered cog
-    OR at least one registered command. If a cog file has no setup(),
-    discord.py raises during load — caught by the fixture itself.
-
-    This test is a sanity for EXTENSIONS additions: a misnamed module path
-    would also raise during load."""
-    # All EXTENSIONS got loaded. We can also check `bot.extensions` is the
-    # set of dotted names we passed in.
+    """`bot.extensions` must be exactly the dotted names in EXTENSIONS, which
+    pins additions to the list. A module that can't import or has no setup()
+    already raised inside the fixture."""
     assert set(loaded_bot.extensions.keys()) == set(EXTENSIONS), (
         f"extensions list out of sync: loaded={set(loaded_bot.extensions)}, "
         f"expected={set(EXTENSIONS)}"
@@ -94,10 +75,8 @@ async def test_bot_loads_every_named_extension(loaded_bot):
 async def test_no_duplicate_top_level_command_names(loaded_bot):
     """If two cogs (or one cog's declarative alias loop) try to register the
     same top-level command name, discord.py raises CommandRegistrationError
-    during the second add_command. The fixture would have failed.
-
-    This test makes the implicit guarantee explicit: count distinct command
-    names, ensure no dupes snuck through."""
+    during the second add_command and the fixture fails. This makes that
+    implicit guarantee explicit."""
     names = [cmd.name for cmd in loaded_bot.commands]
     duplicates = {n for n in names if names.count(n) > 1}
     assert duplicates == set(), f"duplicate top-level commands: {duplicates}"

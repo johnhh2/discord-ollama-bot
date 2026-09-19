@@ -131,7 +131,6 @@ async def test_list_issues_default_excludes_deleted_and_orders_desc(db):
     ids = await _seed_issues_for_listing(db)
     rows = await _persistence.list_issues()
     returned_ids = [r["id"] for r in rows]
-    # Deleted row (ids[5]) excluded; remainder in id-desc order.
     assert ids[5] not in returned_ids
     assert returned_ids == sorted(returned_ids, reverse=True)
     assert len(rows) == 5

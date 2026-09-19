@@ -1,14 +1,12 @@
-"""Round-1 commit 0f0fadd refactored 30 hand-written cmd_<name> wrappers
-into a declarative _SHOP_TOP_ALIASES table iterated in ShopCog.__init__.
-The registration creates `commands.Command` objects on the bot for each
-top-level alias and binds them to the underlying shop_X subcommand
-callback. cog_unload removes them.
+"""ShopCog.__init__ iterates the declarative _SHOP_TOP_ALIASES table and
+registers a `commands.Command` on the bot for each top-level alias, bound to
+the underlying shop_X subcommand callback. cog_unload removes them.
 
-Existing tests in test_shop_extended.py cover the table's *consistency*
-(every entry resolves to a real method; roleup/roledown share shop_roleup).
-This file covers the *registration mechanism*: when ShopCog is loaded,
-the bot ends up with a top-level `!nickname` (etc.) command pointing at
-the right callback; when unloaded, it disappears.
+test_shop_extended.py covers the table's *consistency* (every entry resolves
+to a real method; roleup/roledown share shop_roleup). This file covers the
+*registration mechanism*: when ShopCog is loaded, the bot ends up with a
+top-level `!nickname` (etc.) command pointing at the right callback; when
+unloaded, it disappears.
 """
 
 import pytest
@@ -128,7 +126,6 @@ async def test_cog_can_be_loaded_unloaded_loaded_again():
     bot = _FakeBot()
     cog = ShopCog(bot=bot)
     cog.cog_unload()
-    # Second load — would raise if any aliases lingered.
     ShopCog(bot=bot)
     expected_names = {top for top, _, _ in _SHOP_TOP_ALIASES}
     assert set(bot.commands_registered) == expected_names
@@ -150,15 +147,13 @@ async def test_every_shop_subcommand_in_the_table_actually_exists():
 
 # ── _shop_subcommand decorator must preserve method signature ─────────────────
 #
-# Regression for the bug where _shop_subcommand copied __name__ and __wrapped__
-# but not __qualname__. discord.py's get_signature_parameters calls
-# is_inside_class(callback), which checks __qualname__ for a class component.
-# Without it, discord.py only skips one leading param instead of two (self+ctx),
-# so `ctx` is treated as a user-supplied arg — and every wrapped subcommand
-# 400s with MissingRequiredArgument or BadArgument("Converting to Context failed").
-# Tests that call `cog.shop_X.callback(cog, ctx)` directly bypass this entire
-# code path and won't catch it; the surface we need to assert against is
-# discord.py's view of the Command's .params dict.
+# Regression: _shop_subcommand copied __name__ and __wrapped__ but not
+# __qualname__, which discord.py's get_signature_parameters reads
+# (is_inside_class) to decide whether to skip `self`. Without it `ctx` is
+# parsed as a user arg and every wrapped subcommand fails with
+# MissingRequiredArgument or BadArgument("Converting to Context failed").
+# Calling `cog.shop_X.callback(cog, ctx)` directly bypasses that path, so
+# these assert on discord.py's view: the Command's .params dict.
 
 async def test_shop_subcommand_decorator_does_not_inject_phantom_ctx_param():
     """No-arg !shop subcommands must have zero user params. If
@@ -184,32 +179,23 @@ async def test_shop_subcommand_decorator_preserves_varargs_signature():
 # ── Top-alias dispatch must bind self ─────────────────────────────────────────
 #
 # Regression for production crash: !unassignrole @user Rat King → AttributeError:
-# 'str' object has no attribute 'guild'. Root cause was that
-# `bot.add_command(commands.Command(sub_cmd.callback, name=top))` created a
-# Command with cog=None. discord.py's _parse_arguments then sets
-# ctx.args = [ctx] (instead of [cog, ctx]), so dispatching the wrapper
-# `async def wrapper(self, ctx, *args)` calls it as wrapper(ctx, "@u", "Rat King")
-# — `self` binds to the real Context and `ctx` binds to the string "@u".
-# First `ctx.guild` access then crashes. This affected *every* top-level
-# alias in _SHOP_TOP_ALIASES that took any user argument (~20 commands).
+# 'str' object has no attribute 'guild'. A bare
+# `commands.Command(sub_cmd.callback, name=top)` has cog=None, so
+# _parse_arguments sets ctx.args = [ctx] (instead of [cog, ctx]) and
+# `wrapper(self, ctx, *args)` runs as wrapper(ctx, "@u", "Rat King") — `self`
+# is the Context, `ctx` the string "@u". That hit *every* top-level alias
+# taking a user argument (~20 commands). The fix is alias_cmd.cog = self in
+# ShopCog.__init__.
 #
-# Why the prior tests missed it:
-#   - test_each_alias_command_callback_points_at_real_subcommand only
-#     compared `.callback` identity — never dispatched.
-#   - test_shop_subcommand_decorator_does_not_inject_phantom_ctx_param
-#     inspected the *subcommand's* .params (cog-bound), not the top-level
-#     alias Command's (cog=None). Different objects, different behavior.
-#   - All other shop tests call cog.shop_X.callback(cog, ctx, ...) directly,
-#     manually passing the cog and bypassing _parse_arguments entirely.
-#
-# The fix is alias_cmd.cog = self in ShopCog.__init__. The tests below assert
-# both the static binding AND that dispatch actually wires arguments correctly.
+# No earlier test dispatched: they compared `.callback` identity, inspected
+# the cog-bound *subcommand's* .params rather than the alias Command's
+# (cog=None), or called cog.shop_X.callback(cog, ctx, ...) directly, bypassing
+# _parse_arguments. The tests below assert the static binding AND that
+# dispatch wires the arguments correctly.
 
 async def test_every_top_alias_command_has_cog_bound():
     """Each registered top-level alias must have its .cog set to the
-    ShopCog instance so discord.py prepends it to ctx.args at dispatch.
-    Without this binding, the wrapper's `self` slot eats the real Context
-    and downstream `.guild` access on a string crashes the command."""
+    ShopCog instance so discord.py prepends it to ctx.args at dispatch."""
     bot = _FakeBot()
     cog = ShopCog(bot=bot)
     for top_name, _, _ in _SHOP_TOP_ALIASES:
@@ -222,15 +208,12 @@ async def test_every_top_alias_command_has_cog_bound():
 
 # ── Dispatch path: assert wrapper receives the right positionals ──────────────
 #
-# These tests poke discord.py's actual dispatch machinery (_parse_arguments
-# + callback invocation) and assert what the wrapper actually sees. They
-# would have caught the production crash; the prior identity-only tests
-# could not.
+# These go through discord.py's actual dispatch machinery (_parse_arguments
+# + callback invocation) and assert what the wrapper actually sees.
 
 class _StubGuild:
-    """Just enough Guild for the wrapper's `ctx.guild` truthiness check.
-    The wrapper body short-circuits on ctx.guild being None for some
-    branches; we want it to look like a real guild."""
+    """Just enough Guild: the wrapper body short-circuits on ctx.guild
+    being None for some branches."""
     def __init__(self, gid: int = 999):
         self.id = gid
 
@@ -253,11 +236,9 @@ class _StubCtx:
     def __init__(self, content: str, *, guild_id: int = 999):
         from discord.ext.commands.view import StringView
         self.view = StringView(content)
-        # _parse_arguments calls view.skip_string(command_name) implicitly
-        # via the caller — for our direct invocation, pre-advance past the
-        # command word so subsequent get_quoted_word() pulls user args.
-        # Simulate: "!unassignrole <@1> Rat King" → skip "!unassignrole " then
-        # the view points at "<@1> Rat King".
+        # The real caller skips the command word before _parse_arguments; do
+        # the same here so get_quoted_word() pulls user args:
+        # "!unassignrole <@1> Rat King" → the view points at "<@1> Rat King".
         first_space = content.find(" ")
         if first_space >= 0:
             self.view.index = first_space + 1
@@ -347,9 +328,7 @@ async def test_top_alias_dispatch_does_not_crash_on_str_guild_access():
     ctx = _StubCtx("!unassignrole <@393568333644955648> Rat King")
     await alias_cmd._parse_arguments(ctx)
 
-    # If the bug regresses, args[0] is the Context, args[1] is the string
-    # "<@...>", and the wrapper's `ctx.guild` access raises. We don't need
-    # to fully execute the wrapper — proving args[0] is the cog is enough,
+    # No need to execute the wrapper — proving args[0] is the cog is enough,
     # because that is exactly what dispatch will pass to callback(*ctx.args).
     first = ctx.args[0]
     assert hasattr(first, "shop_unassignrole"), (

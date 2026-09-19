@@ -69,7 +69,7 @@ async def confirm_prompt(
     try:
         await msg.edit(embed=closing, view=None)
     except discord.HTTPException:
-        pass
+        pass  # closing edit is cosmetic — the result stands either way
     return result
 
 
@@ -155,7 +155,7 @@ async def confirm_choice(
     try:
         await msg.edit(embed=closing, view=None)
     except discord.HTTPException:
-        pass
+        pass  # cosmetic, as in confirm_prompt
     return result
 
 

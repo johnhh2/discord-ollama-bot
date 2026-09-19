@@ -11,10 +11,9 @@ These tests pin:
   - The prune helpers individually use a strict-less-than cutoff (rows
     ON the cutoff date are kept).
 
-Snapshot helpers (snapshot_balances etc.) no longer prune in-line —
-that's been moved to the daily DB-level DELETE for correctness (the
-old in-memory load/filter/save pattern silently failed to actually
-remove old DB rows).
+Pruning happens only in do_daily_reset's DB-level DELETE: the snapshot
+helpers (snapshot_balances etc.) don't prune, because the in-memory
+load/filter/save they used never removed the rows from the DB.
 """
 import datetime
 
@@ -66,7 +65,7 @@ async def test_do_daily_reset_prunes_all_pruned_tables(db, monkeypatch):
     assert very_old not in await _persistence.load_command_usage_history()
     crime = await _persistence.load_crime_history()
     assert very_old not in crime
-    assert recent in crime  # recent row untouched
+    assert recent in crime
     assert very_old not in await _persistence.load_gambling_history()
     assert very_old not in await _persistence.load_levelup_history()
 

@@ -1018,7 +1018,8 @@ async def test_monitor_offline_poll_accrues_nothing(monkeypatch):
     monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
     await _tick(cog)
     # The offline tick reset the accrual window, so recovery credits only
-    # the time since that tick — not the whole outage.
+    # the time since that tick — not the whole outage. Tolerance: 2 players
+    # × up to 2 s between the two ticks.
     assert dailies[0] == pytest.approx(0.0, abs=2 * 2.0)
 
 

@@ -96,13 +96,12 @@ UNLOCKS: dict[str, dict] = {
     "channellock":   {"level": 25, "enabled": _always,                    "usage": "`!channellock <name>` — lock a bot-created channel against changes", "reward": True},
     "channelunlock": {"level": 25, "enabled": _always,                    "usage": "`!channelunlock <name>` — unlock a channel (lock owner only)"},
 
-    # Real-estate tier unlocks (levels 15/20/25). The keys are deliberately
-    # NOT command names — !assets itself is never level-gated (per-property
-    # gates live in src/properties.py); these entries exist purely so the
-    # tiers show up in level-up announcements and the !level next-unlocks
-    # list. lookup() matches on qualified_name, so they gate nothing.
-    # Tiers 1–2 (levels 5/10) are deliberately left out — low-level players
-    # already have property access advertised via the catalog itself.
+    # Real-estate tier unlocks. The keys are deliberately NOT command names:
+    # !assets is never level-gated (per-property gates live in
+    # src/properties.py), and lookup() matches on qualified_name, so these
+    # entries gate nothing — they exist only to advertise the tiers in
+    # level-up announcements and !level next-unlocks. Tiers 1–2 (levels
+    # 5/10) are left out: the catalog itself already advertises them.
     "assets tier 3": {"level": 15, "enabled": _always, "usage": "`!assets browse 3` — Tier 3 properties (120k–300k 🪙)", "reward": True},
     "assets tier 4": {"level": 20, "enabled": _always, "usage": "`!assets browse 4` — Tier 4 properties (400k–1m 🪙)", "reward": True},
     "assets tier 5": {"level": 25, "enabled": _always, "usage": "`!assets browse 5` — Tier 5 properties (1.3m–2m 🪙)", "reward": True},

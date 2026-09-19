@@ -54,8 +54,8 @@ async def delete_chess_game(channel_id: int) -> None:
         await cur.execute("DELETE FROM chess_games WHERE channel_id=%s", (int(channel_id),))
 
 
-# Kept for compatibility with !stop in ai_cog.py which iterates and rewrites all chess state.
-# Walks state and per-row upserts; the underlying table no longer gets wiped.
+# Kept for !stop in ai_cog.py, which rewrites all chess state. Per-row
+# upserts — the table is never wiped.
 async def save_chess_games() -> None:
     channel_ids = list(state.active_chess_games.keys())
     if not channel_ids:

@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 
-# Load .env only in dev (not in Docker)
+# Dev only: .env is kept out of the Docker image, so this is a no-op there.
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -22,8 +22,7 @@ RACE_TRACK_LEN = 20
 # so !mc latency measures the internet-facing route players actually take,
 # not a ~0ms same-host container hop. Requires router NAT-loopback; fall back
 # to host.docker.internal if yours lacks it (latency is then local-only).
-# The `or` fallbacks matter: docker-compose exports these as empty strings
-# when unset, which os.getenv's default doesn't cover.
+# `or` fallbacks for the same empty-string reason as above.
 MC_SERVER_HOST = os.getenv("MC_SERVER_HOST", "")
 MC_SERVER_PORT = int(os.getenv("MC_SERVER_PORT") or "19132")
 MC_POLL_SECONDS = int(os.getenv("MC_POLL_SECONDS") or "60")
@@ -60,7 +59,7 @@ SLOT_REEL = (
 SLOT_JACKPOT_SEED = 5_000
 SLOT_JACKPOT_CONTRIB_DIVISOR = 150   # pool gains bet // 150 per spin (~0.67%, rounded down, no minimum)
 SLOT_JACKPOT_CAP = 100_000           # contributions stop once the pool reaches this
-SLOT_HOUSE_CHANCE = 0.055
+SLOT_HOUSE_CHANCE = 0.055           # chance of a house spin: three distinct symbols, never a triple
 
 # Prize pool every fresh monthly lottery starts with (the guild-house drain
 # and per-player bonuses stack on top).
@@ -80,9 +79,9 @@ SCRATCHOFF_PAYOUTS = {1: 100, 2: 1000, 3: 10000, 4: 100000}
 # Soundboard rate-limiting
 SOUNDBOARD_WINDOW_SECS = 10.0
 
-# Lifetime of an invite minted by !invitelink. Previously max_age=0 —
-# permanent, unlimited-use, one more created on every invocation and never
-# revoked. A vanity URL, where the guild has one, is used unchanged.
+# Lifetime of an invite minted by !invitelink. Never max_age=0: that left a
+# permanent, unlimited-use, never-revoked invite behind on every invocation.
+# A vanity URL, where the guild has one, is used unchanged.
 SERVER_INVITE_MAX_AGE_SECS = 86_400  # 24 hours
 SOUNDBOARD_MAX_SOUNDS  = 5
 
@@ -166,11 +165,11 @@ ARTIFACT_SAVINGS_DAILY_MULT = 1.008
 # Shop effect parameters
 #
 # Insurance tiers (`!shop insurance`). Every tier blocks the non-crime effects
-# (mock, ragebait, nickname, role, tax, spellcheck) outright; crime
-# (steal/mug/bankheist) still goes through, and the insurer refunds
-# `refund_pct` of each loss to the victim's wallet — minted, not taken from
-# the thief — up to `refund_cap` per incident. Keys are what users type;
-# order is cheapest → dearest (the tier picker renders in this order).
+# (economy.INSURANCE_PROTECTS) outright; crime (steal/mug/bankheist) still
+# goes through, and the insurer refunds `refund_pct` of each loss to the
+# victim's wallet — minted, not taken from the thief — up to `refund_cap` per
+# incident. Keys are what users type; order is cheapest → dearest (the tier
+# picker renders in this order).
 SHOP_INSURANCE_TIERS = {
     "basic":    {"cost": 1_000, "refund_pct": 50,  "refund_cap": 100_000},
     "standard": {"cost": 3_000, "refund_pct": 75,  "refund_cap": 200_000},
@@ -208,5 +207,5 @@ BOUNTY_AUTHOR_REFUND_FRACTION = 0.9
 # are excluded. This is freshly minted, not drawn from the escrow.
 BOUNTY_POLL_VOTER_REWARD = 100
 
-# Ephemeral message auto-delete timeout
+# Ephemeral message auto-delete timeout (seconds)
 EPHEMERAL_DELETE_AFTER = 120

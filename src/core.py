@@ -9,11 +9,8 @@ from discord.ext import commands
 from src.config import DISCORD_TOKEN
 from src.discord_retry import send_with_retry
 
-# Login-time 429 backoff. discord.py's internal 5-retry-then-raise is fine for
-# normal usage but turns container restart policies into a tight crash-loop
-# during Discord-wide outages: every fresh process resets the backoff clock,
-# so a `restart: unless-stopped` policy keeps slamming /users/@me. Sleeping
-# in-process keeps the container alive and lets the throttle clear naturally.
+# In-process sleeps between login attempts that hit 429 — exiting instead
+# would crash-loop the container (see _run_with_login_backoff).
 LOGIN_429_BACKOFFS_SECS = (60, 300, 900, 1800, 3600)  # 1m, 5m, 15m, 30m, 1h
 
 # Wall-clock budget to drain in-flight AI streams before closing the DB pool.
@@ -234,8 +231,7 @@ def _build_bot() -> commands.Bot:
 
     Called once per login attempt: discord.py's bot.run() closes the bot's
     aiohttp session on shutdown, so retrying with the same instance fails
-    with `RuntimeError: Session is closed`. A fresh Bot per attempt sidesteps
-    that entirely.
+    with `RuntimeError: Session is closed`.
     """
     bot = create_bot()
 
@@ -252,10 +248,11 @@ def _run_with_login_backoff() -> None:
     """Run the bot, sleeping in-process on login-time 429 instead of exiting.
 
     discord.py raises HTTPException out of bot.run() if all 5 of its internal
-    /users/@me retries hit 429. Letting that propagate exits the process,
-    Docker restarts immediately, and the cycle repeats every ~20s — which
-    digs the rate-limit hole deeper. Sleeping here keeps the container alive
-    and the backoff state intact across attempts.
+    /users/@me retries hit 429. Letting that propagate exits the process, a
+    `restart: unless-stopped` policy restarts it immediately, and the cycle
+    repeats every ~20s — digging the rate-limit hole deeper during a
+    Discord-wide outage. Sleeping here keeps the container alive and the
+    backoff state intact across attempts.
     """
     attempt = 0
     while True:

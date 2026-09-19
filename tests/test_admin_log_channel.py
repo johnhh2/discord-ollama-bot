@@ -189,7 +189,6 @@ async def test_log_sends_for_bot_admin_tier_success():
     embed = log_chan.send.call_args.kwargs["embed"]
     assert "Admin Command" in embed.title
     assert "Error" not in embed.title
-    # Description carries identifying fields.
     assert "alice" in embed.description
     assert "my-guild" in embed.description
     assert "bot_admin" in embed.description
@@ -212,9 +211,9 @@ async def test_log_sends_for_server_admin_tier_success():
 
 
 async def test_error_log_routes_to_internal_issue_channel(db):
-    """Command errors now auto-file a bug report into `internal_issue_channel`
-    instead of posting to a separate `error_log_channel`. The embed carries
-    the exception details and the seeded ❌/⚙️/✅/🛑/🔇 reactions enable triage."""
+    """Command errors file a bug report into `internal_issue_channel`, not a
+    separate error log. The embed carries the exception details, and the
+    seeded ❌/⚙️/✅/🛑/🔇 reactions enable triage."""
     _state.bot_settings["internal_issue_channel"] = "67890"
     _state.command_perms["adminhelp"] = {"tier": "bot_admin", "hidden": False}
     _state.error_mutes.clear()
@@ -277,7 +276,6 @@ async def test_error_log_survives_dns_failure_collecting_history(db):
         raise OSError(-3, "Temporary failure in name resolution")
     ctx.channel.history = _boom
 
-    # Must not raise, and the report still posts (just without the history block).
     await _log_command_error(bot, ctx, RuntimeError("kaboom"))
 
     assert log_chan.send.await_count == 1
@@ -334,7 +332,6 @@ async def test_log_swallows_send_forbidden():
     bot = _FakeBot(channel=log_chan)
     ctx = _ctx_for_command("adminhelp")
 
-    # Must not raise.
     await _log_admin_command(bot, ctx)
     assert log_chan.send.await_count == 1
 
@@ -367,10 +364,8 @@ async def test_log_swallows_invalid_channel_id_string():
     bot = _FakeBot(channel=log_chan)
     ctx = _ctx_for_command("adminhelp")
 
-    # Must not raise.
     await _log_admin_command(bot, ctx)
 
-    # No send attempted.
     assert log_chan.send.await_count == 0
 
 

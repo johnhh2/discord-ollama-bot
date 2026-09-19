@@ -251,9 +251,8 @@ def crime_catch_chance(uid: int, base: float) -> float:
 def savings_boost_since(uid: int) -> float | None:
     """Unix time from which the user's savings accrue at the boosted rate, or
     None for no boost. Deliberately None when the artifact row carries no
-    acquisition time: without a boundary the boost could only be applied to
-    the deposit's whole history, which is exactly the retroactive re-pricing
-    the timestamp exists to prevent."""
+    acquisition time: without a boundary the boost would re-price the
+    deposit's whole history."""
     if _owned_total(uid, "savings_rate_boost") <= 0:
         return None
     since = [

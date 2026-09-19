@@ -1,27 +1,20 @@
 """Reaction "buttons" that never miss an early click.
 
 Discord throttles ``add_reaction`` to roughly four calls a second per
-channel, so a message with five buttons takes over a second to finish
-appearing — and players click the first one while the rest are still being
-added. Two things used to swallow those clicks:
+channel, so five buttons take over a second to appear and players click the
+first while the rest are still being added. Two things swallowed those clicks:
 
-1. ``bot.wait_for("reaction_add", check=...)`` only listens while the
-   ``wait_for`` is pending. Every caller seeded the buttons *first* and
-   listened *second*, so a click during seeding went nowhere. The same
-   listener also vanished between two ``wait_for`` calls: a bankheist join
-   that landed while the lobby was busy editing its embed after the previous
-   join was lost the same way.
-2. Persistent ``on_raw_reaction_add`` listeners are always registered, but
-   several sites wrote the state they key on (``state.active_events``,
-   ``cfg["dailies_message_id"]``, the bounty row) *after* seeding, so a click
-   during seeding found nothing to match and was ignored.
+1. ``bot.wait_for("reaction_add")`` only listens while it is pending.
+   Callers seeded first and listened second, and nothing listened between
+   two ``wait_for`` calls (a bankheist join during the lobby's embed edit).
+2. Persistent ``on_raw_reaction_add`` listeners key on state
+   (``state.active_events``, ``cfg["dailies_message_id"]``, the bounty row)
+   that several sites wrote *after* seeding, so an early click matched nothing.
 
-``ReactionCollector`` fixes (1): it registers a persistent listener the
-moment it starts and queues every reaction on the message until the consumer
-asks for it, so seeding happens *inside* the listening window and an early
-click waits in the queue instead of vanishing. Sites of kind (2) are fixed by
-ordering — register the state, *then* seed — and ``seed_reactions`` is the
-one seeding loop they all share, so the rule has a single place to live.
+``ReactionCollector`` fixes (1): it queues every reaction on the message from
+the moment it starts, so seeding happens *inside* the listening window. (2) is
+fixed by ordering — register the state, *then* seed — with ``seed_reactions``
+as the one seeding loop every site shares.
 
 Rule for new code: whatever the reaction handler keys on — the collector, the
 game dict, the ``state`` entry, the DB row — must exist before the first
@@ -49,8 +42,7 @@ async def seed_reactions(message, emojis: Iterable[str], *, what: str = "reactio
     too, so seeding stops there. Returns True when every emoji landed.
 
     Call this *after* whatever the reaction handler keys on is in place (see
-    the module docstring) — the buttons appear one by one and users click the
-    first ones while the rest are still on their way.
+    the module docstring).
     """
     ok = True
     for emoji in emojis:

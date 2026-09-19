@@ -34,7 +34,7 @@ def test_parse_duration_units():
 
 
 def test_parse_duration_month_vs_minute():
-    # `m` is minutes, `mo` is months — the collision the spec called out.
+    # `m` is minutes, `mo` is months.
     assert parse_duration("1m") == 60
     assert parse_duration("1mo") == 2_592_000
 

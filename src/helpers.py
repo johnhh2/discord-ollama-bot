@@ -78,25 +78,22 @@ async def announce_record(channel, category: str, holder_name: str, value: int, 
     set the score (and, for a bank heist, who split the cut).
 
     Also logs the break to `notable_events` so !recap can mention records
-    set today. This is the single hook point for every record category —
-    callers in lottery/gambling/games all funnel through here.
+    set today — every record category (lottery/gambling/games) funnels
+    through here.
 
-    Records-channel routing (best-effort, never blocks the source-channel post):
-    each guild may configure a single `records_channel`. That channel receives
-    (a) every record set in its own guild, and (b) every new GLOBAL-top record
-    from any guild (a value that beats every other guild's value for the
-    category). Cross-guild global tops are tagged with the source guild name.
+    Records channel (best-effort, never blocks the source-channel post): a
+    guild's `records_channel` gets every record set in that guild, plus every
+    new GLOBAL top from any guild (a value that beats every other guild's for
+    the category), tagged with the source guild's name.
 
-    Notification policy: when `holder_id` is given, the source-channel post
-    carries a content mention of the holder so the achiever is highlighted.
-    That send is still `silent=True` by default — nearly every record breaks
-    off the holder's own action (a gamble, a purchase, a winning move), so
-    they're already watching the channel and a push notification is noise.
-    Pass `notify=True` only when the holder is NOT present for the trigger
-    (e.g. the scheduled lottery draw) and the ping needs to be real. The
-    records-channel copy and the cross-guild mirrors are always `silent=True`:
-    they fire unprompted off other people's gambling, and a records channel
-    mirroring every guild would be a notification firehose.
+    Pings: with `holder_id`, the source-channel post mentions the holder but
+    stays `silent=True` — nearly every record breaks off the holder's own
+    action (a gamble, a purchase, a winning move), so they're already
+    watching the channel. Pass `notify=True` only when the holder is NOT
+    present for the trigger (e.g. the scheduled lottery draw). The
+    records-channel copy and the cross-guild mirrors are always silent: they
+    fire off other people's gambling, and a records channel mirroring every
+    guild would be a notification firehose.
     """
     if channel is None:
         return
@@ -218,9 +215,9 @@ def get_memory_mb() -> float:
         with open("/proc/self/status") as f:
             for line in f:
                 if line.startswith("VmRSS:"):
-                    return int(line.split()[1]) / 1024
+                    return int(line.split()[1]) / 1024  # VmRSS is in kB
     except Exception:
-        pass
+        pass  # no /proc off Linux — report 0
     return 0.0
 
 
@@ -354,9 +351,9 @@ def parse_duration(value: str) -> "int | None":
     into seconds. Returns None if the string isn't a valid duration.
 
     Units (case-insensitive): ``s`` seconds, ``m`` minutes, ``h`` hours,
-    ``d`` days, ``w`` weeks, ``mo`` months (30d), ``y`` years (365d). Note the
-    minute/month collision is resolved by spelling month as ``mo`` — a bare
-    ``m`` is always minutes. A decimal multiplier is allowed (``1.5h``).
+    ``d`` days, ``w`` weeks, ``mo`` months (30d), ``y`` years (365d). Month is
+    spelled ``mo`` — a bare ``m`` is always minutes. A decimal multiplier is
+    allowed (``1.5h``).
     """
     s = value.strip().lower()
     if not s:
@@ -485,7 +482,6 @@ class MemberConverter(commands.Converter):
         if ctx.guild is None or argument.isdigit():
             raise commands.BadArgument(f"Member '{argument}' not found.")
 
-        # Case-insensitive substring match against display name and username
         query = argument.lower()
         matches = [
             m for m in ctx.guild.members
@@ -528,6 +524,8 @@ class OptionalMember(commands.Converter):
             return None
 
 
+# A mention or a bare snowflake ID — 15–20 digits, so a short number (a
+# count or an amount) is never read as an ID.
 _USER_TOKEN_RE = re.compile(r"<@!?(\d{15,20})>|(\d{15,20})")
 
 
@@ -642,12 +640,11 @@ async def shop_payout(
 ) -> bool:
     """Credit a gambling win/refund. The mirror image of `shop_charge`.
 
-    `shop_charge` lets a godmode user play without paying. Crediting the win
-    anyway made godmode an unbounded money printer into the shared economy —
-    balances have no guild dimension, so `!flip 1m 100000` under godmode costs
-    nothing, pays out billions, and those coins spend in every server. Free
-    play means no money in *and* no money out, so this is a no-op for godmode
-    users (refunds and pushes included: they never paid the bet).
+    A no-op for godmode users, refunds and pushes included: `shop_charge` lets
+    them play without paying, so crediting the win would make godmode an
+    unbounded money printer — `!flip 1m 100000` costs nothing, pays out
+    billions, and balances have no guild dimension, so those coins spend in
+    every server.
 
     Returns True if the credit set a new highest_balance record.
     """
@@ -658,7 +655,6 @@ async def shop_payout(
 
 
 def _render_race(game: dict) -> str:
-    """Render the race board with each player's lane."""
     lines = []
     for uid in game["players"]:
         pos = game["positions"][uid]

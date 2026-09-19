@@ -155,7 +155,7 @@ class TestExtraBlunderProbabilityForElo:
     """Extra-blunder probability: forced SEE-losing moves layered on top of
     Maia's sampled move. Calibrated against published per-Elo blunder rates
     (Maia paper + Lichess data): real Elo 100 humans blunder ~5-8 times per
-    game, Elo 1000 ~2-3. Curve tapers from 0.15 at Elo 100 to 0.01 at Elo
+    game, Elo 1000 ~2-3. Curve tapers from 0.10 at Elo 100 to 0.01 at Elo
     1000 (never fully zero — even Elo 1000 humans drop the occasional piece)."""
 
     def test_anchor_points(self):
@@ -167,8 +167,8 @@ class TestExtraBlunderProbabilityForElo:
             )
 
     def test_nonzero_through_full_sub_maia_range(self):
-        """Unlike prior versions, this curve stays nonzero at every Elo in
-        sub-Maia — even Elo 1000 humans blunder occasionally."""
+        """The curve stays nonzero at every Elo in sub-Maia — even Elo 1000
+        humans blunder occasionally."""
         for elo in (100, 400, 700, 1000):
             assert chess_bot.extra_blunder_probability_for_elo(elo) > 0.0
 
@@ -212,7 +212,7 @@ class TestNoticeProbabilityForEloAndPiece:
         assert abs(p - 0.85) < 0.001
 
     def test_elo_1000_queen_is_near_certain(self):
-        # 0.85 + 0.35 = 1.20, capped at 0.99 — hanging queens essentially
+        # 0.85 + 0.60 = 1.45, capped at 0.99 — hanging queens essentially
         # always grabbed at the top of the sub-Maia range.
         p = chess_bot.notice_probability_for_elo_and_piece(1000, chess.QUEEN)
         assert abs(p - 0.99) < 0.001
@@ -346,7 +346,6 @@ class TestFilterMateInOne:
         assert chess.Move.from_uci("b7b6") not in filtered
 
     def test_returns_unchanged_when_all_candidates_mate(self):
-        # Contrive: if every candidate allows mate, return original (lost).
         b = chess.Board("r1bqkbnr/pppp1ppp/2n5/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 4 3")
         # Both candidates ignore the f7 threat.
         candidates = [chess.Move.from_uci("b7b6"), chess.Move.from_uci("a7a6")]
@@ -419,30 +418,13 @@ class TestFindSeeLosingMove:
             assert other != first
 
     def test_inverse_value_weighting_prefers_pawn_drops(self):
-        """Position where both a pawn drop and a queen drop are available
-        SEE-losing moves. With inverse-value weighting (pawn weight 1.0,
-        queen weight 0.11), pawn drops should dominate the sample."""
-        # White to move. Black queen on h5 (could be captured by white queen
-        # on d1 via Qxh5, but that walks the queen into the black bishop on
-        # f7's diagonal... actually let me design something cleaner).
-        #
-        # Simpler: white queen on a1 and white pawn on b2, black queen on h8.
-        # Available SEE-losing moves: any pawn move that hangs the pawn, any
-        # queen move that hangs the queen.
-        # Black rook on b8 attacks b-file: b2-b3 hangs the pawn.
-        # Black bishop on h7 attacks down a1-h8 diagonal: Qa1xh8 trades queen
-        # for nothing useful... that's a CAPTURE, not a hang. Need a clean
-        # setup where queen and pawn both have purely losing non-capture moves.
-        #
-        # Use a constructed position with many safe pawn-drop options and
-        # only one queen-drop option, then verify the weighted distribution
-        # heavily favors pawn-drops over many samples.
-        #
-        # Position: white king + queen on the back rank, several white pawns
-        # one square from black attackers, black pieces lined up to attack.
+        """With inverse-value weighting (pawn weight 1.0, queen weight 0.11),
+        pawn drops should dominate the sample."""
+        # White: king + queen (a1) behind a full pawn rank; Black: back-rank
+        # pieces, no pawns. The only SEE-losing moves here are pawn pushes
+        # (b4, d4, g4, h4) — the queen has none, so queen_drops stays 0.
         b = chess.Board("rnbqkbnr/8/8/8/8/8/PPPPPPPP/Q3K3 w - - 0 1")
         samples = [chess_bot._find_see_losing_move(b) for _ in range(200)]
-        # Most picks should be pawn moves (lower-value drops favored).
         pawn_drops = sum(
             1 for m in samples
             if m is not None and b.piece_at(m.from_square).piece_type == chess.PAWN
@@ -451,10 +433,7 @@ class TestFindSeeLosingMove:
             1 for m in samples
             if m is not None and b.piece_at(m.from_square).piece_type == chess.QUEEN
         )
-        # With pawn weight 1.0 and queen weight ~0.11, pawn drops should
-        # dominate by a factor of at least 5x even accounting for variance.
-        # (Total pawn options likely outnumber queen options too, compounding
-        # the bias.)
+        # The weights alone give ~9x; 5x leaves room for variance.
         assert pawn_drops > queen_drops * 5, (
             f"expected pawn-drops to dominate; got {pawn_drops} pawn, "
             f"{queen_drops} queen out of {len(samples)} samples"
@@ -576,7 +555,7 @@ async def test_pick_move_maia_fallback_to_stockfish_when_lc0_missing(monkeypatch
     move = await chess_bot.pick_move(chess_engine.STARTING_FEN, 1500)
     assert calls["configure"] != [], "expected Stockfish configure call after fallback"
     opts = calls["configure"][0]
-    assert opts.get("UCI_Elo") == 1320
+    assert opts.get("UCI_Elo") == 1320  # Stockfish's UCI_Elo floor — the Maia fallback pins to it
     assert isinstance(move, chess.Move)
 
 
@@ -610,8 +589,7 @@ async def test_pick_move_sub_maia_uses_maia_1100_baseline(monkeypatch):
     assert any("maia-1100" in str(a) for a in args), (
         f"sub-Maia at Elo 500 should call maia-1100, got args {args!r}"
     )
-    # Default analyse_pvs starts with e2e4; pool sampling at Elo 500 (pool=~5)
-    # with random.choice unpinned picks something from the top-5.
+    # random.choice is unpinned, so any move in the Elo-500 pool may come back.
     assert isinstance(move, chess.Move)
 
 
@@ -725,9 +703,8 @@ async def test_pick_move_sub_maia_filters_mate_in_one_at_elo_400(monkeypatch):
     monkeypatch.setattr(chess_bot.random, "random", lambda: 0.999)
     monkeypatch.setattr(chess_bot.random, "choice", lambda candidates: list(candidates)[0])
     move = await chess_bot.pick_move(fen, 400)
-    # b7b6 and g8f6 both allow Qxf7#. d7d6 also allows mate (doesn't defend
-    # f7). g7g6 is the only one that prevents mate. Filter survives:
-    # [g7g6] → choice picks first → g7g6.
+    # d7d6 doesn't defend f7 either, so the filter leaves [g7g6] → choice
+    # picks first → g7g6.
     assert move == chess.Move.from_uci("g7g6"), (
         f"expected mate filter to leave g7g6, got {move}"
     )
@@ -754,14 +731,9 @@ async def test_pick_move_sub_maia_mate_filter_skipped_when_already_in_check(monk
     """When the bot is already in check, legal-move enumeration already
     constrains the response. The mate-check should be skipped (no need to
     re-filter what's already restricted)."""
-    # Position: black king on e8, white queen on h5 with check via Qxe5+...
-    # Simpler: construct a check position and verify _filter_mate_in_one
-    # is NOT called by inspecting the trace.
-    #
-    # Easier verification: use a position where the bot is in check and
-    # has only one legal escape. If the mate-filter ran, it would still
-    # return that one move (its fallback), so we just confirm the function
-    # completes without exception.
+    # The bot is in check with one legal escape. Had the mate-filter run, it
+    # would still return that one move (its fallback), so this only confirms
+    # the function completes without exception.
     fen = "4k3/8/8/8/8/8/4q3/4K3 w - - 0 1"  # white king on e1 in check from queen on e2
     pvs = ["e1d1"]  # only escape is to d1
     _install_fake_engine(monkeypatch, analyse_pvs=pvs, maia_available=True)
@@ -911,7 +883,7 @@ def _stub_chess_helpers(monkeypatch):
     monkeypatch.setattr(_chess_mod, "_delete_after", _noop)
 
     async def _allow(_ctx):
-        return False
+        return False  # check_chess_channel returns True when it blocked the command
     monkeypatch.setattr(_chess_mod, "check_chess_channel", _allow)
 
     edit_calls = []
@@ -980,7 +952,6 @@ async def test_cmd_chess_bot_mention_elo_below_min_rejected(db, _stub_chess_help
 
     await cog.cmd_chess.callback(cog, ctx, "50")
 
-    # No game created; error embed sent.
     assert 1002 not in _state.active_chess_games
     assert len(ctx.sent_embeds) >= 1
     assert "Invalid Elo" in ctx.sent_embeds[-1].title

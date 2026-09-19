@@ -1,6 +1,6 @@
 """Tests for the schema migration runner.
 
-Cover the four invariants that matter:
+The runner's core invariants:
   1. Empty DB → migrations apply in order, schema_migrations is populated.
   2. Re-run → no-op (idempotent).
   3. Edited file → checksum mismatch raises.
@@ -94,10 +94,9 @@ async def test_gap_in_version_numbering_raises(tmp_path, fake_cur):
 
 @pytest.mark.asyncio
 async def test_baseline_heuristic_marks_existing_db_without_running(tmp_path, fake_cur):
-    # Simulate an existing prod DB: create the sentinel table directly, then
-    # point the runner at a migration set whose first file would otherwise
-    # try to recreate it (with a deliberately-broken statement we want to
-    # confirm does NOT execute).
+    # An existing prod DB: the sentinel table is already there, and the
+    # baseline is deliberately invalid SQL, so it can only pass by being
+    # marked applied without executing.
     await fake_cur.execute("CREATE TABLE economy_users (user_id INTEGER PRIMARY KEY)")
     _write(
         tmp_path,

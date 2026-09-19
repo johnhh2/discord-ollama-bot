@@ -60,7 +60,6 @@ class AdminCog(commands.Cog):
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
 
-        # Parse optional message count (default 5)
         try:
             count = int(n) if n else 5
             if count <= 0:
@@ -85,12 +84,10 @@ class AdminCog(commands.Cog):
         if text is None:
             await ctx.send(embed=emb("🔊 Say", "Usage: `!say <text>`", C_GREY))
             return
-        # Try to delete the command message (fail silently)
         try:
             await ctx.message.delete()
         except (discord.Forbidden, discord.NotFound):
-            pass
-        # Send the message
+            pass  # best-effort — the text is still sent
         await ctx.send(text)
 
 
@@ -105,12 +102,12 @@ class AdminCog(commands.Cog):
         permissions = "6192724835560529"
         invite_url = f"https://discord.com/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&permissions={permissions}&integration_type=0&scope=bot"
 
-        # Create a view with a button
         _bot = self.bot
         class InviteView(ui.View):
             @ui.button(label="Get Bot Invitation Link", style=discord.ButtonStyle.primary)
             async def copy_button(self, interaction: discord.Interaction, button: ui.Button):
-                # Verify the user clicking the button is an admin
+                # The button is visible to the whole channel. is_admin takes a
+                # Context, so build one from the message and swap in the clicker.
                 user_ctx = await _bot.get_context(interaction.message)
                 user_ctx.author = interaction.user
                 if not is_admin(user_ctx):
@@ -137,7 +134,6 @@ class AdminCog(commands.Cog):
             return
 
         try:
-            # Try to get vanity URL first (if server has one)
             if ctx.guild.vanity_url:
                 invite_url = str(ctx.guild.vanity_url)
             else:
@@ -149,7 +145,6 @@ class AdminCog(commands.Cog):
                 )
                 invite_url = invite.url
 
-            # Create a view with a button
             _bot = self.bot
             _requester_id = ctx.author.id
 

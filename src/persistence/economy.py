@@ -62,10 +62,10 @@ _ECONOMY_UPSERT_SQL = """INSERT INTO economy_users
 async def save_economy(uid: int = None):
     """Write economy state to DB.
 
-    If `uid` is provided, only that user's row is written (plus economy_meta and
-    that user's guild_house if relevant) — safe even if state.economy was never
-    fully loaded. If `uid` is None, writes ALL rows in state (legacy bulk save,
-    used by do_daily_reset).
+    If `uid` is provided, only that user's row is written (plus economy_meta's
+    last_daily_reset; guild_house is left to save_guild_house) — safe even if
+    state.economy was never fully loaded. If `uid` is None, writes ALL rows in
+    state (legacy bulk save, used by do_daily_reset).
     """
     async with with_cursor() as cur:
         if uid is not None:
@@ -118,8 +118,7 @@ async def save_insurance():
     """Persist insurance into the shop_effects table (effect_type='insurance').
     Insurance is bot-wide since migration 0055 — one policy per user, stored
     under the sentinel guild_id=0. protected_from is stored as history_json and
-    the expiry as expires_at. The old standalone shop_insurance table was
-    dropped in migration 0032."""
+    the expiry as expires_at."""
     from src.config import SHOP_INSURANCE_DEFAULT_TIER
     async with with_transaction() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='insurance'")

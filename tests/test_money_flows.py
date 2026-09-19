@@ -121,7 +121,6 @@ async def test_steal_blocked_in_private_channel(db, monkeypatch):
 
     await cog.cmd_steal.callback(cog, ctx, target=victim)
 
-    # Refused with the private-channel embed; balances untouched.
     assert len(ctx.sent_embeds) == 1
     assert "Private Channel" in ctx.sent_embeds[0].title
     assert await _economy.get_balance(thief.id) == 5000
@@ -218,7 +217,6 @@ async def test_steal_caught_and_jailed_deducts_fee_and_sets_jail(db, monkeypatch
 
     assert await _economy.get_balance(thief.id) == starting - 1000
     assert await _read_db_balance(thief.id) == starting - 1000
-    # Victim not touched on failure
     assert await _economy.get_balance(victim.id) == 10_000
 
     jail_until = _state.economy["users"][str(thief.id)]["jail_until"]
@@ -383,8 +381,8 @@ async def test_steal_rigged_force_success(db, monkeypatch):
     ctx = _make_ctx(thief, victim)
     await cog.cmd_steal.callback(cog, ctx, target=victim)
 
-    assert await _economy.get_balance(thief.id) > 5000  # gained from steal
-    assert _state.rigged_steal[thief.id] == 1  # decremented
+    assert await _economy.get_balance(thief.id) > 5000
+    assert _state.rigged_steal[thief.id] == 1
 
 
 async def test_steal_concurrent_lock_blocks_second_attempt(db):
@@ -399,7 +397,6 @@ async def test_steal_concurrent_lock_blocks_second_attempt(db):
     ctx = _make_ctx(thief, victim)
     await cog.cmd_steal.callback(cog, ctx, target=victim)
 
-    # Balance untouched; rejected with "Already Running" embed.
     assert await _economy.get_balance(thief.id) == 5000
     assert any("Already Running" in (e.title or "") for e in ctx.sent_embeds)
 
@@ -426,7 +423,6 @@ async def test_mug_clean_getaway_target_loses_amount(db, monkeypatch):
     ctx.bot = cog_bot
     await cog.cmd_mug.callback(cog, ctx, target=victim, amount="1000")
 
-    # Thief paid 1000 upfront; that's gone. Doesn't get the 1000 back.
     assert await _economy.get_balance(thief.id) == 5000 - 1000
     assert await _economy.get_balance(victim.id) == 10_000 - 1000
     assert await _read_db_balance(thief.id) == 4000
@@ -454,7 +450,6 @@ async def test_mug_caught_jails_thief_for_one_day(db, monkeypatch):
     assert await _economy.get_balance(victim.id) == 9000
     jail_until = _state.economy["users"][str(thief.id)]["jail_until"]
     assert before + 86000 < jail_until < before + 87000
-    # Reason captured at jail time, persisted to DB
     assert _state.economy["users"][str(thief.id)]["jail_reason"] == "Mugged victim for 1,000 coins"
     assert await _read_db_jail_reason(thief.id) == "Mugged victim for 1,000 coins"
 
@@ -596,9 +591,9 @@ async def test_mug_records_both_attacker_lost_and_victim_lost(db, monkeypatch):
 
     thief_rec = _state.crime_today_by_user.get((42, str(thief.id)), {})
     victim_rec = _state.crime_today_by_user.get((42, str(victim.id)), {})
-    assert thief_rec.get("lost") == 1000   # paid muggers
+    assert thief_rec.get("lost") == 1000
     assert thief_rec.get("gained", 0) == 0
-    assert victim_rec.get("lost") == 1000  # robbed
+    assert victim_rec.get("lost") == 1000
     assert victim_rec.get("gained", 0) == 0
 
 
@@ -723,7 +718,6 @@ async def test_jailbreak_success_clears_jail_until(db, monkeypatch):
     assert user_data["jail_until"] == 0
     assert user_data["jailbreak_used"] is True
     assert user_data["jail_reason"] is None
-    # Persisted
     assert await _read_db_jail_until(user.id) == 0
     assert await _read_db_jail_reason(user.id) is None
 
@@ -863,10 +857,9 @@ def _lobby_ctx(cog, host, victim, *clicks):
 
 
 async def test_bankheist_lobby_rejects_jailed_joiner(db):
-    """The lobby applies the host's jail gate to joiners. Pre-fix it checked
-    bot / target / host / duplicate only, so a jailed player took a full
-    share with nothing at stake — a second jail roll costs nothing while
-    already inside."""
+    """The lobby applies the host's jail gate to joiners: an already-jailed
+    player would take a full share with nothing at stake, since a second jail
+    roll costs them nothing."""
     cog = EconomyCog(bot=_StubBot())
     host = FakeMember(uid=860, display_name="host")
     victim = FakeMember(uid=861, display_name="victim")
@@ -1109,7 +1102,7 @@ async def test_bankheist_resolve_success_splits_loot_evenly(db, monkeypatch):
     await _economy._ensure_user(j1.id)
     await _economy._ensure_user(j2.id)
     await _economy._ensure_user(j3.id)
-    _seed_savings(target.id, 10_001)  # 20% = 2000 → split 4 → 500 each, +1 to host
+    _seed_savings(target.id, 10_001)  # 20% = 2000 → split 4 → 500 each
 
     monkeypatch.setattr(random, "random", lambda: 0.0)  # always under chance
 
@@ -1126,7 +1119,6 @@ async def test_bankheist_resolve_success_splits_loot_evenly(db, monkeypatch):
     # Victim savings drained by 2000 → about 8001 left.
     remaining = await _economy.get_savings_value(target.id)
     assert 8000 <= remaining <= 8002
-    # DB persistence
     assert await _read_db_balance(host.id) == 500
     assert await _read_db_balance(j1.id) == 500
 
@@ -1209,7 +1201,6 @@ async def test_bankheist_active_heist_blocks_second_in_same_channel(db):
 
     # Still the original placeholder — the second invocation didn't replace it.
     assert cog._active_heists[ctx.channel.id] == {"placeholder": True}
-    # Rejection embed sent
     assert any(
         getattr(e, "title", "") == "⏳ Heist Already Running"
         for e in ctx.sent_embeds
@@ -1240,7 +1231,6 @@ async def test_bankheist_resolve_success_jails_everyone_when_rolls_low(db, monke
     j1_jail = _state.economy["users"][str(j1.id)]["jail_until"]
     assert now + 86_000 < host_jail < now + 87_000
     assert now + 86_000 < j1_jail < now + 87_000
-    # Result embed body lists both as caught.
     assert "Caught:" in result.description
     assert host.mention in result.description
     assert j1.mention in result.description
@@ -1312,19 +1302,16 @@ async def test_crime_eligible_default_false_blocks_all_three(db, monkeypatch):
     await _economy.add_balance(thief.id, 5000)
     await _economy.add_balance(victim.id, 500)  # well under 100k
 
-    # !steal → off-limits
     ctx = _make_ctx(thief, victim, content="!steal @victim")
     await cog.cmd_steal.callback(cog, ctx, target=victim)
     assert any(getattr(e, "title", "") == "🛡️ Off-Limits" for e in ctx.sent_embeds)
     assert await _economy.get_balance(victim.id) == 500
 
-    # !mug → off-limits
     ctx2 = _make_ctx(thief, victim, content="!mug @victim 100")
     await cog.cmd_mug.callback(cog, ctx2, target=victim, amount="100")
     assert any(getattr(e, "title", "") == "🛡️ Off-Limits" for e in ctx2.sent_embeds)
     assert await _economy.get_balance(victim.id) == 500
 
-    # !bankheist → off-limits
     ctx3 = _make_ctx(thief, victim, content="!bankheist @victim")
     _grant_level(thief.id, 14)  # let the host clear their own gate
     await cog.cmd_bankheist.callback(cog, ctx3, target=victim)
@@ -1340,7 +1327,6 @@ async def test_crime_eligible_latches_when_wallet_crosses_100k(db):
     await _economy.add_balance(uid, 60_000)  # now 110k → crosses threshold
     assert _state.economy["users"][str(uid)]["crime_eligible"] is True
 
-    # Verify it's persisted to DB.
     pool = await _persistence.get_pool()
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
@@ -1350,16 +1336,13 @@ async def test_crime_eligible_latches_when_wallet_crosses_100k(db):
 
 
 async def test_crime_eligible_latches_via_savings_total(db):
-    """Wallet at 60k + savings deposit of 50k → 110k combined → eligible."""
+    """Wallet at 50k + savings deposit of 60k → 110k combined → eligible."""
     uid = 1120
     await _economy.add_balance(uid, 110_000)  # crosses threshold via wallet alone first…
-    # Reset the latch to simulate the "split between wallet and savings" scenario:
-    # we need a starting state where wallet+savings each individually < 100k but
-    # the sum > 100k. Easiest: deposit some into savings, then assert.
+    # Build the split case: wallet and savings each under 100k, sum over it.
     _state.economy["users"][str(uid)]["crime_eligible"] = False  # un-latch for the test
     await _economy.deduct_balance(uid, 60_000)
     assert _state.economy["users"][str(uid)]["balance"] == 50_000
-    # Now deposit 60k into savings via add_savings → triggers the latch via the savings hook.
     await _economy.add_balance(uid, 60_000)
     _state.economy["users"][str(uid)]["crime_eligible"] = False  # un-latch again
     assert await _economy.add_savings(uid, 60_000) is True

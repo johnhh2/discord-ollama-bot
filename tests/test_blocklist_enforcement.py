@@ -1,21 +1,17 @@
 """Regression tests for the blocklist bypasses found in the 2026-08 audit.
 
-Two holes existed, both from the same root cause: the `!ban` / `!globalban`
-check lived only in `events.on_message`, so anything that reaches the bot by
-another route walked straight past it.
+Two holes, one root cause: the `!ban` / `!globalban` check lived only in
+`events.on_message`, so anything reaching the bot another way walked past it.
 
-1. **DMs.** The per-guild check was `message.guild is not None and (gid, uid)
-   in blocklist`. A DM has no guild, so a banned user could DM the bot and keep
-   playing. Because balances have no guild dimension, they farmed coins in a DM
-   and spent them in the server that banned them.
+1. **DMs.** The per-guild check required `message.guild is not None`, so a
+   banned user kept playing in a DM — and balances have no guild dimension,
+   so those coins spent fine in the guild that banned them.
 
 2. **Reactions.** Six listeners act on raw reactions; only `dailies_cog`
-   mirrored the check. A banned user could still claim `!event` coin drops,
-   file bounty claims (and collect the poll-voter reward), and play wagered
-   TTT/C4 by clicking number reactions.
+   mirrored the check, leaving `!event` coin drops, bounty claims and wagered
+   TTT/C4 clicks open.
 
-`src.permissions.is_silenced` is now the single source of truth. Any new entry
-point that can act on a user's behalf must consult it.
+`src.permissions.is_silenced` is now the single gate (CLAUDE.md: Blocklist).
 """
 from unittest.mock import AsyncMock
 

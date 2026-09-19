@@ -96,10 +96,8 @@ _VALUES_FN_RE = re.compile(r"VALUES\s*\(\s*(\w+)\s*\)", re.IGNORECASE)
 
 def _translate(sql: str) -> str:
     """Rewrite MariaDB-isms to SQLite-compatible SQL."""
-    # %s placeholders -> ?
     out = sql.replace("%s", "?")
 
-    # INSERT IGNORE -> INSERT OR IGNORE
     out = re.sub(r"\bINSERT\s+IGNORE\b", "INSERT OR IGNORE", out, flags=re.IGNORECASE)
 
     # GREATEST(a, b) -> MAX(a, b): SQLite's MAX doubles as the scalar
@@ -188,17 +186,15 @@ def _translate(sql: str) -> str:
         table = m_addpk.group(1)
         cols = m_addpk.group(2).strip()
         return f"--REBUILD-PK {table} ({cols})"
-    # information_schema.tables → sqlite_master shim used by run_migrations'
-    # _table_exists. The MariaDB form has a `DATABASE()` builtin SQLite lacks;
-    # rather than rewrite the whole query, the runner already has a fallback,
-    # so we let the original query fail naturally and rely on that fallback.
+    # Deliberately no information_schema shim: run_migrations' _table_exists
+    # query uses `DATABASE()`, which SQLite lacks, so it fails here and the
+    # runner's own sqlite_master fallback takes over.
 
     # INSERT ... ON DUPLICATE KEY UPDATE col=VALUES(col), ...
     #   -> INSERT ... ON CONFLICT(<pk_cols>) DO UPDATE SET col=excluded.col, ...
     m = _ON_DUP_RE.search(out)
     if m:
         update_clause = m.group(1)
-        # Find the table being inserted into to resolve PK.
         table_match = _INSERT_TABLE_RE.search(out)
         if not table_match:
             raise ValueError(f"Could not find INSERT INTO table in: {sql!r}")
@@ -209,7 +205,6 @@ def _translate(sql: str) -> str:
                 f"No PK mapping for table {table!r} in tests/fakes/db.py:_TABLE_PKS. "
                 f"Add one if a new table was introduced."
             )
-        # Replace VALUES(col) with excluded.col
         update_clause = _VALUES_FN_RE.sub(lambda mm: f"excluded.{mm.group(1)}", update_clause)
         conflict_cols = ", ".join(pks)
         new_tail = f" ON CONFLICT({conflict_cols}) DO UPDATE SET {update_clause}"
@@ -361,11 +356,7 @@ class FakePool:
 
 async def make_fake_pool() -> FakePool:
     """Build a fresh in-memory SQLite, apply migrations through the same runner
-    production uses, and return a FakePool.
-
-    Test-prod parity comes from the migration files themselves — there is no
-    parallel hand-translated test schema to drift out of sync.
-    """
+    production uses, and return a FakePool (see the module docstring)."""
     # Avoid an import-time cycle (src.migrations -> src.db is fine, but keeping
     # this import local matches the rest of this module's lazy-import style).
     from src import migrations as _migrations

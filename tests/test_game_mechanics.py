@@ -11,10 +11,9 @@ Each test pins the *contract* of the helper so a future refactor that
 changes gravity direction, photo-finish ranking, or the dealer's stand
 threshold fails loudly.
 
-Chess special moves (castling, en-passant, promotion, check/checkmate) and
-mini-cactpot reveal mechanics aren't tested here — those features either
-aren't implemented or live in interactive command flows that require a
-real Discord gateway.
+Chess special moves (castling, en-passant, promotion) and mini-cactpot
+reveal mechanics aren't tested here — see tests/test_chess.py and
+TestMiniCactpot in tests/test_bot.py.
 """
 
 from src.games.ttt_c4 import drop_in_column, check_c4_winner
@@ -36,7 +35,6 @@ class TestDropInColumn:
 
     def test_drop_into_partially_full_column_lands_above_pieces(self):
         board = _empty_c4_board()
-        # Place a piece at the bottom of column 0
         board[5][0] = "X"
         assert drop_in_column(board, col=0) == 4
 
@@ -69,9 +67,7 @@ class TestDropInColumn:
         # Stack column 3 halfway full
         for r in range(5, 2, -1):
             board[r][3] = "X"
-        # Column 3 next slot should be row 2
         assert drop_in_column(board, col=3) == 2
-        # Column 6 still empty all the way down
         assert drop_in_column(board, col=6) == 5
 
 
@@ -163,7 +159,6 @@ class TestDealerPlay:
         assert len(dealer) == 2  # didn't draw
 
     def test_dealer_hits_on_16_until_at_least_17(self):
-        # Dealer starts at 16, draws — final hand >= 17.
         deck = [_card("5")]   # 16 + 5 = 21
         dealer = [_card("10"), _card("6")]
         dealer_play(deck, dealer)
@@ -171,7 +166,6 @@ class TestDealerPlay:
         assert len(dealer) == 3
 
     def test_dealer_hits_repeatedly_until_threshold(self):
-        # Stack the deck so the dealer needs multiple hits.
         # Cards are drawn from the END of the deck (deck.pop), so the LAST card
         # in the list is drawn first.
         deck = [_card("9"), _card("4"), _card("3"), _card("2")]  # drawn order: 2,3,4,9
@@ -182,7 +176,6 @@ class TestDealerPlay:
         assert deck == [_card("9")]  # one card left undrawn
 
     def test_dealer_can_bust(self):
-        # Deck forces a bust on the dealer.
         deck = [_card("Q")]   # 16 + 10 = 26
         dealer = [_card("K"), _card("6")]
         dealer_play(deck, dealer)
@@ -193,7 +186,6 @@ class TestDealerPlay:
         """Soft 17 = Ace + 6. The bot's rule (`<= 16`) means dealer stands on
         ANY 17, soft or hard. Pin that against a future "hit on soft 17" change.
         """
-        # Build a soft 17: A + 6
         dealer = [_card("A"), _card("6")]
         assert hand_value(dealer) == 17  # soft 17
         deck = [_card("9")]

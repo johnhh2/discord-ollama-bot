@@ -154,16 +154,15 @@ async def test_tax_deducts_per_message_and_credits_master(db, cog):
 
 
 async def test_tax_does_not_fire_on_command_messages(db, cog):
-    """Lines 385: `not message.content.startswith('!')` — taxed users'
-    `!commands` are exempt. Pre-claim auto-daily so we can isolate the
-    tax-deduction effect."""
+    """A taxed user's `!commands` are exempt (on_message skips content
+    starting with `!`). Auto-daily is pre-claimed so only the tax deduction
+    can move the balance."""
     payer = FakeMember(uid=1002)
     master = FakeMember(uid=2002)
     guild = FakeGuild(gid=42)
     channel = _Channel()
 
     await _economy.add_balance(payer.id, 5000)
-    # Mark today's auto-daily as already claimed.
     _state.economy["users"][str(payer.id)]["daily_date"] = _economy._ct_today()
 
     _state.active_taxes[(42, payer.id)] = {
@@ -263,7 +262,6 @@ async def test_curse_decrements_and_replays_in_curse_font(db, cog):
     msg = _Msg(target, "the quick brown fox", guild, channel)
     await cog.on_message(msg)
 
-    # Counter decremented but entry still present.
     assert _state.active_curses[(42, target.id)]["remaining"] == 2
     # Channel got a cursed-font replay.
     channel.send.assert_awaited_once()
@@ -340,7 +338,6 @@ async def test_mock_fires_server_wide_in_any_channel(db, cog):
     }
     await cog.on_message(_Msg(target, "msg", guild, other_channel))
 
-    # Fires regardless of channel — counter decremented.
     assert _state.active_mocks[(42, target.id)]["remaining"] == 4
     other_channel.send.assert_awaited_once()
 
@@ -388,10 +385,9 @@ async def test_ragebait_deletes_at_zero(db, cog):
 
 # ── Insurance protects runtime handlers ───────────────────────────────────────
 #
-# Insurance is supposed to no-op mock and ragebait at runtime (matching
-# the tax handler's behavior). Before this was added, mock/ragebait would
-# fire even on insured users — the effect remained in state.active_*
-# until its counter ticked down, oblivious to insurance.
+# Insurance no-ops mock, curse and ragebait at runtime, like tax: while a
+# policy covers the effect the entry stays in state.active_* and its counter
+# does not tick down.
 
 async def test_mock_skips_when_target_is_insured(db, cog):
     target = FakeMember(uid=3010)
@@ -446,7 +442,6 @@ async def test_ragebait_skips_when_target_is_insured(db, cog):
     await cog.on_message(_Msg(target, "spicy take", guild, channel))
 
     rage = _state.active_ragebaits[(42, target.id)]
-    # Counter and history must be untouched.
     assert rage["remaining"] == 3
     assert rage["history"] == []
 

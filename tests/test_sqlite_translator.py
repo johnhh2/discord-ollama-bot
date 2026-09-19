@@ -76,7 +76,6 @@ async def test_translate_resolves_composite_primary_key():
         " ON DUPLICATE KEY UPDATE value=VALUES(value)"
     )
     out = _translate(sql)
-    # Composite PK: (guild_id, category) — both must appear in ON CONFLICT.
     assert "ON CONFLICT(guild_id, category)" in out
 
 
@@ -206,12 +205,10 @@ def _tables_used_in_on_duplicate() -> set[str]:
     in the persistence layer. Each must have a _TABLE_PKS entry or the test
     suite would fail when that save_X is exercised under the `db` fixture."""
     text = _persistence_sql_text()
-    # Find INSERT INTO <table> within statements that also contain ON DUPLICATE.
-    # Crude but sufficient — split on ON DUPLICATE, look for the most recent
-    # INSERT INTO before each occurrence.
+    # Crude but sufficient — split on ON DUPLICATE and take the most recent
+    # INSERT INTO before each occurrence (the last one in each chunk).
     tables: set[str] = set()
     for chunk in text.split("ON DUPLICATE"):
-        # Look at the tail of the previous chunk — the most recent INSERT INTO.
         ms = re.findall(r"INSERT\s+(?:OR\s+\w+\s+|IGNORE\s+)?INTO\s+(\w+)", chunk, re.IGNORECASE)
         if ms:
             tables.add(ms[-1].lower())
@@ -224,10 +221,8 @@ async def test_every_on_duplicate_table_has_a_pk_mapping():
     the `db` fixture would ValueError at runtime."""
     used = _tables_used_in_on_duplicate()
     missing = used - set(_TABLE_PKS)
-    # The first chunk of the split-on-"ON DUPLICATE" doesn't refer to a real
-    # ON DUPLICATE KEY UPDATE site (it's everything BEFORE the first one).
-    # Ignore tables that appear only in plain INSERT statements.
-    # We re-check by ensuring each "missing" table actually has an
+    # The scanner over-collects: the chunk after the last ON DUPLICATE ends in
+    # a plain INSERT. Re-check that each "missing" table really has an
     # `INSERT ... ON DUPLICATE` in the source.
     text = _persistence_sql_text()
     truly_missing = set()

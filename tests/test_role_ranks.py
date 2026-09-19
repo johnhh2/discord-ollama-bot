@@ -2,22 +2,11 @@
 ranks deterministically, and the !roles leaderboard reads from the
 stored rank rather than Discord's shared role.position.
 
-Before the rank column existed, ranking compared role.position values
-that mixed bot and non-bot roles. A bot role at Discord position 3 with
-no other bot roles above it would jump straight to the top of the bot
-pile in one move (visible as "#3 → #1") because the code only looked
-for *bot* roles with higher position. Storing rank in the DB makes the
-adjacency well-defined: each roleup swaps exactly two adjacent ranks.
-
-These tests pin:
-  - shop_createrole seeds the new role at max(rank)+1 (bottom of the
-    rank ladder, lowest priority).
-  - shop_roleup swaps the role with the next-higher rank, and *only*
-    that one — never jumping multiple positions.
-  - shop_roledown is the symmetric case.
-  - Ranks are per-guild: another guild's roles never participate.
-  - Boundary cases (already highest / already lowest) refuse and refund.
-  - shop_deleterole drops the rank entry so it doesn't leak.
+Ranking once compared role.position values that mixed bot and non-bot
+roles, so a bot role with no other bot role above it jumped straight to
+the top of the bot pile in one move (visible as "#3 → #1"). The stored
+rank makes adjacency well-defined: each roleup swaps exactly two
+adjacent ranks, and a new role is seeded at max(rank)+1.
 """
 from unittest.mock import AsyncMock
 
@@ -120,9 +109,8 @@ async def test_shop_createrole_subsequent_role_gets_bottom_rank(db, force_member
 # ── shop_roleup swaps one position at a time ──────────────────────────────────
 
 async def test_shop_roleup_swaps_with_immediate_neighbor_not_jumping(db):
-    """The #3 → #1 bug: pre-fix, a bot role with no other bot roles
-    above it would jump straight to #1. Fixed: roleup swaps with the
-    role at the next-lower rank number (#3 ↔ #2)."""
+    """Roleup swaps with the role at the next-lower rank number (#3 ↔ #2),
+    never the "#3 → #1" jump of the module docstring."""
     cog = ShopCog(bot=None)
     buyer = FakeMember(uid=3001)
     await add_balance(buyer.id, SHOP_ROLE_MOVE_COST + 1000)
@@ -135,7 +123,6 @@ async def test_shop_roleup_swaps_with_immediate_neighbor_not_jumping(db):
     ctx = FakeCtx(author=buyer, guild=guild)
     ctx.invoked_with = "roleup"
 
-    # Roleup the bottom (#3) role. It must become #2, not #1.
     await cog.shop_roleup.callback(cog, ctx, "<@&503>")
 
     assert _state.bot_role_ranks[(200, 503)] == 2, "#3 must move to #2 (swap), not #1"
@@ -220,8 +207,7 @@ async def test_shop_roleup_only_considers_same_guild_roles(db):
         (901, 1, "A-Top"),
         (902, 2, "A-Bottom"),
     ])
-    # Seed guild B's ranks (no need to mock its guild object — we never
-    # use it; just want to ensure the call doesn't see B's roles).
+    # Guild B needs no guild object — only its rank rows have to stay put.
     _state.bot_roles.add(911)
     _state.bot_roles.add(912)
     _state.bot_role_ranks[(301, 911)] = 1
@@ -280,7 +266,6 @@ async def test_shop_roleup_keeps_db_rank_even_when_discord_mirror_fails(db):
         (1201, 1, "Top"),
         (1202, 2, "Bottom"),
     ])
-    # Make role.edit raise Forbidden for both roles.
     forbidden = discord.Forbidden(
         response=type("R", (), {"status": 403, "reason": "no"})(),
         message="no perms",

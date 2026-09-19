@@ -3,11 +3,10 @@
 Lives in its own file so the autouse _bump_board-stub fixture in
 test_chess.py doesn't shadow the real function under test.
 
-_bump_board sends TWO messages on each bump (embed first, then board image)
-so the image renders BELOW the embed in Discord. The NEW pair is sent
-FIRST, then the prior pair is deleted — that way the channel always shows
-the current board, never an empty gap. Both message IDs are tracked in
-the game dict: embed_msg_id + board_msg_id.
+Each bump sends two messages — embed first, then board image, so the image
+renders below the embed — and only then deletes the prior pair, so the
+channel never shows an empty gap. Both message ids are tracked in the game
+dict: embed_msg_id + board_msg_id.
 """
 from unittest.mock import AsyncMock, MagicMock
 
@@ -47,13 +46,11 @@ async def test_bump_board_deletes_old_pair_and_sends_new_pair():
     # Both prior messages deleted (image first per reverse-send order,
     # then embed).
     assert deleted_ids == [222, 111]
-    # Two new sends: embed then file.
     assert channel.send.await_count == 2
     embed_call_kwargs = channel.send.call_args_list[0].kwargs
     image_call_kwargs = channel.send.call_args_list[1].kwargs
     assert "embed" in embed_call_kwargs and "file" not in embed_call_kwargs
     assert "file" in image_call_kwargs and "embed" not in image_call_kwargs
-    # New ids tracked.
     assert game["embed_msg_id"] == 9001
     assert game["board_msg_id"] == 9002
 
@@ -105,9 +102,8 @@ async def test_bump_board_first_send_no_prior_ids():
 
 @_aio
 async def test_bump_board_sends_new_pair_before_deleting_old():
-    """The whole point of the post-then-delete order: the channel must show
-    the new board BEFORE we delete the old one, so users never see an
-    empty gap between turns."""
+    """The new pair must be up before the old one is deleted, so users never
+    see an empty gap between turns."""
     event_log: list[str] = []
 
     def _fake_fetch(_msg_id):
@@ -134,8 +130,7 @@ async def test_bump_board_sends_new_pair_before_deleting_old():
     game = {"embed_msg_id": 5001, "board_msg_id": 5002}
     await _bump_board(channel, game, MagicMock(), file=fake_file)
 
-    # Both sends must happen before any delete.
-    assert event_log == ["send", "send", "delete", "delete"], (
+    assert event_log ==["send", "send", "delete", "delete"], (
         f"expected send-send-delete-delete order, got {event_log}"
     )
 

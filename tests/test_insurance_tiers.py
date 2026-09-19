@@ -1,8 +1,8 @@
 """Insurance tiers (migration 0065): crime is refunded, not blocked.
 
 Three tiers — basic 50% / standard 75% / premium 100% of a crime loss, each
-with a per-gameplay-day refund cap — replace the old "insured users can't be
-robbed" gate. These tests cover the economy helpers (refund math, the daily
+with a per-incident refund cap — replace the old "insured users can't be
+robbed" gate. These tests cover the economy helpers (refund math, the refund
 cap, tier switching and its surcharge, sub renewal at the sub's tier), the
 `!shop insurance` tier picker flows, and the 0065 backfill that lands every
 pre-tier policy on basic.

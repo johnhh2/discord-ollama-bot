@@ -58,10 +58,9 @@ class ModerationCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Input", "Please provide a valid number.", C_RED))
             return
 
-        # purge() bulk-deletes messages <14 days old and falls back to
-        # single deletes for older ones — bulk_delete (which is what
-        # ctx.channel.delete_messages calls) 400s with error 50034 on
-        # anything older than 14 days.
+        # purge() bulk-deletes messages <14 days old and falls back to single
+        # deletes for older ones; delete_messages/bulk_delete instead 400s
+        # with error 50034 on anything older.
         try:
             deleted = await ctx.channel.purge(limit=n)
         except discord.Forbidden:
@@ -84,7 +83,7 @@ class ModerationCog(commands.Cog):
         try:
             await confirm.delete()
         except discord.NotFound:
-            pass
+            pass  # the confirmation was already deleted during the 5 s wait
 
 
 async def setup(bot):

@@ -2,16 +2,8 @@
 
 The house race is a coin flip with a track: the bot stakes nothing and holds
 no balance, a win pays 2× the stake, a loss forfeits it, a photo-finish tie
-is a push. Pins:
-- payout / forfeit / push arithmetic and the gambling-event record
-- a free race (no amount) runs for a player with no coins at all
-- an unaffordable stake is refused before the board is posted
-- the bot only races one-on-one; extra invitees are rejected
-- no channel slot is taken (two races can run at once) and !stop is inert
-- a Discord failure mid-race refunds the stake
-- godmode: no charge, no payout, no event
-- the "biggest race payout" record honours record_exclude
-- !race @Bot attaches Race Again / 2x buttons; play_bot_race alone does not
+is a push. It claims no channel slot, so two bot races can run in one
+channel at once.
 """
 import asyncio
 from types import SimpleNamespace

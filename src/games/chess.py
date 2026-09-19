@@ -55,19 +55,17 @@ from src import state
 
 BOARD_IMG_FILENAME = "board.png"
 
-# Chess invites stay open for an hour (vs the 60s default for TTT/C4):
-# chess games are slower-paced commitments and invitees are often not
-# watching the channel. Note the accept window holds the channel's game
-# slot, so a pending chess invite blocks new games in that channel until
-# it's accepted or expires. Wagers are charged only after acceptance.
+# Chess invites stay open for an hour (vs the 60s default for TTT/C4): games
+# are slower-paced commitments and invitees often aren't watching the channel.
+# The accept window holds the channel's game slot, so a pending invite blocks
+# new games there until it's accepted or expires. Wagers are charged only
+# after acceptance.
 PVP_INVITE_TIMEOUT_SECS = 3600.0
 
 
 def _last_move_info_from_pgn(pgn_str: str) -> tuple[chess.Move | None, bool]:
-    """Parse a PGN and return (last_move, was_capture). last_move is None
-    if the game has no moves; was_capture is True iff the final move was
-    a capture (including en passant) against the position immediately
-    preceding it."""
+    """(last_move, was_capture) from a PGN. last_move is None if the game
+    has no moves; was_capture includes en passant."""
     try:
         g = chess.pgn.read_game(io.StringIO(pgn_str))
     except Exception:
@@ -131,9 +129,9 @@ def _badge_suffix(uid: int) -> str:
 
 
 def _board_embed(title: str, description: str, color: int) -> discord.Embed:
-    # Note: intentionally does NOT set_image on the attachment. The board PNG
-    # is sent as a top-level attachment alongside this embed so it renders
-    # outside the embed frame (larger inline display in Discord).
+    # Deliberately no set_image: the board PNG goes out as its own message
+    # after this embed (see _bump_board), so it renders outside the embed
+    # frame — a larger inline display in Discord.
     return emb(title, description, color)
 
 
@@ -142,38 +140,32 @@ async def _bump_board(
     *, file: discord.File | None = None, turn_content: str | None = None,
     ping: bool = False,
 ):
-    """Send a fresh embed+board pair. The embed and image are sent as TWO
-    separate messages (embed first, then board image) so the board renders
-    BELOW the embed in Discord's UI — same-message attachments always render
-    above their embed regardless of order.
+    """Send a fresh embed+board pair as two messages (embed first, then board
+    image) so the board renders below the embed — a same-message attachment
+    always renders above its embed.
 
-    In a game thread (every game's home since threads landed) the pair just
-    appends: the thread is dedicated to this one game, so there's nothing to
-    clean up, and skipping the fetch+delete round-trips posts the new board
-    faster.
+    In a game thread the pair just appends: the thread holds this one game,
+    so there's nothing to clean up, and skipping the fetch+delete round-trips
+    posts the new board faster. In a regular channel (a legacy pre-thread
+    game, or thread creation failed) the prior pair is deleted *after*
+    posting — no stale boards pile up, and there's never a window with no
+    board visible.
 
-    In a regular channel (legacy games started before game threads, or a
-    channel where thread creation failed) the prior pair is deleted AFTER
-    posting so the shared channel doesn't fill with stale boards —
-    post-then-delete means there's never a window with no board visible.
+    Message ids tracked on the game dict:
+      - embed_msg_id: the embed message (sent first)
+      - board_msg_id: the board-image message (sent second; its content is
+        the turn line)
+      - turn_msg_id: a standalone turn-line message, only when the render
+        failed and there's no image message to carry it. In-memory only —
+        after a restart a legacy in-channel game leaves one stale turn line
+        undeleted.
 
-    Tracks the message IDs:
-      - game['embed_msg_id']: the text/embed message (sent first)
-      - game['board_msg_id']: the board-image message (sent second; also
-        carries the turn line as its content)
-      - game['turn_msg_id']: standalone turn-line message, only when the
-        board render failed and there's no image message to carry it
-        (in-memory only, not persisted — after a restart the one stale
-        turn line in a legacy in-channel game just goes undeleted once)
-
-    `turn_content` is the "@X's turn!" line. It rides as the content of the
-    board-image message — the game message set stays last in the thread, so
-    the channel-list preview reads whose turn it is. With `ping=True` (PvP
-    only — the next player isn't the one who just moved, so the notification
-    is the point) that message goes out loud; content mentions are the only
-    thing that actually notifies (embed mentions never do). Bot games send
-    the line silent — the lone human just moved (or the engine is about to).
-    Every other chess message stays silent.
+    `turn_content` is the "@X's turn!" line. It rides on the last message of
+    the set, so the channel-list preview reads whose turn it is. `ping=True`
+    (PvP only — the next player isn't the one who just moved, so the
+    notification is the point) sends it loud: content mentions notify, embed
+    mentions never do. Bot games send it silent — the lone human just moved
+    (or the engine is about to) — as does every other chess message.
     """
     # Snapshot the prior IDs before we overwrite them with the new send.
     prior_ids = (
@@ -209,7 +201,7 @@ async def _bump_board(
             old = await channel.fetch_message(prior_id)
             await old.delete()
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            pass
+            pass  # best-effort cleanup: already deleted, or we can't delete here
 
 
 async def _start_blocked(ctx: commands.Context) -> bool:
@@ -386,15 +378,12 @@ def _format_seconds(secs: int) -> str:
 
 
 def _record_turn_time(game: dict, mover_id: int) -> None:
-    """Stop the clock for the player who just moved, then start the clock
-    for the opponent. Adds elapsed seconds since turn_started_at to the
-    mover's column, then resets turn_started_at to now.
-
-    No-op when turn_started_at isn't set (game just started; first move
-    will see its own clock begin via _start_clock)."""
+    """Stop the clock for the player who just moved and start the opponent's:
+    add the seconds since turn_started_at to the mover's column, then reset
+    turn_started_at to now."""
     if game.get("turn_started_at") is None:
-        # First move ever, or post-restart with no recorded start. Start the
-        # clock from now so subsequent moves have a baseline.
+        # No recorded start (first move ever, or post-restart): credit
+        # nothing and start the clock from now so later moves have a baseline.
         game["turn_started_at"] = int(time.time())
         return
     now = int(time.time())
@@ -426,13 +415,12 @@ def _time_summary_block(game: dict) -> str:
 
 
 def _captures_summary(board: chess.Board, captor_color: chess.Color) -> str:
-    """Return a compact summary of pieces `captor_color` has taken from the
-    opponent. Format: '<glyph1>,<glyph2>+N' where the two glyphs are the
-    captor's two highest-value captures by piece type and N is the count
-    of remaining captures. Empty string if no captures yet.
+    """Compact summary of the pieces `captor_color` has taken:
+    '<glyph1>,<glyph2>+N' — the two highest-value captures by piece type,
+    then the count of the rest. Empty string if no captures yet.
 
-    Promotions inflate the captor's own piece counts but don't affect the
-    opponent's, so they're correctly excluded from this calculation."""
+    The captor's own promotions inflate only its own piece counts, not the
+    opponent's, so they don't distort this."""
     opp = not captor_color
     captured: list[chess.PieceType] = []
     for piece_type in _PIECE_DISPLAY_ORDER:
@@ -563,7 +551,7 @@ class _BotLadderView(discord.ui.View):
         try:
             await self.message.edit(view=self)
         except discord.HTTPException:
-            pass
+            pass  # the menu auto-deletes on the same timer, so it's usually gone
 
 
 class _PlayBotButton(discord.ui.Button):
@@ -610,13 +598,13 @@ class ChessCog(commands.Cog):
         self._bot_chess_day_by_uid: dict[int, str] = {}
 
     async def resume_pending_bot_turns(self):
-        """Scan loaded chess games for any where it's the bot's turn and
-        schedule the bot's reply. Called from on_ready after init_db_state
-        so games that were mid-bot-turn at restart don't freeze waiting
-        for a human move to nudge them.
+        """Schedule the bot's reply in every loaded game where it's the bot's
+        turn. Called from on_ready after init_db_state so games that were
+        mid-bot-turn at restart don't freeze waiting for a human move to
+        nudge them.
 
-        Each reply runs as a background task — we don't await them in serial
-        so startup isn't blocked by N parallel Maia spawns."""
+        Each reply runs as a background task, so startup doesn't wait on N
+        engine (Maia) spawns."""
         bot_user = self.bot.user if self.bot is not None else None
         if bot_user is None:
             return
@@ -788,8 +776,7 @@ class ChessCog(commands.Cog):
             f"{_captures_block(game)}"
         )
         file = _render_file_for_game(game, orientation_for_uid=white_id)
-        # Two messages so the board image renders BELOW the embed in Discord
-        # (same-message attachments always render above their embed).
+        # Embed, then image as its own message (see _bump_board).
         embed_msg = await dest.send(embed=_board_embed("♟️ Chess", desc, C_BLUE), silent=True)
         game["embed_msg_id"] = embed_msg.id
         if file is not None:

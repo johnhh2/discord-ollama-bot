@@ -37,9 +37,9 @@ def settle_tick(
 
     Horses that would run past the line this tick are ranked by how far past
     it they'd have gone: the furthest wins and is drawn on the line, the rest
-    are drawn one square short so the board shows the photo finish. Clamping
-    every crosser to the line made any shared crossing tick a tie; now only
-    horses that would have run the exact same distance past the line tie.
+    one square short so the board shows the photo finish. Only horses that
+    would have run the exact same distance past the line tie — clamping every
+    crosser to the line would make any shared crossing tick a tie.
     """
     raw = {uid: positions[uid] + rolls[uid] for uid in positions}
     crossers = [uid for uid, at in raw.items() if at >= finish]
@@ -314,10 +314,9 @@ class RaceCog(commands.Cog):
         state.active_race_games[cid] = placeholder
 
         try:
-            # Check affordability without charging. Debiting every invitee
-            # before they agreed let one !race freeze several players' balances
-            # for the invite window — and nothing stopped the same victims
-            # being named from several channels at once.
+            # Affordability only, no charge: debiting invitees before they
+            # agree would freeze their balances for the invite window, and
+            # from any number of channels at once.
             if amount > 0:
                 for player_uid in all_players:
                     if await get_balance(player_uid) < amount:
@@ -326,7 +325,6 @@ class RaceCog(commands.Cog):
                         await ctx.send(embed=emb("💸 Insufficient Funds", f"**{name}** can't cover the **{amount:,} 🪙** bet.", C_RED))
                         return
 
-            # Skip confirmation if no bet
             if amount == 0:
                 confirmed_ids = set(u.id for u in invited_users)
             else:
@@ -338,7 +336,6 @@ class RaceCog(commands.Cog):
                 ))
                 return
 
-            # Build final player list (host + confirmed)
             final_players = [uid] + list(confirmed_ids)
 
             # Charge only the players who are actually racing, now that the
@@ -356,13 +353,9 @@ class RaceCog(commands.Cog):
                         return
                     paid.append(player_uid)
 
-            # Build names map using known member objects where available
             names = {}
-            # Host is always ctx.author
             names[uid] = ctx.author.display_name
-            # Confirmed players come from invited_users
             for player_uid in confirmed_ids:
-                # Find the member from invited_users
                 member = next((u for u in invited_users if u.id == player_uid), None)
                 if member:
                     names[player_uid] = member.display_name

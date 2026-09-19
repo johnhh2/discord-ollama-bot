@@ -62,10 +62,10 @@ def _stub_recap_deps(monkeypatch):
 
 
 def _make_guild_with_channels(*channels) -> FakeGuild:
-    """FakeGuild whose `text_channels` is the given list. Each channel gets
-    a `guild` backref, an `nsfw` flag, and a `permissions_for` that returns
-    a perms object whose `read_messages` / `read_message_history` we control
-    via the channel's `_visible` attribute."""
+    """FakeGuild whose `text_channels` is the given list; each channel gets
+    a `guild` backref. Build the channels with `_channel`: it sets the `nsfw`
+    flag and a `permissions_for` whose `read_messages` /
+    `read_message_history` follow the channel's `_visible` attribute."""
     guild = FakeGuild(gid=42)
     guild.text_channels = list(channels)
     guild.default_role = object()
@@ -171,7 +171,6 @@ async def test_recap_second_run_same_day_is_blocked(_stub_recap_deps):
     chan = _channel(100, "general", messages=[_msg("hi", "Joseph", uid=1)])
     guild = _make_guild_with_channels(chan)
 
-    # First run claims the slot.
     ctx1, _ = _ctx(author, guild, chan)
     await cog.cmd_recap.callback(cog, ctx1, focus=None)
     assert (42, 1002) in _state.recap_usage

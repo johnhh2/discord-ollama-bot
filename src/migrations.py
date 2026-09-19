@@ -4,15 +4,15 @@ Apply pending `migrations/NNNN_*.sql` files in order, tracking applied
 versions in `schema_migrations`. Runs once at boot (before init_db_state),
 crashes loudly on failure rather than booting with a stale schema.
 
-Adding a new migration: drop a `migrations/NNNN_short_description.sql` file.
-The runner picks it up on next boot. Write idempotent SQL where possible
-(`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE … ADD COLUMN IF NOT EXISTS`)
-so a half-applied migration can be retried by simply rerunning.
+A new `migrations/NNNN_short_description.sql` file is picked up on the next
+boot. Write idempotent SQL (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE …
+ADD COLUMN IF NOT EXISTS`) so a half-applied migration can be retried by
+rerunning.
 
-Reverse (.down.sql) is optional, never automatic. If you ship a
-`migrations/NNNN_name.down.sql` alongside the forward file, an operator
-can run `python -m src.migrations down N` to undo migration N. Without
-a .down.sql, reverts must be done manually (or by restoring a backup).
+Reverse (.down.sql) is optional and never automatic: with a paired
+`migrations/NNNN_name.down.sql`, an operator can run
+`python -m src.migrations down N`. Without one, reverts are manual (or by
+restoring a backup).
 """
 import argparse
 import asyncio
@@ -46,7 +46,6 @@ def _discover(migrations_dir: Path) -> list[tuple[int, str, Path]]:
     for path in sorted(migrations_dir.iterdir()):
         if not path.is_file() or not path.name.endswith(".sql"):
             continue
-        # Paired reverse migrations are picked up by version, not enumerated here.
         if path.name.endswith(".down.sql"):
             if not _DOWN_RE.match(path.name):
                 raise RuntimeError(
@@ -131,10 +130,8 @@ async def _load_applied(cur) -> dict[int, tuple[str, str]]:
 
 
 async def _table_exists(cur, table_name: str) -> bool:
-    """Driver-agnostic table-exists check that works on both MariaDB and SQLite.
-
-    Tries information_schema first (MariaDB); falls back to sqlite_master.
-    """
+    """Driver-agnostic table-exists check: information_schema on MariaDB,
+    sqlite_master on SQLite."""
     try:
         await cur.execute(
             "SELECT 1 FROM information_schema.tables"

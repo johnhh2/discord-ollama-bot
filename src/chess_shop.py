@@ -7,8 +7,9 @@ and live in state.chess_unlocks / the chess_unlocks table.
 
 `key` is the renderer name (render_board_png's piece_set= / theme=); `id` is
 the stable identifier stored in chess_unlocks. Cost 0 marks the default
-everyone already has — it is never written to the table. Nothing equips an
-unlocked item yet; the shop only sells the unlocks.
+everyone already has — it is never written to the table. Equipping is
+separate: `!chess <name>` writes state.chess_equipped, read back through
+equipped_cosmetics.
 """
 from src import state
 from src.games.chess_render import (

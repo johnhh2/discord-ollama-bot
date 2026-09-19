@@ -8,10 +8,9 @@ unit tests miss because they call the build/render functions in isolation:
   - Only one data point → "📊 Not Enough Data" embed.
   - parse_tokens error → "📊 Invalid Combination" embed.
 
-The original `s.x_dates` regression after the bucket refactor would have
-been caught by `test_no_data_fallback_uses_x_points` — `_build_and_render`
-references SeriesData attributes by name, and any rename without a
-matching cog update breaks the no-data path silently.
+`_build_and_render` reads SeriesData attributes by name, so a rename with no
+matching cog update breaks the no-data path silently — that is what
+test_empty_history_for_economy_series_uses_x_points pins.
 """
 from types import SimpleNamespace
 
@@ -37,13 +36,13 @@ def _stub_member(uid: int = 1, name: str = "tester", guild_id: int = 42):
 
 
 def _stub_ctx(author: SimpleNamespace | None = None, guild_id: int = 42):
-    """Minimal ctx for _build_and_render — has author, guild, message, send.
-    Records sent embeds on ctx.sent_embeds for assertion. The cog sends a
-    "Rendering…" placeholder first and then `placeholder.edit(...)` with the
-    final embed or file, so the stubbed send returns a Message-like object
-    whose edit() forwards into the same lists. The placeholder embed itself
-    is recorded in ctx.placeholder_embeds, separate from the final embeds
-    in ctx.sent_embeds, to keep assertions about the *result* clean.
+    """Minimal ctx for _build_and_render, recording everything it sends.
+
+    The cog sends a "Rendering…" placeholder and then `placeholder.edit(...)`
+    with the final embed or file, so send() returns a Message-like object
+    whose edit() forwards into the same lists. Placeholder embeds are kept in
+    ctx.placeholder_embeds, final ones in ctx.sent_embeds, so assertions
+    about the *result* stay clean.
     """
     ctx = SimpleNamespace()
     ctx.author = author or _stub_member()
@@ -66,9 +65,6 @@ def _stub_ctx(author: SimpleNamespace | None = None, guild_id: int = 42):
                 ctx.sent_files.extend(attachments)
 
     async def _send(content=None, *, embed=None, file=None, **kwargs):
-        # Direct ctx.send embeds (parse-error path) go straight to sent_embeds.
-        # Placeholder embeds (the "Rendering…" message) get separated out so
-        # tests can ignore them.
         if embed is not None:
             title = embed.title or ""
             if "Rendering" in title:
@@ -100,28 +96,22 @@ def patch_member_converter(monkeypatch):
 
 
 async def test_empty_history_for_economy_series_uses_x_points(monkeypatch, patch_member_converter):
-    """REGRESSION: This is the exact scenario from the prod crash —
-    `!graph economy` invoked when balance_history is empty. Before the
-    bucket refactor, `_build_and_render` referenced `s.x_dates`, which
-    AttributeError'd here because SeriesData was renamed to `x_points`.
+    """`!graph economy` with an empty balance_history — the prod crash, where
+    `_build_and_render` read `s.x_dates` after SeriesData's attribute became
+    `x_points`.
 
-    With empty history, build_series_economy still appends a live "now"
-    point (sums in-memory wallets), so x_points has length 1 → the
-    'Not Enough Data' guard fires, not 'No Data'. Either way the cog must
-    NOT crash with AttributeError; the relevant invariant is that the
-    attribute access at line ~50 succeeds and the user gets a friendly
-    fallback embed.
+    build_series_economy appends a live "now" point (sums the in-memory
+    wallets) even with no history, so x_points has length 1 and the
+    'Not Enough Data' guard fires rather than 'No Data'. Either is fine —
+    what's pinned is that the attribute access succeeds and the user gets a
+    fallback embed instead of an AttributeError.
     """
     async def _empty(): return {}
     monkeypatch.setattr(graph_series, "load_balance_history", _empty)
 
     ctx = _stub_ctx()
-    # The bug fired at attribute-access time. If `s.x_points` is the wrong
-    # name, this line AttributeErrors before any guard logic runs.
     await _build_and_render(ctx, tokens=(), entry_spec=graph_series.find_spec("economy"))
 
-    # Either fallback is acceptable — we're pinning that the attribute
-    # access works and a fallback embed is delivered (no file).
     assert len(ctx.sent_embeds) == 1
     assert ctx.sent_files == []
     title = ctx.sent_embeds[0].title or ""
@@ -159,10 +149,8 @@ async def test_not_enough_data_fallback(monkeypatch, patch_member_converter):
 
     # Make sure the live append doesn't fire (no current-bucket activity).
     _state.stats_commands_today_by_cog = {}
-    # And the bucket from the on-disk row matches today's current bucket so
-    # the live append's `x_points[-1] != now_point` check stays True only
-    # when we have ONE point. Force the test history's bucket to match
-    # current bucket.
+    # Put the seeded row in the current bucket so the live append has no new
+    # point to add — the series stays at exactly one point.
     cur_b = _economy._current_bucket_ct()
     fake[today] = {cur_b: {"GraphCog": 5}}
 
@@ -244,6 +232,5 @@ async def test_successful_render_sends_file_not_embed(monkeypatch, patch_member_
     assert ctx.sent_files, "expected a discord.File attachment, got embeds: " + repr(
         [(e.title, e.description) for e in ctx.sent_embeds]
     )
-    # The file should be a PNG with non-empty content.
     file = ctx.sent_files[0]
     assert file.filename.endswith(".png")

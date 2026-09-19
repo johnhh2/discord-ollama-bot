@@ -28,11 +28,9 @@ def _is_first_relevant_arrival(channel, joiner, ignored) -> bool:
     """True if `joiner` is the only human in `channel` that a subscriber cares
     about — i.e. every other current member is a bot or is in `ignored`.
 
-    This is the per-subscriber generalization of the old 0→1 rule: with an empty
-    ignore list it reduces to "the joiner is the only human present". With an
-    ignore list, ignored members (and bots) don't count, so a non-ignored person
-    arriving as the 2nd/3rd member still counts as the first relevant arrival —
-    as long as everyone already there was ignored or a bot.
+    With an empty ignore list that means "the only human present"; with one, a
+    non-ignored person arriving 2nd or 3rd still counts as long as everyone
+    already there was ignored or a bot.
     """
     for m in channel.members:
         if m.id == joiner.id:
@@ -131,12 +129,10 @@ class VoiceCog(commands.Cog):
 
         key = (ctx.guild.id, ctx.author.id)
 
-        # Resolve the target ourselves (project MemberConverter supports
-        # case-insensitive display-name / username substring matching, which the
-        # raw `discord.Member` annotation doesn't). Resolving inline also lets us
-        # tell "no argument → list" apart from "given but not found → error",
-        # and keeps the not-found path from escaping as an unhandled
-        # MemberNotFound that the global error logger would report.
+        # Resolve the target inline: the project MemberConverter matches
+        # case-insensitive name substrings (a `discord.Member` annotation
+        # doesn't), "no argument → list" stays distinct from "not found →
+        # error", and a MemberNotFound can't escape to the global error logger.
         member = None
         if query is not None:
             try:
@@ -252,8 +248,8 @@ class VoiceCog(commands.Cog):
         # Only care about joins (someone entered a new channel).
         if after.channel is None or after.channel == before.channel:
             return
-        # Bots joining/leaving never trigger pings — and shouldn't count toward
-        # the empty→1 transition either, which _count_humans already enforces.
+        # Bots never trigger pings — nor count as present, which
+        # _is_first_relevant_arrival enforces.
         if member.bot:
             return
 
@@ -280,16 +276,14 @@ class VoiceCog(commands.Cog):
             if uid == member.id:
                 continue
             ignored = state.voice_ping_ignores.get((guild_id, uid), ())
-            # Skip if this subscriber has ignored the triggering member. This
-            # happens BEFORE the cooldown check and never touches last_pinged_at,
-            # so an ignored trigger doesn't burn the cooldown — a later trigger
-            # by a non-ignored member can still ping.
+            # Ignored trigger: skipped BEFORE the cooldown check, without
+            # touching last_pinged_at, so it doesn't burn the cooldown for a
+            # later non-ignored trigger.
             if member.id in ignored:
                 continue
-            # Only ping when `member` is the FIRST human this subscriber cares
-            # about to be in the channel. If a non-ignored human was already
-            # present before this join, the subscriber was already notified for
-            # them; don't ping again for every subsequent joiner.
+            # Only ping for the FIRST human this subscriber cares about — if a
+            # non-ignored human was already present, the subscriber was
+            # notified for them; don't ping again for every later joiner.
             if not _is_first_relevant_arrival(channel, member, ignored):
                 continue
             # One DM per cooldown period per subscriber, across ALL their

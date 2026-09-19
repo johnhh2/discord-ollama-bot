@@ -91,7 +91,7 @@ def _reset_ai_enabled():
 
 @pytest.fixture(autouse=True)
 def _reset_semaphore():
-    """The module-level ollama_semaphore is async.Semaphore(1). Tests
+    """The module-level ollama_semaphore is asyncio.Semaphore(1). Tests
     acquire it; if a previous test left it acquired, the next would block.
     Replace with a fresh semaphore per test."""
     import asyncio
@@ -115,7 +115,6 @@ async def test_stream_ollama_assembles_tokens_into_full_response():
     full = await _ai.stream_ollama(session, [{"role": "user", "content": "hi"}], placeholder)
 
     assert full == "Hello, world!"
-    # Exactly one POST to /api/chat with stream=True.
     assert len(session.post_calls) == 1
     url, payload = session.post_calls[0]
     assert url.endswith("/api/chat")
@@ -170,7 +169,6 @@ async def test_stream_ollama_edits_placeholder_with_cursor(monkeypatch):
     placeholder = MagicMock(spec=discord.Message)
     placeholder.edit = AsyncMock()
 
-    # Make every token cross the 0.8s threshold.
     counter = {"t": 0.0}
     def _fast_clock():
         counter["t"] += 1.0  # always >= EDIT_INTERVAL (0.8)
@@ -186,10 +184,8 @@ async def test_stream_ollama_edits_placeholder_with_cursor(monkeypatch):
 
     await _ai.stream_ollama(session, [], placeholder)
 
-    # Each non-empty token triggered a placeholder.edit with cursor.
     edits = placeholder.edit.await_args_list
     assert len(edits) >= 2  # at least 2 mid-stream edits (the third is post-done)
-    # The cursor character ▌ appears in mid-stream edits.
     sample = edits[0].kwargs.get("content") or (edits[0].args[0] if edits[0].args else "")
     assert "▌" in sample
 
@@ -214,10 +210,8 @@ async def test_stream_ollama_throttles_edits_when_clock_doesnt_advance(monkeypat
 
     await _ai.stream_ollama(session, [], placeholder)
 
-    # Clock never advanced past EDIT_INTERVAL, so no mid-stream edit fired.
-    # (The very first edit gates on `now - last_edit >= EDIT_INTERVAL` and
-    # last_edit starts at 0.0; with `now=1000.0`, the gate IS satisfied
-    # once. So we expect <=1 edits.)
+    # last_edit starts at 0.0, so with now=1000.0 the gate opens once; after
+    # that the clock never advances past EDIT_INTERVAL — at most one edit.
     assert placeholder.edit.await_count <= 1
 
 
@@ -236,9 +230,7 @@ async def test_stream_ollama_returns_empty_when_ai_disabled():
     result = await _ai.stream_ollama(session, [], placeholder)
 
     assert result == ""
-    # No POST happened.
     assert session.post_calls == []
-    # Placeholder was edited with an offline embed.
     placeholder.edit.assert_awaited_once()
 
 
@@ -297,7 +289,6 @@ async def test_stream_ollama_falls_back_to_default_model_when_no_guild():
 
     await _ai.stream_ollama(session, [], placeholder)
 
-    # Default OLLAMA_MODEL from src.config.
     payload = session.post_calls[0][1]
     assert payload["model"] == _ai.OLLAMA_MODEL
 

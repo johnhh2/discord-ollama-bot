@@ -52,7 +52,7 @@ def xp_for_level(n: int) -> int:
 
 
 def level_from_xp(xp: int) -> int:
-    """Level a user is at given total XP."""
+    """Internal (0-based) level for a total XP amount."""
     if xp <= 0:
         return 0
     level = 0
@@ -75,6 +75,7 @@ def display_level(internal_level: int) -> int:
     return internal_level + 1
 
 
+# (max display level, tier): the reward is 500 × 2^tier coins, tier 6 above 149.
 _LEVEL_REWARD_TIERS = ((4, 0), (9, 1), (29, 2), (59, 3), (99, 4), (149, 5))
 
 
@@ -97,7 +98,7 @@ def _ensure_lvl_record(guild_id: int, uid: int) -> dict:
             "level": 0,
             # hourly / daily rate-limit tracking
             "msg_last_hour": 0.0,   # epoch of last msg XP grant
-            "msg_today": 0,         # grants this calendar day
+            "msg_today": 0,         # grants this bot day (5am CT rollover)
             "msg_day_ts": 0.0,      # epoch when msg_today was last reset
             "cmd_last_hour": 0.0,
             "cmd_today": 0,
@@ -135,9 +136,8 @@ def best_level_elsewhere(guild_id: int, uid: int) -> int:
 def _day_reset(rec: dict, key_today: str, key_day_ts: str):
     """Reset daily counter when the 5am-CT bot day rolls over.
 
-    Uses the economy's `_ct_today` day key (day boundary = 5am CT) so XP caps
-    reset at the same moment as everything else. The old UTC-midnight logic
-    reset at 6/7pm CT while !lvl displayed the 5am reset time.
+    Same day boundary as the economy's `_ct_today`, so XP caps reset with
+    everything else — and at the 5am reset time !lvl displays.
     """
     from zoneinfo import ZoneInfo
     import datetime
@@ -155,7 +155,7 @@ def _day_reset(rec: dict, key_today: str, key_day_ts: str):
 
 async def grant_xp(uid: int, source: str, bot=None, guild_id: int = None) -> tuple[int, bool]:
     """
-    Attempt to grant XP for *source* ('msg', 'cmd', 'voice').
+    Attempt to grant XP for *source* ('msg', 'cmd', 'voice', 'scratch', 'stream').
 
     Returns (xp_granted, leveled_up).
     Does nothing and returns (0, False) if rate-limited or no guild_id.

@@ -1,6 +1,6 @@
 """Graph-series registry powering combinable `!graph` subcommands.
 
-Each subcommand (`balance`, `economy`, `commands`, `server`, `ai`, `memory`)
+Each subcommand (`balance`, `economy`, `commands`, `server`, `ai`, `memory`, …)
 contributes a `SeriesSpec` declaring its aliases, group, and a build function
 that returns the standardized `SeriesData` shape. The combiner picks rendering
 style from (number-of-series, group):
@@ -32,8 +32,7 @@ from src.economy import (
     _current_bucket_ct, _bucket_start_dt,
     get_balance, savings_growth,
 )
-# Silence unused-import warnings — these names are part of this module's
-# test-facing surface even though graph_series itself doesn't reference them.
+# Referencing the test re-exports keeps the unused-import lint quiet.
 __all_test_reexports__ = (_ct_today_date, _calendar_today_date)
 from src.helpers import get_memory_mb
 from src.persistence import (
@@ -92,11 +91,12 @@ class SeriesData:
     segments: list[Segment]
     x_points: list[datetime.datetime]
     native_style: str     # "line" or "bar"
-    # Optional extras only used by ai in single-mode:
+    # Solo-render extras: ai's "ai_up_flags", minecraft's "mc_daily" bars.
     extras: dict = field(default_factory=dict)
 
 
-# A build function may take an optional discord.Member (only `balance` uses it).
+# A build function takes, positionally, only what its spec's accepts_* flags
+# declare: member, guild_id, bot.
 BuildFn = Callable[..., Awaitable[SeriesData]]
 
 
@@ -143,9 +143,7 @@ def _live_now_point() -> datetime.datetime:
 
 
 def _ct_now_iso_date() -> str:
-    """Calendar date in CT as ISO string. Inlined small helper so this
-    module doesn't need to import _ct_now from economy just for one use.
-    """
+    """Calendar date in CT as ISO string."""
     from src.economy import _ct_now
     return _ct_now().date().isoformat()
 
@@ -165,9 +163,7 @@ def _ct_date_of_ts(ts: float) -> str:
 async def build_series_balance(member: discord.Member) -> SeriesData:
     """Per-(date, bucket) wallet, savings, and total for `member`.
 
-    Mirrors the segment shape of build_series_economy (Wallets/Savings/Total)
-    but scoped to a single user. The renderer dashes the Total line as a
-    summary, matching the existing economy graph's style.
+    The renderer dashes the Total line as a summary, as on the economy graph.
     """
     from src.economy import get_savings_value
 
@@ -429,7 +425,6 @@ async def build_series_commands() -> SeriesData:
         x_points.append(point_dt)
         per_point.append(by_cog)
 
-    # Append the live current-bucket data point.
     now_point = _live_now_point()
     live_now = dict(state.stats_commands_today_by_cog)
     if not x_points or x_points[-1] != now_point:
@@ -578,19 +573,17 @@ MC_BIN_SECONDS = 3600  # aggregation window for per-poll samples: 1 hour
 
 
 async def build_series_minecraft() -> SeriesData:
-    """Minecraft server ping in ms: averaged line with a faded min/max
-    band, downtime counted as 0 so outages drag the band (and average)
-    visibly toward the floor.
+    """Minecraft server ping in ms: averaged line with a faded min/max band.
+    Downtime counts as 0, so outages drag the band (and average) visibly
+    toward the floor.
 
-    Two properly-aggregated resolutions, never overlapping: the persisted
-    monitor polls (mc_ping_samples, ~60s cadence, last 7 days) binned
-    hourly for the recent span, and the daily avg/min/max rollup
-    (mc_daily_ping_stats, migration 0042) for completed days strictly
-    before the sample window's first CT day. Where both tables cover a
-    day, the fine-grained samples win. The coarse per-(date, bucket)
-    mc_up/mc_ping_ms snapshots in bot_stats_history are deliberately NOT
-    plotted: each is a single instantaneous ping, not an average, and made
-    the older tail read as wrong next to aggregated data.
+    Two aggregated resolutions that never overlap: the persisted monitor
+    polls (mc_ping_samples, ~60s cadence, last 7 days) binned hourly, and
+    the daily avg/min/max rollup (mc_daily_ping_stats, migration 0042) for
+    completed days strictly before the first sample's CT day — where both
+    cover a day, the samples win. The per-(date, bucket) mc_up/mc_ping_ms
+    snapshots in bot_stats_history are deliberately NOT plotted: each is one
+    instantaneous ping, which reads as wrong next to averaged data.
     """
     samples = await load_mc_ping_samples(int(_time.time() - 7 * 86_400))
     raw = [
@@ -716,11 +709,8 @@ class ParseResult:
 async def parse_tokens(
     ctx, tokens: tuple[str, ...]
 ) -> ParseResult:
-    """Walk free-form tokens; classify each as series alias OR member mention.
-
-    Member-mention tokens are resolved via discord.py's `MemberConverter`. Any
-    token that is neither a known series alias nor a resolvable member is
-    rejected with a clear error.
+    """Classify each free-form token as a series alias or a member (resolved
+    via discord.py's `MemberConverter`); anything else is an error.
 
     Validates: at least one series, all in same group, no duplicates,
     guild-scoped series (e.g. `levels`) require ctx.guild.
@@ -740,7 +730,6 @@ async def parse_tokens(
             specs.append(spec)
             seen_names.add(spec.name)
             continue
-        # Not a series alias — try to resolve as a member.
         try:
             resolved = await converter.convert(ctx, tok)
         except _cmds.BadArgument:
@@ -764,11 +753,10 @@ async def parse_tokens(
             error=f"cannot combine `{names}` — incompatible y-axes ({readable})",
         )
 
-    # `balance`/`crime`/`gambling`/`levels` accept a member; default to invoker.
+    # Member-scoped series default to the invoker.
     if any(s.accepts_member for s in specs) and member is None:
         member = ctx.author
 
-    # Guild-scoped series need a guild — reject in DMs with a clear error.
     guild_id: Optional[int] = ctx.guild.id if ctx.guild else None
     if any(s.accepts_guild for s in specs) and guild_id is None:
         guilded = ", ".join(s.name for s in specs if s.accepts_guild)
@@ -809,7 +797,6 @@ async def parse_admin_tokens(ctx, tokens: tuple[str, ...]) -> AdminParseResult:
     seen_member_ids: set[int] = set()
 
     for tok in tokens:
-        # Try integer first.
         if tok.isdigit():
             if n is not None:
                 return AdminParseResult(error=f"multiple counts given: `{n}` and `{tok}`")
@@ -826,7 +813,6 @@ async def parse_admin_tokens(ctx, tokens: tuple[str, ...]) -> AdminParseResult:
                 )
             n = value
             continue
-        # Otherwise try a member mention.
         try:
             resolved = await converter.convert(ctx, tok)
         except _cmds.BadArgument:
@@ -903,8 +889,7 @@ async def build_admin_series(
 
     history = await load_balance_history()
 
-    # Walk the history once to gather every (point_dt, uid_str -> value).
-    # We need it pivoted: per user, a list of (point_dt, value) pairs.
+    # Pivot the history: per user, a list of (point_dt, value) pairs.
     by_user: dict[str, list[tuple[datetime.datetime, float]]] = {}
     all_points: list[datetime.datetime] = []
     for point_dt, snap_by_user in _iter_points(history):
@@ -938,7 +923,6 @@ async def build_admin_series(
             if value > 0 or uid_str in by_user:
                 by_user.setdefault(uid_str, []).append((now_point, value))
 
-    # Pick which users to plot.
     if members is not None:
         picked_ids = [str(m.id) for m in members]
         # Members may not appear in history if they have no recorded balance;
@@ -946,8 +930,7 @@ async def build_admin_series(
         picked_ids = [uid for uid in picked_ids if uid in by_user]
         labels_by_uid = {str(m.id): m.display_name for m in members}
     else:
-        # Top N by most-recent value. "Most recent" = each user's last
-        # (point_dt, value) pair.
+        # Top N by each user's most recent (last) value.
         ranking = []
         for uid, points in by_user.items():
             if not points:
@@ -1028,18 +1011,9 @@ async def render_combined(serieses: list[SeriesData], group: str, y_unit_label: 
 
 
 def _render_combined_sync(serieses: list[SeriesData], group: str, y_unit_label: str, title: str):
-    """Render `serieses` to a PNG buffer.
-
-    Style rules:
-      - 1 series, native "line"  → overlaid lines, one per segment.
-      - 1 series, native "bar"   → stacked bar.
-      - N series, group coins    → all segments overlaid as lines.
-      - N series, group counts   → grouped bars; each bar internally stacked
-                                   from its source's segments. Legend labels
-                                   prefixed with [Source].
-      - MB group is always size 1.
-
-    Returns an `io.BytesIO` ready to send. Caller closes the figure.
+    """Render `serieses` to a PNG `io.BytesIO`, ready to send. Style rules
+    are in the module docstring; with N series, legend labels are prefixed
+    with [Source].
     """
     import io
     import matplotlib

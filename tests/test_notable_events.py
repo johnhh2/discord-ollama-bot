@@ -72,7 +72,6 @@ async def test_prune_notable_events_drops_old_rows_only(db):
 
     rows = await load_notable_events_today(42, day)
     assert [r["holder_name"] for r in rows] == ["Recent"]
-    # The old row is gone; loading its day returns nothing.
     assert await load_notable_events_today(42, "2000-01-01") == []
 
 
@@ -83,7 +82,6 @@ async def test_announce_record_logs_a_notable_event(db, monkeypatch):
     after sending the embed it must also write a kind='record' row."""
     from src.helpers import announce_record
 
-    # Fake channel with a .guild and an awaitable .send.
     class _Chan:
         def __init__(self, guild):
             self.guild = guild
@@ -96,9 +94,7 @@ async def test_announce_record_logs_a_notable_event(db, monkeypatch):
 
     await announce_record(chan, "slots_jackpot", "Joseph", 15_000)
 
-    # The announcement embed still went out.
     assert len(chan.sent) == 1
-    # And a notable_events row was logged for it.
     rows = await load_notable_events_today(42, _ct_today())
     assert rows == [{
         "kind": "record", "category": "slots_jackpot",
@@ -152,15 +148,14 @@ async def test_recap_events_block_includes_top_gambling_and_crime(db, monkeypatc
     cal_today = _ct_now().date().isoformat()
     bucket = _current_bucket_ct()
 
-    # Two gamblers (one big winner, one net loser → excluded) and one thief.
-    # crime/gambling history is guild-scoped now — insert into guild 42,
-    # which is the guild _build_recap_events_block is called for below.
+    # Two gamblers (one big winner, one net loser → excluded) and one thief,
+    # all in guild 42: history is guild-scoped and the block is built for 42.
     await upsert_gambling_delta(cal_today, bucket, 42, 1001, gained=8_000, lost=0)
     await upsert_gambling_delta(cal_today, bucket, 42, 1002, gained=0, lost=3_000)
     await upsert_crime_delta(cal_today, bucket, 42, 1003, gained=4_200, lost=0)
 
-    # _recap_resolve_name resolves ids via fetch_member() — get_member()
-    # finds these because they're in guild.members.
+    # _recap_resolve_name tries get_member() first, which finds these —
+    # they're in guild.members.
     winner = FakeMember(uid=1001, display_name="BigWinner")
     thief = FakeMember(uid=1003, display_name="SneakyThief")
     guild = FakeGuild(gid=42)
@@ -174,7 +169,7 @@ async def test_recap_events_block_includes_top_gambling_and_crime(db, monkeypatc
     block = await cog._build_recap_events_block(42, _ct_today())
 
     # Each user is the sole entry in its category, so the top-1 rule shows
-    # both even though neither clears the 10k floor.
+    # both even though neither clears the 25k floor.
     assert "BigWinner won 8,000 coins gambling" in block
     assert "SneakyThief pulled off 4,200 coins in crime" in block
     # The net loser is not mentioned.
@@ -182,10 +177,10 @@ async def test_recap_events_block_includes_top_gambling_and_crime(db, monkeypatc
 
 
 async def test_recap_resolve_name_falls_back_to_api_fetch(db):
-    """The bot runs without the members intent, so guild.get_member() misses
-    for most users. _recap_resolve_name must fall through to an API fetch
-    (guild.fetch_member, then bot.fetch_user) instead of printing raw ids —
-    this is the bug behind 'user 1489430987489149110' in real recaps."""
+    """guild.get_member() is cache-only and can miss. _recap_resolve_name
+    must fall through to an API fetch (guild.fetch_member, then
+    bot.fetch_user) instead of printing raw ids — the bug behind
+    'user 1489430987489149110' in real recaps."""
     from src.persistence.history import upsert_gambling_delta
     from src.economy import _current_bucket_ct
 
@@ -198,7 +193,6 @@ async def test_recap_resolve_name_falls_back_to_api_fetch(db):
     guild.members = []
 
     async def _fetch_member(uid):
-        # Simulates the API fetch fetch_member() falls through to.
         if uid == 555:
             return FakeMember(uid=555, display_name="ApiResolved")
         raise Exception("not found")
@@ -281,9 +275,7 @@ async def test_recap_resolve_name_logs_diagnostic_when_all_paths_fail(db, caplog
     with caplog.at_level(logging.WARNING):
         block = await cog._build_recap_events_block(42, _ct_today())
 
-    # Bare-id fallback in the output.
     assert "user 999 won 5,000 coins gambling" in block
-    # And a diagnostic record naming both failures.
     rec = next(r for r in caplog.records if r.message == "recap_name_unresolved")
     assert rec.user_id == 999
     assert "member fetch boom" in rec.fetch_member_error
@@ -315,7 +307,6 @@ async def test_recap_events_block_top1_unconditional_then_floor(db):
     cog = AICog(bot=_Bot())
     block = await cog._build_recap_events_block(42, _ct_today())
 
-    # Top-1 (74,173) + the one entry over the 25k floor; sub-floor ones drop.
     assert "u1 won 74,173" in block
     assert "u2 won 30,000" in block
     assert "u3" not in block  # 14,073 — under the 25k floor

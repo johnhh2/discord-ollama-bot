@@ -82,8 +82,8 @@ _ERROR_REPORT_REACTIONS: tuple[str, ...] = ("❌", "⚙️", "✅", "🛑", "\U0
 def _build_error_mute_key(ctx: commands.Context, error: Exception) -> str:
     """Compose the (command, type, message) mute key used by error_mutes.
 
-    The full exception message is included so a small wording change re-files
-    a fresh report — that's deliberate (per user preference at design time).
+    The full exception message is included deliberately: a small wording
+    change re-files a fresh report.
     """
     cmd_name = ctx.command.qualified_name if ctx.command is not None else "—"
     return f"{cmd_name}:{type(error).__name__}:{error}"[:255]
@@ -92,9 +92,8 @@ def _build_error_mute_key(ctx: commands.Context, error: Exception) -> str:
 async def _log_command_error(bot, ctx: commands.Context, error: Exception):
     """File an auto-bug-report for a command exception.
 
-    Replaces the older "post to error_log_channel" path: command errors now
-    route to `internal_issue_channel` so the same admin reaction-triage flow
-    (❌ 🚧 ✅) applies, plus a 🔇 mute reaction unique to error reports.
+    Posts to `internal_issue_channel` so the same admin reaction-triage flow
+    (❌ ⚙️ ✅ 🛑) applies, plus a 🔇 mute reaction unique to error reports.
 
     No-op when:
     - `internal_issue_channel` isn't configured (nowhere to post)
@@ -215,7 +214,8 @@ def _short_msg_text(msg) -> str:
 
 
 async def _roast_soundboard_spam(bot, guild_id: int, user_id: int):
-    """Generate a roast for soundboard spam using the ragebait system."""
+    """Stream an AI roast of a soundboard spammer into the guild's first
+    sendable AI channel."""
     guild = bot.get_guild(guild_id)
     if guild is None:
         return
@@ -237,12 +237,10 @@ async def _roast_soundboard_spam(bot, guild_id: int, user_id: int):
     )
 
     try:
-        # Create a fake channel/message context for the streaming function
         voice_channel = member.voice.channel if member.voice else None
         if voice_channel is None:
             return
 
-        # Find the first AI channel in the guild to send the roast to
         cfg = get_guild_cfg(guild_id)
         ai_channels = cfg.get("ai_channels", [])
         text_channel = None
@@ -297,10 +295,8 @@ async def _handle_soundboard_ratelimit(bot, guild_id: int, user_id: int):
     if member is None or member.voice is None:
         return
 
-    # Generate roast
     asyncio.create_task(_roast_soundboard_spam(bot, guild_id, user_id))
 
-    # Kick from voice channel
     try:
         await member.move_to(None)  # kick from voice channel
     except (discord.Forbidden, Exception):
@@ -420,13 +416,11 @@ class EventsCog(commands.Cog):
     async def on_ready(self):
         logging.info(f"Logged in as {self.bot.user} ({self.bot.user.id})")
 
-        # Shield init from on_ready cancellation: if this listener task
-        # is killed mid-await (gateway hiccup, container signal), the
-        # inner `async with with_cursor()` raises GeneratorExit during
-        # cleanup, init_done never gets set, and every subsequent
-        # on_message hits its 60s timeout and silently drops — bot looks
-        # unresponsive until manual restart. Shield wraps the coro in a
-        # Task that keeps running even if the outer await is cancelled.
+        # Shield init from on_ready cancellation (gateway hiccup, container
+        # signal): killed mid-await, `async with with_cursor()` raises
+        # GeneratorExit and init_done is never set, so every later on_message
+        # hits its 60s timeout and silently drops — unresponsive until a
+        # manual restart. The shielded Task runs on if this await is cancelled.
         await asyncio.shield(init_db_state())
 
         # Edit the restart confirmation message if one was saved
@@ -437,7 +431,7 @@ class EventsCog(commands.Cog):
                 msg = await channel.fetch_message(restart_data["message_id"])
                 await msg.edit(embed=emb("✅ Restarted", "Bot has restarted.", C_GREEN))
             except Exception:
-                pass
+                pass  # best-effort: the channel or message may be gone
             await clear_restart_msg()
 
         # Delete all ephemeral messages that survived the restart
@@ -483,25 +477,22 @@ class EventsCog(commands.Cog):
         """Global command-channel whitelist/blacklist gate.
 
         `bot_check` is a discord.py Cog special method registered as a
-        bot-wide check for every command. (This was previously declared as a
-        @Cog.listener(), which never fires — listeners are dispatched by
-        gateway event name — so the whitelist/blacklist was silently
-        unenforced.) Returning False raises CheckFailure; on_command_error
-        formats the wrong-channel reply.
+        bot-wide check for every command. Don't make it a @Cog.listener():
+        listeners dispatch by gateway event name, so it would never fire and
+        the gate would go silently unenforced. Returning False raises
+        CheckFailure; on_command_error formats the wrong-channel reply.
         """
         if ctx.guild is None:
             return True
         if ctx.command and ctx.command.name in ("settings", "clear"):
-            return True  # always allow !settings and !clear in any channel
+            return True
 
         cfg = get_guild_cfg(ctx.guild.id)
 
-        # Allow searchquote if bypass is enabled
         if ctx.command and ctx.command.name == "searchquote":
             if cfg.get("quote_bypass_restrictions", False):
                 return True
 
-        # !quote (save/display) always allowed in any channel
         if ctx.command and ctx.command.name == "quote":
             return True
 
@@ -526,9 +517,8 @@ class EventsCog(commands.Cog):
             logging.debug(f"[debug] {error}")
             return
         # A command-local `@cmd.error` handler that fully dealt with the error
-        # (sent the user a friendly message) sets `error.handled = True`.
-        # discord.py still dispatches this global listener afterwards, so honor
-        # the flag and skip the audit log / "⚠️ Command Error" report for those.
+        # sets `error.handled = True`; discord.py still dispatches this listener
+        # afterwards, so skip the audit log and "⚠️ Command Error" report.
         if getattr(error, "handled", False):
             return
         from src.level_unlocks import LevelLocked
@@ -546,11 +536,10 @@ class EventsCog(commands.Cog):
                 msg = "Commands are not allowed in this channel."
             await _wrong_channel_reply(ctx, msg)
             return
-        # Bad/missing/extra arguments to a typed parameter (e.g. `!scratch help`
-        # failing to convert "help" to int). discord.py raises BadArgument /
-        # MissingRequiredArgument / TooManyArguments — all subclasses of
-        # UserInputError. Show the command's usage instead of routing this to the
-        # admin "⚠️ Command Error" bug-report path and re-raising.
+        # Bad/missing/extra arguments (e.g. `!scratch help` failing to convert
+        # "help" to int): BadArgument, MissingRequiredArgument and
+        # TooManyArguments all subclass UserInputError. Show the command's usage
+        # instead of filing a "⚠️ Command Error" report and re-raising.
         if isinstance(error, commands.UserInputError):
             if ctx.command is not None:
                 prefix = ctx.clean_prefix or "!"
@@ -563,10 +552,9 @@ class EventsCog(commands.Cog):
                 usage = f"{prefix}{typed} {ctx.command.signature}".rstrip()
                 await ctx.send(f"❌ Usage: `{usage}`")
             return
-        # A 503 from Discord's edge proxy is Discord's outage, not a bug in
-        # the command — and the send has already been retried (see
-        # src/discord_retry.py). Tell the user to try again and log a
-        # warning; no audit-log entry, no "⚠️ Command Error" report, no
+        # A 503 that survived the send retries (src/discord_retry.py) is
+        # Discord's outage, not a bug in the command: warn and tell the user to
+        # try again — no audit-log entry, no "⚠️ Command Error" report, no
         # traceback. The reply is best-effort: if Discord is still down it
         # fails too, and that must not surface as a second error.
         original = getattr(error, "original", error)
@@ -595,10 +583,9 @@ class EventsCog(commands.Cog):
         if ctx.command is not None:
             from src.metrics import command_invocations
             command_invocations.labels(command=ctx.command.qualified_name, outcome="error").inc()
-        # Error reporting is best-effort: a transient network failure (DNS,
-        # connection reset) while posting the bug report must not produce a
-        # second, misleading on_command_error traceback that buries the real
-        # error. Swallow anything here; the original `error` is re-raised below.
+        # Best-effort: a network failure (DNS, connection reset) while posting
+        # the report must not raise a second on_command_error traceback that
+        # buries the real error, which is re-raised below.
         try:
             await _log_command_error(self.bot, ctx, error)
         except Exception:
@@ -661,19 +648,17 @@ class EventsCog(commands.Cog):
         if message.author == self.bot.user:
             return
 
-        # Block until init_db_state has loaded state from the DB. Without
-        # this, a fast command after restart hits _ensure_user against an
-        # empty state.economy["users"], which overwrites the user's real
-        # row with {balance: 0, daily_date: None}.
+        # Block until init_db_state has loaded state from the DB: a fast
+        # command after restart would otherwise hit _ensure_user against an
+        # empty state.economy["users"] and overwrite the user's real row with
+        # {balance: 0, daily_date: None}.
         #
         # Bounded wait: if init_db_state was cancelled mid-flight (e.g. a
-        # gateway hiccup re-dispatched on_ready and aborted the in-flight
-        # task), init_done stays unset forever and every message hangs here.
-        # 60s is well past a healthy boot's init time; if we're past that,
-        # something is wrong and silently dropping the message is better
-        # than blocking the listener task indefinitely. _ensure_user and
-        # grant_xp keep their unbounded waits — there the cost of proceeding
-        # on empty state is data corruption, not a dropped command.
+        # gateway hiccup re-dispatching on_ready), init_done stays unset
+        # forever. 60s is well past a healthy boot, and silently dropping the
+        # message beats blocking the listener task indefinitely. _ensure_user
+        # and grant_xp keep their unbounded waits — there, proceeding on empty
+        # state means data corruption, not a dropped command.
         import src.persistence as _pkg
         try:
             await asyncio.wait_for(_pkg.init_done.wait(), timeout=60.0)
@@ -681,33 +666,30 @@ class EventsCog(commands.Cog):
             logging.error("[on_message] init_done not set after 60s; dropping message")
             return
 
-        # Bot-side blocklist: silently drop everything from banned users —
-        # no AI, no commands, no XP/economy/tax/curse side effects, no
-        # stats counted. Mirrors the hidden-permission denial pattern.
-        #
-        # is_silenced (not an inline dict lookup) so DMs are covered: a DM has
-        # no guild to scope the per-guild blocklist to, and the economy has no
-        # guild dimension, so a banned user could otherwise farm coins in a DM
-        # and spend them in the server that banned them.
+        # Bot-side blocklist: silently drop everything from banned users (like
+        # a hidden-permission denial) — no AI, no commands, no XP/economy/tax/
+        # curse side effects, no stats counted. is_silenced, not an inline
+        # dict lookup, so DMs are covered: the economy has no guild dimension,
+        # so a banned user could otherwise farm coins in a DM and spend them
+        # in the server that banned them.
         if is_silenced(message.author.id, message.guild.id if message.guild else None):
             return
 
         state.stats_messages_seen += 1
         state.stats_messages_today += 1
 
-        # Side-effect handlers — each runs on every non-command message from a
-        # human, mutating its own state slice. Order matters for things like
-        # the tax/curse/mock/ragebait quartet: they're independent but run in
-        # the canonical order to keep ordering stable. Each is isolated: one
-        # handler blowing up (DB hiccup, Discord 500) must not silently abort
-        # the rest of the chain — including process_commands at the end.
+        # Side-effect handlers — each runs on every message from a human,
+        # mutating its own state slice. They're independent; the fixed order
+        # only keeps behaviour stable. Each is isolated: one handler blowing up
+        # (DB hiccup, Discord 500) must not silently abort the rest of the
+        # chain — including process_commands at the end.
         #
-        # Bots are excluded from the whole chain, not just from XP. This bot's
-        # own messages already returned above, but process_commands is
-        # deliberately open to *other* bots, so their messages reach here: a
-        # mocked bot and this bot would echo each other indefinitely, and
-        # `!shop tax @somebot` billed an account that can't notice or object.
-        # The interceptors and AI routing below stay open to bots as before.
+        # Bots are excluded from the whole chain, not just from XP:
+        # process_commands is deliberately open to *other* bots, so their
+        # messages reach here — a mocked bot and this bot would echo each
+        # other indefinitely, and `!shop tax @somebot` would bill an account
+        # that can't notice or object. The interceptors and AI routing below
+        # stay open to bots.
         for handler in () if message.author.bot else (
             self._handle_msg_xp,
             self._handle_ragebait,
@@ -998,6 +980,8 @@ class EventsCog(commands.Cog):
             return False
         reward = puzzle["reward"]
         expected = puzzle["answer"]
+        # Claim synchronously before the awaits so a second correct answer
+        # can't also be paid.
         del state.active_puzzles[cid]
         await add_balance(uid, reward)
         await message.channel.send(embed=emb(
@@ -1092,13 +1076,11 @@ class EventsCog(commands.Cog):
             await self.bot.process_commands(message)
             return
 
-        # "@Bot !give @user 1" is a command, not an AI prompt. The dispatcher
-        # only sees the "!" prefix at the very start of the raw content, so a
-        # mention-prefixed command never reached it — the LLM answered in
-        # prose instead (typically coaching the user toward the canonical
-        # command name). Same for a "!command" DM, where the LLM used to
-        # answer on top of the command. Strip the mention and dispatch;
-        # an unresolvable "!word" still falls through to the AI.
+        # "@Bot !give @user 1" is a command, not an AI prompt, but the
+        # dispatcher only sees a "!" at the very start of the raw content — the
+        # LLM would answer in prose instead (or, for a "!command" DM, on top
+        # of the command). Strip the mention and dispatch; an unresolvable
+        # "!word" still falls through to the AI.
         if content.startswith("!"):
             message.content = content
             ctx = await self.bot.get_context(message)

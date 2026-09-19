@@ -144,7 +144,6 @@ async def test_stream_ollama_skips_request_when_rate_limited(monkeypatch):
     assert result == ""
     assert session.post_calls == []
     placeholder.edit.assert_awaited_once()
-    # Embed should mention the rate limit.
     kwargs = placeholder.edit.await_args.kwargs
     embed = kwargs.get("embed")
     assert embed is not None

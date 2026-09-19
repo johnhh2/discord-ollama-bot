@@ -72,6 +72,7 @@ async def _wait_for_confirmations(
                 break
             if emoji == ACCEPT_EMOJI and user.id in invited_ids:
                 confirmed_ids.add(user.id)
+    # Best-effort cleanup: a failed delete must not lose the confirmations.
     try:
         await invite_msg.delete()
     except Exception:

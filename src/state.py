@@ -14,7 +14,7 @@ bot_roles: set = set()
 # 1 = highest, gaps are fine. Source of truth is the bot_roles table
 # (rank_pos column). The leaderboard and !shop roleup / !shop roledown
 # read/write through this dict; Discord's role.position is updated
-# best-effort but is no longer authoritative.
+# best-effort and is not authoritative.
 bot_role_ranks: dict = {}
 bot_admins: set = set()
 godmode_users: set = set()
@@ -90,10 +90,9 @@ gambler_streak: dict = {}
 # window rolls with the 1st-of-month 6pm CT draw). The chess ceiling is
 # global: the gate sums a user's rows across all guilds for the period
 # (cumulative monthly ceiling — see chess_ticket_ceiling in
-# src/cogs/lottery_cog.py).
-# Gate checks claim
-# these synchronously (see CLAUDE.md concurrency rules). Source of truth is
-# the lottery_ticket_grants table; loaded at boot.
+# src/cogs/lottery_cog.py). Gate checks claim these synchronously (see
+# CLAUDE.md concurrency rules). Source of truth is the
+# lottery_ticket_grants table; loaded at boot.
 lottery_ticket_grants: dict = {}
 # {uid_str: {"date": "YYYY-MM-DD", "count": int}} — sequential-day streak of
 # using any command (bumped in on_command_completion). Source of truth is the
@@ -159,6 +158,7 @@ def _load_riddles_list() -> list:
                 if r["QUESTIONS"].strip() and r["ANSWERS"].strip()
             ]
     except Exception:
+        # Runs at import: a missing or malformed file must not take state down.
         return []
 
 

@@ -422,11 +422,9 @@ async def test_list_buy_cross_server_pays_seller_minus_fee(db):
     await add_balance(buyer, 100_000)
 
     cog = AssetsCog(bot=None)
-    # Seller lists at 50k in guild 42.
     await AssetsCog.assets_sell.callback(cog, _ctx(seller, gid=GID), "Car", "Wash", "50k")
     assert _state.property_owners["car_wash"]["list_price"] == 50_000
 
-    # Buyer buys from guild 77.
     buy_ctx = _ctx(buyer, gid=77)
     await AssetsCog.assets_buy.callback(cog, buy_ctx, name="Car Wash")
 

@@ -89,7 +89,7 @@ def _msg_text(msg: discord.Message) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | None:
-    """Return the 'Gamblers' role, creating it if it doesn't exist."""
+    """The 'Gamblers' role, created on demand; None if creation fails."""
     role = discord.utils.get(guild.roles, name="Gamblers")
     if role is None:
         try:
@@ -105,12 +105,12 @@ PUZZLE_RIDDLE_REWARD = 20
 class UtilityCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # epoch of last !puzzle generation per uid, for the per-user cooldown.
+        # Epoch of the last !puzzle per uid, for the 6h cooldown — which
+        # cmd_puzzle applies to bot authors only.
         self._last_puzzle_by_uid: dict[int, float] = {}
-        # Per-admin listing cache for `!issue delete <N>`: {uid: [issue_id, ...]}
-        # where the index in the list corresponds to the 1-indexed number the
-        # user saw in their most recent `!issues` invocation. In-memory only —
-        # if a delete comes after a restart we just tell them to re-list.
+        # Per-admin cache for `!issue delete <N>`: {uid: [issue_id, ...]}, in
+        # the order of the user's latest `!issues` (N is 1-indexed). In-memory
+        # only — a delete after a restart just asks them to re-list.
         self._issues_listing_by_user: dict[int, list[int]] = {}
 
     @commands.command(name="gambler-role", aliases=["gamblerole", "gamblers"])
@@ -178,7 +178,6 @@ class UtilityCog(commands.Cog):
             "`!shop` — Browse items"
         ))
 
-        # Only show NSFW if enabled in guild
         if ctx.guild:
             cfg = get_guild_cfg(ctx.guild.id)
             nsfw_enabled = cfg.get("nsfw_enabled", False)
@@ -295,8 +294,8 @@ class UtilityCog(commands.Cog):
             inline=False
         )
 
-        # Costs come from the single source of truth so this menu can't go
-        # stale again (it previously showed 10/50 vs the real 200/500).
+        # Costs come from FEATURE_COSTS, never hardcoded, so this menu can't
+        # drift from the real prices.
         from src.ai import FEATURE_COSTS
 
         embed.add_field(
@@ -683,7 +682,6 @@ class UtilityCog(commands.Cog):
             return
 
         # ── Coding branch ──────────────────────────────────────────────────────────
-        # Resolve difficulty
         difficulty = (difficulty or "medium").lower()
         if difficulty not in PUZZLE_REWARDS:
             await ctx.send(f"Unknown difficulty `{difficulty}`. Choose: {', '.join(PUZZLE_REWARDS)}")
@@ -978,8 +976,8 @@ class UtilityCog(commands.Cog):
         """User-facing feature-request submission.
 
         Posts an embed to the per-guild `feature_request_channel` and seeds
-        only two reactions: ✅ (accept → spawns a feature issue) and 🛑
-        (reject). Distinct from `!issue feature` which is bot-admin only.
+        ✅ (accept → spawns a feature issue), ❌ (reject) and 👀 (watch).
+        Distinct from `!issue feature` which is bot-admin only.
         """
         title = "📖 Feature Request"
         if description is None or not description.strip():
@@ -1281,9 +1279,8 @@ class UtilityCog(commands.Cog):
                 await self._set_feature_request_watch(payload, watching=True)
             return
 
-        # is_bot_admin_id, not a bare state.bot_admins lookup: a user granted
-        # bot_admin via !setperm can run every other bot-admin command, and
-        # was silently excluded from triage only.
+        # is_bot_admin_id, not a bare state.bot_admins lookup: a !setperm
+        # bot_admin override must reach triage like every other bot-admin command.
         if not is_bot_admin_id(payload.user_id, payload.guild_id):
             return
 
@@ -1345,11 +1342,10 @@ class UtilityCog(commands.Cog):
             except (discord.Forbidden, discord.HTTPException) as e:
                 logging.error(f"[bug] failed to clear reactions on {payload.message_id}: {e}")
 
-        # Propagate to the originating feature_request, if this issue is a
-        # spawned feature linked to one. Completing or rejecting the feature
-        # resolves the request too, so its requester and 👀 watchers hear
-        # about it. Bug reports DM the !bugreport author on completion; other
-        # kinds (admin-filed feature/task/improvement/error) don't DM.
+        # A spawned feature mirrors its status onto the originating request;
+        # completing or rejecting it resolves the request too, so the requester
+        # and 👀 watchers hear about it. Bug reports DM the !bugreport author on
+        # completion; admin-filed kinds (feature/task/improvement/error) don't DM.
         if issue.get("kind") == "feature":
             request = await self._refresh_feature_request_for_issue(issue["id"], feature_status=new_status)
             if request is not None and new_status in ("completed", "rejected"):
@@ -1375,9 +1371,7 @@ class UtilityCog(commands.Cog):
             return
         if emoji != _ISSUE_MUTE_EMOJI:
             return
-        # is_bot_admin_id, not a bare state.bot_admins lookup: a user granted
-        # bot_admin via !setperm can run every other bot-admin command, and
-        # was silently excluded from triage only.
+        # is_bot_admin_id for !setperm overrides — see on_raw_reaction_add.
         if not is_bot_admin_id(payload.user_id, payload.guild_id):
             return
 
@@ -1855,10 +1849,8 @@ _ISSUE_KINDS: dict[str, dict] = {
     },
 }
 
-# Emojis the bot seeds onto each new issue embed. Order is the order
-# they appear in Discord's reaction bar.
-# Statuses accepted as a filter argument to `!issues`. 'open' is the seeded
-# initial status; the rest are reachable via the reaction-triage flow.
+# Statuses accepted as a filter argument to `!issues`. 'open' is the legacy
+# initial status (new rows start 'not_started'); the rest are set by triage.
 _ISSUE_VALID_STATUSES: tuple[str, ...] = (
     "open", "not_started", "wip", "completed", "rejected",
 )
@@ -1916,7 +1908,7 @@ def _format_issue_listing_line(n: int, row: dict) -> str:
 
 # Emojis the bot seeds onto each new issue embed. Order is the order
 # they appear in Discord's reaction bar.
-_ISSUE_STATUS_EMOJIS: tuple[str, ...] = ("❌", "⚙️", "✅", "🛑")  # ❌ ⚙️ ✅ 🛑
+_ISSUE_STATUS_EMOJIS: tuple[str, ...] = ("❌", "⚙️", "✅", "🛑")
 _ISSUE_EMOJI_TO_STATUS: dict[str, str] = {
     "❌": "not_started",
     "⚙️": "wip",
@@ -1933,8 +1925,8 @@ _ISSUE_STATUS_TO_COLOR: dict[str, int] = {
     "wip":         C_GOLD,
     "rejected":    C_RED,
 }
-# Human-readable label per stored status. "open" is the seeded default; we
-# don't render a status footer for it.
+# Human-readable label per stored status. The legacy "open" has none, so it
+# renders no status footer.
 _ISSUE_STATUS_LABEL: dict[str, str] = {
     "not_started": "Not started",
     "completed":   "Completed",
@@ -1951,7 +1943,7 @@ def _issue_status_footer(status: str) -> str | None:
 
 _ISSUE_MUTED_FOOTER = "**This error has been muted and will not be reported again**"
 
-# Mute reaction for auto-filed error reports. The triage emojis (❌/🚧/✅) apply
+# Mute reaction for auto-filed error reports. The triage emojis (❌/⚙️/✅/🛑) apply
 # to every kind; 🔇 only does anything on kind='error' issues.
 _ISSUE_MUTE_EMOJI = "\U0001F507"  # 🔇
 

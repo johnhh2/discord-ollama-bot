@@ -69,10 +69,10 @@ async def check_token_budget_or_notify(ctx, prompt_text: str = "") -> bool:
     """Pre-flight token-budget check for AI commands.
 
     Sends the rate-limit embed and returns False when the user's bucket
-    can't even cover what they typed (so we don't waste effort deducting
-    the coin cost or spinning up a Discord thread that's about to fail).
-    Returns True when the call should proceed; the authoritative spend
-    still happens inside `stream_ollama`. user_id=None / godmode pass.
+    can't cover what they typed — before the caller deducts the coin cost
+    or opens a Discord thread that's about to fail. Returns True when the
+    call should proceed; the authoritative spend still happens inside
+    `stream_ollama`. Godmode users pass.
     """
     if ctx.author.id in state.godmode_users:
         return True
@@ -93,7 +93,7 @@ async def check_token_budget_or_notify(ctx, prompt_text: str = "") -> bool:
 
 def _peek_token_budget(user_id: int) -> float:
     """Return the user's current token balance without spending. Used by
-    the `!ai` status display so users can see what they have left."""
+    the pre-flight check and the `!ai` status display."""
     if user_id in state.godmode_users:
         return float(TOKEN_BUCKET_MAX)
     now = time.monotonic()
@@ -237,9 +237,8 @@ async def ollama_complete(messages: list, model: str = None) -> str:
 async def keep_typing(channel: discord.abc.Messageable):
     try:
         while True:
-            # channel.typing() is the discord.py 2.x one-shot form;
-            # trigger_typing() was removed in 2.0 and raised AttributeError,
-            # silently killing this task on its first iteration.
+            # The discord.py 2.x one-shot form. trigger_typing() was removed in
+            # 2.0 — its AttributeError silently killed this task on the first pass.
             await channel.typing()
             await asyncio.sleep(5)
     except asyncio.CancelledError:
@@ -348,12 +347,13 @@ async def stream_ollama(
                         full_response += token
                         now = time.monotonic()
                         if now - last_edit >= EDIT_INTERVAL and full_response:
+                            # Discord's 2000-char cap: show the tail, leaving room for the cursor.
                             display = full_response[-1997:] if len(full_response) > 1997 else full_response
                             try:
                                 await placeholder.edit(content=display + "▌")
                                 last_edit = now
                             except discord.HTTPException:
-                                pass
+                                pass  # harmless — the next edit or finalize() catches up
                         if data.get("done"):
                             break
             except asyncio.TimeoutError:
@@ -388,6 +388,7 @@ async def stream_ollama(
 
 
 async def finalize(placeholder: discord.Message, channel: discord.abc.Messageable, text: str):
+    # max(…, 1): empty text still yields the one chunk chunks[0] needs.
     chunks = [text[i:i + 2000] for i in range(0, max(len(text), 1), 2000)]
     await placeholder.edit(content=chunks[0])
     for chunk in chunks[1:]:

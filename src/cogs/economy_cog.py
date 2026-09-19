@@ -125,12 +125,10 @@ async def try_set_crime_record(
 
 
 def _is_public_channel(channel) -> bool:
-    """True if @everyone can view this channel (i.e. it's a public channel).
+    """True if @everyone can view this channel, i.e. it's public.
 
-    A channel is considered private when the guild's default role (@everyone)
-    is denied `view_channel` via a permission overwrite. Crimes (steal / mug /
-    bankheist) are blocked in private channels so they can only target people
-    in the open. DMs / non-guild contexts return False (not public)."""
+    Crimes (steal / mug / bankheist) are blocked in private channels so they
+    can only target people in the open. DMs / non-guild contexts return False."""
     guild = getattr(channel, "guild", None)
     if guild is None:
         return False
@@ -234,7 +232,7 @@ class _StealTierView(discord.ui.View):
         try:
             await self.message.edit(view=self)
         except discord.HTTPException:
-            pass
+            pass  # best-effort: the picker message may be gone
 
 
 class _StealTierButton(discord.ui.Button):
@@ -393,10 +391,8 @@ class EconomyCog(commands.Cog):
             ((k, v) for k, v in state.economy["users"].items() if v["balance"] > 0 or k in lottery_players),
             key=lambda x: x[1]["balance"], reverse=True
         )
-        # Server scope filters the global economy down to members of this guild.
-        # The member cache is only populated for users who've interacted (the
-        # bot runs without the privileged members intent), so this reflects
-        # active members rather than the full roster.
+        # Server scope filters the global economy down to this guild's cached
+        # members.
         if server_only:
             ranked = [(k, v) for k, v in ranked if ctx.guild.get_member(int(k)) is not None]
         sorted_users = ranked[:10]
@@ -480,8 +476,9 @@ class EconomyCog(commands.Cog):
         await self._send_steal_picker(ctx, target)
 
     async def _steal_preflight(self, ctx: commands.Context, target) -> discord.Embed | None:
-        """Tier-independent gating shared by `_run_steal` and the tier picker.
-        Returns an error embed to show the user, or None if the steal can proceed.
+        """Tier-independent gating for the tier picker; mirrors the checks
+        `_run_steal` runs itself. Returns an error embed to show the user, or
+        None if the steal can proceed.
 
         Sending happens at the call site so the picker can decide whether to
         attach buttons; centralizing the message text isn't worth the indirection."""
@@ -519,7 +516,7 @@ class EconomyCog(commands.Cog):
         return None
 
     async def _send_steal_picker(self, ctx: commands.Context, target):
-        """Show 3 buttons (10/15/25%) so the user can pick a tier interactively."""
+        """Show 3 buttons (10/15/20%) so the user can pick a tier interactively."""
         # Run the same gating as `_run_steal` so we don't show buttons for an
         # impossible heist. Special-case self-target so the test that asserts a
         # plain `ctx.send(...)` string still passes.
@@ -576,7 +573,6 @@ class EconomyCog(commands.Cog):
 
         thief_data = state.economy["users"][str(thief_id)]
 
-        # Check jail
         jail_until = thief_data.get("jail_until", 0)
         if time.time() < jail_until:
             reason = thief_data.get("jail_reason")
@@ -726,9 +722,10 @@ class EconomyCog(commands.Cog):
     # joinable via 2️⃣/3️⃣/4️⃣ reactions). Host starts with 🚀 or cancels with ❌;
     # auto-starts at 60s with a 10s last-call warning. On success, seizes 20%
     # of the target's savings via seize_from_savings and splits evenly among
-    # participants (host gets the integer-division remainder). Failure is a
-    # no-op for everyone — savings are only at risk on success. Jail gates
-    # both ends: a jailed host can't open a lobby, a jailed player can't join.
+    # participants (host gets the integer-division remainder). Failure leaves
+    # the savings untouched, but win or lose every participant rolls 50% for
+    # a day in jail. Jail gates both ends: a jailed host can't open a lobby,
+    # a jailed player can't join.
     #
     # Silas: a host who owns the heist-partner artifact gets SILAS (Lv 1, an
     # NPC) in slot 4 whenever fewer than three players have joined. `slots`
@@ -1056,6 +1053,7 @@ class EconomyCog(commands.Cog):
             "target": target,
             "slots": slots,
             "message": None,
+            # Loop time drives the timeout; wall time feeds the <t:…> deadline.
             "opened_at": asyncio.get_running_loop().time(),
             "opened_at_wall": time.time(),
             "warned": False,
@@ -1092,10 +1090,9 @@ class EconomyCog(commands.Cog):
                 return False
 
             # Listen before seeding: the five buttons take over a second to
-            # appear, and under wait_for a joiner who clicked 2️⃣ while 🚀 was
-            # still being added was ignored — as was a join that landed while
-            # the lobby was editing its embed after the previous one. The
-            # collector queues both (see src/reactions.py).
+            # appear, and the collector queues a click that lands while they're
+            # still being added or while the lobby is editing its embed after
+            # the previous join (see src/reactions.py).
             async with ReactionCollector(ctx.bot, lobby_msg) as reactions:
                 await seed_reactions(
                     lobby_msg,
@@ -1118,7 +1115,7 @@ class EconomyCog(commands.Cog):
                                 hstate, gid, savings_value, last_call=True,
                             ))
                         except Exception:
-                            pass
+                            pass  # best-effort refresh — a failed edit mustn't end the lobby
                         wait_for_timeout = time_left
                     else:
                         time_until_warning = max(0.0, time_left - self.BANKHEIST_LAST_CALL)
@@ -1534,7 +1531,8 @@ class EconomyCog(commands.Cog):
                 base += extra_fn(rec)
             return base
 
-        # Most hangman wins
+        # Hangman wins are tallied per user in hangman_wins_<uid> rows — show
+        # the top one.
         hangman_wins_entries = [
             (k, v) for k, v in r.items()
             if k.startswith("hangman_wins_")
@@ -1599,7 +1597,6 @@ class EconomyCog(commands.Cog):
             amount = action[1:]
             action = "add" if action[0] == "+" else "remove"
 
-        # Normalize word aliases
         if action in ("+", "add", "deposit"):
             action = "add"
         elif action in ("-", "remove", "withdraw"):
@@ -1875,6 +1872,7 @@ class EconomyCog(commands.Cog):
         duration_hours = None
         if duration is not None:
             if duration.startswith("<#"):
+                # No duration given — the second arg is the #channel mention.
                 duration = None
             else:
                 try:
@@ -1936,6 +1934,8 @@ class EconomyCog(commands.Cog):
         if user.id in event["rewarded"]:
             return
         try:
+            # Claim before the await (rolled back below): racing reactions
+            # grant once.
             event["rewarded"].add(user.id)
             await add_balance(user.id, event["amount"])
         except Exception as e:

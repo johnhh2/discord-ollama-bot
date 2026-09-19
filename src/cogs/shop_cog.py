@@ -71,13 +71,9 @@ from src import state
 
 def _shop_subcommand(enabled_key: "str | None"):
     def deco(func):
-        # functools.wraps copies __qualname__ from `func` (e.g. "ShopCog.shop_insurance"),
-        # which is load-bearing: discord.py's get_signature_parameters calls
-        # is_inside_class(callback) to decide how many leading params to skip
-        # (self + ctx for methods, ctx only for plain functions). If wrapper keeps its
-        # local qualname ("_shop_subcommand.<locals>.deco.<locals>.wrapper"),
-        # is_inside_class returns False, only one param is skipped, and discord.py
-        # treats `ctx` as a user-supplied arg — causing MissingRequiredArgument /
+        # wraps() is load-bearing: discord.py reads __qualname__ (is_inside_class) to
+        # decide whether to skip `self`. With the wrapper's local qualname it skips
+        # only one param and parses `ctx` as a user arg — MissingRequiredArgument /
         # BadArgument("Converting to Context failed") on every wrapped subcommand.
         @functools.wraps(func)
         async def wrapper(self, ctx: commands.Context, *args, **kwargs):
@@ -98,9 +94,8 @@ def _shop_subcommand(enabled_key: "str | None"):
     return deco
 
 
-# Top-level command names that should map to a !shop subcommand of the same
-# shape (same args, same body). Keeps a !shop subcommand and a !alias top-level
-# command in lockstep without 30 hand-written wrappers.
+# Top-level commands that mirror a !shop subcommand (same args, same body) —
+# one table keeps the pair in lockstep without 30 hand-written wrappers.
 # Each entry: (canonical top-level name, handler attr, [legacy aliases]).
 # The canonical name mirrors the !shop subcommand's name=; legacy aliases keep
 # the pre-rename verb-first names (createrole, createchannel, …) working as
@@ -145,20 +140,17 @@ class ShopCog(commands.Cog):
         # (guild_id, user_id) pairs with an XP purchase confirm in flight —
         # the confirm prompt is a long await, so gate re-entry explicitly.
         self._buyxp_active: set = set()
-        # Register declarative top-level aliases for shop subcommands. Tests
-        # instantiate ShopCog(bot=None) to exercise subcommand handlers
-        # directly, so skip registration when there's no bot to attach to.
+        # Register the top-level aliases. Tests instantiate ShopCog(bot=None)
+        # to call handlers directly — nothing to attach to then.
         if bot is not None:
             for top_name, sub_attr, legacy_aliases in _SHOP_TOP_ALIASES:
                 sub_cmd = getattr(self, sub_attr)
                 # cog=self is load-bearing: the callback's __qualname__ is
-                # ShopCog.shop_X (preserved by functools.wraps in
-                # _shop_subcommand), so discord.py's _parse_arguments builds
-                # ctx.args as [cog, ctx, ...]. Without cog set, it builds
-                # [ctx, ...] and the wrapper's `self` slot binds to the real
-                # Context, shifting every other arg by one — `ctx` then ends
-                # up bound to the first user arg (a string), and the first
-                # `.guild` access dies with 'str' has no attribute 'guild'.
+                # ShopCog.shop_X (kept by wraps() in _shop_subcommand), so
+                # discord.py's _parse_arguments builds ctx.args as
+                # [cog, ctx, ...]. Without a cog it builds [ctx, ...]: `self`
+                # binds to the Context, `ctx` to the first user arg, and the
+                # first `.guild` access dies with 'str' has no attribute 'guild'.
                 alias_cmd = commands.Command(sub_cmd.callback, name=top_name, aliases=legacy_aliases)
                 alias_cmd.cog = self
                 bot.add_command(alias_cmd)
@@ -210,7 +202,7 @@ class ShopCog(commands.Cog):
         try:
             await save_bot_roles()
         except Exception:
-            pass
+            pass  # best-effort: the caller still has to refund
         return True
 
     @staticmethod
@@ -297,7 +289,6 @@ class ShopCog(commands.Cog):
             return
         if not ctx.guild:
             return
-        # Extract the attempted command name from the raw message
         parts = ctx.message.content.strip().split(None, 1)
         if not parts:
             return
@@ -508,9 +499,8 @@ class ShopCog(commands.Cog):
         await save_user_artifact(uid, art["id"], prior + 1, acquired.get(art["id"]))
         await ctx.send(embed=emb("🏺 Artifact Acquired", f"Its power is now yours: {art['effect'].lower()}.", C_GREEN))
 
-        # Artifacts are global but records are per-guild: the "most artifacts
-        # owned" record lands in whichever guild the purchase happened in,
-        # same as every other category.
+        # total_artifacts is a global per-user stat: try_set_record mirrors it
+        # into the holder's other guilds, and only this guild announces.
         if ctx.guild is not None:
             total = owned_artifact_count(uid)
             if await try_set_record(
@@ -651,8 +641,8 @@ class ShopCog(commands.Cog):
             return
         # Track the role the moment it exists, before the assign. The assign
         # can fail on its own (target left during the confirm prompt, role
-        # hierarchy) and used to leave a live role the shop had never
-        # registered — invisible to !shop roledelete for good.
+        # hierarchy), and a live role the shop never registered is invisible
+        # to !shop roledelete for good.
         # New roles go to the bottom of the rank ladder for this guild
         # (max rank + 1 — lowest priority). Operators promote them via
         # !shop roleup.
@@ -844,9 +834,8 @@ class ShopCog(commands.Cog):
             name = role.name
             await role.delete()
             state.bot_roles.discard(role.id)
-            # Drop the rank entry too. Gaps are fine — the rank ladder
-            # doesn't get compacted, so adjacent ranks may have non-adjacent
-            # numbers after deletes.
+            # Drop the rank entry too. The ladder isn't compacted, so deletes
+            # leave gaps in the rank numbers — that's fine.
             state.bot_role_ranks.pop((ctx.guild.id, role.id), None)
             await save_bot_roles()
             await ctx.send(embed=emb("✅ Role Deleted", f"Role **{name}** has been permanently deleted.", C_GREEN))
@@ -1088,9 +1077,9 @@ class ShopCog(commands.Cog):
         if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_ROLECHANNEL_COST:,}"):
             return
         # Three overwrites, in this order so the bot keeps access before
-        # @everyone loses it. Each is its own HTTP call, so a failure on the
-        # second or third used to leave the earlier ones in place while the
-        # full price went back. Remember what each target had and restore it.
+        # @everyone loses it. Each is its own HTTP call, so remember what each
+        # target had: a failure on the second or third must restore the
+        # earlier ones before the full price goes back.
         applied: list[tuple] = []
         try:
             for who, perms in (
@@ -1317,9 +1306,8 @@ class ShopCog(commands.Cog):
             if cost > 0:
                 await add_balance(uid, cost)
             return
-        # Activate and persist before posting the opener. A failed save then
-        # refunds with nothing posted — it used to run post → activate → save,
-        # so the refund went out with the message landed and the effect live.
+        # Activate and save before posting the opener: a failed save must refund
+        # with nothing posted and no live effect.
         key = (gid, target.id)
         state.active_ragebaits[key] = {"remaining": SHOP_RAGEBAIT_MESSAGES, "history": [], "channel_id": ctx.channel.id}
         try:
@@ -1421,7 +1409,7 @@ class ShopCog(commands.Cog):
 
     @staticmethod
     def _insurance_tier_lines() -> str:
-        """One line per tier: price, refund share, daily refund cap."""
+        """One line per tier: price, refund share, per-robbery refund cap."""
         return "\n".join(
             f"**{name.title()}** — **{info['cost']:,} 🪙/day** · refunds **{info['refund_pct']}%** "
             f"of what crime takes from you, up to {info['refund_cap']:,} 🪙 per robbery"
@@ -1699,10 +1687,8 @@ class ShopCog(commands.Cog):
         expires_at = None
         charge = switch
         if bridged:
-            # Not covered, or covered only until some point before the next
-            # 5am sweep — charge the first day now (stacked on any remaining
-            # coverage) so the subscription protects without a gap until the
-            # sweep takes over.
+            # Charge the first day now, stacked on any remaining coverage —
+            # see _sub_needs_first_day.
             expires_at = extend_insurance(uid, 1, tier=chosen)
             charge += insurance_tier_cost(chosen)
         set_insurance_tier(uid, chosen)
@@ -2282,6 +2268,8 @@ class ShopCog(commands.Cog):
             leveled = new_level - old_level
             if leveled > 0:
                 await record_levelup(gid, uid, count=leveled)
+                # Reaching display level 10 (internal 9) latches crime
+                # eligibility, as grant_xp does for organic XP.
                 if old_level < 9 <= new_level:
                     from src.economy import _ensure_user as _eu
                     from src.persistence import save_economy as _save
@@ -2318,10 +2306,9 @@ class ShopCog(commands.Cog):
     # guild* and swaps the two ranks atomically in memory, then mirrors to
     # Discord's role.position best-effort.
     #
-    # Previously the code sorted Discord's role.position (which includes
-    # every server role, not just bot roles), so a bot role at Discord
-    # position 3 with no other bot roles above it would jump straight to
-    # the top of the bot pile in one move — visible as "#3 → #1".
+    # Discord's role.position can't drive the swap: it counts every server
+    # role, not just bot roles, so a bot role with no other bot role above it
+    # would jump straight to the top of the bot pile in one move ("#3 → #1").
     @cmd_shop.command(name="roleup", aliases=["roledown"])
     @_shop_subcommand("dynamic")
     async def shop_roleup(self, ctx: commands.Context, *args):
@@ -2386,17 +2373,15 @@ class ShopCog(commands.Cog):
                 return
             neighbor_rank, neighbor_id = min(candidates, key=lambda x: x[0])
 
-        # Swap the two ranks synchronously before any await — sibling
-        # invocations either see the new state and act on it or were
-        # already past their own gate (matches the codebase's standard
-        # race-avoidance pattern for in-memory mutations).
+        # Swap both ranks synchronously, before any await, so a sibling
+        # invocation never sees half a swap (see CLAUDE.md on per-user
+        # command races).
         state.bot_role_ranks[(ctx.guild.id, role.id)] = neighbor_rank
         state.bot_role_ranks[(ctx.guild.id, neighbor_id)] = my_rank
 
         try:
             await save_bot_roles()
         except Exception as e:
-            # Roll back in-memory swap and refund.
             state.bot_role_ranks[(ctx.guild.id, role.id)] = my_rank
             state.bot_role_ranks[(ctx.guild.id, neighbor_id)] = neighbor_rank
             if cost > 0:
@@ -2417,7 +2402,8 @@ class ShopCog(commands.Cog):
             except (discord.Forbidden, discord.HTTPException):
                 pass  # rank in DB is still correct; sidebar may look stale
 
-        # Compute display rank by counting how many ranks are <= ours.
+        # Rank numbers have gaps after deletes — show the position in the
+        # sorted list instead.
         guild_all_ranks = sorted(
             r for (g, _rid), r in state.bot_role_ranks.items() if g == ctx.guild.id
         )
@@ -2431,15 +2417,13 @@ class ShopCog(commands.Cog):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
             return
-        # Sort by stored bot_role_ranks (1 = highest), tie-break and
-        # fall-back to Discord position for any unranked role.
         candidates: list = []
         for r in ctx.guild.roles:
             if r.id not in state.bot_roles:
                 continue
             rank = state.bot_role_ranks.get((ctx.guild.id, r.id))
-            # Unranked roles sort after ranked ones; among unranked,
-            # higher Discord position wins.
+            # Ranked roles first (1 = highest); unranked ones after, higher
+            # Discord position first.
             sort_key = (0, rank) if rank is not None else (1, -r.position)
             candidates.append((sort_key, r))
         if not candidates:

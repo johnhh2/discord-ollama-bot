@@ -37,13 +37,11 @@ DAILY_TICKET_PRICE = 1000
 TICKET_POOL_SHARE = 700
 TICKET_HOUSE_SHARE = DAILY_TICKET_PRICE - TICKET_POOL_SHARE
 NEW_PLAYER_POOL_BONUS = 1000
-# Free monthly chess-win tickets, granted as a cumulative per-lottery
-# ceiling: only beating a 600+ Elo bot rewards, topping the winner up to 2
-# tickets in the current lottery. The window follows the lottery schedule
-# (lottery_period_key): it opens with the 1st-of-month 6pm CT draw and runs
-# until the next one. PvP wins and sub-600 bot wins grant nothing. The
-# ceiling is GLOBAL per user — wins anywhere count against one monthly cap
-# (each granted ticket still lands in the pot of the server it was won in).
+# Free chess-win tickets are a cumulative per-lottery ceiling: beating a 600+
+# Elo bot tops the winner up to 2 tickets; PvP and sub-600 bot wins grant
+# nothing. The window follows the lottery schedule (lottery_period_key), from
+# one 1st-of-month 6pm CT draw to the next. The ceiling is global per user,
+# though each granted ticket lands in the pot of the server it was won in.
 CHESS_TICKET_BOT_TIERS = ((600, 2),)
 CHESS_TICKET_MONTHLY_CAP = 2
 
@@ -71,11 +69,10 @@ def chess_tickets_granted_this_lottery(uid: int) -> int:
         if u == uid and r.get("chess_period") == period
     )
 # The reworked ticket economy starts with the September 2026 lottery. The
-# August 2026 pot still holds thousands of old 10-coin bulk tickets, so
-# selling a 1,000 🪙 ticket (or granting a free chess one) into it would be a
-# rip-off — no tickets of any kind until the 9/1/2026 6pm CT draw resets the
-# pool. This gate (and its three call sites) can be deleted once that date
-# has passed.
+# August 2026 pot still holds thousands of old 10-coin bulk tickets, so no
+# tickets of any kind (sold or free chess) go into it; sales open when the
+# 9/1/2026 6pm CT draw resets the pool. This gate (and its three call sites)
+# can be deleted once that date has passed.
 TICKET_SALES_START_CT = datetime.datetime(2026, 9, 1, 18, 0, tzinfo=ZoneInfo("America/Chicago"))
 
 
@@ -133,11 +130,10 @@ def _post_draw_lock(now_cst) -> bool:
     2nd: the fresh lottery takes no tickets on draw day.
 
     The dailies-channel 🎟️ reaction is one click per claim embed, and the
-    embed (with its reactions) is only reposted at the 5am reset. Selling
-    into the new pot the same evening meant anyone who had clicked 🎟️
-    earlier that day had to un-react and re-react to buy — nobody worked
-    that out. Holding sales until the reset hands everyone a fresh button.
-    Sales only; free chess-win tickets still land in the new pot.
+    embed (with its reactions) is only reposted at the 5am reset — anyone
+    who had already clicked 🎟️ that day would have to un-react and re-react
+    to buy into the new pot. Holding sales until the reset hands everyone a
+    fresh button. Sales only; free chess-win tickets still land in the new pot.
     """
     if now_cst.day == 1:
         return now_cst.hour >= 18
@@ -155,9 +151,8 @@ def _sales_not_started(now_cst) -> bool:
 
 
 def _bots_refused_embed():
-    """Bot accounts are shut out of every lottery function: buying
-    tickets, the free chess-win tickets, and the draw itself
-    (LotteryCog._is_bot_user)."""
+    """Refusal for bot accounts, which are shut out of every lottery
+    function (see LotteryCog._is_bot_user)."""
     return emb("🎰 Lottery", "Bots can't play the lottery.", C_GREY)
 
 
@@ -220,10 +215,9 @@ class LotteryCog(commands.Cog):
     async def _before_lottery_scheduler(self):
         # wait_until_ready gates only the gateway; init_db_state (which loads
         # guild_house into state.economy) finishes later, inside on_ready. A
-        # tick in that window finds an empty in-memory house pot, so a
-        # 1st-of-month draw drains 0 into the fresh lottery while the DB row
-        # keeps its coins — the 9/1/2026 draws started without their house
-        # pots exactly this way (backfilled by migration 0059).
+        # tick in that window sees an empty in-memory house pot, so a
+        # 1st-of-month draw drains 0 into the fresh lottery while the DB keeps
+        # its coins — as the 9/1/2026 draws did (backfilled by migration 0059).
         await self.bot.wait_until_ready()
         import src.persistence as _pkg
         await _pkg.init_done.wait()
@@ -291,7 +285,7 @@ class LotteryCog(commands.Cog):
                     winner.display_name, pool,
                 )
             except Exception:
-                pass
+                pass  # the recap log is best-effort; the results still post
 
             embed = discord.Embed(title="🎰 Lottery Results", color=C_GOLD)
             embed.description = (
@@ -302,7 +296,6 @@ class LotteryCog(commands.Cog):
             )
             await channel.send(embed=embed, silent=False)
 
-            # Ping Gamblers role if enabled
             cfg = get_guild_cfg(guild.id)
             if cfg.get("gambler_role_enabled", False):
                 gamblers_role = discord.utils.get(guild.roles, name="Gamblers")
@@ -323,12 +316,10 @@ class LotteryCog(commands.Cog):
         """Add `tickets` to the guild's lottery for `uid`, charging `cost`
         (0 for the free chess-win tickets).
 
-        Runs inside the guild lock: save_lottery rewrites the whole snapshot,
-        so an unlocked concurrent purchase would erase this buyer's tickets
-        (while keeping their coins), and a save racing the 1st-of-month draw
-        would resurrect the paid-out pool.
+        Runs inside the guild lock — see `_guild_locks` in __init__ for what
+        an unlocked save clobbers.
 
-        The once-a-day / once-a-week gates live with the CALLERS, which must
+        The once-a-day / per-lottery gates live with the CALLERS, which must
         claim them synchronously before awaiting (see CLAUDE.md concurrency
         rules) and roll them back if this returns an error.
 
@@ -453,14 +444,11 @@ class LotteryCog(commands.Cog):
 
     async def award_chess_tickets(self, guild, uid: int, bot_elo: "int | None" = None) -> int:
         """Free monthly lottery tickets for a chess win in `guild`, topping
-        the winner up to the win's ceiling (chess_ticket_ceiling: 600+ Elo
-        bot 2; PvP and sub-600 bot wins 0) within the current lottery — the
-        window opens at the 1st-of-month 6pm CT draw and runs until the next
-        one (lottery_period_key). The counter is global — tickets already
-        granted in any other guild this lottery count against the ceiling,
-        though each new ticket still goes into this guild's pot. Returns how
-        many tickets were granted (0 when already at the ceiling or lottery
-        disabled).
+        the winner up to the win's ceiling (chess_ticket_ceiling) within the
+        current lottery period — see CHESS_TICKET_BOT_TIERS for the rules.
+        The ceiling is global, but each new ticket goes into this guild's
+        pot. Returns how many tickets were granted (0 when already at the
+        ceiling or lottery disabled).
 
         Called from the chess endgame path (src/games/chess.py) after a
         human wins a game. Bot accounts get nothing (_is_bot_user).
@@ -480,9 +468,8 @@ class LotteryCog(commands.Cog):
             return 0
 
         # Claim the monthly counter synchronously before any await; roll back
-        # if the grant fails so the win isn't burned for nothing. Tickets
-        # already granted this lottery are summed across every guild (the
-        # bonus is bot-wide), but the claim lands in this guild's row.
+        # if the grant fails so the win isn't burned for nothing. The count is
+        # summed across every guild, but the claim lands in this guild's row.
         period = lottery_period_key(now)
         row = _grant_row(guild.id, uid)
         prior_period, prior_count = row.get("chess_period"), int(row.get("chess_tickets") or 0)
@@ -510,7 +497,6 @@ class LotteryCog(commands.Cog):
         uid = ctx.author.id
         await _ensure_user(uid)
 
-        # Check if lottery channel is configured
         if ctx.guild is None:
             await ctx.send(embed=emb("🎰 Lottery", "Lottery only works in servers.", C_RED))
             return
@@ -534,8 +520,7 @@ class LotteryCog(commands.Cog):
         )
 
         if in_transition:
-            # Next lottery starts at 7pm today
-            next_lottery_start = now_cst.replace(hour=19, minute=0, second=0, microsecond=0)
+            next_lottery_start =now_cst.replace(hour=19, minute=0, second=0, microsecond=0)
             ts = int(next_lottery_start.timestamp())
             await ctx.send(embed=emb(
                 "🎰 Lottery",
@@ -545,7 +530,6 @@ class LotteryCog(commands.Cog):
             ))
             return
 
-        # Show lottery info
         pool = lottery.get("prize_pool", 0)
         players_dict = lottery.get("players", {})
         user_tickets = int(players_dict.get(str(uid), 0))

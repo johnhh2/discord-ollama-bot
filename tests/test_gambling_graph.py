@@ -147,7 +147,6 @@ async def test_build_series_gambling_returns_gained_lost_net(monkeypatch):
     lost = next(s for s in data.segments if s.label == "Lost")
     net = next(s for s in data.segments if s.label == "Net")
 
-    # Net = gained - lost for every entry.
     for g, l, n in zip(gained.y_values, lost.y_values, net.y_values):
         assert n == g - l
 

@@ -107,6 +107,8 @@ def extract_puzzle_fields(text: str) -> dict | None:
         pass
     lang_m = re.search(r'"language"\s*:\s*"([^"]+)"', blob)
     ans_m  = re.search(r'"answer"\s*:\s*"([^"]*)"', blob)
+    # `code` may contain unescaped quotes, so match lazily up to the next
+    # field key or the closing brace rather than to the first `"`.
     code_m = re.search(r'"code"\s*:\s*"(.*?)"\s*(?:,\s*"answer"|,\s*"language"|\})', blob, re.DOTALL)
     if lang_m and ans_m and code_m:
         return {

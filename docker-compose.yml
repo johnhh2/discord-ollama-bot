@@ -9,6 +9,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # ${VAR:-} gives an empty default so Portainer doesn't warn "variable not
+    # set". A var missing from this block never reaches the container.
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
@@ -30,7 +32,7 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
-    # Allows the bot container to reach Ollama and other services
+    # `ollama` (OLLAMA_BASE_URL above) is OLLAMA_HOST_IP, or the Docker host if unset.
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "ollama:${OLLAMA_HOST_IP:-host-gateway}"

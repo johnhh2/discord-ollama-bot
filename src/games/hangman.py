@@ -88,17 +88,9 @@ def hangman_pot_msg(word: str, player_count: int) -> str:
 
 
 def calculate_hangman_reward(word: str) -> int:
-    """Calculate hangman reward based on word difficulty.
-
-    Formula (AI-derived):
-    - Base: 10 coins
-    - Length Bonus: (word_length - 3) × 6
-    - Unique Letters Bonus: unique_count × 3
-    - Rare Letters Bonus: rare_count × 15
-
-    Examples:
-    - 5-letter average word (APPLE): ~25 coins
-    - 10-letter hard word with rare letters: ~150 coins
+    """Total reward for solving `word`: a base plus bonuses for length, unique
+    letters, rare letters (ultra-rare q/x/z pay more) and the word's own bonus
+    from hangman_words.txt. The multipliers are the HANGMAN_* config constants.
     """
     ULTRA_RARE_LETTERS = {'q', 'x', 'z'}
     RARE_LETTERS = {'y', 'j', 'k', 'w', 'v'}
@@ -118,16 +110,16 @@ def calculate_hangman_reward(word: str) -> int:
 
 
 async def _distribute_hangman_rewards(cid: int, game: dict) -> tuple[str, list[tuple[str, str, int, int]]]:
-    """Distributes win rewards, deletes the game, and returns (reward_message, pending_records)
-    where pending_records is a list of (category, holder_name, value, holder_id) for records that should be
-    announced AFTER the caller sends the result embed."""
+    """Pay out the win and delete the game. Returns (reward_message,
+    pending_records); each pending record is (category, holder_name, value,
+    holder_id), for the caller to announce AFTER it sends the result embed."""
     word = game["word"]
     gid = game.get("guild_id")
     total_reward = calculate_hangman_reward(word)
     active_players = list(game["active_players"])
     per_player = total_reward // len(active_players)
     remainder = total_reward % len(active_players)
-    del state.active_hangman_games[cid]
+    del state.active_hangman_games[cid]  # settle before the first await (see _hangman_lost)
     if len(active_players) == 1:
         msg = f"The word was `{word}`!\n\n"
     else:
@@ -229,7 +221,6 @@ async def _process_hangman_guess(channel: discord.abc.Messageable, author_id: in
     name = author_name
     game["player_names"][author_id] = author_name
 
-    # Track this player as active
     game["active_players"].add(author_id)
 
     # Full word guess
@@ -318,7 +309,6 @@ class HangmanCog(commands.Cog):
         # Claim the parent channel synchronously for the invite window; the
         # game moves into its own thread once the lobby is settled.
         state.active_hangman_games[cid] = game
-        # Invite flow for mentioned users
         invited_users = [m for m in ctx.message.mentions if m.id != ctx.author.id]
         if invited_users:
             confirmed = await _wait_for_confirmations(ctx, invited_users, title="📨 Hangman Invite")

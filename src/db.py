@@ -32,6 +32,7 @@ async def _create_pool() -> aiomysql.Pool:
         charset="utf8mb4",
         minsize=2,
         maxsize=10,
+        # No Note-level warnings (e.g. IF NOT EXISTS on an existing table).
         init_command="SET sql_notes=0",
     )
 
@@ -46,12 +47,9 @@ async def close_pool():
 
 @asynccontextmanager
 async def with_cursor():
-    """`async with with_cursor() as cur:` — opens a cursor on a pooled
-    connection and yields it. Replaces the 3-line
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            async with conn.cursor() as cur:
-    boilerplate that occurs ~25 times across persistence.py.
+    """`async with with_cursor() as cur:` — yields a cursor on a pooled
+    connection. Each statement autocommits; use with_transaction() for
+    all-or-nothing writes.
     """
     pool = await get_pool()
     async with pool.acquire() as conn:

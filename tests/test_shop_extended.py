@@ -155,7 +155,6 @@ async def test_shop_createrole_refunds_on_forbidden(db, force_member_converter_f
 
     await cog.shop_createrole.callback(cog, ctx, "target", "Cool")
 
-    # Refunded back to starting balance.
     assert await get_balance(buyer.id) == starting
     assert await _read_db_balance(buyer.id) == starting
 
@@ -175,7 +174,6 @@ async def test_shop_nickname_rejects_oversize_name(db, force_member_converter_fa
     long_name = "x" * 33
     await cog.shop_nickname.callback(cog, ctx, long_name)
 
-    # Rejected before charging and before any edit attempt.
     assert await get_balance(buyer.id) == starting
     buyer.edit.assert_not_called()
     assert any("Too Long" in e.title for e in ctx.sent_embeds)
@@ -257,9 +255,7 @@ async def test_shop_lockchannel_rejects_already_locked(db):
     ctx = FakeCtx(author=buyer, guild=guild)
     await cog.shop_lockchannel.callback(cog, ctx, str(chan.id))
 
-    # Not charged.
     assert await get_balance(buyer.id) == SHOP_LOCK_COST + 5000
-    # Owner unchanged.
     assert _state.locked_channels[chan.id] == 9999
 
 
@@ -289,7 +285,6 @@ async def test_shop_unlockchannel_non_owner_rejected(db):
     ctx = FakeCtx(author=other, guild=guild)
     await cog.shop_unlockchannel.callback(cog, ctx, str(chan.id))
 
-    # Still locked, still owned by `owner`.
     assert _state.locked_channels[chan.id] == owner.id
 
 

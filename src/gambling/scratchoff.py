@@ -36,7 +36,7 @@ from src import state, status_manager
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | None:
-    """Return the 'Gamblers' role, creating it if it doesn't exist."""
+    """The 'Gamblers' role, created on demand; None if creation fails."""
     role = discord.utils.get(guild.roles, name="Gamblers")
     if role is None:
         try:
@@ -52,13 +52,10 @@ GAMBLER_ROLE_STREAK_REQUIRED = 3
 def scratchoff_attempts_remaining(user: dict, today: str, cap: int = SCRATCHOFF_MAX_DAILY) -> int:
     """Return how many scratchoff attempts the user has left today.
 
-    Mutates `user` to roll the daily counters to `today` if the stored
-    `scratch_date` is stale (or missing) — zeroing both `scratch_used` and
-    the day's `scratch_won_today` total — and normalizes `scratch_used`
-    to an int so the caller can safely do `user["scratch_used"] += 1`.
-    Mirrors the pre-condition logic at the top of cmd_scratchoff so the
-    rollover + cap behavior can be tested in isolation. Pass the user's
-    artifact-adjusted cap (scratchoff_daily_cap) for the real limit.
+    Mutates `user`: a stale or missing `scratch_date` rolls the daily
+    counters to `today` (zeroing `scratch_used` and `scratch_won_today`),
+    and `scratch_used` is always set so the caller can `+=` it. Pass the
+    user's artifact-adjusted cap (scratchoff_daily_cap) for the real limit.
     """
     if user.get("scratch_date") != today:
         user["scratch_date"] = today
@@ -147,6 +144,7 @@ def scratchoff_status_text() -> "str | None":
     return f"{total}x 🎫 scratched today"
 
 
+# Line sum (three distinct cells of 1–9, so 6–24) → payout.
 CACTPOT_PAYOUTS = {
     6: 10000, 7: 36, 8: 720, 9: 360, 10: 80, 11: 252, 12: 108, 13: 72, 14: 54, 15: 180,
     16: 72, 17: 180, 18: 119, 19: 36, 20: 306, 21: 1080, 22: 144, 23: 1800, 24: 3600
@@ -158,7 +156,6 @@ class MiniCactpotGame:
         self.grid = list(range(1, 10))
         random.shuffle(self.grid)
         self.revealed = set()
-        # Reveal one random cell initially
         self.revealed.add(random.randint(0, 8))
         self.selections = []
         self.selected_line = None
@@ -223,10 +220,9 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1) -> int:
 
     count = min(count, remaining)
 
-    # Reserve attempts up front (sync) so concurrent invocations see the
-    # updated counter before they pass the remaining > 0 gate. Without
-    # this, a user spamming !scratchoff can cross the await boundaries
-    # below and run more than 3 cards in a single day.
+    # Reserve attempts synchronously, before any await — otherwise spammed
+    # !scratchoff calls all pass the remaining > 0 gate and overrun the
+    # daily cap.
     first_attempt = user["scratch_used"]
     user["scratch_used"] += count
 
@@ -266,7 +262,6 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1) -> int:
                 if pos in match_positions:
                     card.append(goal[pos])
                 else:
-                    # Pick a symbol that doesn't match the goal at this position
                     non_matches = [s for s in SCRATCH_SYMBOLS if s != goal[pos]]
                     card.append(random.choice(non_matches) if non_matches else random.choice(SCRATCH_SYMBOLS))
             del state.rigged_scratch[uid]
@@ -302,7 +297,6 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1) -> int:
             await record_gambling_event(guild.id if guild else None, uid, gained=payout, channel_id=channel.id)
         await save_economy(uid=uid)
 
-        # Award 10 XP per scratchoff played
         if guild:
             _, leveled_up = await grant_xp(uid, "scratch", guild_id=guild.id)
             # _announce_levelup grants the coin reward and skips the
@@ -336,11 +330,10 @@ async def play_scratchoffs(bot, author, channel, guild, count: int = 1) -> int:
             new_streak = await update_gambler_streak(uid, today)
             await maybe_assign_gambler_role(guild, author, channel, new_streak)
 
-    # "Best scratchoff day" record: the combined payout of every card the user
-    # has scratched this gameplay-day. Attempted once per batch rather than per
-    # card so !scratches / the dailies 🎟️ button announce a single embed for
-    # the whole run, and so three separate !scratchoff calls still add up to
-    # the same number the batch path would produce.
+    # "Best scratchoff day" record: the gameplay-day's combined payout. Offered
+    # once per batch, not per card, so !scratches / the dailies 🎟️ button
+    # announce one embed, and three separate !scratchoff calls reach the same
+    # total the batch path would.
     day_total = int(user.get("scratch_won_today", 0) or 0)
     if guild is not None and day_total > 0:
         if await try_set_record(guild.id, "scratchoff_day", day_total, uid, author.display_name):

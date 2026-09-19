@@ -85,8 +85,7 @@ class TestHandValue:
         assert hand_value([_card("A"), _card("A"), _card("9")]) == 21
 
     def test_ace_downgrade_multiple(self):
-        # A+A+A+9 → 11+11+11+9=42 → downgrade 2 aces → 12+9=12... wait:
-        # 42-10=32, 32-10=22, 22-10=12 → yes 12
+        # A+A+A+9 = 42 → three aces downgrade (−30) → 12
         assert hand_value([_card("A"), _card("A"), _card("A"), _card("9")]) == 12
 
     def test_blackjack(self):
@@ -175,24 +174,18 @@ class TestCalculateHangmanReward:
         assert calculate_hangman_reward("abc") == 69
 
     def test_ultra_rare_letters(self):
-        # "quiz": q (ultra-rare), z (ultra-rare), u, i
-        # base=60, length_bonus=(4-3)*6=6, unique=4→12
-        # ultra_rare_count=2 (q, z) → rare_bonus=100
-        # total = 178
+        # "quiz": base=60, length_bonus=(4-3)*6=6, unique=4→12,
+        # two ultra-rare (q, z) → rare_bonus=100 → total=178
         assert calculate_hangman_reward("quiz") == 178
 
     def test_rare_letters(self):
-        # "sky": s, k (rare), y (rare)
-        # base=60, length_bonus=0, unique=3→9
-        # rare_count=2 (k, y) → rare_bonus=50
-        # total=119
+        # "sky": base=60, length_bonus=0, unique=3→9,
+        # two rare (k, y) → rare_bonus=50 → total=119
         assert calculate_hangman_reward("sky") == 119
 
     def test_longer_word(self):
-        # "python": 6 chars, p,y(rare),t,h,o,n → 6 unique
-        # base=60, length_bonus=(6-3)*6=18, unique=6→18
-        # rare_count=1 (y) → rare_bonus=25
-        # total=121
+        # "python": base=60, length_bonus=(6-3)*6=18, unique=6→18,
+        # one rare (y) → rare_bonus=25 → total=121
         assert calculate_hangman_reward("python") == 121
 
 
@@ -315,21 +308,11 @@ class TestIsTttStalemate:
         assert is_ttt_stalemate(board)
 
     def test_mid_game_forced_draw(self):
-        # X and O each block every winning line but board isn't full
-        # ❌ ⭕ ❌
-        # ⭕ ⭕ ❌
-        # ❌ ❌ ⭕  <- no winner, and no open winning line possible
-        # Actually let's pick a real mid-game forced draw:
-        # ❌ ⭕ ❌
-        # ❌ ⭕ ⭕
-        # ⭕ ❌  _   <- last square can't help either player win
+        # Board isn't full, but every line through the open square (row 2,
+        # col 2, the 0-4-8 diagonal) already holds both marks — nobody can win.
         board = ["❌", "⭕", "❌",
                  "❌", "⭕", "⭕",
                  "⭕", "❌", None]
-        # col0: ❌❌⭕ — ⭕ present, ❌ blocked; col1: ⭕⭕❌ — ❌ present, ⭕ blocked
-        # row2: ⭕❌_ — both marks present, blocked for both
-        # diag(0,4,8): ❌⭕_ — both marks present, blocked
-        # anti-diag(2,4,6): ❌⭕⭕ — ❌ present, ⭕ blocked; but ❌ also blocked (⭕ there)
         assert is_ttt_stalemate(board)
 
     def test_open_winning_line_not_stalemate(self):
@@ -508,7 +491,6 @@ class TestLotteryWinnerPayout:
         for uid_str in players:
             await add_balance(int(uid_str), 0)
         pool = 3000
-        # Force random.choice to always pick player 8002
         monkeypatch.setattr("random.choice", lambda seq: "8002")
         winner_id = int(random.choice(list(players.keys())))
         await add_balance(winner_id, pool)
@@ -543,7 +525,6 @@ class TestAnnounceNewLotteryTimestamp:
         # Called mid-June (CDT); next draw is Jul 1 at 6pm CT
         now = _ct(2025, 6, 10, 12)
         embed = await self._send_and_capture(2000, now)
-        # Extract Unix timestamp from <t:XXXXXX:R>
         import re
         match = re.search(r"<t:(\d+):R>", embed.description)
         assert match, "No Discord timestamp found in description"

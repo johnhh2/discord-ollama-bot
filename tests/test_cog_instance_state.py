@@ -1,18 +1,9 @@
-"""Cog-instance state isolation regression tests.
+"""Cog-instance state isolation.
 
-Round-2 cleanup commit 8113e4d moved 4 transient dicts off global state.py
-onto cog-instance attributes:
-  - state.crime_active_users   -> EconomyCog._crime_active   (already covered
-    in test_money_flows.py)
-  - state.user_last_puzzle     -> UtilityCog._last_puzzle_by_uid
-  - state.user_last_hangman    -> HangmanCog._last_hangman_by_uid
-  - state._soundboard_timestamps -> module-private _SOUNDBOARD_TIMESTAMPS
-
-This file covers the puzzle and hangman dicts directly:
-- New cog instance starts with an empty dict (no leakage from a previous
-  instance).
-- The dict is per-uid (independent timestamps).
-- The dict is per-cog-instance (no cross-instance pollution).
+The transient per-user dicts live on the cog instance — not on src.state,
+and not as class vars: a fresh cog (a reload) starts empty and two
+instances never share one. The globals they replaced must stay gone from
+src.state. EconomyCog._crime_active is covered in test_money_flows.py.
 """
 import pytest
 
@@ -31,7 +22,6 @@ async def test_utility_cog_starts_with_empty_puzzle_cooldown_dict():
 
 
 async def test_utility_cog_puzzle_cooldown_per_uid():
-    """Setting a cooldown for one uid doesn't affect others."""
     cog = UtilityCog(bot=None)
     cog._last_puzzle_by_uid[1001] = 1_000_000.0
     cog._last_puzzle_by_uid[1002] = 2_000_000.0
@@ -50,11 +40,9 @@ async def test_separate_utility_cog_instances_have_independent_state():
 
 
 async def test_utility_cog_puzzle_cooldown_dict_is_not_class_var():
-    """If the dict were a class var (not instance), instance B would
-    see instance A's mutations. Defend against that regression."""
+    """A class var would let instance B see instance A's mutations."""
     cog_a = UtilityCog(bot=None)
     cog_a._last_puzzle_by_uid[7] = 1.0
-    # The class itself should not have the populated dict.
     assert getattr(UtilityCog, "_last_puzzle_by_uid", None) is None
 
 
@@ -89,8 +77,6 @@ async def test_hangman_cog_cooldown_dict_is_not_class_var():
 # ── State no longer lives on src.state ────────────────────────────────────────
 
 async def test_state_module_no_longer_exposes_user_last_puzzle():
-    """Regression: round-2 cleanup removed these from src.state. If they
-    come back, something is wrong."""
     import src.state as _state
     assert not hasattr(_state, "user_last_puzzle")
 

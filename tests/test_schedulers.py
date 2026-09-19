@@ -27,9 +27,8 @@ from src.economy import get_balance
 
 from tests.fakes.discord import FakeMember
 
-# Note: no module-level pytestmark — most tests are async, but the tax-expiry
-# arithmetic test is sync. Async tests get @pytest.mark.asyncio per-function
-# below.
+# No module-level pytestmark: the tax-expiry arithmetic test is sync, so the
+# async tests carry @pytest.mark.asyncio individually.
 
 
 # ── grant_xp ──────────────────────────────────────────────────────────────────
@@ -50,12 +49,12 @@ async def test_grant_xp_msg_second_call_within_hour_blocked(db, monkeypatch):
     monkeypatch.setattr("src.cogs.leveling_cog.time.time", lambda: times[0])
 
     xp1, _ = await grant_xp(uid=2, source="msg", guild_id=42)
-    times[0] += 60  # 1 minute later
+    times[0] += 60
     xp2, _ = await grant_xp(uid=2, source="msg", guild_id=42)
 
     assert xp1 == XP_MESSAGE
     assert xp2 == 0
-    assert _state.leveling["42"]["2"]["msg_today"] == 1  # still 1
+    assert _state.leveling["42"]["2"]["msg_today"] == 1
 
 
 @pytest.mark.asyncio
@@ -91,7 +90,6 @@ async def test_grant_xp_msg_daily_cap_blocks(db, monkeypatch):
 async def test_grant_xp_daily_cap_resets_on_utc_day_rollover(db, monkeypatch):
     """_day_reset compares UTC dates; once we cross midnight UTC, msg_today resets."""
     import datetime
-    # Anchor at noon UTC on day N
     day_n_noon = datetime.datetime(2026, 5, 1, 12, 0, tzinfo=datetime.timezone.utc).timestamp()
     times = [day_n_noon]
     monkeypatch.setattr("src.cogs.leveling_cog.time.time", lambda: times[0])
@@ -101,13 +99,12 @@ async def test_grant_xp_daily_cap_resets_on_utc_day_rollover(db, monkeypatch):
         await grant_xp(uid=5, source="msg", guild_id=42)
         times[0] += HOUR_SECS + 1
 
-    # Jump to noon UTC on day N+1
     day_np1_noon = datetime.datetime(2026, 5, 2, 12, 0, tzinfo=datetime.timezone.utc).timestamp()
     times[0] = day_np1_noon
 
     xp, _ = await grant_xp(uid=5, source="msg", guild_id=42)
     assert xp == XP_MESSAGE
-    assert _state.leveling["42"]["5"]["msg_today"] == 1  # reset
+    assert _state.leveling["42"]["5"]["msg_today"] == 1
 
 
 @pytest.mark.asyncio
@@ -169,7 +166,6 @@ async def test_grant_xp_levels_up_when_threshold_crossed(db, monkeypatch):
     from src.leveling import xp_for_level
     monkeypatch.setattr("src.cogs.leveling_cog.time.time", lambda: 1_000_000.0)
 
-    # Seed user with xp = level-1 threshold - 1, level=0
     rec = _ensure_lvl_user(42, 10)
     rec["xp"] = xp_for_level(1) - 1
     rec["level"] = 0
@@ -221,7 +217,6 @@ async def test_soundboard_over_threshold_clears_and_attempts_kick(db, monkeypatc
         def get_guild(self, gid):
             return object()  # non-None so we enter the resolve branch
 
-    # Send SOUNDBOARD_MAX_SOUNDS + 1 within the window.
     for _ in range(SOUNDBOARD_MAX_SOUNDS + 1):
         await _handle_soundboard_ratelimit(_Bot(), guild_id=1, user_id=200)
         times[0] += 0.1
@@ -317,7 +312,6 @@ async def test_event_reaction_after_expiry_silently_skipped(db):
 
     await cog.on_reaction_add(_StubReaction(msg_id), user)
 
-    # Balance still 0; no entry was created.
     assert await get_balance(user.id) == 0
 
 

@@ -527,7 +527,7 @@ class SettingsCog(commands.Cog):
                 try:
                     user_ids.append(int(arg))
                 except ValueError:
-                    pass
+                    pass  # not a raw id — mention tokens were collected above
             if not user_ids:
                 await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", "Usage: `!settings soundboard-ratelimit add @user` or `!settings soundboard-ratelimit add <userid>`", C_GREY))
                 return
@@ -550,7 +550,7 @@ class SettingsCog(commands.Cog):
                 try:
                     user_ids.append(int(arg))
                 except ValueError:
-                    pass
+                    pass  # not a raw id — mention tokens were collected above
             if not user_ids:
                 await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", "Usage: `!settings soundboard-ratelimit remove @user` or `!settings soundboard-ratelimit remove <userid>`", C_GREY))
                 return
@@ -871,6 +871,8 @@ class SettingsCog(commands.Cog):
 
             current_month = lottery_month_key(_ct_now())
             lottery = await load_lottery(ctx.guild.id)
+            # last_posted_week holds a YYYYMM month key — the name predates
+            # the monthly lottery.
             if lottery.get("last_posted_week", 0) != current_month:
                 lottery = {"prize_pool": LOTTERY_SEED_POOL, "players": {}, "last_posted_week": current_month}
                 await drain_bot_balance_into_lottery(lottery, ctx.guild.id)
@@ -878,7 +880,7 @@ class SettingsCog(commands.Cog):
                 try:
                     await announce_new_lottery(channel, lottery["prize_pool"])
                 except Exception:
-                    pass
+                    pass  # best-effort: the lottery is already saved
 
             await ctx.send(embed=emb("🎰 Lottery Channel", f"Lottery channel set to {channel.mention}\n🎟️ Lottery ready!", C_GREEN))
         else:
@@ -982,6 +984,8 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("🛡️ Admin Log Channel", "Admin command logging disabled.", C_GREEN))
         elif ctx.message.channel_mentions:
             channel = ctx.message.channel_mentions[0]
+            # str, unlike the per-guild channel ids: bot_settings is a TEXT
+            # column and loads back as str after a reboot.
             state.bot_settings["admin_log_channel"] = str(channel.id)
             await save_bot_settings()
             await ctx.send(embed=emb(

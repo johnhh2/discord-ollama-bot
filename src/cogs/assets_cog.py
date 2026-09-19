@@ -197,10 +197,9 @@ class AssetsCog(commands.Cog):
         if row is not None and not row.get("list_price"):
             await ctx.send(embed=emb("🔒 Not For Sale", f"{_fmt_prop(prop)} is owned and not listed for sale.", C_RED))
             return
-        # Gate-and-claim: the ownership-cap check and the deed claim run
-        # synchronously before any await, so a concurrent second buy (same
-        # user or another user racing for the same deed) sees the claim and
-        # bails instead of double-selling a unique property.
+        # Early refusal only. The race-safe gate — cap re-check plus the
+        # synchronous deed claim — runs after the confirm wait, in
+        # _buy_from_bank / _buy_from_market.
         if owned_property_count(uid) >= PROPERTY_MAX_OWNED:
             await ctx.send(embed=emb(
                 "🏘️ Portfolio Full",
@@ -472,8 +471,7 @@ class AssetsCog(commands.Cog):
                 if row.get("upgraded"):
                     lines.append(f"{_fmt_prop(p, row)} — ⭐ **{up_name}** owned (+{up_boost}% revenue)")
                     continue
-                # The upgrade-discount artifact cuts the price shown and
-                # charged; the full catalog cost still folds into the value.
+                # Show the artifact-discounted price the buy path below charges.
                 price = property_upgrade_cost(uid, up_cost)
                 if price != up_cost:
                     discounted = True

@@ -149,7 +149,7 @@ def test_render_passes_threat_arrows_to_python_chess(monkeypatch):
     b = chess.Board("3rk3/8/8/8/8/8/8/3QK3 w - - 0 1")
     chess_render.render_board_png(b, threat_squares={chess.D1})
 
-    assert captured["arrows"]  # non-empty list of arrows
+    assert captured["arrows"]
     assert len(captured["arrows"]) >= 1
 
 

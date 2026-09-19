@@ -16,5 +16,4 @@ def format_mug_reason(victim_name: str, amount: int) -> str:
 
 
 def format_bankheist_reason(target_name: str) -> str:
-    """Stub for the upcoming bankheist cog. Not currently called."""
     return f"Participated in a bankheist targeting {target_name}"

@@ -17,12 +17,11 @@ async def save_guild_settings():
 async def save_bot_roles():
     """Replace the bot_roles table with the current in-memory contents.
 
-    Source of truth for *rank* is state.bot_role_ranks ({(guild_id, role_id):
-    rank}). state.bot_roles is the set of role IDs and is kept in sync as a
-    derived view. Any role in bot_roles that has no entry in bot_role_ranks
-    defaults to guild_id=0 and rank_pos=0 — that branch shouldn't normally
-    fire (createrole / deleterole maintain both), but it preserves legacy
-    behavior for any caller that mutates bot_roles directly.
+    state.bot_role_ranks ({(guild_id, role_id): rank}) is the source of truth
+    for rank; state.bot_roles (the role-id set) is a derived view kept in
+    sync. A role in bot_roles with no rank entry is written with guild_id=0,
+    rank_pos=0 — createrole / deleterole maintain both, so that's only a
+    fallback for legacy callers that mutate bot_roles directly.
     """
     async with with_transaction() as cur:
         await cur.execute("DELETE FROM bot_roles")
@@ -56,8 +55,7 @@ async def save_bot_settings():
                 (k, str(v)),
             )
         # Also delete rows for keys popped from state (e.g. `!settings-channel
-        # X clear`) — upsert-only left them in the DB, so cleared channels
-        # silently resurrected on the next reboot.
+        # X clear`) — upsert alone would resurrect them on the next reboot.
         if state.bot_settings:
             placeholders = ",".join(["%s"] * len(state.bot_settings))
             await cur.execute(

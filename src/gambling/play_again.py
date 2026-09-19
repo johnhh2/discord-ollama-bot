@@ -57,7 +57,7 @@ class PlayAgainView(discord.ui.View):
         try:
             await self.message.edit(view=None)
         except discord.HTTPException:
-            pass
+            pass  # best-effort: nothing to strip if the result message is gone
 
 
 class _PlayAgainButton(discord.ui.Button):

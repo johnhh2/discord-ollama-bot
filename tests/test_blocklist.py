@@ -175,7 +175,6 @@ async def test_unban_removes_from_state_and_db(db):
     target = FakeMember(uid=500)
     target.guild = ctx.guild
 
-    # Seed a ban first.
     await _persistence.save_blocklist(42, 500, "spammer", banned_by=1)
     _state.blocklist[(42, 500)] = {"reason": "spammer", "banned_by": 1, "banned_at": None}
 
@@ -265,7 +264,7 @@ def _on_message_with_banned_author(uid: int, guild_id: int | None):
 async def _drive_on_message(message) -> int:
     """Run EventsCog.on_message against `message` and return the new value of
     state.stats_messages_seen so the test can confirm the gate fired."""
-    from src.events import EventsCog  # cog wraps the listeners
+    from src.events import EventsCog
 
     bot = _StubBot()
     cog = EventsCog(bot)

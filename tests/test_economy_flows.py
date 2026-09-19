@@ -162,7 +162,6 @@ async def test_remove_savings_partial_fifo(db, monkeypatch):
     times = [0.0]
     monkeypatch.setattr(_economy.time, "time", lambda: times[0])
 
-    # Two deposits.
     await _economy.add_savings(uid, 100)
     times[0] = 86400.0  # one day later
     await _economy.add_savings(uid, 100)
@@ -215,7 +214,6 @@ async def test_partial_withdraw_then_redeposit_does_not_lose_value(db, monkeypat
     ok = await _economy.remove_savings(uid, 500)
     assert ok is True
 
-    # Redeposit 500 at the same instant.
     ok = await _economy.add_savings(uid, 500)
     assert ok is True
 
@@ -364,13 +362,10 @@ class _StubBot:
 async def test_concurrent_daily_invocations_grant_once(monkeypatch):
     """Spamming !daily concurrently must only credit DAILY_REWARD once.
 
-    Previously, `cmd_daily` checked daily_date == today, then awaited
-    add_balance() before stamping daily_date. Two concurrent invocations
-    could each pass the gate and both award the reward.
-
-    Forces real event-loop yielding via patched add_balance — without that,
-    the conftest noop stubs return synchronously and never expose the
-    interleaving the bug needs.
+    Regression: cmd_daily once awaited add_balance() between the daily_date
+    check and the stamp, so concurrent invocations each passed the gate and
+    each paid out. The patched add_balance forces a real event-loop yield —
+    the conftest noop stubs return synchronously and never interleave.
     """
     cog = EconomyCog(bot=_StubBot())
     author = FakeMember(uid=7777, display_name="dailyspammer")
@@ -382,9 +377,7 @@ async def test_concurrent_daily_invocations_grant_once(monkeypatch):
     grant_count = [0]
 
     async def _yielding_add_balance(uid, n, **kwargs):
-        # Let the event loop schedule another invocation here — this is the
-        # exact spot where the pre-fix code yielded between the daily-date
-        # check and the daily-date set.
+        # Yield exactly where the pre-fix code did (see the docstring).
         await asyncio.sleep(0)
         _state.economy["users"][str(uid)]["balance"] += n
         grant_count[0] += 1

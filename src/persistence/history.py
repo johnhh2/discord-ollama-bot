@@ -135,8 +135,7 @@ async def load_crime_history() -> dict:
 async def load_gambling_history() -> dict:
     """Returns {date_str: {bucket: {(guild_id_int, uid_str): {"gained", "lost"}}}}.
 
-    Keyed by (guild_id, user) — gambling P/L is per-server (see migration
-    0018). Pre-0018 rows carry guild_id=0 and naturally age out.
+    Keyed per-server like load_crime_history (same guild_id=0 legacy rows).
     """
     async with with_cursor() as cur:
         await cur.execute(
@@ -152,9 +151,9 @@ async def load_gambling_history() -> dict:
 
 
 async def prune_balance_history(*, before_date: str):
-    """DELETE all rows with snapshot_date < before_date. Server-side
-    prune (not load/filter/save) — these tables can grow large over
-    years and we don't want to round-trip every row through Python."""
+    """DELETE rows with snapshot_date < before_date. Server-side (not
+    load/filter/save) — these tables grow for years and shouldn't round-trip
+    every row through Python. The other prune_* helpers work the same way."""
     async with with_cursor() as cur:
         await cur.execute(
             "DELETE FROM balance_history WHERE snapshot_date < %s",

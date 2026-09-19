@@ -60,13 +60,12 @@ def _load_piece_set(name: str) -> dict[str, str] | None:
     _piece_set_cache[name] = pieces
     return pieces
 
-# Board color themes. Each theme carries its square colors plus lastmove
-# tints tuned to read against that palette: blue for ordinary moves, red for
-# moves that captured a piece (signals 'something died here'). python-chess
-# uses separate keys for light- vs dark-square tints so each palette sets
-# both. Cool-toned boards (blue/slate/ice/purple) get a deeper, more
-# saturated blue so the move tint doesn't melt into the squares; coffee's
-# warm brown gets a hotter red for the same reason.
+# Board color themes. Each carries its square colors plus lastmove tints
+# tuned to that palette: blue for ordinary moves, red for captures.
+# python-chess keys light- and dark-square tints separately, so each theme
+# sets both. Cool-toned boards (blue/ice/purple) get a deeper, more saturated
+# blue so the tint doesn't melt into the squares; coffee's warm brown gets a
+# hotter red for the same reason.
 #
 # "default" mirrors python-chess's built-in square colors and the tints the
 # bot has always used, and is what every render gets today — nothing selects
@@ -122,9 +121,8 @@ BOARD_THEMES = {
 # every board square) — no SVG post-processing.
 _THREAT_FILL_COLOR = "#ff5050"
 
-# Arrow colors for the !chessthreats overlay. Light shade = piece is white,
-# dark shade = piece is black (matches the universal chess convention that
-# white = light, black = dark). Attackers are red, defenders are green.
+# Arrow colors for the !chessthreats overlay: attackers red, defenders green;
+# light shade = white piece, dark shade = black piece.
 _ATTACKER_ARROW_COLOR = {
     chess.WHITE: "#ff6060",  # bright red — white attacker
     chess.BLACK: "#a00000",  # dark red — black attacker

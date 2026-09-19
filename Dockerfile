@@ -4,9 +4,8 @@ COPY requirements.txt requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes --prefix=/install -r requirements.lock
 
 # ── lc0 build stage ──────────────────────────────────────────────────────────
-# lc0 isn't packaged in Debian apt and the project doesn't publish Linux
-# binaries (only Windows/macOS/Android). Build from source with the OpenBLAS
-# CPU backend (no GPU/CUDA). Pinned to a specific tag for reproducibility.
+# lc0 has no Debian package and no published Linux binaries, so build it
+# from source: OpenBLAS CPU backend (no GPU/CUDA), pinned to a tag.
 FROM python:3.10-slim@sha256:cdbf8193cee2e31639ea8ea85ffdd8fa5cce98ee9abfde96ea5f329490048831 AS lc0-builder
 ARG LC0_VERSION=v0.31.2
 RUN apt-get update \
@@ -23,6 +22,7 @@ RUN apt-get update \
 # ── Runtime stage ────────────────────────────────────────────────────────────
 FROM python:3.10-slim@sha256:cdbf8193cee2e31639ea8ea85ffdd8fa5cce98ee9abfde96ea5f329490048831
 WORKDIR /app
+# libcairo2: cairosvg (chess board rendering). libopenblas0: lc0's runtime BLAS.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends libcairo2 stockfish libopenblas0 \
  && rm -rf /var/lib/apt/lists/*
@@ -30,10 +30,13 @@ COPY --from=lc0-builder /usr/local/bin/lc0 /usr/local/bin/lc0
 COPY --from=builder /install /usr/local
 COPY src/ ./src/
 COPY assets/ ./assets/
+# Read from disk at boot by src/migrations.py — the bot won't start without it.
 COPY migrations/ ./migrations/
 COPY maia_weights/ ./maia_weights/
 COPY main.py ./
 RUN useradd --system --uid 1001 --no-create-home bot
+# No home dir and a read-only rootfs (docker-compose.yml): /tmp is the only
+# writable path, so HOME and matplotlib's config dir point there.
 ENV HOME=/tmp \
     MPLCONFIGDIR=/tmp/matplotlib \
     PYTHONDONTWRITEBYTECODE=1 \

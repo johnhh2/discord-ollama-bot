@@ -84,16 +84,12 @@ NEW_THREAD_NAME = "New Gambling Thread"
 THREAD_NAME_MAX = 100
 
 # Discord allows two name changes per channel per ten minutes, and a busy
-# table changes leader far more often than that. So the name is brought up
-# to date by a sweep, never on the result path: a result only marks its
-# thread dirty, and the once-a-minute sweep renames a dirty thread when its
-# previous rename is at least RENAME_INTERVAL ago — one edit per thread per
-# five minutes, inside the budget however hot the table runs. A thread
-# nobody has gambled in since its last check is left alone, so a name a
-# moderator set by hand sticks until the next result. The first name lands
-# within a sweep of the first result; after that the name can lag the
-# table by up to five minutes — expected. discord.py sleeps out a 429, so
-# an inline `thread.edit(name=...)` on a result path would stall the game.
+# table changes leader far more often. So the name is never edited on the
+# result path (discord.py sleeps out a 429, which would stall the game): a
+# result marks its thread dirty and the once-a-minute sweep renames it when
+# its previous rename is at least RENAME_INTERVAL ago (see sweep_renames).
+# The first name lands within a sweep of the first result; after that it
+# can lag the table by up to five minutes — expected.
 RENAME_INTERVAL = 300.0
 RENAME_SWEEP_SECONDS = 60
 
@@ -240,7 +236,7 @@ class GamblingSessionCog(commands.Cog):
         try:
             economy.GAMBLING_RESULT_HOOKS.remove(self._on_gambling_result)
         except ValueError:
-            pass
+            pass  # hook already removed
 
     async def bot_check(self, ctx: commands.Context) -> bool:
         """Bot-wide gate (a Cog special method, registered for every command):

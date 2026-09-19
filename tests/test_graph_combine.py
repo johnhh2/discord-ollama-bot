@@ -36,7 +36,7 @@ def _stub_member(uid: int, name: str = "tester"):
 def _stub_ctx(invoker_id: int = 100):
     """Minimal ctx-like object for parse_tokens. Provides .author and lets
     MemberConverter.convert() succeed for `<@N>` patterns by patching it on
-    the test side (see _patch_member_converter)."""
+    the test side (see patch_member_converter)."""
     ctx = SimpleNamespace()
     ctx.author = _stub_member(invoker_id, "invoker")
     ctx.bot = SimpleNamespace()
@@ -205,7 +205,6 @@ async def test_build_series_balance_has_wallet_savings_total_segments(monkeypatc
     savings = next(s for s in data.segments if s.label == "Savings")
     total = next(s for s in data.segments if s.label == "Total")
 
-    # Total must equal Wallet + Savings at every point.
     assert len(total.y_values) == len(wallet.y_values) == len(savings.y_values)
     for w, s, t in zip(wallet.y_values, savings.y_values, total.y_values):
         assert t == w + s

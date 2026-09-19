@@ -22,7 +22,7 @@ from src.economy import add_balance
 
 from tests.fakes.discord import FakeCtx, FakeMember
 
-# Note: no module-level pytestmark — only async tests get pytest.mark.asyncio,
+# No module-level pytestmark — only async tests get pytest.mark.asyncio,
 # applied at the class or function level below.
 
 
@@ -99,7 +99,6 @@ class TestLevelupCoinReward:
         assert levelup_coin_reward(lvl) == expected
 
     def test_reward_doubles_each_tier(self):
-        # The progression is 500, 1000, 2000, 4000, 8000, 16000, 32000.
         rewards = [levelup_coin_reward(lvl) for lvl in (1, 5, 10, 30, 60, 100, 150)]
         for a, b in zip(rewards, rewards[1:]):
             assert b == 2 * a
@@ -113,27 +112,23 @@ class TestBar:
 
     def test_empty_bar(self):
         out = _bar(0, 100)
-        # No filled cells — the "done" character should not appear.
-        # The exact glyph is irrelevant; what matters is full vs empty differ.
+        # The exact glyphs are irrelevant; full and empty must differ.
         assert _bar(100, 100) != out
 
     def test_zero_total_does_not_divide_by_zero(self):
-        # Defensive: avoid ZeroDivisionError when total==0.
-        # Just shouldn't raise.
+        # No assert: the test is that it doesn't raise ZeroDivisionError.
         _bar(0, 0)
 
     def test_overflow_is_clamped(self):
-        # filled > total should not produce a bar longer than width.
+        # filled > total only has to survive; the width cap isn't asserted.
         out = _bar(200, 100, width=10)
-        # Some implementations cap at width chars. The function should
-        # at minimum not crash.
         assert isinstance(out, str)
 
 
 # ── parse_amount ──────────────────────────────────────────────────────────────
 
 def _parse_ctx(uid: int, balance: int = 0):
-    """Build a minimal FakeCtx for parse_amount tests, with optional balance."""
+    """Minimal FakeCtx for parse_amount tests; callers fund the user themselves."""
     ctx = FakeCtx(author=FakeMember(uid=uid))
     return ctx
 
@@ -197,7 +192,6 @@ class TestParseAmount:
         assert result is None
 
     async def test_min_val_threshold(self, db):
-        """min_val parameter rejects amounts below the floor."""
         ctx = _parse_ctx(uid=10)
         await add_balance(10, 1000)
         assert await parse_amount(ctx, "5", min_val=10) is None
@@ -278,8 +272,6 @@ class _GuildWithMembers:
         self.chunked = True
 
     def get_member_named(self, _name):
-        # Force the built-in converter to give up (returns None → BadArgument)
-        # so our fallback substring logic gets a chance to run.
         return None
 
 
@@ -298,8 +290,6 @@ class TestMemberConverter:
 
     @pytest.fixture(autouse=True)
     def _force_fallback(self, monkeypatch):
-        """Make the built-in converter always raise BadArgument so our
-        substring-match fallback path runs."""
         from discord.ext import commands as dpy_commands
 
         async def _always_bad_argument(self, ctx, argument):

@@ -85,7 +85,6 @@ async def test_global_scope_includes_non_members(db, monkeypatch):
 
     embed = ctx.sent_embeds[-1]
     assert embed.title == "🪙 Leaderboard"
-    # All three users appear; ranked by balance.
     assert "u1" in embed.description
     assert "u2" in embed.description
     # Non-member name still resolves through the guild member fake or fetch;

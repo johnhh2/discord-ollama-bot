@@ -125,9 +125,6 @@ class FakeChannel:
             self.permissions_for = _permissions_for
 
 
-# Subclass discord.TextChannel so isinstance() checks pass without pulling in
-# the full discord.py state machinery. We bypass __init__ and set just the
-# attributes our code touches.
 import discord as _discord  # noqa: E402
 
 
@@ -209,8 +206,6 @@ class FakeMessage:
         self.create_thread = AsyncMock(side_effect=self._default_create_thread)
 
     async def _default_create_thread(self, name: str = "test-thread", **kwargs):
-        # Default: hand back a fresh FakeThread. Tests that need to inspect
-        # the thread before/after can patch `create_thread` directly.
         return FakeThread(name=name)
 
 
@@ -229,10 +224,9 @@ class FakeCtx:
     ):
         self.author = author or FakeMember(uid=1)
         self.guild = guild or FakeGuild()
-        # Default channel is bound to this ctx's guild so `channel.guild` is set
-        # (real guild commands always have it). This makes the channel look like
-        # a public guild channel — `permissions_for(@everyone).view_channel` is
-        # True — which is what `_is_public_channel` checks for crime commands.
+        # Bound to this ctx's guild, as real guild commands are, so the channel
+        # reads as public to `_is_public_channel` (crime commands) — see
+        # FakeChannel.
         self.channel = channel or FakeChannel(guild=self.guild)
         self.bot = None  # cogs that need .bot can set this in tests
         # `command` is referenced by check_command_permission via .qualified_name.

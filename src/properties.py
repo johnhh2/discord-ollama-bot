@@ -2,21 +2,21 @@
 
 Every property is a UNIQUE, bot-wide deed: at most one owner across all
 servers, tracked in state.property_owners ({property_id: {owner_id,
-acquired_at, list_price, listed_at}}, source of truth: property_owners
-table). The catalog below is the full board — 36 properties from 10k to 2m.
+acquired_at, list_price, listed_at, upgraded, custom_name}}, source of truth:
+property_owners table). The catalog below is the full board — 36 properties
+from 10k to 2m.
 
 Economics:
   - Revenue is 1.1% of purchase price per day, derived (never hand-typed):
     daily = cost * 11 // 1000. One invariant for the whole catalog.
   - Revenue is counted in gameplay days (5am CT rollover), not real time:
     every daily claim (!daily or the dailies channel) banks one full day of
-    portfolio revenue, however long since the last claim. A skipped day
-    isn't lost — it goes to the missed-day bank, one full day's revenue per
-    skipped claim, capped at PROPERTY_ACCRUAL_CAP_BASE (plus artifact
-    bonuses — or one full day's portfolio revenue when that's larger, so a
-    single skipped day always banks in full). The next claim pays today's
-    rent plus the bank; today's rent is never capped, so the two together
-    can exceed it.
+    portfolio revenue, however long since the last claim. Each skipped day
+    adds a full day's revenue to the missed-day bank, capped at
+    PROPERTY_ACCRUAL_CAP_BASE plus artifact bonuses — or one day's portfolio
+    revenue when that's larger, so a single skipped day always banks in
+    full. The next claim pays today's rent plus the bank; today's rent is
+    never capped, so the two together can exceed the cap.
   - A user owns at most PROPERTY_MAX_OWNED properties.
   - Owners can list a property for sale at any price; listings are global,
     so a deed listed in one server can be bought from any other.
@@ -58,7 +58,7 @@ PROPERTY_DAILY_REVENUE_PCT = f"{PROPERTY_DAILY_REVENUE_PERMILLE / 10:g}%"
 # emoji   — display emoji
 # tier    — display grouping, 1..5
 # level   — display level (per-guild, see level_unlocks) required to buy
-# cost    — bank price in coins; also drives daily revenue (2×/year)
+# cost    — bank price in coins; also drives daily revenue (see daily_revenue)
 
 PROPERTIES: list[dict] = [
     # Tier 1

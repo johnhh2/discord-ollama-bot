@@ -25,10 +25,9 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
                     record_exclude: int = 0, play_again: bool = False):
     """Charge amount×n and flip n coins on `side`, announcing in `channel`.
 
-    Extracted from cmd_flip so the dailies-channel reaction claim can flip a
-    player's claim (daily reward + scratchoff winnings) without a
-    commands.Context. Inputs are
-    assumed validated (amount >= 1, n >= 1, side in heads/tails).
+    Takes no commands.Context, so the dailies-channel reaction claim can flip
+    a player's claim (daily reward + scratchoff winnings). Inputs are assumed
+    validated (amount >= 1, n >= 1, side in heads/tails).
 
     `play_again` attaches "Flip Again" (same stake) and "2x" (double the
     per-coin stake, same n and side) buttons to the result (`PlayAgainView`).
@@ -85,7 +84,7 @@ async def play_flip(author, channel, guild, amount: int, n: int = 1, side: str =
     wins = heads if side == "heads" else tails
     winnings_per = amount * 2
     total_winnings = wins * winnings_per
-    net = total_winnings - total_cost  # signed net P/L
+    net = total_winnings - total_cost
 
     gid = guild.id if guild else None
     new_bal_record = False

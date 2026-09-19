@@ -2,7 +2,7 @@
 
 These tests use the opt-in `db` fixture (see tests/conftest.py), which swaps
 in an in-memory SQLite for `src.db.get_pool` and restores the real save_*/
-load_* functions. They exercise the actual SQL strings in src/persistence.py;
+load_* functions. They exercise the actual SQL strings in src/persistence/;
 a typo in a column name will fail a test here.
 """
 
@@ -44,7 +44,6 @@ async def test_economy_users_roundtrip(db):
 
     await _persistence.save_economy()
 
-    # Wipe in-memory state and reload from DB
     _state.economy["users"].clear()
     _state.economy["last_daily_reset"] = None
     await _persistence.init_db_state()
@@ -69,12 +68,10 @@ async def test_economy_targeted_save_writes_only_one_user(db):
     _state.economy["users"]["2"] = {"balance": 200, "last_daily": 0.0}
     await _persistence.save_economy()  # bulk: both rows in DB
 
-    # Mutate in memory but only save uid=1
     _state.economy["users"]["1"]["balance"] = 999
     _state.economy["users"]["2"]["balance"] = 999
     await _persistence.save_economy(uid=1)
 
-    # Reload — uid 1 should reflect 999, uid 2 should still be 200
     _state.economy["users"].clear()
     await _persistence.init_db_state()
     assert _state.economy["users"]["1"]["balance"] == 999
@@ -194,7 +191,6 @@ async def test_lottery_save_replaces_players(db):
         "prize_pool": 100, "last_posted_week": 0, "last_drawn_week": 0,
         "players": {"100": 1, "200": 2, "300": 3},
     })
-    # Now save with only one player — old players for this guild should be gone
     await _persistence.save_lottery(1, {
         "prize_pool": 100, "last_posted_week": 0, "last_drawn_week": 0,
         "players": {"100": 5},
@@ -232,7 +228,6 @@ async def test_load_global_records_picks_top_across_guilds(db):
         "highest_balance": {"value": 3000, "holder_id": 3, "holder_name": "carol"},
     })
     g = await _persistence.load_global_records()
-    # highest_balance: guild 2's bob wins
     assert g["highest_balance"]["value"] == 8000
     assert g["highest_balance"]["holder_name"] == "bob"
     # lottery: only guild 1 has it
@@ -244,14 +239,12 @@ async def test_try_set_record_only_updates_when_higher(db):
     ok1 = await _persistence.try_set_record(7, "score", 100, 1, "alice")
     assert ok1 is True
 
-    # Lower value: should NOT update
     ok2 = await _persistence.try_set_record(7, "score", 50, 2, "bob")
     assert ok2 is False
     loaded = await _persistence.load_records(7)
     assert loaded["score"]["value"] == 100
     assert loaded["score"]["holder_name"] == "alice"
 
-    # Higher value: should update
     ok3 = await _persistence.try_set_record(7, "score", 200, 3, "carol")
     assert ok3 is True
     loaded = await _persistence.load_records(7)
@@ -319,7 +312,6 @@ async def test_gambler_streak_roundtrip(db):
 
 async def test_jackpot_roundtrip(db):
     await _persistence.save_jackpot(42424)
-    # Wipe in-memory then reload
     _state.slot_jackpot = 0
     await _persistence.init_db_state()
     assert _state.slot_jackpot == 42424
@@ -543,7 +535,6 @@ async def test_ai_threads_roundtrip_preserves_set_invited_ids(db):
     assert t["kind"] == "ask"
     assert t["owner_id"] == 7
     assert t["guild_id"] == 99
-    # Set on the way out, set on the way in.
     assert isinstance(t["invited_ids"], set)
     assert t["invited_ids"] == {201, 202, 203}
     assert t["system_prompt"] == "be brief"
@@ -788,7 +779,6 @@ async def test_leveling_targeted_save_writes_one_user(db):
     }
     await _persistence.save_leveling(guild_id=42, uid=100)
 
-    # Read uid=100 back via init_db_state
     _state.leveling.clear()
     await _persistence.init_db_state()
     assert _state.leveling["42"]["100"]["xp"] == 500
@@ -883,7 +873,6 @@ async def test_init_db_state_failure_leaves_guard_unset(db, monkeypatch):
     _persistence._init_db_state_done = False
     _persistence.init_done.clear()
 
-    # Make run_migrations raise to simulate a startup-time failure.
     import src.migrations as _migrations
 
     async def _boom():
@@ -915,7 +904,6 @@ async def test_add_balance_blocks_until_init_done(db):
     _state.economy["users"].clear()
     _persistence.init_done.clear()
 
-    # add_balance must NOT proceed while init_done is unset.
     add_task = asyncio.create_task(_economy.add_balance(8001, 100))
     await asyncio.sleep(0.05)
     assert not add_task.done(), "add_balance should block on init_done"
@@ -957,9 +945,8 @@ async def test_grant_xp_blocks_until_init_done(db):
     _persistence.init_done.set()
 
     await grant_task
-    # XP should have been added to the real seeded value, not started from 0.
-    # Without the guard, the rec would have been re-created as {xp: 0} and
-    # incremented to XP_VOICE (==10), which is the bug we're proving against.
+    # Without the guard the rec would be re-created as {xp: 0} and incremented
+    # to XP_VOICE (==10); the seeded 9,999 must survive instead.
     assert _state.leveling["42"]["8002"]["xp"] > 9_999
 
 

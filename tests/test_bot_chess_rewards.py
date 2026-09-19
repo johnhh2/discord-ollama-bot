@@ -86,7 +86,7 @@ async def test_idempotent_same_elo_same_day(db):
 async def test_stale_date_self_heals_to_zero(db):
     """If the stored date is yesterday (or older), the read treats max as 0,
     so the next win pays out fully."""
-    # Pre-seed a stale row (yesterday's date, prior highwater 800).
+    # Pre-seed a stale row (an old date, prior highwater 800).
     await _persistence.init_done.wait() if False else None  # no-op; just for shape parity
     from src.economy import _ensure_user
     await _ensure_user(5005)
@@ -97,7 +97,7 @@ async def test_stale_date_self_heals_to_zero(db):
     payout, _, _ = await br.award_bot_defeat(
         user_id=5005, guild_id=42, holder_name="Alice", bot_elo=600,
     )
-    # 600 from a treated-as-0 baseline pays 600*10 (all below 1000).
+    # 600 from a treated-as-0 baseline, all below the threshold → low rate.
     assert payout == 600 * br.COINS_PER_NEW_ELO_LOW
     u = await _user_dict(5005)
     assert u["bot_chess_elo_max_today"] == 600

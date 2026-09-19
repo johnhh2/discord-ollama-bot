@@ -116,7 +116,6 @@ async def test_metrics_endpoint_serves_prometheus_text(patch_db_and_ollama):
         body = await resp.text()
     assert resp.status == 200
     assert resp.content_type.startswith("text/plain")
-    # Sanity: the registry should expose at least the bot's metric names
     assert "bot_command_invocations" in body
     assert "bot_ollama_stream_seconds" in body
 

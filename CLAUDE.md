@@ -95,6 +95,17 @@ pytest tests/test_bot.py::TestHandValue::test_blackjack
 
 Tests do **not** require a Discord token or Ollama connection. No files are written to `data/` during the test run.
 
+## Comments: concise, and only for the non-obvious
+
+**Add/use concise comments for non-obvious parts.** That is the rule for every `#` comment and docstring in new or edited code, tests included. The Python and config files were audited against it in September 2026, so they are the model to match.
+
+- **Comment the non-obvious.** The *why* a fluent Python / discord.py reader can't get from the code on screen: a synchronous claim before an `await`, an ordering that matters, a Discord rate limit or discord.py quirk, where a magic number comes from, a deliberately swallowed exception, "X stays out because…". If that reader would stop and ask "why?", the answer belongs in a comment.
+- **Don't comment the obvious.** No restating the next line, no `# Arrange` / `# Act` / `# Assert`, no docstring that repeats the function's name, no commented-out code, no scratch arithmetic or self-corrections left in tests.
+- **Keep it concise.** Lead with the point. One to three lines is normal; about six is the ceiling, for a genuinely subtle mechanism. Give the present reason, not the story of how the code got here — git has the history. A one-clause bug history is fine when it *is* the reason the code looks odd ("save before posting — a failed save must refund with nothing posted").
+- **Say it once.** Full explanation at the definition, a one-line pointer at the other sites. Where this file already covers something in depth, point here (`see CLAUDE.md: Concurrency`) rather than re-explaining it.
+- **Never invent a rationale.** If you can't establish why code is the way it is, leave it uncommented — a wrong comment is worse than none. When you change code, fix or delete the comments the change made stale, in the same edit.
+- **Leave these exactly as they are:** directive comments (`# noqa`, `# nosec …` with its justification, `# type: ignore`); the `# ── section ───` dividers, which are navigation in the long cog files; and every comment in an already-applied migration — the file is checksummed (see Schema migrations), so rewording one stops the bot booting. Those older migrations (and the `src/schema.sql` generated from them) predate this rule and aren't the model; a *new* migration's comments follow it like any other file.
+
 ## Timezones
 
 The bot's daily reset is **5am CT** (`DAILY_RESET_HOUR = 5` in `src/config.py`).

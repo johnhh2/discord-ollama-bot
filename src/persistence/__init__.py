@@ -1,11 +1,10 @@
 """Persistence package — DB-backed save/load layer.
 
-Public surface preserved exactly: every name that used to live on the flat
-`src.persistence` module is re-exported here, so existing
-`from src.persistence import X` imports keep working unchanged.
+Every public name of the submodules is re-exported here, so callers import
+with `from src.persistence import X` whichever submodule defines X.
 
-The `_init_db_state_done` flag intentionally lives on this package (not on
-the `init` submodule) so test fixtures can flip it via
+The `_init_db_state_done` flag lives on this package (not on the `init`
+submodule) so test fixtures can flip it via
 `src.persistence._init_db_state_done = False`.
 """
 
@@ -199,7 +198,7 @@ from src.persistence.init import init_db_state  # noqa: F401
 
 import asyncio as _asyncio
 
-# Module-level guard, owned by the package so tests can patch it directly.
+# Makes a second init_db_state call a no-op (see the module docstring).
 _init_db_state_done = False
 
 # Set when init_db_state has finished loading state from the DB. on_message

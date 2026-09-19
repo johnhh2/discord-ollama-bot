@@ -158,7 +158,6 @@ async def test_bankheist_success_records_share_as_bail_amount(db, monkeypatch):
 # ── cmd_bail behavior ────────────────────────────────────────────────────────
 
 async def _set_jailed(uid: int, jail_until: float | None = None, bail_amount: int = 0):
-    """Force a user into jail with the given bail_amount."""
     await _economy._ensure_user(uid)
     user = _state.economy["users"][str(uid)]
     user["jail_until"] = jail_until if jail_until is not None else time.time() + 3_600
@@ -322,14 +321,10 @@ async def test_bail_balance_drops_during_confirm(db, monkeypatch):
 
 
 async def test_concurrent_bail_confirms_charge_once(monkeypatch):
-    """Two concurrent !bail confirmations for the same jailed user must charge
-    the payer once, not twice.
-
-    Previously, cmd_bail checked `jail_until > now` then awaited deduct_balance
-    before clearing jail_until — so two confirmations both passed the gate and
-    both deducted the cost. The fix clears jail_until synchronously up front
-    so the second confirmation sees jail_until=0 and bails out on the
-    'Already Free' branch.
+    """Two concurrent !bail confirmations for the same jailed user charge the
+    payer once: cmd_bail clears jail_until synchronously before the
+    deduct_balance await, so the second confirmation sees jail_until=0 and
+    takes the 'Already Free' branch instead of deducting again.
     """
     cog = EconomyCog(bot=_StubBot())
     payer = FakeMember(uid=2_070, display_name="payer")

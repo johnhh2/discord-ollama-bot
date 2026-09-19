@@ -62,26 +62,22 @@ class TestResolveRole:
 
 class TestFormatUptime:
     def test_short_uptime(self, monkeypatch):
-        # 2 minutes elapsed.
         monkeypatch.setattr("src.helpers.time.monotonic", lambda: 100.0)
         monkeypatch.setattr(_state, "bot_start_time", 100.0 - 120)
         assert format_uptime() == "0d 0h 2m"
 
     def test_hours_and_minutes(self, monkeypatch):
-        # 3h 45m elapsed.
         monkeypatch.setattr("src.helpers.time.monotonic", lambda: 100.0)
         monkeypatch.setattr(_state, "bot_start_time", 100.0 - (3 * 3600 + 45 * 60))
         assert format_uptime() == "0d 3h 45m"
 
     def test_days_hours_minutes(self, monkeypatch):
-        # 2d 5h 17m elapsed.
         monkeypatch.setattr("src.helpers.time.monotonic", lambda: 100.0)
         elapsed = 2 * 86400 + 5 * 3600 + 17 * 60
         monkeypatch.setattr(_state, "bot_start_time", 100.0 - elapsed)
         assert format_uptime() == "2d 5h 17m"
 
     def test_zero_uptime(self, monkeypatch):
-        """Just-started bot: all zeros."""
         monkeypatch.setattr("src.helpers.time.monotonic", lambda: 100.0)
         monkeypatch.setattr(_state, "bot_start_time", 100.0)
         assert format_uptime() == "0d 0h 0m"
@@ -114,10 +110,9 @@ async def test_auto_daily_first_call_grants_daily_reward(db):
 
     granted, prop_rev = await _auto_daily(msg.author, msg.channel)
 
-    # Balance bumped by DAILY_REWARD; daily_date set to today. The returned
-    # total is what the dailies reaction claim stakes on its flip/slots
-    # gamble, so it must be the amount actually awarded; the property
-    # portion is 0 for a user with no properties.
+    # The returned total is what the dailies reaction claim stakes on its
+    # flip/slots gamble, so it must be the amount actually awarded; the
+    # property portion is 0 for a user with no properties.
     assert granted == DAILY_REWARD
     assert prop_rev == 0
     assert await _economy.get_balance(user.id) == DAILY_REWARD
@@ -187,5 +182,4 @@ async def test_auto_daily_returning_user_does_not_overwrite_last_daily(db):
 
     await _auto_daily(user, channel)
 
-    # last_daily NOT overwritten (the `if is_new` branch was skipped).
     assert _state.economy["users"][str(user.id)]["last_daily"] == 123.0

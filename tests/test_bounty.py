@@ -177,19 +177,16 @@ async def test_create_with_duration_sets_expiry(db):
     row = await _persistence.get_bounty_by_message(mid)
     assert row["condition"] == "watch this video"     # duration token consumed
     assert row["expires_at"] is not None
-    # ~7 days out.
     assert 6.9 * 86_400 < row["expires_at"] - time.time() < 7.1 * 86_400
 
 
 async def test_duration_token_not_consumed_without_condition(db):
-    """`!bounty 5k 7d` with no trailing condition keeps 7d as the condition and
-    errors (condition required)."""
+    """A duration token is only eaten when condition text follows it, so
+    `!bounty 5k 2w` posts a bounty whose condition is "2w", with no expiry."""
     cog, bot, channel = _make_cog()
     author = 17
     await add_balance(author, 50_000)
     ctx = _ctx(author, channel)
-    # Only amount + one token: too few args (need >=2). Add a real condition
-    # that is itself a duration-looking word to prove it's NOT eaten.
     await cog.create_bounty(ctx, ("5k", "2w"))   # len(args) == 2, "2w" is condition
     mid = next(iter(_state.active_bounties))
     row = await _persistence.get_bounty_by_message(mid)
@@ -366,7 +363,6 @@ async def test_accept_voids_sibling_live_poll(db):
     await cog._resolve_claim(_bounty(mid), claim_b, accepted=True)
 
     assert await get_balance(37) == 10_000
-    # Claim A's poll was edited to a void embed and its reactions cleared.
     poll_msg.clear_reactions.assert_awaited()
     assert "void" in poll_msg.embeds[0].title.lower() or "cancel" in poll_msg.embeds[0].title.lower()
     found = await _persistence.get_claim_by_dm(claim_a["dm_message_id"])
@@ -496,7 +492,6 @@ async def test_poll_voter_rewarded_once_when_voting_both_ways(db):
     """A user who reacts both ✅ and ❌ is paid the 100-coin reward only once."""
     cog, bot, channel = _make_cog()
     mid, claim = await _setup_polling_claim(cog, channel, author=20, claimant=47)
-    # Voter 9 appears in both yes and no lists.
     _seed_poll_votes(channel, claim, yes_ids=[9], no_ids=[9, 10])
     claim["poll_expires_at"] = time.time() - 1
 

@@ -62,10 +62,9 @@ async def test_confirm_purchase_timeout_returns_false():
     """When the view's timeout fires (no clicks), confirm_purchase returns
     False and edits the message to a 'Timed Out' embed.
 
-    discord.py only starts the timeout countdown after the View is attached
-    to a real interaction message — in test we simulate the timeout by
-    calling the private _dispatch_timeout hook on the View as soon as it's
-    created."""
+    discord.py only starts the countdown once the View is attached to a real
+    interaction message, so the test fires the View's private
+    _dispatch_timeout hook instead."""
     import asyncio
     payer = FakeMember(uid=45, display_name="payer")
     ctx = FakeCtx(author=payer)

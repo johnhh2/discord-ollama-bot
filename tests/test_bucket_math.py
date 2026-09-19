@@ -18,7 +18,6 @@ _UTC = datetime.timezone.utc
 
 
 def _at_ct(year: int, month: int, day: int, hour: int) -> datetime.datetime:
-    """Helper: build a CT-aware datetime at a given hour."""
     return datetime.datetime(year, month, day, hour, tzinfo=_CT)
 
 
@@ -44,7 +43,6 @@ class TestCurrentBucketCt:
 
 class TestBucketStartDt:
     def test_bucket_0_is_midnight_ct(self):
-        """Bucket 0 of 2026-05-04 starts at 2026-05-04 00:00 CT."""
         result = _economy._bucket_start_dt("2026-05-04", 0)
         # Round-trip through CT to compare against the expected wall-clock.
         in_ct = result.astimezone(_CT)

@@ -35,7 +35,6 @@ class LevelingCog(commands.Cog):
                 if vc.overwrites_for(everyone).view_channel is False:
                     continue
 
-                # Skip channels with only 1 non-bot member
                 human_members = [m for m in vc.members if not m.bot]
                 if len(human_members) < 2:
                     continue
@@ -45,9 +44,8 @@ class LevelingCog(commands.Cog):
                     if vs is None:
                         continue
 
-                    # Voice XP: must not be muted/deafened. The coin reward is
-                    # granted inside _announce_levelup regardless of whether a
-                    # level-up channel is configured — don't gate the call on it.
+                    # Voice XP: must not be muted/deafened. _announce_levelup also
+                    # pays the coin reward — don't gate the call on a level-up channel.
                     if not (vs.self_mute or vs.self_deaf or vs.mute or vs.deaf):
                         _, leveled_up = await grant_xp(member.id, "voice", guild_id=guild.id)
                         if leveled_up:
@@ -79,7 +77,9 @@ class LevelingCog(commands.Cog):
 
     # ── Level-up announcement ─────────────────────────────────────────────────
     async def _announce_levelup(self, member: discord.Member, guild_id: int):
-        rec = state.leveling.get(str(guild_id), {}).get(str(member.id), {})
+        """Pay the level-up coin reward, then announce it if the guild has a
+        level-up channel — callers must not gate the call on the channel."""
+        rec =state.leveling.get(str(guild_id), {}).get(str(member.id), {})
         lvl = display_level(rec.get("level", 0))
         reward = levelup_coin_reward(lvl)
         await add_balance(member.id, reward)

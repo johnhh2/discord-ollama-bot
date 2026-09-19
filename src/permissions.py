@@ -11,7 +11,7 @@ from src.guild_config import get_guild_cfg
 
 # Every tier `check_command_permission` knows how to evaluate. Anything else in
 # command_perms.json is a typo — init_db_state refuses to boot on one rather
-# than letting the gate fall through to its (now fail-closed) else branch.
+# than letting the gate fall through to its fail-closed else branch.
 VALID_TIERS = ("everyone", "server_admin", "bot_admin", "global_admin")
 
 
@@ -26,6 +26,9 @@ def requires_perm(func):
     (or silently, if the command_perms entry has hidden=true) when the author
     lacks the configured tier. Equivalent to opening the body with
     `if not await check_command_permission(ctx): return`.
+
+    Legacy: the global gate (`_command_perm_gate` in src/core.py) already
+    denies first — don't add this to new commands.
     """
     @functools.wraps(func)
     async def wrapper(self, ctx, *args, **kwargs):
@@ -50,12 +53,11 @@ async def _wrong_channel_reply(ctx_or_msg, text: str, *, title: str = "❌ Wrong
 
 def gate_channel_ids(channel) -> tuple:
     """The ids a channel gate tests: the channel's own, plus its parent's when
-    it's a thread. A thread lives inside its parent channel and inherits the
-    parent's allow/deny status — that's what lets `!slots` run inside a
-    `!session` thread opened from a game channel (the thread's own id is
-    never in `game_channels`), and keeps a thread under a blacklisted
-    channel blacklisted. Every channel gate should test against this rather
-    than `ctx.channel.id` alone."""
+    it's a thread. A thread inherits its parent's allow/deny status — that's
+    what lets `!slots` run inside a `!session` thread opened from a game
+    channel (the thread's own id is never in `game_channels`), and keeps a
+    thread under a blacklisted channel blacklisted. Every channel gate should
+    test against this rather than `ctx.channel.id` alone."""
     parent_id = getattr(channel, "parent_id", None) if isinstance(channel, discord.Thread) else None
     return (channel.id, parent_id) if parent_id else (channel.id,)
 
@@ -113,9 +115,8 @@ def is_admin(ctx: commands.Context) -> bool:
 def is_bot_admin_id(user_id: int, guild_id: "int | None" = None) -> bool:
     """ctx-free form of `is_admin`, for raw-event handlers that only have ids.
 
-    Raw reaction payloads carry no Context, so handlers were checking
-    `state.bot_admins` directly and silently ignoring `!setperm` overrides —
-    a user who could run every other bot-admin command couldn't run those.
+    Raw reaction payloads carry no Context; checking `state.bot_admins`
+    directly there would silently ignore `!setperm` overrides.
     """
     if user_id in state.bot_admins:
         return True
@@ -215,10 +216,9 @@ async def check_command_permission(ctx: commands.Context) -> bool:
     elif tier == "global_admin":
         allowed = is_global_admin(ctx)
     else:
-        # Fail closed. An unrecognized tier is a typo in command_perms.json
-        # ("bot-admin", "admin", …); defaulting it to allowed silently made
-        # the command public. init_db_state validates tiers at boot so this
-        # branch should be unreachable in practice.
+        # Fail closed: an unrecognized tier is a typo in command_perms.json
+        # ("bot-admin", "admin", …) and must not make the command public.
+        # init_db_state validates tiers at boot, so this should be unreachable.
         allowed = False
 
     if not allowed:

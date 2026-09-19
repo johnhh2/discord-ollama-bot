@@ -120,7 +120,6 @@ async def test_crime_dict_survives_do_daily_reset(db, monkeypatch):
 
     await _economy.do_daily_reset()
 
-    # Dict still holds today's totals — not cleared.
     assert _state.crime_today_by_user[(GID, "42")] == {"gained": 500, "lost": 100}
 
 
@@ -131,7 +130,6 @@ async def test_init_db_state_hydrates_today_crime_dict(db):
     await _economy.record_crime_event(GID, 42, gained=500, lost=100)
     # Simulate restart: dict cleared.
     _state.crime_today_by_user.clear()
-    # Re-run init_db_state.
     await _persistence.init_db_state()
     assert _state.crime_today_by_user[(GID, "42")] == {"gained": 500, "lost": 100}
 

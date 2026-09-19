@@ -138,7 +138,7 @@ async def test_setperm_blocked_when_caller_is_not_bot_admin(db):
     check_command_permission denies the call before any state mutation."""
     cog = AdminCog(bot=_StubBot())
     _state.command_perms["setperm"] = {"tier": "bot_admin", "hidden": True}
-    # Note: NOT adding to bot_admins.
+    # Deliberately not added to bot_admins, unlike _admin_ctx.
     ctx = FakeCtx(author=FakeMember(uid=99), guild=FakeGuild(gid=42))
     ctx.bot = _StubBot()
     ctx.command.qualified_name = "setperm"

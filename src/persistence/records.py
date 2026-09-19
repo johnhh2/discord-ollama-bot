@@ -2,28 +2,23 @@ import json
 
 from src.db import with_cursor
 
-# Categories whose ties break on the lower holder user id instead of on
-# "whoever got there first". A strict `>` comparison already gives every
-# other category first-come-wins: the incumbent keeps the record until
-# somebody strictly beats it. For these, an equal value held by a HIGHER
-# user id is displaced by the lower one, so the holder is a pure function
-# of (value, user id) rather than of arrival order. Both `try_set_record`
-# and `load_global_records` consult this so the per-guild and cross-guild
-# views agree on who holds a tied record.
+# Categories whose ties break on the lower holder user id. Every other
+# category is first-come-wins: the incumbent keeps the record until strictly
+# beaten. Here an equal value held by a higher user id is displaced, so the
+# holder is a pure function of (value, user id), not of arrival order. Both
+# `try_set_record` and `load_global_records` consult this so the per-guild
+# and cross-guild views agree on who holds a tied record.
 UID_TIEBREAK_CATEGORIES = {"command_streak"}
 
-# Categories whose value is a GLOBAL per-user stat — one number that reads the
-# same from every server — rather than something that happened in one guild.
-# Your artifact count, balance, command streak and best Stockfish Elo are
-# properties of *you*; buying an artifact in server A raises the number server
-# B sees too, so B's "most artifacts owned" record has to move with it. A 50k
-# slots win, by contrast, is an event that happened in A and belongs to A.
-#
-# For these, `try_set_record` mirrors the write into every other guild the
-# holder is active in. Deliberately excluded: the gambling categories, the
-# per-guild `crime` score, `chess_pvp_wins` (counted per guild by
-# `count_pvp_wins_in_guild`) and `hangman_wins_*` (a per-guild tally kept in
-# these very rows) — all four are already scoped correctly.
+# Categories whose value is a global per-user stat — one number that reads the
+# same from every server (artifact count, balance, command streak, best
+# Stockfish Elo) — not an event that happened in one guild, like a 50k slots
+# win. Buying an artifact in server A raises the number server B sees, so
+# `try_set_record` mirrors the write into every other guild the holder is
+# active in. Deliberately excluded, already scoped correctly: the gambling
+# categories, the per-guild `crime` score, `chess_pvp_wins` (counted per guild
+# by `count_pvp_wins_in_guild`) and `hangman_wins_*` (a per-guild tally kept
+# in these very rows).
 GLOBAL_STAT_CATEGORIES = {
     "highest_balance",
     "total_artifacts",
@@ -136,10 +131,9 @@ async def try_set_record(guild_id: int, category: str, value: int, holder_id: in
     """Offer (value, holder) to `category`'s record in `guild_id`.
 
     Returns whether *this* guild's record changed. For GLOBAL_STAT_CATEGORIES
-    the same offer is mirrored into every other guild the holder is active in,
-    which is what keeps a global stat's record consistent across servers — but
-    those mirrors never affect the return value, so the caller's announcement
-    fires only where the action happened rather than in every server at once.
+    the offer is also mirrored into every other guild the holder is active in;
+    the mirrors never affect the return value, so the caller's announcement
+    fires only where the action happened, not in every server at once.
     """
     if guild_id is None:
         return False

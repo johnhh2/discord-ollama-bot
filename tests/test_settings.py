@@ -84,7 +84,6 @@ async def test_shop_subcommand_invalid_item_does_not_persist(db):
 
     await cog.settings_shop.callback(cog, ctx, "notarealitem", "on")
 
-    # No state mutation, no DB write.
     assert _state.guild_settings.get("42", {}).get("shop_items", {}) == {}
     assert await _read_guild_settings(42) == {}
 
@@ -107,7 +106,6 @@ async def test_ai_channels_set_persists_channel_ids(db):
 
 async def test_ai_channels_clear_empties_list(db):
     cog = SettingsCog(bot=None)
-    # Pre-seed.
     _state.guild_settings["42"] = {"ai_channels": [9001, 9002]}
 
     ctx = _admin_ctx(guild_id=42)
@@ -180,8 +178,7 @@ async def test_lottery_channel_set_persists_and_seeds_lottery(db, monkeypatch):
     persisted = await _read_guild_settings(99)
     assert persisted["lottery_channel"] == 5555
 
-    # And a lottery row was seeded for this guild.
-    lot = await _persistence.load_lottery(99)
+    lot =await _persistence.load_lottery(99)
     from src.config import LOTTERY_SEED_POOL
     assert lot["prize_pool"] == LOTTERY_SEED_POOL
 
@@ -242,6 +239,5 @@ async def test_settings_subcommand_blocked_for_non_admin(db):
 
     await cog.settings_channel_ai.callback(cog, ctx, "clear")
 
-    # Denied → no state mutation, no DB write.
     assert "ai_channels" not in _state.guild_settings.get("42", {})
     assert await _read_guild_settings(42) == {}

@@ -26,10 +26,9 @@ from src.guild_config import get_guild_cfg
 
 
 async def _ensure_user(uid: int):
-    # Block until init_db_state has loaded state from the DB. Without this,
-    # any caller that lands here before the load finishes (background tasks
-    # like the leveling voice tick, lottery draw, etc.) would materialize a
-    # zero-valued entry and UPSERT it over the user's real DB row.
+    # Block until init_db_state has loaded state from the DB. A caller that
+    # lands here earlier (the leveling voice tick, the lottery draw, …) would
+    # materialize a zero-valued entry and UPSERT it over the user's real row.
     import src.persistence as _pkg
     await _pkg.init_done.wait()
     key = str(uid)
@@ -46,16 +45,14 @@ CRIME_ELIGIBLE_NET_WORTH = 100_000
 async def _maybe_latch_crime_eligible(uid: int) -> bool:
     """Sticky: if the user qualifies (display level >= 10 in any guild, OR
     wallet + savings > 100k now), set the flag and persist. Returns True iff
-    this call latched the flag (i.e. the user was previously ineligible and
-    just qualified). The level-up branch of grant_xp also latches on the
-    transition into display level 10."""
+    this call latched the flag. The level-up branch of grant_xp also latches
+    on the transition into display level 10."""
     user = state.economy["users"].get(str(uid))
     if user is None or user.get("crime_eligible"):
         return False
     wallet = user.get("balance", 0)
-    # Compound value, not raw principal — the doc above and the user-facing
-    # copy both say "current value of savings", and get_savings_value is the
-    # same formula the rest of the economy uses.
+    # Compound value, not raw principal — the user-facing copy says "current
+    # value of savings", and get_savings_value is the economy-wide formula.
     savings_total = await get_savings_value(uid)
     if wallet + savings_total > CRIME_ELIGIBLE_NET_WORTH:
         user["crime_eligible"] = True
@@ -125,11 +122,9 @@ async def add_guild_house(guild_id: int, amount: int):
 async def drain_bot_balance_into_lottery(lottery: dict, guild_id: int) -> int:
     """Transfer this guild's house balance into the lottery prize pool. Returns the amount transferred."""
     from src.persistence import save_guild_house
-    # Block until init_db_state has loaded guild_house from the DB. Before
-    # that, the in-memory pot reads 0 and the drain silently transfers
-    # nothing — the fresh lottery starts without the house money while the
-    # DB row keeps its coins (migration 0059 backfilled the 9/1/2026 draws
-    # that hit this).
+    # Block until init_db_state has loaded guild_house: before that the pot
+    # reads 0 and the drain silently transfers nothing while the DB row keeps
+    # its coins (migration 0059 backfilled the 9/1/2026 draws that hit this).
     import src.persistence as _pkg
     await _pkg.init_done.wait()
     state.economy.setdefault("guild_house", {})
@@ -191,7 +186,7 @@ async def announce_new_lottery(
 
 # Everything a bought/renewed insurance day blocks outright. Single source of
 # truth for `!shop insurance` and the subscription renewal below. Crime
-# (steal/mug/bankheist) is deliberately NOT here: insurance no longer stops a
+# (steal/mug/bankheist) is deliberately NOT here: insurance doesn't stop a
 # robbery, it refunds part of the loss — see insurance_refund.
 # A policy row stores a snapshot of this list at purchase; init_db_state
 # unions the stored list with this one on load, so a name added here covers
@@ -342,9 +337,8 @@ async def sweep_insurance_subs() -> None:
     the old claim-time flow that day.
 
     The only premium charged outside this sweep is a new subscriber's first
-    day, bought at `!shop insurance sub` time when their coverage is absent or
-    would run out before the next sweep (ShopCog._sub_needs_first_day) — so a
-    mid-day subscriber never lapses waiting for 5am.
+    day, bought at `!shop insurance sub` time — see
+    ShopCog._sub_needs_first_day.
     """
     today = _ct_today()
     prior = state.economy.get("last_insurance_sweep")
@@ -387,7 +381,7 @@ async def is_insured(uid: int, against: str) -> bool:
 
 
 def get_insurance_expiry(uid: int) -> int | None:
-    """Return the user's insurance expiry timestamp, or None."""
+    """Expiry ts of the user's active policy; None when uninsured or expired."""
     entry = state.insurance.get(int(uid))
     if entry and entry.get("expires_at", 0) > time.time():
         return int(entry["expires_at"])
@@ -410,7 +404,6 @@ def get_guild_coding_model(guild_id: int) -> str:
 
 
 def _ct_now() -> datetime.datetime:
-    """Return the current time in America/Chicago timezone."""
     return datetime.datetime.now(datetime.timezone.utc).astimezone(ZoneInfo("America/Chicago"))
 
 
@@ -423,9 +416,8 @@ def _ct_today() -> str:
 
 
 def _ct_today_date() -> datetime.date:
-    """Same as _ct_today() but returns a datetime.date instead of an ISO string.
-    Convenience for graph code that needs to compare/append dates directly.
-    """
+    """_ct_today() as a datetime.date, for graph code that compares/appends
+    dates directly."""
     now_ct = _ct_now()
     if now_ct.hour < DAILY_RESET_HOUR:
         return now_ct.date() - datetime.timedelta(days=1)
@@ -496,11 +488,10 @@ def lottery_month_key(now_ct: datetime.datetime) -> int:
     the same month a year later, mirroring the old YYYYWW week scheme.
 
     Transition from the weekly lottery (deployed 2026-07-31): the DB's
-    last_drawn_week/last_posted_week columns still hold YYYYWW week keys
-    from July 2026 (weeks 27-31, i.e. last two digits >= 27). Those can
-    never equal a YYYYMM key (last two digits 01-12), so the first
-    1st-of-month draw fires normally and overwrites them with month keys
-    via the normal save path.
+    last_drawn_week/last_posted_week columns may still hold YYYYWW keys from
+    July 2026 (weeks 27-31). Those can never equal a YYYYMM key (last two
+    digits 01-12), so the first 1st-of-month draw fires normally and
+    overwrites them via the normal save path.
     """
     return now_ct.year * 100 + now_ct.month
 
@@ -646,10 +637,9 @@ async def remove_savings(uid: int, amount: int) -> bool:
         elif val <= remaining:
             remaining -= val
         else:
-            # Store the leftover principal as a float so the kept value
-            # (kept_amount * factor) exactly equals (val - remaining). Truncating
-            # to int here used to lose up to ~factor coins, letting a withdraw +
-            # redeposit of the same amount drop displayed savings by 1.
+            # Keep the leftover principal as a float so kept_amount * factor
+            # equals val - remaining exactly. Truncating to int lost up to
+            # ~factor coins: withdraw + redeposit dropped displayed savings by 1.
             kept_amount = entry["amount"] - remaining / factor
             if kept_amount > 0:
                 new_deposits.append({"amount": kept_amount, "deposited_at": entry["deposited_at"]})
@@ -683,6 +673,7 @@ async def seize_from_savings(uid: int, max_amount: int) -> int:
         elif val <= remaining:
             remaining -= val
         else:
+            # Float principal on purpose — see remove_savings.
             kept_amount = entry["amount"] - remaining / factor
             if kept_amount > 0:
                 new_deposits.append({"amount": kept_amount, "deposited_at": entry["deposited_at"]})
@@ -776,11 +767,12 @@ async def record_crime_event(guild_id: int, uid: int, *, gained: int = 0, lost: 
     `guild_id` to crime_history AND bump the in-memory cache for the same
     bucket.
 
-    Called by !steal / !mug on every outcome (win/lose, attacker/victim).
-    Persists synchronously — no data loss on bot restart. If the 6h CT
-    bucket has rolled over since the last recorded event, the in-memory
-    cache is cleared first so it only reflects the current bucket. A
-    falsy `guild_id` (DM context — shouldn't happen for crime) is a no-op.
+    Called by !steal / !mug on every outcome (win/lose, attacker/victim) and
+    by a successful !bankheist. Persists synchronously — no data loss on bot
+    restart. If the 6h CT bucket has rolled over since the last recorded
+    event, the in-memory cache is cleared first so it only reflects the
+    current bucket. A falsy `guild_id` (DM context — shouldn't happen for
+    crime) is a no-op.
     """
     if gained == 0 and lost == 0 or not guild_id:
         return
@@ -905,14 +897,14 @@ async def try_set_loss_record(
 
 
 async def snapshot_all(ping_ms: float | None = None):
-    """Run the periodic graph-data snapshots. Called by the GraphCog scheduler
-    every 6 hours and once on boot.
+    """Run the periodic graph-data snapshots. Called by the GraphCog loop
+    every 30 minutes (first tick at boot) and by do_daily_reset.
 
     `ping_ms` is the gateway heartbeat latency, passed in by the GraphCog
     loop (the only caller with a bot reference). The daily-reset path omits
-    it; that bucket's ping refreshes on the next scheduler tick.
+    it; that bucket's ping refreshes on the next loop tick.
 
-    Note: crime, gambling, and level-ups are NOT snapshotted here — they're
+    Crime, gambling, and level-ups are NOT snapshotted here — they're
     written atomically at event time via the `record_*_event` helpers, so the
     *_history tables are always current. Only the aggregate counters
     (balances, bot stats, per-cog command usage) need periodic flushing.
@@ -928,8 +920,8 @@ async def do_daily_reset():
     """Reset all users' daily reward and scratchoff counts at 5am CT.
 
     Captures a final snapshot of yesterday's aggregate counters BEFORE clearing
-    them — the 6h GraphCog scheduler can't be relied on to fire exactly at 5am,
-    so without this the last hours of the gameplay-day would be lost.
+    them — the 30-minute GraphCog loop can't be relied on to fire exactly at
+    5am, so without this the tail of the gameplay-day would be lost.
 
     The crime/gambling/levelup dicts are NOT cleared here — they're keyed
     by calendar date on the disk side and persisted atomically per-event,
@@ -952,9 +944,8 @@ async def do_daily_reset():
     state.economy["last_daily_reset"] = today
     await save_economy()
 
-    # Prune all graph-history tables once per gameplay-day via a single
-    # DB-level DELETE per table — cheap, correct, and uniform across the
-    # snapshot-style and atomic-write tables.
+    # Prune every graph-history table once per gameplay-day: one DB-level
+    # DELETE each, uniform across the snapshot-style and atomic-write tables.
     cutoff = (_ct_now().date() - datetime.timedelta(days=GRAPH_HISTORY_RETENTION_DAYS)).isoformat()
     await prune_balance_history(before_date=cutoff)
     await prune_bot_stats_history(before_date=cutoff)

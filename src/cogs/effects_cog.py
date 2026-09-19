@@ -121,7 +121,6 @@ class EffectsCog(commands.Cog):
             await ctx.send(embed=emb("❌ Server Only", "Effects only exist in servers.", C_RED))
             return
 
-        # !effects list  — admin-only listing of available effect types.
         if len(args) == 1 and args[0].lower() == "list":
             if not (is_admin(ctx) or is_server_admin(ctx)):
                 await ctx.send(embed=emb("❌ No Permission", "Only server admins can list effects.", C_RED))
@@ -138,11 +137,11 @@ class EffectsCog(commands.Cog):
                 target = await MemberConverter().convert(ctx, rest[0])
                 rest = rest[1:]
             except commands.BadArgument:
-                # First token isn't a user — only valid form left is none.
+                # Not a member: the author stays the target and the whole
+                # tail is read as the subcommand.
                 target = ctx.author
 
         if rest:
-            # Admin subcommand: add / remove.
             await self._handle_admin_action(ctx, target, rest)
             return
 
@@ -255,8 +254,8 @@ class EffectsCog(commands.Cog):
         """Construct the state dict for an admin-granted effect."""
         now = time.time()
         if effect == "insurance":
-            # An admin grant is the strongest policy — full crime refunds —
-            # the nearest thing to the old "insured users can't be robbed".
+            # An admin grant is the strongest policy: premium, so crime
+            # losses are refunded in full.
             from src.economy import INSURANCE_PROTECTS
             return {
                 "expires_at": expires_at if expires_at is not None else now + 10 * 365 * 86_400,

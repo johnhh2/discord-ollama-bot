@@ -5,7 +5,7 @@ the channel/uid and either ends it (paying out the wager pot to the
 opponent for PvP games, refunding nothing for solo games like blackjack)
 or releases the user's seat (AI thread invited group).
 
-The 3 PvP games (ttt, c4, chess) all route through the new
+The 3 PvP games (ttt, c4, chess) all route through the
 _stop_pvp_game helper. Race uses its own multi-player branch. Blackjack,
 hangman, AI thread, and puzzle each have their own shape.
 
@@ -84,11 +84,9 @@ async def test_stop_ttt_with_wager_pays_opponent_double(db, _stub_edit_board):
     # so the spy fires before we assert on it.
     await asyncio.sleep(0)
 
-    # Game cleared.
     assert 500 not in _state.active_ttt_games
     # Opponent got 2× the wager (their original stake + the forfeiter's stake).
     assert await _economy.get_balance(opponent.id) == 500
-    # Edit-board called for the 🏳️ embed.
     assert len(_stub_edit_board) == 1
     embed = _stub_edit_board[0][2]
     assert "Forfeited" in embed.title
@@ -110,7 +108,6 @@ async def test_stop_ttt_no_wager_records_forfeit_without_payout(db, _stub_edit_b
     await cog.cmd_stop.callback(cog, ctx)
 
     assert 501 not in _state.active_ttt_games
-    # No coins moved.
     assert await _economy.get_balance(opponent.id) == 0
 
 
@@ -201,12 +198,10 @@ async def test_stop_chess_forfeit_counts_in_head_to_head(db, _stub_edit_board):
     white = FakeMember(uid=1020)
     black = FakeMember(uid=1021)
 
-    # No prior games — start clean.
     from src.persistence import load_head_to_head
     h2h_before = await load_head_to_head(white.id, black.id)
     assert h2h_before == {"wins_a": 0, "wins_b": 0, "draws": 0}
 
-    # White forfeits.
     ctx = _ctx(white, channel_id=510)
     _state.active_chess_games[510] = _starter_chess_game(white.id, black.id, amount=0)
     await cog.cmd_stop.callback(cog, ctx)
@@ -229,7 +224,7 @@ async def test_stop_chess_no_wager_still_archives_report(db, _stub_edit_board):
     await cog.cmd_stop.callback(cog, ctx)
 
     assert 506 not in _state.active_chess_games
-    assert await _economy.get_balance(white.id) == 0  # no payout
+    assert await _economy.get_balance(white.id) == 0
     from src.persistence import load_chess_report
     report = await load_chess_report(1)
     assert report is not None
@@ -250,7 +245,6 @@ async def test_stop_chess_non_player_does_nothing(db, _stub_edit_board):
 
     await cog.cmd_stop.callback(cog, ctx)
 
-    # Game still active (interloper isn't a player), no payout, no report.
     assert 507 in _state.active_chess_games
     assert await _economy.get_balance(white.id) == 0
     assert await _economy.get_balance(black.id) == 0
@@ -273,9 +267,7 @@ async def test_stop_pvp_game_in_other_channel_returns_none(db, _stub_edit_board)
 
     await cog.cmd_stop.callback(cog, ctx)
 
-    # Other-channel game untouched.
     assert 999 in _state.active_ttt_games
-    # No board edit.
     assert _stub_edit_board == []
 
 
@@ -295,7 +287,6 @@ async def test_stop_pvp_game_user_not_in_players_returns_none(db, _stub_edit_boa
 
     await cog.cmd_stop.callback(cog, ctx)
 
-    # Game still active; bystander isn't a player so no forfeit happened.
     assert 506 in _state.active_ttt_games
     assert _stub_edit_board == []
 
@@ -413,7 +404,6 @@ async def test_stop_hangman_non_host_does_nothing(db, _stub_edit_board):
 
     await cog.cmd_stop.callback(cog, ctx)
 
-    # Game still active.
     assert 801 in _state.active_hangman_games
 
 
@@ -451,7 +441,6 @@ async def test_stop_ai_thread_by_invited_user_just_leaves_group(db, _stub_edit_b
 
     await cog.cmd_stop.callback(cog, ctx)
 
-    # Thread still active; invited user removed from group.
     assert 901 in _state.ai_threads
     assert invited.id not in _state.ai_threads[901]["invited_ids"]
     assert owner.id in _state.ai_threads[901]["invited_ids"]
@@ -495,7 +484,6 @@ async def test_stop_in_idle_channel_replies_nothing_to_stop(db, _stub_edit_board
 
     await cog.cmd_stop.callback(cog, ctx)
 
-    # Nothing-to-stop reply emitted via ctx.send.
     assert ctx.sent_embeds, "Expected an embed reply"
     embed = ctx.sent_embeds[0]
     assert "Nothing to Stop" in embed.title
@@ -510,7 +498,6 @@ async def test_stop_clears_multiple_simultaneous_activities(db, _stub_edit_board
     cog = AICog(bot=None)
     user = FakeMember(uid=8001)
     ctx = _ctx(user, channel_id=1200)
-    # AI thread on this channel
     _state.ai_threads[1200] = {
         "kind": "ask", "owner_id": user.id,
         "invited_ids": {user.id}, "history": [],

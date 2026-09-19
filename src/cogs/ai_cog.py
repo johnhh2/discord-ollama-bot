@@ -37,11 +37,9 @@ from src.config import (
 )
 from src import state
 from src.invites import _wait_for_confirmations, _send_invite
-# Forfeit-board renderers used in cmd_stop. NOTE: these were referenced
-# inline since the original bot.py split but never actually imported —
-# !stop in a ttt/c4/chess/hangman game would NameError. Tests in
-# test_cmd_stop.py now cover this. Don't drop these without adjusting
-# the cmd_stop coverage.
+# Forfeit-board renderers used in cmd_stop. They were once referenced but
+# never imported — !stop in a ttt/c4/chess/hangman game would NameError.
+# test_cmd_stop.py covers this; don't drop them without adjusting it.
 from src.games.ttt_c4 import build_ttt_display, build_c4_display
 from src.games.hangman import build_hangman_display
 from src.games.blackjack import retire_blackjack_buttons
@@ -93,7 +91,6 @@ class AICog(commands.Cog):
         if not await check_token_budget_or_notify(ctx, question):
             return
 
-        # Check cost
         if not await enforce_cost(ctx, "ask"):
             return
 
@@ -208,7 +205,7 @@ class AICog(commands.Cog):
                     try:
                         await _thread.add_user(member)
                     except Exception:
-                        pass
+                        pass  # best-effort — still recorded in invited_ids below
                 t = state.ai_threads.get(_thread_id)
                 if t is not None:
                     t["invited_ids"].add(user.id)
@@ -327,7 +324,6 @@ class AICog(commands.Cog):
             await ctx.send("Usage: `!roleplay <character prompt> [@user1 @user2 ...]`")
             return
 
-        # Parse mentions and clean prompt
         invited_users = [m for m in ctx.message.mentions if m.id != uid]
         clean_prompt = character_prompt
         for m in ctx.message.mentions:
@@ -343,7 +339,6 @@ class AICog(commands.Cog):
         if not await enforce_cost(ctx, "roleplay"):
             return
 
-        # Create a thread to contain the roleplay
         guild_id = ctx.guild.id if ctx.guild else None
         thread = await _try_create_thread(ctx, f"roleplay: {clean_prompt[:70]}")
         rp_channel_id = thread.id if thread is not None else ctx.channel.id
@@ -389,7 +384,6 @@ class AICog(commands.Cog):
             return
         uid = ctx.author.id
 
-        # Parse mentions for multiplayer
         invited_users = [m for m in ctx.message.mentions if m.id != uid]
 
         if not await check_token_budget_or_notify(ctx, "Begin the adventure."):
@@ -398,7 +392,6 @@ class AICog(commands.Cog):
         if not await enforce_cost(ctx, "rpg"):
             return
 
-        # Register host with participants set
         rpg_system_prompt = (
             "Purpose:\n"
             "To create an immersive, text-based role-playing game.\n"
@@ -471,7 +464,6 @@ class AICog(commands.Cog):
             "24. Main Story and Side Quests: There is a Main Overarching Story as the backbone of the adventure. Each party member that joins should have their own personal story that can be completed with the player."
         )
 
-        # Create a thread to contain the RPG session
         guild_id = ctx.guild.id if ctx.guild else None
         thread = await _try_create_thread(ctx, f"rpg: {ctx.author.display_name}'s adventure")
         rpg_channel_id = thread.id if thread is not None else ctx.channel.id

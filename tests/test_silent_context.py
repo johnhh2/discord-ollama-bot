@@ -11,7 +11,6 @@ _aio = pytest.mark.asyncio
 
 @_aio
 async def test_ctx_send_defaults_to_silent_true():
-    """ctx.send(...) with no silent kwarg flows through with silent=True."""
     ctx = SilentContext.__new__(SilentContext)  # bypass __init__ which needs real Discord state
     with patch("discord.ext.commands.Context.send", new=AsyncMock()) as send:
         await SilentContext.send(ctx, "hello")
@@ -33,7 +32,6 @@ async def test_ctx_send_silent_false_is_preserved():
 
 @_aio
 async def test_ctx_send_silent_true_is_preserved():
-    """Explicit silent=True is also a no-op override (same as default)."""
     ctx = SilentContext.__new__(SilentContext)
     with patch("discord.ext.commands.Context.send", new=AsyncMock()) as send:
         await SilentContext.send(ctx, "hello", silent=True)

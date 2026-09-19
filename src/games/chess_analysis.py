@@ -28,9 +28,9 @@ false-positive traps below can't reach:
 Engine cost is bounded: one Stockfish process per finished game, one
 analyse call per position (book plies included — their evals decide when
 theory ended) at depth ANALYSIS_DEPTH with a per-position wall-clock cap,
-run strictly after the game ends. The
-engine-facing seam is _run_engine_analysis; everything below it is pure
-math and unit-testable without a Stockfish binary.
+run strictly after the game ends. The engine-facing seam is
+_run_engine_analysis; everything below it is pure math and unit-testable
+without a Stockfish binary.
 """
 from __future__ import annotations
 
@@ -54,9 +54,8 @@ from src.persistence import count_flagged_reports, save_chess_analysis
 
 # Bumped when the stat definitions change, so stored analyses from different
 # eras aren't compared apples-to-oranges.
-# v2: est_elo derived from average win%-loss instead of ACPL — clamped-cp
-# ACPL zeroed out blunders in decided positions, wildly inflating estimates
-# for weak games (a 600 vs 600 game graded ~1500-1800). Adds awpl/accuracy.
+# v2: est_elo derived from average win%-loss instead of ACPL (see the
+# win-probability note below); adds awpl/accuracy.
 ANALYSIS_VERSION = 2
 
 # Per-position engine budget. Depth 12 is plenty to grade human/bot moves;
@@ -66,14 +65,13 @@ ANALYSIS_DEPTH = 12
 ANALYSIS_TIME_PER_POSITION = 0.4
 ANALYSIS_MULTIPV = 2  # best + runner-up, for the triviality gap below
 
-# The first BOOK_PLIES half-moves are treated as memorized opening theory
-# and skipped — grading recited theory inflates everyone's accuracy (and the
-# cheat flag's match rate). But the exemption holds only while the game still
-# LOOKS like theory: a balanced eval and no real mistake. At the first
-# significant swing — eval outside ±BOOK_EXIT_CP, or a move losing more than
-# BOOK_EXIT_CP — grading starts immediately, triggering move included. A
-# 100-Elo bot hanging its bishop on move 3 is not "book", and without this
-# a weak player's decisive early blunders were never graded at all.
+# The first BOOK_PLIES half-moves are skipped as memorized opening theory —
+# grading it inflates everyone's accuracy (and the cheat flag's match rate) —
+# but only while the game still LOOKS like theory. At the first significant
+# swing — eval outside ±BOOK_EXIT_CP, or a move losing more than BOOK_EXIT_CP
+# — grading starts, triggering move included; otherwise a weak player's
+# decisive early blunders (a 100-Elo bot hanging its bishop on move 3) would
+# never be graded.
 BOOK_PLIES = 12
 BOOK_EXIT_CP = 150
 

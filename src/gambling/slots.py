@@ -57,11 +57,9 @@ def eval_slots(reels: list[str], bet: int) -> tuple[str, int]:
     a, b, c = reels
     cherry = "🍒"
 
-    # Priority: evaluate highest payout first
     if a == b == c:
         sym = a
         if sym == "7️⃣":
-            # Jackpot requires minimum bet
             if bet < SLOT_MIN_BET:
                 return ("nothing", 0)
             return ("jackpot", SLOT_MULT_JACKPOT)
@@ -90,21 +88,19 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
                      roll_again: bool = False):
     """Spin the slots for `author` betting `amount`, announcing in `channel`.
 
-    Extracted from cmd_slots so the dailies-channel reaction claim can bet a
-    player's claim (daily reward + scratchoff winnings) without a
-    commands.Context. `amount` is
-    assumed validated (>= SLOT_MIN_BET).
+    Takes no commands.Context so the dailies-channel reaction claim can bet a
+    player's claim (daily reward + scratchoff winnings). `amount` is assumed
+    validated (>= SLOT_MIN_BET).
 
     `roll_again` attaches a "Roll Again" button to the result that re-spins
     the same bet (`PlayAgainView`). `!slots` passes True; the dailies claim
     keeps the default so the daily stake stays a one-shot.
 
     `record_exclude` shrinks the bet considered for the slots records
-    (payouts are untouched): non-jackpot record offers use
-    (amount - record_exclude) × mult, and the jackpot record offer recomputes
-    the prize with the reduced bet's bonus multiplier. The dailies claim
-    passes its property revenue portion here so property owners'
-    auto-staked income can't trivialize the records; a hand-typed !slots
+    (payouts are untouched): non-jackpot offers use (amount - record_exclude)
+    × mult, and the jackpot offer recomputes the prize with the reduced bet's
+    bonus multiplier. The dailies claim passes its property-revenue portion
+    so auto-staked income can't trivialize the records; a hand-typed !slots
     wagers real coins knowingly and keeps the default 0.
     """
     uid = author.id
@@ -165,11 +161,10 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
         return msg
 
     # Jackpot contribution: one coin per SLOT_JACKPOT_CONTRIB_DIVISOR bet,
-    # rounded down, so a bet under the divisor feeds nothing. There is
-    # deliberately no minimum — the old max(1, …) made a 25-coin bet feed
-    # 4%, double the intended rate. The pool stops growing at
-    # SLOT_JACKPOT_CAP; a pool already past it (from before the cap) is
-    # left alone until it's won, never clamped down.
+    # rounded down, so a bet under the divisor feeds nothing. Deliberately no
+    # minimum — max(1, …) made a 25-coin bet feed 4%, double the intended
+    # rate. The pool stops growing at SLOT_JACKPOT_CAP; a pool already past
+    # it (from before the cap) is left alone until it's won, never clamped.
     contrib = amount // SLOT_JACKPOT_CONTRIB_DIVISOR
     if contrib and state.slot_jackpot < SLOT_JACKPOT_CAP:
         state.slot_jackpot = min(SLOT_JACKPOT_CAP, state.slot_jackpot + contrib)
@@ -216,9 +211,8 @@ async def play_slots(author, channel, guild, amount: int, record_exclude: int = 
         try:
             await msg.pin()
         except Exception:
-            pass
+            pass  # best-effort: no pin permission or a full pin list mustn't break the win
         await keep_in_dailies_channel(guild, channel, msg, prize - amount)
-        # Ping Gamblers role if enabled
         if guild:
             cfg = get_guild_cfg(guild.id)
             if cfg.get("gambler_role_enabled", False):

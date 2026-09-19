@@ -101,11 +101,9 @@ async def test_listener_applies_valid_bare_move(db, _stub_helpers, _allow_all_ch
 
     await cog.on_message(msg)
 
-    # Move applied.
     g = _state.active_chess_games[2000]
     assert g["current_id"] == black_id
     assert " e4" in g["pgn"]
-    # Trigger message deleted.
     msg.delete.assert_awaited_once()
 
 
@@ -119,11 +117,9 @@ async def test_listener_ignores_invalid_text(db, _stub_helpers, _allow_all_chess
 
     await cog.on_message(msg)
 
-    # No state change.
     g = _state.active_chess_games[2001]
     assert g["current_id"] == white_id
     assert g["fen"] == chess_engine.STARTING_FEN
-    # Message NOT deleted.
     msg.delete.assert_not_awaited()
 
 

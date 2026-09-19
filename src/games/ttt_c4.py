@@ -29,7 +29,6 @@ NUM_EMOJIS_C4 = NUM_EMOJIS_TTT[:7]
 
 
 def build_ttt_display(game: dict) -> str:
-    """Build a tic-tac-toe board display from game state."""
     board = game["board"]
     row1 = (board[0] or NUM_EMOJIS_TTT[0]) + (board[1] or NUM_EMOJIS_TTT[1]) + (board[2] or NUM_EMOJIS_TTT[2])
     row2 = (board[3] or NUM_EMOJIS_TTT[3]) + (board[4] or NUM_EMOJIS_TTT[4]) + (board[5] or NUM_EMOJIS_TTT[5])
@@ -38,7 +37,6 @@ def build_ttt_display(game: dict) -> str:
 
 
 def build_c4_display(game: dict) -> str:
-    """Build a connect 4 board display from game state."""
     COL_EMOJIS = "1️⃣2️⃣3️⃣4️⃣5️⃣6️⃣7️⃣"
     board = game["board"]
     display = COL_EMOJIS + "\n"
@@ -48,7 +46,7 @@ def build_c4_display(game: dict) -> str:
 
 
 def check_ttt_winner(board: list) -> str | None:
-    """Check if there's a winner in tic-tac-toe. Return winning mark or None."""
+    """The winning mark, or None."""
     LINES = [(0,1,2),(3,4,5),(6,7,8),(0,3,6),(1,4,7),(2,5,8),(0,4,8),(2,4,6)]
     for a, b, c in LINES:
         if board[a] and board[a] == board[b] == board[c]:
@@ -80,7 +78,7 @@ def drop_in_column(board: list, col: int) -> "int | None":
 
 
 def check_c4_winner(board: list) -> str | None:
-    """Check if there's a winner in connect 4. Return winning mark or None."""
+    """The winning mark, or None."""
     # Check horizontal
     for r in range(6):
         for c in range(4):
@@ -91,12 +89,12 @@ def check_c4_winner(board: list) -> str | None:
         for c in range(7):
             if board[r][c] and board[r][c] == board[r+1][c] == board[r+2][c] == board[r+3][c]:
                 return board[r][c]
-    # Check diagonal (↗)
+    # Check diagonal (↘ — row 0 is the top)
     for r in range(3):
         for c in range(4):
             if board[r][c] and board[r][c] == board[r+1][c+1] == board[r+2][c+2] == board[r+3][c+3]:
                 return board[r][c]
-    # Check diagonal (↖)
+    # Check diagonal (↗)
     for r in range(3, 6):
         for c in range(4):
             if board[r][c] and board[r][c] == board[r-1][c+1] == board[r-2][c+2] == board[r-3][c+3]:
@@ -210,7 +208,7 @@ async def _send_game_board(ctx: commands.Context, dest, game: dict, title: str,
 
 
 async def _setup_pvp_game(ctx, opponent, amount, invite_title, *, timeout: float = 60.0):
-    """Validates opponent, deducts wagers, waits for confirmation.
+    """Validate the opponent, wait for their ✅, then charge both wagers.
 
     `amount` is the already-parsed wager (int >= 0); callers parse the raw
     string (with `k`/`m` shorthand) before invoking. Returns True if the game
@@ -228,11 +226,10 @@ async def _setup_pvp_game(ctx, opponent, amount, invite_title, *, timeout: float
         await ctx.send("Amount must be positive.")
         return False
 
-    # Affordability is checked up front but NOT charged. Escrowing before the
-    # opponent agrees let anyone freeze an arbitrary player's balance for the
-    # length of the invite window, from as many channels at once as they liked.
-    # The charge happens after the ✅, re-reading balances at that point —
-    # the ordering confirm_view.py's module docstring argues for.
+    # Affordability is checked up front but NOT charged: escrowing before the
+    # opponent agrees would let anyone freeze any player's balance for the
+    # whole invite window, from many channels at once. The charge comes after
+    # the ✅ — the ordering confirm_view.py's module docstring argues for.
     if amount > 0:
         for player in (ctx.author, opponent):
             if await get_balance(player.id) < amount:
@@ -340,20 +337,16 @@ async def _apply_ttt_move(channel, guild, mover, pos: int | None) -> None:
         next_player = guild.get_member(game["current"]) if guild else None
         game["last_move"] = f"{name} played position {pos}"
         await _edit_board(channel, game, emb("🎮 Tic-Tac-Toe", build_ttt_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!m <1-9>`\n\n**Last move:** {game['last_move']}", C_BLUE))
-        # Square is now taken — remove the bot's reaction for that number so it stops
-        # being clickable. Also remove the mover's own reaction so they can react again
-        # on their next turn (Discord ignores duplicate reactions, which is the source
-        # of the "click does nothing" bug).
+        # Square taken — remove the bot's reaction so that number stops being
+        # clickable, and the mover's own so they can react again next turn
+        # (Discord ignores a duplicate reaction: the "click does nothing" bug).
         if bot_user is not None:
             await _remove_bot_reaction(channel, game, move_emoji, bot_user)
         await _remove_user_reaction(channel, game, move_emoji, mover)
 
 
 async def _apply_c4_move(channel, guild, mover, pos: int | None) -> None:
-    """Apply a C4 move and update the board. Sends temp error embeds for invalid moves.
-
-    `mover` is the discord.User/Member who made the move — needed to remove their
-    reaction after a successful click so they can react again on their next turn."""
+    """Connect 4 counterpart of `_apply_ttt_move` — same contract."""
     uid = mover.id
     name = mover.display_name if hasattr(mover, "display_name") else str(mover)
     cid = channel.id
@@ -418,10 +411,8 @@ async def _apply_c4_move(channel, guild, mover, pos: int | None) -> None:
         next_player = guild.get_member(game["current"]) if guild else None
         game["last_move"] = f"{name} dropped in column {pos}"
         await _edit_board(channel, game, emb("🟡 Connect 4", build_c4_display(game) + f"\n\n{next_player.mention if next_player else 'Next player'}'s turn. Use `!m <1-7>`\n\n**Last move:** {game['last_move']}", C_BLUE))
-        # If this drop filled the column, remove the bot's reaction for that number so
-        # nobody can click it again. Always remove the mover's own reaction so they can
-        # react again on their next turn (Discord ignores duplicate reactions, which is
-        # the source of the "click does nothing then everything fires at once" bug).
+        # Retire the button only if this drop filled the column; the mover's own
+        # reaction always goes, for the reason given in _apply_ttt_move.
         if column_now_full and bot_user is not None:
             await _remove_bot_reaction(channel, game, move_emoji, bot_user)
         await _remove_user_reaction(channel, game, move_emoji, mover)
@@ -575,7 +566,7 @@ class TttC4Cog(commands.Cog):
                 try:
                     await reaction.remove(user)
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    pass
+                    pass  # best-effort tidy-up of a spectator / out-of-turn click
                 return
             pos = NUM_EMOJIS_TTT.index(emoji) + 1
             await _apply_ttt_move(msg.channel, msg.guild, user, pos)
@@ -590,7 +581,7 @@ class TttC4Cog(commands.Cog):
                 try:
                     await reaction.remove(user)
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    pass
+                    pass  # best-effort, as above
                 return
             pos = NUM_EMOJIS_C4.index(emoji) + 1
             await _apply_c4_move(msg.channel, msg.guild, user, pos)

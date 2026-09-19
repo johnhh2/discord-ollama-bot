@@ -82,15 +82,14 @@ async def _nsfw_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[
 
     async def _fetch_pid(pid: int) -> list[dict]:
         # urlencode, not f-string interpolation: `search_tags` is raw user
-        # input, so a tag containing & or # used to inject extra query
+        # input, and a tag containing & or # would inject extra query
         # parameters into the upstream call (or truncate the credentials).
-        # Booru-style APIs take the key as a query param, not a header, so it
-        # has to live here — which is exactly why no code path may ever put
-        # this URL in front of a user (see the caller's except block).
-        # `search_tags` arrives "+"-joined, which is the wire form of a
-        # space-separated tag list. Hand urlencode the spaces and let it emit
-        # the "+" itself — encoding a literal "+" would become %2B and the API
-        # would read the whole thing as one tag named "a+b".
+        # Booru-style APIs take the key as a query param, not a header, so no
+        # code path may ever show this URL to a user (see the caller's except
+        # block).
+        # `search_tags` arrives "+"-joined, the wire form of a space-separated
+        # tag list. Hand urlencode the spaces and let it emit the "+" itself —
+        # a literal "+" would become %2B and read as one tag named "a+b".
         params = {
             "page": "dapi", "s": "post", "q": "index",
             "json": "1", "limit": "100", "pid": str(pid),
@@ -145,7 +144,6 @@ class FunCog(commands.Cog):
             await ctx.send(embed=emb("🔞 Disabled", "NSFW commands are disabled in this server.", C_GREY))
             return
 
-        # Check channel whitelist
         if ctx.guild:
             nsfw_channels = cfg.get("nsfw_channels", [])
             if nsfw_channels and ctx.channel.id not in nsfw_channels:
@@ -284,7 +282,7 @@ class FunCog(commands.Cog):
         try:
             await msg.delete()
         except discord.NotFound:
-            pass
+            pass  # already deleted by the user or a moderator
 
 
     @commands.command(name="quote")
@@ -300,7 +298,6 @@ class FunCog(commands.Cog):
         guild_quotes = all_quotes.get(guild_id, [])
 
         if ctx.message.reference:
-            # Save the replied-to message as a quote
             try:
                 replied_msg = await ctx.channel.fetch_message(ctx.message.reference.message_id)
             except Exception:
@@ -326,7 +323,6 @@ class FunCog(commands.Cog):
             clean_content = re.sub(r'<@!?\d+>', '', replied_msg.content).strip()
             await ctx.send(embed=emb("📜 Quote Saved", f"> {clean_content}\n— **{replied_msg.author.display_name}**", C_GREEN))
         else:
-            # Display a random saved quote
             if not guild_quotes:
                 await ctx.send(embed=emb("📜 Quote", "No saved quotes yet. Reply to a message with `!quote` to save one.", C_GREY))
                 return
@@ -349,7 +345,6 @@ class FunCog(commands.Cog):
         await ctx.typing()
 
         try:
-            # Parse arguments (could be channel, user, or both)
             target_channel = ctx.channel
             target_user = None
 
@@ -364,15 +359,12 @@ class FunCog(commands.Cog):
             # channels, so cap at 2x the sampling budget.
             all_messages = []
             async for msg in target_channel.history(limit=2000):
-                # Filter: no bot messages, no commands, reasonable length, no URLs
                 if msg.author == self.bot.user or msg.content.startswith("!") or "http" in msg.content.lower():
                     continue
                 if len(msg.content) < 10 or len(msg.content) > 500:
                     continue
-                # Filter by user if specified
                 if target_user and msg.author.id != target_user.id:
                     continue
-                # Skip if already in recent quotes log
                 if msg.content in state.quote_log:
                     continue
                 # Skip if message is only mentions
@@ -393,13 +385,10 @@ class FunCog(commands.Cog):
             spicy_msgs = [m for m in all_messages if any(kw in m["content"].lower() for kw in spicy_keywords)]
             regular_msgs = [m for m in all_messages if m not in spicy_msgs]
 
-            # Sample: up to 100 from spicy, up to 900 from regular
             spicy_sample = spicy_msgs[:100]
             regular_sample = random.sample(regular_msgs, min(900, len(regular_msgs))) if regular_msgs else []
             messages = spicy_sample + regular_sample
 
-            # Use AI to rank messages by entertainment/volatility value
-            # Show a sample of messages and ask AI to pick the best one
             prompt = f"""Rank these {len(messages)} chat messages by how entertaining and funny they are. Consider:
     - Absurd or ridiculous claims that are genuinely funny (good)
     - Self-aware humor or witty comebacks (good)
@@ -439,7 +428,7 @@ class FunCog(commands.Cog):
                         model=model
                     )
 
-                # Parse the response to get message number
+                # An unparseable or out-of-range pick falls back to a random one.
                 try:
                     msg_num = int(response.strip()) - 1
                     if msg_num < 0 or msg_num >= len(messages):

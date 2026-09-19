@@ -17,33 +17,29 @@ import chess.engine
 # below 2000, so a chess.com-600 player should pick roughly a 900 bot. The
 # native tier (2000+) is only approximately on-scale: Stockfish's UCI_Elo is
 # anchored to CCRL blitz (an engine pool, hardware/TC-dependent, compressed
-# near the top) — but human rating scales converge above ~2000 anyway, so
-# treat those labels as "roughly this strong". The post-game analysis
-# estimator (chess_analysis.py) is calibrated against these same tiers, so
-# its est. Elo agrees with this scale by construction.
+# near the top) — but human rating scales converge above ~2000 anyway. The
+# post-game analysis estimator (chess_analysis.py) is calibrated against
+# these same tiers, so its est. Elo agrees with this scale.
 #
 # Three-tier strength model:
 #   - Sub-Maia (100-1000): Maia 1100 as the baseline (real human-shaped moves),
-#     with two probabilistic degraders layered on top:
-#       * random-move blend: swap Maia's pick for a random legal move
-#       * extra-blunder injection: swap for a SEE-losing move (drops material)
-#     Curves scale with Elo so 100 plays mostly random, 1000 plays nearly
-#     pure Maia 1100 with only ~1 extra blunder per game.
+#     degraded by sampling uniformly from its top-N policy moves (wider pool
+#     at lower Elo), then a threat-awareness check and extra-blunder
+#     injection (swap for a SEE-losing move that drops material). Elo 1000
+#     plays nearly pure Maia 1100 with only ~1 extra blunder per game.
 #   - Maia (1100-1900): human-trained neural networks, one per 100-Elo bin.
 #     A single forward pass per move (`go nodes 1`) returns the move a real
 #     player at that rating would make. Each weights file is bundled in
 #     ./maia_weights/ and consumed by lc0 (Leela Chess Zero) as a UCI engine.
-#   - Native (2000+): Stockfish's UCI_LimitStrength + UCI_Elo limiter.
-#     Stockfish's native floor is 1320 but at that level it plays nothing
-#     like a real 1320 human; we let Maia cover everything up to 1900 and
-#     only switch back to Stockfish well above Maia's training range.
+#   - Native (2000+): Stockfish's UCI_LimitStrength + UCI_Elo limiter. Its
+#     native floor is 1320 but it plays nothing like a real 1320 human there,
+#     so Maia covers everything up to 1900.
 STOCKFISH_NATIVE_ELO_MIN = 2000
 STOCKFISH_NATIVE_ELO_MAX = 3190
 MAIA_ELO_MIN = 1100
 MAIA_ELO_MAX = 1900
-# Baseline Maia network used for ALL sub-Maia Elos (100-1000). The lower
-# Elos are produced by degrading this baseline, not by training models at
-# those ratings (Maia has no networks below 1100).
+# The Maia network behind ALL sub-Maia Elos (100-1000): Maia has no networks
+# below 1100, so lower Elos degrade this one.
 SUB_MAIA_BASELINE_ELO = 1100
 
 # What we accept from users via !chess @Bot <elo>. Caller (the cog) rounds
@@ -58,9 +54,8 @@ ELO_DEFAULT = 1300
 MOVE_TIME_SECONDS = 0.5
 
 # Debian's `stockfish` apt package installs at /usr/games/stockfish, which is
-# NOT on the default PATH for non-login shells (which is what asyncio's
-# subprocess sees). We can't rely on PATH lookup alone — must fall back to
-# the known install location.
+# NOT on the default PATH for non-login shells (what asyncio's subprocess
+# sees), so PATH lookup falls back to this.
 _DEBIAN_STOCKFISH_PATH = "/usr/games/stockfish"
 
 # Maia weights live alongside the source tree, copied into the Docker image
@@ -70,13 +65,11 @@ _MAIA_WEIGHTS_DIR = _REPO_ROOT / "maia_weights"
 
 
 # Sub-Maia pool size: how many of Maia 1100's top-N policy moves we sample
-# uniformly from. Each move in Maia's top-N is a real move that 1100-rated
-# humans actually play in this position — just less common ones at the tail.
-# Sampling from a wider pool models a weaker player making more "unlikely but
-# human" choices. Even at the top of the range (Elo 1000) the pool is small
-# but >1 so sampling still varies the bot's response within Maia's most
-# confident moves. MULTIPV_COUNT below is the engine query size and must
-# be ≥ the largest pool anchor.
+# uniformly from. Every one is a move 1100-rated humans actually play in this
+# position, just less common at the tail, so a wider pool models a weaker
+# player making more "unlikely but human" choices. The pool stays >1 even at
+# Elo 1000 so the bot's replies still vary. MULTIPV_COUNT below is the engine
+# query size and must be ≥ the largest pool anchor.
 MULTIPV_COUNT = 11
 _MAIA_POOL_SIZE_ANCHORS: list[tuple[int, int]] = [
     (100, 11),
@@ -87,11 +80,10 @@ _MAIA_POOL_SIZE_ANCHORS: list[tuple[int, int]] = [
     (1000, 2),
 ]
 
-# Probability of injecting an EXTRA blunder on top of Maia's sampled move.
-# Swaps for a SEE-losing alternative (a move that drops material per static
-# exchange evaluation). Only fires at low Elo (≤500) — above 500, the wider
-# Maia pool already includes Maia's natural mistake distribution, no need
-# to force additional ones.
+# Probability of injecting an EXTRA blunder on top of Maia's sampled move:
+# swap it for a SEE-losing alternative (a move that drops material per static
+# exchange evaluation). Tapers with Elo but never reaches zero — even Elo
+# 1000 humans drop the occasional piece.
 _EXTRA_BLUNDER_ANCHORS: list[tuple[int, float]] = [
     (100, 0.10),
     (400, 0.02),
@@ -100,9 +92,9 @@ _EXTRA_BLUNDER_ANCHORS: list[tuple[int, float]] = [
 ]
 
 # Base probability that the bot NOTICES a hanging piece (its own or the
-# opponent's) and re-routes its move to address it. Linear from 0.40 at
-# Elo 100 to 0.95 at Elo 1000. Total notice rate adds a value-based bonus
-# (queens get noticed more than pawns); see _PIECE_NOTICE_BONUS below.
+# opponent's) and re-routes its move to address it: 0.25 at Elo 100 rising
+# to 0.85 at Elo 1000. Total notice rate adds a value-based bonus (queens
+# get noticed more than pawns); see _PIECE_NOTICE_BONUS below.
 _NOTICE_BASE_ANCHORS: list[tuple[int, float]] = [
     (100, 0.25),
     (400, 0.55),
@@ -110,10 +102,9 @@ _NOTICE_BASE_ANCHORS: list[tuple[int, float]] = [
     (1000, 0.85),
 ]
 
-# Bonus added to the base notice probability per piece type. Models the
-# real-beginner pattern that a hanging queen is way more obvious than a
-# hanging pawn — even Elo 100 humans rarely walk a queen into attack
-# without noticing. Combined notice rate is capped at 0.99.
+# Bonus added to the base notice probability per piece type: a hanging queen
+# is far more obvious than a hanging pawn — even Elo 100 humans rarely walk a
+# queen into attack unnoticed. Combined notice rate is capped at 0.99.
 _PIECE_NOTICE_BONUS: dict[chess.PieceType, float] = {
     chess.PAWN: 0.0,
     chess.KNIGHT: 0.25,
@@ -160,7 +151,6 @@ def round_elo_to_bin(elo: int) -> int:
 
 
 def maia_weights_path(elo: int) -> Path:
-    """Filesystem path to the Maia weights file for the given Elo bin."""
     return _MAIA_WEIGHTS_DIR / f"maia-{elo}.pb.gz"
 
 
@@ -230,18 +220,14 @@ def clamp_elo(elo: int) -> int:
 
 
 def maia_pool_size_for_elo(elo: int) -> int:
-    """How many of Maia 1100's top-N policy moves to sample uniformly from.
-    Larger pool = more variety (and more of Maia's less-likely human moves,
-    which models weaker play). Pool=2 at Elo 1000 keeps a little response
-    variability even at the top of the sub-Maia range; pool=11 at Elo 100
-    samples broadly from Maia 1100's tail."""
+    """How many of Maia 1100's top-N policy moves to sample uniformly from:
+    11 at Elo 100 down to 2 at Elo 1000 (see _MAIA_POOL_SIZE_ANCHORS)."""
     return _interp_int(_MAIA_POOL_SIZE_ANCHORS, elo)
 
 
 def extra_blunder_probability_for_elo(elo: int) -> float:
     """Probability of swapping Maia's pick for a SEE-losing alternative
-    (a move that drops material). Only fires at sub-500 Elo — above that,
-    the wider Maia sampling pool already produces enough natural mistakes."""
+    (a move that drops material). Nonzero across the whole sub-Maia range."""
     return _interp_float(_EXTRA_BLUNDER_ANCHORS, elo)
 
 
@@ -349,8 +335,7 @@ def _move_addresses_self_hang(board: chess.Board, move: chess.Move,
     # is gone (whether or not a new threat exists on the destination).
     if move.from_square == hang_square:
         return True
-    # Otherwise the piece is still on hang_square. Check whether it's still
-    # SEE-losing for the mover (i.e. opponent can still win material there).
+    # Still on hang_square: can the opponent still win material there?
     return see_capture(after, hang_square, not mover) <= 0
 
 
@@ -360,13 +345,9 @@ def _move_takes_opp_hang(move: chess.Move, hang_square: chess.Square) -> bool:
 
 
 def _find_see_losing_move(board: chess.Board, exclude: chess.Move | None = None) -> chess.Move | None:
-    """Walk legal moves and return a SEE-losing one weighted INVERSELY by
-    the value of the piece being dropped.
-
-    Weighting by 1/piece_value matches the real-beginner pattern: hanging
-    a pawn happens often, hanging a queen rarely. Without this weighting,
-    a uniform-random pick treats queen-drops and pawn-drops equally, which
-    makes the bot hang queens on early moves at any Elo (not realistic).
+    """A random SEE-losing legal move, weighted INVERSELY by the value of the
+    piece being dropped: beginners hang pawns often and queens rarely, and a
+    uniform pick would have the bot hanging queens on early moves at any Elo.
 
     Used by the extra-blunder injector. Excludes `exclude` (typically
     Maia's chosen move) so the injector actually changes the move.
@@ -392,10 +373,9 @@ def _find_see_losing_move(board: chess.Board, exclude: chess.Move | None = None)
         after.push(mv)
         if see_capture(after, mv.to_square, opp) > 0:
             losing.append(mv)
-            # Weight inversely by piece value. Pawn (1) → weight 1.0,
-            # knight/bishop (3) → 0.33, rook (5) → 0.2, queen (9) → 0.11.
-            # King hangs shouldn't be reachable here (illegal move), but
-            # guard with the same formula via _piece_value.
+            # Pawn (1) → weight 1.0, knight/bishop (3) → 0.33, rook (5) → 0.2,
+            # queen (9) → 0.11. A king hang shouldn't be reachable (illegal
+            # move); _piece_value covers it with the same formula anyway.
             weights.append(1.0 / _piece_value(piece))
     if not losing:
         return None
@@ -419,8 +399,7 @@ def _move_allows_mate_in_one(board: chess.Board, move: chess.Move) -> bool:
     after = board.copy(stack=False)
     after.push(move)
     if after.is_game_over():
-        # Move ended the game (mate, stalemate, etc.) — opponent has no reply,
-        # so by definition no mate-in-1 reply exists.
+        # Our move ended the game (mate, stalemate, etc.) — no reply exists.
         return False
     for reply in after.legal_moves:
         with_reply = after.copy(stack=False)
@@ -461,15 +440,12 @@ async def _move_allows_mate_in_two(board: chess.Board, move: chess.Move) -> bool
         score = info.get("score")
         if score is None:
             return False
-        # Opponent's POV after our push. A mate score from their POV with
-        # 1 or 2 plies means they have a forced mate-in-1-or-2 from here.
-        # python-chess's PovScore.relative is relative to side-to-move
-        # (the opponent here).
+        # python-chess's PovScore.relative is relative to side-to-move — the
+        # opponent, after our push — so mate > 0 means they mate in `mate`
+        # moves.
         mate = score.relative.mate()
         if mate is None:
             return False
-        # mate > 0 means side-to-move (opponent) mates in `mate` moves.
-        # mate <= 2 means within our threshold.
         return 0 < mate <= 2
     except chess.engine.EngineError:
         return False
@@ -573,25 +549,22 @@ def _apply_threat_awareness(
     board: chess.Board, candidates: list[chess.Move], sampled: chess.Move,
     elo: int,
 ) -> chess.Move:
-    """Apply the threat-awareness check: with Elo-dependent probability,
-    re-route the sampled move to address a hanging piece (own or opponent's)
-    that the sampled move ignored.
+    """Threat-awareness check: with Elo-dependent probability, re-route the
+    sampled move to address a hanging piece (own or opponent's) it ignored.
 
-    Logic mirrors the way real players notice threats:
-    1. If the bot's own most-valuable hanging piece isn't addressed by the
-       sampled move, with P(notice | piece value, Elo): swap to a candidate
-       that addresses it. (Defensive.)
-    2. If the opponent has a hanging piece a candidate could capture and
-       the sampled move ignores it, with P(notice | piece value, Elo):
-       swap to the capture. (Offensive.)
+    1. Defensive: if the sampled move doesn't address the bot's own
+       most-valuable hanging piece, with P(notice | piece value, Elo) swap
+       to a candidate that does.
+    2. Offensive: if a candidate could capture the opponent's most-valuable
+       hanging piece and the sampled move ignores it, with
+       P(notice | piece value, Elo) swap to the capture.
 
     Notice rate scales with the hanging piece's value (queens are noticed
-    more than pawns) and with Elo (1000 noticed almost everything).
+    more than pawns) and with Elo (1000 notices almost everything).
 
-    Fallback strategy when the safety dice fires but no candidate in the
-    pool addresses the threat: narrow the pool to top-N/2 (Maia's most
-    confident moves) and pick from there. Models 'I really see this — even
-    if it's not my usual style, I'll play tighter.'
+    When the defensive roll fires but no candidate addresses the threat,
+    narrow the pool to top-N/2 (Maia's most confident moves) and pick from
+    there — a player who sees the danger plays tighter.
     """
     mover = board.turn
 
@@ -647,10 +620,9 @@ async def _sub_maia_move(board: chess.Board, elo: int) -> chess.Move:
     4. Apply threat-awareness: with P(notice) based on Elo and piece value,
        re-route to address a hanging piece (own or opponent's) the sampled
        move ignored.
-    5. With extra_blunder_probability_for_elo (only nonzero below Elo 500):
-       swap the chosen move for a SEE-losing alternative if one exists —
-       but verify it doesn't also allow mate.
-    6. Return.
+    5. With extra_blunder_probability_for_elo: swap the chosen move for a
+       SEE-losing alternative if one exists — but verify it doesn't also
+       allow mate.
     """
     pool_size = maia_pool_size_for_elo(elo)
     top_n = await _maia_top_n(board, SUB_MAIA_BASELINE_ELO, pool_size)
@@ -692,7 +664,8 @@ async def pick_move(fen: str, elo: int) -> chess.Move:
 
     Routing (assuming Elo is a multiple of 100 — caller rounds at the
     command boundary, and pick_move rounds defensively):
-      - Elo 100-1000: Maia 1100 + random-blend + extra-blunder degraders.
+      - Elo 100-1000: Maia 1100 top-N sampling + threat awareness +
+        extra-blunder injection (_sub_maia_move).
       - Elo 1100-1900: pure Maia at the matching weights bin.
       - Elo 2000+: Stockfish with UCI_LimitStrength + UCI_Elo.
 

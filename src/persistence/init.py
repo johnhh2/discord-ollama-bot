@@ -36,12 +36,9 @@ async def init_db_state():
         _pkg.init_done.set()
         return
 
-    # Only flip the guard after a successful load. If migrations or the DB
-    # raise, the exception propagates and discord.py will retry on reconnect
-    # against the same (still-False) guard, re-doing the full load.
-    # init_done stays unset on failure: the guards in _ensure_user and
-    # grant_xp blocking forever is preferable to writing zero-baselined
-    # rows over real DB data from partially-loaded state.
+    # A failed load leaves the guard False (see docstring) and init_done
+    # unset: _ensure_user and grant_xp blocking forever beats writing
+    # zero-baselined rows over real DB data from partially-loaded state.
     await _init_db_state_inner(state, run_migrations)
     _pkg._init_db_state_done = True
     _pkg.init_done.set()
@@ -637,9 +634,7 @@ async def _init_db_state_inner(state, run_migrations):
 
         # ── command_perms ─────────────────────────────────────────────────
         # The JSON file is the source of truth: upsert every row from JSON,
-        # then delete any DB rows whose command isn't in the JSON. Runtime
-        # !setperm changes are intentionally transient — port them back to
-        # command_perms.json to make them permanent.
+        # then delete any DB rows whose command isn't in the JSON.
         try:
             json_perms = _load_json(COMMAND_PERMS_FILE, None)
             if not json_perms:

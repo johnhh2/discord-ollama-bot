@@ -92,18 +92,15 @@ def _stub_external(monkeypatch):
         return (0, False)
     monkeypatch.setattr(_events, "_grant_xp", _no_xp)
 
-    # Pre-claim today's auto-daily for any uid we touch so the auto-daily
-    # branch doesn't credit unexpected coins.
+    # Stub the auto-daily so it can't credit unexpected coins.
     async def _no_daily(*a, **kw):
         return None
     monkeypatch.setattr(_events, "_auto_daily", _no_daily)
 
 
 # ── _handle_blackjack_input ───────────────────────────────────────────────────
-# Pre-conditions for the interceptor: uid in active_blackjack_games AND the
-# game's channel_id matches AND the message text is one of "hit"/"stand"
-# (with or without "!"). The interceptor short-circuits on_message before
-# the AI-routing tail fires.
+# Conditions: uid in active_blackjack_games AND the game's channel_id matches
+# AND the text is "hit"/"stand"/"double" (with or without "!").
 
 def _make_bj_game(channel_id: int, deck=None, player_hand=None, dealer_hand=None, amount=100):
     """Bare-minimum game dict for the blackjack interceptor."""
@@ -128,7 +125,6 @@ async def test_blackjack_hit_under_21_continues_game(db, cog):
 
     await cog.on_message(_Msg(player, "hit", guild, channel))
 
-    # Game still active, hand grew by one card.
     assert player.id in _state.active_blackjack_games
     assert len(_state.active_blackjack_games[player.id]["player_hand"]) == 3
     # Channel got the "hit again or stand" embed.
@@ -224,7 +220,6 @@ async def test_blackjack_hit_in_other_channel_does_not_intercept(db, cog):
     msg = _Msg(player, "hit", guild, other_channel)
     await cog.on_message(msg)
 
-    # Game state untouched in either channel.
     assert player.id in _state.active_blackjack_games
     assert len(_state.active_blackjack_games[player.id]["player_hand"]) == 2
     # Dispatcher fell through to the AI-routing tail; it's a non-mention,
@@ -242,7 +237,6 @@ async def test_non_hit_stand_text_does_not_intercept(db, cog):
     msg = _Msg(player, "hello", guild, channel)
     await cog.on_message(msg)
 
-    # Game untouched.
     assert player.id in _state.active_blackjack_games
     assert len(_state.active_blackjack_games[player.id]["player_hand"]) == 2
 
@@ -302,7 +296,6 @@ async def test_puzzle_wrong_answer_leaves_state_intact(db, cog):
 
     await cog.on_message(_Msg(solver, "shadow", guild, channel))
 
-    # Puzzle still active, no payout.
     assert 902 in _state.active_puzzles
     assert await _economy.get_balance(solver.id) == 0
 
@@ -322,7 +315,6 @@ async def test_puzzle_uninvited_user_cannot_solve(db, cog):
 
     await cog.on_message(_Msg(randomer, "echo", guild, channel))
 
-    # Puzzle still active; randomer wasn't paid.
     assert 903 in _state.active_puzzles
     assert await _economy.get_balance(randomer.id) == 0
 
@@ -341,7 +333,6 @@ async def test_puzzle_bang_prefix_skips_intercept(db, cog):
 
     await cog.on_message(_Msg(solver, "!echo", guild, channel))
 
-    # Puzzle still active.
     assert 904 in _state.active_puzzles
 
 

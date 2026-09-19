@@ -203,12 +203,11 @@ from src.persistence import load_voice_ping_ignores  # noqa: E402
 def _no_builtin_member_converter(monkeypatch):
     """Force src.helpers.MemberConverter to use its substring fallback.
 
-    discord.py's built-in MemberConverter requires real discord.Member objects
-    and a populated _state (it does isinstance(result, discord.Member) and a
-    gateway query), neither of which our FakeMember/FakeGuild provide. In
-    production it handles mentions/IDs; here we make it raise BadArgument so the
-    project converter falls through to the case-insensitive substring match we
-    actually want to exercise."""
+    discord.py's built-in MemberConverter needs real discord.Member objects and
+    a populated _state (an isinstance check and a gateway query), which
+    FakeMember/FakeGuild don't provide. In production it handles mentions/IDs;
+    here it raises BadArgument so the project converter falls through to the
+    case-insensitive substring match under test."""
     import discord.ext.commands as _c
 
     async def _always_bad(self, ctx, argument):

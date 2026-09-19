@@ -1,10 +1,10 @@
 """@requires_perm decorator behavior.
 
 `requires_perm` (src/permissions.py) wraps a cog command so it short-circuits
-when the author lacks the configured tier. It's applied to 52 sites across
-6 cogs; tests there cover those sites *indirectly*. This file covers the
-decorator's contract directly so a future maintainer changing it can't
-silently break those 52 sites.
+when the author lacks the configured tier. It is applied to dozens of
+commands across the cogs, whose own tests cover it only *indirectly*; this
+file covers the decorator's contract directly so a change to it can't
+silently break every one of those sites.
 
 Contract:
 - For tier=everyone: call always proceeds, decorator passes args/kwargs through.
@@ -33,7 +33,6 @@ class _DummyCog:
 
     @requires_perm
     async def cmd_protected(self, ctx, *args, **kwargs):
-        """Records that we made it past the gate."""
         self.calls.append((args, kwargs))
         return "called"
 
@@ -79,7 +78,6 @@ async def test_server_admin_tier_blocks_non_admin_with_visible_embed():
 
     # Body never executed.
     assert cog.calls == []
-    # "No Permission" embed sent.
     assert ctx.sent_embeds, "expected a No Permission embed"
     embed = ctx.sent_embeds[0]
     assert "No Permission" in embed.title
@@ -193,8 +191,7 @@ async def test_decorator_preserves_function_name_and_signature():
     via functools.wraps. If those are missing, parameter parsing breaks."""
     cog = _DummyCog()
     method = cog.cmd_protected
-    # Bound method has __func__; either __wrapped__ is present (functools.wraps)
-    # or __name__ matches the original.
+    # The wraps-copied attributes sit on the bound method's __func__.
     assert method.__func__.__name__ == "cmd_protected"
     # functools.wraps sets __wrapped__ to the original function.
     assert hasattr(method.__func__, "__wrapped__")

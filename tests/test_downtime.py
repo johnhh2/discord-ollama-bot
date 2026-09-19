@@ -27,13 +27,9 @@ pytestmark = pytest.mark.asyncio
 # ── daily reset ───────────────────────────────────────────────────────────────
 
 async def test_do_daily_reset_after_three_days_down(db, monkeypatch):
-    """Bot offline 3 days. When it comes back up, do_daily_reset should
-    correctly clear stale per-user fields and advance last_daily_reset.
-
-    The scheduler is wall-clock based, so once the bot is up and a user
-    triggers !jailbreak or scratchoff, do_daily_reset() runs. We verify it
-    DOES NOT, e.g., try to "catch up" by looping for each missed day —
-    it just resets to today's state in one shot.
+    """Bot offline 3 days: do_daily_reset clears the stale per-user fields and
+    advances last_daily_reset in one shot — no catch-up loop over the missed
+    days. It runs lazily, off the next !jailbreak or scratchoff.
     """
     # Seed state as it would have been 3 days ago.
     await _economy.add_balance(1, 100)
@@ -82,7 +78,6 @@ async def test_do_daily_reset_idempotent_within_same_day(db, monkeypatch):
     history_after_first = await _persistence.load_balance_history()
     bal_after_first = history_after_first[snapshot_date][bucket]["1"]["wallet"]
 
-    # Mutate balance, run reset again
     await _economy.add_balance(1, 500)
     await _economy.do_daily_reset()
 
@@ -127,8 +122,6 @@ async def test_cmd_daily_across_multi_day_gap_grants_once(db):
     today = _economy._ct_today()
     user = _state.economy["users"][str(uid)]
 
-    # First call: matches the scheduler logic. Stale daily_date != today,
-    # so user is allowed to claim.
     assert user["daily_date"] != today
     starting_balance = user["balance"]
     # Inline the cmd_daily decision: if daily_date != today, grant + set.
@@ -190,13 +183,10 @@ async def test_lottery_skips_draw_mid_month_after_missed_first(db):
 
 
 async def test_lottery_redraws_on_next_first_after_missed_month(db):
-    """1st of the next month after the bot missed a draw: scheduler WILL
-    draw, using whoever bought tickets in the missed month. This is the
-    current behavior — pool keeps accumulating, old players win.
-
-    This test pins the behavior so a future fix that changes it (e.g.
-    "expire pool if missed", "refund tickets on missed draw") fails this
-    test loudly.
+    """1st of the next month after a missed draw: the scheduler draws, using
+    whoever bought tickets in the missed month — the pool keeps accumulating
+    and old players win. Pinned so a change to that (expire the pool, refund
+    missed tickets) fails here loudly.
     """
     # April 2025's draw (May 1) was missed entirely.
     await _persistence.save_lottery(1, {
@@ -211,9 +201,8 @@ async def test_lottery_redraws_on_next_first_after_missed_month(db):
         now_day=1, now_hour=18, last_drawn_month=202503, current_month=202506,
     ) is True
 
-    # The scheduler would now pay out the full 50000 to one of {100, 200}.
-    # Pin contract: load_lottery surfaces the players intact, so payout
-    # math is correct.
+    # load_lottery must surface the missed month's players and pool intact —
+    # the draw pays the full 50000 to one of {100, 200}.
     loaded = await _persistence.load_lottery(1)
     assert loaded["players"] == {"100": 10, "200": 5}
     assert loaded["prize_pool"] == 50000
@@ -300,9 +289,8 @@ async def test_lottery_scheduler_before_loop_waits_for_init(db):
 # ── insurance ─────────────────────────────────────────────────────────────────
 
 async def test_insurance_expired_entries_dropped_on_init_db_state(db):
-    """Bot down 3 weeks. Insurance entries were valid at shutdown but are
-    now expired. init_db_state must filter them out (line ~810 in
-    persistence.py: `if expires_at > now`)."""
+    """Bot down 3 weeks. Insurance entries were valid at shutdown but are now
+    expired, so init_db_state must drop them on load (`expires_at > now`)."""
     now = time.time()
     _state.insurance[1] = {
         "expires_at": now - 86400,  # expired yesterday
@@ -347,7 +335,6 @@ async def test_insurance_is_insured_returns_false_after_expiry(db):
     """Real-time check: a user whose insurance expired during downtime
     is correctly reported as unprotected."""
     uid = 99
-    # Insurance "expires" 1 second from now.
     expires = time.time() + 1
     _state.insurance[uid] = {
         "expires_at": expires,
@@ -357,9 +344,8 @@ async def test_insurance_is_insured_returns_false_after_expiry(db):
     # Still insured right now.
     assert await _economy.is_insured(uid, "nickname") is True
 
-    # Time passes (simulating downtime / wall-clock advance).
-    # Use sleep here because is_insured uses time.time() directly and we
-    # want to actually exercise that real path, not monkeypatch around it.
+    # A real sleep rather than a monkeypatched clock: is_insured reads
+    # time.time() directly, and this exercises that path.
     import asyncio
     await asyncio.sleep(1.1)
 
@@ -401,7 +387,6 @@ async def test_jail_until_expires_naturally_across_downtime(db):
     uid = 55
     await _economy._ensure_user(uid)
 
-    # Jail until 1 hour from now.
     _state.economy["users"][str(uid)]["jail_until"] = time.time() + 3600
     assert _state.economy["users"][str(uid)]["jail_until"] > time.time()
 
@@ -413,8 +398,7 @@ async def test_jail_until_expires_naturally_across_downtime(db):
     # Still jailed (under an hour passed).
     assert _state.economy["users"][str(uid)]["jail_until"] > time.time()
 
-    # Now simulate the wall-clock passing the deadline by overwriting the
-    # value to something in the past, persisting, reloading.
+    # Wall clock passes the deadline, simulated by backdating the value.
     past = time.time() - 3600
     _state.economy["users"][str(uid)]["jail_until"] = past
     await _persistence.save_economy(uid=uid)
@@ -443,4 +427,3 @@ async def test_balance_history_has_gaps_for_missed_days_not_crashes(db, monkeypa
     await _persistence.save_balance_history(history)
     loaded = await _persistence.load_balance_history()
     assert set(loaded.keys()) == {"2026-04-25", "2026-04-26", "2026-04-30"}
-    # Sparse — graph code must handle missing buckets without crashes.
