@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 
 import discord
 from discord.ext import commands
@@ -12,6 +13,21 @@ from src.permissions import (
 )
 from src import state
 
+# Discord's "You can only bulk delete messages that are under 14 days old."
+BULK_DELETE_TOO_OLD = 50034
+# Well inside Discord's 14-day bulk limit, so its clock and ours can disagree.
+_SAFE_BULK_AGE = datetime.timedelta(days=13)
+
+
+async def _purge_near_cutoff(channel, limit: int) -> list:
+    """Delete the last `limit` messages when a plain purge() hit 50034: bulk
+    only what is safely young, single-delete the rest (slow, rate-limited)."""
+    cutoff = discord.utils.utcnow() - _SAFE_BULK_AGE
+    # oldest_first=False: `after` alone would flip history to oldest-first.
+    deleted = await channel.purge(limit=limit, after=cutoff, oldest_first=False)
+    if len(deleted) < limit:
+        deleted += await channel.purge(limit=limit - len(deleted), bulk=False)
+    return deleted
 
 
 class ModerationCog(commands.Cog):
@@ -58,11 +74,17 @@ class ModerationCog(commands.Cog):
             await ctx.send(embed=emb("❌ Invalid Input", "Please provide a valid number.", C_RED))
             return
 
-        # purge() bulk-deletes messages <14 days old and falls back to single
-        # deletes for older ones; delete_messages/bulk_delete instead 400s
-        # with error 50034 on anything older.
+        # purge() bulk-deletes messages <14 days old and single-deletes older
+        # ones, but it draws that line on the local clock: a message right at
+        # the boundary (or a skewed clock) still gets bulked, and Discord 400s
+        # the whole batch with 50034, deleting nothing.
         try:
-            deleted = await ctx.channel.purge(limit=n)
+            try:
+                deleted = await ctx.channel.purge(limit=n)
+            except discord.HTTPException as e:
+                if e.code != BULK_DELETE_TOO_OLD:
+                    raise
+                deleted = await _purge_near_cutoff(ctx.channel, n)
         except discord.Forbidden:
             await ctx.send(embed=emb("❌ No Permission", "I don't have permission to delete messages.", C_RED))
             return
