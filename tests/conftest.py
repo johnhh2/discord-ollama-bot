@@ -249,6 +249,16 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_assets_cog_mod, "confirm_prompt", _auto_confirm)
     monkeypatch.setattr(_lottery_cog_mod, "confirm_purchase", _auto_confirm)
 
+    # The settings prompts (src/settings_views.py) wait on a click that never
+    # comes in tests: dismiss them by default, as if the admin pressed Cancel.
+    # Tests that exercise a pick monkeypatch these per-test.
+    async def _dismissed(*args, **kwargs):
+        return None
+    import src.cogs.settings_cog as _settings_cog_mod
+    for _prompt in ("pick_channels", "pick_from_list", "pick_users", "toggle_panel",
+                    "confirm_choice", "confirm_prompt"):
+        monkeypatch.setattr(_settings_cog_mod, _prompt, _dismissed)
+
 
 @pytest_asyncio.fixture
 async def db(monkeypatch):

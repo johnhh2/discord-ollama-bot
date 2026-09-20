@@ -598,6 +598,37 @@ closing. Logic lives in `src/gambling/session.py`.
   guild cache (deleted, or archived while the bot was down) is stale and is
   dropped on the owner's next `!session`.
 
+## Settings prompts: a bare command opens buttons
+
+A settings command run without its value opens a prompt from
+`src/settings_views.py` instead of printing a usage line: a channel dropdown
+for every channel setting (`pick_channels`), on/off toggles for
+`!settings shop` (`toggle_panel`), buttons for the on/off and either/or
+settings (`confirm_choice`), a dropdown for removing aliases, banned tags and
+rate-limited users (`pick_from_list`), a user picker (`pick_users`), and a
+Confirm on every alias `clear`. Bare `!settings` / `!settings-channel` end
+with a dropdown that opens any of them (`_open_panel`).
+
+- **The typed forms are unchanged and win.** `clear`, a #mention or an
+  `on|off` argument never opens a prompt. A prompt only *chooses*: the
+  command then runs the same branch the typed form does (`_channel_choice`
+  returns `[]` for clear, channels to set, or None for "nothing chosen"), so
+  side effects like the lottery seed or the dailies refresh can't drift
+  between the two paths.
+- **Invoker-only, and they time out** (`_OwnedView.interaction_check`).
+  A prompt is a long await — read config again after it returns rather than
+  trusting a value captured before it.
+- **`_open_panel` sets `ctx.command` to the subcommand before calling it**,
+  so that subcommand's `@requires_perm` still decides. The bot-admin channel
+  settings are only listed for bot admins, but the listing is cosmetic — the
+  check is what protects them.
+- **Tests:** conftest dismisses every settings prompt by default (they'd wait
+  forever on a click); patch `src.cogs.settings_cog.<prompt>` to make a pick.
+- A new settings command should follow suit: typed form first, prompt when
+  bare, and an entry in `_SETTINGS_PANELS` / `_CHANNEL_PANELS`.
+
+Coverage: [tests/test_settings_views.py](tests/test_settings_views.py).
+
 ## Counters (!count / !counter)
 
 Custom tallies an admin defines per server (`!counter add afk <description>`),

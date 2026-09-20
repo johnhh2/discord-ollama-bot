@@ -864,17 +864,23 @@ async def test_settings_dailies_channel_set_and_clear(db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_dailies_channel_usage_message(db):
+async def test_settings_dailies_channel_bare_opens_picker(db, monkeypatch):
     cog = SettingsCog(bot=_StubBot())
     author = FakeMember(uid=1, administrator=True)
     ctx = FakeCtx(author=author, guild=FakeGuild(gid=42))
     ctx.command.qualified_name = "settings dailies-channel"
     ctx.message.channel_mentions = []
+    opened = []
+
+    async def _cancelled(ctx, **kwargs):
+        opened.append(kwargs)
+        return None
+    monkeypatch.setattr("src.cogs.settings_cog.pick_channels", _cancelled)
 
     await cog.settings_dailies_channel.callback(cog, ctx)
 
     assert "dailies_channel" not in _state.guild_settings.get("42", {})
-    assert "Usage" in ctx.sent_embeds[-1].description
+    assert opened[0]["multi"] is False and "clear" in opened[0]["typed_usage"]
 
 
 # ── daily streak ──────────────────────────────────────────────────────────────
