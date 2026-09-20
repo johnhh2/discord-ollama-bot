@@ -19,6 +19,7 @@ from src.persistence import (
     load_lottery
 )
 from src.guild_config import get_guild_cfg
+from src.custom_names import name_conflict
 from src.config import OLLAMA_MODEL, LOTTERY_SEED_POOL
 from src import state
 
@@ -335,6 +336,18 @@ class SettingsCog(commands.Cog):
         else:
             await ctx.send(embed=emb("⚙️ NSFW", "Usage: `!settings nsfw on|off` / `channels <add|remove|list> [#channel]` / `ban <tag>` / `unban <tag>` / `banned`", C_GREY))
 
+    async def _refuse_taken_alias(self, ctx, word: str, *, own: str, also: "str | None" = None) -> bool:
+        """Send the refusal and return True if `!<word>` is already taken
+        (see src/custom_names.py). `also` is a second command path to check."""
+        holder = name_conflict(self.bot, ctx.guild.id, word, own=own)
+        if holder is None and also and self.bot is not None and self.bot.get_command(also) is not None:
+            holder = "a bot command"
+            word = also
+        if holder is None:
+            return False
+        await ctx.send(embed=emb("❌ Name Taken", f"`!{word}` is already {holder}. Pick another word.", C_RED))
+        return True
+
     # ── !settings nsfw-alias ──────────────────────────────────────────────────
     @cmd_settings.command(name="nsfw-alias")
     @requires_perm
@@ -383,6 +396,8 @@ class SettingsCog(commands.Cog):
                 return
             if word in aliases:
                 await ctx.send(embed=emb("🔞 NSFW Aliases", f"`{word}` is already an alias.", C_GREY))
+                return
+            if await self._refuse_taken_alias(ctx, word, own="nsfw_aliases"):
                 return
             tags = " ".join(args[2:]) if len(args) > 2 else ""
             aliases[word] = {"tags": tags}
@@ -454,6 +469,8 @@ class SettingsCog(commands.Cog):
             word = args[1].lower()
             if not word.isalnum():
                 await ctx.send(embed=emb("❌ Invalid Alias", "Alias must be a single word (letters and numbers only).", C_RED))
+                return
+            if await self._refuse_taken_alias(ctx, word, own="story_aliases"):
                 return
             prompt = " ".join(args[2:]).strip()
             if not prompt:
@@ -640,6 +657,9 @@ class SettingsCog(commands.Cog):
                 return
             if word in aliases:
                 await ctx.send(embed=emb("🏷️ Tax Aliases", f"`{word}` is already an alias.", C_GREY))
+                return
+            # A tax alias also answers as `!shop <word>`.
+            if await self._refuse_taken_alias(ctx, word, own="tax_aliases", also=f"shop {word}"):
                 return
             emoji = args[2] if len(args) > 2 else "💰"
             aliases[word] = emoji

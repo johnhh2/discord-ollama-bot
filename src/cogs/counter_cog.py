@@ -13,7 +13,7 @@ from discord.ext import commands
 import src.persistence as persistence
 from src import state
 from src.confirm_view import confirm_choice, confirm_prompt
-from src.guild_config import get_guild_cfg
+from src.custom_names import COUNTERS, custom_name_holder
 from src.helpers import (
     emb, C_BLUE, C_GREEN, C_GREY, C_RED,
     MemberConverter, format_duration, parse_duration, parse_int_amount,
@@ -179,8 +179,8 @@ class CounterCog(commands.Cog):
         word = (ctx.invoked_with or "").lower()
         if word not in _guild_counters(ctx.guild.id):
             return
-        if word in get_guild_cfg(ctx.guild.id).get("nsfw_aliases", {}):
-            return  # FunCog's listener answers this one
+        if custom_name_holder(ctx.guild.id, word, own=COUNTERS):
+            return  # a collision from before add-time checks — that alias's listener answers
         # This path skipped bot.invoke, so nothing has run the global checks
         # (perm gate, level gate, channel lists, !session allowlist) yet.
         ctx.command = self.cmd_count
@@ -223,6 +223,10 @@ class CounterCog(commands.Cog):
             problem = f"`{name}` is reserved for a `!counter` subcommand."
         elif name in _guild_counters(gid):
             problem = f"A counter named `{name}` already exists."
+        elif holder := custom_name_holder(gid, name, own=COUNTERS):
+            # Unlike a real command (warned about below), an alias's listener
+            # would answer `!name` alongside ours.
+            problem = f"`!{name}` is already {holder} here."
         elif len(description) > MAX_DESCRIPTION:
             problem = f"Keep the description under {MAX_DESCRIPTION} characters."
         if problem:
@@ -271,10 +275,7 @@ class CounterCog(commands.Cog):
         }
         await persistence.save_counter(gid, name)
 
-        shadowed = (
-            self.bot.get_command(name) is not None
-            or name in get_guild_cfg(gid).get("nsfw_aliases", {})
-        )
+        shadowed = self.bot.get_command(name) is not None
         usage = (
             f"`!{name}` is already a command here, so use `!count {name}`."
             if shadowed else f"Use `!{name}` or `!count {name}`."

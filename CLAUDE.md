@@ -621,8 +621,15 @@ the `counters`, `counter_values` and `counter_perms` tables (migration 0069).
   of that name always wins, including one added later. That path never went
   through `bot.invoke`, so the listener sets `ctx.command` and runs
   `bot.can_run(ctx)` itself — without it the perm gate, level gate, channel
-  lists and the `!session` allowlist are all skipped. It defers to an nsfw
-  alias of the same name (FunCog's listener answers those).
+  lists and the `!session` allowlist are all skipped.
+- **Custom `!<word>` names must not collide.** nsfw / story / tax aliases and
+  counters are each served by their own `CommandNotFound` listener, so a word
+  held by two fires both, and one matching a real command never fires. Every
+  command that creates one calls `name_conflict` (`src/custom_names.py`)
+  first and refuses; a new alias family goes in `ALIAS_FAMILIES` there. The
+  one exception is a counter named after a real command: allowed with a
+  warning, since `!count <name>` still reaches it. Tax aliases also check
+  `shop <word>`. Coverage: [tests/test_custom_names.py](tests/test_custom_names.py).
 - **Parsing:** the last token is the amount if it parses in the counter's
   unit (`parse_int_amount` / `parse_duration`, optional leading `-`);
   whatever precedes it is the user. A lone 15–20 digit token is a user id,
