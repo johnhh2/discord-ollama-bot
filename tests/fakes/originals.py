@@ -28,6 +28,8 @@ _PERSISTENCE_SAVE_NAMES = [
     "save_property_owner", "delete_property_owner",
     "save_gambler_streak", "save_command_streak", "save_ai_threads",
     "save_gambling_thread", "delete_gambling_thread",
+    "save_counter", "delete_counter", "save_counter_value",
+    "save_counter_perm", "delete_counter_perm",
     "save_quote_log", "save_saved_quotes", "save_lottery", "save_records",
     "save_lottery_ticket_grant",
     "save_leveling", "save_command_perms", "save_channel_prompts",

@@ -82,6 +82,13 @@ from src.persistence.gambling_threads import (  # noqa: F401
     save_gambling_thread,
     delete_gambling_thread,
 )
+from src.persistence.counters import (  # noqa: F401
+    save_counter,
+    delete_counter,
+    save_counter_value,
+    save_counter_perm,
+    delete_counter_perm,
+)
 from src.persistence.quotes import (  # noqa: F401
     save_quote_log,
     save_saved_quotes,

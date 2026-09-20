@@ -176,6 +176,12 @@ ai_threads: dict = {}
 # Source of truth is the gambling_threads table; loaded at boot. Logic lives
 # in src/gambling/session.py.
 gambling_threads: dict = {}
+# !count counters — {guild_id: {name: {description, user_required: bool,
+# kind: "number"|"time", created_by, created_at, values: {uid: int}}}}.
+# uid 0 is the unattributed bucket; a time counter's values are seconds.
+counters: dict = {}
+# {guild_id: {uid}} — users trusted to write to that guild's counters.
+counter_perms: dict = {}
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 bot_start_time = time.monotonic()

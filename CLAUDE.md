@@ -598,6 +598,38 @@ closing. Logic lives in `src/gambling/session.py`.
   guild cache (deleted, or archived while the bot was down) is stale and is
   dropped on the owner's next `!session`.
 
+## Counters (!count / !counter)
+
+Custom tallies an admin defines per server (`!counter add afk <description>`),
+in `src/cogs/counter_cog.py`. `state.counters` / `state.counter_perms` mirror
+the `counters`, `counter_values` and `counter_perms` tables (migration 0069).
+
+- **Everything is per-guild.** All three tables lead with `guild_id` and every
+  lookup goes through `state.counters[ctx.guild.id]`. Two servers with an
+  `afk` counter share nothing, and an `addperm` grant in one is worthless in
+  the other. None of the global-stat mirroring under Records applies.
+- **Totals are derived.** A counter's total is the sum of its per-user values
+  plus uid 0, the bucket for writes made with no user. Don't store a total.
+  Values clamp at 0; a time counter stores seconds.
+- **`count` is `everyone` in `command_perms.json`, but writes are gated
+  inline** by `can_write_counters` (admins via `can_manage_settings`, or a
+  `counter_perms` row). This is the one sanctioned exception to "no bare
+  permission guards": viewing and writing are the same command, and a JSON
+  tier can't split them. `!counter` and its subcommands are plain
+  `server_admin`.
+- **`!<counter>` is a `CommandNotFound` fallback**, so a real command or alias
+  of that name always wins, including one added later. That path never went
+  through `bot.invoke`, so the listener sets `ctx.command` and runs
+  `bot.can_run(ctx)` itself — without it the perm gate, level gate, channel
+  lists and the `!session` allowlist are all skipped. It defers to an nsfw
+  alias of the same name (FunCog's listener answers those).
+- **Parsing:** the last token is the amount if it parses in the counter's
+  unit (`parse_int_amount` / `parse_duration`, optional leading `-`);
+  whatever precedes it is the user. A lone 15–20 digit token is a user id,
+  never an amount. New `!counter` subcommands go in `RESERVED_NAMES`.
+
+Coverage: [tests/test_counters.py](tests/test_counters.py).
+
 ## Concurrency: per-user command races
 
 Discord users can fire several invocations of the same command before the first finishes (spam-typing, multi-device, scripted clients). Because asyncio is cooperative, a coroutine only loses control at an `await` — so a sequence like *check counter → await network/DB → mutate counter* is racey: two invocations both pass the check before either mutates, and the user gets the resource twice. This bot has had four of these bugs in one month (`!scratchoff`, `!daily`, `!bail`, `!shop insurance`, `!shop unoreverse`). The pattern is easy to introduce and easy to miss in code review.

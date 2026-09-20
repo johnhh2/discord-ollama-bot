@@ -94,6 +94,7 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 - A `hidden` flag makes sensitive admin commands invisible to unauthorized users — denied silently, no error message
 - Full audit log of admin actions; Docker-aware `!restart`; `!settings` for per-guild configuration
 - Built-in issue tracking: users file `!bugreport` / `!featurerequest` from inside Discord
+- Custom per-server counters: `!counter add afk Times gone afk` (pick user-required or optional, number or time), then `!afk @user 1` to count and `!afk @user` / `!afk` to read — `!count afk …` always works, the `!afk` shortcut whenever no real command has that name. Admins write by default; `!counter addperm @user` trusts anyone else
 
 ## Quick start (Docker)
 

@@ -13,16 +13,20 @@ from discord import ui
 from src.helpers import emb, C_GREEN, C_GREY, C_GOLD
 
 
+NOT_YOURS = "Not your purchase."
+
+
 class _ConfirmView(ui.View):
-    def __init__(self, payer_id: int, timeout: float):
+    def __init__(self, payer_id: int, timeout: float, not_yours: str = NOT_YOURS):
         super().__init__(timeout=timeout)
         self.payer_id = payer_id
+        self.not_yours = not_yours
         self.value: bool | None = None
 
     @ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: ui.Button):
         if interaction.user.id != self.payer_id:
-            await interaction.response.send_message("Not your purchase.", ephemeral=True)
+            await interaction.response.send_message(self.not_yours, ephemeral=True)
             return
         self.value = True
         await interaction.response.defer()
@@ -31,7 +35,7 @@ class _ConfirmView(ui.View):
     @ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button: ui.Button):
         if interaction.user.id != self.payer_id:
-            await interaction.response.send_message("Not your purchase.", ephemeral=True)
+            await interaction.response.send_message(self.not_yours, ephemeral=True)
             return
         self.value = False
         await interaction.response.defer()
@@ -45,6 +49,7 @@ async def confirm_prompt(
     description: str,
     payer: discord.Member,
     timeout: float = 30.0,
+    not_yours: str = NOT_YOURS,
 ) -> bool:
     """Show a Confirm/Cancel embed with a free-form body. Returns True only
     if `payer` clicks Confirm (False on Cancel or timeout). The generic core
@@ -54,7 +59,7 @@ async def confirm_prompt(
         f"{description}\n\n"
         f"Click **Confirm** within {int(timeout)}s to proceed."
     )
-    view = _ConfirmView(payer_id=payer.id, timeout=timeout)
+    view = _ConfirmView(payer_id=payer.id, timeout=timeout, not_yours=not_yours)
     msg = await ctx.send(embed=emb(title, body, C_GOLD), view=view)
 
     timed_out = await view.wait()
@@ -77,9 +82,10 @@ class _ChoiceView(ui.View):
     """One button per choice plus Cancel. `value` is the picked choice's
     value, False on Cancel, None while waiting / after a timeout."""
 
-    def __init__(self, payer_id: int, choices: list[dict], timeout: float):
+    def __init__(self, payer_id: int, choices: list[dict], timeout: float, not_yours: str = NOT_YOURS):
         super().__init__(timeout=timeout)
         self.payer_id = payer_id
+        self.not_yours = not_yours
         self.value = None
         for choice in choices:
             self.add_item(_ChoiceButton(choice))
@@ -99,7 +105,7 @@ class _ChoiceButton(ui.Button):
     async def callback(self, interaction: discord.Interaction):
         view: _ChoiceView = self.view  # type: ignore[assignment]
         if interaction.user.id != view.payer_id:
-            await interaction.response.send_message("Not your purchase.", ephemeral=True)
+            await interaction.response.send_message(view.not_yours, ephemeral=True)
             return
         view.value = self.choice_value
         await interaction.response.defer()
@@ -113,7 +119,7 @@ class _ChoiceCancel(ui.Button):
     async def callback(self, interaction: discord.Interaction):
         view: _ChoiceView = self.view  # type: ignore[assignment]
         if interaction.user.id != view.payer_id:
-            await interaction.response.send_message("Not your purchase.", ephemeral=True)
+            await interaction.response.send_message(view.not_yours, ephemeral=True)
             return
         view.value = False
         await interaction.response.defer()
@@ -128,6 +134,7 @@ async def confirm_choice(
     choices: list[dict],
     payer: discord.Member,
     timeout: float = 60.0,
+    not_yours: str = NOT_YOURS,
 ):
     """Show an embed with one button per choice (plus Cancel) and return the
     picked choice's `value`, or None on Cancel / timeout. Each choice is
@@ -139,7 +146,7 @@ async def confirm_choice(
         f"{description}\n\n"
         f"Pick one within {int(timeout)}s to proceed."
     )
-    view = _ChoiceView(payer_id=payer.id, choices=choices, timeout=timeout)
+    view = _ChoiceView(payer_id=payer.id, choices=choices, timeout=timeout, not_yours=not_yours)
     msg = await ctx.send(embed=emb(title, body, C_GOLD), view=view)
 
     timed_out = await view.wait()

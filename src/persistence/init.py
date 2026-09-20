@@ -606,6 +606,33 @@ async def _init_db_state_inner(state, run_migrations):
             logging.error(f"[init_db_state] gambling_threads failed: {e}", exc_info=True)
             raise
 
+        # ── counters (!count) ────────────────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT guild_id, name, description, user_required, kind, created_by, created_at "
+                "FROM counters"
+            )
+            for gid, name, description, user_required, kind, created_by, created_at in await cur.fetchall():
+                state.counters.setdefault(int(gid), {})[name] = {
+                    "description": description,
+                    "user_required": bool(user_required),
+                    "kind": kind,
+                    "created_by": int(created_by),
+                    "created_at": int(created_at),
+                    "values": {},
+                }
+            await cur.execute("SELECT guild_id, name, user_id, value FROM counter_values")
+            for gid, name, uid, value in await cur.fetchall():
+                counter = state.counters.get(int(gid), {}).get(name)
+                if counter is not None:
+                    counter["values"][int(uid)] = int(value)
+            await cur.execute("SELECT guild_id, user_id FROM counter_perms")
+            for gid, uid in await cur.fetchall():
+                state.counter_perms.setdefault(int(gid), set()).add(int(uid))
+        except Exception as e:
+            logging.error(f"[init_db_state] counters failed: {e}", exc_info=True)
+            raise
+
         # ── quote_log ─────────────────────────────────────────────────────
         try:
             await cur.execute("SELECT content FROM quote_log ORDER BY id")

@@ -104,6 +104,8 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "active_puzzles", {})
     monkeypatch.setattr(_state, "ai_threads", {})
     monkeypatch.setattr(_state, "gambling_threads", {})
+    monkeypatch.setattr(_state, "counters", {})
+    monkeypatch.setattr(_state, "counter_perms", {})
     monkeypatch.setattr(_state, "channel_prompts", {})
     monkeypatch.setattr(_state, "command_streak", {})
     monkeypatch.setattr(_state, "crime_today_by_user", {})
@@ -141,6 +143,8 @@ def reset_bot_state(monkeypatch):
         "save_property_owner", "delete_property_owner",
         "save_gambler_streak", "save_command_streak", "save_ai_threads",
         "save_gambling_thread", "delete_gambling_thread",
+    "save_counter", "delete_counter", "save_counter_value",
+    "save_counter_perm", "delete_counter_perm",
         "save_quote_log", "save_saved_quotes", "save_lottery", "save_records",
         "save_lottery_ticket_grant",
         "save_leveling", "save_command_perms", "save_channel_prompts",

@@ -205,6 +205,7 @@ class UtilityCog(commands.Cog):
             "`!stats` — Show bot statistics\n"
             "`!stop` — Stop roleplay / forfeit active game\n"
             "`!subscribe [voice-channel]` — DM you when a voice channel fills up\n"
+            "`!count [counter] [@user]` — This server's custom counters\n"
             "`!bugreport <message>` — Send a bug report to the maintainer"
         )
         help_embed.add_field(name="🔧 Utility", inline=False, value=utility_val)
