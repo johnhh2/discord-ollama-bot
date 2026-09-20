@@ -133,7 +133,7 @@ class CounterCog(commands.Cog):
         else:
             title = _label(name, counter)
             body = f"{change} → **{_fmt(counter, sum(values.values()))}**"
-        await ctx.send(embed=emb(title, body, C_GREEN))
+        await ctx.send(embed=emb(title, f"*{counter['description']}*\n\n{body}", C_GREEN))
 
     async def _send_view(self, ctx, name: str, counter: dict, member):
         values = counter["values"]
@@ -146,7 +146,7 @@ class CounterCog(commands.Cog):
         else:
             title = _label(name, counter)
             body = f"**{_fmt(counter, sum(values.values()))}**"
-        await ctx.send(embed=emb(title, f"{body}\n\n*{counter['description']}*", C_BLUE))
+        await ctx.send(embed=emb(title, f"*{counter['description']}*\n\n{body}", C_BLUE))
 
     @staticmethod
     def _leaderboard(counter: dict) -> str:

@@ -177,6 +177,15 @@ async def test_negative_clamps_at_zero(cog):
     assert _state.counters[1]["afk"]["values"][TARGET] == 0
 
 
+async def test_description_sits_under_the_title_before_the_count(cog):
+    guild = _guild()
+    _make(1, "afk")
+    for rest in ("sleepy 2", "sleepy -1", "sleepy", ""):
+        ctx = _ctx(guild)
+        await cog._count(ctx, "afk", rest)
+        assert ctx.sent_embeds[-1].description.startswith("*afk things*")
+
+
 async def test_time_counter_parses_and_formats_durations(cog):
     guild = _guild()
     _make(1, "nap", kind="time")
