@@ -210,6 +210,19 @@ async def test_buy_below_level_blocked(db):
     assert _state.user_artifacts.get(uid, {}).get(BLANK_ART_ID, 0) == 0
 
 
+async def test_buy_gates_on_global_level(db):
+    """A level earned in another guild unlocks the artifact here."""
+    cog = ShopCog(bot=None)
+    uid = 7010
+    _set_level(uid, 5, gid=99)
+    await add_balance(uid, ARTIFACT_SLOTS_BLANK_COST)
+
+    await _invoke(cog, _ctx(uid), "buy", "1")
+
+    assert _state.user_artifacts[uid][BLANK_ART_ID] == 1
+    assert await get_balance(uid) == 0
+
+
 async def test_list_marks_level_locked(db):
     """Below-level artifacts are struck through with a 🔒 Lvl marker."""
     cog = ShopCog(bot=None)

@@ -368,6 +368,16 @@ async def test_buy_respects_level_gate(db):
     assert "Level" in ctx.sent_embeds[-1].title or "Level" in ctx.sent_embeds[-1].description
 
 
+async def test_buy_gates_on_global_level(db):
+    """A level earned in another guild unlocks the deed here."""
+    uid = 9019
+    _set_level(uid, 5, gid=GID + 1)
+    await add_balance(uid, 50_000)
+    cog = AssetsCog(bot=None)
+    await AssetsCog.assets_buy.callback(cog, _ctx(uid), name="Car Wash")
+    assert _state.property_owners["car_wash"]["owner_id"] == uid
+
+
 async def test_buy_enforces_ownership_cap(db):
     uid = 9023
     _set_level(uid, 50)

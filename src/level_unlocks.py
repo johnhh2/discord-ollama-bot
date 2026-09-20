@@ -155,6 +155,21 @@ def user_display_level(user_id: int, guild_id: int) -> int:
     return rec.get("level", 0) + 1  # internal 0-based → display 1-based
 
 
+def user_global_display_level(user_id: int) -> int:
+    """The user's highest display level in any guild, defaulting to 1.
+
+    Gates purchases that are global per user (artifacts), so where the
+    command is typed — a low-level server, a DM — doesn't change the answer.
+    """
+    ukey = str(user_id)
+    best = 0
+    for users in state.leveling.values():
+        rec = users.get(ukey)
+        if rec and rec.get("level", 0) > best:
+            best = rec["level"]
+    return best + 1
+
+
 def next_unlocks(user_id: int, guild_id: int, count: int = 3) -> list[tuple[int, str, dict]]:
     """Return up to *count* upcoming unlocks above the user's current level.
 

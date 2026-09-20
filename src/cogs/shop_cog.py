@@ -423,11 +423,11 @@ class ShopCog(commands.Cog):
     @cmd_shop.command(name="artifacts")
     @_shop_subcommand(None)
     async def shop_artifacts(self, ctx: commands.Context, *args):
-        from src.level_unlocks import user_display_level
+        from src.level_unlocks import user_global_display_level
 
         uid = ctx.author.id
-        gid = ctx.guild.id if ctx.guild else 0
-        lvl = user_display_level(uid, gid)
+        # Artifacts are owned bot-wide, so the gate is the global level too.
+        lvl = user_global_display_level(uid)
 
         if not args:
             lines = []
@@ -458,7 +458,7 @@ class ShopCog(commands.Cog):
 
         req = art.get("level", 1)
         if lvl < req:
-            await ctx.send(embed=emb("🔒 Level Locked", f"That artifact unlocks at **Level {req}** — you're Level {lvl}.", C_RED))
+            await ctx.send(embed=emb("🔒 Level Locked", f"That artifact unlocks at **global Level {req}** (your highest level in any server) — you're Level {lvl}.", C_RED))
             return
         if owned_qty(uid, art["id"]) >= art["max"]:
             await ctx.send(embed=emb("🏺 Already Owned", "You already own that artifact.", C_PURPLE))

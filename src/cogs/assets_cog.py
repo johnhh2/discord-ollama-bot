@@ -125,10 +125,10 @@ class AssetsCog(commands.Cog):
     # ── !assets browse / market (combined catalog + listings view) ────────
     @cmd_assets.command(name="browse", aliases=["market", "catalog", "shop", "listings", "forsale"])
     async def assets_browse(self, ctx: commands.Context, tier: int = None):
-        from src.level_unlocks import user_display_level
+        from src.level_unlocks import user_global_display_level
         uid = ctx.author.id
-        gid = ctx.guild.id if ctx.guild else 0
-        lvl = user_display_level(uid, gid)
+        # Deeds are bot-wide, so the gate is the global level too.
+        lvl = user_global_display_level(uid)
 
         lines = []
         cur_tier = None
@@ -173,7 +173,7 @@ class AssetsCog(commands.Cog):
     # ── !assets buy ───────────────────────────────────────────────────────
     @cmd_assets.command(name="buy", aliases=["purchase"])
     async def assets_buy(self, ctx: commands.Context, *, name: str = None):
-        from src.level_unlocks import user_display_level
+        from src.level_unlocks import user_global_display_level
         if not name:
             await ctx.send(embed=emb("🏘️ Real Estate", "Usage: `!assets buy <property name>` — see `!assets browse`.", C_PURPLE))
             return
@@ -183,10 +183,9 @@ class AssetsCog(commands.Cog):
             return
         uid = ctx.author.id
         await _ensure_user(uid)
-        gid = ctx.guild.id if ctx.guild else 0
-        lvl = user_display_level(uid, gid)
+        lvl = user_global_display_level(uid)
         if lvl < prop["level"]:
-            await ctx.send(embed=emb("🔒 Level Locked", f"{_fmt_prop(prop)} unlocks at **Level {prop['level']}** — you're Level {lvl}.", C_RED))
+            await ctx.send(embed=emb("🔒 Level Locked", f"{_fmt_prop(prop)} unlocks at **global Level {prop['level']}** (your highest level in any server) — you're Level {lvl}.", C_RED))
             return
 
         pid = prop["id"]

@@ -348,6 +348,10 @@ Rules when touching this system:
    New properties just get appended — there's no supply migration, unowned
    means bank-owned — but every property needs a `PROPERTY_UPGRADES` entry
    (a module-load assert enforces it).
+   A property's `level` gates on the **global** level
+   (`user_global_display_level` — highest level in any guild), like
+   artifacts: deeds are bot-wide, so the server the command ran in
+   doesn't matter.
 8. **Upgrade values are shipped constants.** Each property has exactly one
    upgrade in `PROPERTY_UPGRADES` — (name, cost, boost%), rolled once at
    75–125% of cost / 35–75% boost and hardcoded. Never re-roll a shipped
@@ -406,6 +410,10 @@ block and `save_user_artifact`'s first insert only).
   `add_balance` and `record_crime_event`; the crime record lists him with
   `id: None`. Any new per-participant side effect must branch on `_is_npc`
   first — his `id` is 0, not a user.
+- **The level gate is the global level.** Ownership is bot-wide, so
+  `!artifacts` gates on `user_global_display_level(uid)` (the user's highest
+  level in any guild — the same number `!profile` shows), not the level in
+  the guild the command ran in. It works in DMs too.
 - **Level and cost live in the catalog, not the tests.** Levels 5–50 in
   5-step increments; two artifacts may share a level (both property deeds
   sit at 40, Silas and the upgrade discount at 45). Existing tests assert
