@@ -26,6 +26,12 @@ SOFT_CAP = 60
 POST_CAP_MULT = 1.25     # past the soft cap the curve steepens
 PENALTY_MULT = 1.10      # penalties grow with level too
 
+# A level-up is channel news on every MILESTONE_EVERY-th level, and on every
+# level once one takes at least RARE_LEVEL_SECS (level 62 on the base curve).
+# The rest stay in the player's own feed thread.
+MILESTONE_EVERY = 10
+RARE_LEVEL_SECS = 7 * 86_400
+
 PRESTIGE_LEVEL = 60
 PRESTIGE_BONUS_PCT = 5   # faster levelling per prestige rank…
 PRESTIGE_MAX_RANKS = 5   # …for the first five ranks
@@ -176,6 +182,11 @@ def ttl(level: int, prestige: int = 0) -> int:
         base = BASE_TTL * LEVEL_MULT ** SOFT_CAP * POST_CAP_MULT ** (level - SOFT_CAP)
     bonus = PRESTIGE_BONUS_PCT * min(prestige, PRESTIGE_MAX_RANKS)
     return int(base * (100 - bonus) / 100)
+
+
+def level_is_news(level: int, prestige: int = 0) -> bool:
+    """Whether reaching `level` is announced in the idle channel."""
+    return level % MILESTONE_EVERY == 0 or ttl(level - 1, prestige) >= RARE_LEVEL_SECS
 
 
 def new_character(class_name: str, now: int) -> dict:

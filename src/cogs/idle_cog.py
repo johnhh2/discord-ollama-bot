@@ -222,7 +222,7 @@ class IdleCog(commands.Cog):
                     (uid,),
                     f"🎉 {name(uid)} the {char['class']} reached **level {char['level']}**! "
                     f"The next one takes {format_duration(rpg.ttl(char['level'], char['prestige']))}.",
-                    True,
+                    rpg.level_is_news(char["level"], char["prestige"]),
                 ))
                 notes.append(rpg.find_item(uid, char, self.rng, name))
                 notes += rpg.level_up_battle(uid, chars, self.rng, name, now)

@@ -187,7 +187,7 @@ async def test_tick_levels_up_finds_an_item_and_posts_once_per_destination(monke
 
     assert char["level"] == 1 and char["next_level_at"] > now
     assert len(char["items"]) == 1
-    assert "reached **level 1**" in _sent(idle)
+    idle.send.assert_not_called()                 # an ordinary level is the player's own news
     thread = guild.threads[0]                     # made lazily: the character had none
     story = [call.args[0] for call in thread.send.call_args_list]
     assert len(story) == 2                        # the opening line, then one batched post
@@ -227,10 +227,13 @@ async def test_quest_start_mentions_the_questers_silently_and_only_in_the_channe
 
 async def test_tick_catches_up_several_levels_in_one_post():
     cog, guild, idle = _world()
-    char = _spawn(left=-(rpg.ttl(1) + rpg.ttl(2) + 5))
+    char = _spawn(level=8, left=-(rpg.ttl(9) + rpg.ttl(10) + 5))
     await cog.tick()
-    assert char["level"] == 3
+    assert char["level"] == 11
     assert idle.send.await_count == 1
+    assert "level 10" in _sent(idle) and "level 9" not in _sent(idle) and "level 11" not in _sent(idle)
+    feed = _sent(guild.threads[0])
+    assert all(f"level {n}" in feed for n in (9, 10, 11))
 
 
 async def test_tick_does_nothing_with_the_game_off_but_freeze_clocks():

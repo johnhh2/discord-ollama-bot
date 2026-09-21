@@ -1627,3 +1627,11 @@ ALTER TABLE idle_quests ADD COLUMN IF NOT EXISTS p1x INT NULL;
 ALTER TABLE idle_quests ADD COLUMN IF NOT EXISTS p1y INT NULL;
 ALTER TABLE idle_quests ADD COLUMN IF NOT EXISTS p2x INT NULL;
 ALTER TABLE idle_quests ADD COLUMN IF NOT EXISTS p2y INT NULL;
+
+-- ── 0072_idle_wipe_test_characters.sql ──
+-- 0072: one-off wipe. When this shipped the only !idle data anywhere was the
+-- owner's test character, made before the map and the quieter level
+-- announcements landed; the game starts clean. Runs once (checksummed like
+-- every migration) and is a no-op on a fresh database.
+DELETE FROM idle_characters;
+DELETE FROM idle_quests;

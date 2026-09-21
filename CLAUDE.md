@@ -712,7 +712,9 @@ tables from migrations 0070–0071.
   Commands save immediately, and claim before their first await (`join`
   puts the character in `state` first; `duel` stamps `duel_day` first).
 - **Posting is batched**: one message per destination per tick, item finds
-  in the feed thread only. **Every post is silent**, and
+  in the feed thread only. A level-up is channel news only on every tenth
+  level, and on every level once one takes a week (`level_is_news` — level
+  62 on the base curve); the rest stay in the player's thread. **Every post is silent**, and
   mentions are off except for a `Note`'s `ping` uids — used by the quest
   start alone, in the idle channel only, so the questers get a mention
   badge and nobody gets a notification. An event that touches many players must stay one public post plus the

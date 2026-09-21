@@ -50,6 +50,12 @@ def test_curve_grows_per_level_and_steepens_past_the_cap():
     assert rpg.ttl(10, prestige=9) == rpg.ttl(10, prestige=rpg.PRESTIGE_MAX_RANKS)
 
 
+def test_only_milestones_and_week_long_levels_are_channel_news():
+    news = [level for level in range(1, 70) if rpg.level_is_news(level)]
+    assert news == [10, 20, 30, 40, 50, 60, 62, 63, 64, 65, 66, 67, 68, 69]
+    assert rpg.ttl(60) < rpg.RARE_LEVEL_SECS <= rpg.ttl(61)
+
+
 def test_level_up_starts_the_next_clock_where_the_last_ran_out():
     char = _char(left=-500)   # the tick arrived 500s late
     rpg.level_up(char)
