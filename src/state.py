@@ -182,6 +182,13 @@ gambling_threads: dict = {}
 counters: dict = {}
 # {guild_id: {uid}} — users trusted to write to that guild's counters.
 counter_perms: dict = {}
+# !idle characters — {guild_id: {uid: character}}; the character dict is
+# built by src.idlerpg.new_character. Per guild: nothing is shared between
+# servers. Source of truth is the idle_characters table; loaded at boot.
+idle_characters: dict = {}
+# {guild_id: {members: [uid], description, ends_at: int|None, not_before}} —
+# ends_at is None while no quest is running.
+idle_quests: dict = {}
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 bot_start_time = time.monotonic()

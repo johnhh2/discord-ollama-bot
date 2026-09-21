@@ -89,6 +89,12 @@ from src.persistence.counters import (  # noqa: F401
     save_counter_perm,
     delete_counter_perm,
 )
+from src.persistence.idlerpg import (  # noqa: F401
+    save_idle_character,
+    delete_idle_character,
+    delete_idle_guild,
+    save_idle_quest,
+)
 from src.persistence.quotes import (  # noqa: F401
     save_quote_log,
     save_saved_quotes,

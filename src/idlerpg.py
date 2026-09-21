@@ -1,0 +1,592 @@
+"""Idle RPG rules (!idle) — pure functions over character dicts. No Discord,
+no DB, and every random draw goes through the `rng` a caller passes in, so
+the whole ruleset is testable with a seeded `random.Random`.
+
+The rules are the classic IRC IdleRPG's (level by idling, talking costs you)
+with a gentler curve, prestige and a daily duel. A character's clock is an
+absolute `next_level_at` while it runs and a `remaining` seconds count while
+it is paused — exactly one of the two is set. Everything that speeds up or
+slows down a character goes through `shift` / `scale`, which handle both.
+
+Functions that tell the players something return `Note`s; the cog decides
+where they are posted (src/cogs/idle_cog.py).
+"""
+from __future__ import annotations
+
+from typing import Callable, NamedTuple
+
+from src.helpers import format_duration
+
+# ── the curve ────────────────────────────────────────────────────────────────
+
+BASE_TTL = 600           # seconds from level 0 to level 1
+LEVEL_MULT = 1.12        # each level takes this much longer (level 60 ≈ 52 idle days in all)
+SOFT_CAP = 60
+POST_CAP_MULT = 1.25     # past the soft cap the curve steepens
+PENALTY_MULT = 1.10      # penalties grow with level too
+
+PRESTIGE_LEVEL = 60
+PRESTIGE_BONUS_PCT = 5   # faster levelling per prestige rank…
+PRESTIGE_MAX_RANKS = 5   # …for the first five ranks
+
+# Penalty bases, in seconds at level 0.
+PEN_TALK_PER_CHAR = 1
+PEN_PART = 200           # left their own feed thread
+PEN_QUIT = 20            # left the server
+PEN_QUEST_FAIL = 15      # everyone pays when a quester slips
+
+# A player counts as logged in for this long after they were last seen online.
+GRACE_SECS = 3600
+
+ALIGN_COOLDOWN_SECS = 86_400
+DUEL_PCT = 5
+
+# ── per-day odds (the cog divides by its ticks per day) ──────────────────────
+
+GODSEND_PER_DAY = 1 / 8
+CALAMITY_PER_DAY = 1 / 8
+HAND_OF_GOD_PER_DAY = 1 / 20
+BLESSING_PER_DAY = 1 / 12      # good characters
+TEMPTATION_PER_DAY = 1 / 8     # evil characters
+TEAM_BATTLE_PER_DAY = 1 / 4    # per guild
+# Lawful characters live quieter lives, chaotic ones louder — for good and ill.
+LAW_EVENT_FACTOR = {"lawful": 0.5, "neutral": 1.0, "chaotic": 2.0}
+
+BATTLE_ALWAYS_LEVEL = 25       # below this a level-up only sometimes means a fight
+BATTLE_CHANCE_BELOW = 0.25
+CRIT_ODDS = {"good": 50, "neutral": 35, "evil": 20}   # 1-in-N on a won battle
+STEAL_CHANCE = 0.02
+TEAM_SIZE = 3
+
+QUEST_MIN_LEVEL = 40
+QUEST_CLEAN_SECS = 10 * 3600   # no penalty for this long to be picked
+QUEST_MIN_PARTY, QUEST_MAX_PARTY = 2, 4
+QUEST_MIN_SECS, QUEST_MAX_SECS = 12 * 3600, 24 * 3600
+QUEST_REWARD_PCT = 25
+QUEST_REST_SECS = 6 * 3600     # after a success
+QUEST_DROUGHT_SECS = 12 * 3600  # after a failure
+
+LAWS = ("lawful", "neutral", "chaotic")
+MORALS = ("good", "neutral", "evil")
+
+ITEM_SLOTS = (
+    "ring", "amulet", "charm", "weapon", "helm",
+    "tunic", "gloves", "leggings", "shield", "boots",
+)
+
+# (minimum character level, slot, name, lowest item level, highest item level)
+UNIQUES = (
+    (25, "helm", "Crown of the Unblinking Moderator", 50, 74),
+    (25, "ring", "Signet of Perpetual Lurking", 50, 74),
+    (30, "tunic", "Hauberk of the Muted Channel", 75, 99),
+    (35, "amulet", "Amulet of the Last Seen Recently", 100, 124),
+    (40, "weapon", "Greatsword of Read Receipts", 150, 174),
+    (45, "weapon", "Staff of the Unanswered Ping", 175, 200),
+    (48, "boots", "Slippers of the Away Status", 250, 300),
+    (52, "weapon", "Banhammer of the Elder Admins", 300, 350),
+)
+UNIQUE_ODDS = 40   # 1-in-N per level-up, checked per eligible unique
+
+HOUSE_NAME = "the Idle Warden"
+
+_GODSENDS = (
+    "found a forgotten shortcut through the hills",
+    "was carried a league by a friendly giant",
+    "slept so well that a whole day's march felt like a stroll",
+    "was handed a map by a ghost with nothing better to do",
+    "caught a tailwind blowing the right way for once",
+    "was mistaken for royalty and waved through every gate",
+    "drank from a spring that tasted faintly of purpose",
+    "got a lift on a merchant's cart",
+)
+_CALAMITIES = (
+    "was chased up a tree by an unreasonable goose",
+    "took a wrong turn at a very convincing signpost",
+    "lost a day arguing with a bridge troll about tolls",
+    "fell into a bog and had to dry every sock",
+    "was cursed with hiccups by a bored hedge witch",
+    "walked in circles around a suspiciously familiar rock",
+    "ate the mushrooms",
+    "was held up at a border for improper paperwork",
+)
+_ITEM_BOONS = (
+    "A wandering smith polished", "A blessing settled on", "Moonlight tempered",
+)
+_ITEM_BANES = (
+    "Rust crept into", "A gremlin chewed on", "Rain warped",
+)
+_QUESTS = (
+    "stand vigil over the sleeping dragon of the eastern pass",
+    "escort a caravan of extremely slow pilgrims",
+    "guard the silence of the Great Library",
+    "wait out the siege of a castle nobody remembers the name of",
+    "watch a pot until it boils, by royal decree",
+    "hold the line at a bridge no enemy has yet found",
+)
+
+
+class Note(NamedTuple):
+    """Something to tell the players. `uids` are the characters it concerns
+    (their feed threads get it); `public` also posts it in the idle channel.
+    `ping` lists the users whose `<@id>` in `text` may really mention them
+    there — the post stays silent, so that's a badge, not a notification."""
+    uids: tuple
+    text: str
+    public: bool = False
+    ping: tuple = ()
+
+
+NameFn = Callable[[int], str]
+
+
+# ── characters and their clocks ──────────────────────────────────────────────
+
+def ttl(level: int, prestige: int = 0) -> int:
+    """Seconds it takes to go from `level` to `level + 1`."""
+    if level <= SOFT_CAP:
+        base = BASE_TTL * LEVEL_MULT ** level
+    else:
+        base = BASE_TTL * LEVEL_MULT ** SOFT_CAP * POST_CAP_MULT ** (level - SOFT_CAP)
+    bonus = PRESTIGE_BONUS_PCT * min(prestige, PRESTIGE_MAX_RANKS)
+    return int(base * (100 - bonus) / 100)
+
+
+def new_character(class_name: str, now: int) -> dict:
+    return {
+        "class": class_name,
+        "level": 0,
+        "next_level_at": now + ttl(0),
+        "remaining": None,
+        "law": "neutral",
+        "moral": "neutral",
+        "prestige": 0,
+        "penalty_total": 0,
+        "last_seen": now,
+        "last_penalty_at": 0,
+        "thread_id": None,
+        "created_at": now,
+        "align_changed_at": 0,
+        "duel_day": None,
+        "items": {},
+    }
+
+
+def is_paused(char: dict) -> bool:
+    return char["next_level_at"] is None
+
+
+def time_left(char: dict, now: int) -> int:
+    if is_paused(char):
+        return char["remaining"]
+    return max(0, char["next_level_at"] - now)
+
+
+def shift(char: dict, seconds: int) -> None:
+    """Move the level-up `seconds` later (negative = sooner), paused or not."""
+    if is_paused(char):
+        char["remaining"] = max(0, char["remaining"] + seconds)
+    else:
+        char["next_level_at"] += seconds
+
+
+def scale(char: dict, now: int, pct: float) -> int:
+    """Shift by `pct` percent of the time left; returns the seconds moved."""
+    seconds = int(time_left(char, now) * pct / 100)
+    shift(char, seconds)
+    return seconds
+
+
+def pause(char: dict, at: int) -> None:
+    if not is_paused(char):
+        char["remaining"] = max(0, char["next_level_at"] - at)
+        char["next_level_at"] = None
+
+
+def resume(char: dict, now: int) -> None:
+    if is_paused(char):
+        char["next_level_at"] = now + char["remaining"]
+        char["remaining"] = None
+
+
+def logged_in(char: dict, now: int) -> bool:
+    return now - char["last_seen"] < GRACE_SECS
+
+
+def level_up(char: dict) -> None:
+    """The next clock starts where the last one ran out, not at `now`, so a
+    tick that arrives late (or a boot after downtime) loses nobody any time."""
+    char["level"] += 1
+    char["next_level_at"] += ttl(char["level"], char["prestige"])
+
+
+def do_prestige(char: dict, now: int) -> None:
+    char["prestige"] += 1
+    char["level"] = 0
+    char["items"] = {}
+    fresh = ttl(0, char["prestige"])
+    if is_paused(char):
+        char["remaining"] = fresh
+    else:
+        char["next_level_at"] = now + fresh
+
+
+def item_sum(char: dict) -> int:
+    return sum(item["level"] for item in char["items"].values())
+
+
+def battle_sum(char: dict) -> int:
+    total = item_sum(char)
+    if char["moral"] == "good":
+        return int(total * 1.1)
+    if char["moral"] == "evil":
+        return int(total * 0.9)
+    return total
+
+
+def rank_key(now: int):
+    """Sort key for the leaderboard: prestige, then level, then who levels next."""
+    return lambda pair: (-pair[1]["prestige"], -pair[1]["level"], time_left(pair[1], now), pair[0])
+
+
+def running(chars: dict) -> list:
+    return [uid for uid, c in chars.items() if not is_paused(c)]
+
+
+# ── alignment ────────────────────────────────────────────────────────────────
+
+def alignment_label(char: dict) -> str:
+    if char["law"] == "neutral" and char["moral"] == "neutral":
+        return "true neutral"
+    return f"{char['law']} {char['moral']}"
+
+
+ALIGNMENTS = tuple((law, moral) for law in LAWS for moral in MORALS)
+
+
+def parse_alignment(text: str) -> "tuple[str, str] | None":
+    """`lawful good`, `chaotic`, `evil`, `neutral`, `true neutral` → (law, moral)."""
+    words = text.lower().split()
+    if words in (["neutral"], ["true", "neutral"], ["neutral", "neutral"]):
+        return ("neutral", "neutral")
+    if len(words) == 1:
+        if words[0] in LAWS:
+            return (words[0], "neutral")
+        if words[0] in MORALS:
+            return ("neutral", words[0])
+    if len(words) == 2 and words[0] in LAWS and words[1] in MORALS:
+        return (words[0], words[1])
+    return None
+
+
+# ── penalties ────────────────────────────────────────────────────────────────
+
+def penalize(char: dict, base: int, now: int, units: int = 1) -> int:
+    seconds = int(base * units * PENALTY_MULT ** char["level"])
+    shift(char, seconds)
+    char["penalty_total"] += seconds
+    char["last_penalty_at"] = now
+    return seconds
+
+
+def penalize_player(uid: int, chars: dict, quest: dict, base: int, now: int,
+                    name: NameFn, units: int = 1) -> "tuple[int, list[Note]]":
+    """A penalty a player earned themselves. A quester who takes one fails
+    the quest for everybody."""
+    seconds = penalize(chars[uid], base, now, units)
+    notes = []
+    if quest.get("ends_at") is not None and uid in quest["members"]:
+        notes = fail_quest(uid, chars, quest, now, name)
+    return seconds, notes
+
+
+# ── items ────────────────────────────────────────────────────────────────────
+
+def roll_item_level(level: int, rng) -> int:
+    """The classic roll: every item level up to 1.5× the character's gets a
+    shrinking chance, and the highest one that hits wins."""
+    best = 1
+    for num in range(1, int(level * 1.5) + 1):
+        if rng.random() * 1.4 ** (num / 4) < 1:
+            best = num
+    return best
+
+
+def find_item(uid: int, char: dict, rng, name: NameFn) -> Note:
+    for min_level, slot, unique, low, high in UNIQUES:
+        if char["level"] < min_level or rng.randrange(UNIQUE_ODDS):
+            continue
+        found = rng.randint(low, high)
+        if found > char["items"].get(slot, {}).get("level", 0):
+            char["items"][slot] = {"level": found, "name": unique}
+            return Note((uid,), f"✨ {name(uid)} unearthed the **{unique}** — a level {found} {slot}!", True)
+    slot = rng.choice(ITEM_SLOTS)
+    found = roll_item_level(char["level"], rng)
+    held = char["items"].get(slot, {}).get("level", 0)
+    if found > held:
+        char["items"][slot] = {"level": found, "name": None}
+        return Note((uid,), f"🎒 {name(uid)} found a level {found} {slot} (was level {held}).")
+    return Note((uid,), f"🎒 {name(uid)} found a level {found} {slot}, but their level {held} one is better.")
+
+
+def _item_label(slot: str, item: dict) -> str:
+    return item.get("name") or f"level {item['level']} {slot}"
+
+
+def _steal(thief: dict, victim: dict, rng) -> "str | None":
+    """Swap one slot if the victim's is better; returns what was taken."""
+    slot = rng.choice(ITEM_SLOTS)
+    theirs = victim["items"].get(slot)
+    mine = thief["items"].get(slot)
+    if theirs is None or theirs["level"] <= (mine or {"level": 0})["level"]:
+        return None
+    thief["items"][slot] = theirs
+    if mine is None:
+        del victim["items"][slot]
+    else:
+        victim["items"][slot] = mine
+    return _item_label(slot, theirs)
+
+
+# ── battles ──────────────────────────────────────────────────────────────────
+
+def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int) -> "list[Note]":
+    me = chars[uid]
+    if me["level"] < BATTLE_ALWAYS_LEVEL and rng.random() >= BATTLE_CHANCE_BELOW:
+        return []
+    pool = [u for u in running(chars) if u != uid]
+    # The house is one more contender, so a lone player still gets fights.
+    pick = rng.randrange(len(pool) + 1)
+    opp_uid = pool[pick] if pick < len(pool) else None
+    opp = chars.get(opp_uid)
+    if opp is None:
+        opp_sum = max(item_sum(c) for c in chars.values()) + 1
+        opp_name, win_pct, lose_pct = HOUSE_NAME, 20, 10
+    else:
+        opp_sum = battle_sum(opp)
+        opp_name = name(opp_uid)
+        win_pct, lose_pct = max(opp["level"] / 4, 7), max(opp["level"] / 7, 7)
+
+    my_sum = battle_sum(me)
+    my_roll, opp_roll = rng.randint(0, my_sum), rng.randint(0, opp_sum)
+    involved = (uid,) if opp is None else (uid, opp_uid)
+    head = f"⚔️ {name(uid)} [{my_roll}/{my_sum}] challenged {opp_name} [{opp_roll}/{opp_sum}]"
+    if my_roll < opp_roll:
+        lost = scale(me, now, lose_pct)
+        return [Note(involved, f"{head} and lost. {format_duration(lost)} added to their clock.", True)]
+
+    won = -scale(me, now, -win_pct)
+    notes = [Note(involved, f"{head} and won! {format_duration(won)} off their clock.", True)]
+    if opp is None:
+        return notes
+    if not rng.randrange(CRIT_ODDS[me["moral"]]):
+        hurt = scale(opp, now, rng.randint(5, 25))
+        notes.append(Note(involved, f"💥 A critical strike! {opp_name} is set back {format_duration(hurt)}.", True))
+    if rng.random() < STEAL_CHANCE:
+        taken = _steal(me, opp, rng)
+        if taken:
+            notes.append(Note(involved, f"🫳 In the chaos, {name(uid)} made off with {opp_name}'s {taken}!", True))
+    return notes
+
+
+def duel(uid: int, target_uid: int, chars: dict, rng, name: NameFn, now: int) -> "list[Note]":
+    """The loser hands DUEL_PCT of their remaining time to the winner."""
+    a, b = chars[uid], chars[target_uid]
+    a_sum, b_sum = battle_sum(a), battle_sum(b)
+    a_roll, b_roll = rng.randint(0, a_sum), rng.randint(0, b_sum)
+    (w_uid, winner), (l_uid, loser) = ((uid, a), (target_uid, b)) if a_roll >= b_roll else ((target_uid, b), (uid, a))
+    stake = scale(loser, now, DUEL_PCT)
+    shift(winner, -min(stake, time_left(winner, now)))
+    return [Note(
+        (uid, target_uid),
+        f"🤺 {name(uid)} [{a_roll}/{a_sum}] duelled {name(target_uid)} [{b_roll}/{b_sum}] — "
+        f"{name(w_uid)} takes {format_duration(stake)} from {name(l_uid)}.",
+        True,
+    )]
+
+
+def team_battle(chars: dict, rng, name: NameFn, now: int) -> "list[Note]":
+    pool = running(chars)
+    if len(pool) < TEAM_SIZE * 2:
+        return []
+    picked = rng.sample(pool, TEAM_SIZE * 2)
+    teams = picked[:TEAM_SIZE], picked[TEAM_SIZE:]
+    sums = [sum(battle_sum(chars[u]) for u in team) for team in teams]
+    rolls = [rng.randint(0, s) for s in sums]
+    win, lose = (0, 1) if rolls[0] >= rolls[1] else (1, 0)
+    # Each side moves by 20% of its own shortest clock.
+    gain = int(min(time_left(chars[u], now) for u in teams[win]) * 0.2)
+    loss = int(min(time_left(chars[u], now) for u in teams[lose]) * 0.2)
+    for u in teams[win]:
+        shift(chars[u], -min(gain, time_left(chars[u], now)))
+    for u in teams[lose]:
+        shift(chars[u], loss)
+
+    def _side(i):
+        return ", ".join(name(u) for u in teams[i]) + f" [{rolls[i]}/{sums[i]}]"
+    return [Note(
+        tuple(picked),
+        f"🛡️ Team battle! {_side(win)} beat {_side(lose)}. "
+        f"Winners gain {format_duration(gain)}; losers are set back {format_duration(loss)}.",
+        True,
+    )]
+
+
+# ── random events ────────────────────────────────────────────────────────────
+
+def hand_of_god(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
+    char = chars[uid]
+    pct = rng.randint(5, 75)
+    if rng.random() < 0.8:
+        moved = -scale(char, now, -pct)
+        return Note((uid,), f"🙌 The Hand of God lifts {name(uid)} {format_duration(moved)} closer to level {char['level'] + 1}!", True)
+    moved = scale(char, now, pct)
+    return Note((uid,), f"🔥 The Hand of God swats {name(uid)} {format_duration(moved)} away from level {char['level'] + 1}.", True)
+
+
+def _item_event(uid: int, char: dict, rng, name: NameFn, good: bool) -> "Note | None":
+    if not char["items"]:
+        return None
+    slot = rng.choice(sorted(char["items"]))
+    item = char["items"][slot]
+    before = item["level"]
+    item["level"] = max(1, int(before * (1.1 if good else 0.9)))
+    lead = rng.choice(_ITEM_BOONS if good else _ITEM_BANES)
+    verb = "gains" if good else "loses"
+    return Note((uid,), f"{'🌟' if good else '🌧️'} {lead} {name(uid)}'s {_item_label(slot, item)}: it {verb} 10% ({before} → {item['level']}).")
+
+
+def godsend(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
+    char = chars[uid]
+    if rng.random() < 0.1:
+        note = _item_event(uid, char, rng, name, good=True)
+        if note:
+            return note
+    moved = -scale(char, now, -rng.randint(5, 12))
+    return Note((uid,), f"🌟 {name(uid)} {rng.choice(_GODSENDS)}. {format_duration(moved)} off their clock.")
+
+
+def calamity(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
+    char = chars[uid]
+    if rng.random() < 0.1:
+        note = _item_event(uid, char, rng, name, good=False)
+        if note:
+            return note
+    moved = scale(char, now, rng.randint(5, 12))
+    return Note((uid,), f"🌧️ {name(uid)} {rng.choice(_CALAMITIES)}. {format_duration(moved)} added to their clock.")
+
+
+def _blessing(uid: int, chars: dict, rng, name: NameFn, now: int) -> "Note | None":
+    others = [u for u in running(chars) if u != uid and chars[u]["moral"] == "good"]
+    if not others:
+        return None
+    friend = rng.choice(others)
+    pct = rng.randint(5, 12)
+    for u in (uid, friend):
+        scale(chars[u], now, -pct)
+    return Note((uid, friend), f"🕊️ {name(uid)} and {name(friend)} prayed together. Both are {pct}% closer to their next level.")
+
+
+def _temptation(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
+    marks = [u for u in running(chars) if u != uid and chars[u]["moral"] == "good"]
+    if marks and rng.random() < 0.5:
+        mark = rng.choice(marks)
+        taken = _steal(chars[uid], chars[mark], rng)
+        if taken:
+            return Note((uid, mark), f"🦹 {name(uid)} crept into {name(mark)}'s camp and stole their {taken}!", True)
+        return Note((uid,), f"🦹 {name(uid)} rifled through {name(mark)}'s pack and found nothing worth taking.")
+    moved = scale(chars[uid], now, rng.randint(1, 5))
+    return Note((uid,), f"🦹 {name(uid)} was forsaken by their dark patron. {format_duration(moved)} added to their clock.")
+
+
+def random_events(uid: int, chars: dict, rng, name: NameFn, now: int, ticks_per_day: int) -> "list[Note]":
+    """One tick's worth of luck for one running character."""
+    char = chars[uid]
+    factor = LAW_EVENT_FACTOR[char["law"]] / ticks_per_day
+    notes = []
+    if rng.random() < HAND_OF_GOD_PER_DAY * factor:
+        notes.append(hand_of_god(uid, chars, rng, name, now))
+    if rng.random() < GODSEND_PER_DAY * factor:
+        notes.append(godsend(uid, chars, rng, name, now))
+    if rng.random() < CALAMITY_PER_DAY * factor:
+        notes.append(calamity(uid, chars, rng, name, now))
+    if char["moral"] == "good" and rng.random() < BLESSING_PER_DAY / ticks_per_day:
+        notes.append(_blessing(uid, chars, rng, name, now))
+    if char["moral"] == "evil" and rng.random() < TEMPTATION_PER_DAY / ticks_per_day:
+        notes.append(_temptation(uid, chars, rng, name, now))
+    return [n for n in notes if n]
+
+
+# ── quests ───────────────────────────────────────────────────────────────────
+
+def new_quest() -> dict:
+    return {"members": [], "description": "", "ends_at": None, "not_before": 0}
+
+
+def quest_active(quest: dict) -> bool:
+    return quest.get("ends_at") is not None
+
+
+def _names(uids, name: NameFn) -> str:
+    return ", ".join(name(u) for u in uids)
+
+
+def _end_quest(quest: dict, not_before: int) -> None:
+    quest.update(members=[], description="", ends_at=None, not_before=not_before)
+
+
+def quest_eligible(chars: dict, now: int) -> list:
+    return [
+        uid for uid in running(chars)
+        if chars[uid]["level"] >= QUEST_MIN_LEVEL
+        and now - max(chars[uid]["last_penalty_at"], chars[uid]["created_at"]) >= QUEST_CLEAN_SECS
+    ]
+
+
+def tick_quest(chars: dict, quest: dict, rng, name: NameFn, now: int) -> "list[Note]":
+    """Finish a quest whose time is up, or start one when a party is ready."""
+    if quest_active(quest):
+        quest["members"] = [u for u in quest["members"] if u in chars]
+        if not quest["members"]:
+            _end_quest(quest, now)
+            return []
+        if now < quest["ends_at"]:
+            return []
+        members = tuple(quest["members"])
+        for u in members:
+            scale(chars[u], now, -QUEST_REWARD_PCT)
+        _end_quest(quest, now + QUEST_REST_SECS)
+        return [Note(members, f"🏆 {_names(members, name)} completed their quest! Each is {QUEST_REWARD_PCT}% closer to their next level.", True)]
+
+    if now < quest.get("not_before", 0):
+        return []
+    eligible = quest_eligible(chars, now)
+    if len(eligible) < QUEST_MIN_PARTY:
+        return []
+    members = rng.sample(eligible, min(QUEST_MAX_PARTY, len(eligible)))
+    quest.update(
+        members=members,
+        description=rng.choice(_QUESTS),
+        ends_at=now + rng.randint(QUEST_MIN_SECS, QUEST_MAX_SECS),
+    )
+    # Mentions, not names: the questers are the ones who must now keep quiet.
+    called = ", ".join(f"<@{u}>" for u in members)
+    return [Note(
+        tuple(members),
+        f"📜 {called} have been chosen to {quest['description']}. "
+        f"It ends <t:{quest['ends_at']}:R> — if any of them takes a penalty before then, everyone pays.",
+        True,
+        tuple(members),
+    )]
+
+
+def fail_quest(culprit: int, chars: dict, quest: dict, now: int, name: NameFn) -> "list[Note]":
+    members = tuple(quest["members"])
+    _end_quest(quest, now + QUEST_DROUGHT_SECS)
+    for uid in running(chars):
+        penalize(chars[uid], PEN_QUEST_FAIL, now)
+    return [Note(
+        members,
+        f"💀 {name(culprit)} broke the quest's silence. The gods are displeased: every adventurer is "
+        f"set back, and no quest will be offered for {format_duration(QUEST_DROUGHT_SECS)}.",
+        True,
+    )]

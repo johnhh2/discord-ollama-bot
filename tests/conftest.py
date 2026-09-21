@@ -106,6 +106,8 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "gambling_threads", {})
     monkeypatch.setattr(_state, "counters", {})
     monkeypatch.setattr(_state, "counter_perms", {})
+    monkeypatch.setattr(_state, "idle_characters", {})
+    monkeypatch.setattr(_state, "idle_quests", {})
     monkeypatch.setattr(_state, "channel_prompts", {})
     monkeypatch.setattr(_state, "command_streak", {})
     monkeypatch.setattr(_state, "crime_today_by_user", {})
@@ -145,6 +147,7 @@ def reset_bot_state(monkeypatch):
         "save_gambling_thread", "delete_gambling_thread",
     "save_counter", "delete_counter", "save_counter_value",
     "save_counter_perm", "delete_counter_perm",
+        "save_idle_character", "delete_idle_character", "delete_idle_guild", "save_idle_quest",
         "save_quote_log", "save_saved_quotes", "save_lottery", "save_records",
         "save_lottery_ticket_grant",
         "save_leveling", "save_command_perms", "save_channel_prompts",
@@ -248,6 +251,14 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_assets_cog_mod, "confirm_purchase", _auto_confirm)
     monkeypatch.setattr(_assets_cog_mod, "confirm_prompt", _auto_confirm)
     monkeypatch.setattr(_lottery_cog_mod, "confirm_purchase", _auto_confirm)
+
+    # !idle: confirms auto-accept, the alignment dropdown is dismissed.
+    import src.cogs.idle_cog as _idle_cog_mod
+    monkeypatch.setattr(_idle_cog_mod, "confirm_prompt", _auto_confirm)
+
+    async def _no_pick(*args, **kwargs):
+        return None
+    monkeypatch.setattr(_idle_cog_mod, "pick_from_list", _no_pick)
 
     # The settings prompts (src/settings_views.py) wait on a click that never
     # comes in tests: dismiss them by default, as if the admin pressed Cancel.

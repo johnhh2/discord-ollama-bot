@@ -70,5 +70,7 @@
   "settings minecraft-channel": {"tier": "server_admin", "hidden": false},
   "settings dailies-channel": {"tier": "server_admin", "hidden": false},
   "count":         {"tier": "everyone",    "hidden": false},
-  "counter":       {"tier": "server_admin", "hidden": false}
+  "counter":       {"tier": "server_admin", "hidden": false},
+  "idle":          {"tier": "everyone",    "hidden": false},
+  "idle admin":    {"tier": "server_admin", "hidden": false}
 }

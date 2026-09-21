@@ -1,0 +1,922 @@
+"""!idle — a per-guild idle RPG. The rules live in src/idlerpg.py; this cog
+is the Discord half: commands, the once-a-minute tick, the listeners that
+turn presence and chatter into clock changes, and the feed threads.
+
+The game runs in the channel set with `!settings-channel idle` and is off
+while none is set (every clock freezes). Server-wide news is posted in that
+channel; each character also gets a public thread under it that carries
+everything concerning them.
+
+"Logged in" means seen online within the last hour (`idlerpg.GRACE_SECS`).
+`last_seen` is stamped by presence updates, by the tick for anyone showing
+non-offline, and by any message the player sends in the guild (which is what
+keeps an invisible player in the game). A character not seen for an hour is
+paused retroactively at `last_seen + GRACE_SECS`, so neither the tick's timing
+nor a reboot hands out free minutes. Without the presence intent every
+status reads offline, so the check is skipped and everyone counts as online.
+
+All rule mutations are synchronous; awaits happen only when posting and
+saving. Rows changed by the tick or a listener are queued in `_dirty` and
+written once per tick rather than per event.
+"""
+from __future__ import annotations
+
+import logging
+import random
+import re
+import time
+
+import discord
+from discord.ext import commands, tasks
+
+import src.persistence as persistence
+from src import idlerpg as rpg
+from src import state
+from src.confirm_view import confirm_prompt
+from src.economy import _ct_today, next_daily_reset_ts
+from src.guild_config import get_guild_cfg
+from src.helpers import emb, C_BLUE, C_GOLD, C_GREEN, C_GREY, C_RED, MemberConverter, format_duration, parse_duration
+from src.permissions import gate_channel_ids, is_silenced
+from src.settings_views import pick_from_list
+
+log = logging.getLogger(__name__)
+
+TICK_SECONDS = 60
+TICKS_PER_DAY = 86_400 // TICK_SECONDS
+# A late boot may owe a character many levels; past this the rest wait a tick.
+MAX_LEVELS_PER_TICK = 25
+SEEN_SAVE_SECS = 300            # how stale the persisted last_seen may get
+THREAD_AUTO_ARCHIVE_MINUTES = 10080   # Discord's maximum; a send un-archives the thread anyway
+THREAD_NAME_MAX = 100
+# Discord allows two renames per thread per ten minutes (see CLAUDE.md:
+# Gambling threads) — titles are brought up to date by the tick, never inline.
+RENAME_INTERVAL = 300.0
+MESSAGE_MAX = 1900
+LEADERBOARD_SIZE = 10
+CLASS_MAX = 30
+_CLASS_RE = re.compile(r"[\w][\w '\-]*")
+_COMMAND_WORDS = ("!idle", "!irpg")
+NOT_YOURS = "Not your prompt."
+NO_MENTIONS = discord.AllowedMentions.none()
+
+ALIGN_EFFECTS = (
+    "**Good** +10% item power in battle, prayers with other good players, rarer critical strikes.\n"
+    "**Evil** −10% item power, more critical strikes, a chance to rob the good — or be forsaken.\n"
+    "**Lawful** half as many random events, good and bad. **Chaotic** twice as many."
+)
+
+
+def _is_idle_command(content: str) -> bool:
+    words = content.split(None, 1)
+    return bool(words) and words[0].lower() in _COMMAND_WORDS
+
+
+class IdleCog(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        self.rng = random.Random()
+        self._dirty: set = set()            # (guild_id, uid) rows to save at the next flush
+        self._dirty_quests: set = set()
+        self._pending: dict = {}            # guild_id -> notes queued by listeners
+        self._talk: dict = {}               # (guild_id, uid) -> [messages, seconds] since the last tick
+        self._seen_saved: dict = {}
+        self._creating: set = set()         # (guild_id, uid) with a thread being created
+        self._rename_due: set = set()
+        self._renamed_at: dict = {}
+
+    async def cog_load(self):
+        # Started here (not __init__) so tests constructing the cog don't spawn the loop.
+        self._loop.start()
+
+    def cog_unload(self):
+        self._loop.cancel()
+
+    # ── lookups ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _chars(guild_id: int) -> dict:
+        return state.idle_characters.setdefault(guild_id, {})
+
+    @staticmethod
+    def _quest(guild_id: int) -> dict:
+        return state.idle_quests.setdefault(guild_id, rpg.new_quest())
+
+    @staticmethod
+    def _channel(guild):
+        cid = get_guild_cfg(guild.id).get("idle_channel")
+        return guild.get_channel(cid) if cid else None
+
+    @staticmethod
+    def _namer(guild):
+        def name(uid: int) -> str:
+            member = guild.get_member(uid)
+            return f"**{discord.utils.escape_markdown(member.display_name)}**" if member else f"<@{uid}>"
+        return name
+
+    def _online(self, guild, uid: int) -> bool:
+        if not getattr(getattr(self.bot, "intents", None), "presences", False):
+            return True
+        member = guild.get_member(uid)
+        return member is not None and str(member.status) != "offline"
+
+    def _title(self, guild, uid: int, char: dict) -> str:
+        member = guild.get_member(uid)
+        who = member.display_name if member else str(uid)
+        stars = "★" * char["prestige"] + " " if char["prestige"] else ""
+        return f"{stars}{who} — Lv {char['level']} {char['class']}"[:THREAD_NAME_MAX]
+
+    def _seen(self, guild, uid: int, char: dict, now: int) -> None:
+        """The player is provably here: stamp them, and wake a paused clock."""
+        char["last_seen"] = now
+        key = (guild.id, uid)
+        if now - self._seen_saved.get(key, 0) >= SEEN_SAVE_SECS:
+            self._seen_saved[key] = now
+            self._dirty.add(key)
+        if rpg.is_paused(char) and self._channel(guild) is not None:
+            rpg.resume(char, now)
+            self._dirty.add(key)
+            self._pending.setdefault(guild.id, []).append(rpg.Note(
+                (uid,),
+                f"▶️ {self._namer(guild)(uid)} is back. The clock resumes with "
+                f"{format_duration(rpg.time_left(char, now))} to level {char['level'] + 1}.",
+            ))
+
+    # ── the tick ─────────────────────────────────────────────────────────
+
+    @tasks.loop(seconds=TICK_SECONDS)
+    async def _loop(self):
+        # tasks.loop stops for good on an unhandled exception.
+        try:
+            await self.tick()
+        except Exception:
+            log.exception("idle: tick failed")
+
+    @_loop.before_loop
+    async def _before_loop(self):
+        # wait_until_ready gates only the gateway; init_db_state, which loads
+        # state.idle_characters, finishes later inside on_ready.
+        await self.bot.wait_until_ready()
+        await persistence.init_done.wait()
+
+    async def tick(self, now: "int | None" = None) -> None:
+        now = int(time.time() if now is None else now)
+        for gid in list(state.idle_characters):
+            guild = self.bot.get_guild(gid)
+            if guild is None:
+                continue
+            notes = self._advance(guild, now)
+            await self._deliver(guild, notes)
+            await self._sweep_renames(guild)
+        await self._flush()
+
+    def _advance(self, guild, now: int) -> list:
+        """One tick of the rules for one guild. Synchronous on purpose: no
+        command or listener can interleave with a half-applied tick."""
+        gid = guild.id
+        chars, quest = self._chars(gid), self._quest(gid)
+        enabled = self._channel(guild) is not None
+        name = self._namer(guild)
+        notes: list = []
+
+        for uid, char in list(chars.items()):
+            if self._online(guild, uid):
+                self._seen(guild, uid, char, now)
+            if rpg.is_paused(char):
+                continue
+            if not enabled:
+                rpg.pause(char, now)
+                self._dirty.add((gid, uid))
+                continue
+            here = rpg.logged_in(char, now)
+            horizon = now if here else char["last_seen"] + rpg.GRACE_SECS
+            for _ in range(MAX_LEVELS_PER_TICK):
+                if char["next_level_at"] > horizon:
+                    break
+                rpg.level_up(char)
+                self._rename_due.add((gid, uid))
+                notes.append(rpg.Note(
+                    (uid,),
+                    f"🎉 {name(uid)} the {char['class']} reached **level {char['level']}**! "
+                    f"The next one takes {format_duration(rpg.ttl(char['level'], char['prestige']))}.",
+                    True,
+                ))
+                notes.append(rpg.find_item(uid, char, self.rng, name))
+                notes += rpg.level_up_battle(uid, chars, self.rng, name, now)
+            if not here:
+                rpg.pause(char, horizon)
+                self._dirty.add((gid, uid))
+                notes.append(rpg.Note(
+                    (uid,),
+                    f"⏸️ {name(uid)} hasn't been seen for an hour. Their clock is paused with "
+                    f"{format_duration(char['remaining'])} to go.",
+                ))
+            else:
+                notes += rpg.random_events(uid, chars, self.rng, name, now, TICKS_PER_DAY)
+
+        if enabled:
+            if self.rng.random() < rpg.TEAM_BATTLE_PER_DAY / TICKS_PER_DAY:
+                notes += rpg.team_battle(chars, self.rng, name, now)
+            before = dict(quest)
+            notes += rpg.tick_quest(chars, quest, self.rng, name, now)
+            if quest != before:
+                self._dirty_quests.add(gid)
+
+        for (tgid, uid), (count, seconds) in list(self._talk.items()):
+            if tgid != gid:
+                continue
+            del self._talk[(tgid, uid)]
+            notes.append(rpg.Note(
+                (uid,),
+                f"💬 Talking cost {name(uid)} {format_duration(seconds)} ({count} message{'s' if count != 1 else ''}).",
+            ))
+        notes += self._pending.pop(gid, [])
+
+        for note in notes:
+            self._dirty.update((gid, uid) for uid in note.uids)
+        return notes
+
+    async def _flush(self) -> None:
+        for gid, uid in list(self._dirty):
+            self._dirty.discard((gid, uid))
+            if uid not in state.idle_characters.get(gid, {}):
+                continue
+            try:
+                await persistence.save_idle_character(gid, uid)
+            except Exception:
+                log.exception("idle: save of %s/%s failed", gid, uid)
+                self._dirty.add((gid, uid))
+        for gid in list(self._dirty_quests):
+            self._dirty_quests.discard(gid)
+            if gid in state.idle_quests:
+                await persistence.save_idle_quest(gid)
+
+    # ── posting ──────────────────────────────────────────────────────────
+
+    async def _deliver(self, guild, notes: list, *, skip_main: bool = False) -> None:
+        """Everything for one destination goes out as one message (chunked),
+        so a busy tick costs one send per thread, not one per event."""
+        channel = self._channel(guild)
+        if channel is None or not notes:
+            return
+        if not skip_main:
+            public = [n for n in notes if n.public]
+            # Pings land in the channel only; the same line in a feed thread
+            # shows the name without mentioning anyone a second time.
+            await self._send(channel, [n.text for n in public], ping={uid for n in public for uid in n.ping})
+        feeds: dict = {}
+        for note in notes:
+            for uid in note.uids:
+                feeds.setdefault(uid, []).append(note.text)
+        for uid, lines in feeds.items():
+            thread = await self._thread_for(guild, channel, uid)
+            if thread is not None:
+                await self._send(thread, lines)
+
+    @staticmethod
+    async def _send(dest, lines: list, ping=()) -> None:
+        """Always silent. `ping` is the only way a post mentions anyone, and
+        even then nobody is notified — they get the mention badge."""
+        mentions = discord.AllowedMentions(everyone=False, roles=False, users=[discord.Object(id=u) for u in ping]) if ping else NO_MENTIONS
+        chunk = ""
+        chunks = []
+        for line in lines:
+            if chunk and len(chunk) + len(line) + 1 > MESSAGE_MAX:
+                chunks.append(chunk)
+                chunk = ""
+            chunk = f"{chunk}\n{line}" if chunk else line[:MESSAGE_MAX]
+        if chunk:
+            chunks.append(chunk)
+        for text in chunks:
+            try:
+                await dest.send(text, silent=True, allowed_mentions=mentions)
+            except discord.HTTPException as e:
+                log.warning("idle: send to %s failed (%s)", getattr(dest, "id", "?"), type(e).__name__)
+                return
+
+    async def _thread_for(self, guild, channel, uid: int):
+        """The character's feed thread under `channel`, made (or remade — it
+        was deleted, or the idle channel moved) when there isn't one."""
+        char = self._chars(guild.id).get(uid)
+        if char is None:
+            return None
+        tid = char["thread_id"]
+        if tid:
+            thread = guild.get_thread(tid)
+            if thread is None:
+                try:
+                    # Archived threads drop out of the cache; a send revives them.
+                    thread = await guild.fetch_channel(tid)
+                except discord.NotFound:
+                    thread = None
+                except discord.HTTPException:
+                    return None   # transient — skip this post rather than open a second thread
+            if thread is not None and getattr(thread, "parent_id", None) == channel.id:
+                return thread
+        return await self._create_thread(guild, channel, uid, char)
+
+    async def _create_thread(self, guild, channel, uid: int, char: dict):
+        key = (guild.id, uid)
+        create = getattr(channel, "create_thread", None)
+        if create is None or key in self._creating:
+            return None
+        self._creating.add(key)
+        try:
+            thread = await create(
+                name=self._title(guild, uid, char),
+                type=discord.ChannelType.public_thread,
+                auto_archive_duration=THREAD_AUTO_ARCHIVE_MINUTES,
+            )
+        except discord.HTTPException as e:
+            log.warning("idle: create_thread in %s failed (%s)", channel.id, type(e).__name__)
+            return None
+        finally:
+            self._creating.discard(key)
+        if self._chars(guild.id).get(uid) is not char:
+            return None   # the character was deleted while the thread was being made
+        char["thread_id"] = thread.id
+        await persistence.save_idle_character(guild.id, uid)
+        member = guild.get_member(uid)
+        if member is not None:
+            try:
+                await thread.add_user(member)
+            except discord.HTTPException:
+                pass  # best-effort: the thread is public either way
+        await self._send(thread, [
+            f"📖 This is {self._namer(guild)(uid)}'s story. Everything that happens to them lands here.\n"
+            "Idling is progress; talking in here or in the idle channel costs time. `!idle rules` has the details.",
+        ])
+        return thread
+
+    async def _archive_thread(self, guild, thread_id: "int | None") -> None:
+        thread = guild.get_thread(thread_id) if thread_id else None
+        if thread is None:
+            return
+        try:
+            await thread.edit(archived=True)
+        except discord.HTTPException:
+            pass  # best-effort: Discord archives it after a week idle anyway
+
+    async def _sweep_renames(self, guild) -> None:
+        now = time.monotonic()
+        for key in [k for k in self._rename_due if k[0] == guild.id]:
+            gid, uid = key
+            char = self._chars(gid).get(uid)
+            thread = guild.get_thread(char["thread_id"]) if char and char["thread_id"] else None
+            if thread is None:
+                self._rename_due.discard(key)
+                continue
+            if now - self._renamed_at.get(key, -RENAME_INTERVAL) < RENAME_INTERVAL:
+                continue
+            self._rename_due.discard(key)
+            title = self._title(guild, uid, char)
+            if title == thread.name:
+                continue
+            # The slot is spent whether or not the edit lands.
+            self._renamed_at[key] = now
+            try:
+                await thread.edit(name=title)
+            except discord.HTTPException as e:
+                log.warning("idle: rename of thread %s failed (%s)", thread.id, type(e).__name__)
+                self._rename_due.add(key)
+
+    # ── listeners ────────────────────────────────────────────────────────
+
+    def _penalize(self, guild, uid: int, base: int, now: int, units: int = 1) -> int:
+        gid = guild.id
+        quest = self._quest(gid)
+        was_active = rpg.quest_active(quest)
+        seconds, notes = rpg.penalize_player(uid, self._chars(gid), quest, base, now, self._namer(guild), units)
+        self._dirty.add((gid, uid))
+        if notes:
+            self._pending.setdefault(gid, []).extend(notes)
+            self._dirty.update((gid, other) for other in self._chars(gid))
+        if was_active != rpg.quest_active(quest):
+            self._dirty_quests.add(gid)
+        return seconds
+
+    @commands.Cog.listener()
+    async def on_presence_update(self, before, after):
+        char = state.idle_characters.get(after.guild.id, {}).get(after.id)
+        if char is None:
+            return
+        now = int(time.time())
+        if str(after.status) != "offline":
+            self._seen(after.guild, after.id, char, now)
+        elif str(before.status) != "offline":
+            # The last moment they were provably here; the grace hour runs from it.
+            char["last_seen"] = now
+            self._dirty.add((after.guild.id, after.id))
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        guild = message.guild
+        if guild is None or message.author.bot:
+            return
+        uid = message.author.id
+        char = state.idle_characters.get(guild.id, {}).get(uid)
+        if char is None or is_silenced(uid, guild.id):
+            return
+        now = int(time.time())
+        # A message anywhere in the guild proves presence — it's what keeps an
+        # invisible player logged in.
+        self._seen(guild, uid, char, now)
+        idle_channel = get_guild_cfg(guild.id).get("idle_channel")
+        if not idle_channel or idle_channel not in gate_channel_ids(message.channel):
+            return
+        if _is_idle_command(message.content):
+            return
+        seconds = self._penalize(guild, uid, rpg.PEN_TALK_PER_CHAR, now, units=max(1, len(message.content)))
+        # Reported by the tick as one line, not one reply per message.
+        tally = self._talk.setdefault((guild.id, uid), [0, 0])
+        tally[0] += 1
+        tally[1] += seconds
+
+    @commands.Cog.listener()
+    async def on_thread_member_remove(self, member):
+        thread = member.thread
+        guild = thread.guild
+        char = state.idle_characters.get(guild.id, {}).get(member.id)
+        # Leaving the server also drops them from the thread; that's the quit
+        # penalty's business (on_member_remove), not a second one here.
+        if char is None or char["thread_id"] != thread.id or guild.get_member(member.id) is None:
+            return
+        seconds = self._penalize(guild, member.id, rpg.PEN_PART, int(time.time()))
+        self._pending.setdefault(guild.id, []).append(rpg.Note(
+            (member.id,),
+            f"🚪 {self._namer(guild)(member.id)} walked out on their own story. {format_duration(seconds)} added to their clock.",
+        ))
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member):
+        char = state.idle_characters.get(member.guild.id, {}).get(member.id)
+        if char is None:
+            return
+        seconds = self._penalize(member.guild, member.id, rpg.PEN_QUIT, int(time.time()))
+        self._pending.setdefault(member.guild.id, []).append(rpg.Note(
+            (member.id,),
+            f"🏃 **{discord.utils.escape_markdown(member.display_name)}** fled the realm. "
+            f"{format_duration(seconds)} added to their clock.",
+            True,
+        ))
+
+    # ── command plumbing ─────────────────────────────────────────────────
+
+    async def _ready(self, ctx, *, need_channel: bool = False) -> bool:
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "The idle RPG is played in a server.", C_RED))
+            return False
+        if need_channel and self._channel(ctx.guild) is None:
+            await ctx.send(embed=emb(
+                "💤 Idle RPG Is Off",
+                "No idle channel is set here. An admin can turn the game on with `!settings-channel idle #channel`.",
+                C_GREY,
+            ))
+            return False
+        return True
+
+    async def _own_char(self, ctx) -> "dict | None":
+        char = self._chars(ctx.guild.id).get(ctx.author.id)
+        if char is None:
+            await ctx.send(embed=emb("❌ No Character", "You have no character here. `!idle join <class>` makes one.", C_RED))
+            return None
+        self._seen(ctx.guild, ctx.author.id, char, int(time.time()))
+        return char
+
+    async def _target_uid(self, ctx, text: "str | None") -> "int | None":
+        """A member, or the raw id of someone who already left the server."""
+        if not text:
+            return None
+        try:
+            return (await MemberConverter().convert(ctx, text)).id
+        except commands.BadArgument:
+            digits = text.strip("<@!>")
+            return int(digits) if digits.isdigit() else None
+
+    def _sheet(self, guild, uid: int, char: dict, now: int) -> discord.Embed:
+        if not rpg.is_paused(char):
+            clock = f"<t:{char['next_level_at']}:R>"
+        elif self._channel(guild) is None:
+            clock = f"⏸️ paused, {format_duration(char['remaining'])} left — the game is switched off"
+        else:
+            clock = f"⏸️ paused, {format_duration(char['remaining'])} left — last seen <t:{char['last_seen']}:R>"
+        lines = [
+            f"**Alignment:** {rpg.alignment_label(char)}",
+            f"**Level {char['level'] + 1}:** {clock}",
+            f"**Item power:** {rpg.item_sum(char):,}",
+            f"**Time lost to penalties:** {format_duration(char['penalty_total'])}",
+            f"**Adventuring since:** <t:{char['created_at']}:D>",
+        ]
+        if char["prestige"]:
+            lines.insert(0, f"**Prestige:** {'★' * char['prestige']}")
+        if char["thread_id"]:
+            lines.append(f"**Feed:** <#{char['thread_id']}>")
+        return emb(f"⚔️ {self._title(guild, uid, char)}", "\n".join(lines), C_BLUE)
+
+    # ── !idle ────────────────────────────────────────────────────────────
+
+    @commands.group(name="idle", aliases=["irpg"], invoke_without_command=True)
+    async def cmd_idle(self, ctx: commands.Context):
+        """!idle join|status|items|top|align|duel|quest|prestige|leave|rules"""
+        if not await self._ready(ctx):
+            return
+        char = self._chars(ctx.guild.id).get(ctx.author.id)
+        if char is None:
+            await ctx.send(embed=emb(
+                "⚔️ Idle RPG",
+                "A game you win by doing nothing. Your character levels up while you're online and idle; "
+                "talking in the idle channel sets you back. Items, battles and quests happen on their own.\n\n"
+                "`!idle join <class>` to start · `!idle rules` for how it works · `!idle top` for the ladder",
+                C_BLUE,
+            ))
+            return
+        now = int(time.time())
+        self._seen(ctx.guild, ctx.author.id, char, now)
+        await ctx.send(embed=self._sheet(ctx.guild, ctx.author.id, char, now))
+
+    @cmd_idle.command(name="join")
+    async def cmd_join(self, ctx: commands.Context, *, class_name: str = None):
+        if not await self._ready(ctx, need_channel=True):
+            return
+        gid, uid = ctx.guild.id, ctx.author.id
+        chars = self._chars(gid)
+        if uid in chars:
+            feed = f" Your feed is <#{chars[uid]['thread_id']}>." if chars[uid]["thread_id"] else ""
+            await ctx.send(embed=emb("❌ Already Adventuring", f"You already have a character here.{feed}", C_RED))
+            return
+        if not class_name:
+            await ctx.send(embed=emb(
+                "❌ Pick a Class",
+                f"Say what you are: `!idle join <class>`. It's yours to invent, up to {CLASS_MAX} characters — "
+                "`!idle join Drunken Bard`, `!idle join Tax Wizard`.",
+                C_RED,
+            ))
+            return
+        class_name = " ".join(class_name.split())
+        if len(class_name) > CLASS_MAX or not _CLASS_RE.fullmatch(class_name):
+            await ctx.send(embed=emb(
+                "❌ Pick a Class",
+                f"A class is up to {CLASS_MAX} characters: letters, digits, spaces, `'` and `-`.",
+                C_RED,
+            ))
+            return
+
+        now = int(time.time())
+        char = rpg.new_character(class_name, now)
+        chars[uid] = char   # claimed before the first await: a second !idle join sees it
+        await persistence.save_idle_character(gid, uid)
+        channel = self._channel(ctx.guild)
+        thread = await self._create_thread(ctx.guild, channel, uid, char)
+        name = self._namer(ctx.guild)(uid)
+        first = format_duration(rpg.ttl(0))
+        if thread is not None:
+            where = f"Your story unfolds in {thread.mention}."
+        else:
+            where = f"I couldn't open your feed thread — check that I have **Create Public Threads** in {channel.mention}. You're in the game regardless."
+        await ctx.send(embed=emb(
+            "⚔️ A New Adventurer",
+            f"{name} the {class_name} sets out. Level 1 is {first} away — now stop talking.\n{where}",
+            C_GREEN,
+        ))
+        if not self._in_idle_channel(ctx):
+            await self._send(channel, [f"🆕 {name} the {class_name} has joined the realm. Level 1 in {first}."])
+
+    @cmd_idle.command(name="status", aliases=["info"])
+    async def cmd_status(self, ctx: commands.Context, *, member: MemberConverter = None):
+        if not await self._ready(ctx):
+            return
+        target = member or ctx.author
+        char = self._chars(ctx.guild.id).get(target.id)
+        if char is None:
+            await ctx.send(embed=emb("❌ No Character", f"{target.display_name} has no character here.", C_RED))
+            return
+        now = int(time.time())
+        if target.id == ctx.author.id:
+            self._seen(ctx.guild, target.id, char, now)
+        await ctx.send(embed=self._sheet(ctx.guild, target.id, char, now))
+
+    @cmd_idle.command(name="items")
+    async def cmd_items(self, ctx: commands.Context, *, member: MemberConverter = None):
+        if not await self._ready(ctx):
+            return
+        target = member or ctx.author
+        char = self._chars(ctx.guild.id).get(target.id)
+        if char is None:
+            await ctx.send(embed=emb("❌ No Character", f"{target.display_name} has no character here.", C_RED))
+            return
+        lines = []
+        for slot in rpg.ITEM_SLOTS:
+            item = char["items"].get(slot)
+            if item is None:
+                lines.append(f"**{slot.title()}:** —")
+            elif item.get("name"):
+                lines.append(f"**{slot.title()}:** ✨ {item['name']} (level {item['level']})")
+            else:
+                lines.append(f"**{slot.title()}:** level {item['level']}")
+        lines.append(f"\n**Item power:** {rpg.item_sum(char):,}")
+        await ctx.send(embed=emb(f"🎒 {self._title(ctx.guild, target.id, char)}", "\n".join(lines), C_BLUE))
+
+    @cmd_idle.command(name="top")
+    async def cmd_top(self, ctx: commands.Context):
+        if not await self._ready(ctx):
+            return
+        now = int(time.time())
+        ranked = sorted(self._chars(ctx.guild.id).items(), key=rpg.rank_key(now))[:LEADERBOARD_SIZE]
+        if not ranked:
+            await ctx.send(embed=emb("🏔️ Idle Ladder", "Nobody is adventuring here yet. `!idle join <class>`.", C_GREY))
+            return
+        name = self._namer(ctx.guild)
+        lines = []
+        for i, (uid, char) in enumerate(ranked, 1):
+            stars = "★" * char["prestige"] + " " if char["prestige"] else ""
+            clock = "⏸️ paused" if rpg.is_paused(char) else f"next <t:{char['next_level_at']}:R>"
+            lines.append(f"**{i}.** {name(uid)} — {stars}Lv {char['level']} {char['class']} · {clock}")
+        await ctx.send(embed=emb("🏔️ Idle Ladder", "\n".join(lines), C_GOLD))
+
+    @cmd_idle.command(name="align", aliases=["alignment"])
+    async def cmd_align(self, ctx: commands.Context, *, alignment: str = None):
+        if not await self._ready(ctx) or await self._own_char(ctx) is None:
+            return
+        if alignment is None:
+            picked = await pick_from_list(
+                ctx,
+                title="⚖️ Alignment",
+                description=f"{ALIGN_EFFECTS}\n\nYou can change once a day. Typed form: `!idle align chaotic good`.",
+                options=[(rpg.alignment_label({"law": law, "moral": moral}).title(), f"{law} {moral}") for law, moral in rpg.ALIGNMENTS],
+                placeholder="Pick an alignment…",
+                multi=False,
+            )
+            if not picked:
+                return
+            alignment = picked[0]
+        parsed = rpg.parse_alignment(alignment)
+        if parsed is None:
+            await ctx.send(embed=emb(
+                "❌ Alignment",
+                "Use a law and a moral — `!idle align lawful good`, `!idle align chaotic`, `!idle align neutral`.",
+                C_RED,
+            ))
+            return
+        # The dropdown was a long await — read the character again.
+        char = self._chars(ctx.guild.id).get(ctx.author.id)
+        if char is None:
+            return
+        now = int(time.time())
+        if (char["law"], char["moral"]) == parsed:
+            await ctx.send(embed=emb("⚖️ Alignment", f"You're already {rpg.alignment_label(char)}.", C_GREY))
+            return
+        ready_at = char["align_changed_at"] + rpg.ALIGN_COOLDOWN_SECS
+        if now < ready_at:
+            await ctx.send(embed=emb("❌ Alignment", f"A change of heart takes time — you can switch again <t:{ready_at}:R>.", C_RED))
+            return
+        char["law"], char["moral"] = parsed
+        char["align_changed_at"] = now
+        await persistence.save_idle_character(ctx.guild.id, ctx.author.id)
+        await ctx.send(embed=emb("⚖️ Alignment", f"You are now **{rpg.alignment_label(char)}**.\n\n{ALIGN_EFFECTS}", C_GREEN))
+
+    @cmd_idle.command(name="duel")
+    async def cmd_duel(self, ctx: commands.Context, *, member: MemberConverter = None):
+        if not await self._ready(ctx, need_channel=True):
+            return
+        char = await self._own_char(ctx)
+        if char is None:
+            return
+        if member is None:
+            await ctx.send(embed=emb("❌ Usage", "`!idle duel @user` — one challenge a day.", C_RED))
+            return
+        gid, uid = ctx.guild.id, ctx.author.id
+        chars = self._chars(gid)
+        target = chars.get(member.id)
+        problem = None
+        if member.id == uid:
+            problem = "You can't duel yourself."
+        elif target is None:
+            problem = f"{member.display_name} has no character here."
+        elif rpg.is_paused(target):
+            problem = f"{member.display_name} is offline — their clock is paused, and so are they."
+        elif char["duel_day"] == _ct_today():
+            problem = f"You've had today's duel. The next one is ready <t:{next_daily_reset_ts()}:R>."
+        if problem:
+            await ctx.send(embed=emb("❌ Duel", problem, C_RED))
+            return
+        char["duel_day"] = _ct_today()
+        notes = rpg.duel(uid, member.id, chars, self.rng, self._namer(ctx.guild), int(time.time()))
+        await persistence.save_idle_character(gid, uid)
+        await persistence.save_idle_character(gid, member.id)
+        await ctx.send(embed=emb("🤺 Duel", "\n".join(n.text for n in notes), C_GOLD))
+        await self._deliver(ctx.guild, notes, skip_main=self._in_idle_channel(ctx))
+
+    def _in_idle_channel(self, ctx) -> bool:
+        """The reply already shows there — don't post the same news under it."""
+        channel = self._channel(ctx.guild)
+        return channel is not None and ctx.channel.id == channel.id
+
+    @cmd_idle.command(name="quest")
+    async def cmd_quest(self, ctx: commands.Context):
+        if not await self._ready(ctx, need_channel=True):
+            return
+        now = int(time.time())
+        quest = self._quest(ctx.guild.id)
+        name = self._namer(ctx.guild)
+        if rpg.quest_active(quest):
+            party = ", ".join(name(u) for u in quest["members"])
+            body = (
+                f"{party} must {quest['description']}.\nIt ends <t:{quest['ends_at']}:R>. "
+                f"If any of them takes a penalty first, every adventurer pays. Success is worth "
+                f"{rpg.QUEST_REWARD_PCT}% of each quester's clock."
+            )
+        else:
+            ready = len(rpg.quest_eligible(self._chars(ctx.guild.id), now))
+            body = (
+                f"No quest is running. One starts when at least {rpg.QUEST_MIN_PARTY} adventurers are level "
+                f"{rpg.QUEST_MIN_LEVEL}+, logged in, and {format_duration(rpg.QUEST_CLEAN_SECS)} clear of any penalty "
+                f"— **{ready}** qualify right now."
+            )
+            if now < quest["not_before"]:
+                body += f"\nThe gods offer the next one no sooner than <t:{quest['not_before']}:R>."
+        await ctx.send(embed=emb("📜 Quest", body, C_BLUE))
+
+    @cmd_idle.command(name="prestige")
+    async def cmd_prestige(self, ctx: commands.Context):
+        if not await self._ready(ctx, need_channel=True):
+            return
+        char = await self._own_char(ctx)
+        if char is None:
+            return
+        if char["level"] < rpg.PRESTIGE_LEVEL:
+            await ctx.send(embed=emb("❌ Prestige", f"Prestige opens at level {rpg.PRESTIGE_LEVEL}. You're level {char['level']}.", C_RED))
+            return
+        maxed = char["prestige"] >= rpg.PRESTIGE_MAX_RANKS
+        perk = "no further speed bonus (you're at the cap), just the star" if maxed else f"levelling {rpg.PRESTIGE_BONUS_PCT}% faster, for good"
+        if not await confirm_prompt(
+            ctx,
+            title="🌟 Prestige",
+            description=f"You go back to **level 0** and lose **every item**. In return: a ★ and {perk}.",
+            payer=ctx.author,
+            not_yours=NOT_YOURS,
+        ):
+            return
+        gid, uid = ctx.guild.id, ctx.author.id
+        # Identity + level again: the prompt was a long await.
+        if self._chars(gid).get(uid) is not char or char["level"] < rpg.PRESTIGE_LEVEL:
+            return
+        rpg.do_prestige(char, int(time.time()))
+        self._rename_due.add((gid, uid))
+        await persistence.save_idle_character(gid, uid)
+        note = rpg.Note((uid,), f"🌟 {self._namer(ctx.guild)(uid)} has ascended to prestige {'★' * char['prestige']} and begins again at level 0.", True)
+        await ctx.send(embed=emb("🌟 Prestige", note.text, C_GOLD))
+        await self._deliver(ctx.guild, [note], skip_main=self._in_idle_channel(ctx))
+
+    @cmd_idle.command(name="leave")
+    async def cmd_leave(self, ctx: commands.Context):
+        if not await self._ready(ctx):
+            return
+        gid, uid = ctx.guild.id, ctx.author.id
+        char = self._chars(gid).get(uid)
+        if char is None:
+            await ctx.send(embed=emb("❌ No Character", "You have no character here.", C_RED))
+            return
+        if not await confirm_prompt(
+            ctx,
+            title="🪦 Retire Your Character",
+            description=f"Your level {char['level']} {char['class']} and everything they carry is deleted for good.",
+            payer=ctx.author,
+            not_yours=NOT_YOURS,
+        ):
+            return
+        if not await self._remove_character(ctx.guild, uid, char):
+            return
+        await ctx.send(embed=emb("🪦 Retired", "Your character hangs up their boots. You can talk freely again.", C_GREY))
+
+    async def _remove_character(self, guild, uid: int, char: dict) -> bool:
+        chars = self._chars(guild.id)
+        if chars.get(uid) is not char:
+            return False   # already gone, or replaced, while a prompt was open
+        del chars[uid]
+        self._talk.pop((guild.id, uid), None)
+        await persistence.delete_idle_character(guild.id, uid)
+        await self._archive_thread(guild, char["thread_id"])
+        return True
+
+    @cmd_idle.command(name="rules", aliases=["help"])
+    async def cmd_rules(self, ctx: commands.Context):
+        hour = format_duration(rpg.GRACE_SECS)
+        await ctx.send(embed=emb(
+            "📖 Idle RPG — How It Works",
+            f"**Levelling.** Your character levels up on a clock: {format_duration(rpg.ttl(0))} for level 1, "
+            f"{int((rpg.LEVEL_MULT - 1) * 100)}% longer for each level after. There is nothing to do but wait.\n"
+            f"**Logged in.** The clock runs while you've been online in the last {hour} (idle and do-not-disturb count). "
+            "After that it pauses, and picks up where it stopped when you're back. No penalty for being away.\n"
+            "**Talking costs time.** Every message in the idle channel or any feed thread adds seconds — one per character typed, "
+            f"growing {int((rpg.PENALTY_MULT - 1) * 100)}% per level. `!idle` commands are free. Leaving your own thread or the server costs more.\n"
+            f"**Items and battles.** Each level-up finds an item for one of ten slots and may start a fight (always from level {rpg.BATTLE_ALWAYS_LEVEL}). "
+            "Both sides roll up to their item power; winning shortens your clock, losing lengthens it.\n"
+            "**Luck.** Godsends, calamities and the Hand of God strike at random. Alignment (`!idle align`) bends the odds.\n"
+            f"**Quests.** Level {rpg.QUEST_MIN_LEVEL}+ adventurers are sent on quests of 12–24 hours. If any quester takes a penalty, *everyone* pays.\n"
+            f"**Duels.** `!idle duel @user` once a day: the loser hands {rpg.DUEL_PCT}% of their clock to the winner.\n"
+            f"**Prestige.** At level {rpg.PRESTIGE_LEVEL}, `!idle prestige` starts you over with a ★ and a permanent speed bonus.\n\n"
+            "`!idle status` · `items` · `top` · `quest` · `leave`",
+            C_BLUE,
+        ))
+
+    # ── !idle admin ──────────────────────────────────────────────────────
+
+    @cmd_idle.group(name="admin", invoke_without_command=True)
+    async def cmd_admin(self, ctx: commands.Context):
+        await ctx.send(embed=emb(
+            "🛠️ Idle RPG Admin",
+            "`!idle admin hog @user` — a Hand of God, now\n"
+            "`!idle admin push @user <±time>` — move a clock (`-2h` sooner, `+1d` later)\n"
+            "`!idle admin remove @user` — delete a character\n"
+            "`!idle admin reset` — wipe this server's game",
+            C_GREY,
+        ))
+
+    async def _admin_target(self, ctx, who: "str | None", usage: str) -> "tuple[int, dict] | None":
+        if not await self._ready(ctx):
+            return None
+        uid = await self._target_uid(ctx, who)
+        char = self._chars(ctx.guild.id).get(uid) if uid else None
+        if char is None:
+            await ctx.send(embed=emb("❌ Idle Admin", f"No character found. Usage: {usage}", C_RED))
+            return None
+        return uid, char
+
+    @cmd_admin.command(name="hog")
+    async def cmd_admin_hog(self, ctx: commands.Context, *, who: str = None):
+        found = await self._admin_target(ctx, who, "`!idle admin hog @user`")
+        if found is None:
+            return
+        uid, _char = found
+        note = rpg.hand_of_god(uid, self._chars(ctx.guild.id), self.rng, self._namer(ctx.guild), int(time.time()))
+        await persistence.save_idle_character(ctx.guild.id, uid)
+        await ctx.send(embed=emb("🙌 Hand of God", note.text, C_GOLD))
+        await self._deliver(ctx.guild, [note], skip_main=self._in_idle_channel(ctx))
+
+    @cmd_admin.command(name="push")
+    async def cmd_admin_push(self, ctx: commands.Context, who: str = None, amount: str = None):
+        usage = "`!idle admin push @user <±time>` — `-2h` sooner, `+1d` later"
+        found = await self._admin_target(ctx, who, usage)
+        if found is None:
+            return
+        uid, char = found
+        seconds = parse_duration((amount or "").lstrip("+-"))
+        if seconds is None:
+            await ctx.send(embed=emb("❌ Idle Admin", f"Usage: {usage}", C_RED))
+            return
+        now = int(time.time())
+        if amount.startswith("-"):
+            seconds = -min(seconds, rpg.time_left(char, now))
+        rpg.shift(char, seconds)
+        await persistence.save_idle_character(ctx.guild.id, uid)
+        direction = "later" if seconds > 0 else "sooner"
+        await ctx.send(embed=emb(
+            "🛠️ Clock Moved",
+            f"{self._namer(ctx.guild)(uid)} levels {format_duration(abs(seconds))} {direction} — "
+            f"{format_duration(rpg.time_left(char, now))} to go.",
+            C_GREEN,
+        ))
+
+    @cmd_admin.command(name="remove")
+    async def cmd_admin_remove(self, ctx: commands.Context, *, who: str = None):
+        found = await self._admin_target(ctx, who, "`!idle admin remove @user`")
+        if found is None:
+            return
+        uid, char = found
+        if not await confirm_prompt(
+            ctx,
+            title="🗑️ Remove Character",
+            description=f"Delete <@{uid}>'s level {char['level']} {char['class']} for good?",
+            payer=ctx.author,
+            not_yours=NOT_YOURS,
+        ):
+            return
+        if await self._remove_character(ctx.guild, uid, char):
+            await ctx.send(embed=emb("🗑️ Character Removed", f"<@{uid}>'s character is gone.", C_GREY))
+
+    @cmd_admin.command(name="reset")
+    async def cmd_admin_reset(self, ctx: commands.Context):
+        if not await self._ready(ctx):
+            return
+        gid = ctx.guild.id
+        count = len(self._chars(gid))
+        if not await confirm_prompt(
+            ctx,
+            title="💥 Reset the Idle RPG",
+            description=f"This deletes all **{count}** character(s), their items and the current quest in this server. There is no undo.",
+            payer=ctx.author,
+            not_yours=NOT_YOURS,
+        ):
+            return
+        chars = state.idle_characters.pop(gid, {})
+        state.idle_quests.pop(gid, None)
+        self._pending.pop(gid, None)
+        for key in [k for k in self._talk if k[0] == gid]:
+            del self._talk[key]
+        await persistence.delete_idle_guild(gid)
+        for char in chars.values():
+            await self._archive_thread(ctx.guild, char["thread_id"])
+        await ctx.send(embed=emb("💥 Idle RPG Reset", f"{len(chars)} character(s) deleted. A new age begins.", C_GREY))
+
+
+async def setup(bot):
+    await bot.add_cog(IdleCog(bot))

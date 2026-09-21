@@ -10,7 +10,7 @@ cp .env.example .env   # fill in DISCORD_TOKEN and any optional vars
 python bot.py
 ```
 
-The bot enables the privileged **Server Members Intent** (`intents.members`, needed for name-based member lookup in `!pay <name>` etc.). It must also be toggled on in the Discord Developer Portal (Bot → Privileged Gateway Intents) or login fails with `PrivilegedIntentsRequired`.
+The bot enables two privileged intents besides message content: **Server Members** (`intents.members`, needed for name-based member lookup in `!pay <name>` etc.) and **Presence** (`intents.presences`, which `!idle` uses to tell who is online). Both must also be toggled on in the Discord Developer Portal (Bot → Privileged Gateway Intents) or login fails with `PrivilegedIntentsRequired`.
 
 Key environment variables (all optional except `DISCORD_TOKEN`):
 
@@ -675,6 +675,66 @@ the `counters`, `counter_values` and `counter_perms` tables (migration 0069).
   never an amount. New `!counter` subcommands go in `RESERVED_NAMES`.
 
 Coverage: [tests/test_counters.py](tests/test_counters.py).
+
+## Idle RPG (!idle)
+
+A per-guild idle game: characters level up on a clock while their player is
+online, and talking in the idle channel sets them back. The rules are pure
+functions in `src/idlerpg.py` (every random draw goes through a passed-in
+`rng`); `src/cogs/idle_cog.py` is the Discord half. `state.idle_characters`
+/ `state.idle_quests` mirror the tables from migration 0070.
+
+- **Everything is per-guild**, keyed `(guild_id, user_id)` like counters. No
+  record mirroring, and no coins: item power must never be buyable, and a
+  payout would multiply across servers because the wallet is global.
+- **Off until `!settings-channel idle` names a channel.** News posts there
+  and each character's public feed thread opens under it. Clearing it
+  freezes every clock; nothing expires while the game is off.
+- **A clock is `next_level_at` (running) or `remaining` (paused) — exactly
+  one is set.** Change one only through `idlerpg.shift` / `scale` / `pause`
+  / `resume`, which handle both. `level_up` starts the next clock where the
+  last one ran out, not at `now`, so a late tick or a reboot costs nobody
+  time.
+- **"Logged in" = seen online within `GRACE_SECS` (one hour).** `last_seen`
+  is stamped by `on_presence_update`, by the tick for anyone non-offline,
+  and by any message the player sends in the guild (that last one is what
+  keeps an *invisible* player in the game). Past the hour the tick pauses
+  the character retroactively at `last_seen + GRACE_SECS` — levels that
+  came due inside the grace hour still count, nothing after does. Being
+  away is a pause, never a penalty. With the presence intent off every
+  status reads offline, so `_online` skips the check rather than pause the
+  whole server.
+- **`_advance` is synchronous on purpose** — one guild's tick can't
+  interleave with a command. Awaits happen only in `_deliver` and `_flush`.
+  Rows touched by the tick or a listener go in `_dirty` and are written
+  once per tick; don't add a per-message or per-presence-event DB write.
+  Commands save immediately, and claim before their first await (`join`
+  puts the character in `state` first; `duel` stamps `duel_day` first).
+- **Posting is batched**: one message per destination per tick, item finds
+  and talk penalties in the feed thread only. **Every post is silent**, and
+  mentions are off except for a `Note`'s `ping` uids — used by the quest
+  start alone, in the idle channel only, so the questers get a mention
+  badge (they're the ones who must now keep quiet) and nobody gets a
+  notification. An event that touches many players must stay one public post plus the
+  involved threads — never a fan-out to every thread.
+- **Threads**: never lock one (a send un-archives an archived thread, but
+  not a locked one). A deleted thread — or one under a previous idle
+  channel — is remade on the next post; a *transient* fetch error skips the
+  post instead, or every Discord hiccup would open a second thread. Titles
+  follow the level through a rename sweep with the same budget as the
+  gambling threads; never rename inline.
+- **Talking**: any non-`!idle` message in the idle channel or a thread
+  under it (`gate_channel_ids`) costs a second per character, ×1.10 per
+  level. `is_silenced` users and bots are ignored. A quester's penalty
+  fails the quest for the whole server (`penalize_player`) — a new penalty
+  source must go through it, not call `penalize` directly.
+- **`!idle` is `everyone`, `!idle admin …` is `server_admin`** — two JSON
+  entries, resolved by the longest-prefix walk.
+- **Flavour text is ours.** The mechanics follow the classic IRC IdleRPG;
+  its item names and event lines are not copied, and shouldn't be.
+
+Coverage: [tests/test_idlerpg.py](tests/test_idlerpg.py) (rules) and
+[tests/test_idle_cog.py](tests/test_idle_cog.py).
 
 ## Concurrency: per-user command races
 

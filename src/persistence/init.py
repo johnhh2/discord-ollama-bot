@@ -14,6 +14,7 @@ from src.persistence.history import (
     load_today_crime_row, load_today_gambling_row, load_today_levelups_row,
 )
 from src.persistence.gambling_threads import parse_tally
+from src.persistence.idlerpg import parse_items, parse_members
 
 
 async def init_db_state():
@@ -631,6 +632,45 @@ async def _init_db_state_inner(state, run_migrations):
                 state.counter_perms.setdefault(int(gid), set()).add(int(uid))
         except Exception as e:
             logging.error(f"[init_db_state] counters failed: {e}", exc_info=True)
+            raise
+
+        # ── idle rpg (!idle) ─────────────────────────────────────────────
+        try:
+            await cur.execute(
+                "SELECT guild_id, user_id, class_name, level, next_level_at, remaining, law, moral, "
+                "prestige, penalty_total, last_seen, last_penalty_at, thread_id, created_at, "
+                "align_changed_at, duel_day, items_json FROM idle_characters"
+            )
+            for (gid, uid, class_name, level, next_level_at, remaining, law, moral, prestige,
+                 penalty_total, last_seen, last_penalty_at, thread_id, created_at,
+                 align_changed_at, duel_day, items_json) in await cur.fetchall():
+                state.idle_characters.setdefault(int(gid), {})[int(uid)] = {
+                    "class": class_name,
+                    "level": int(level),
+                    "next_level_at": None if next_level_at is None else int(next_level_at),
+                    "remaining": None if remaining is None else int(remaining),
+                    "law": law,
+                    "moral": moral,
+                    "prestige": int(prestige),
+                    "penalty_total": int(penalty_total),
+                    "last_seen": int(last_seen),
+                    "last_penalty_at": int(last_penalty_at),
+                    "thread_id": None if thread_id is None else int(thread_id),
+                    "created_at": int(created_at),
+                    "align_changed_at": int(align_changed_at),
+                    "duel_day": duel_day,
+                    "items": parse_items(items_json),
+                }
+            await cur.execute("SELECT guild_id, members_json, description, ends_at, not_before FROM idle_quests")
+            for gid, members_json, description, ends_at, not_before in await cur.fetchall():
+                state.idle_quests[int(gid)] = {
+                    "members": parse_members(members_json),
+                    "description": description,
+                    "ends_at": None if ends_at is None else int(ends_at),
+                    "not_before": int(not_before),
+                }
+        except Exception as e:
+            logging.error(f"[init_db_state] idle rpg failed: {e}", exc_info=True)
             raise
 
         # ── quote_log ─────────────────────────────────────────────────────

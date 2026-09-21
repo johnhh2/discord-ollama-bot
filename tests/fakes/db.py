@@ -50,6 +50,8 @@ _TABLE_PKS = {
     "counters": ("guild_id", "name"),
     "counter_values": ("guild_id", "name", "user_id"),
     "counter_perms": ("guild_id", "user_id"),
+    "idle_characters": ("guild_id", "user_id"),
+    "idle_quests": ("guild_id",),
     "leveling": ("guild_id", "user_id"),
     "gambler_streak": ("user_id",),
     "command_streak": ("user_id",),

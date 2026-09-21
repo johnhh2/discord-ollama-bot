@@ -53,6 +53,7 @@ _CHANNEL_PANELS = (
     ("🎰 Lottery channel", "settings_channel_lottery", ()),
     ("📊 Level-up channel", "settings_channel_levelup", ()),
     ("🏆 Records channel", "settings_channel_records", ()),
+    ("⚔️ Idle RPG channel", "settings_channel_idle", ()),
     ("📖 Feature request channel", "settings_channel_feature_request", ()),
 )
 _GLOBAL_CHANNEL_PANELS = (
@@ -885,6 +886,7 @@ class SettingsCog(commands.Cog):
         records_channel_id = cfg.get("records_channel")
         minecraft_channel_id = cfg.get("minecraft_channel")
         dailies_channel_id = cfg.get("dailies_channel")
+        idle_channel_id = cfg.get("idle_channel")
 
         ai_val = " ".join(f"<#{c}>" for c in ai_channels) if ai_channels else "all channels"
         ai_val += "\n*Subcommand: `ai #ch... / clear`*"
@@ -922,6 +924,10 @@ class SettingsCog(commands.Cog):
         dailies_val += "\nSelf-cleaning channel with a react-to-claim dailies embed (daily reward + scratchoffs)."
         dailies_val += "\n*Set with: `!settings dailies-channel #channel / clear`*"
 
+        idle_val = f"<#{idle_channel_id}>" if idle_channel_id else "❌ disabled"
+        idle_val += "\nThe idle RPG (`!idle`): server-wide news posts here, and each player's feed thread opens under it."
+        idle_val += "\n*Subcommand: `idle #channel / clear`*"
+
         embed = discord.Embed(title="⚙️ Server Channel Settings", color=C_BLUE)
         embed.add_field(name="✅ Channel whitelist", value=whitelist_val, inline=False)
         embed.add_field(name="❌ Channel blacklist", value=blacklist_val, inline=False)
@@ -934,6 +940,7 @@ class SettingsCog(commands.Cog):
         embed.add_field(name="📖 Feature request channel", value=feature_req_val, inline=False)
         embed.add_field(name="⛏️ Minecraft channel", value=minecraft_val, inline=False)
         embed.add_field(name="🪙 Dailies channel", value=dailies_val, inline=False)
+        embed.add_field(name="⚔️ Idle RPG channel", value=idle_val, inline=False)
 
         if is_admin(ctx):
             admin_log_id = state.bot_settings.get("admin_log_channel")
@@ -1142,6 +1149,36 @@ class SettingsCog(commands.Cog):
                 "🏆 Records Channel",
                 f"{channel.mention} will now show this server's new records **plus** every new global-top record from any server "
                 "(in addition to the channel where the event happened).",
+                C_GREEN,
+            ))
+
+    # ── !settings-channel idle ────────────────────────────────────────────────
+    @cmd_settings_channel.command(name="idle")
+    @requires_perm
+    async def settings_channel_idle(self, ctx: commands.Context, *args):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        chosen = await self._channel_choice(ctx, args, title="⚔️ Idle RPG Channel", current=cfg.get("idle_channel"), multi=False)
+        if chosen is None:
+            return
+        if not chosen:
+            cfg["idle_channel"] = None
+            await save_guild_settings()
+            await ctx.send(embed=emb(
+                "⚔️ Idle RPG Channel",
+                "Idle RPG switched off. Every clock is frozen where it stands until a channel is set again.",
+                C_GREEN,
+            ))
+        else:
+            channel = chosen[0]
+            cfg["idle_channel"] = channel.id
+            await save_guild_settings()
+            await ctx.send(embed=emb(
+                "⚔️ Idle RPG Channel",
+                f"The idle RPG runs in {channel.mention}: news posts there and each player's feed thread opens under it. "
+                "I need **Create Public Threads** and **Send Messages in Threads** there. Players start with `!idle join <class>`.",
                 C_GREEN,
             ))
 

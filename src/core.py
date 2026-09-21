@@ -47,6 +47,7 @@ EXTENSIONS = [
     "src.cogs.minecraft_cog",
     "src.cogs.status_cog",
     "src.cogs.counter_cog",
+    "src.cogs.idle_cog",
     "src.events",
 ]
 
@@ -153,6 +154,10 @@ def create_bot() -> commands.Bot:
     # member lookup (!pay <name>, !steal <name>) sees the full member cache,
     # not just voice-channel occupants.
     intents.members = True
+    # Privileged as well (Bot → Presence Intent in the portal, or login
+    # fails). !idle runs a character's clock only while its player has been
+    # online in the last hour — see src/cogs/idle_cog.py.
+    intents.presences = True
     allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=True)
     bot = Bot(
         command_prefix="!",
