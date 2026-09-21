@@ -679,7 +679,7 @@ Coverage: [tests/test_counters.py](tests/test_counters.py).
 ## Idle RPG (!idle)
 
 A per-guild idle game: characters level up on a clock while their player is
-online, and talking in the idle channel sets them back. The rules are pure
+online, and there is nothing else to do. The rules are pure
 functions in `src/idlerpg.py` (every random draw goes through a passed-in
 `rng`); `src/cogs/idle_cog.py` is the Discord half. `state.idle_characters`
 / `state.idle_quests` mirror the tables from migration 0070.
@@ -711,11 +711,10 @@ functions in `src/idlerpg.py` (every random draw goes through a passed-in
   Commands save immediately, and claim before their first await (`join`
   puts the character in `state` first; `duel` stamps `duel_day` first).
 - **Posting is batched**: one message per destination per tick, item finds
-  and talk penalties in the feed thread only. **Every post is silent**, and
+  in the feed thread only. **Every post is silent**, and
   mentions are off except for a `Note`'s `ping` uids — used by the quest
   start alone, in the idle channel only, so the questers get a mention
-  badge (they're the ones who must now keep quiet) and nobody gets a
-  notification. An event that touches many players must stay one public post plus the
+  badge and nobody gets a notification. An event that touches many players must stay one public post plus the
   involved threads — never a fan-out to every thread.
 - **Threads**: never lock one (a send un-archives an archived thread, but
   not a locked one). A deleted thread — or one under a previous idle
@@ -723,11 +722,12 @@ functions in `src/idlerpg.py` (every random draw goes through a passed-in
   post instead, or every Discord hiccup would open a second thread. Titles
   follow the level through a rename sweep with the same budget as the
   gambling threads; never rename inline.
-- **Talking**: any non-`!idle` message in the idle channel or a thread
-  under it (`gate_channel_ids`) costs a second per character, ×1.10 per
-  level. `is_silenced` users and bots are ignored. A quester's penalty
-  fails the quest for the whole server (`penalize_player`) — a new penalty
-  source must go through it, not call `penalize` directly.
+- **Talking is free, and quests can't fail.** The IRC original charged
+  time for every message in the game channel and failed a quest when a
+  quester slipped; on Discord there is always another channel to talk in,
+  so the rule only confused people and was removed. Don't bring it back as
+  a "faithful" touch. The only penalties left are leaving your own feed
+  thread and leaving the server, and they cost that player alone.
 - **`!idle` is `everyone`, `!idle admin …` is `server_admin`** — two JSON
   entries, resolved by the longest-prefix walk.
 - **Flavour text is ours.** The mechanics follow the classic IRC IdleRPG;

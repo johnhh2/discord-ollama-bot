@@ -84,29 +84,9 @@ def test_prestige_resets_level_and_items_but_keeps_the_rank():
 
 def test_penalty_grows_with_level():
     low, high = _char(0), _char(10)
-    assert rpg.penalize(low, rpg.PEN_TALK_PER_CHAR, NOW, units=40) == 40
-    assert rpg.penalize(high, rpg.PEN_TALK_PER_CHAR, NOW, units=40) == int(40 * 1.1 ** 10)
-    assert low["penalty_total"] == 40 and low["last_penalty_at"] == NOW
-
-
-def test_a_questers_penalty_fails_the_quest_for_everyone():
-    chars = {1: _char(45), 2: _char(45), 3: _char(5)}
-    quest = {"members": [1, 2], "description": "wait", "ends_at": NOW + 5000, "not_before": 0}
-    before = rpg.time_left(chars[3], NOW)
-
-    _secs, notes = rpg.penalize_player(1, chars, quest, rpg.PEN_PART, NOW, _name)
-
-    assert not rpg.quest_active(quest)
-    assert quest["not_before"] == NOW + rpg.QUEST_DROUGHT_SECS
-    assert rpg.time_left(chars[3], NOW) > before       # a bystander pays too
-    assert notes and notes[0].public and "P1" in notes[0].text
-
-
-def test_a_bystanders_penalty_leaves_the_quest_alone():
-    chars = {1: _char(45), 2: _char(45), 3: _char(5)}
-    quest = {"members": [1, 2], "description": "wait", "ends_at": NOW + 5000, "not_before": 0}
-    _secs, notes = rpg.penalize_player(3, chars, quest, rpg.PEN_PART, NOW, _name)
-    assert rpg.quest_active(quest) and notes == []
+    assert rpg.penalize(low, rpg.PEN_PART, NOW) == 200
+    assert rpg.penalize(high, rpg.PEN_PART, NOW) == int(200 * 1.1 ** 10)
+    assert low["penalty_total"] == 200 and low["last_penalty_at"] == NOW
 
 
 # ── items ────────────────────────────────────────────────────────────────────
@@ -216,8 +196,10 @@ def test_chaotic_lives_see_more_events_than_lawful_ones():
 
 # ── quests ───────────────────────────────────────────────────────────────────
 
-def test_quest_starts_with_two_clean_high_level_players_and_pays_out():
-    chars = {1: _char(40), 2: _char(50), 3: _char(39), 4: _char(60, last_penalty_at=NOW - 60)}
+def test_quest_starts_with_two_high_level_players_and_pays_out():
+    paused = _char(60)
+    rpg.pause(paused, NOW)
+    chars = {1: _char(40), 2: _char(50), 3: _char(39), 4: paused}
     quest = rpg.new_quest()
     notes = rpg.tick_quest(chars, quest, random.Random(1), _name, NOW)
     assert sorted(quest["members"]) == [1, 2] and notes[0].public

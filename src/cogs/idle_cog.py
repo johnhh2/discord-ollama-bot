@@ -1,6 +1,6 @@
 """!idle — a per-guild idle RPG. The rules live in src/idlerpg.py; this cog
 is the Discord half: commands, the once-a-minute tick, the listeners that
-turn presence and chatter into clock changes, and the feed threads.
+track who is online, and the feed threads.
 
 The game runs in the channel set with `!settings-channel idle` and is off
 while none is set (every clock freezes). Server-wide news is posted in that
@@ -36,7 +36,7 @@ from src.confirm_view import confirm_prompt
 from src.economy import _ct_today, next_daily_reset_ts
 from src.guild_config import get_guild_cfg
 from src.helpers import emb, C_BLUE, C_GOLD, C_GREEN, C_GREY, C_RED, MemberConverter, format_duration, parse_duration
-from src.permissions import gate_channel_ids, is_silenced
+from src.permissions import is_silenced
 from src.settings_views import pick_from_list
 
 log = logging.getLogger(__name__)
@@ -55,7 +55,6 @@ MESSAGE_MAX = 1900
 LEADERBOARD_SIZE = 10
 CLASS_MAX = 30
 _CLASS_RE = re.compile(r"[\w][\w '\-]*")
-_COMMAND_WORDS = ("!idle", "!irpg")
 NOT_YOURS = "Not your prompt."
 NO_MENTIONS = discord.AllowedMentions.none()
 
@@ -65,10 +64,28 @@ ALIGN_EFFECTS = (
     "**Lawful** half as many random events, good and bad. **Chaotic** twice as many."
 )
 
-
-def _is_idle_command(content: str) -> bool:
-    words = content.split(None, 1)
-    return bool(words) and words[0].lower() in _COMMAND_WORDS
+# `!idle rules <topic>` — the bare command stays a few lines on purpose.
+_RULES_TOPICS = {
+    "levels": (
+        f"Level 1 takes {format_duration(rpg.ttl(0))}; each level after takes {int((rpg.LEVEL_MULT - 1) * 100)}% longer.\n"
+        f"The timer runs while you've been online in the last {format_duration(rpg.GRACE_SECS)} — idle and do-not-disturb count. "
+        "After that it pauses and picks up where it stopped. Being away never costs you anything."
+    ),
+    "battles": (
+        f"Each level-up finds an item for one of ten slots and may start a fight (always, from level {rpg.BATTLE_ALWAYS_LEVEL}).\n"
+        "Both sides roll up to their item power. Win and your timer shrinks; lose and it grows.\n"
+        f"`!idle duel @user` once a day: the loser hands {rpg.DUEL_PCT}% of their timer to the winner."
+    ),
+    "alignment": ALIGN_EFFECTS + "\nSet it with `!idle align`, once a day.",
+    "quests": (
+        f"Now and then, {rpg.QUEST_MIN_PARTY}–{rpg.QUEST_MAX_PARTY} online players of level {rpg.QUEST_MIN_LEVEL}+ are sent on a 12–24 hour quest.\n"
+        f"Finish and each quester's timer drops {rpg.QUEST_REWARD_PCT}%. There is nothing to do, and nothing to get wrong."
+    ),
+    "prestige": (
+        f"At level {rpg.PRESTIGE_LEVEL}, `!idle prestige` sends you back to level 0 without your items. "
+        f"You keep a ★ and level {rpg.PRESTIGE_BONUS_PCT}% faster for good (up to {rpg.PRESTIGE_MAX_RANKS} ranks)."
+    ),
+}
 
 
 class IdleCog(commands.Cog):
@@ -78,7 +95,6 @@ class IdleCog(commands.Cog):
         self._dirty: set = set()            # (guild_id, uid) rows to save at the next flush
         self._dirty_quests: set = set()
         self._pending: dict = {}            # guild_id -> notes queued by listeners
-        self._talk: dict = {}               # (guild_id, uid) -> [messages, seconds] since the last tick
         self._seen_saved: dict = {}
         self._creating: set = set()         # (guild_id, uid) with a thread being created
         self._rename_due: set = set()
@@ -221,14 +237,6 @@ class IdleCog(commands.Cog):
             if quest != before:
                 self._dirty_quests.add(gid)
 
-        for (tgid, uid), (count, seconds) in list(self._talk.items()):
-            if tgid != gid:
-                continue
-            del self._talk[(tgid, uid)]
-            notes.append(rpg.Note(
-                (uid,),
-                f"💬 Talking cost {name(uid)} {format_duration(seconds)} ({count} message{'s' if count != 1 else ''}).",
-            ))
         notes += self._pending.pop(gid, [])
 
         for note in notes:
@@ -343,7 +351,7 @@ class IdleCog(commands.Cog):
                 pass  # best-effort: the thread is public either way
         await self._send(thread, [
             f"📖 This is {self._namer(guild)(uid)}'s story. Everything that happens to them lands here.\n"
-            "Idling is progress; talking in here or in the idle channel costs time. `!idle rules` has the details.",
+            "There is nothing to do but stay online. `!idle rules` has the details.",
         ])
         return thread
 
@@ -381,18 +389,9 @@ class IdleCog(commands.Cog):
 
     # ── listeners ────────────────────────────────────────────────────────
 
-    def _penalize(self, guild, uid: int, base: int, now: int, units: int = 1) -> int:
-        gid = guild.id
-        quest = self._quest(gid)
-        was_active = rpg.quest_active(quest)
-        seconds, notes = rpg.penalize_player(uid, self._chars(gid), quest, base, now, self._namer(guild), units)
-        self._dirty.add((gid, uid))
-        if notes:
-            self._pending.setdefault(gid, []).extend(notes)
-            self._dirty.update((gid, other) for other in self._chars(gid))
-        if was_active != rpg.quest_active(quest):
-            self._dirty_quests.add(gid)
-        return seconds
+    def _penalize(self, guild, uid: int, base: int, now: int) -> int:
+        self._dirty.add((guild.id, uid))
+        return rpg.penalize(self._chars(guild.id)[uid], base, now)
 
     @commands.Cog.listener()
     async def on_presence_update(self, before, after):
@@ -416,20 +415,9 @@ class IdleCog(commands.Cog):
         char = state.idle_characters.get(guild.id, {}).get(uid)
         if char is None or is_silenced(uid, guild.id):
             return
-        now = int(time.time())
         # A message anywhere in the guild proves presence — it's what keeps an
         # invisible player logged in.
-        self._seen(guild, uid, char, now)
-        idle_channel = get_guild_cfg(guild.id).get("idle_channel")
-        if not idle_channel or idle_channel not in gate_channel_ids(message.channel):
-            return
-        if _is_idle_command(message.content):
-            return
-        seconds = self._penalize(guild, uid, rpg.PEN_TALK_PER_CHAR, now, units=max(1, len(message.content)))
-        # Reported by the tick as one line, not one reply per message.
-        tally = self._talk.setdefault((guild.id, uid), [0, 0])
-        tally[0] += 1
-        tally[1] += seconds
+        self._seen(guild, uid, char, int(time.time()))
 
     @commands.Cog.listener()
     async def on_thread_member_remove(self, member):
@@ -503,9 +491,10 @@ class IdleCog(commands.Cog):
             f"**Alignment:** {rpg.alignment_label(char)}",
             f"**Level {char['level'] + 1}:** {clock}",
             f"**Item power:** {rpg.item_sum(char):,}",
-            f"**Time lost to penalties:** {format_duration(char['penalty_total'])}",
             f"**Adventuring since:** <t:{char['created_at']}:D>",
         ]
+        if char["penalty_total"]:
+            lines.insert(3, f"**Time lost to penalties:** {format_duration(char['penalty_total'])}")
         if char["prestige"]:
             lines.insert(0, f"**Prestige:** {'★' * char['prestige']}")
         if char["thread_id"]:
@@ -524,7 +513,7 @@ class IdleCog(commands.Cog):
             await ctx.send(embed=emb(
                 "⚔️ Idle RPG",
                 "A game you win by doing nothing. Your character levels up while you're online and idle; "
-                "talking in the idle channel sets you back. Items, battles and quests happen on their own.\n\n"
+                "items, battles and quests happen on their own.\n\n"
                 "`!idle join <class>` to start · `!idle rules` for how it works · `!idle top` for the ladder",
                 C_BLUE,
             ))
@@ -574,7 +563,7 @@ class IdleCog(commands.Cog):
             where = f"I couldn't open your feed thread — check that I have **Create Public Threads** in {channel.mention}. You're in the game regardless."
         await ctx.send(embed=emb(
             "⚔️ A New Adventurer",
-            f"{name} the {class_name} sets out. Level 1 is {first} away — now stop talking.\n{where}",
+            f"{name} the {class_name} sets out. Level 1 is {first} away.\n{where}",
             C_GREEN,
         ))
         if not self._in_idle_channel(ctx):
@@ -721,15 +710,13 @@ class IdleCog(commands.Cog):
             party = ", ".join(name(u) for u in quest["members"])
             body = (
                 f"{party} must {quest['description']}.\nIt ends <t:{quest['ends_at']}:R>. "
-                f"If any of them takes a penalty first, every adventurer pays. Success is worth "
-                f"{rpg.QUEST_REWARD_PCT}% of each quester's clock."
+                f"Each of them comes back {rpg.QUEST_REWARD_PCT}% closer to their next level."
             )
         else:
-            ready = len(rpg.quest_eligible(self._chars(ctx.guild.id), now))
+            ready = len(rpg.quest_eligible(self._chars(ctx.guild.id)))
             body = (
                 f"No quest is running. One starts when at least {rpg.QUEST_MIN_PARTY} adventurers are level "
-                f"{rpg.QUEST_MIN_LEVEL}+, logged in, and {format_duration(rpg.QUEST_CLEAN_SECS)} clear of any penalty "
-                f"— **{ready}** qualify right now."
+                f"{rpg.QUEST_MIN_LEVEL}+ and logged in — **{ready}** qualify right now."
             )
             if now < quest["not_before"]:
                 body += f"\nThe gods offer the next one no sooner than <t:{quest['not_before']}:R>."
@@ -785,36 +772,31 @@ class IdleCog(commands.Cog):
             return
         if not await self._remove_character(ctx.guild, uid, char):
             return
-        await ctx.send(embed=emb("🪦 Retired", "Your character hangs up their boots. You can talk freely again.", C_GREY))
+        await ctx.send(embed=emb("🪦 Retired", "Your character hangs up their boots.", C_GREY))
 
     async def _remove_character(self, guild, uid: int, char: dict) -> bool:
         chars = self._chars(guild.id)
         if chars.get(uid) is not char:
             return False   # already gone, or replaced, while a prompt was open
         del chars[uid]
-        self._talk.pop((guild.id, uid), None)
         await persistence.delete_idle_character(guild.id, uid)
         await self._archive_thread(guild, char["thread_id"])
         return True
 
     @cmd_idle.command(name="rules", aliases=["help"])
-    async def cmd_rules(self, ctx: commands.Context):
-        hour = format_duration(rpg.GRACE_SECS)
+    async def cmd_rules(self, ctx: commands.Context, topic: str = None):
+        detail = _RULES_TOPICS.get((topic or "").lower())
+        if detail is not None:
+            await ctx.send(embed=emb(f"📖 Idle RPG — {topic.title()}", detail, C_BLUE))
+            return
         await ctx.send(embed=emb(
-            "📖 Idle RPG — How It Works",
-            f"**Levelling.** Your character levels up on a clock: {format_duration(rpg.ttl(0))} for level 1, "
-            f"{int((rpg.LEVEL_MULT - 1) * 100)}% longer for each level after. There is nothing to do but wait.\n"
-            f"**Logged in.** The clock runs while you've been online in the last {hour} (idle and do-not-disturb count). "
-            "After that it pauses, and picks up where it stopped when you're back. No penalty for being away.\n"
-            "**Talking costs time.** Every message in the idle channel or any feed thread adds seconds — one per character typed, "
-            f"growing {int((rpg.PENALTY_MULT - 1) * 100)}% per level. `!idle` commands are free. Leaving your own thread or the server costs more.\n"
-            f"**Items and battles.** Each level-up finds an item for one of ten slots and may start a fight (always from level {rpg.BATTLE_ALWAYS_LEVEL}). "
-            "Both sides roll up to their item power; winning shortens your clock, losing lengthens it.\n"
-            "**Luck.** Godsends, calamities and the Hand of God strike at random. Alignment (`!idle align`) bends the odds.\n"
-            f"**Quests.** Level {rpg.QUEST_MIN_LEVEL}+ adventurers are sent on quests of 12–24 hours. If any quester takes a penalty, *everyone* pays.\n"
-            f"**Duels.** `!idle duel @user` once a day: the loser hands {rpg.DUEL_PCT}% of their clock to the winner.\n"
-            f"**Prestige.** At level {rpg.PRESTIGE_LEVEL}, `!idle prestige` starts you over with a ★ and a permanent speed bonus.\n\n"
-            "`!idle status` · `items` · `top` · `quest` · `leave`",
+            "📖 Idle RPG",
+            "**Do nothing. Level up.**\n\n"
+            "⏳ Your character levels on a timer while you're online.\n"
+            "🎒 Items, fights and lucky breaks happen on their own.\n"
+            "📜 High-level players get sent on quests for a big shortcut.\n\n"
+            "`!idle status` · `items` · `top` · `align` · `duel @user` · `quest`\n"
+            f"More: `!idle rules <{'|'.join(_RULES_TOPICS)}>`",
             C_BLUE,
         ))
 
@@ -910,8 +892,6 @@ class IdleCog(commands.Cog):
         chars = state.idle_characters.pop(gid, {})
         state.idle_quests.pop(gid, None)
         self._pending.pop(gid, None)
-        for key in [k for k in self._talk if k[0] == gid]:
-            del self._talk[key]
         await persistence.delete_idle_guild(gid)
         for char in chars.values():
             await self._archive_thread(ctx.guild, char["thread_id"])

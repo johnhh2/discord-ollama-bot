@@ -81,7 +81,7 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 - `!hangman` (~7.5k-word list, rarity-weighted payouts), `!ttt`, `!c4`, `!race` (multiplayer with a shared pot, or `!race @Bot [amount]` — a coin flip with a track, playable with no coins at all), `!puzzle`
 - Chess, hangman, tic-tac-toe and Connect 4 each play out in their own thread under the channel they were started from; the thread is renamed with the result (`👑 X won against Y`) and closed when the game ends
 - Per-guild XP and levels (`!lvl`, `!levels`) with commands gated behind level thresholds
-- An idle RPG (`!idle join <class>`) in the spirit of the IRC classic: characters level up while their player is online and *not talking* — every message in the idle channel sets them back. Items, battles, godsends, quests, nine alignments, a daily duel and prestige all happen on their own; each character's story unfolds in its own thread. Enabled per server with `!settings-channel idle #channel`
+- An idle RPG (`!idle join <class>`) in the spirit of the IRC classic: characters level up on a timer while their player is online, and there is nothing else to do. Items, battles, godsends, quests, nine alignments, a daily duel and prestige all happen on their own; each character's story unfolds in its own thread. Enabled per server with `!settings-channel idle #channel`
 
 ### ⛏️ Minecraft server status
 - `!mc` (aliases `!minecraft`, `!mcstatus`) — live Bedrock server status over a RakNet UDP ping: player count, latency, version, server name, gamemode

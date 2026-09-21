@@ -1,5 +1,5 @@
 """!idle (src/cogs/idle_cog.py): joining, the tick, the one-hour login grace,
-talk penalties, feed threads, and the admin commands."""
+feed threads, and the admin commands."""
 import asyncio
 import json
 import time
@@ -361,70 +361,38 @@ async def test_a_message_anywhere_keeps_an_invisible_player_logged_in():
     assert abs(char["last_seen"] - time.time()) <= 2
 
 
-# ── talking costs time ───────────────────────────────────────────────────────
+# ── talking is free ──────────────────────────────────────────────────────────
 
-async def test_talking_in_the_idle_channel_costs_a_second_per_character():
+async def test_talking_in_the_idle_channel_or_a_feed_thread_costs_nothing():
     cog, guild, idle = _world()
     char = _spawn(level=10, left=5000)
     due = char["next_level_at"]
-    text = "x" * 40
-
-    await cog.on_message(_message(guild, ALICE, text, idle))
-    await cog.on_message(_message(guild, ALICE, text, idle))
-
-    cost = int(40 * 1.1 ** 10)
-    assert char["next_level_at"] == due + 2 * cost and char["penalty_total"] == 2 * cost
-    idle.send.assert_not_called()            # no reply per message…
-
+    await cog.on_message(_message(guild, ALICE, "x" * 400, idle))
+    await cog.on_message(_message(guild, ALICE, "hello", FakeThread(thread_id=950, parent_id=IDLE_CH)))
     await cog.tick()
-    feed = _sent(guild.threads[0])           # …one line at the next tick
-    assert f"Talking cost **alice** {_idle_cog.format_duration(2 * cost)} (2 messages)" in feed
+    assert char["next_level_at"] == due and char["penalty_total"] == 0
+    idle.send.assert_not_called()
 
 
-async def test_talking_in_any_feed_thread_costs_too():
-    cog, guild, _idle = _world()
-    char = _spawn(left=5000)
-    bobs_thread = FakeThread(thread_id=950, parent_id=IDLE_CH)
-    await cog.on_message(_message(guild, ALICE, "hi bob", bobs_thread))
-    assert char["penalty_total"] == 6
-
-
-@pytest.mark.parametrize("content", ["!idle status", "!IRPG top", "!idle"])
-async def test_idle_commands_are_free(content):
+async def test_a_talking_quester_leaves_the_quest_running():
     cog, guild, idle = _world()
-    char = _spawn(left=5000)
-    await cog.on_message(_message(guild, ALICE, content, idle))
-    assert char["penalty_total"] == 0
+    _spawn(ALICE, level=45, left=50_000), _spawn(BOB, level=45, left=50_000)
+    now = int(time.time())
+    _state.idle_quests[GID] = {"members": [ALICE, BOB], "description": "wait", "ends_at": now + 9000, "not_before": 0}
+    await cog.on_message(_message(guild, ALICE, "still here", idle))
+    await cog.tick(now)
+    assert _state.idle_quests[GID]["ends_at"] == now + 9000
 
 
-async def test_other_channels_bots_and_silenced_users_are_ignored():
+async def test_silenced_users_and_bots_are_not_stamped_as_seen():
     cog, guild, idle = _world()
-    char = _spawn(left=5000)
-    await cog.on_message(_message(guild, ALICE, "chatting", FakeTextChannel(ch_id=77)))
-    assert char["penalty_total"] == 0
-
+    char = _spawn(last_seen=5)
     guild.get_member(ALICE).bot = True
     await cog.on_message(_message(guild, ALICE, "beep", idle))
     guild.get_member(ALICE).bot = False
     _state.blocklist[(GID, ALICE)] = {"reason": None, "banned_by": 1, "banned_at": None}
     await cog.on_message(_message(guild, ALICE, "banned", idle))
-    assert char["penalty_total"] == 0
-
-
-async def test_a_talking_quester_fails_the_quest_for_the_server():
-    cog, guild, idle = _world()
-    alice, bob = _spawn(ALICE, level=45, left=50_000), _spawn(BOB, level=45, left=50_000)
-    now = int(time.time())
-    _state.idle_quests[GID] = {"members": [ALICE, BOB], "description": "wait", "ends_at": now + 9000, "not_before": 0}
-    bob_due = bob["next_level_at"]
-
-    await cog.on_message(_message(guild, ALICE, "oops", idle))
-
-    assert _state.idle_quests[GID]["ends_at"] is None
-    assert bob["next_level_at"] > bob_due
-    await cog.tick(now)
-    assert "broke the quest's silence" in _sent(idle)
-    assert alice["penalty_total"] > 0
+    assert char["last_seen"] == 5
 
 
 async def test_leaving_your_own_thread_is_a_penalty_but_leaving_the_server_is_not_charged_twice():
@@ -456,6 +424,21 @@ async def test_bare_idle_pitches_to_strangers_and_shows_the_sheet_to_players():
     _spawn(level=7)
     await cog.cmd_idle.callback(cog, ctx)
     assert "Lv 7 Bard" in ctx.sent_embeds[-1].title
+
+
+async def test_rules_stay_short_and_the_detail_lives_in_topics():
+    cog, guild, _idle = _world()
+    ctx = _ctx(guild)
+    await cog.cmd_rules.callback(cog, ctx)
+    card = ctx.sent_embeds[-1].description
+    assert len(card) < 600 and card.count("\n") <= 10
+    assert "!idle rules <levels|battles|alignment|quests|prestige>" in card
+    assert "talk" not in card.lower()
+
+    await cog.cmd_rules.callback(cog, ctx, "Quests")
+    assert ctx.sent_embeds[-1].title == "📖 Idle RPG — Quests"
+    await cog.cmd_rules.callback(cog, ctx, "nonsense")
+    assert ctx.sent_embeds[-1].description == card
 
 
 async def test_status_of_a_paused_character_says_why():

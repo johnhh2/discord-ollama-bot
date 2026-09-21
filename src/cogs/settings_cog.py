@@ -38,6 +38,7 @@ _SETTINGS_PANELS = (
     ("🎯 Bounty channel", "settings_bounty_channel", ()),
     ("⛏️ Minecraft channel", "settings_minecraft_channel", ()),
     ("🪙 Dailies channel", "settings_dailies_channel", ()),
+    ("⚔️ Idle RPG channel", "settings_channel_idle", ()),
     ("🔞 Remove NSFW aliases", "settings_nsfw_alias", ("remove",)),
     ("📖 Remove story aliases", "settings_story_alias", ("remove",)),
     ("🏷️ Remove tax aliases", "settings_tax_aliases", ("remove",)),
@@ -135,7 +136,7 @@ class SettingsCog(commands.Cog):
             name="📁 Channel Settings",
             value=(
                 "Channel-related settings have moved to **`!settings-channel`** "
-                "(AI channels, whitelist/blacklist, games, chess, lottery, level-up, records, etc.)."
+                "(AI channels, whitelist/blacklist, games, chess, lottery, level-up, records, idle RPG, etc.)."
             ),
             inline=False,
         )
@@ -145,6 +146,13 @@ class SettingsCog(commands.Cog):
         embed.add_field(name="📖 Story aliases", value=story_aliases_val, inline=False)
         embed.add_field(name="💬 Quote bypass", value=quote_bypass_val, inline=False)
         embed.add_field(name="🪙 Leaderboard", value=lb_val, inline=False)
+        idle_channel_id = cfg.get("idle_channel")
+        embed.add_field(
+            name="⚔️ Idle RPG",
+            value=(f"<#{idle_channel_id}>" if idle_channel_id else "❌ disabled")
+            + "\n*Set with: `!settings-channel idle #channel / clear`*",
+            inline=False,
+        )
         embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
         embed.add_field(name="🔞 NSFW", value=nsfw_val, inline=False)
 

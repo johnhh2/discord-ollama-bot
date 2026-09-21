@@ -2,8 +2,9 @@
 no DB, and every random draw goes through the `rng` a caller passes in, so
 the whole ruleset is testable with a seeded `random.Random`.
 
-The rules are the classic IRC IdleRPG's (level by idling, talking costs you)
-with a gentler curve, prestige and a daily duel. A character's clock is an
+The rules are the classic IRC IdleRPG's (level by idling) with a gentler
+curve, prestige and a daily duel, minus its penalties for talking — on
+Discord there is always somewhere else to talk. A character's clock is an
 absolute `next_level_at` while it runs and a `remaining` seconds count while
 it is paused — exactly one of the two is set. Everything that speeds up or
 slows down a character goes through `shift` / `scale`, which handle both.
@@ -30,10 +31,8 @@ PRESTIGE_BONUS_PCT = 5   # faster levelling per prestige rank…
 PRESTIGE_MAX_RANKS = 5   # …for the first five ranks
 
 # Penalty bases, in seconds at level 0.
-PEN_TALK_PER_CHAR = 1
 PEN_PART = 200           # left their own feed thread
 PEN_QUIT = 20            # left the server
-PEN_QUEST_FAIL = 15      # everyone pays when a quester slips
 
 # A player counts as logged in for this long after they were last seen online.
 GRACE_SECS = 3600
@@ -59,12 +58,10 @@ STEAL_CHANCE = 0.02
 TEAM_SIZE = 3
 
 QUEST_MIN_LEVEL = 40
-QUEST_CLEAN_SECS = 10 * 3600   # no penalty for this long to be picked
 QUEST_MIN_PARTY, QUEST_MAX_PARTY = 2, 4
 QUEST_MIN_SECS, QUEST_MAX_SECS = 12 * 3600, 24 * 3600
 QUEST_REWARD_PCT = 25
-QUEST_REST_SECS = 6 * 3600     # after a success
-QUEST_DROUGHT_SECS = 12 * 3600  # after a failure
+QUEST_REST_SECS = 6 * 3600     # before the next one
 
 LAWS = ("lawful", "neutral", "chaotic")
 MORALS = ("good", "neutral", "evil")
@@ -280,23 +277,12 @@ def parse_alignment(text: str) -> "tuple[str, str] | None":
 
 # ── penalties ────────────────────────────────────────────────────────────────
 
-def penalize(char: dict, base: int, now: int, units: int = 1) -> int:
-    seconds = int(base * units * PENALTY_MULT ** char["level"])
+def penalize(char: dict, base: int, now: int) -> int:
+    seconds = int(base * PENALTY_MULT ** char["level"])
     shift(char, seconds)
     char["penalty_total"] += seconds
     char["last_penalty_at"] = now
     return seconds
-
-
-def penalize_player(uid: int, chars: dict, quest: dict, base: int, now: int,
-                    name: NameFn, units: int = 1) -> "tuple[int, list[Note]]":
-    """A penalty a player earned themselves. A quester who takes one fails
-    the quest for everybody."""
-    seconds = penalize(chars[uid], base, now, units)
-    notes = []
-    if quest.get("ends_at") is not None and uid in quest["members"]:
-        notes = fail_quest(uid, chars, quest, now, name)
-    return seconds, notes
 
 
 # ── items ────────────────────────────────────────────────────────────────────
@@ -534,11 +520,10 @@ def _end_quest(quest: dict, not_before: int) -> None:
     quest.update(members=[], description="", ends_at=None, not_before=not_before)
 
 
-def quest_eligible(chars: dict, now: int) -> list:
+def quest_eligible(chars: dict) -> list:
     return [
         uid for uid in running(chars)
         if chars[uid]["level"] >= QUEST_MIN_LEVEL
-        and now - max(chars[uid]["last_penalty_at"], chars[uid]["created_at"]) >= QUEST_CLEAN_SECS
     ]
 
 
@@ -559,7 +544,7 @@ def tick_quest(chars: dict, quest: dict, rng, name: NameFn, now: int) -> "list[N
 
     if now < quest.get("not_before", 0):
         return []
-    eligible = quest_eligible(chars, now)
+    eligible = quest_eligible(chars)
     if len(eligible) < QUEST_MIN_PARTY:
         return []
     members = rng.sample(eligible, min(QUEST_MAX_PARTY, len(eligible)))
@@ -568,25 +553,13 @@ def tick_quest(chars: dict, quest: dict, rng, name: NameFn, now: int) -> "list[N
         description=rng.choice(_QUESTS),
         ends_at=now + rng.randint(QUEST_MIN_SECS, QUEST_MAX_SECS),
     )
-    # Mentions, not names: the questers are the ones who must now keep quiet.
+    # Mentions, not names: being picked is the one thing worth a badge.
     called = ", ".join(f"<@{u}>" for u in members)
     return [Note(
         tuple(members),
         f"📜 {called} have been chosen to {quest['description']}. "
-        f"It ends <t:{quest['ends_at']}:R> — if any of them takes a penalty before then, everyone pays.",
+        f"It ends <t:{quest['ends_at']}:R>, and each of them comes back {QUEST_REWARD_PCT}% closer to their next level.",
         True,
         tuple(members),
     )]
 
-
-def fail_quest(culprit: int, chars: dict, quest: dict, now: int, name: NameFn) -> "list[Note]":
-    members = tuple(quest["members"])
-    _end_quest(quest, now + QUEST_DROUGHT_SECS)
-    for uid in running(chars):
-        penalize(chars[uid], PEN_QUEST_FAIL, now)
-    return [Note(
-        members,
-        f"💀 {name(culprit)} broke the quest's silence. The gods are displeased: every adventurer is "
-        f"set back, and no quest will be offered for {format_duration(QUEST_DROUGHT_SECS)}.",
-        True,
-    )]
