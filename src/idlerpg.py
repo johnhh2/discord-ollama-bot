@@ -380,6 +380,11 @@ def rank_key(now: int):
     return lambda pair: (-pair[1]["prestige"], -pair[1]["level"], time_left(pair[1], now), pair[0])
 
 
+def ladder(chars: dict, now: int, limit: int) -> list:
+    """The top `limit` (uid, character) pairs — `!idle top` and `!lb idle`."""
+    return sorted(chars.items(), key=rank_key(now))[:limit]
+
+
 def running(chars: dict) -> list:
     return [uid for uid, c in chars.items() if not is_paused(c)]
 

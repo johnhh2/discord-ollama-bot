@@ -751,7 +751,7 @@ class IdleCog(commands.Cog):
         if not await self._ready(ctx):
             return
         now = int(time.time())
-        ranked = sorted(self._chars(ctx.guild.id).items(), key=rpg.rank_key(now))[:LEADERBOARD_SIZE]
+        ranked = rpg.ladder(self._chars(ctx.guild.id), now, LEADERBOARD_SIZE)
         if not ranked:
             await ctx.send(embed=emb("🏔️ Idle Ladder", "Nobody is adventuring here yet. `!idle join <class>`.", C_GREY))
             return

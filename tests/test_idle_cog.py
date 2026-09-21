@@ -788,6 +788,36 @@ async def test_status_shows_the_biome_and_the_monster_tally():
     assert "[300, 100] — Mountains" in sheet and "**Monsters slain:** 12 · **Struck down:** 3" in sheet
 
 
+# ── !lb idle ─────────────────────────────────────────────────────────────────
+
+async def test_lb_idle_ranks_this_servers_characters_by_prestige_then_level(monkeypatch):
+    import src.cogs.economy_cog as _economy_cog
+    cog, guild, _idle = _world()
+    _spawn(ALICE, level=30)
+    _spawn(BOB, level=2, prestige=1)
+    paused = _spawn(ADMIN, level=12)
+    rpg.pause(paused, int(time.time()))
+    _state.idle_characters[2] = {999: rpg.new_character("Elsewhere", 0)}     # another server's: not listed
+
+    async def _fetch(g, uid):
+        return g.get_member(uid)
+    monkeypatch.setattr(_economy_cog, "fetch_member", _fetch)
+    economy = _economy_cog.EconomyCog.__new__(_economy_cog.EconomyCog)
+    ctx = _ctx(guild)
+
+    await economy.cmd_leaderboard.callback(economy, ctx, "idle")
+
+    board = ctx.sent_embeds[-1]
+    lines = board.description.split("\n")
+    assert board.title == "⚔️ Idle RPG Leaderboard"
+    assert lines[0].startswith("🥇 **bob** — ★ Lv 2 Bard") and lines[1].startswith("🥈 **alice** — Lv 30 Bard")
+    assert lines[2].startswith("🥉 **boss** — Lv 12 Bard · paused") and "Elsewhere" not in board.description
+
+    _state.idle_characters.pop(GID)
+    await economy.cmd_leaderboard.callback(economy, ctx, "IDLE")
+    assert "Nobody is adventuring here yet" in ctx.sent_embeds[-1].description
+
+
 # ── the tables ───────────────────────────────────────────────────────────────
 
 async def test_gamble_command_bets_in_town_and_the_sheet_keeps_score():

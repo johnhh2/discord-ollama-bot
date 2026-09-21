@@ -37,6 +37,7 @@ from src.artifacts import bail_cost, steal_success_chance, crime_catch_chance, h
 from src.properties import bank_property_revenue
 from src.confirm_view import confirm_purchase
 from src.reactions import ReactionCollector, seed_reactions
+from src import idlerpg
 from src import state
 
 
@@ -377,6 +378,10 @@ class EconomyCog(commands.Cog):
             await ctx.send("Leaderboard is only available in servers.")
             return
 
+        if scope is not None and scope.lower() in ("idle", "irpg", "idlerpg"):
+            await self._idle_leaderboard(ctx)
+            return
+
         cfg = get_guild_cfg(ctx.guild.id)
         default_scope = cfg.get("leaderboard_default_scope", "global")
         if scope is not None and scope.lower() in ("server", "global"):
@@ -423,7 +428,28 @@ class EconomyCog(commands.Cog):
             ticket_str = f" • {tickets:,} 🎟️" if tickets else ""
             lines.append(f"{prefix} **{name}** — {data['balance']:,} 🪙{ticket_str}")
         other_scope = "global" if server_only else "server"
-        lines.append(f"\n*Scope: **{scope}** · try `!lb {other_scope}` · `!levels` XP · `!lbr` roles*")
+        lines.append(f"\n*Scope: **{scope}** · try `!lb {other_scope}` · `!lb idle` idle RPG · `!levels` XP · `!lbr` roles*")
+        await ctx.send(embed=emb(title, "\n".join(lines), C_GREEN))
+
+    async def _idle_leaderboard(self, ctx: commands.Context):
+        """`!lb idle` — this server's idle RPG ladder. Characters are per
+        guild, so there is no global scope to offer."""
+        now = int(time.time())
+        ranked = idlerpg.ladder(state.idle_characters.get(ctx.guild.id, {}), now, 10)
+        title = "⚔️ Idle RPG Leaderboard"
+        if not ranked:
+            await ctx.send(embed=emb(title, "Nobody is adventuring here yet. `!idle join <class>` starts a character.", C_GREEN))
+            return
+        medals = ["🥇", "🥈", "🥉"]
+        members = await asyncio.gather(*(fetch_member(ctx.guild, uid) for uid, _ in ranked))
+        lines = []
+        for i, (member, (uid, char)) in enumerate(zip(members, ranked)):
+            prefix = medals[i] if i < 3 else f"{i + 1}."
+            who = member.display_name if member else f"User {uid}"
+            stars = "★" * char["prestige"] + " " if char["prestige"] else ""
+            clock = "paused" if idlerpg.is_paused(char) else f"next <t:{char['next_level_at']}:R>"
+            lines.append(f"{prefix} **{who}** — {stars}Lv {char['level']} {char['class']} · {clock}")
+        lines.append("\n*Ranked by prestige, then level · `!idle status` for a character · `!lb` for coins*")
         await ctx.send(embed=emb(title, "\n".join(lines), C_GREEN))
 
 

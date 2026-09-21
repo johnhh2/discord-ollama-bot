@@ -165,7 +165,7 @@ class UtilityCog(commands.Cog):
         ))
         lb_lines = [
             "`!profile [@user]` — Player overview: coins, level, tickets, chess ranks",
-            "`!leaderboard` — Top 10 richest users",
+            "`!leaderboard` — Top 10 richest users (`!lb idle` for the idle RPG ladder)",
             "`!roles` — View role thresholds and your progress",
             "`!levels` — Top 10 users by XP level",
             "`!records` — All-time records for economy and games",
