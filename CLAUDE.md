@@ -683,11 +683,36 @@ online, and there is nothing else to do. The rules are pure
 functions in `src/idlerpg.py` (every random draw goes through a passed-in
 `rng`); `src/cogs/idle_cog.py` is the Discord half and `src/idle_map.py`
 draws the map. `state.idle_characters` / `state.idle_quests` mirror the
-tables from migrations 0070–0071.
+tables from migrations 0070–0073.
 
 - **Everything is per-guild**, keyed `(guild_id, user_id)` like counters. No
-  record mirroring, and no coins: item power must never be buyable, and a
-  payout would multiply across servers because the wallet is global.
+  record mirroring, and no *coins*: the bot's wallet is global, so buying
+  item power with it would sell the ladder to the richest user and a coin
+  payout would multiply across servers.
+- **Gold is the game's own money**, a column on the character: earned only
+  by playing (level-ups, won fights, quests, the odd godsend), spent in
+  `!idle shop`, bet with `!idle duel @user <gold>`. It never converts to or
+  from coins, and there is deliberately no way to send it — a `!idle pay`
+  would let a server funnel everything into one character. It changes hands
+  only through a wagered duel and a collision fight's 5% spoils. Income and
+  prices both scale with level (constants at the top of `src/idlerpg.py`).
+  The `buy_*` functions check, charge and apply in one synchronous step —
+  keep a new purchase that way, and re-read the character after any menu
+  await before calling one. A wagered duel claims `duel_day` before its
+  Accept prompt, re-validates both purses after it, and rolls the claim
+  back if the duel doesn't happen. Gold survives prestige and dies with the
+  character.
+- **Markets.** The settlements in `TOWNS` have them. `!idle shop` is open
+  only within `MARKET_RADIUS` (60) of one — every purchase, checked again
+  after a menu await because the character keeps walking. Inside a town's
+  centre (`TOWN_CORE_RADIUS`, 15) the tick runs `auto_trade`: at most one
+  find and one sharpening of the weakest item, within half the purse, once
+  per twelve hours, reported in the feed thread only. It never buys a rush,
+  a duel or a class — those are decisions — and `!idle shop auto off`
+  (usable anywhere) disables it. The ring is wide because nobody steers on
+  this map: it is the player's window to spend the gold their own way
+  before the errand does. A visit too poor to buy anything isn't stamped.
+  Distances are straight-line; the map's wrap is ignored for them.
 - **Off until `!settings-channel idle` names a channel.** News posts there
   and each character's public feed thread opens under it. Clearing it
   freezes every clock; nothing expires while the game is off.

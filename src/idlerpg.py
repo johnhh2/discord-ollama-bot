@@ -46,6 +46,28 @@ GRACE_SECS = 3600
 ALIGN_COOLDOWN_SECS = 86_400
 DUEL_PCT = 5
 
+# ── gold ─────────────────────────────────────────────────────────────────────
+# The game's own currency: per character, earned only by playing, never
+# exchanged with the bot's coins and never sent between players (a !pay
+# would let a server funnel everything to one character). It moves between
+# characters only through a wagered duel and a collision fight's spoils.
+# Income and prices both scale with level.
+GOLD_PER_LEVEL = 10            # × the level reached
+GOLD_PER_WIN = 5               # × the beaten opponent's level
+GOLD_HOUSE_WIN = 10
+GOLD_QUEST_PER_MEMBER = 250    # × party size, to each quester
+GOLD_GODSEND_PER_LEVEL = 20
+GOLD_EVENT_CHANCE = 0.2        # share of godsends / calamities that are about gold
+GOLD_SPOILS_PCT = 5            # of the loser's purse, to a collision fight's winner
+
+PRICE_FIND_PER_LEVEL = 25
+PRICE_SHARPEN_PER_ITEM_LEVEL = 20
+PRICE_RUSH_PER_LEVEL = 15
+PRICE_SECOND_DUEL_PER_LEVEL = 10
+PRICE_CLASS = 100
+SHARPEN_PCT = 10
+RUSH_PCT = 10
+
 # ── per-day odds (the cog divides by its ticks per day) ──────────────────────
 
 GODSEND_PER_DAY = 1 / 8
@@ -161,6 +183,17 @@ LANDMARKS = {
 }
 _LANDMARK_NAMES = {point: label for label, point in LANDMARKS.items()}
 
+# The settlements among them have markets. `!idle shop` works within
+# MARKET_RADIUS of one; walking into its centre (TOWN_CORE_RADIUS) makes the
+# character trade on its own — the wide ring is the player's chance to spend
+# the gold their way first. Nobody steers on this map, so the ring has to be
+# generous: five of them cover about a fifth of the realm.
+TOWNS = ("Denmark", "the land of Qwok", "Velvragh", "the Towers of Ankh-Allor", "Jow Botzi territory")
+MARKET_RADIUS = 60
+TOWN_CORE_RADIUS = 15
+AUTO_TRADE_COOLDOWN_SECS = 12 * 3600
+AUTO_TRADE_BUDGET_PCT = 50     # an errand never spends more than this share of the purse
+
 # (first waypoint, second waypoint, what the party was chosen to do)
 _JOURNEYS = (
     ("Denmark", "Velvragh", "deliver a strongly worded letter from the Danes to the elders of Velvragh"),
@@ -232,6 +265,11 @@ def new_character(class_name: str, now: int) -> dict:
         "items": {},
         "x": None,   # placed by ensure_position, which has the rng
         "y": None,
+        "gold": 0,
+        "rush_day": None,         # gameplay-day of the last shop rush / second duel
+        "extra_duel_day": None,
+        "auto_trade": True,
+        "traded_at": 0,
     }
 
 
@@ -434,7 +472,9 @@ def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int, pace: Pa
         return [Note(involved, f"{head} and lost. {format_duration(lost)} added to their clock.", True)]
 
     won = -scale(me, now, -win_pct)
-    notes = [Note(involved, f"{head} and won! {format_duration(won)} off their clock.", True)]
+    prize = GOLD_HOUSE_WIN if opp is None else GOLD_PER_WIN * max(opp["level"], 1)
+    me["gold"] += prize
+    notes = [Note(involved, f"{head} and won! {format_duration(won)} off their clock, and {prize:,} gold.", True)]
     if opp is None:
         return notes
     if not rng.randrange(CRIT_ODDS[me["moral"]]):
@@ -447,8 +487,10 @@ def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int, pace: Pa
     return notes
 
 
-def duel(uid: int, target_uid: int, chars: dict, rng, name: NameFn, now: int) -> "list[Note]":
-    """The loser hands DUEL_PCT of their remaining time to the winner."""
+def duel(uid: int, target_uid: int, chars: dict, rng, name: NameFn, now: int, wager: int = 0) -> "list[Note]":
+    """The loser hands DUEL_PCT of their remaining time to the winner, and
+    the `wager` in gold if one was agreed (the caller has checked both can
+    cover it)."""
     a, b = chars[uid], chars[target_uid]
     a_sum, b_sum = battle_sum(a), battle_sum(b)
     a_roll, b_roll = rng.randint(0, a_sum), rng.randint(0, b_sum)
@@ -459,11 +501,14 @@ def duel(uid: int, target_uid: int, chars: dict, rng, name: NameFn, now: int) ->
     (w_uid, winner), (l_uid, loser) = ((uid, a), (target_uid, b)) if a_wins else ((target_uid, b), (uid, a))
     stake = scale(loser, now, DUEL_PCT)
     tied = " It was dead even, so a coin toss settled it." if a_roll == b_roll else ""
+    loser["gold"] -= wager
+    winner["gold"] += wager
+    staked = f" and the {wager:,} gold on the table" if wager else ""
     shift(winner, -min(stake, time_left(winner, now)))
     return [Note(
         (uid, target_uid),
         f"🤺 {name(uid)} {_rolled(a_roll, a_sum)} duelled {name(target_uid)} {_rolled(b_roll, b_sum)}.{tied} "
-        f"{name(w_uid)} wins and takes {format_duration(stake)} off {name(l_uid)}'s clock.",
+        f"{name(w_uid)} wins, taking {format_duration(stake)} from {name(l_uid)}'s clock{staked}.",
         True,
     )]
 
@@ -526,6 +571,10 @@ def godsend(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
         note = _item_event(uid, char, rng, name, good=True)
         if note:
             return note
+    elif rng.random() < GOLD_EVENT_CHANCE:
+        purse = GOLD_GODSEND_PER_LEVEL * max(char["level"], 1)
+        char["gold"] += purse
+        return Note((uid,), f"🌟 {name(uid)} found a purse somebody dropped in a hurry: {purse:,} gold.")
     moved = -scale(char, now, -rng.randint(5, 12))
     return Note((uid,), f"🌟 {name(uid)} {rng.choice(_GODSENDS)}. {format_duration(moved)} off their clock.")
 
@@ -536,6 +585,10 @@ def calamity(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
         note = _item_event(uid, char, rng, name, good=False)
         if note:
             return note
+    elif char["gold"] and rng.random() < GOLD_EVENT_CHANCE:
+        lost = max(1, char["gold"] * rng.randint(5, 10) // 100)
+        char["gold"] -= lost
+        return Note((uid,), f"🌧️ {name(uid)} was pickpocketed at a crossroads fair: {lost:,} gold gone.")
     moved = scale(char, now, rng.randint(5, 12))
     return Note((uid,), f"🌧️ {name(uid)} {rng.choice(_CALAMITIES)}. {format_duration(moved)} added to their clock.")
 
@@ -580,6 +633,133 @@ def random_events(uid: int, chars: dict, rng, name: NameFn, now: int, ticks_per_
     if char["moral"] == "evil" and rng.random() < TEMPTATION_PER_DAY / ticks_per_day:
         notes.append(_temptation(uid, chars, rng, name, now))
     return [n for n in notes if n]
+
+
+# ── the shop ─────────────────────────────────────────────────────────────────
+#
+# Every purchase is synchronous: the price is checked and taken in the same
+# breath as the effect, so two racing !idle shop commands can't both spend
+# the same gold. Each returns (bought, what to tell the player).
+
+def level_gold(level: int) -> int:
+    return GOLD_PER_LEVEL * level
+
+
+def shop_prices(char: dict) -> dict:
+    level = max(char["level"], 1)
+    return {
+        "find": PRICE_FIND_PER_LEVEL * level,
+        "rush": PRICE_RUSH_PER_LEVEL * level,
+        "duel": PRICE_SECOND_DUEL_PER_LEVEL * level,
+        "class": PRICE_CLASS,
+    }
+
+
+def sharpen_price(item: dict) -> int:
+    return PRICE_SHARPEN_PER_ITEM_LEVEL * item["level"]
+
+
+def _pay(char: dict, price: int) -> "str | None":
+    """Take the price, or say why not."""
+    if char["gold"] < price:
+        return f"That costs {price:,} gold and you have {char['gold']:,}."
+    char["gold"] -= price
+    return None
+
+
+def buy_find(uid: int, char: dict, rng, name: NameFn) -> "tuple[bool, str]":
+    broke = _pay(char, shop_prices(char)["find"])
+    if broke:
+        return False, broke
+    return True, find_item(uid, char, rng, name).text
+
+
+def buy_sharpen(char: dict, slot: str) -> "tuple[bool, str]":
+    item = char["items"].get(slot)
+    if item is None:
+        return False, f"You have no {slot} to sharpen."
+    broke = _pay(char, sharpen_price(item))
+    if broke:
+        return False, broke
+    before = item["level"]
+    item["level"] = before + max(1, before * SHARPEN_PCT // 100)
+    return True, f"Your {_item_label(slot, {**item, 'level': before})} is now level {item['level']}."
+
+
+def buy_rush(char: dict, now: int, today: str) -> "tuple[bool, str]":
+    if char["rush_day"] == today:
+        return False, "You've already rushed today."
+    broke = _pay(char, shop_prices(char)["rush"])
+    if broke:
+        return False, broke
+    char["rush_day"] = today
+    saved = -scale(char, now, -RUSH_PCT)
+    return True, f"{format_duration(saved)} off your clock."
+
+
+def buy_second_duel(char: dict, today: str) -> "tuple[bool, str]":
+    if char["duel_day"] != today:
+        return False, "You still have today's duel."
+    if char["extra_duel_day"] == today:
+        return False, "You've already bought a second duel today."
+    broke = _pay(char, shop_prices(char)["duel"])
+    if broke:
+        return False, broke
+    char["extra_duel_day"] = today
+    char["duel_day"] = None
+    return True, "You may duel once more today."
+
+
+def buy_class(char: dict, class_name: str) -> "tuple[bool, str]":
+    broke = _pay(char, PRICE_CLASS)
+    if broke:
+        return False, broke
+    char["class"] = class_name
+    return True, f"You are now a {class_name}."
+
+
+def nearest_town(char: dict) -> "tuple[str, int] | None":
+    """(town, straight-line distance in squares), or None before the
+    character has a position."""
+    if char.get("x") is None:
+        return None
+    return min(
+        ((town, int(((char["x"] - LANDMARKS[town][0]) ** 2 + (char["y"] - LANDMARKS[town][1]) ** 2) ** 0.5)) for town in TOWNS),
+        key=lambda pair: pair[1],
+    )
+
+
+def market_in_reach(char: dict) -> "str | None":
+    near = nearest_town(char)
+    return near[0] if near and near[1] <= MARKET_RADIUS else None
+
+
+def auto_trade(uid: int, char: dict, rng, name: NameFn, now: int) -> "Note | None":
+    """The errand a character runs on its own in a town's centre: at most one
+    find and one sharpening of its weakest item, inside half its purse.
+    Timers, duels and names stay the player's to buy."""
+    near = nearest_town(char)
+    if (
+        not char.get("auto_trade", True) or near is None or near[1] > TOWN_CORE_RADIUS
+        or now - char.get("traded_at", 0) < AUTO_TRADE_COOLDOWN_SECS
+    ):
+        return None
+    before = char["gold"]
+    budget = before * AUTO_TRADE_BUDGET_PCT // 100
+    done = []
+    price = shop_prices(char)["find"]
+    if price <= budget:
+        budget -= price
+        done.append(buy_find(uid, char, rng, name)[1])
+    if char["items"]:
+        slot = min(char["items"], key=lambda s: (char["items"][s]["level"], s))
+        if sharpen_price(char["items"][slot]) <= budget:
+            done.append(buy_sharpen(char, slot)[1].replace("Your ", "Their ", 1))
+    if not done:
+        return None   # too poor today — no stamp, so a fuller purse still trades this visit
+    char["traded_at"] = now
+    return Note((uid,), f"🏘️ {name(uid)} wandered into {near[0]} and did some trading. {' '.join(done)} "
+                        f"{before - char['gold']:,} gold spent, {char['gold']:,} left.")
 
 
 # ── the map ──────────────────────────────────────────────────────────────────
@@ -628,7 +808,12 @@ def collision_fight(uid: int, opp_uid: int, chars: dict, rng, name: NameFn, now:
         lost = scale(me, now, max(opp["level"] // 7, 7))
         return [Note(involved, f"{head} and was defeated. {format_duration(lost)} added to their clock.", True)]
     won = -scale(me, now, -max(opp["level"] // 4, 7))
-    notes = [Note(involved, f"{head} and took them in combat! {format_duration(won)} off their clock.", True)]
+    spoils = opp["gold"] * GOLD_SPOILS_PCT // 100
+    opp["gold"] -= spoils
+    prize = GOLD_PER_WIN * max(opp["level"], 1)
+    me["gold"] += prize + spoils
+    took = f", plus {spoils:,} from {name(opp_uid)}'s purse" if spoils else ""
+    notes = [Note(involved, f"{head} and took them in combat! {format_duration(won)} off their clock, and {prize:,} gold{took}.", True)]
     if not rng.randrange(COLLISION_CRIT_ODDS):
         hurt = scale(opp, now, 5 + rng.randrange(20))
         notes.append(Note(involved, f"💥 A critical strike! {name(opp_uid)} is set back {format_duration(hurt)}.", True))
@@ -637,6 +822,14 @@ def collision_fight(uid: int, opp_uid: int, chars: dict, rng, name: NameFn, now:
         if taken:
             notes.append(Note(involved, f"🫳 In the fierce battle {name(opp_uid)} dropped their {taken}, and {name(uid)} picked it up!", True))
     return notes
+
+
+def _pay_questers(chars: dict, members, now: int) -> int:
+    purse = GOLD_QUEST_PER_MEMBER * len(members)
+    for u in members:
+        scale(chars[u], now, -QUEST_REWARD_PCT)
+        chars[u]["gold"] += purse
+    return purse
 
 
 def _journey_step(chars: dict, quest: dict, now: int, name: NameFn) -> "tuple[list, bool]":
@@ -652,10 +845,9 @@ def _journey_step(chars: dict, quest: dict, now: int, name: NameFn) -> "tuple[li
     if quest["stage"] == 1:
         quest["stage"] = 2
         return [Note(tuple(members), f"🧭 {_names(members, name)} have reached {_place(quest['p1'])}. Onward to {_place(quest['p2'])}.", True)], True
-    for u in members:
-        scale(chars[u], now, -QUEST_REWARD_PCT)
+    purse = _pay_questers(chars, members, now)
     _end_quest(quest, now + QUEST_REST_SECS)
-    return [Note(tuple(members), f"🏆 {_names(members, name)} have completed their journey! Each is {QUEST_REWARD_PCT}% closer to their next level.", True)], True
+    return [Note(tuple(members), f"🏆 {_names(members, name)} have completed their journey! Each is {QUEST_REWARD_PCT}% closer to their next level and {purse:,} gold richer.", True)], True
 
 
 def move_players(chars: dict, quest: dict, rng, name: NameFn, now: int, seconds: int) -> "list[Note]":
@@ -738,10 +930,9 @@ def tick_quest(chars: dict, quest: dict, rng, name: NameFn, now: int) -> "list[N
         if quest["kind"] != "vigil" or now < quest["ends_at"]:
             return []
         members = tuple(quest["members"])
-        for u in members:
-            scale(chars[u], now, -QUEST_REWARD_PCT)
+        purse = _pay_questers(chars, members, now)
         _end_quest(quest, now + QUEST_REST_SECS)
-        return [Note(members, f"🏆 {_names(members, name)} completed their quest! Each is {QUEST_REWARD_PCT}% closer to their next level.", True)]
+        return [Note(members, f"🏆 {_names(members, name)} completed their quest! Each is {QUEST_REWARD_PCT}% closer to their next level and {purse:,} gold richer.", True)]
 
     if now < quest.get("not_before", 0):
         return []

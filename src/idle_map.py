@@ -16,7 +16,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from src.idlerpg import MAP_SIZE
+from src.idlerpg import LANDMARKS, MAP_SIZE, MARKET_RADIUS, TOWNS
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ _PLAYER = (30, 80, 170)
 _QUESTER = (20, 130, 60)
 _HIGHLIGHT = (210, 40, 40)
 _ROUTE = (210, 40, 40)
+_MARKET = (176, 120, 40)
 
 _background: "Image.Image | None" = None
 
@@ -88,6 +89,12 @@ def render_map(players: list, *, highlight=(), quest: "dict | None" = None) -> b
     image = _load_background()
     draw = ImageDraw.Draw(image)
     small, normal = _font(15), _font(18)
+
+    # Where `!idle shop` is open.
+    for town in TOWNS:
+        cx, cy = _px(*LANDMARKS[town])
+        reach = MARKET_RADIUS * _SCALE
+        draw.ellipse((cx - reach, cy - reach, cx + reach, cy + reach), outline=_MARKET, width=2)
 
     questers: set = set()
     if quest and quest.get("p1") and quest.get("p2"):

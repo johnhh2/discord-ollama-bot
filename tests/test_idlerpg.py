@@ -213,6 +213,98 @@ def test_chaotic_lives_see_more_events_than_lawful_ones():
     assert _count("chaotic") > _count("neutral") > _count("lawful")
 
 
+# ── gold ─────────────────────────────────────────────────────────────────────
+
+def test_winning_a_level_up_battle_pays_by_the_opponents_level_and_the_house_pays_flat():
+    chars = {1: _char(30, items={"ring": {"level": 50, "name": None}})}
+    rng = _Scripted(randint=lambda low, high: high if high == 50 else 0)
+    rpg.level_up_battle(1, chars, rng, _name, NOW)
+    assert chars[1]["gold"] == rpg.GOLD_HOUSE_WIN
+
+    chars = {1: _char(30, items={"ring": {"level": 50, "name": None}}), 2: _char(12)}
+    rng = _Scripted(randint=lambda low, high: high if high == 50 else 0, randrange=0)   # randrange 0 picks player 2… and crits
+    notes = rpg.level_up_battle(1, chars, rng, _name, NOW)
+    assert chars[1]["gold"] == 60 and "60 gold" in notes[0].text and chars[2]["gold"] == 0
+
+
+def test_a_collision_win_also_lifts_five_percent_of_the_losers_purse():
+    chars = {
+        1: _char(10, x=10, y=10, gold=1000),
+        2: _char(10, x=11, y=11, gold=0, items={"ring": {"level": 30, "name": None}}),
+    }
+    rng = _Walk([(0, 0), (-1, -1)], random_=0.4, randrange=10 ** 9)
+    notes = rpg.move_players(chars, rpg.new_quest(), rng, _name, NOW, 1)
+    assert chars[1]["gold"] == 950 and chars[2]["gold"] == 50 + 50
+    assert "plus 50 from P1's purse" in notes[0].text
+
+
+def test_a_finished_quest_pays_every_quester_by_party_size():
+    chars = {1: _char(45), 2: _char(45), 3: _char(45)}
+    quest = {**rpg.new_quest(), "members": [1, 2, 3], "description": "wait", "kind": "vigil", "ends_at": NOW}
+    notes = rpg.tick_quest(chars, quest, _Scripted(), _name, NOW)
+    assert [c["gold"] for c in chars.values()] == [750, 750, 750] and "750 gold" in notes[0].text
+
+
+def test_godsends_and_calamities_are_sometimes_about_gold():
+    chars = {1: _char(10, left=10_000, gold=1000)}
+    rng = _Scripted(random_=0.15, randint=lambda low, high: high)   # past the 10% item roll, inside the 20% gold one
+    assert "1,200" not in rpg.godsend(1, chars, rng, _name, NOW).text and chars[1]["gold"] == 1200
+    assert "120 gold gone" in rpg.calamity(1, chars, rng, _name, NOW).text and chars[1]["gold"] == 1080
+    assert rpg.time_left(chars[1], NOW) == 10_000
+
+    broke = {1: _char(10, left=10_000)}
+    rpg.calamity(1, broke, rng, _name, NOW)      # nothing to steal: the ordinary kind
+    assert broke[1]["gold"] == 0 and rpg.time_left(broke[1], NOW) > 10_000
+
+
+def test_prestige_keeps_the_gold():
+    char = _char(60, gold=777)
+    rpg.do_prestige(char, NOW)
+    assert char["gold"] == 777
+
+
+def test_shop_prices_scale_with_level_and_sharpening_with_the_item():
+    assert rpg.shop_prices(_char(0))["find"] == 25 and rpg.shop_prices(_char(40))["find"] == 1000
+    char = _char(10, gold=10_000, items={"ring": {"level": 5, "name": None}, "helm": {"level": 300, "name": "Crown"}})
+    assert rpg.buy_sharpen(char, "ring") == (True, "Your level 5 ring is now level 6.")    # at least +1
+    bought, text = rpg.buy_sharpen(char, "helm")
+    assert bought and char["items"]["helm"]["level"] == 330 and text.startswith("Your Crown")
+    assert char["gold"] == 10_000 - 100 - 6000
+
+
+# ── towns ────────────────────────────────────────────────────────────────────
+
+def test_markets_reach_sixty_squares_and_only_settlements_have_one():
+    town = rpg.LANDMARKS["Velvragh"]
+    assert rpg.market_in_reach(_char(x=town[0] + 60, y=town[1])) == "Velvragh"
+    assert rpg.market_in_reach(_char(x=town[0] + 61, y=town[1])) is None
+    wilds = rpg.LANDMARKS["the Great Shahlil mountains"]
+    assert rpg.market_in_reach(_char(x=wilds[0], y=wilds[1])) is None
+    assert rpg.market_in_reach(_char()) is None and rpg.nearest_town(_char()) is None   # not yet on the map
+    assert all(town in rpg.LANDMARKS for town in rpg.TOWNS)
+
+
+def test_the_errand_stays_inside_half_the_purse_and_never_buys_the_players_choices():
+    x, y = rpg.LANDMARKS["Denmark"]
+    rng = _Scripted(random_=0.999, randrange=1)
+    char = _char(10, left=10_000, gold=300, x=x, y=y, items={"ring": {"level": 5, "name": None}})
+    note = rpg.auto_trade(1, char, rng, _name, NOW)           # budget 150: no find (250), but the ring (100)
+    assert char["gold"] == 200 and char["items"]["ring"]["level"] == 6 and "Their level 5 ring" in note.text
+    assert rpg.time_left(char, NOW) == 10_000 and char["rush_day"] is None and char["class"] == "Tester"
+    assert rpg.auto_trade(1, char, rng, _name, NOW + 3600) is None                       # cooldown
+
+
+def test_a_poor_visit_is_not_stamped_and_the_ring_and_the_wilds_do_not_trade():
+    x, y = rpg.LANDMARKS["Denmark"]
+    rng = _Scripted()
+    poor = _char(10, gold=40, x=x, y=y, items={"ring": {"level": 5, "name": None}})
+    assert rpg.auto_trade(1, poor, rng, _name, NOW) is None and poor["traded_at"] == 0 and poor["gold"] == 40
+    ring = _char(10, gold=5000, x=x + rpg.TOWN_CORE_RADIUS + 1, y=y)
+    assert rpg.auto_trade(1, ring, rng, _name, NOW) is None and ring["gold"] == 5000
+    off = _char(10, gold=5000, x=x, y=y, auto_trade=False)
+    assert rpg.auto_trade(1, off, rng, _name, NOW) is None and off["gold"] == 5000
+
+
 # ── pace ─────────────────────────────────────────────────────────────────────
 
 def test_lively_pace_brings_luck_about_daily_and_classic_about_weekly():

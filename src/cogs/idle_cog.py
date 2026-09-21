@@ -38,7 +38,10 @@ from src.confirm_view import confirm_prompt
 from src.economy import _ct_today, next_daily_reset_ts
 from src.guild_config import get_guild_cfg
 from src.idle_map import MAP_FILENAME, render_map
-from src.helpers import emb, C_BLUE, C_GOLD, C_GREEN, C_GREY, C_RED, MemberConverter, format_duration, parse_duration
+from src.helpers import (
+    emb, C_BLUE, C_GOLD, C_GREEN, C_GREY, C_RED,
+    MemberConverter, format_duration, parse_duration, parse_int_amount,
+)
 from src.permissions import is_silenced
 from src.settings_views import pick_from_list
 
@@ -59,6 +62,7 @@ LEADERBOARD_SIZE = 10
 CLASS_MAX = 30
 _CLASS_RE = re.compile(r"[\w][\w '\-]*")
 NOT_YOURS = "Not your prompt."
+WAGER_ACCEPT_SECS = 120.0
 NO_MENTIONS = discord.AllowedMentions.none()
 
 ALIGN_EFFECTS = (
@@ -85,6 +89,15 @@ _RULES_TOPICS = {
         "Land on the same square as someone and you may fight them, there and then.\n"
         "Some quests are journeys: the party stops wandering and walks to one landmark, then another. `!idle map` shows it all."
     ),
+    "gold": (
+        "The realm's own money — nothing to do with the server's coins, and it can't be sent to anyone.\n"
+        "You earn it by levelling, winning fights and finishing quests; a collision fight's winner also lifts "
+        f"{rpg.GOLD_SPOILS_PCT}% of the loser's purse.\n"
+        f"`!idle shop` spends it, but only within {rpg.MARKET_RADIUS} squares of a town (the rings on `!idle map`): an extra item find, "
+        "sharpening an item, a once-a-day rush, a second duel, a new class. Walk right into a town and your character "
+        f"trades on its own with up to {rpg.AUTO_TRADE_BUDGET_PCT}% of its gold — `!idle shop auto off` stops that. "
+        "`!idle duel @user 200` bets gold, anywhere."
+    ),
     "alignment": ALIGN_EFFECTS + "\nSet it with `!idle align`, once a day.",
     "quests": (
         f"Now and then, {rpg.QUEST_MIN_PARTY}–{rpg.QUEST_MAX_PARTY} online players of level {rpg.QUEST_MIN_LEVEL}+ are sent on a 12–24 hour quest.\n"
@@ -95,6 +108,12 @@ _RULES_TOPICS = {
         f"You keep a ★ and level {rpg.PRESTIGE_BONUS_PCT}% faster for good (up to {rpg.PRESTIGE_MAX_RANKS} ranks)."
     ),
 }
+
+
+def _clean_class(text: str) -> "str | None":
+    """A class name fit to print in announcements, or None."""
+    text = " ".join(text.split())
+    return text if len(text) <= CLASS_MAX and _CLASS_RE.fullmatch(text) else None
 
 
 class IdleCog(commands.Cog):
@@ -219,10 +238,12 @@ class IdleCog(commands.Cog):
                 if char["next_level_at"] > horizon:
                     break
                 rpg.level_up(char)
+                earned = rpg.level_gold(char["level"])
+                char["gold"] += earned
                 self._rename_due.add((gid, uid))
                 notes.append(rpg.Note(
                     (uid,),
-                    f"🎉 {name(uid)} the {char['class']} reached **level {char['level']}**! "
+                    f"🎉 {name(uid)} the {char['class']} reached **level {char['level']}**! +{earned:,} gold. "
                     f"The next one takes {format_duration(rpg.ttl(char['level'], char['prestige']))}.",
                     rpg.level_is_news(char["level"], char["prestige"]),
                 ))
@@ -246,6 +267,10 @@ class IdleCog(commands.Cog):
             # Positions ride along with whatever else saves the row (at worst
             # the five-minute last_seen write) — never a write per step.
             notes += rpg.move_players(chars, quest, self.rng, name, now, TICK_SECONDS)
+            for uid in rpg.running(chars):
+                errand = rpg.auto_trade(uid, chars[uid], self.rng, name, now)
+                if errand:
+                    notes.append(errand)
             notes += rpg.tick_quest(chars, quest, self.rng, name, now)
             if quest != before:
                 self._dirty_quests.add(gid)
@@ -529,12 +554,14 @@ class IdleCog(commands.Cog):
         lines = [
             f"**Alignment:** {rpg.alignment_label(char)}",
             f"**Level {char['level'] + 1}:** {clock}",
-            f"**Item power:** {rpg.item_sum(char):,}",
+            f"**Item power:** {rpg.item_sum(char):,} · **Gold:** {char['gold']:,}",
             f"**Adventuring since:** <t:{char['created_at']}:D>",
         ]
         if char.get("x") is not None:
             here = rpg.landmark_at((char["x"], char["y"]))
-            lines.insert(2, f"**Position:** [{char['x']}, {char['y']}]" + (f" — at {here}" if here else ""))
+            town, away = rpg.nearest_town(char)
+            market = f"market open ({town})" if away <= rpg.MARKET_RADIUS else f"nearest market: {town}, {away} squares"
+            lines.insert(2, f"**Position:** [{char['x']}, {char['y']}]" + (f" — at {here}" if here else "") + f" · {market}")
         if char["penalty_total"]:
             lines.insert(3, f"**Time lost to penalties:** {format_duration(char['penalty_total'])}")
         if char["prestige"]:
@@ -547,7 +574,7 @@ class IdleCog(commands.Cog):
 
     @commands.group(name="idle", aliases=["irpg"], invoke_without_command=True)
     async def cmd_idle(self, ctx: commands.Context):
-        """!idle join|status|items|map|top|align|duel|quest|prestige|leave|rules"""
+        """!idle join|status|items|map|shop|top|align|duel|quest|prestige|leave|rules"""
         if not await self._ready(ctx):
             return
         char = self._chars(ctx.guild.id).get(ctx.author.id)
@@ -582,8 +609,8 @@ class IdleCog(commands.Cog):
                 C_RED,
             ))
             return
-        class_name = " ".join(class_name.split())
-        if len(class_name) > CLASS_MAX or not _CLASS_RE.fullmatch(class_name):
+        class_name = _clean_class(class_name)
+        if class_name is None:
             await ctx.send(embed=emb(
                 "❌ Pick a Class",
                 f"A class is up to {CLASS_MAX} characters: letters, digits, spaces, `'` and `-`.",
@@ -655,7 +682,7 @@ class IdleCog(commands.Cog):
                 lines.append(f"**{slot.title()}:** ✨ {item['name']} (level {item['level']})")
             else:
                 lines.append(f"**{slot.title()}:** level {item['level']}")
-        lines.append(f"\n**Item power:** {rpg.item_sum(char):,}")
+        lines.append(f"\n**Item power:** {rpg.item_sum(char):,} · **Gold:** {char['gold']:,}")
         await ctx.send(embed=emb(f"{self._title(ctx.guild, target.id, char)} — Items", "\n".join(lines), C_BLUE))
 
     @cmd_idle.command(name="top")
@@ -717,14 +744,14 @@ class IdleCog(commands.Cog):
         await ctx.send(embed=emb("⚖️ Alignment", f"You are now **{rpg.alignment_label(char)}**.\n\n{ALIGN_EFFECTS}", C_GREEN))
 
     @cmd_idle.command(name="duel")
-    async def cmd_duel(self, ctx: commands.Context, *, member: MemberConverter = None):
+    async def cmd_duel(self, ctx: commands.Context, member: MemberConverter = None, wager: str = None):
         if not await self._ready(ctx, need_channel=True):
             return
         char = await self._own_char(ctx)
         if char is None:
             return
         if member is None:
-            await ctx.send(embed=emb("❌ Usage", "`!idle duel @user` — one challenge a day.", C_RED))
+            await ctx.send(embed=emb("❌ Usage", "`!idle duel @user [gold]` — one challenge a day; add an amount to bet gold on it.", C_RED))
             return
         gid, uid = ctx.guild.id, ctx.author.id
         chars = self._chars(gid)
@@ -737,16 +764,163 @@ class IdleCog(commands.Cog):
         elif rpg.is_paused(target):
             problem = f"{member.display_name} is offline — their clock is paused, and so are they."
         elif char["duel_day"] == _ct_today():
-            problem = f"You've had today's duel. The next one is ready <t:{next_daily_reset_ts()}:R>."
+            problem = (
+                f"You've had today's duel. The next one is ready <t:{next_daily_reset_ts()}:R> "
+                "— or buy a second with `!idle shop duel`."
+            )
+        stake = 0
+        if problem is None and wager is not None:
+            stake = parse_int_amount(wager) or 0
+            if stake <= 0:
+                problem = "The wager is an amount of gold — `!idle duel @user 200`."
+            elif char["gold"] < stake:
+                problem = f"You only have {char['gold']:,} gold."
+            elif target["gold"] < stake:
+                problem = f"{member.display_name} only has {target['gold']:,} gold."
         if problem:
             await ctx.send(embed=emb("❌ Duel", problem, C_RED))
             return
-        char["duel_day"] = _ct_today()
-        notes = rpg.duel(uid, member.id, chars, self.rng, self._namer(ctx.guild), int(time.time()))
+        prior_day = char["duel_day"]
+        char["duel_day"] = _ct_today()   # claimed before the prompt: a second !idle duel sees it
+        if stake:
+            accepted = await confirm_prompt(
+                ctx,
+                title="🤺 Wagered Duel",
+                description=(
+                    f"{member.mention} — {ctx.author.mention} challenges you to a duel for **{stake:,} gold**. "
+                    "The winner takes the gold, and a slice of the loser's clock as usual."
+                ),
+                payer=member,
+                timeout=WAGER_ACCEPT_SECS,
+                not_yours="Only the challenged player can answer.",
+            )
+            # The prompt was a long await: both characters and both purses again.
+            still_on = (
+                accepted and chars.get(uid) is char and chars.get(member.id) is target
+                and not rpg.is_paused(target) and char["gold"] >= stake and target["gold"] >= stake
+            )
+            if not still_on:
+                if chars.get(uid) is char:
+                    char["duel_day"] = prior_day
+                if accepted:
+                    await ctx.send(embed=emb("❌ Duel", "The duel fell through — someone can no longer cover the wager.", C_RED))
+                return
+        notes = rpg.duel(uid, member.id, chars, self.rng, self._namer(ctx.guild), int(time.time()), stake)
         await persistence.save_idle_character(gid, uid)
         await persistence.save_idle_character(gid, member.id)
         await ctx.send(embed=emb("🤺 Duel", "\n".join(n.text for n in notes), C_GOLD))
         await self._deliver(ctx.guild, notes, skip_main=self._in_idle_channel(ctx))
+
+    # ── !idle shop ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _shop_lines(char: dict) -> list:
+        prices = rpg.shop_prices(char)
+        return [
+            ("find", f"Find — one more item roll · {prices['find']:,} gold"),
+            ("sharpen", f"Sharpen — +{rpg.SHARPEN_PCT}% to one of your items · {rpg.PRICE_SHARPEN_PER_ITEM_LEVEL} gold per item level"),
+            ("rush", f"Rush — {rpg.RUSH_PCT}% off your clock, once a day · {prices['rush']:,} gold"),
+            ("duel", f"Second duel — once a day · {prices['duel']:,} gold"),
+            ("class", f"New class — `!idle shop class <name>` · {prices['class']:,} gold"),
+        ]
+
+    @cmd_idle.command(name="shop")
+    async def cmd_shop(self, ctx: commands.Context, item: str = None, *, arg: str = None):
+        if not await self._ready(ctx, need_channel=True):
+            return
+        char = await self._own_char(ctx)
+        if char is None:
+            return
+        gid, uid = ctx.guild.id, ctx.author.id
+        usage = "`!idle shop find` · `sharpen <slot>` · `rush` · `duel` · `class <name>` · `auto on|off`"
+        if item is not None and item.lower() == "auto":
+            choice = (arg or "").lower()
+            if choice not in ("on", "off"):
+                state_now = "on" if char["auto_trade"] else "off"
+                await ctx.send(embed=emb(
+                    "🛒 Idle Shop",
+                    f"Auto-trading is **{state_now}**. In a town's centre your character spends up to "
+                    f"{rpg.AUTO_TRADE_BUDGET_PCT}% of its gold on a find and a sharpening, at most once every "
+                    f"{format_duration(rpg.AUTO_TRADE_COOLDOWN_SECS)}. `!idle shop auto on|off`",
+                    C_BLUE,
+                ))
+                return
+            char["auto_trade"] = choice == "on"
+            await persistence.save_idle_character(gid, uid)
+            await ctx.send(embed=emb("🛒 Idle Shop", f"Auto-trading is now **{choice}**.", C_GREEN))
+            return
+        if rpg.market_in_reach(char) is None:
+            near = rpg.nearest_town(char)
+            where = f" The nearest is **{near[0]}**, {near[1]} squares away — `!idle map`." if near else ""
+            await ctx.send(embed=emb(
+                "❌ No Market Here",
+                f"You can only trade within {rpg.MARKET_RADIUS} squares of a town.{where}",
+                C_RED,
+            ))
+            return
+        if item is None:
+            lines = self._shop_lines(char)
+            picked = await pick_from_list(
+                ctx,
+                title="🛒 Idle Shop",
+                description=f"The market of **{rpg.market_in_reach(char)}**. You have **{char['gold']:,}** gold.\n\n" + "\n".join(f"• {text}" for _key, text in lines) + f"\n\nTyped: {usage}",
+                options=[(text.split(" · ")[0][:100], key) for key, text in lines],
+                placeholder="Buy…", multi=False,
+            )
+            if not picked:
+                return
+            item = picked[0]
+        item = item.lower()
+        if item == "sharpen" and not arg:
+            owned = [(f"{slot.title()} (level {char['items'][slot]['level']}) · {rpg.sharpen_price(char['items'][slot]):,} gold", slot)
+                     for slot in rpg.ITEM_SLOTS if slot in char["items"]]
+            if not owned:
+                await ctx.send(embed=emb("❌ Idle Shop", "You have nothing to sharpen yet.", C_RED))
+                return
+            picked = await pick_from_list(
+                ctx, title="🛒 Sharpen", description=f"You have **{char['gold']:,}** gold. Which item?",
+                options=owned, placeholder="Item…", multi=False,
+            )
+            if not picked:
+                return
+            arg = picked[0]
+
+        # The menus were long awaits: the character, and its purse, again.
+        char = self._chars(gid).get(uid)
+        if char is None or rpg.market_in_reach(char) is None:
+            return   # retired, or wandered out of the market, while a menu was open
+        if item == "find":
+            bought, text = rpg.buy_find(uid, char, self.rng, self._namer(ctx.guild))
+        elif item == "sharpen":
+            slot = arg.lower()
+            if slot not in rpg.ITEM_SLOTS:
+                await ctx.send(embed=emb("❌ Idle Shop", f"Slots: {', '.join(rpg.ITEM_SLOTS)}.", C_RED))
+                return
+            bought, text = rpg.buy_sharpen(char, slot)
+        elif item == "rush":
+            bought, text = rpg.buy_rush(char, int(time.time()), _ct_today())
+        elif item == "duel":
+            bought, text = rpg.buy_second_duel(char, _ct_today())
+        elif item == "class":
+            class_name = _clean_class(arg or "")
+            if class_name is None:
+                await ctx.send(embed=emb(
+                    "❌ Idle Shop",
+                    f"`!idle shop class <name>` — up to {CLASS_MAX} characters: letters, digits, spaces, `'` and `-`.",
+                    C_RED,
+                ))
+                return
+            bought, text = rpg.buy_class(char, class_name)
+            if bought:
+                self._rename_due.add((gid, uid))
+        else:
+            await ctx.send(embed=emb("❌ Idle Shop", f"Usage: {usage}", C_RED))
+            return
+        if not bought:
+            await ctx.send(embed=emb("❌ Idle Shop", text, C_RED))
+            return
+        await persistence.save_idle_character(gid, uid)
+        await ctx.send(embed=emb("🛒 Idle Shop", f"{text}\n**{char['gold']:,}** gold left.", C_GREEN))
 
     def _in_idle_channel(self, ctx) -> bool:
         """The reply already shows there — don't post the same news under it."""
@@ -860,7 +1034,7 @@ class IdleCog(commands.Cog):
             "⏳ Your character levels on a timer while you're online.\n"
             "⚔️ Items, fights and lucky breaks happen on their own.\n"
             "📜 High-level players get sent on quests for a big shortcut.\n\n"
-            "`!idle status` · `items` · `map` · `top` · `align` · `duel @user` · `quest`\n"
+            "`!idle status` · `items` · `map` · `shop` · `top` · `align` · `duel @user` · `quest`\n"
             f"More: `!idle rules <{'|'.join(_RULES_TOPICS)}>`",
             C_BLUE,
         ))
@@ -873,6 +1047,7 @@ class IdleCog(commands.Cog):
             "🛠️ Idle RPG Admin",
             "`!idle admin hog @user` — a Hand of God, now\n"
             "`!idle admin push @user <±time>` — move a clock (`-2h` sooner, `+1d` later)\n"
+            "`!idle admin gold @user <±amount>` — give or take gold\n"
             "`!idle admin remove @user` — delete a character\n"
             "`!idle admin reset` — wipe this server's game",
             C_GREY,
@@ -898,6 +1073,25 @@ class IdleCog(commands.Cog):
         await persistence.save_idle_character(ctx.guild.id, uid)
         await ctx.send(embed=emb("🙌 Hand of God", note.text, C_GOLD))
         await self._deliver(ctx.guild, [note], skip_main=self._in_idle_channel(ctx))
+
+    @cmd_admin.command(name="gold")
+    async def cmd_admin_gold(self, ctx: commands.Context, who: str = None, amount: str = None):
+        usage = "`!idle admin gold @user <±amount>`"
+        found = await self._admin_target(ctx, who, usage)
+        if found is None:
+            return
+        uid, char = found
+        delta = parse_int_amount((amount or "").lstrip("+-"))
+        if not delta:
+            await ctx.send(embed=emb("❌ Idle Admin", f"Usage: {usage}", C_RED))
+            return
+        if amount.startswith("-"):
+            delta = -min(delta, char["gold"])
+        char["gold"] += delta
+        await persistence.save_idle_character(ctx.guild.id, uid)
+        await ctx.send(embed=emb(
+            "🛠️ Gold", f"{self._namer(ctx.guild)(uid)} now has **{char['gold']:,}** gold ({delta:+,}).", C_GREEN,
+        ))
 
     @cmd_admin.command(name="push")
     async def cmd_admin_push(self, ctx: commands.Context, who: str = None, amount: str = None):

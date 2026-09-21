@@ -24,6 +24,9 @@ from tests.fakes.discord import FakeCtx, FakeGuild, FakeMember, FakeMessage, Fak
 pytestmark = pytest.mark.asyncio
 
 GID, IDLE_CH = 1, 500
+# Inside Velvragh's market ring (60 squares) but outside its centre (15), so
+# `!idle shop` is open and nothing trades on its own.
+MARKET = {"x": 365, "y": 270}
 ALICE, BOB, ADMIN = 11, 12, 13
 
 
@@ -49,6 +52,12 @@ class _WalkRng(_Rng):
     """Every wander step is +1 on both axes."""
     def randint(self, low, high):
         return high
+
+
+class _StillRng(_Rng):
+    """Nobody wanders: a character placed in a town stays there through a tick."""
+    def randint(self, low, high):
+        return 0 if (low, high) == (-1, 1) else low
 
 
 def _sent_text(dest) -> str:
@@ -445,7 +454,7 @@ async def test_rules_stay_short_and_the_detail_lives_in_topics():
     await cog.cmd_rules.callback(cog, ctx)
     card = ctx.sent_embeds[-1].description
     assert len(card) < 600 and card.count("\n") <= 10
-    assert "!idle rules <levels|battles|map|alignment|quests|prestige>" in card
+    assert "!idle rules <levels|battles|map|gold|alignment|quests|prestige>" in card
     assert "talk" not in card.lower()
 
     await cog.cmd_rules.callback(cog, ctx, "Quests")
@@ -646,8 +655,6 @@ async def test_profile_mentions_the_idle_character(monkeypatch):
     assert "⚔️ Idle RPG: **Lv 9 Bard** · [5, 6]" in shown[order[2]]
 
 
-# ── admin ────────────────────────────────────────────────────────────────────
-
 @pytest.fixture
 def _member_lookup(monkeypatch):
     async def _convert(self, ctx, argument):
@@ -658,6 +665,215 @@ def _member_lookup(monkeypatch):
         return member
     monkeypatch.setattr(_idle_cog.MemberConverter, "convert", _convert)
 
+
+# ── gold ─────────────────────────────────────────────────────────────────────
+
+async def test_a_level_up_pays_gold_and_says_so_in_the_feed():
+    cog, guild, _idle = _world()
+    char = _spawn(level=6, left=-10)
+    await cog.tick()
+    assert char["level"] == 7 and char["gold"] == 70
+    assert "+70 gold" in _sent(guild.threads[0])
+
+
+async def test_shop_typed_purchases_charge_and_apply():
+    cog, guild, _idle = _world()
+    char = _spawn(level=10, left=10_000, gold=5000, items={"helm": {"level": 20, "name": None}}, **MARKET)
+    ctx = _ctx(guild)
+
+    await cog.cmd_shop.callback(cog, ctx, "sharpen", arg="Helm")
+    assert char["items"]["helm"]["level"] == 22 and char["gold"] == 5000 - 400
+
+    before = char["next_level_at"]
+    await cog.cmd_shop.callback(cog, ctx, "rush")
+    assert char["next_level_at"] < before and char["gold"] == 4600 - 150
+    await cog.cmd_shop.callback(cog, ctx, "rush")
+    assert "already rushed" in ctx.sent_embeds[-1].description and char["gold"] == 4450
+
+    await cog.cmd_shop.callback(cog, ctx, "find")
+    assert char["gold"] == 4450 - 250 and len(char["items"]) >= 1
+
+    await cog.cmd_shop.callback(cog, ctx, "class", arg="Tax  Wizard")
+    assert char["class"] == "Tax Wizard" and char["gold"] == 4200 - 100
+    await cog.cmd_shop.callback(cog, ctx, "class", arg="@everyone")
+    assert char["class"] == "Tax Wizard" and char["gold"] == 4100
+    assert "4,100" not in ctx.sent_embeds[-1].description     # a refusal, not a receipt
+
+
+async def test_shop_refuses_what_you_cannot_afford_or_do_not_own():
+    cog, guild, _idle = _world()
+    char = _spawn(level=10, gold=10, **MARKET)
+    ctx = _ctx(guild)
+    for item, arg in (("find", None), ("rush", None), ("sharpen", "ring"), ("duel", None), ("potion", None)):
+        await cog.cmd_shop.callback(cog, ctx, item, arg=arg)
+        assert ctx.sent_embeds[-1].title == "❌ Idle Shop"
+    assert char["gold"] == 10 and char["items"] == {}
+
+
+async def test_shop_second_duel_only_after_the_first_and_once_a_day():
+    cog, guild, _idle = _world()
+    alice, _bob = _spawn(ALICE, level=10, gold=1000, **MARKET), _spawn(BOB)
+    ctx = _ctx(guild)
+    await cog.cmd_shop.callback(cog, ctx, "duel")
+    assert "still have today's duel" in ctx.sent_embeds[-1].description and alice["gold"] == 1000
+
+    await cog.cmd_duel.callback(cog, ctx, member=guild.get_member(BOB))
+    await cog.cmd_shop.callback(cog, ctx, "duel")
+    assert alice["gold"] == 900 and alice["duel_day"] is None
+    await cog.cmd_duel.callback(cog, ctx, member=guild.get_member(BOB))
+    await cog.cmd_shop.callback(cog, ctx, "duel")
+    assert "already bought" in ctx.sent_embeds[-1].description and alice["gold"] == 900
+
+
+async def test_bare_shop_opens_a_menu_and_buys_the_pick(monkeypatch):
+    cog, guild, _idle = _world()
+    char = _spawn(level=10, left=10_000, gold=1000, **MARKET)
+    menus = []
+
+    async def _pick(ctx, *, title, options, **kwargs):
+        menus.append((title, options))
+        return ["rush"]
+    monkeypatch.setattr(_idle_cog, "pick_from_list", _pick)
+    await cog.cmd_shop.callback(cog, _ctx(guild))
+    assert [key for _label, key in menus[0][1]] == ["find", "sharpen", "rush", "duel", "class"]
+    assert char["gold"] == 850 and char["rush_day"] is not None
+
+
+async def test_concurrent_rushes_charge_once(monkeypatch):
+    cog, guild, _idle = _world()
+    char = _spawn(level=10, left=10_000, gold=1000, **MARKET)
+
+    async def _yielding_save(*args):
+        await asyncio.sleep(0)
+    monkeypatch.setattr(_persistence, "save_idle_character", _yielding_save)
+    await asyncio.gather(
+        cog.cmd_shop.callback(cog, _ctx(guild), "rush"),
+        cog.cmd_shop.callback(cog, _ctx(guild), "rush"),
+    )
+    assert char["gold"] == 850
+
+
+async def test_the_shop_is_shut_in_the_wilds_and_says_where_the_nearest_market_is():
+    cog, guild, _idle = _world()
+    char = _spawn(level=10, gold=5000, x=450, y=270)          # 125 squares east of Velvragh, far from the rest
+    ctx = _ctx(guild)
+    for item in (None, "find", "rush"):
+        await cog.cmd_shop.callback(cog, ctx, item)
+        assert ctx.sent_embeds[-1].title == "❌ No Market Here"
+    assert "**Velvragh**, 125 squares away" in ctx.sent_embeds[-1].description
+    assert char["gold"] == 5000
+
+    await cog.cmd_status.callback(cog, ctx)
+    assert "nearest market: Velvragh, 125 squares" in ctx.sent_embeds[-1].description
+    char["x"] = 345
+    await cog.cmd_status.callback(cog, ctx)
+    assert "market open (Velvragh)" in ctx.sent_embeds[-1].description
+
+
+async def test_a_menu_pick_made_after_wandering_out_of_the_market_buys_nothing(monkeypatch):
+    cog, guild, _idle = _world()
+    char = _spawn(level=10, gold=1000, **MARKET)
+
+    async def _pick_late(ctx, **kwargs):
+        char["x"] = 100                                       # walked off while the dropdown was open
+        return ["find"]
+    monkeypatch.setattr(_idle_cog, "pick_from_list", _pick_late)
+    await cog.cmd_shop.callback(cog, _ctx(guild))
+    assert char["gold"] == 1000
+
+
+async def test_walking_into_a_town_runs_the_errand_once_and_reports_it_in_the_feed():
+    cog, guild, idle = _world()
+    cog.rng = _StillRng()
+    char = _spawn(level=10, left=50_000, gold=1000, x=325, y=270, items={"ring": {"level": 5, "name": None}, "helm": {"level": 40, "name": None}})
+
+    await cog.tick()
+
+    # Half the purse at most: a find (250), then the weakest item sharpened (5 × 20 = 100).
+    assert char["gold"] == 650 and char["items"]["ring"]["level"] == 6 and char["items"]["helm"]["level"] == 40
+    feed = _sent(guild.threads[0])
+    assert "wandered into Velvragh and did some trading" in feed and "350 gold spent, 650 left" in feed
+    idle.send.assert_not_called()                             # the player's own business
+
+    await cog.tick()                                          # still in town: not again for twelve hours
+    assert char["gold"] == 650
+
+
+async def test_auto_trade_can_be_switched_off_from_anywhere():
+    cog, guild, _idle = _world()
+    cog.rng = _StillRng()
+    char = _spawn(level=10, left=50_000, gold=1000, x=20, y=480)
+    ctx = _ctx(guild)
+    await cog.cmd_shop.callback(cog, ctx, "auto", arg="off")
+    assert char["auto_trade"] is False
+    char["x"], char["y"] = 325, 270
+    await cog.tick()
+    assert char["gold"] == 1000
+    await cog.cmd_shop.callback(cog, ctx, "auto")
+    assert "Auto-trading is **off**" in ctx.sent_embeds[-1].description
+
+
+async def test_a_wagered_duel_moves_the_gold_once_the_target_accepts(monkeypatch):
+    cog, guild, _idle = _world()
+    alice = _spawn(ALICE, left=10_000, gold=500, items={"ring": {"level": 9, "name": None}})
+    bob = _spawn(BOB, left=10_000, gold=300)
+    asked = {}
+
+    async def _accept(ctx, *, payer, description, **kwargs):
+        asked.update(payer=payer.id, description=description)
+        return True
+    monkeypatch.setattr(_idle_cog, "confirm_prompt", _accept)
+
+    class _HighRoller(_Rng):
+        def randint(self, low, high):
+            return high
+    cog.rng = _HighRoller()                      # alice rolls 9, bob has nothing to roll
+
+    ctx = _ctx(guild)
+    await cog.cmd_duel.callback(cog, ctx, member=guild.get_member(BOB), wager="200")
+    assert asked["payer"] == BOB and "200 gold" in asked["description"]
+    assert (alice["gold"], bob["gold"]) == (700, 100)
+    assert "200 gold on the table" in ctx.sent_embeds[-1].description
+
+
+async def test_a_declined_or_uncoverable_wager_costs_nothing_not_even_the_daily_duel(monkeypatch):
+    cog, guild, _idle = _world()
+    alice, bob = _spawn(ALICE, gold=500), _spawn(BOB, gold=300)
+    ctx = _ctx(guild)
+
+    await cog.cmd_duel.callback(cog, ctx, member=guild.get_member(BOB), wager="400")
+    assert "only has 300" in ctx.sent_embeds[-1].description and alice["duel_day"] is None
+
+    async def _decline(*args, **kwargs):
+        return False
+    monkeypatch.setattr(_idle_cog, "confirm_prompt", _decline)
+    await cog.cmd_duel.callback(cog, ctx, member=guild.get_member(BOB), wager="200")
+    assert alice["duel_day"] is None and (alice["gold"], bob["gold"]) == (500, 300)
+
+    async def _accept_after_spending(*args, **kwargs):
+        bob["gold"] = 50                         # spent it while the prompt was open
+        return True
+    monkeypatch.setattr(_idle_cog, "confirm_prompt", _accept_after_spending)
+    await cog.cmd_duel.callback(cog, ctx, member=guild.get_member(BOB), wager="200")
+    assert "fell through" in ctx.sent_embeds[-1].description
+    assert alice["duel_day"] is None and (alice["gold"], bob["gold"]) == (500, 50)
+
+
+async def test_status_shows_gold_and_admin_can_adjust_it(_member_lookup):
+    cog, guild, _idle = _world()
+    char = _spawn(gold=1250, x=1, y=1)
+    ctx = _ctx(guild)
+    await cog.cmd_status.callback(cog, ctx)
+    assert "**Gold:** 1,250" in ctx.sent_embeds[-1].description
+
+    admin = _ctx(guild, ADMIN)
+    await cog.cmd_admin_gold.callback(cog, admin, f"<@{ALICE}>", "+2k")
+    assert char["gold"] == 3250
+    await cog.cmd_admin_gold.callback(cog, admin, f"<@{ALICE}>", "-9999999")
+    assert char["gold"] == 0
+
+
+# ── admin ────────────────────────────────────────────────────────────────────
 
 async def test_admin_push_moves_a_clock_both_ways(_member_lookup):
     cog, guild, _idle = _world()
@@ -752,7 +968,8 @@ async def test_settings_idle_pace_sets_validates_and_prompts(monkeypatch):
 # ── persistence ──────────────────────────────────────────────────────────────
 
 async def test_characters_and_quests_round_trip_through_the_db(db):
-    char = _spawn(level=12, items={"ring": {"level": 9, "name": None}}, thread_id=900, law="chaotic", x=17, y=499)
+    char = _spawn(level=12, items={"ring": {"level": 9, "name": None}}, thread_id=900, law="chaotic", x=17, y=499,
+                  gold=4321, rush_day="2026-09-21", extra_duel_day="2026-09-20", auto_trade=False, traded_at=1234)
     paused = _spawn(BOB)
     rpg.pause(paused, int(time.time()))
     _state.idle_quests[GID] = {
@@ -777,3 +994,11 @@ async def test_characters_and_quests_round_trip_through_the_db(db):
     _state.idle_characters.clear()
     await _persistence.init_db_state()
     assert GID not in _state.idle_characters
+
+
+async def test_items_sheet_shows_the_purse_too():
+    cog, guild, _idle = _world()
+    _spawn(gold=1250, items={"ring": {"level": 9, "name": None}})
+    ctx = _ctx(guild)
+    await cog.cmd_items.callback(cog, ctx)
+    assert "**Item power:** 9 · **Gold:** 1,250" in ctx.sent_embeds[-1].description
