@@ -632,6 +632,7 @@ async def test_profile_mentions_the_idle_character(monkeypatch):
     import src.cogs.profile_cog as _profile_cog
     cog, guild, _idle = _world()
     _spawn(ALICE, level=9, x=5, y=6)
+    _state.leveling[str(GID)] = {str(ALICE): {"level": 4, "xp": 1234}}
     monkeypatch.setattr(_profile_cog, "load_lottery", AsyncMock(return_value={}))
     monkeypatch.setattr(_profile_cog, "load_records", AsyncMock(return_value={}))
     member = guild.get_member(ALICE)
@@ -639,7 +640,10 @@ async def test_profile_mentions_the_idle_character(monkeypatch):
     profile = _profile_cog.ProfileCog(None)
     ctx = _ctx(guild)
     await profile.cmd_profile.callback(profile, ctx)
-    assert "⚔️ Idle RPG: **Lv 9 Bard** · [5, 6]" in ctx.sent_embeds[-1].description
+    shown = ctx.sent_embeds[-1].description.split("\n")
+    order = [next(i for i, line in enumerate(shown) if line.startswith(mark)) for mark in ("🏺 Artifacts", "📊 Level", "⚔️ Idle RPG")]
+    assert order == sorted(order) and order[2] == order[1] + 1 == order[0] + 2
+    assert "⚔️ Idle RPG: **Lv 9 Bard** · [5, 6]" in shown[order[2]]
 
 
 # ── admin ────────────────────────────────────────────────────────────────────

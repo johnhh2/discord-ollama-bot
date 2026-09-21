@@ -59,11 +59,18 @@ class ProfileCog(commands.Cog):
             )
             lines.append(f"🏆 Records held: **{held:,}**")
 
-            idle_char = state.idle_characters.get(ctx.guild.id, {}).get(uid)
-            if idle_char is not None:
-                place = f" · [{idle_char['x']}, {idle_char['y']}]" if idle_char.get("x") is not None else ""
-                lines.append(f"⚔️ Idle RPG: **Lv {idle_char['level']} {idle_char['class']}**{place} (`!idle status`)")
+        streak = effective_streak(get_command_streak_entry(str(uid)), _ct_today())
+        if streak:
+            lines.append(f"🔥 Streak: **{streak:,}** day{'' if streak == 1 else 's'}")
 
+        artifacts = owned_artifact_count(uid)
+        props = owned_properties(uid)
+        holdings = f"🏺 Artifacts: **{artifacts:,}**"
+        if props:
+            holdings += f" · 🏘️ Properties: **{len(props):,}** (worth {portfolio_value(uid):,} 🪙)"
+        lines.append(holdings)
+
+        if ctx.guild is not None:
             lvl_rec = state.leveling.get(str(ctx.guild.id), {}).get(str(uid))
             if lvl_rec is not None:
                 level = display_level(lvl_rec.get("level", 0))
@@ -78,16 +85,10 @@ class ProfileCog(commands.Cog):
                     line += f" · 🌐 Global level **{global_level}**"
                 lines.append(line)
 
-        streak = effective_streak(get_command_streak_entry(str(uid)), _ct_today())
-        if streak:
-            lines.append(f"🔥 Streak: **{streak:,}** day{'' if streak == 1 else 's'}")
-
-        artifacts = owned_artifact_count(uid)
-        props = owned_properties(uid)
-        holdings = f"🏺 Artifacts: **{artifacts:,}**"
-        if props:
-            holdings += f" · 🏘️ Properties: **{len(props):,}** (worth {portfolio_value(uid):,} 🪙)"
-        lines.append(holdings)
+            idle_char = state.idle_characters.get(ctx.guild.id, {}).get(uid)
+            if idle_char is not None:
+                place = f" · [{idle_char['x']}, {idle_char['y']}]" if idle_char.get("x") is not None else ""
+                lines.append(f"⚔️ Idle RPG: **Lv {idle_char['level']} {idle_char['class']}**{place} (`!idle status`)")
 
         user_row = state.economy["users"].get(str(uid), {})
         if float(user_row.get("jail_until", 0) or 0) > time.time():
