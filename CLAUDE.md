@@ -819,6 +819,18 @@ tables from migrations 0070–0075.
   steps in). Early level-ups fight a quarter of the time at every pace —
   lively once made it half, which with a level every ten minutes was one
   player being fought without pause.
+- **Voice bonus.** A character whose player shares one of the guild's voice
+  channels with at least one other human (not the AFK channel, not alone,
+  bots don't count — otherwise parking in an empty room overnight pays) runs `VOICE_BONUS_PCT` (10%) faster and earns
+  that much more gold. The tick applies both: `voice_speedup` takes six
+  seconds off per minute ticked, and the gold bonus is 10% of whatever the
+  purse *grew* by during that `_advance` — one snapshot covers level-ups,
+  fights, quests and luck without touching each source, and leaves wagers
+  and the shop (commands, outside the tick) alone. A tick that spends more
+  than it earns pays nothing. Being in voice also counts as being seen: a
+  phone in a call often shows offline. Needs `intents.voice_states`, which
+  the bot already has. No extra row saves — the shifted clock rides the
+  usual writes.
 - **Pace.** The IRC odds (a godsend a week) assume dozens of players for
   months; with a handful nothing ever happens. `idlerpg.PACES` holds two
   sets: `lively` (the default — a godsend and a calamity about daily per

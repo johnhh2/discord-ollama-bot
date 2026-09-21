@@ -76,7 +76,9 @@ _RULES_TOPICS = {
     "levels": (
         f"Level 1 takes {format_duration(rpg.ttl(0))}; each level after takes {int((rpg.LEVEL_MULT - 1) * 100)}% longer.\n"
         f"The timer runs while you've been online in the last {format_duration(rpg.GRACE_SECS)} — idle and do-not-disturb count. "
-        "After that it pauses and picks up where it stopped. Being away never costs you anything."
+        "After that it pauses and picks up where it stopped. Being away never costs you anything.\n"
+        f"Share one of the server's voice channels with someone (not the AFK one, and not alone) and your timer runs {rpg.VOICE_BONUS_PCT}% faster, "
+        f"with {rpg.VOICE_BONUS_PCT}% more gold from everything you earn."
     ),
     "battles": (
         f"Each level-up finds an item for one of ten slots and may start a fight (always, from level {rpg.BATTLE_ALWAYS_LEVEL}).\n"
@@ -172,6 +174,17 @@ class IdleCog(commands.Cog):
         member = guild.get_member(uid)
         return member is not None and str(member.status) != "offline"
 
+    @staticmethod
+    def _in_voice(guild, uid: int) -> bool:
+        """In one of this guild's voice channels with at least one other
+        person — the AFK channel and a channel shared only with bots don't
+        count, or parking alone in an empty room overnight would."""
+        member = guild.get_member(uid)
+        channel = getattr(getattr(member, "voice", None), "channel", None)
+        if channel is None or channel == getattr(guild, "afk_channel", None):
+            return False
+        return sum(1 for m in getattr(channel, "members", ()) if not m.bot) >= 2
+
     def _title(self, guild, uid: int, char: dict) -> str:
         member = guild.get_member(uid)
         who = member.display_name if member else str(uid)
@@ -231,9 +244,12 @@ class IdleCog(commands.Cog):
         name = self._namer(guild)
         pace = rpg.PACES.get(get_guild_cfg(gid).get("idle_pace"), rpg.PACES[rpg.DEFAULT_PACE])
         notes: list = []
+        # Whoever is in voice this tick, with the purse they started it on.
+        voiced = {uid: char["gold"] for uid, char in chars.items() if self._in_voice(guild, uid)}
 
         for uid, char in list(chars.items()):
-            if self._online(guild, uid):
+            # Voice proves presence too — a phone in a call often shows offline.
+            if uid in voiced or self._online(guild, uid):
                 self._seen(guild, uid, char, now)
             if rpg.is_paused(char):
                 continue
@@ -241,6 +257,8 @@ class IdleCog(commands.Cog):
                 rpg.pause(char, now)
                 self._dirty.add((gid, uid))
                 continue
+            if uid in voiced:
+                rpg.voice_speedup(char, TICK_SECONDS)
             here = rpg.logged_in(char, now)
             horizon = now if here else char["last_seen"] + rpg.GRACE_SECS
             for _ in range(MAX_LEVELS_PER_TICK):
@@ -285,6 +303,12 @@ class IdleCog(commands.Cog):
             notes += rpg.tick_quest(chars, quest, self.rng, name, now)
             if quest != before:
                 self._dirty_quests.add(gid)
+
+        for uid, before in voiced.items():
+            bonus = rpg.voice_gold_bonus(chars[uid]["gold"] - before) if uid in chars else 0
+            if bonus:
+                chars[uid]["gold"] += bonus
+                notes.append(rpg.Note((uid,), f"🎙️ Voice bonus: +{bonus:,} gold for {name(uid)}."))
 
         notes += self._pending.pop(gid, [])
 
@@ -574,6 +598,8 @@ class IdleCog(commands.Cog):
             f"**Item power:** {rpg.item_sum(char):,} · **Gold:** {char['gold']:,}",
             f"**Adventuring since:** <t:{char['created_at']}:D>",
         ]
+        if self._in_voice(guild, uid):
+            lines.append(f"🎙️ **In voice:** clock and gold +{rpg.VOICE_BONUS_PCT}%")
         if char.get("x") is not None:
             here = rpg.landmark_at((char["x"], char["y"]))
             town, away = rpg.nearest_town(char)

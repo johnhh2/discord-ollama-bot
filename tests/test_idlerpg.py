@@ -86,6 +86,16 @@ def test_prestige_resets_level_and_items_but_keeps_the_rank():
     assert char["next_level_at"] == NOW + rpg.ttl(0, 1)
 
 
+def test_voice_speeds_a_running_clock_and_leaves_a_paused_one_alone():
+    char = _char(left=1000)
+    rpg.voice_speedup(char, 60)
+    assert rpg.time_left(char, NOW) == 994
+    rpg.pause(char, NOW)
+    rpg.voice_speedup(char, 60)
+    assert char["remaining"] == 994
+    assert rpg.voice_gold_bonus(70) == 7 and rpg.voice_gold_bonus(9) == 0 and rpg.voice_gold_bonus(-50) == 0
+
+
 # ── penalties ────────────────────────────────────────────────────────────────
 
 def test_penalty_grows_with_level():

@@ -44,6 +44,11 @@ PEN_QUIT = 20            # left the server
 # A player counts as logged in for this long after they were last seen online.
 GRACE_SECS = 3600
 
+# Sitting in one of the server's voice channels: the clock runs this much
+# faster and gold earned by the tick (level-ups, fights, quests, luck) is this
+# much larger. Wagers and the shop are untouched.
+VOICE_BONUS_PCT = 10
+
 ALIGN_COOLDOWN_SECS = 86_400
 DUEL_PCT = 5
 
@@ -316,6 +321,16 @@ def resume(char: dict, now: int) -> None:
     if is_paused(char):
         char["next_level_at"] = now + char["remaining"]
         char["remaining"] = None
+
+
+def voice_speedup(char: dict, seconds: int) -> None:
+    """`seconds` of running clock spent in voice: take the bonus share off."""
+    if not is_paused(char):
+        shift(char, -(seconds * VOICE_BONUS_PCT // 100))
+
+
+def voice_gold_bonus(gained: int) -> int:
+    return gained * VOICE_BONUS_PCT // 100 if gained > 0 else 0
 
 
 def logged_in(char: dict, now: int) -> bool:

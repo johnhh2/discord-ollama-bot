@@ -666,6 +666,91 @@ def _member_lookup(monkeypatch):
     monkeypatch.setattr(_idle_cog.MemberConverter, "convert", _convert)
 
 
+# ── voice bonus ──────────────────────────────────────────────────────────────
+
+def _join_voice(guild, uid, channel=None, *, company=(ADMIN,)):
+    """Put `uid` in a voice channel alongside `company` (other members' ids)."""
+    channel = channel or SimpleNamespace(id=321)
+    channel.members = [guild.get_member(u) for u in (uid, *company)]
+    guild.get_member(uid).voice = SimpleNamespace(channel=channel)
+
+
+async def test_a_minute_in_voice_takes_six_seconds_off_the_clock_and_only_for_those_in_it():
+    cog, guild, _idle = _world()
+    cog.rng = _StillRng()
+    talker, lurker = _spawn(ALICE, left=50_000, **MARKET), _spawn(BOB, left=50_000, **MARKET)
+    _join_voice(guild, ALICE)
+    due_talker, due_lurker = talker["next_level_at"], lurker["next_level_at"]
+
+    await cog.tick()
+
+    assert talker["next_level_at"] == due_talker - 6 and lurker["next_level_at"] == due_lurker
+
+
+async def test_gold_earned_by_the_tick_is_a_tenth_larger_in_voice_and_the_feed_says_so():
+    cog, guild, _idle = _world()
+    cog.rng = _StillRng()
+    talker, lurker = _spawn(ALICE, level=6, left=-10, **MARKET), _spawn(BOB, level=6, left=-10, **MARKET)
+    _join_voice(guild, ALICE)
+
+    await cog.tick()
+
+    assert (talker["gold"], lurker["gold"]) == (77, 70)          # level 7 pays 70
+    feeds = {t.name.split(" ")[0]: _sent(t) for t in guild.threads}
+    assert "Voice bonus: +7 gold" in feeds["alice"] and "Voice bonus" not in feeds["bob"]
+
+
+async def test_the_afk_channel_and_a_paused_clock_earn_nothing_and_voice_counts_as_being_seen():
+    cog, guild, _idle = _world(presences=True)
+    cog.rng = _StillRng()
+    afk = SimpleNamespace(id=999)
+    guild.afk_channel = afk
+    parked = _spawn(ALICE, left=50_000, **MARKET)
+    _join_voice(guild, ALICE, afk)
+    due = parked["next_level_at"]
+    await cog.tick()
+    assert parked["next_level_at"] == due
+
+    # On a phone in a call: presence says offline, the voice channel says otherwise.
+    now = int(time.time())
+    caller = _spawn(BOB, left=50_000, last_seen=now - 7200, **MARKET)
+    guild.get_member(BOB).status = discord.Status.offline
+    _join_voice(guild, BOB)
+    await cog.tick(now)
+    assert not rpg.is_paused(caller) and caller["last_seen"] == now
+
+
+async def test_alone_in_voice_or_with_only_a_bot_for_company_earns_nothing():
+    cog, guild, _idle = _world()
+    cog.rng = _StillRng()
+    loner = _spawn(ALICE, left=50_000, **MARKET)
+    due = loner["next_level_at"]
+
+    _join_voice(guild, ALICE, company=())
+    await cog.tick()
+    assert loner["next_level_at"] == due
+
+    guild.get_member(BOB).bot = True                       # a music bot is not company
+    _join_voice(guild, ALICE, company=(BOB,))
+    await cog.tick()
+    assert loner["next_level_at"] == due
+
+    _join_voice(guild, ALICE, company=(BOB, ADMIN))       # …but one real person is
+    await cog.tick()
+    assert loner["next_level_at"] == due - 6
+
+
+async def test_status_shows_the_voice_bonus_while_it_applies():
+    cog, guild, _idle = _world()
+    _spawn(x=1, y=1)
+    ctx = _ctx(guild)
+    await cog.cmd_status.callback(cog, ctx)
+    assert "In voice" not in ctx.sent_embeds[-1].description
+    _join_voice(guild, ALICE)
+    await cog.cmd_status.callback(cog, ctx)
+    assert "🎙️ **In voice:** clock and gold +10%" in ctx.sent_embeds[-1].description
+
+
 # ── monsters ─────────────────────────────────────────────────────────────────
 
 async def test_the_tick_sends_wild_characters_into_fights_and_keeps_them_in_the_feed(monkeypatch):
