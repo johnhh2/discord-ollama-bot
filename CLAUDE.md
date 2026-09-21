@@ -713,11 +713,14 @@ tables from migrations 0070–0075.
   this map: it is the player's window to spend the gold their own way
   before the errand does. A visit too poor to buy anything isn't stamped.
   Distances are straight-line; the map's wrap is ignored for them.
-- **Travel.** `!idle travel <town>` sets `travel_to`; `move_players` then
+- **Travel.** `!idle travel <place>` sets `travel_to` to any `LANDMARKS`
+  key — a town for its market, or a wild place (the two mountain ranges,
+  the Secret Passage, T'rnalvph) for its monsters; `match_place` lets a
+  lone town win an ambiguous word. `move_players` then
   walks that character like a journey quester (the same 1%-a-second step,
   no wandering, so no collision fights — that lost income is the price,
-  which is why travel is free) until it stands on the town's square, where
-  the flag clears and the errand fires. Only *running* travellers move. A
+  which is why travel is free) until it stands on the place's square, where
+  the flag clears (and, in a town, the errand fires). Only *running* travellers move. A
   journey quest overrides it: being picked clears `travel_to`, and the
   command refuses while on one. It is the only steering in the game —
   don't add a faster or paid variant without rethinking the market ring.

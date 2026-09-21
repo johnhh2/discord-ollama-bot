@@ -96,7 +96,7 @@ _RULES_TOPICS = {
         f"The realm is a {rpg.MAP_SIZE}×{rpg.MAP_SIZE} grid. Everyone online wanders one step a second, and the edges wrap.\n"
         "Land on the same square as someone and you may fight them, there and then.\n"
         "Some quests are journeys: the party stops wandering and walks to one landmark, then another. `!idle map` shows it all.\n"
-        "`!idle travel <town>` walks you to a town on purpose — slowly, and without the chance meetings of the road."
+        "`!idle travel <place>` walks you to a town, or out to a wild region, on purpose — slowly, and meeting monsters but no players on the way."
     ),
     "gold": (
         "The realm's own money — nothing to do with the server's coins, and it can't be sent to anyone.\n"
@@ -847,8 +847,12 @@ class IdleCog(commands.Cog):
         rpg.ensure_position(char, self.rng)
         if where is None:
             options = [
-                (f"{town} — {rpg.travel_steps(char, town)} squares, about {format_duration(rpg.travel_eta_secs(char, town))}", town)
-                for town in sorted(rpg.TOWNS, key=lambda t: rpg.travel_steps(char, t))
+                (
+                    f"{place} ({'market' if place in rpg.TOWNS else rpg.biome_at(*rpg.LANDMARKS[place])}) — "
+                    f"{rpg.travel_steps(char, place)} squares, about {format_duration(rpg.travel_eta_secs(char, place))}"[:100],
+                    place,
+                )
+                for place in sorted(rpg.LANDMARKS, key=lambda p: rpg.travel_steps(char, p))
             ]
             if char.get("travel_to"):
                 options.append(("Stop travelling — wander again", "stop"))
@@ -857,9 +861,10 @@ class IdleCog(commands.Cog):
                 ctx,
                 title="🧭 Travel",
                 description=(
-                    f"{going} Pick a town and your character stops wandering and walks there, a step every "
-                    f"{int(1 / rpg.JOURNEY_STEP_CHANCE)} seconds or so. Travellers meet nobody on the road — no collision fights.\n\n"
-                    "Typed: `!idle travel velvragh` · `!idle travel stop`"
+                    f"{going} Pick a place and your character stops wandering and walks there, a step every "
+                    f"{int(1 / rpg.JOURNEY_STEP_CHANCE)} seconds or so. Towns have markets; the rest is wilderness, where the monsters are. "
+                    "Travellers meet no other players on the road, but monsters find them all the same.\n\n"
+                    "Typed: `!idle travel velvragh` · `!idle travel trnalvph` · `!idle travel stop`"
                 ),
                 options=options, placeholder="Where to…", multi=False,
             )
@@ -877,16 +882,21 @@ class IdleCog(commands.Cog):
             await persistence.save_idle_character(gid, uid)
             await ctx.send(embed=emb("🧭 Travel", f"You give up on {was} and wander again." if was else "You weren't going anywhere.", C_GREY))
             return
-        town = rpg.match_town(where)
+        town = rpg.match_place(where)
         if town is None:
-            await ctx.send(embed=emb("❌ Travel", "Towns: " + ", ".join(rpg.TOWNS) + ". `!idle travel stop` to wander.", C_RED))
+            wilds = [place for place in rpg.LANDMARKS if place not in rpg.TOWNS]
+            await ctx.send(embed=emb(
+                "❌ Travel",
+                f"**Towns:** {', '.join(rpg.TOWNS)}\n**Wilds:** {', '.join(wilds)}\n`!idle travel stop` to wander.",
+                C_RED,
+            ))
             return
         quest = self._quest(gid)
         if quest.get("kind") == "journey" and uid in quest["members"]:
             await ctx.send(embed=emb("❌ Travel", "You're on a journey quest — it decides where you walk until it's done.", C_RED))
             return
         if rpg.travel_steps(char, town) == 0:
-            await ctx.send(embed=emb("🧭 Travel", f"You're already standing in {town}.", C_GREY))
+            await ctx.send(embed=emb("🧭 Travel", f"You're already standing at {town}.", C_GREY))
             return
         char["travel_to"] = town
         await persistence.save_idle_character(gid, uid)
@@ -894,7 +904,9 @@ class IdleCog(commands.Cog):
             "🧭 Travel",
             f"You set out for **{town}**: {rpg.travel_steps(char, town)} squares, about "
             f"{format_duration(rpg.travel_eta_secs(char, town))} of walking while you're online. "
-            "You can shop as soon as you're inside its ring. `!idle travel stop` to wander again.",
+            + ("You can shop as soon as you're inside its ring. " if town in rpg.TOWNS
+               else f"It's {rpg.biome_at(*rpg.LANDMARKS[town])} country — once there you wander again, among its monsters. ")
+            + "`!idle travel stop` to wander again.",
             C_GREEN,
         )
         await self._send_with_map(ctx, embed, highlight=(uid,))

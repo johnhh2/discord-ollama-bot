@@ -721,6 +721,10 @@ async def test_travel_sets_a_destination_shows_the_route_and_stop_clears_it():
     assert char["travel_to"] is None
     await cog.cmd_travel.callback(cog, ctx, where="atlantis")
     assert ctx.sent_embeds[-1].title == "❌ Travel" and char["travel_to"] is None
+    assert "**Wilds:**" in ctx.sent_embeds[-1].description
+
+    await cog.cmd_travel.callback(cog, ctx, where="trnalvph")
+    assert char["travel_to"] == "T'rnalvph" and "Darklands country" in ctx.sent_embeds[-1].description
 
 
 async def test_travel_bare_lists_towns_nearest_first(monkeypatch):
@@ -733,7 +737,9 @@ async def test_travel_bare_lists_towns_nearest_first(monkeypatch):
         return [options[0][1]]
     monkeypatch.setattr(_idle_cog, "pick_from_list", _pick)
     await cog.cmd_travel.callback(cog, _ctx(guild))
-    assert [value for _label, value in seen["options"]][0] == "Velvragh" and len(seen["options"]) == 5
+    assert [value for _label, value in seen["options"]][0] == "Velvragh" and len(seen["options"]) == len(rpg.LANDMARKS)
+    labels = dict((value, label) for label, value in seen["options"])
+    assert "(market)" in labels["Velvragh"] and "(Darklands)" in labels["T'rnalvph"]
     assert char["travel_to"] == "Velvragh"
 
 

@@ -14,6 +14,7 @@ where they are posted (src/cogs/idle_cog.py).
 """
 from __future__ import annotations
 
+import re
 from typing import Callable, NamedTuple
 
 from src.helpers import format_duration
@@ -274,7 +275,7 @@ def new_character(class_name: str, now: int) -> dict:
         "extra_duel_day": None,
         "auto_trade": True,
         "traded_at": 0,
-        "travel_to": None,   # a TOWNS key while the player has it walking there (!idle travel)
+        "travel_to": None,   # a LANDMARKS key while the player has it walking there (!idle travel)
         "mob_kills": 0,
         "mob_deaths": 0,
     }
@@ -992,10 +993,14 @@ def _place(point) -> str:
     return f"{label} [{point[0]}, {point[1]}]" if label else f"[{point[0]}, {point[1]}]"
 
 
-def match_town(text: str) -> "str | None":
-    """`velvragh`, `towers`, `qwok` → the town, when exactly one matches."""
-    wanted = text.lower().strip()
-    hits = [town for town in TOWNS if wanted and wanted in town.lower()]
+def match_place(text: str) -> "str | None":
+    """`velvragh`, `towers`, `shahlil`, `trnalvph` → the place on the map.
+    When several match, a lone town among them wins (`qwok` is the land of
+    Qwok, not its mountains); otherwise it is too vague."""
+    wanted = re.sub(r"[^a-z ]", "", text.lower()).strip()
+    hits = [place for place in LANDMARKS if wanted and wanted in re.sub(r"[^a-z ]", "", place.lower())]
+    if len(hits) > 1:
+        hits = [place for place in hits if place in TOWNS]
     return hits[0] if len(hits) == 1 else None
 
 
@@ -1093,7 +1098,7 @@ def move_players(chars: dict, quest: dict, rng, name: NameFn, now: int, seconds:
                     char["x"], char["y"] = _toward(char["x"], goal[0]), _toward(char["y"], goal[1])
                     if (char["x"], char["y"]) == goal:
                         char["travel_to"] = None
-                        notes.append(Note((uid,), f"🧭 {name(uid)} arrived in {town}."))
+                        notes.append(Note((uid,), f"🧭 {name(uid)} arrived {'in' if town in TOWNS else 'at'} {town}."))
                 continue
             char["x"], char["y"] = _wander(char["x"], rng), _wander(char["y"], rng)
             spot = (char["x"], char["y"])

@@ -428,6 +428,11 @@ def test_a_traveller_walks_straight_to_town_without_wandering_or_meeting_anyone(
     assert (chars[1]["x"], chars[1]["y"]) == (gx, gy) and chars[1]["travel_to"] is None
     assert [n.text for n in notes] == ["🧭 P1 arrived in Velvragh."] and not notes[0].public
 
+    wx, wy = rpg.LANDMARKS["T'rnalvph"]
+    chars = {1: _char(10, x=wx - 1, y=wy, travel_to="T'rnalvph")}
+    notes = rpg.move_players(chars, rpg.new_quest(), rng, _name, NOW, 1)
+    assert [n.text for n in notes] == ["🧭 P1 arrived at T'rnalvph."] and chars[1]["travel_to"] is None
+
 
 def test_a_traveller_mostly_stands_still_and_a_paused_one_always_does():
     chars = {1: _char(10, x=10, y=10, travel_to="Velvragh")}
@@ -451,10 +456,17 @@ def test_being_picked_for_a_journey_cancels_travel_and_a_vigil_does_not():
 
 
 def test_towns_match_by_any_unambiguous_part_of_the_name():
-    assert rpg.match_town("Velvragh") == "Velvragh"
-    assert rpg.match_town("towers") == "the Towers of Ankh-Allor"
-    assert rpg.match_town(" QWOK ") == "the land of Qwok"
-    assert rpg.match_town("the") is None and rpg.match_town("") is None and rpg.match_town("bharash") is None
+    assert rpg.match_place("Velvragh") == "Velvragh"
+    assert rpg.match_place("towers") == "the Towers of Ankh-Allor"
+    assert rpg.match_place(" QWOK ") == "the land of Qwok"          # a town beats its namesake mountains
+    assert rpg.match_place("mountains of qwok") == "the Mountains of Qwok"
+    assert rpg.match_place("trnalvph") == rpg.match_place("T'rnalvph") == "T'rnalvph"
+    assert rpg.match_place("shahlil") == "the Great Shahlil mountains" and rpg.match_place("bharash") == "the Secret Passage to Bharash"
+    assert rpg.match_place("the") is None and rpg.match_place("") is None and rpg.match_place("mountains") is None
+    # Every wild destination really is wild: monsters, no market.
+    for place, (x, y) in rpg.LANDMARKS.items():
+        if place not in rpg.TOWNS:
+            assert rpg.biome_at(x, y) != "Plains" and rpg.market_in_reach(_char(x=x, y=y)) is None
     char = _char(x=300, y=200)
     assert rpg.travel_steps(char, "Velvragh") == 70 and rpg.travel_eta_secs(char, "Velvragh") == 7000
 
