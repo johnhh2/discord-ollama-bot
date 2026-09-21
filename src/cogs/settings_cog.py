@@ -39,6 +39,7 @@ _SETTINGS_PANELS = (
     ("⛏️ Minecraft channel", "settings_minecraft_channel", ()),
     ("🪙 Dailies channel", "settings_dailies_channel", ()),
     ("⚔️ Idle RPG channel", "settings_channel_idle", ()),
+    ("⚔️ Idle RPG pace", "settings_idle_pace", ()),
     ("🔞 Remove NSFW aliases", "settings_nsfw_alias", ("remove",)),
     ("📖 Remove story aliases", "settings_story_alias", ("remove",)),
     ("🏷️ Remove tax aliases", "settings_tax_aliases", ("remove",)),
@@ -150,7 +151,8 @@ class SettingsCog(commands.Cog):
         embed.add_field(
             name="⚔️ Idle RPG",
             value=(f"<#{idle_channel_id}>" if idle_channel_id else "❌ disabled")
-            + "\n*Set with: `!settings-channel idle #channel / clear`*",
+            + f" · pace: **{cfg.get('idle_pace') or 'lively'}**"
+            + "\n*Set with: `!settings-channel idle #channel / clear` · `!settings idle-pace lively|classic`*",
             inline=False,
         )
         embed.add_field(name="🔇 Soundboard rate-limit", value=rl_val, inline=False)
@@ -229,6 +231,38 @@ class SettingsCog(commands.Cog):
             f"`!lb` now defaults to **{scope.lower()}** scope. Users can still override with `!lb server` or `!lb global`.",
             C_GREEN,
         ))
+
+    # ── !settings idle-pace ───────────────────────────────────────────────────
+    @cmd_settings.command(name="idle-pace")
+    @requires_perm
+    async def settings_idle_pace(self, ctx: commands.Context, pace: str = None):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        usage = "`!settings idle-pace lively|classic`"
+        what = (
+            "**Lively** (default) — a godsend and a calamity about once a day per player, more early battles, "
+            "team battles from four players. Built for a handful of players.\n"
+            "**Classic** — the IRC odds: an event every week or so. Built for dozens."
+        )
+        if pace is None:
+            pace = await confirm_choice(
+                ctx,
+                title="⚔️ Idle RPG Pace",
+                description=f"{what}\n**Currently:** {cfg.get('idle_pace') or 'lively'}\n\nUsage: {usage}",
+                choices=[{"label": "Lively", "value": "lively"}, {"label": "Classic", "value": "classic"}],
+                payer=ctx.author,
+                not_yours="Not your prompt.",
+            )
+            if pace is None:
+                return
+        if pace.lower() not in ("lively", "classic"):
+            await ctx.send(embed=emb("⚔️ Idle RPG Pace", f"Usage: {usage}\n\n{what}", C_GREY))
+            return
+        cfg["idle_pace"] = pace.lower()
+        await save_guild_settings()
+        await ctx.send(embed=emb("⚔️ Idle RPG Pace", f"The idle RPG now runs at the **{pace.lower()}** pace.", C_GREEN))
 
     # ── !settings bounty-channel ──────────────────────────────────────────────
     @cmd_settings.command(name="bounty-channel")

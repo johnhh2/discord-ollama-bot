@@ -201,6 +201,7 @@ class IdleCog(commands.Cog):
         chars, quest = self._chars(gid), self._quest(gid)
         enabled = self._channel(guild) is not None
         name = self._namer(guild)
+        pace = rpg.PACES.get(get_guild_cfg(gid).get("idle_pace"), rpg.PACES[rpg.DEFAULT_PACE])
         notes: list = []
 
         for uid, char in list(chars.items()):
@@ -226,7 +227,7 @@ class IdleCog(commands.Cog):
                     rpg.level_is_news(char["level"], char["prestige"]),
                 ))
                 notes.append(rpg.find_item(uid, char, self.rng, name))
-                notes += rpg.level_up_battle(uid, chars, self.rng, name, now)
+                notes += rpg.level_up_battle(uid, chars, self.rng, name, now, pace)
             if not here:
                 rpg.pause(char, horizon)
                 self._dirty.add((gid, uid))
@@ -236,11 +237,11 @@ class IdleCog(commands.Cog):
                     f"{format_duration(char['remaining'])} to go.",
                 ))
             else:
-                notes += rpg.random_events(uid, chars, self.rng, name, now, TICKS_PER_DAY)
+                notes += rpg.random_events(uid, chars, self.rng, name, now, TICKS_PER_DAY, pace)
 
         if enabled:
             if self.rng.random() < rpg.TEAM_BATTLE_PER_DAY / TICKS_PER_DAY:
-                notes += rpg.team_battle(chars, self.rng, name, now)
+                notes += rpg.team_battle(chars, self.rng, name, now, pace)
             before = dict(quest)
             # Positions ride along with whatever else saves the row (at worst
             # the five-minute last_seen write) — never a write per step.

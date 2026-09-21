@@ -750,6 +750,14 @@ tables from migrations 0070–0071.
   `last_seen` write. The map image appears on `!idle` / `!idle status`,
   `!idle map`, `!idle quest` (journeys) and under a journey's announcement
   (`Note.show_map`); `!profile` shows the character and its coordinates.
+- **Pace.** The IRC odds (a godsend a week) assume dozens of players for
+  months; with a handful nothing ever happens. `idlerpg.PACES` holds two
+  sets: `lively` (the default — a godsend and a calamity about daily per
+  player, a Hand of God every five days, fights on half of early level-ups,
+  team battles from four players) and `classic`. A guild picks with
+  `!settings idle-pace`; the engine functions default to `CLASSIC` so the
+  rules tests pin the original numbers, and the cog passes the guild's.
+  Add a new tunable to `Pace`, not as a bare constant read by one path.
 - **`!idle` is `everyone`, `!idle admin …` is `server_admin`** — two JSON
   entries, resolved by the longest-prefix walk.
 - **Flavour text is ours.** The mechanics follow the classic IRC IdleRPG;

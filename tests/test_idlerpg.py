@@ -213,6 +213,37 @@ def test_chaotic_lives_see_more_events_than_lawful_ones():
     assert _count("chaotic") > _count("neutral") > _count("lawful")
 
 
+# ── pace ─────────────────────────────────────────────────────────────────────
+
+def test_lively_pace_brings_luck_about_daily_and_classic_about_weekly():
+    def _events(pace) -> int:
+        rng = random.Random(11)
+        chars = {1: _char(10, left=10 ** 12)}
+        return sum(len(rpg.random_events(1, chars, rng, _name, NOW, 1440, pace)) for _ in range(1440 * 30))
+
+    lively, classic = _events(rpg.PACES["lively"]), _events(rpg.CLASSIC)
+    assert 45 <= lively <= 90        # ~2.2 a day over thirty days
+    assert 3 <= classic <= 20        # ~0.3 a day
+    assert rpg.PACES[rpg.DEFAULT_PACE] is rpg.PACES["lively"]
+
+
+def test_lively_pace_fights_on_half_of_early_level_ups():
+    chars = {1: _char(5)}
+    rng = _Scripted(random_=0.4)
+    assert rpg.level_up_battle(1, chars, rng, _name, NOW, rpg.CLASSIC) == []
+    assert rpg.level_up_battle(1, chars, rng, _name, NOW, rpg.PACES["lively"]) != []
+
+
+def test_lively_team_battles_shrink_to_two_a_side_and_never_to_one():
+    lively = rpg.PACES["lively"]
+    chars = {uid: _char(10) for uid in range(1, 4)}
+    assert rpg.team_battle(chars, random.Random(1), _name, NOW, lively) == []
+    chars[4] = _char(10)
+    assert len(rpg.team_battle(chars, random.Random(1), _name, NOW, lively)[0].uids) == 4
+    chars.update({uid: _char(10) for uid in range(5, 9)})
+    assert len(rpg.team_battle(chars, random.Random(1), _name, NOW, lively)[0].uids) == 6
+
+
 # ── quests ───────────────────────────────────────────────────────────────────
 
 def test_quest_starts_with_two_high_level_players_and_pays_out():

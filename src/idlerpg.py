@@ -76,6 +76,26 @@ COLLISION_CRIT_ODDS = 35       # 1-in-N on a won collision fight
 COLLISION_STEAL_ODDS = 25      # …else 1-in-N to swap an item, from COLLISION_STEAL_LEVEL up
 COLLISION_STEAL_LEVEL = 20
 
+
+
+class Pace(NamedTuple):
+    """How often luck strikes. The IRC odds assume dozens of players idling
+    for months; a Discord server with a handful sees almost nothing at that
+    rate, so "lively" is the default and "classic" is there for a crowd."""
+    godsend_per_day: float
+    calamity_per_day: float
+    hand_of_god_per_day: float
+    battle_chance_below: float   # chance a level-up under BATTLE_ALWAYS_LEVEL means a fight
+    min_team_size: int           # team battles shrink to this when too few are online
+
+
+PACES = {
+    "lively": Pace(1.0, 1.0, 1 / 5, 0.5, 2),
+    "classic": Pace(GODSEND_PER_DAY, CALAMITY_PER_DAY, HAND_OF_GOD_PER_DAY, BATTLE_CHANCE_BELOW, TEAM_SIZE),
+}
+DEFAULT_PACE = "lively"
+CLASSIC = PACES["classic"]
+
 LAWS = ("lawful", "neutral", "chaotic")
 MORALS = ("good", "neutral", "evil")
 
@@ -388,9 +408,9 @@ def _rolled(roll: int, power: int) -> str:
     return f"(rolled {roll} of {power})" if power else "(no gear)"
 
 
-def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int) -> "list[Note]":
+def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int, pace: Pace = CLASSIC) -> "list[Note]":
     me = chars[uid]
-    if me["level"] < BATTLE_ALWAYS_LEVEL and rng.random() >= BATTLE_CHANCE_BELOW:
+    if me["level"] < BATTLE_ALWAYS_LEVEL and rng.random() >= pace.battle_chance_below:
         return []
     pool = [u for u in running(chars) if u != uid]
     # The house is one more contender, so a lone player still gets fights.
@@ -448,12 +468,13 @@ def duel(uid: int, target_uid: int, chars: dict, rng, name: NameFn, now: int) ->
     )]
 
 
-def team_battle(chars: dict, rng, name: NameFn, now: int) -> "list[Note]":
+def team_battle(chars: dict, rng, name: NameFn, now: int, pace: Pace = CLASSIC) -> "list[Note]":
     pool = running(chars)
-    if len(pool) < TEAM_SIZE * 2:
+    size = min(TEAM_SIZE, len(pool) // 2)
+    if size < pace.min_team_size:
         return []
-    picked = rng.sample(pool, TEAM_SIZE * 2)
-    teams = picked[:TEAM_SIZE], picked[TEAM_SIZE:]
+    picked = rng.sample(pool, size * 2)
+    teams = picked[:size], picked[size:]
     sums = [sum(battle_sum(chars[u]) for u in team) for team in teams]
     rolls = [rng.randint(0, s) for s in sums]
     win, lose = (0, 1) if rolls[0] >= rolls[1] else (1, 0)
@@ -542,16 +563,17 @@ def _temptation(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
     return Note((uid,), f"🦹 {name(uid)} was forsaken by their dark patron. {format_duration(moved)} added to their clock.")
 
 
-def random_events(uid: int, chars: dict, rng, name: NameFn, now: int, ticks_per_day: int) -> "list[Note]":
+def random_events(uid: int, chars: dict, rng, name: NameFn, now: int, ticks_per_day: int,
+                  pace: Pace = CLASSIC) -> "list[Note]":
     """One tick's worth of luck for one running character."""
     char = chars[uid]
     factor = LAW_EVENT_FACTOR[char["law"]] / ticks_per_day
     notes = []
-    if rng.random() < HAND_OF_GOD_PER_DAY * factor:
+    if rng.random() < pace.hand_of_god_per_day * factor:
         notes.append(hand_of_god(uid, chars, rng, name, now))
-    if rng.random() < GODSEND_PER_DAY * factor:
+    if rng.random() < pace.godsend_per_day * factor:
         notes.append(godsend(uid, chars, rng, name, now))
-    if rng.random() < CALAMITY_PER_DAY * factor:
+    if rng.random() < pace.calamity_per_day * factor:
         notes.append(calamity(uid, chars, rng, name, now))
     if char["moral"] == "good" and rng.random() < BLESSING_PER_DAY / ticks_per_day:
         notes.append(_blessing(uid, chars, rng, name, now))

@@ -710,6 +710,41 @@ async def test_settings_channel_idle_sets_and_clears(monkeypatch):
     assert get_guild_cfg(GID)["idle_channel"] is None
 
 
+async def test_the_tick_runs_at_the_guilds_pace(monkeypatch):
+    cog, guild, _idle = _world()
+    _spawn(left=50_000)
+    seen = []
+    monkeypatch.setattr(rpg, "random_events", lambda *args: seen.append(args[-1]) or [])
+
+    await cog.tick()
+    get_guild_cfg(GID)["idle_pace"] = "classic"
+    await cog.tick()
+    get_guild_cfg(GID)["idle_pace"] = "nonsense"
+    await cog.tick()
+
+    assert seen == [rpg.PACES["lively"], rpg.CLASSIC, rpg.PACES["lively"]]
+
+
+async def test_settings_idle_pace_sets_validates_and_prompts(monkeypatch):
+    import src.cogs.settings_cog as _settings_cog
+    monkeypatch.setattr(_settings_cog, "save_guild_settings", AsyncMock())
+    guild = FakeGuild(gid=GID)
+    guild.members = [FakeMember(ADMIN, "boss", administrator=True)]
+    cog = SettingsCog(None)
+    ctx = FakeCtx(author=guild.get_member(ADMIN), guild=guild, command_name="settings idle-pace")
+
+    await cog.settings_idle_pace.callback(cog, ctx, "Classic")
+    assert get_guild_cfg(GID)["idle_pace"] == "classic"
+    await cog.settings_idle_pace.callback(cog, ctx, "turbo")
+    assert get_guild_cfg(GID)["idle_pace"] == "classic" and "Usage" in ctx.sent_embeds[-1].description
+
+    async def _pick(ctx, *, choices, **kwargs):
+        return "lively"
+    monkeypatch.setattr(_settings_cog, "confirm_choice", _pick)
+    await cog.settings_idle_pace.callback(cog, ctx)
+    assert get_guild_cfg(GID)["idle_pace"] == "lively"
+
+
 # ── persistence ──────────────────────────────────────────────────────────────
 
 async def test_characters_and_quests_round_trip_through_the_db(db):
