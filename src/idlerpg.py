@@ -77,6 +77,9 @@ BLESSING_PER_DAY = 1 / 12      # good characters
 TEMPTATION_PER_DAY = 1 / 8     # evil characters
 TEAM_BATTLE_PER_DAY = 1 / 4    # per guild
 # Lawful characters live quieter lives, chaotic ones louder — for good and ill.
+# Only godsends and calamities scale: they mirror each other, so the axis
+# changes the swing and not the average. The Hand of God helps four times
+# in five, so scaling it too made chaotic simply the best pick.
 LAW_EVENT_FACTOR = {"lawful": 0.5, "neutral": 1.0, "chaotic": 2.0}
 
 BATTLE_ALWAYS_LEVEL = 25       # below this a level-up only sometimes means a fight
@@ -626,7 +629,7 @@ def random_events(uid: int, chars: dict, rng, name: NameFn, now: int, ticks_per_
     char = chars[uid]
     factor = LAW_EVENT_FACTOR[char["law"]] / ticks_per_day
     notes = []
-    if rng.random() < pace.hand_of_god_per_day * factor:
+    if rng.random() < pace.hand_of_god_per_day / ticks_per_day:
         notes.append(hand_of_god(uid, chars, rng, name, now))
     if rng.random() < pace.godsend_per_day * factor:
         notes.append(godsend(uid, chars, rng, name, now))

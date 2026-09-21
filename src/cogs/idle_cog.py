@@ -68,7 +68,7 @@ NO_MENTIONS = discord.AllowedMentions.none()
 ALIGN_EFFECTS = (
     "**Good** +10% item power in battle, prayers with other good players, rarer critical strikes.\n"
     "**Evil** −10% item power, more critical strikes, a chance to rob the good — or be forsaken.\n"
-    "**Lawful** half as many random events, good and bad. **Chaotic** twice as many."
+    "**Lawful** half as many godsends and calamities. **Chaotic** twice as many — a wilder ride, the same average."
 )
 
 # `!idle rules <topic>` — the bare command stays a few lines on purpose.

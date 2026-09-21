@@ -205,6 +205,23 @@ def test_alignment_bends_battle_power():
     assert rpg.battle_sum(_char(items=items)) == 100
 
 
+def test_the_hand_of_god_ignores_law_and_chaos_so_no_alignment_is_simply_best(monkeypatch):
+    hands = []
+    monkeypatch.setattr(rpg, "hand_of_god", lambda uid, *args: hands.append(uid) or rpg.Note((uid,), "hog"))
+    monkeypatch.setattr(rpg, "godsend", lambda uid, *args: None)
+    monkeypatch.setattr(rpg, "calamity", lambda uid, *args: None)
+    counts = {}
+    for law in rpg.LAWS:
+        hands.clear()
+        rng = random.Random(4)
+        chars = {1: _char(10, left=10 ** 9, law=law)}
+        for _ in range(3000):
+            rpg.random_events(1, chars, rng, _name, NOW, 1)
+        counts[law] = len(hands)
+    # Same seed, same number of draws per tick: identical, not merely close.
+    assert counts["lawful"] == counts["neutral"] == counts["chaotic"] > 0
+
+
 def test_chaotic_lives_see_more_events_than_lawful_ones():
     def _count(law: str) -> int:
         rng = random.Random(3)
