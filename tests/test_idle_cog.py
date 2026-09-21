@@ -788,6 +788,64 @@ async def test_status_shows_the_biome_and_the_monster_tally():
     assert "[300, 100] — Mountains" in sheet and "**Monsters slain:** 12 · **Struck down:** 3" in sheet
 
 
+# ── the tables ───────────────────────────────────────────────────────────────
+
+async def test_gamble_command_bets_in_town_and_the_sheet_keeps_score():
+    cog, guild, _idle = _world()
+
+    class _Lucky(_Rng):
+        def randrange(self, n):
+            return n - 1                                  # 99: a win
+    cog.rng = _Lucky()
+    char = _spawn(gold=1000, **MARKET)
+    ctx = _ctx(guild)
+
+    await cog.cmd_gamble.callback(cog, ctx)               # bare: the terms, no bet
+    assert "even money" in ctx.sent_embeds[-1].description and char["gold"] == 1000
+
+    await cog.cmd_gamble.callback(cog, ctx, "200")
+    assert char["gold"] == 1200 and "won 200 gold" in ctx.sent_embeds[-1].description
+    await cog.cmd_gamble.callback(cog, ctx, "half")
+    assert char["gold"] == 1800
+    await cog.cmd_gamble.callback(cog, ctx, "5k")
+    assert char["gold"] == 1800 and ctx.sent_embeds[-1].title == "❌ The Tables"
+    await cog.cmd_gamble.callback(cog, ctx, "lots")
+    assert char["gold"] == 1800
+
+    await cog.cmd_status.callback(cog, ctx)
+    assert "**At the tables:** 2 bets · won 800 · lost 0" in ctx.sent_embeds[-1].description
+
+    char["x"] = 480                                        # out in the wilds
+    char["y"] = 20
+    await cog.cmd_gamble.callback(cog, ctx, "all")
+    assert char["gold"] == 1800 and "towns" in ctx.sent_embeds[-1].description
+
+
+async def test_the_tick_gambles_for_a_character_in_town_in_the_feed_and_without_a_voice_top_up():
+    cog, guild, idle = _world()
+
+    class _Gambler(_StillRng):
+        def random(self):
+            return 0.0                                    # every chance hits
+        def randrange(self, n):
+            return n - 1                                  # and the bet wins
+    cog.rng = _Gambler()
+    import src.idlerpg as _rpg
+    char = _spawn(level=10, left=50_000, gold=1000, auto_trade=False, x=MARKET["x"], y=MARKET["y"])
+    _join_voice(guild, ALICE)
+    real_events, real_team = _rpg.random_events, _rpg.team_battle
+    _rpg.random_events = lambda *args: []
+    _rpg.team_battle = lambda *args: []
+    try:
+        await cog.tick()
+    finally:
+        _rpg.random_events, _rpg.team_battle = real_events, real_team
+
+    assert char["gold"] == 1138                           # +138, and not a coin more for being in voice
+    assert "sat down at the tables with 138 gold and doubled it" in _sent(guild.threads[0])
+    idle.send.assert_not_called()
+
+
 # ── travel ───────────────────────────────────────────────────────────────────
 
 async def test_travel_sets_a_destination_shows_the_route_and_stop_clears_it():
@@ -1161,7 +1219,8 @@ async def test_settings_idle_pace_sets_validates_and_prompts(monkeypatch):
 
 async def test_characters_and_quests_round_trip_through_the_db(db):
     char = _spawn(level=12, items={"ring": {"level": 9, "name": None}}, thread_id=900, law="chaotic", x=17, y=499,
-                  gold=4321, rush_day="2026-09-21", extra_duel_day="2026-09-20", auto_trade=False, traded_at=1234, travel_to="Velvragh", mob_kills=12, mob_deaths=3)
+                  gold=4321, rush_day="2026-09-21", extra_duel_day="2026-09-20", auto_trade=False, traded_at=1234, travel_to="Velvragh", mob_kills=12, mob_deaths=3,
+                  gamble_town="Denmark", gamble_visit_at=99, gamble_budget=40, gambles=7, gamble_won=300, gamble_lost=450)
     paused = _spawn(BOB)
     rpg.pause(paused, int(time.time()))
     _state.idle_quests[GID] = {

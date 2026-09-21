@@ -1656,3 +1656,15 @@ ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS travel_to VARCHAR(32) NULL;
 -- 0075: !idle monster encounters — lifetime tallies for the sheet and ladder.
 ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS mob_kills INT NOT NULL DEFAULT 0;
 ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS mob_deaths INT NOT NULL DEFAULT 0;
+
+-- ── 0076_idle_gambling.sql ──
+-- 0076: !idle town gambling. gamble_town / gamble_visit_at / gamble_budget
+-- describe the current town visit: the gold still allowed on the tables
+-- (a fifth of the purse the character arrived with). The rest are lifetime
+-- tallies for the sheet.
+ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS gamble_town VARCHAR(32) NULL;
+ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS gamble_visit_at BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS gamble_budget BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS gambles INT NOT NULL DEFAULT 0;
+ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS gamble_won BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS gamble_lost BIGINT NOT NULL DEFAULT 0;

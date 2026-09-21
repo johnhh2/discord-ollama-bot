@@ -107,7 +107,10 @@ _RULES_TOPICS = {
         f"`!idle shop` spends it, but only within {rpg.MARKET_RADIUS} squares of a town (the rings on `!idle map`): an extra item find, "
         "sharpening an item, a once-a-day rush, a second duel, a new class. Walk right into a town and your character "
         f"trades on its own with up to {rpg.AUTO_TRADE_BUDGET_PCT}% of its gold — `!idle shop auto off` stops that. "
-        "`!idle duel @user 200` bets gold, anywhere."
+        "`!idle duel @user 200` bets gold, anywhere.\n"
+        f"Towns have gambling tables, too. In one, your character bets on its own now and then — a bigger share the richer it is, "
+        f"but never more than {rpg.GAMBLE_VISIT_CAP_PCT}% of the purse it arrived with per visit — and `!idle gamble <gold>` bets by hand. "
+        f"Even money; the house wins {rpg.GAMBLE_LOSE_BELOW} in 100."
     ),
     "alignment": ALIGN_EFFECTS + "\nSet it with `!idle align`, once a day.",
     "quests": (
@@ -309,6 +312,13 @@ class IdleCog(commands.Cog):
             if bonus:
                 chars[uid]["gold"] += bonus
                 notes.append(rpg.Note((uid,), f"🎙️ Voice bonus: +{bonus:,} gold for {name(uid)}."))
+
+        if enabled:
+            # After the voice bonus on purpose: table winnings aren't earnings to top up.
+            for uid in rpg.running(chars):
+                bet = rpg.town_gamble(uid, chars[uid], self.rng, name, now, 3600 // TICK_SECONDS)
+                if bet:
+                    notes.append(bet)
 
         notes += self._pending.pop(gid, [])
 
@@ -609,6 +619,8 @@ class IdleCog(commands.Cog):
             if char.get("travel_to") in rpg.LANDMARKS:
                 eta = format_duration(rpg.travel_eta_secs(char, char["travel_to"]))
                 lines.insert(3, f"**Travelling to:** {char['travel_to']} — about {eta} of walking left")
+        if char["gambles"]:
+            lines.append(f"**At the tables:** {char['gambles']:,} bets · won {char['gamble_won']:,} · lost {char['gamble_lost']:,}")
         if char["mob_kills"] or char["mob_deaths"]:
             lines.append(f"**Monsters slain:** {char['mob_kills']:,} · **Struck down:** {char['mob_deaths']:,}")
         if char["penalty_total"]:
@@ -623,7 +635,7 @@ class IdleCog(commands.Cog):
 
     @commands.group(name="idle", aliases=["irpg"], invoke_without_command=True)
     async def cmd_idle(self, ctx: commands.Context):
-        """!idle join|status|items|map|travel|shop|top|align|duel|quest|prestige|leave|rules"""
+        """!idle join|status|items|map|travel|shop|gamble|top|align|duel|quest|prestige|leave|rules"""
         if not await self._ready(ctx):
             return
         char = self._chars(ctx.guild.id).get(ctx.author.id)
@@ -859,6 +871,37 @@ class IdleCog(commands.Cog):
         await persistence.save_idle_character(gid, member.id)
         await ctx.send(embed=emb("🤺 Duel", "\n".join(n.text for n in notes), C_GOLD))
         await self._deliver(ctx.guild, notes, skip_main=self._in_idle_channel(ctx))
+
+    # ── !idle gamble ─────────────────────────────────────────────────────
+
+    @cmd_idle.command(name="gamble", aliases=["bet"])
+    async def cmd_gamble(self, ctx: commands.Context, amount: str = None):
+        if not await self._ready(ctx, need_channel=True):
+            return
+        char = await self._own_char(ctx)
+        if char is None:
+            return
+        if amount is None:
+            await ctx.send(embed=emb(
+                "🎲 The Tables",
+                f"`!idle gamble <gold|half|all>` — even money, the house wins {rpg.GAMBLE_LOSE_BELOW} rolls in 100. "
+                f"Only within {rpg.MARKET_RADIUS} squares of a town. You have **{char['gold']:,}** gold.\n"
+                f"In town your character also bets on its own now and then — never more than "
+                f"{rpg.GAMBLE_VISIT_CAP_PCT}% of the purse it arrived with per visit.",
+                C_BLUE,
+            ))
+            return
+        word = amount.lower()
+        stake = char["gold"] if word == "all" else char["gold"] // 2 if word == "half" else parse_int_amount(amount)
+        if stake is None:
+            await ctx.send(embed=emb("❌ The Tables", "`!idle gamble <gold|half|all>` — `200`, `1.5k`, `half`, `all`.", C_RED))
+            return
+        won, text = rpg.manual_gamble(char, stake, self.rng)
+        if won is None:
+            await ctx.send(embed=emb("❌ The Tables", text, C_RED))
+            return
+        await persistence.save_idle_character(ctx.guild.id, ctx.author.id)
+        await ctx.send(embed=emb("🎲 The Tables", text, C_GREEN if won else C_GREY))
 
     # ── !idle travel ─────────────────────────────────────────────────────
 
@@ -1160,7 +1203,7 @@ class IdleCog(commands.Cog):
             "⏳ Your character levels on a timer while you're online.\n"
             "⚔️ Items, fights and lucky breaks happen on their own.\n"
             "📜 High-level players get sent on quests for a big shortcut.\n\n"
-            "`!idle status` · `items` · `map` · `travel` · `shop` · `top` · `align` · `duel @user` · `quest`\n"
+            "`!idle status` · `items` · `map` · `travel` · `shop` · `gamble` · `top` · `align` · `duel @user` · `quest`\n"
             f"More: `!idle rules <{'|'.join(_RULES_TOPICS)}>`",
             C_BLUE,
         ))

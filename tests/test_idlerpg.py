@@ -466,6 +466,74 @@ def test_a_group_is_fought_one_at_a_time_and_a_rare_kill_is_news():
     assert "Dragon" in notes[0].text and notes[0].public
 
 
+# ── the tables ───────────────────────────────────────────────────────────────
+
+_TOWN = {"x": rpg.LANDMARKS["Velvragh"][0] + 30, "y": rpg.LANDMARKS["Velvragh"][1]}
+
+
+def test_the_stake_is_a_share_of_the_purse_that_grows_with_it():
+    assert [rpg.gamble_stake(g) for g in (100, 1000, 10_000, 50_000)] == [9, 138, 1842, 10_819]
+    assert rpg.gamble_stake(1) == 0 and rpg.gamble_stake(0) == 0
+
+
+def test_a_visits_bets_stop_at_a_fifth_of_the_purse_the_character_arrived_with():
+    char = _char(20, gold=10_000, **_TOWN)
+    rng = _Scripted(random_=0.0, randrange=0)            # bets every tick, and loses every one
+    staked = []
+    for minute in range(300):
+        before = char["gold"]
+        if rpg.town_gamble(1, char, rng, _name, NOW + 60 * minute, 60):
+            staked.append(before - char["gold"])
+    assert sum(staked) == 2000 and char["gold"] == 8000  # 20% of 10,000, then nothing more
+    assert staked[0] == 1842 and char["gambles"] == len(staked) and char["gamble_lost"] == 2000
+
+
+def test_the_budget_follows_the_visit_not_the_ring():
+    char = _char(20, gold=10_000, **_TOWN)
+    rng = _Scripted(random_=0.999)                       # never actually bets
+    rpg.town_gamble(1, char, rng, _name, NOW, 60)
+    assert (char["gamble_town"], char["gamble_budget"]) == ("Velvragh", 2000)
+
+    char["gamble_budget"] = 0
+    char["x"] += 500                                     # wanders out of the ring…
+    assert rpg.town_gamble(1, char, rng, _name, NOW + 60, 60) is None
+    char["x"] -= 500                                     # …and straight back: the same visit
+    rpg.town_gamble(1, char, rng, _name, NOW + 120, 60)
+    assert char["gamble_budget"] == 0
+
+    rpg.town_gamble(1, char, rng, _name, NOW + rpg.GAMBLE_VISIT_SECS, 60)
+    assert char["gamble_budget"] == 2000                 # a stay this long is a new visit
+
+    char["gamble_budget"] = 0
+    char["x"], char["y"] = rpg.LANDMARKS["Denmark"]      # another town is another visit
+    rpg.town_gamble(1, char, rng, _name, NOW + rpg.GAMBLE_VISIT_SECS + 60, 60)
+    assert (char["gamble_town"], char["gamble_budget"]) == ("Denmark", 2000)
+
+
+def test_no_tables_in_the_wilds_none_for_the_poor_and_no_opting_out():
+    rng = _Scripted(random_=0.0, randrange=99)
+    assert rpg.town_gamble(1, _char(20, gold=10_000, x=480, y=20), rng, _name, NOW, 60) is None
+    assert rpg.town_gamble(1, _char(20, gold=17, **_TOWN), rng, _name, NOW, 60) is None
+    stubborn = _char(20, gold=10_000, auto_trade=False, **_TOWN)
+    note = rpg.town_gamble(1, stubborn, rng, _name, NOW, 60)
+    assert "doubled it" in note.text and stubborn["gold"] == 11_842 and stubborn["gamble_won"] == 1842
+
+
+def test_the_house_wins_fifty_one_rolls_in_a_hundred():
+    rng = random.Random(3)
+    wins = sum(rpg.manual_gamble(_char(gold=10, **_TOWN), 1, rng)[0] for _ in range(40_000))
+    assert 0.475 < wins / 40_000 < 0.505
+
+
+def test_manual_bets_need_a_town_and_the_gold():
+    rng = _Scripted(randrange=99)
+    assert rpg.manual_gamble(_char(gold=500, x=480, y=20), 100, rng)[0] is None
+    rich = _char(gold=500, **_TOWN)
+    assert rpg.manual_gamble(rich, 501, rng)[0] is None and rpg.manual_gamble(rich, 0, rng)[0] is None
+    assert rpg.manual_gamble(rich, 500, rng) == (True, "[Velvragh] You won 500 gold. 1,000 gold left.")
+    assert rich["gamble_budget"] == 0                    # a bet by hand is outside the visit's cap
+
+
 # ── travel ───────────────────────────────────────────────────────────────────
 
 def test_a_traveller_walks_straight_to_town_without_wandering_or_meeting_anyone():

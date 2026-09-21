@@ -14,6 +14,7 @@ where they are posted (src/cogs/idle_cog.py).
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Callable, NamedTuple
 
@@ -283,6 +284,12 @@ def new_character(class_name: str, now: int) -> dict:
         "travel_to": None,   # a LANDMARKS key while the player has it walking there (!idle travel)
         "mob_kills": 0,
         "mob_deaths": 0,
+        "gamble_town": None,      # the town visit the budget below belongs to
+        "gamble_visit_at": 0,
+        "gamble_budget": 0,
+        "gambles": 0,
+        "gamble_won": 0,
+        "gamble_lost": 0,
     }
 
 
@@ -1001,6 +1008,72 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int) -> "list[No
             f" they were carried to the outskirts of {town}.{dented}",
         ))
     return notes
+
+
+# ── the tables ───────────────────────────────────────────────────────────────
+#
+# Town gambling is sizzlorox/Idle-RPG-Bot's: a character in a town bets on
+# its own, the stake a share of the purse that grows with it
+# (2·ln(gold)·gold/100 — 9% of 100 gold, 18% of 10,000), at even money with
+# the house a nose ahead. There it has no limit; here a visit's stakes stop
+# at a fifth of the purse the character arrived with. It cannot be switched
+# off — it is the town's tax on a hoard — and `!idle gamble` lets the player
+# bet by hand on the same terms, in the same places.
+
+GAMBLE_MIN_GOLD = 18
+GAMBLE_LOSE_BELOW = 51          # of 100: the house wins 51 rolls in 100
+GAMBLE_VISIT_CAP_PCT = 20
+GAMBLE_VISIT_SECS = 6 * 3600    # a stay longer than this counts as a new visit
+GAMBLES_PER_HOUR = 0.75         # automatic bets, while inside a market ring
+
+
+def gamble_stake(gold: int) -> int:
+    return int(2 * math.log(gold) * gold / 100) if gold > 1 else 0
+
+
+def _settle_bet(char: dict, stake: int, rng) -> bool:
+    """Even money, house edge GAMBLE_LOSE_BELOW - 50. Returns whether it won."""
+    won = rng.randrange(100) >= GAMBLE_LOSE_BELOW
+    char["gold"] += stake if won else -stake
+    char["gambles"] += 1
+    char["gamble_won" if won else "gamble_lost"] += stake
+    return won
+
+
+def town_gamble(uid: int, char: dict, rng, name: NameFn, now: int, ticks_per_hour: int) -> "Note | None":
+    """One tick of a character's own gambling. The visit's budget is set on
+    arriving in a town (or after GAMBLE_VISIT_SECS in the same one) — by the
+    clock and the town's name, not by crossing the ring, which a wanderer at
+    its edge does every few seconds."""
+    town = market_in_reach(char)
+    if town is None:
+        return None
+    if town != char["gamble_town"] or now - char["gamble_visit_at"] >= GAMBLE_VISIT_SECS:
+        char["gamble_town"], char["gamble_visit_at"] = town, now
+        char["gamble_budget"] = char["gold"] * GAMBLE_VISIT_CAP_PCT // 100
+    if char["gold"] < GAMBLE_MIN_GOLD or rng.random() >= GAMBLES_PER_HOUR / ticks_per_hour:
+        return None
+    stake = min(gamble_stake(char["gold"]), char["gamble_budget"], char["gold"])
+    if stake < 1:
+        return None
+    char["gamble_budget"] -= stake
+    won = _settle_bet(char, stake, rng)
+    return Note((uid,), f"🎲 [{town}] {name(uid)} sat down at the tables with {stake:,} gold and "
+                        f"{'doubled it' if won else 'lost it'}. {char['gold']:,} gold left.")
+
+
+def manual_gamble(char: dict, stake: int, rng) -> "tuple[bool | None, str]":
+    """`!idle gamble`: (won, text), or (None, why not)."""
+    town = market_in_reach(char)
+    if town is None:
+        return None, f"The tables are in the towns — you can only gamble within {MARKET_RADIUS} squares of one."
+    if stake < 1:
+        return None, "Bet at least 1 gold."
+    if stake > char["gold"]:
+        return None, f"You only have {char['gold']:,} gold."
+    won = _settle_bet(char, stake, rng)
+    outcome = f"won {stake:,} gold" if won else f"lost {stake:,} gold"
+    return won, f"[{town}] You {outcome}. {char['gold']:,} gold left."
 
 
 # ── the map ──────────────────────────────────────────────────────────────────

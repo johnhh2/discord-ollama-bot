@@ -683,7 +683,7 @@ online, and there is nothing else to do. The rules are pure
 functions in `src/idlerpg.py` (every random draw goes through a passed-in
 `rng`); `src/cogs/idle_cog.py` is the Discord half and `src/idle_map.py`
 draws the map. `state.idle_characters` / `state.idle_quests` mirror the
-tables from migrations 0070–0075.
+tables from migrations 0070–0076.
 
 - **Everything is per-guild**, keyed `(guild_id, user_id)` like counters. No
   record mirroring, and no *coins*: the bot's wallet is global, so buying
@@ -713,6 +713,20 @@ tables from migrations 0070–0075.
   this map: it is the player's window to spend the gold their own way
   before the errand does. A visit too poor to buy anything isn't stamped.
   Distances are straight-line; the map's wrap is ignored for them.
+- **The tables.** Town gambling is sizzlorox's: inside a market ring a
+  character bets on its own (`town_gamble`, ~0.75 an hour), the stake
+  `2·ln(gold)·gold/100` — a share that grows with the purse — at even money
+  with the house winning 51 in 100. Two things are ours. A visit's stakes
+  stop at `GAMBLE_VISIT_CAP_PCT` (20%) of the purse the character arrived
+  with, and a "visit" is keyed on the town's name and a six-hour clock, not
+  on crossing the ring — a wanderer at the edge crosses it every few
+  seconds and would mint a fresh budget each time. And it **cannot be
+  switched off**: it deliberately ignores `auto_trade`, which governs the
+  shopping errand only — it is the town's tax on a hoard, by the owner's
+  decision. `!idle gamble <gold|half|all>` bets by hand on the same odds, in
+  the same places, outside the cap. The tick runs the automatic bet *after*
+  the voice bonus is computed, so table winnings are never topped up (that
+  would turn a 49% bet into a winning one in a voice channel).
 - **Travel.** `!idle travel <place>` sets `travel_to` to any `LANDMARKS`
   key — a town for its market, or a wild place (the two mountain ranges,
   the Secret Passage, T'rnalvph) for its monsters; `match_place` lets a
