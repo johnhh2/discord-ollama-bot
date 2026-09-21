@@ -126,12 +126,56 @@ def test_unique_needs_the_level_and_lands_in_its_slot():
 
 # ── battles ──────────────────────────────────────────────────────────────────
 
+def _rolls(*values):
+    """A randint that hands out `values` in order (capped at the roll's maximum)."""
+    queue = list(values)
+    return lambda low, high: min(queue.pop(0), high)
+
+
 def test_a_lone_player_fights_the_house_and_a_win_shortens_the_clock():
     chars = {1: _char(30, left=10_000, items={"ring": {"level": 50, "name": None}})}
-    rng = _Scripted(randint=lambda low, high: high if high == 50 else 0)   # we roll 50, the Warden 0
-    notes = rpg.level_up_battle(1, chars, rng, _name, NOW)
+    notes = rpg.level_up_battle(1, chars, _Scripted(randint=_rolls(50, 0)), _name, NOW)
     assert rpg.HOUSE_NAME in notes[0].text and notes[0].public
-    assert rpg.time_left(chars[1], NOW) == 8000      # the house is worth 20%
+    assert rpg.time_left(chars[1], NOW) == 8000      # a decisive win over the house is worth 20%
+
+
+def test_the_house_is_the_challengers_own_match_not_the_best_players():
+    chars = {
+        1: _char(30, items={"ring": {"level": 20, "name": None}}),
+        2: _char(30, items={"ring": {"level": 900, "name": None}}),
+    }
+    rpg.pause(chars[2], NOW)                          # nobody to pick but the house
+    notes = rpg.level_up_battle(1, chars, _Scripted(randint=_rolls(20, 999)), _name, NOW)
+    assert "(rolled 20 of 20)" in notes[0].text and notes[0].text.count("of 20)") == 2
+
+
+def test_the_stake_follows_the_margin_of_the_win():
+    def _fight(mine, theirs):
+        chars = {
+            1: _char(25, left=10_000, items={"ring": {"level": 40, "name": None}}),   # 25: a fight on every level-up
+            2: _char(25, left=10_000, items={"ring": {"level": 40, "name": None}}),
+        }
+        notes = rpg.level_up_battle(1, chars, _Scripted(randint=_rolls(mine, theirs, 5), randrange=0, random_=0.9), _name, NOW)   # the spare 5 feeds a critical strike's roll
+        return rpg.time_left(chars[1], NOW), notes[0].text
+
+    assert _fight(40, 0)[0] == 9300                   # a rout: the whole 7%
+    assert _fight(30, 20)[0] == 9650                  # by half the reach: half of it
+    left, text = _fight(21, 20)
+    assert left == 9825 and "narrowly won" in text    # by a hair: a quarter
+    left, text = _fight(19, 20)
+    assert left == 10_175 and "narrowly lost" in text
+    assert rpg.margin_factor(0, 3, 7, 3) == pytest.approx(3 / 3.5)
+
+
+def test_nobody_is_challenged_twice_inside_the_cooldown():
+    chars = {1: _char(30), 2: _char(30)}
+    rng = _Scripted(randrange=0)                      # always the first in the pool
+    first = rpg.level_up_battle(1, chars, rng, _name, NOW)
+    assert 2 in first[0].uids and chars[2]["challenged_at"] == NOW
+    again = rpg.level_up_battle(1, chars, rng, _name, NOW + 600)
+    assert again[0].uids == (1,) and rpg.HOUSE_NAME in again[0].text
+    later = rpg.level_up_battle(1, chars, rng, _name, NOW + rpg.CHALLENGED_COOLDOWN_SECS)
+    assert 2 in later[0].uids
 
 
 def test_battles_below_the_threshold_are_only_sometimes():
@@ -485,11 +529,11 @@ def test_lively_pace_brings_luck_about_daily_and_classic_about_weekly():
     assert rpg.PACES[rpg.DEFAULT_PACE] is rpg.PACES["lively"]
 
 
-def test_lively_pace_fights_on_half_of_early_level_ups():
-    chars = {1: _char(5)}
-    rng = _Scripted(random_=0.4)
-    assert rpg.level_up_battle(1, chars, rng, _name, NOW, rpg.CLASSIC) == []
-    assert rpg.level_up_battle(1, chars, rng, _name, NOW, rpg.PACES["lively"]) != []
+def test_no_pace_turns_early_level_ups_into_constant_fights():
+    # Lively once fought on half of them; with two players and a level every
+    # few minutes, that was one player being fought without pause.
+    for pace in rpg.PACES.values():
+        assert pace.battle_chance_below <= 0.25
 
 
 def test_lively_team_battles_shrink_to_two_a_side_and_never_to_one():

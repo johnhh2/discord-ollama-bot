@@ -117,7 +117,7 @@ class Pace(NamedTuple):
 
 
 PACES = {
-    "lively": Pace(1.0, 1.0, 1 / 5, 0.5, 2, 8.0),
+    "lively": Pace(1.0, 1.0, 1 / 5, BATTLE_CHANCE_BELOW, 2, 8.0),
     "classic": Pace(GODSEND_PER_DAY, CALAMITY_PER_DAY, HAND_OF_GOD_PER_DAY, BATTLE_CHANCE_BELOW, TEAM_SIZE, 2.0),
 }
 DEFAULT_PACE = "lively"
@@ -454,19 +454,48 @@ def _rolled(roll: int, power: int) -> str:
     return f"(rolled {roll} of {power})" if power else "(no gear)"
 
 
+# A fight is one roll a side, which at low power is close to a coin flip —
+# and the IRC game staked a flat 7%+ of a level on it. With dozens of players
+# that evens out; with two, every swing lands on the same pair. So the stake
+# follows the margin: a win by a hair moves MARGIN_FLOOR of it, and only a win
+# by half the bigger side's range (or more) moves all of it.
+MARGIN_FLOOR = 0.25
+MARGIN_FULL_AT = 0.5
+# Nobody is picked as a level-up opponent twice inside this window; the house
+# steps in instead. In a two-player server the pool is one person, and early
+# levels come every few minutes — without it one player is fought constantly.
+CHALLENGED_COOLDOWN_SECS = 3 * 3600
+
+
+def margin_factor(my_roll: int, opp_roll: int, my_sum: int, opp_sum: int) -> float:
+    reach = max(my_sum, opp_sum, 1) * MARGIN_FULL_AT
+    return max(MARGIN_FLOOR, min(1.0, abs(my_roll - opp_roll) / reach))
+
+
+def _how(factor: float) -> str:
+    return "narrowly " if factor <= 0.5 else ""
+
+
 def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int, pace: Pace = CLASSIC) -> "list[Note]":
     me = chars[uid]
     if me["level"] < BATTLE_ALWAYS_LEVEL and rng.random() >= pace.battle_chance_below:
         return []
-    pool = [u for u in running(chars) if u != uid]
+    pool = [
+        u for u in running(chars)
+        if u != uid and now - chars[u].get("challenged_at", 0) >= CHALLENGED_COOLDOWN_SECS
+    ]
     # The house is one more contender, so a lone player still gets fights.
     pick = rng.randrange(len(pool) + 1)
     opp_uid = pool[pick] if pick < len(pool) else None
     opp = chars.get(opp_uid)
     if opp is None:
-        opp_sum = max(item_sum(c) for c in chars.values()) + 1
+        # The house is the challenger's own match. The IRC bot sized it to the
+        # best-geared player, so in a small server whoever was behind fought
+        # their rival's gear in every house fight as well.
+        opp_sum = max(battle_sum(me), 1)
         opp_name, win_pct, lose_pct = HOUSE_NAME, 20, 10
     else:
+        opp["challenged_at"] = now   # in memory only: a reboot forgetting it is harmless
         opp_sum = battle_sum(opp)
         opp_name = name(opp_uid)
         win_pct, lose_pct = max(opp["level"] / 4, 7), max(opp["level"] / 7, 7)
@@ -475,14 +504,15 @@ def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int, pace: Pa
     my_roll, opp_roll = rng.randint(0, my_sum), rng.randint(0, opp_sum)
     involved = (uid,) if opp is None else (uid, opp_uid)
     head = f"⚔️ {name(uid)} {_rolled(my_roll, my_sum)} challenged {opp_name} {_rolled(opp_roll, opp_sum)}"
+    factor = margin_factor(my_roll, opp_roll, my_sum, opp_sum)
     if my_roll < opp_roll:
-        lost = scale(me, now, lose_pct)
-        return [Note(involved, f"{head} and lost. {format_duration(lost)} added to their clock.", True)]
+        lost = scale(me, now, lose_pct * factor)
+        return [Note(involved, f"{head} and {_how(factor)}lost. {format_duration(lost)} added to their clock.", True)]
 
-    won = -scale(me, now, -win_pct)
+    won = -scale(me, now, -win_pct * factor)
     prize = GOLD_HOUSE_WIN if opp is None else GOLD_PER_WIN * max(opp["level"], 1)
     me["gold"] += prize
-    notes = [Note(involved, f"{head} and won! {format_duration(won)} off their clock, and {prize:,} gold.", True)]
+    notes = [Note(involved, f"{head} and {_how(factor)}won! {format_duration(won)} off their clock, and {prize:,} gold.", True)]
     if opp is None:
         return notes
     if not rng.randrange(CRIT_ODDS[me["moral"]]):
@@ -1021,10 +1051,11 @@ def collision_fight(uid: int, opp_uid: int, chars: dict, rng, name: NameFn, now:
     opp_roll = rng.randrange(opp_sum) if opp_sum else 0
     involved = (uid, opp_uid)
     head = f"⚔️ {name(uid)} {_rolled(my_roll, my_sum)} came upon {name(opp_uid)} {_rolled(opp_roll, opp_sum)} at [{me['x']}, {me['y']}]"
+    factor = margin_factor(my_roll, opp_roll, my_sum, opp_sum)
     if my_roll < opp_roll:
-        lost = scale(me, now, max(opp["level"] // 7, 7))
-        return [Note(involved, f"{head} and was defeated. {format_duration(lost)} added to their clock.", True)]
-    won = -scale(me, now, -max(opp["level"] // 4, 7))
+        lost = scale(me, now, max(opp["level"] // 7, 7) * factor)
+        return [Note(involved, f"{head} and was {_how(factor)}defeated. {format_duration(lost)} added to their clock.", True)]
+    won = -scale(me, now, -max(opp["level"] // 4, 7) * factor)
     spoils = opp["gold"] * GOLD_SPOILS_PCT // 100
     opp["gold"] -= spoils
     prize = GOLD_PER_WIN * max(opp["level"], 1)

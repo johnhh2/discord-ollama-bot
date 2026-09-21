@@ -807,10 +807,22 @@ tables from migrations 0070–0075.
   inside the market ring, outside the errand's — so losing never triggers
   an auto-trade by itself. Fights are feed-only; a `RARE_KILLS` kill is
   channel news.
+- **Player fights are tuned for a handful of players, not the IRC crowd.**
+  A level-up battle is one roll a side — near a coin flip at low power —
+  and the original staked a flat 7% of a level on it. With two players
+  every swing lands on the same pair and snowballs. Three rules keep that
+  in check; don't undo them for "faithfulness": the stake follows the
+  margin (`margin_factor`: a win by a hair moves a quarter of it, a rout all
+  of it — level-up and collision fights both); the house is the challenger's
+  own match, not the best-geared player's; and nobody is picked as a
+  level-up opponent twice within `CHALLENGED_COOLDOWN_SECS` (the house
+  steps in). Early level-ups fight a quarter of the time at every pace —
+  lively once made it half, which with a level every ten minutes was one
+  player being fought without pause.
 - **Pace.** The IRC odds (a godsend a week) assume dozens of players for
   months; with a handful nothing ever happens. `idlerpg.PACES` holds two
   sets: `lively` (the default — a godsend and a calamity about daily per
-  player, a Hand of God every five days, fights on half of early level-ups,
+  player, a Hand of God every five days, monster fights eight times a day,
   team battles from four players) and `classic`. A guild picks with
   `!settings idle-pace`; the engine functions default to `CLASSIC` so the
   rules tests pin the original numbers, and the cog passes the guild's.
