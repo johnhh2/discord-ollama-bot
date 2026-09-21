@@ -683,7 +683,7 @@ online, and there is nothing else to do. The rules are pure
 functions in `src/idlerpg.py` (every random draw goes through a passed-in
 `rng`); `src/cogs/idle_cog.py` is the Discord half and `src/idle_map.py`
 draws the map. `state.idle_characters` / `state.idle_quests` mirror the
-tables from migrations 0070–0073.
+tables from migrations 0070–0074.
 
 - **Everything is per-guild**, keyed `(guild_id, user_id)` like counters. No
   record mirroring, and no *coins*: the bot's wallet is global, so buying
@@ -713,6 +713,14 @@ tables from migrations 0070–0073.
   this map: it is the player's window to spend the gold their own way
   before the errand does. A visit too poor to buy anything isn't stamped.
   Distances are straight-line; the map's wrap is ignored for them.
+- **Travel.** `!idle travel <town>` sets `travel_to`; `move_players` then
+  walks that character like a journey quester (the same 1%-a-second step,
+  no wandering, so no collision fights — that lost income is the price,
+  which is why travel is free) until it stands on the town's square, where
+  the flag clears and the errand fires. Only *running* travellers move. A
+  journey quest overrides it: being picked clears `travel_to`, and the
+  command refuses while on one. It is the only steering in the game —
+  don't add a faster or paid variant without rethinking the market ring.
 - **Off until `!settings-channel idle` names a channel.** News posts there
   and each character's public feed thread opens under it. Clearing it
   freezes every clock; nothing expires while the game is off.

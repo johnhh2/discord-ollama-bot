@@ -1646,3 +1646,8 @@ ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS rush_day VARCHAR(10) NULL;
 ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS extra_duel_day VARCHAR(10) NULL;
 ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS auto_trade TINYINT(1) NOT NULL DEFAULT 1;
 ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS traded_at BIGINT NOT NULL DEFAULT 0;
+
+-- ── 0074_idle_travel.sql ──
+-- 0074: !idle travel. The town a character is walking toward (a key of
+-- idlerpg.TOWNS), NULL while it wanders.
+ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS travel_to VARCHAR(32) NULL;

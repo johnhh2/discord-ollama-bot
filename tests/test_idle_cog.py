@@ -666,6 +666,70 @@ def _member_lookup(monkeypatch):
     monkeypatch.setattr(_idle_cog.MemberConverter, "convert", _convert)
 
 
+# ── travel ───────────────────────────────────────────────────────────────────
+
+async def test_travel_sets_a_destination_shows_the_route_and_stop_clears_it():
+    cog, guild, _idle = _world()
+    char = _spawn(x=300, y=200)
+    ctx = _ctx(guild)
+    await cog.cmd_travel.callback(cog, ctx, where="velvragh")
+    assert char["travel_to"] == "Velvragh"
+    assert "70 squares" in ctx.sent_embeds[-1].description and "1h 56m" in ctx.sent_embeds[-1].description
+    assert ctx.send_mock.call_args.kwargs["file"].filename == _idle_cog.MAP_FILENAME
+
+    await cog.cmd_status.callback(cog, ctx)
+    assert "**Travelling to:** Velvragh" in ctx.sent_embeds[-1].description
+
+    await cog.cmd_travel.callback(cog, ctx, where="stop")
+    assert char["travel_to"] is None
+    await cog.cmd_travel.callback(cog, ctx, where="atlantis")
+    assert ctx.sent_embeds[-1].title == "❌ Travel" and char["travel_to"] is None
+
+
+async def test_travel_bare_lists_towns_nearest_first(monkeypatch):
+    cog, guild, _idle = _world()
+    char = _spawn(x=300, y=200)
+    seen = {}
+
+    async def _pick(ctx, *, options, **kwargs):
+        seen["options"] = options
+        return [options[0][1]]
+    monkeypatch.setattr(_idle_cog, "pick_from_list", _pick)
+    await cog.cmd_travel.callback(cog, _ctx(guild))
+    assert [value for _label, value in seen["options"]][0] == "Velvragh" and len(seen["options"]) == 5
+    assert char["travel_to"] == "Velvragh"
+
+
+async def test_no_travel_on_a_journey_quest_or_to_where_you_stand():
+    cog, guild, _idle = _world()
+    gx, gy = rpg.LANDMARKS["Denmark"]
+    char = _spawn(x=gx, y=gy)
+    ctx = _ctx(guild)
+    await cog.cmd_travel.callback(cog, ctx, where="denmark")
+    assert "already standing" in ctx.sent_embeds[-1].description and char["travel_to"] is None
+
+    _state.idle_quests[GID] = {**rpg.new_quest(), "members": [ALICE], "description": "walk", "kind": "journey", "p1": [1, 1], "p2": [2, 2]}
+    await cog.cmd_travel.callback(cog, ctx, where="velvragh")
+    assert "journey quest" in ctx.sent_embeds[-1].description and char["travel_to"] is None
+
+
+async def test_arriving_in_town_is_announced_in_the_feed_and_the_errand_follows():
+    cog, guild, idle = _world()
+
+    class _Stride(_StillRng):
+        def random(self):
+            return 0.0                                       # every step chance hits (so does every stroke of luck)
+    cog.rng = _Stride()
+    gx, gy = rpg.LANDMARKS["Velvragh"]
+    char = _spawn(level=10, left=50_000, gold=1000, x=gx - 20, y=gy, travel_to="Velvragh", items={"ring": {"level": 5, "name": None}})
+
+    await cog.tick()
+
+    assert (char["x"], char["y"]) == (gx, gy) and char["travel_to"] is None
+    feed = _sent(guild.threads[0])
+    assert "arrived in Velvragh" in feed and "did some trading" in feed
+
+
 # ── gold ─────────────────────────────────────────────────────────────────────
 
 async def test_a_level_up_pays_gold_and_says_so_in_the_feed():
@@ -969,7 +1033,7 @@ async def test_settings_idle_pace_sets_validates_and_prompts(monkeypatch):
 
 async def test_characters_and_quests_round_trip_through_the_db(db):
     char = _spawn(level=12, items={"ring": {"level": 9, "name": None}}, thread_id=900, law="chaotic", x=17, y=499,
-                  gold=4321, rush_day="2026-09-21", extra_duel_day="2026-09-20", auto_trade=False, traded_at=1234)
+                  gold=4321, rush_day="2026-09-21", extra_duel_day="2026-09-20", auto_trade=False, traded_at=1234, travel_to="Velvragh")
     paused = _spawn(BOB)
     rpg.pause(paused, int(time.time()))
     _state.idle_quests[GID] = {

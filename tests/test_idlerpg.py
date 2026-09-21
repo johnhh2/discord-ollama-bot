@@ -305,6 +305,53 @@ def test_a_poor_visit_is_not_stamped_and_the_ring_and_the_wilds_do_not_trade():
     assert rpg.auto_trade(1, off, rng, _name, NOW) is None and off["gold"] == 5000
 
 
+# ── travel ───────────────────────────────────────────────────────────────────
+
+def test_a_traveller_walks_straight_to_town_without_wandering_or_meeting_anyone():
+    gx, gy = rpg.LANDMARKS["Velvragh"]
+    chars = {
+        1: _char(10, x=gx - 2, y=gy + 1, travel_to="Velvragh"),
+        2: _char(10, x=gx - 2, y=gy + 1),                       # stands on the same square, and stays
+    }
+    rng = _Walk(random_=0.0)                                    # every traveller steps every second
+    notes = rpg.move_players(chars, rpg.new_quest(), rng, _name, NOW, 1)
+    assert (chars[1]["x"], chars[1]["y"]) == (gx - 1, gy) and notes == []     # diagonal, and no fight
+
+    notes = rpg.move_players(chars, rpg.new_quest(), rng, _name, NOW, 3)
+    assert (chars[1]["x"], chars[1]["y"]) == (gx, gy) and chars[1]["travel_to"] is None
+    assert [n.text for n in notes] == ["🧭 P1 arrived in Velvragh."] and not notes[0].public
+
+
+def test_a_traveller_mostly_stands_still_and_a_paused_one_always_does():
+    chars = {1: _char(10, x=10, y=10, travel_to="Velvragh")}
+    rpg.move_players(chars, rpg.new_quest(), _Walk([(1, 1)] * 5, random_=0.5), _name, NOW, 5)
+    assert (chars[1]["x"], chars[1]["y"]) == (10, 10)           # 0.5 ≥ the 1% step chance, and no wander either
+    rpg.pause(chars[1], NOW)
+    rpg.move_players(chars, rpg.new_quest(), _Walk(random_=0.0), _name, NOW, 5)
+    assert (chars[1]["x"], chars[1]["y"]) == (10, 10)
+
+
+def test_being_picked_for_a_journey_cancels_travel_and_a_vigil_does_not():
+    class _PickJourney(_Scripted):
+        def choice(self, seq):
+            return rpg._JOURNEYS[0]
+    chars = {1: _char(40, travel_to="Denmark"), 2: _char(50)}
+    rpg.tick_quest(chars, rpg.new_quest(), _PickJourney(), _name, NOW)
+    assert chars[1]["travel_to"] is None
+    chars = {1: _char(40, travel_to="Denmark"), 2: _char(50)}
+    rpg.tick_quest(chars, rpg.new_quest(), _Scripted(), _name, NOW)
+    assert chars[1]["travel_to"] == "Denmark"
+
+
+def test_towns_match_by_any_unambiguous_part_of_the_name():
+    assert rpg.match_town("Velvragh") == "Velvragh"
+    assert rpg.match_town("towers") == "the Towers of Ankh-Allor"
+    assert rpg.match_town(" QWOK ") == "the land of Qwok"
+    assert rpg.match_town("the") is None and rpg.match_town("") is None and rpg.match_town("bharash") is None
+    char = _char(x=300, y=200)
+    assert rpg.travel_steps(char, "Velvragh") == 70 and rpg.travel_eta_secs(char, "Velvragh") == 7000
+
+
 # ── pace ─────────────────────────────────────────────────────────────────────
 
 def test_lively_pace_brings_luck_about_daily_and_classic_about_weekly():

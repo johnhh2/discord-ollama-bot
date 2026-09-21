@@ -87,7 +87,8 @@ _RULES_TOPICS = {
     "map": (
         f"The realm is a {rpg.MAP_SIZE}×{rpg.MAP_SIZE} grid. Everyone online wanders one step a second, and the edges wrap.\n"
         "Land on the same square as someone and you may fight them, there and then.\n"
-        "Some quests are journeys: the party stops wandering and walks to one landmark, then another. `!idle map` shows it all."
+        "Some quests are journeys: the party stops wandering and walks to one landmark, then another. `!idle map` shows it all.\n"
+        "`!idle travel <town>` walks you to a town on purpose — slowly, and without the chance meetings of the road."
     ),
     "gold": (
         "The realm's own money — nothing to do with the server's coins, and it can't be sent to anyone.\n"
@@ -331,7 +332,13 @@ class IdleCog(commands.Cog):
             players.append((uid, member.display_name if member else str(uid), char["x"], char["y"]))
         quest = self._quest(guild.id)
         journey = dict(quest) if quest.get("kind") == "journey" else None
-        png = await asyncio.to_thread(render_map, players, highlight=tuple(highlight), quest=journey)
+        # Only the travellers this picture is about: everyone's lines would bury the map.
+        routes = []
+        for uid in highlight:
+            char = self._chars(guild.id).get(uid)
+            if char and char.get("travel_to") in rpg.LANDMARKS and char.get("x") is not None:
+                routes.append((char["x"], char["y"], *rpg.LANDMARKS[char["travel_to"]]))
+        png = await asyncio.to_thread(render_map, players, highlight=tuple(highlight), quest=journey, routes=routes)
         return discord.File(io.BytesIO(png), filename=MAP_FILENAME)
 
     async def _post_map(self, guild, channel) -> None:
@@ -562,6 +569,9 @@ class IdleCog(commands.Cog):
             town, away = rpg.nearest_town(char)
             market = f"market open ({town})" if away <= rpg.MARKET_RADIUS else f"nearest market: {town}, {away} squares"
             lines.insert(2, f"**Position:** [{char['x']}, {char['y']}]" + (f" — at {here}" if here else "") + f" · {market}")
+            if char.get("travel_to") in rpg.LANDMARKS:
+                eta = format_duration(rpg.travel_eta_secs(char, char["travel_to"]))
+                lines.insert(3, f"**Travelling to:** {char['travel_to']} — about {eta} of walking left")
         if char["penalty_total"]:
             lines.insert(3, f"**Time lost to penalties:** {format_duration(char['penalty_total'])}")
         if char["prestige"]:
@@ -574,7 +584,7 @@ class IdleCog(commands.Cog):
 
     @commands.group(name="idle", aliases=["irpg"], invoke_without_command=True)
     async def cmd_idle(self, ctx: commands.Context):
-        """!idle join|status|items|map|shop|top|align|duel|quest|prestige|leave|rules"""
+        """!idle join|status|items|map|travel|shop|top|align|duel|quest|prestige|leave|rules"""
         if not await self._ready(ctx):
             return
         char = self._chars(ctx.guild.id).get(ctx.author.id)
@@ -811,6 +821,71 @@ class IdleCog(commands.Cog):
         await ctx.send(embed=emb("🤺 Duel", "\n".join(n.text for n in notes), C_GOLD))
         await self._deliver(ctx.guild, notes, skip_main=self._in_idle_channel(ctx))
 
+    # ── !idle travel ─────────────────────────────────────────────────────
+
+    @cmd_idle.command(name="travel")
+    async def cmd_travel(self, ctx: commands.Context, *, where: str = None):
+        if not await self._ready(ctx, need_channel=True):
+            return
+        char = await self._own_char(ctx)
+        if char is None:
+            return
+        gid, uid = ctx.guild.id, ctx.author.id
+        rpg.ensure_position(char, self.rng)
+        if where is None:
+            options = [
+                (f"{town} — {rpg.travel_steps(char, town)} squares, about {format_duration(rpg.travel_eta_secs(char, town))}", town)
+                for town in sorted(rpg.TOWNS, key=lambda t: rpg.travel_steps(char, t))
+            ]
+            if char.get("travel_to"):
+                options.append(("Stop travelling — wander again", "stop"))
+            going = f"You're walking to **{char['travel_to']}**." if char.get("travel_to") else "You're wandering."
+            picked = await pick_from_list(
+                ctx,
+                title="🧭 Travel",
+                description=(
+                    f"{going} Pick a town and your character stops wandering and walks there, a step every "
+                    f"{int(1 / rpg.JOURNEY_STEP_CHANCE)} seconds or so. Travellers meet nobody on the road — no collision fights.\n\n"
+                    "Typed: `!idle travel velvragh` · `!idle travel stop`"
+                ),
+                options=options, placeholder="Where to…", multi=False,
+            )
+            if not picked:
+                return
+            where = picked[0]
+            # The dropdown was a long await.
+            char = self._chars(gid).get(uid)
+            if char is None:
+                return
+
+        if where.lower() == "stop":
+            was = char.get("travel_to")
+            char["travel_to"] = None
+            await persistence.save_idle_character(gid, uid)
+            await ctx.send(embed=emb("🧭 Travel", f"You give up on {was} and wander again." if was else "You weren't going anywhere.", C_GREY))
+            return
+        town = rpg.match_town(where)
+        if town is None:
+            await ctx.send(embed=emb("❌ Travel", "Towns: " + ", ".join(rpg.TOWNS) + ". `!idle travel stop` to wander.", C_RED))
+            return
+        quest = self._quest(gid)
+        if quest.get("kind") == "journey" and uid in quest["members"]:
+            await ctx.send(embed=emb("❌ Travel", "You're on a journey quest — it decides where you walk until it's done.", C_RED))
+            return
+        if rpg.travel_steps(char, town) == 0:
+            await ctx.send(embed=emb("🧭 Travel", f"You're already standing in {town}.", C_GREY))
+            return
+        char["travel_to"] = town
+        await persistence.save_idle_character(gid, uid)
+        embed = emb(
+            "🧭 Travel",
+            f"You set out for **{town}**: {rpg.travel_steps(char, town)} squares, about "
+            f"{format_duration(rpg.travel_eta_secs(char, town))} of walking while you're online. "
+            "You can shop as soon as you're inside its ring. `!idle travel stop` to wander again.",
+            C_GREEN,
+        )
+        await self._send_with_map(ctx, embed, highlight=(uid,))
+
     # ── !idle shop ───────────────────────────────────────────────────────
 
     @staticmethod
@@ -851,7 +926,7 @@ class IdleCog(commands.Cog):
             return
         if rpg.market_in_reach(char) is None:
             near = rpg.nearest_town(char)
-            where = f" The nearest is **{near[0]}**, {near[1]} squares away — `!idle map`." if near else ""
+            where = f" The nearest is **{near[0]}**, {near[1]} squares away — `!idle travel` walks you there." if near else ""
             await ctx.send(embed=emb(
                 "❌ No Market Here",
                 f"You can only trade within {rpg.MARKET_RADIUS} squares of a town.{where}",
@@ -1034,7 +1109,7 @@ class IdleCog(commands.Cog):
             "⏳ Your character levels on a timer while you're online.\n"
             "⚔️ Items, fights and lucky breaks happen on their own.\n"
             "📜 High-level players get sent on quests for a big shortcut.\n\n"
-            "`!idle status` · `items` · `map` · `shop` · `top` · `align` · `duel @user` · `quest`\n"
+            "`!idle status` · `items` · `map` · `travel` · `shop` · `top` · `align` · `duel @user` · `quest`\n"
             f"More: `!idle rules <{'|'.join(_RULES_TOPICS)}>`",
             C_BLUE,
         ))

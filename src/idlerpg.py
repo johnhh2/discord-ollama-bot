@@ -270,6 +270,7 @@ def new_character(class_name: str, now: int) -> dict:
         "extra_duel_day": None,
         "auto_trade": True,
         "traded_at": 0,
+        "travel_to": None,   # a TOWNS key while the player has it walking there (!idle travel)
     }
 
 
@@ -797,6 +798,23 @@ def _place(point) -> str:
     return f"{label} [{point[0]}, {point[1]}]" if label else f"[{point[0]}, {point[1]}]"
 
 
+def match_town(text: str) -> "str | None":
+    """`velvragh`, `towers`, `qwok` → the town, when exactly one matches."""
+    wanted = text.lower().strip()
+    hits = [town for town in TOWNS if wanted and wanted in town.lower()]
+    return hits[0] if len(hits) == 1 else None
+
+
+def travel_steps(char: dict, town: str) -> int:
+    """Steps left to `town`. A step moves one square on both axes at once."""
+    goal = LANDMARKS[town]
+    return max(abs(char["x"] - goal[0]), abs(char["y"] - goal[1]))
+
+
+def travel_eta_secs(char: dict, town: str) -> int:
+    return int(travel_steps(char, town) / JOURNEY_STEP_CHANCE)
+
+
 def collision_fight(uid: int, opp_uid: int, chars: dict, rng, name: NameFn, now: int) -> "list[Note]":
     me, opp = chars[uid], chars[opp_uid]
     my_sum, opp_sum = battle_sum(me), battle_sum(opp)
@@ -873,6 +891,16 @@ def move_players(chars: dict, quest: dict, rng, name: NameFn, now: int, seconds:
             if uid in questers or uid not in chars:
                 continue
             char = chars[uid]
+            town = char.get("travel_to")
+            if town in LANDMARKS:
+                # A traveller walks like a quester — and, like one, meets nobody on the way.
+                if rng.random() < JOURNEY_STEP_CHANCE:
+                    goal = LANDMARKS[town]
+                    char["x"], char["y"] = _toward(char["x"], goal[0]), _toward(char["y"], goal[1])
+                    if (char["x"], char["y"]) == goal:
+                        char["travel_to"] = None
+                        notes.append(Note((uid,), f"🧭 {name(uid)} arrived in {town}."))
+                continue
             char["x"], char["y"] = _wander(char["x"], rng), _wander(char["y"], rng)
             spot = (char["x"], char["y"])
             held = squares.get(spot)
@@ -956,6 +984,8 @@ def tick_quest(chars: dict, quest: dict, rng, name: NameFn, now: int) -> "list[N
             tuple(members),
         )]
     start, end, text = picked
+    for u in members:
+        chars[u]["travel_to"] = None   # the quest decides where they walk now
     quest.update(
         members=members, description=text, kind="journey", ends_at=None,
         stage=1, p1=list(LANDMARKS[start]), p2=list(LANDMARKS[end]),

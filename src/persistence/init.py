@@ -640,12 +640,12 @@ async def _init_db_state_inner(state, run_migrations):
                 "SELECT guild_id, user_id, class_name, level, next_level_at, remaining, law, moral, "
                 "prestige, penalty_total, last_seen, last_penalty_at, thread_id, created_at, "
                 "align_changed_at, duel_day, items_json, x, y, gold, rush_day, extra_duel_day, "
-                "auto_trade, traded_at FROM idle_characters"
+                "auto_trade, traded_at, travel_to FROM idle_characters"
             )
             for (gid, uid, class_name, level, next_level_at, remaining, law, moral, prestige,
                  penalty_total, last_seen, last_penalty_at, thread_id, created_at,
                  align_changed_at, duel_day, items_json, x, y, gold, rush_day,
-                 extra_duel_day, auto_trade, traded_at) in await cur.fetchall():
+                 extra_duel_day, auto_trade, traded_at, travel_to) in await cur.fetchall():
                 state.idle_characters.setdefault(int(gid), {})[int(uid)] = {
                     "class": class_name,
                     "level": int(level),
@@ -669,6 +669,7 @@ async def _init_db_state_inner(state, run_migrations):
                     "extra_duel_day": extra_duel_day,
                     "auto_trade": bool(auto_trade),
                     "traded_at": int(traded_at),
+                    "travel_to": travel_to,
                 }
             await cur.execute(
                 "SELECT guild_id, members_json, description, ends_at, not_before, kind, stage, "
