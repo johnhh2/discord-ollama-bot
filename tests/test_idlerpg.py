@@ -305,6 +305,96 @@ def test_a_poor_visit_is_not_stamped_and_the_ring_and_the_wilds_do_not_trade():
     assert rpg.auto_trade(1, off, rng, _name, NOW) is None and off["gold"] == 5000
 
 
+# ── monsters ─────────────────────────────────────────────────────────────────
+
+class _Fight(_Scripted):
+    """rolls: my roll, then the monster's, per fight. No groups, no drops."""
+    def __init__(self, rolls, *, random_=0.999, randrange=99):
+        super().__init__(random_=random_, randrange=randrange)
+        self._rolls = list(rolls)
+
+    def randint(self, low, high):
+        return min(self._rolls.pop(0), high)
+
+
+def test_biomes_follow_the_drawn_map_and_every_one_can_spawn_something():
+    assert rpg.biome_at(300, 100) == "Mountains" and rpg.biome_at(60, 450) == "Mountains"
+    assert rpg.biome_at(480, 480) == "Darklands" and rpg.biome_at(20, 20) == "Coast"
+    assert rpg.biome_at(90, 250) == "Caves" and rpg.biome_at(250, 490) == "Haunted"
+    assert rpg.biome_at(430, 250) == "Forest" and rpg.biome_at(440, 150) == "Plains"
+    biomes = {biome for _n, _r, _t, _tier, where in rpg.MOB_TYPES for biome in where}
+    rng = random.Random(5)
+    for biome in biomes:
+        for level in (1, 30, 80):
+            for _ in range(200):
+                prefix, beast, strength, gold_mult, tier = rpg.roll_monster(level, biome, rng)
+                assert 1 <= tier <= 5 and strength > 0
+
+
+def test_level_and_dangerous_ground_bring_out_the_rarer_monsters():
+    def _rare_share(level, biome):
+        rng = random.Random(9)
+        rolls = [rpg.roll_monster(level, biome, rng) for _ in range(4000)]
+        return sum(tier >= 4 for *_rest, tier in rolls) / len(rolls)
+    assert _rare_share(60, "Mountains") > _rare_share(5, "Mountains") * 2
+    assert _rare_share(30, "Darklands") > _rare_share(30, "Plains")
+
+
+def test_monsters_are_cut_to_the_characters_size_and_go_easy_on_beginners():
+    geared = _char(30, items={"ring": {"level": 120, "name": None}})
+    assert rpg.mob_power(geared, 1.0) == 100                   # 120 / 1.2 × (0.6 + 0.4)
+    assert rpg.mob_power(geared, 3.0) == 180
+    assert rpg.mob_power(_char(5, items={"ring": {"level": 120, "name": None}}), 1.0) == 50
+    assert rpg.mob_power(_char(30), 1.0) == 50                 # no gear: sized to the level instead
+
+
+def test_a_won_fight_pays_gold_and_clock_and_a_town_is_safe():
+    char = _char(20, left=10_000, x=480, y=20, items={"ring": {"level": 60, "name": None}})
+    notes = rpg.mob_encounter(1, char, _Fight([60, 0]), _name, NOW)
+    # randrange 99 → the commonest pool; choice takes its first: a Starving Rat, tier 1.
+    assert "killed a Starving Rat" in notes[0].text and "[Plains]" in notes[0].text and not notes[0].public
+    assert char["gold"] == 10 and rpg.time_left(char, NOW) == 9900 and char["mob_kills"] == 1   # 1 × 0.25 × 20 × 2
+
+    safe = _char(20, x=rpg.LANDMARKS["Velvragh"][0] + 30, y=rpg.LANDMARKS["Velvragh"][1])
+    assert rpg.mob_encounter(1, safe, _Fight([60, 0]), _name, NOW) == []
+
+
+def test_a_close_fight_ends_with_someone_fleeing_and_nothing_lost():
+    char = _char(20, left=10_000, x=480, y=20, gold=500, items={"ring": {"level": 60, "name": None}})
+    notes = rpg.mob_encounter(1, char, _Fight([30, 28]), _name, NOW)
+    assert "fled" in notes[0].text
+    assert (char["gold"], rpg.time_left(char, NOW), char["mob_kills"], char["mob_deaths"]) == (500, 10_000, 0, 0)
+
+
+def test_a_lost_fight_costs_clock_and_gold_and_carries_you_to_a_towns_outskirts():
+    char = _char(20, left=10_000, x=480, y=150, gold=1200, items={"ring": {"level": 60, "name": None}})
+    notes = rpg.mob_encounter(1, char, _Fight([0, 99]), _name, NOW)
+    assert "struck P1 down" in notes[-1].text and "outskirts of the land of Qwok" in notes[-1].text
+    assert char["gold"] == 1100 and rpg.time_left(char, NOW) == 10_100 and char["mob_deaths"] == 1   # 1/12 of 1,200
+    rich = _char(20, x=480, y=150, gold=60_000, items={"ring": {"level": 60, "name": None}})
+    rpg.mob_encounter(1, rich, _Fight([0, 99]), _name, NOW)
+    assert rich["gold"] == 59_900                               # capped at 5 × level
+    assert rpg.nearest_town(char)[1] <= rpg.MOB_RESPAWN_DISTANCE
+    assert rpg.market_in_reach(char) == "the land of Qwok"
+    assert rpg.nearest_town(char)[1] > rpg.TOWN_CORE_RADIUS    # the market, not the errand
+
+
+def test_a_group_is_fought_one_at_a_time_and_a_rare_kill_is_news():
+    char = _char(40, left=100_000, x=480, y=20, items={"ring": {"level": 60, "name": None}})
+    rng = _Fight([3, 60, 0, 60, 0, 60, 0], random_=0.0)        # a group of three, all beaten; then the drop roll hits
+    notes = rpg.mob_encounter(1, char, rng, _name, NOW)
+    assert notes[0].text.count("Starving Rat") == 3 and char["mob_kills"] == 3
+    assert len(notes) == 2 and "found a level" in notes[1].text   # a won fight can turn up an item
+
+    class _DragonSlayer(_Fight):
+        def choice(self, seq):
+            dragons = [entry for entry in seq if entry[0] == "Dragon"]
+            return dragons[0] if dragons else seq[0]
+    hunter = _char(60, left=100_000, x=300, y=100, items={"ring": {"level": 60, "name": None}})
+    notes = rpg.mob_encounter(1, hunter, _DragonSlayer([60, 0], randrange=0), _name, NOW)
+    assert "Dragon" in notes[0].text and notes[0].public
+
+
 # ── travel ───────────────────────────────────────────────────────────────────
 
 def test_a_traveller_walks_straight_to_town_without_wandering_or_meeting_anyone():

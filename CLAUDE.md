@@ -683,7 +683,7 @@ online, and there is nothing else to do. The rules are pure
 functions in `src/idlerpg.py` (every random draw goes through a passed-in
 `rng`); `src/cogs/idle_cog.py` is the Discord half and `src/idle_map.py`
 draws the map. `state.idle_characters` / `state.idle_quests` mirror the
-tables from migrations 0070–0074.
+tables from migrations 0070–0075.
 
 - **Everything is per-guild**, keyed `(guild_id, user_id)` like counters. No
   record mirroring, and no *coins*: the bot's wallet is global, so buying
@@ -783,6 +783,27 @@ tables from migrations 0070–0074.
   `last_seen` write. The map image appears on `!idle` / `!idle status`,
   `!idle map`, `!idle quest` (journeys) and under a journey's announcement
   (`Note.show_map`); `!profile` shows the character and its coordinates.
+- **Monsters.** The encounter design is sizzlorox/Idle-RPG-Bot's (MIT; its
+  source, not its README, is the reference): prefix + type names, spawn
+  pools by biome, its two-roll rarity threshold eased by half the level,
+  groups a quarter of the time, mobs cut to the size of the character they
+  meet (`mob_power` — better gear means tougher monsters, by design, and
+  half strength up to level 5), towns safe, and a beaten character carried
+  to a town. That bot fights with HP and five stats; this game has neither,
+  so a fight is the usual roll-up-to-your-power, with a "fled" draw when the
+  rolls are within a tenth of the bigger side, and the stakes are clock and
+  gold. `biome_at` reads the regions drawn on the map art; the Rat's
+  everywhere-at-rarity-100 entry is what keeps every pool non-empty, so
+  don't remove it. Frequency is `Pace.mob_fights_per_day` (8 lively, 2
+  classic — their bot runs ~90 a day, which a timer game can't absorb).
+  The gold numbers were set by simulation: a day of fights nets a little
+  gold and ~3% of the clock at every level, the dangerous biomes pay more
+  for a worse win rate, and the death tax (1/12 of the purse) is capped at
+  5 × level so a saver isn't bled. Re-run that sum before changing them. A
+  beaten character lands `MOB_RESPAWN_DISTANCE` from the town's centre —
+  inside the market ring, outside the errand's — so losing never triggers
+  an auto-trade by itself. Fights are feed-only; a `RARE_KILLS` kill is
+  channel news.
 - **Pace.** The IRC odds (a godsend a week) assume dozens of players for
   months; with a handful nothing ever happens. `idlerpg.PACES` holds two
   sets: `lively` (the default — a godsend and a calamity about daily per

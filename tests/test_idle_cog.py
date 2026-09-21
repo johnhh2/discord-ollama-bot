@@ -454,7 +454,7 @@ async def test_rules_stay_short_and_the_detail_lives_in_topics():
     await cog.cmd_rules.callback(cog, ctx)
     card = ctx.sent_embeds[-1].description
     assert len(card) < 600 and card.count("\n") <= 10
-    assert "!idle rules <levels|battles|map|gold|alignment|quests|prestige>" in card
+    assert "!idle rules <levels|battles|monsters|map|gold|alignment|quests|prestige>" in card
     assert "talk" not in card.lower()
 
     await cog.cmd_rules.callback(cog, ctx, "Quests")
@@ -664,6 +664,43 @@ def _member_lookup(monkeypatch):
             raise discord.ext.commands.BadArgument("not found")
         return member
     monkeypatch.setattr(_idle_cog.MemberConverter, "convert", _convert)
+
+
+# ── monsters ─────────────────────────────────────────────────────────────────
+
+async def test_the_tick_sends_wild_characters_into_fights_and_keeps_them_in_the_feed(monkeypatch):
+    cog, guild, idle = _world()
+    wild = _spawn(ALICE, level=10, left=50_000, x=480, y=20)
+    townie = _spawn(BOB, level=10, left=50_000, **MARKET)
+    met = []
+
+    def _encounter(uid, char, rng, name, now):
+        met.append(uid)
+        return [rpg.Note((uid,), f"🗡️ {name(uid)} killed a Normal Rat.")]
+    monkeypatch.setattr(rpg, "mob_encounter", _encounter)
+
+    class _Eager(_StillRng):
+        def random(self):
+            return 0.0
+    cog.rng = _Eager()
+    monkeypatch.setattr(rpg, "random_events", lambda *args: [])
+    monkeypatch.setattr(rpg, "team_battle", lambda *args: [])
+
+    await cog.tick()
+
+    assert met == [ALICE, BOB]                 # the cog asks for everyone; the rules keep towns safe
+    assert "killed a Normal Rat" in _sent(guild.threads[0])
+    idle.send.assert_not_called()
+    assert wild["x"] == 480 and townie["x"] == MARKET["x"]
+
+
+async def test_status_shows_the_biome_and_the_monster_tally():
+    cog, guild, _idle = _world()
+    _spawn(x=300, y=100, mob_kills=12, mob_deaths=3)
+    ctx = _ctx(guild)
+    await cog.cmd_status.callback(cog, ctx)
+    sheet = ctx.sent_embeds[-1].description
+    assert "[300, 100] — Mountains" in sheet and "**Monsters slain:** 12 · **Struck down:** 3" in sheet
 
 
 # ── travel ───────────────────────────────────────────────────────────────────
@@ -1033,7 +1070,7 @@ async def test_settings_idle_pace_sets_validates_and_prompts(monkeypatch):
 
 async def test_characters_and_quests_round_trip_through_the_db(db):
     char = _spawn(level=12, items={"ring": {"level": 9, "name": None}}, thread_id=900, law="chaotic", x=17, y=499,
-                  gold=4321, rush_day="2026-09-21", extra_duel_day="2026-09-20", auto_trade=False, traded_at=1234, travel_to="Velvragh")
+                  gold=4321, rush_day="2026-09-21", extra_duel_day="2026-09-20", auto_trade=False, traded_at=1234, travel_to="Velvragh", mob_kills=12, mob_deaths=3)
     paused = _spawn(BOB)
     rpg.pause(paused, int(time.time()))
     _state.idle_quests[GID] = {

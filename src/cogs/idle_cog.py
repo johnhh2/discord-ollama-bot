@@ -84,6 +84,14 @@ _RULES_TOPICS = {
         "Win and your timer shrinks; lose and it grows.\n"
         f"`!idle duel @user` once a day: the loser hands {rpg.DUEL_PCT}% of their timer to the winner. A tie is a coin toss."
     ),
+    "monsters": (
+        "Out in the wilds your character runs into monsters — rats and bandits on the plains, trolls and dragons in the mountains, "
+        "worse in the caves, the haunted ground and T'rnalvph, where the rewards are better too. Towns (the rings on `!idle map`) are safe.\n"
+        "A monster is sized to you, so gear alone doesn't make them easy; its prefix (Veteran, Elite … Corrupted) and kind set how much harder. "
+        "Both sides roll up to their power. Win: gold, time off your clock, sometimes an item. Too close to call: someone flees, nothing lost. "
+        f"Lose: time added, some gold (1/{rpg.MOB_DEATH_GOLD_DIVISOR} of it, capped by your level), and you're carried to the nearest town's outskirts.\n"
+        f"From level 11 a quarter of fights are against a group. Up to level {rpg.MOB_EASY_LEVEL} monsters fight at half strength."
+    ),
     "map": (
         f"The realm is a {rpg.MAP_SIZE}×{rpg.MAP_SIZE} grid. Everyone online wanders one step a second, and the edges wrap.\n"
         "Land on the same square as someone and you may fight them, there and then.\n"
@@ -272,6 +280,8 @@ class IdleCog(commands.Cog):
                 errand = rpg.auto_trade(uid, chars[uid], self.rng, name, now)
                 if errand:
                     notes.append(errand)
+                if self.rng.random() < pace.mob_fights_per_day / TICKS_PER_DAY:
+                    notes += rpg.mob_encounter(uid, chars[uid], self.rng, name, now)
             notes += rpg.tick_quest(chars, quest, self.rng, name, now)
             if quest != before:
                 self._dirty_quests.add(gid)
@@ -568,10 +578,13 @@ class IdleCog(commands.Cog):
             here = rpg.landmark_at((char["x"], char["y"]))
             town, away = rpg.nearest_town(char)
             market = f"market open ({town})" if away <= rpg.MARKET_RADIUS else f"nearest market: {town}, {away} squares"
-            lines.insert(2, f"**Position:** [{char['x']}, {char['y']}]" + (f" — at {here}" if here else "") + f" · {market}")
+            where = f"at {here}" if here else rpg.biome_at(char["x"], char["y"])
+            lines.insert(2, f"**Position:** [{char['x']}, {char['y']}] — {where} · {market}")
             if char.get("travel_to") in rpg.LANDMARKS:
                 eta = format_duration(rpg.travel_eta_secs(char, char["travel_to"]))
                 lines.insert(3, f"**Travelling to:** {char['travel_to']} — about {eta} of walking left")
+        if char["mob_kills"] or char["mob_deaths"]:
+            lines.append(f"**Monsters slain:** {char['mob_kills']:,} · **Struck down:** {char['mob_deaths']:,}")
         if char["penalty_total"]:
             lines.insert(3, f"**Time lost to penalties:** {format_duration(char['penalty_total'])}")
         if char["prestige"]:

@@ -31,8 +31,8 @@ async def save_idle_character(guild_id: int, user_id: int) -> None:
             "INSERT INTO idle_characters (guild_id, user_id, class_name, level, next_level_at, remaining, "
             "law, moral, prestige, penalty_total, last_seen, last_penalty_at, thread_id, created_at, "
             "align_changed_at, duel_day, items_json, x, y, gold, rush_day, extra_duel_day, "
-            "auto_trade, traded_at, travel_to) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "auto_trade, traded_at, travel_to, mob_kills, mob_deaths) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "ON DUPLICATE KEY UPDATE class_name=VALUES(class_name), level=VALUES(level), "
             "next_level_at=VALUES(next_level_at), remaining=VALUES(remaining), law=VALUES(law), "
             "moral=VALUES(moral), prestige=VALUES(prestige), penalty_total=VALUES(penalty_total), "
@@ -41,7 +41,8 @@ async def save_idle_character(guild_id: int, user_id: int) -> None:
             "align_changed_at=VALUES(align_changed_at), duel_day=VALUES(duel_day), "
             "items_json=VALUES(items_json), x=VALUES(x), y=VALUES(y), gold=VALUES(gold), "
             "rush_day=VALUES(rush_day), extra_duel_day=VALUES(extra_duel_day), "
-            "auto_trade=VALUES(auto_trade), traded_at=VALUES(traded_at), travel_to=VALUES(travel_to)",
+            "auto_trade=VALUES(auto_trade), traded_at=VALUES(traded_at), travel_to=VALUES(travel_to), "
+            "mob_kills=VALUES(mob_kills), mob_deaths=VALUES(mob_deaths)",
             (
                 int(guild_id), int(user_id), c["class"], int(c["level"]), c["next_level_at"], c["remaining"],
                 c["law"], c["moral"], int(c["prestige"]), int(c["penalty_total"]), int(c["last_seen"]),
@@ -49,6 +50,7 @@ async def save_idle_character(guild_id: int, user_id: int) -> None:
                 int(c["align_changed_at"]), c["duel_day"], json.dumps(c["items"]),
                 c.get("x"), c.get("y"), int(c["gold"]), c["rush_day"], c["extra_duel_day"],
                 int(c["auto_trade"]), int(c["traded_at"]), c["travel_to"],
+                int(c["mob_kills"]), int(c["mob_deaths"]),
             ),
         )
 

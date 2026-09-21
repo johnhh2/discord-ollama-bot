@@ -1651,3 +1651,8 @@ ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS traded_at BIGINT NOT NULL D
 -- 0074: !idle travel. The town a character is walking toward (a key of
 -- idlerpg.TOWNS), NULL while it wanders.
 ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS travel_to VARCHAR(32) NULL;
+
+-- ── 0075_idle_monsters.sql ──
+-- 0075: !idle monster encounters — lifetime tallies for the sheet and ladder.
+ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS mob_kills INT NOT NULL DEFAULT 0;
+ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS mob_deaths INT NOT NULL DEFAULT 0;

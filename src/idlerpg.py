@@ -109,11 +109,12 @@ class Pace(NamedTuple):
     hand_of_god_per_day: float
     battle_chance_below: float   # chance a level-up under BATTLE_ALWAYS_LEVEL means a fight
     min_team_size: int           # team battles shrink to this when too few are online
+    mob_fights_per_day: float    # monster encounters per character, outside the towns
 
 
 PACES = {
-    "lively": Pace(1.0, 1.0, 1 / 5, 0.5, 2),
-    "classic": Pace(GODSEND_PER_DAY, CALAMITY_PER_DAY, HAND_OF_GOD_PER_DAY, BATTLE_CHANCE_BELOW, TEAM_SIZE),
+    "lively": Pace(1.0, 1.0, 1 / 5, 0.5, 2, 8.0),
+    "classic": Pace(GODSEND_PER_DAY, CALAMITY_PER_DAY, HAND_OF_GOD_PER_DAY, BATTLE_CHANCE_BELOW, TEAM_SIZE, 2.0),
 }
 DEFAULT_PACE = "lively"
 CLASSIC = PACES["classic"]
@@ -271,6 +272,8 @@ def new_character(class_name: str, now: int) -> dict:
         "auto_trade": True,
         "traded_at": 0,
         "travel_to": None,   # a TOWNS key while the player has it walking there (!idle travel)
+        "mob_kills": 0,
+        "mob_deaths": 0,
     }
 
 
@@ -761,6 +764,194 @@ def auto_trade(uid: int, char: dict, rng, name: NameFn, now: int) -> "Note | Non
     char["traded_at"] = now
     return Note((uid,), f"🏘️ {name(uid)} wandered into {near[0]} and did some trading. {' '.join(done)} "
                         f"{before - char['gold']:,} gold spent, {char['gold']:,} left.")
+
+
+# ── monsters ─────────────────────────────────────────────────────────────────
+#
+# The encounter design is sizzlorox/Idle-RPG-Bot's (MIT): a monster is a
+# rarity prefix plus a type ("Veteran Goblin"), types spawn by biome, a
+# higher level opens the rarer ones, one fight in four is against a group,
+# mobs are scaled to the player they meet, towns are safe, and a beaten
+# character is carried back to one. That bot fights with hit points and five
+# stats, which this game doesn't have, so a fight here is this game's usual
+# roll — each side up to its power — and the stakes are clock and gold.
+
+# The realm's regions, as drawn on assets/idle_map.png. First match wins;
+# everything else is Plains.
+_BIOME_BOXES = (
+    ("Darklands", lambda x, y: x + y >= 800),              # T'rnalvph's corner
+    ("Coast", lambda x, y: x + y <= 110),                  # Denmark's corner
+    ("Mountains", lambda x, y: 245 <= x <= 350 and 55 <= y <= 195),    # the Mountains of Qwok
+    ("Caves", lambda x, y: 35 <= x <= 150 and 230 <= y <= 330),        # the Secret Passage to Bharash
+    ("Mountains", lambda x, y: x <= 190 and y >= 260 and y - 260 >= (x - 40) * 0.6),   # the Great Shahlil mountains
+    ("Haunted", lambda x, y: 150 <= x <= 360 and y >= 320),            # around the Towers of Ankh-Allor
+    ("Forest", lambda x, y: 220 <= x <= 450 and 170 <= y <= 370),      # Velvragh's woods
+)
+DANGEROUS_BIOMES = frozenset({"Darklands", "Caves", "Haunted"})
+
+# (name, power multiplier, gold multiplier, rarity) — a prefix is in the pool
+# when its rarity is at least the 0..99 roll, so the top two always are and
+# the last few need a roll near zero.
+MOB_PREFIXES = (
+    ("Starving", 0.5, 0.25, 100), ("Normal", 1.0, 1, 100), ("Veteran", 1.25, 2, 50),
+    ("Elite", 1.5, 3, 30), ("Champion", 1.75, 4, 15), ("Legendary", 2.0, 5, 10),
+    ("Undead", 2.5, 1, 5), ("Deadly", 2.75, 6, 4), ("Berserk", 3.0, 1, 3),
+    ("Omega", 2.25, 6, 2), ("Corrupted", 3.25, 7, 2),
+)
+
+# (name, rarity, toughness, tier, biomes). Tier 1-5 sets the stakes: that
+# percent of the clock either way, and the gold. The Rat lives everywhere at
+# rarity 100, which is what keeps every pool non-empty.
+_EVERYWHERE = ("Plains", "Coast", "Mountains", "Caves", "Haunted", "Forest", "Darklands")
+MOB_TYPES = (
+    ("Rat", 100, 0.5, 1, _EVERYWHERE),
+    ("Slime", 100, 0.6, 1, ("Plains", "Forest")),
+    ("Crab", 100, 0.6, 1, ("Coast",)),
+    ("Bat", 90, 0.7, 1, ("Caves", "Haunted", "Forest", "Darklands")),
+    ("Goblin", 90, 0.8, 2, ("Plains", "Forest", "Mountains")),
+    ("Boar", 90, 0.8, 1, ("Plains", "Forest")),
+    ("Bandit", 80, 0.9, 2, ("Plains", "Coast", "Forest", "Mountains")),
+    ("Wraith", 80, 1.0, 2, ("Haunted", "Darklands")),
+    ("Zombie", 75, 1.0, 2, ("Haunted", "Darklands")),
+    ("Bugbear", 75, 1.0, 2, ("Plains", "Forest", "Mountains", "Caves")),
+    ("Pirate", 65, 1.0, 2, ("Coast",)),
+    ("Cyclops", 63, 1.3, 3, ("Plains", "Mountains")),
+    ("Golem", 60, 1.4, 4, ("Mountains", "Caves", "Darklands")),
+    ("Knight", 50, 1.2, 3, ("Plains", "Coast", "Forest", "Mountains", "Haunted")),
+    ("Orc", 50, 1.2, 3, ("Plains", "Forest", "Mountains")),
+    ("Necromancer", 50, 1.3, 3, ("Haunted", "Caves", "Darklands")),
+    ("Giant Spider", 50, 1.1, 3, ("Forest", "Caves")),
+    ("Griffin", 48, 1.3, 3, ("Plains", "Mountains")),
+    ("Vampire", 40, 1.4, 4, ("Haunted", "Darklands")),
+    ("Banshee", 40, 1.3, 3, ("Haunted", "Darklands")),
+    ("Werewolf", 35, 1.4, 4, ("Forest", "Mountains", "Darklands")),
+    ("Water Spirit", 35, 1.2, 3, ("Coast",)),
+    ("Ogre", 20, 1.5, 4, ("Plains", "Forest")),
+    ("Gargoyle", 25, 1.5, 4, ("Haunted", "Mountains")),
+    ("Mountain Troll", 25, 1.7, 5, ("Mountains",)),
+    ("Cave Troll", 25, 1.7, 5, ("Caves",)),
+    ("Dragon", 15, 1.8, 5, ("Mountains", "Darklands")),
+    ("Basilisk", 10, 1.8, 5, ("Caves", "Darklands")),
+)
+# Killing one of these is channel news; every other fight stays in the feed.
+RARE_KILLS = frozenset({"Dragon", "Basilisk", "Mountain Troll", "Cave Troll", "Golem"})
+
+MOB_GROUP_CHANCE = 0.25
+MOB_EASY_LEVEL = 5             # at or below it, monsters fight at half strength
+MOB_DROP_CHANCE = 0.15         # a won fight turns up an item
+MOB_GEAR_DAMAGE_CHANCE = 0.15  # a lost one dents one
+MOB_DEATH_GOLD_DIVISOR = 12
+MOB_DEATH_GOLD_CAP_PER_LEVEL = 5    # …but never more than half a level-up's worth: a fat purse isn't bled dry
+MOB_GOLD_PER_LEVEL = 2         # × tier × the prefix's gold multiplier
+MOB_DANGER_GOLD_BONUS = 1.5    # the dangerous biomes pay for the risk
+MOB_RESPAWN_DISTANCE = 40      # squares from the town's centre: inside the market ring, outside the errand's
+
+
+def biome_at(x: int, y: int) -> str:
+    for biome, inside in _BIOME_BOXES:
+        if inside(x, y):
+            return biome
+    return "Plains"
+
+
+def roll_monster(level: int, biome: str, rng) -> "tuple[str, str, float, float, int]":
+    """(prefix, type, power multiplier, gold multiplier, tier). Two 0..99
+    rolls: the first picks the prefix pool, and their sum — eased by half the
+    character's level — picks the type pool, so a rare prefix tends to come
+    with a rare beast and both open up with level. The dangerous biomes lean
+    the rolls toward the rare end."""
+    lean = 15 if biome in DANGEROUS_BIOMES else 0
+    rarity_roll = max(0, rng.randrange(100) - lean)
+    type_roll = max(0, rng.randrange(100) - lean)
+    prefix = rng.choice([p for p in MOB_PREFIXES if p[3] >= rarity_roll])
+    threshold = min(100, type_roll + rarity_roll - level / 2)
+    beast = rng.choice([t for t in MOB_TYPES if t[1] >= threshold and biome in t[4]])
+    return prefix[0], beast[0], prefix[1] * beast[2], prefix[2], beast[3]
+
+
+def mob_power(char: dict, strength: float) -> int:
+    """A monster is cut from the character it meets: most of their own power,
+    bent by how strong its kind is."""
+    base = max(battle_sum(char), char["level"] * 2, 4)
+    power = base / 1.2 * (0.6 + 0.4 * strength)
+    return max(1, int(power * (0.5 if char["level"] <= MOB_EASY_LEVEL else 1)))
+
+
+def _to_town_outskirts(char: dict) -> str:
+    """Carry a beaten character to the edge of the nearest town's market."""
+    town, distance = nearest_town(char)
+    tx, ty = LANDMARKS[town]
+    if distance > MOB_RESPAWN_DISTANCE:
+        pull = MOB_RESPAWN_DISTANCE / distance
+        char["x"], char["y"] = int(tx + (char["x"] - tx) * pull), int(ty + (char["y"] - ty) * pull)
+    return town
+
+
+def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int) -> "list[Note]":
+    """One encounter in the wild: a monster or, a quarter of the time from
+    level 11, a group fought one after another until one of them wins."""
+    if char.get("x") is None or market_in_reach(char):
+        return []   # towns are safe ground
+    biome = biome_at(char["x"], char["y"])
+    count = 1
+    if rng.random() < MOB_GROUP_CHANCE:
+        count = rng.randint(1, int(char["level"] * 0.0912) + 1)
+
+    slain, gold, saved, rare, ending = [], 0, 0, False, None
+    for _ in range(count):
+        prefix, beast, strength, gold_mult, tier = roll_monster(char["level"], biome, rng)
+        mob = f"{prefix} {beast}"
+        their_sum, my_sum = mob_power(char, strength), max(battle_sum(char), 1)
+        my_roll, their_roll = rng.randint(0, my_sum), rng.randint(0, their_sum)
+        margin = max(1, max(my_sum, their_sum) // 10)
+        rolls = f"{_rolled(my_roll, my_sum)} against its {their_roll} of {their_sum}"
+        if abs(my_roll - their_roll) < margin:
+            # Too close to call: nobody falls, and whoever was behind breaks off.
+            ending = f"the {mob} fled {rolls}" if my_roll >= their_roll else f"{name(uid)} fled from a {mob} {rolls}"
+            break
+        if my_roll < their_roll:
+            ending = (mob, tier, rolls)
+            break
+        slain.append(f"{mob} {rolls}")
+        bonus = MOB_DANGER_GOLD_BONUS if biome in DANGEROUS_BIOMES else 1
+        gold += max(1, int(tier * gold_mult * max(char["level"], 1) * MOB_GOLD_PER_LEVEL * bonus))
+        saved += -scale(char, now, -tier)
+        rare = rare or beast in RARE_KILLS
+
+    char["gold"] += gold
+    char["mob_kills"] = char.get("mob_kills", 0) + len(slain)
+    where = f"[{biome}]"
+    notes = []
+    if slain:
+        text = f"🗡️ {where} {name(uid)} killed a {', then a '.join(slain)}. {format_duration(saved)} off their clock and {gold:,} gold."
+        if isinstance(ending, str):
+            text += f" Then {ending}."
+        notes.append(Note((uid,), text, rare))
+        if not isinstance(ending, tuple) and rng.random() < MOB_DROP_CHANCE:
+            notes.append(find_item(uid, char, rng, name))
+    elif isinstance(ending, str):
+        notes.append(Note((uid,), f"🗡️ {where} {ending[0].upper()}{ending[1:]}."))
+
+    if isinstance(ending, tuple):
+        mob, tier, rolls = ending
+        lost_time = scale(char, now, tier)
+        lost_gold = min(-(-char["gold"] // MOB_DEATH_GOLD_DIVISOR), MOB_DEATH_GOLD_CAP_PER_LEVEL * max(char["level"], 1))
+        char["gold"] -= lost_gold
+        char["mob_deaths"] = char.get("mob_deaths", 0) + 1
+        dented = ""
+        if char["items"] and rng.random() < MOB_GEAR_DAMAGE_CHANCE:
+            slot = rng.choice(sorted(char["items"]))
+            item = char["items"][slot]
+            item["level"] = max(1, item["level"] * 9 // 10)
+            dented = f" Their {_item_label(slot, item)} was dented in the fall."
+        town = _to_town_outskirts(char)
+        purse = f" and {lost_gold:,} gold" if lost_gold else ""
+        notes.append(Note(
+            (uid,),
+            f"☠️ {where} A {mob} struck {name(uid)} down {rolls}. {format_duration(lost_time)} added to their clock{purse};"
+            f" they were carried to the outskirts of {town}.{dented}",
+        ))
+    return notes
 
 
 # ── the map ──────────────────────────────────────────────────────────────────
