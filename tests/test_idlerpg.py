@@ -221,6 +221,104 @@ def test_no_quest_with_one_eligible_player_or_during_the_drought():
 
 
 def test_a_quest_whose_party_all_left_is_dropped():
-    quest = {"members": [8, 9], "description": "wait", "ends_at": NOW + 500, "not_before": 0}
+    quest = {**rpg.new_quest(), "members": [8, 9], "description": "wait", "kind": "vigil", "ends_at": NOW + 500}
     assert rpg.tick_quest({1: _char(1)}, quest, random.Random(1), _name, NOW) == []
     assert not rpg.quest_active(quest)
+
+
+# ── the map ──────────────────────────────────────────────────────────────────
+
+class _Walk(_Scripted):
+    """Wander steps come from a list of (dx, dy) pairs, then stand still."""
+    def __init__(self, steps=(), **kwargs):
+        super().__init__(**kwargs)
+        self._steps = [d for pair in steps for d in pair]
+
+    def randint(self, low, high):
+        if (low, high) == (-1, 1):
+            return self._steps.pop(0) if self._steps else 0
+        return super().randint(low, high)
+
+
+def test_wandering_wraps_at_the_edges_like_the_original():
+    chars = {1: _char(x=rpg.MAP_SIZE, y=0)}
+    rpg.move_players(chars, rpg.new_quest(), _Walk([(1, -1)], random_=0.999), _name, NOW, 1)
+    assert (chars[1]["x"], chars[1]["y"]) == (0, rpg.MAP_SIZE)
+
+
+def test_paused_characters_do_not_move_and_nobody_moves_with_no_one_online():
+    sleeper = _char(x=50, y=50)
+    rpg.pause(sleeper, NOW)
+    chars = {1: sleeper}
+    assert rpg.move_players(chars, rpg.new_quest(), _Walk([(1, 1)] * 5), _name, NOW, 5) == []
+    assert (sleeper["x"], sleeper["y"]) == (50, 50)
+
+
+def test_two_characters_on_one_square_fight_with_a_one_in_online_chance():
+    def _meet(random_):
+        chars = {
+            1: _char(10, left=10_000, x=10, y=10),
+            2: _char(10, left=10_000, x=11, y=11, items={"ring": {"level": 30, "name": None}}),
+        }
+        rng = _Walk([(0, 0), (-1, -1)], random_=random_, randrange=10 ** 9)   # 2 walks onto 1's square
+        return chars, rpg.move_players(chars, rpg.new_quest(), rng, _name, NOW, 1)
+
+    chars, notes = _meet(0.4)            # 0.4 × 2 online < 1: they fight
+    assert "came upon" in notes[0].text and "[10, 10]" in notes[0].text and notes[0].public
+    assert rpg.time_left(chars[2], NOW) == 9300      # the challenger won 7% of their clock
+
+    chars, notes = _meet(0.6)            # 0.6 × 2 online ≥ 1: they pass by
+    assert notes == [] and rpg.time_left(chars[2], NOW) == 10_000
+
+
+def test_journey_questers_walk_to_the_first_waypoint_then_the_second_and_are_paid():
+    chars = {1: _char(45, left=10_000, x=88, y=121), 2: _char(45, left=10_000, x=90, y=120), 3: _char(5, x=300, y=300)}
+    quest = {**rpg.new_quest(), "members": [1, 2], "description": "walk", "kind": "journey", "p1": [90, 120], "p2": [91, 120]}
+    rng = _Walk(random_=0.0)             # every quester steps every second; bystanders stand still
+
+    notes = rpg.move_players(chars, quest, rng, _name, NOW, 2)
+    assert (chars[1]["x"], chars[1]["y"]) == (90, 120)   # diagonal first, then straight
+    assert quest["stage"] == 1 and notes == []
+
+    notes = rpg.move_players(chars, quest, rng, _name, NOW, 1)   # the second they are all found at p1
+    assert quest["stage"] == 2 and "have reached Afkhold Keep [90, 120]" in notes[0].text
+    assert (chars[1]["x"], chars[2]["x"]) == (90, 90)            # …is spent on that: nobody moved
+
+    notes = rpg.move_players(chars, quest, rng, _name, NOW, 2)
+    assert "completed their journey" in notes[-1].text
+    assert rpg.time_left(chars[1], NOW) == 7500 and rpg.time_left(chars[3], NOW) == 1000
+    assert not rpg.quest_active(quest) and quest["not_before"] == NOW + rpg.QUEST_REST_SECS
+
+
+def test_questers_do_not_wander_or_collide_while_on_a_journey():
+    chars = {1: _char(45, x=10, y=10), 2: _char(45, x=10, y=10)}
+    quest = {**rpg.new_quest(), "members": [1, 2], "description": "walk", "kind": "journey", "p1": [400, 400], "p2": [0, 0]}
+    notes = rpg.move_players(chars, quest, _Walk([(1, 1)] * 10, random_=0.5), _name, NOW, 5)
+    assert notes == [] and (chars[1]["x"], chars[1]["y"]) == (10, 10)   # 0.5 ≥ the 1% step chance
+
+
+def test_a_started_journey_names_its_waypoints_and_asks_for_the_map():
+    class _PickJourney(_Scripted):
+        def choice(self, seq):
+            return rpg._JOURNEYS[0]
+    chars = {1: _char(40), 2: _char(50)}
+    quest = rpg.new_quest()
+    notes = rpg.tick_quest(chars, quest, _PickJourney(), _name, NOW)
+    assert quest["kind"] == "journey" and quest["ends_at"] is None and quest["stage"] == 1
+    assert quest["p1"] == list(rpg.LANDMARKS["Afkhold Keep"])
+    assert notes[0].show_map and notes[0].ping == (1, 2)
+
+
+def test_every_journey_runs_between_two_real_landmarks():
+    for start, end, _text in rpg._JOURNEYS:
+        assert start in rpg.LANDMARKS and end in rpg.LANDMARKS and start != end
+    for x, y in rpg.LANDMARKS.values():
+        assert 0 <= x <= rpg.MAP_SIZE and 0 <= y <= rpg.MAP_SIZE
+
+
+def test_the_map_renders_a_png_for_an_empty_realm_and_a_busy_one():
+    from src.idle_map import render_map
+    assert render_map([])[:4] == b"\x89PNG"
+    crowd = [(uid, f"player{uid}", uid * 7 % 501, uid * 13 % 501) for uid in range(60)]
+    quest = {"members": [1, 2], "stage": 2, "p1": [90, 120], "p2": [410, 80]}
+    assert render_map(crowd, highlight=(3,), quest=quest)[:4] == b"\x89PNG"

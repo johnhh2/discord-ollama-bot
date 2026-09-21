@@ -63,6 +63,13 @@ QUEST_MIN_SECS, QUEST_MAX_SECS = 12 * 3600, 24 * 3600
 QUEST_REWARD_PCT = 25
 QUEST_REST_SECS = 6 * 3600     # before the next one
 
+# The map: coordinates run 0..MAP_SIZE on both axes and wrap at the edges.
+MAP_SIZE = 500
+JOURNEY_STEP_CHANCE = 0.01     # per quester per second
+COLLISION_CRIT_ODDS = 35       # 1-in-N on a won collision fight
+COLLISION_STEAL_ODDS = 25      # …else 1-in-N to swap an item, from COLLISION_STEAL_LEVEL up
+COLLISION_STEAL_LEVEL = 20
+
 LAWS = ("lawful", "neutral", "chaotic")
 MORALS = ("good", "neutral", "evil")
 
@@ -112,7 +119,29 @@ _ITEM_BOONS = (
 _ITEM_BANES = (
     "Rust crept into", "A gremlin chewed on", "Rain warped",
 )
-_QUESTS = (
+LANDMARKS = {
+    "Afkhold Keep": (90, 120),
+    "the Pinged Plains": (280, 90),
+    "Dozing Dragon Pass": (410, 80),
+    "Port Brb": (40, 270),
+    "the Great Library of Hush": (250, 250),
+    "the Muted Mountains": (460, 300),
+    "the Sunken Tower": (130, 400),
+    "Lurker's Fen": (330, 430),
+}
+_LANDMARK_NAMES = {point: label for label, point in LANDMARKS.items()}
+
+# (first waypoint, second waypoint, what the party was chosen to do)
+_JOURNEYS = (
+    ("Afkhold Keep", "Dozing Dragon Pass", "carry the keep's last lantern to the dragon's door without waking it"),
+    ("Port Brb", "the Great Library of Hush", "return a book that is four centuries overdue, and face the librarian"),
+    ("the Sunken Tower", "the Muted Mountains", "haul the tower's drowned bell up to where nobody will hear it"),
+    ("Lurker's Fen", "the Pinged Plains", "lead the fen's lost sheep home across the plains"),
+    ("the Pinged Plains", "Port Brb", "deliver an urgent message that stopped being urgent a week ago"),
+    ("the Muted Mountains", "Afkhold Keep", "escort a very old king home from a very long holiday"),
+)
+
+_VIGILS = (
     "stand vigil over the sleeping dragon of the eastern pass",
     "escort a caravan of extremely slow pilgrims",
     "guard the silence of the Great Library",
@@ -131,6 +160,7 @@ class Note(NamedTuple):
     text: str
     public: bool = False
     ping: tuple = ()
+    show_map: bool = False   # post the map under it (a journey's start)
 
 
 NameFn = Callable[[int], str]
@@ -165,6 +195,8 @@ def new_character(class_name: str, now: int) -> dict:
         "align_changed_at": 0,
         "duel_day": None,
         "items": {},
+        "x": None,   # placed by ensure_position, which has the rng
+        "y": None,
     }
 
 
@@ -502,14 +534,134 @@ def random_events(uid: int, chars: dict, rng, name: NameFn, now: int, ticks_per_
     return [n for n in notes if n]
 
 
+# ── the map ──────────────────────────────────────────────────────────────────
+#
+# Ported rule for rule from the IRC bot's moveplayers / collision_fight:
+# once a second every running character steps -1, 0 or +1 on each axis, the
+# grid wraps, and two characters landing on one square fight with a
+# 1-in-(players online) chance. Questers on a journey don't wander — each
+# has a 1% chance a second to take one step toward the current waypoint.
+
+def ensure_position(char: dict, rng) -> None:
+    if char.get("x") is None or char.get("y") is None:
+        char["x"], char["y"] = rng.randrange(MAP_SIZE), rng.randrange(MAP_SIZE)
+
+
+def _wander(value: int, rng) -> int:
+    value += rng.randint(-1, 1)
+    if value > MAP_SIZE:
+        return 0
+    if value < 0:
+        return MAP_SIZE
+    return value
+
+
+def _toward(value: int, goal: int) -> int:
+    return value if value == goal else value + (1 if value < goal else -1)
+
+
+def landmark_at(point) -> "str | None":
+    return _LANDMARK_NAMES.get(tuple(point)) if point else None
+
+
+def _place(point) -> str:
+    label = landmark_at(point)
+    return f"{label} [{point[0]}, {point[1]}]" if label else f"[{point[0]}, {point[1]}]"
+
+
+def collision_fight(uid: int, opp_uid: int, chars: dict, rng, name: NameFn, now: int) -> "list[Note]":
+    me, opp = chars[uid], chars[opp_uid]
+    my_sum, opp_sum = battle_sum(me), battle_sum(opp)
+    my_roll = rng.randrange(my_sum) if my_sum else 0
+    opp_roll = rng.randrange(opp_sum) if opp_sum else 0
+    involved = (uid, opp_uid)
+    head = f"⚔️ {name(uid)} [{my_roll}/{my_sum}] came upon {name(opp_uid)} [{opp_roll}/{opp_sum}] at [{me['x']}, {me['y']}]"
+    if my_roll < opp_roll:
+        lost = scale(me, now, max(opp["level"] // 7, 7))
+        return [Note(involved, f"{head} and was defeated. {format_duration(lost)} added to their clock.", True)]
+    won = -scale(me, now, -max(opp["level"] // 4, 7))
+    notes = [Note(involved, f"{head} and took them in combat! {format_duration(won)} off their clock.", True)]
+    if not rng.randrange(COLLISION_CRIT_ODDS):
+        hurt = scale(opp, now, 5 + rng.randrange(20))
+        notes.append(Note(involved, f"💥 A critical strike! {name(opp_uid)} is set back {format_duration(hurt)}.", True))
+    elif not rng.randrange(COLLISION_STEAL_ODDS) and me["level"] >= COLLISION_STEAL_LEVEL:
+        taken = _steal(me, opp, rng)
+        if taken:
+            notes.append(Note(involved, f"🫳 In the fierce battle {name(opp_uid)} dropped their {taken}, and {name(uid)} picked it up!", True))
+    return notes
+
+
+def _journey_step(chars: dict, quest: dict, now: int, name: NameFn) -> "tuple[list, bool]":
+    """One second of a journey's bookkeeping. Returns (notes, moved_on): when
+    the party has just reached a waypoint the second is spent on that, as in
+    the original, and nobody moves."""
+    members = [u for u in quest["members"] if u in chars]
+    if not members:
+        return [], False
+    goal = quest["p1"] if quest["stage"] == 1 else quest["p2"]
+    if any((chars[u]["x"], chars[u]["y"]) != tuple(goal) for u in members):
+        return [], False
+    if quest["stage"] == 1:
+        quest["stage"] = 2
+        return [Note(tuple(members), f"🧭 {_names(members, name)} have reached {_place(quest['p1'])}. Onward to {_place(quest['p2'])}.", True)], True
+    for u in members:
+        scale(chars[u], now, -QUEST_REWARD_PCT)
+    _end_quest(quest, now + QUEST_REST_SECS)
+    return [Note(tuple(members), f"🏆 {_names(members, name)} have completed their journey! Each is {QUEST_REWARD_PCT}% closer to their next level.", True)], True
+
+
+def move_players(chars: dict, quest: dict, rng, name: NameFn, now: int, seconds: int) -> "list[Note]":
+    """`seconds` one-second steps of the map."""
+    for char in chars.values():
+        ensure_position(char, rng)
+    online = running(chars)
+    if not online:
+        return []
+    notes: list = []
+    for _ in range(seconds):
+        questers: list = []
+        if quest.get("kind") == "journey":
+            arrived, moved_on = _journey_step(chars, quest, now, name)
+            notes += arrived
+            if moved_on:
+                continue
+            questers = [u for u in quest["members"] if u in chars]
+
+        # Who stands where this second, to spot two characters on one square.
+        squares: dict = {}
+        for uid in online:
+            if uid in questers or uid not in chars:
+                continue
+            char = chars[uid]
+            char["x"], char["y"] = _wander(char["x"], rng), _wander(char["y"], rng)
+            spot = (char["x"], char["y"])
+            held = squares.get(spot)
+            if held is not None and not held["battled"]:
+                if rng.random() * len(online) < 1:
+                    held["battled"] = True
+                    notes += collision_fight(uid, held["uid"], chars, rng, name, now)
+            else:
+                squares[spot] = {"uid": uid, "battled": False}
+
+        goal = quest["p1"] if quest.get("stage") == 1 else quest.get("p2")
+        for uid in questers:
+            if rng.random() < JOURNEY_STEP_CHANCE:
+                char = chars[uid]
+                char["x"], char["y"] = _toward(char["x"], goal[0]), _toward(char["y"], goal[1])
+    return notes
+
+
 # ── quests ───────────────────────────────────────────────────────────────────
 
 def new_quest() -> dict:
-    return {"members": [], "description": "", "ends_at": None, "not_before": 0}
+    return {
+        "members": [], "description": "", "kind": None, "ends_at": None,
+        "stage": 1, "p1": None, "p2": None, "not_before": 0,
+    }
 
 
 def quest_active(quest: dict) -> bool:
-    return quest.get("ends_at") is not None
+    return quest.get("kind") is not None
 
 
 def _names(uids, name: NameFn) -> str:
@@ -517,7 +669,7 @@ def _names(uids, name: NameFn) -> str:
 
 
 def _end_quest(quest: dict, not_before: int) -> None:
-    quest.update(members=[], description="", ends_at=None, not_before=not_before)
+    quest.update(members=[], description="", kind=None, ends_at=None, stage=1, p1=None, p2=None, not_before=not_before)
 
 
 def quest_eligible(chars: dict) -> list:
@@ -528,13 +680,14 @@ def quest_eligible(chars: dict) -> list:
 
 
 def tick_quest(chars: dict, quest: dict, rng, name: NameFn, now: int) -> "list[Note]":
-    """Finish a quest whose time is up, or start one when a party is ready."""
+    """Finish a vigil whose time is up, or start a quest when a party is
+    ready. A journey finishes in `move_players`, when the party arrives."""
     if quest_active(quest):
         quest["members"] = [u for u in quest["members"] if u in chars]
         if not quest["members"]:
             _end_quest(quest, now)
             return []
-        if now < quest["ends_at"]:
+        if quest["kind"] != "vigil" or now < quest["ends_at"]:
             return []
         members = tuple(quest["members"])
         for u in members:
@@ -548,18 +701,32 @@ def tick_quest(chars: dict, quest: dict, rng, name: NameFn, now: int) -> "list[N
     if len(eligible) < QUEST_MIN_PARTY:
         return []
     members = rng.sample(eligible, min(QUEST_MAX_PARTY, len(eligible)))
-    quest.update(
-        members=members,
-        description=rng.choice(_QUESTS),
-        ends_at=now + rng.randint(QUEST_MIN_SECS, QUEST_MAX_SECS),
-    )
     # Mentions, not names: being picked is the one thing worth a badge.
     called = ", ".join(f"<@{u}>" for u in members)
+    picked = rng.choice(_VIGILS + _JOURNEYS)   # every quest is equally likely, as in the original
+    if isinstance(picked, str):
+        quest.update(
+            members=members, description=picked, kind="vigil",
+            ends_at=now + rng.randint(QUEST_MIN_SECS, QUEST_MAX_SECS),
+        )
+        return [Note(
+            tuple(members),
+            f"📜 {called} have been chosen to {picked}. "
+            f"It ends <t:{quest['ends_at']}:R>, and each of them comes back {QUEST_REWARD_PCT}% closer to their next level.",
+            True,
+            tuple(members),
+        )]
+    start, end, text = picked
+    quest.update(
+        members=members, description=text, kind="journey", ends_at=None,
+        stage=1, p1=list(LANDMARKS[start]), p2=list(LANDMARKS[end]),
+    )
     return [Note(
         tuple(members),
-        f"📜 {called} have been chosen to {quest['description']}. "
-        f"It ends <t:{quest['ends_at']}:R>, and each of them comes back {QUEST_REWARD_PCT}% closer to their next level.",
+        f"📜 {called} have been chosen to {text}. They must first reach {_place(quest['p1'])}, "
+        f"then {_place(quest['p2'])} — `!idle map` follows their journey. "
+        f"Each of them comes back {QUEST_REWARD_PCT}% closer to their next level.",
         True,
         tuple(members),
+        True,
     )]
-

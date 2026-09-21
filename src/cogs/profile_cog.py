@@ -59,6 +59,11 @@ class ProfileCog(commands.Cog):
             )
             lines.append(f"🏆 Records held: **{held:,}**")
 
+            idle_char = state.idle_characters.get(ctx.guild.id, {}).get(uid)
+            if idle_char is not None:
+                place = f" · [{idle_char['x']}, {idle_char['y']}]" if idle_char.get("x") is not None else ""
+                lines.append(f"⚔️ Idle RPG: **Lv {idle_char['level']} {idle_char['class']}**{place} (`!idle status`)")
+
             lvl_rec = state.leveling.get(str(ctx.guild.id), {}).get(str(uid))
             if lvl_rec is not None:
                 level = display_level(lvl_rec.get("level", 0))

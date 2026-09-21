@@ -639,11 +639,11 @@ async def _init_db_state_inner(state, run_migrations):
             await cur.execute(
                 "SELECT guild_id, user_id, class_name, level, next_level_at, remaining, law, moral, "
                 "prestige, penalty_total, last_seen, last_penalty_at, thread_id, created_at, "
-                "align_changed_at, duel_day, items_json FROM idle_characters"
+                "align_changed_at, duel_day, items_json, x, y FROM idle_characters"
             )
             for (gid, uid, class_name, level, next_level_at, remaining, law, moral, prestige,
                  penalty_total, last_seen, last_penalty_at, thread_id, created_at,
-                 align_changed_at, duel_day, items_json) in await cur.fetchall():
+                 align_changed_at, duel_day, items_json, x, y) in await cur.fetchall():
                 state.idle_characters.setdefault(int(gid), {})[int(uid)] = {
                     "class": class_name,
                     "level": int(level),
@@ -660,13 +660,23 @@ async def _init_db_state_inner(state, run_migrations):
                     "align_changed_at": int(align_changed_at),
                     "duel_day": duel_day,
                     "items": parse_items(items_json),
+                    "x": None if x is None else int(x),
+                    "y": None if y is None else int(y),
                 }
-            await cur.execute("SELECT guild_id, members_json, description, ends_at, not_before FROM idle_quests")
-            for gid, members_json, description, ends_at, not_before in await cur.fetchall():
+            await cur.execute(
+                "SELECT guild_id, members_json, description, ends_at, not_before, kind, stage, "
+                "p1x, p1y, p2x, p2y FROM idle_quests"
+            )
+            for gid, members_json, description, ends_at, not_before, kind, stage, p1x, p1y, p2x, p2y in await cur.fetchall():
                 state.idle_quests[int(gid)] = {
                     "members": parse_members(members_json),
                     "description": description,
+                    # A quest saved before migration 0071 has no kind; it was a vigil.
+                    "kind": kind or ("vigil" if ends_at is not None else None),
                     "ends_at": None if ends_at is None else int(ends_at),
+                    "stage": int(stage),
+                    "p1": None if p1x is None else [int(p1x), int(p1y)],
+                    "p2": None if p2x is None else [int(p2x), int(p2y)],
                     "not_before": int(not_before),
                 }
         except Exception as e:

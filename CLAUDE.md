@@ -681,8 +681,9 @@ Coverage: [tests/test_counters.py](tests/test_counters.py).
 A per-guild idle game: characters level up on a clock while their player is
 online, and there is nothing else to do. The rules are pure
 functions in `src/idlerpg.py` (every random draw goes through a passed-in
-`rng`); `src/cogs/idle_cog.py` is the Discord half. `state.idle_characters`
-/ `state.idle_quests` mirror the tables from migration 0070.
+`rng`); `src/cogs/idle_cog.py` is the Discord half and `src/idle_map.py`
+draws the map. `state.idle_characters` / `state.idle_quests` mirror the
+tables from migrations 0070–0071.
 
 - **Everything is per-guild**, keyed `(guild_id, user_id)` like counters. No
   record mirroring, and no coins: item power must never be buyable, and a
@@ -728,6 +729,22 @@ functions in `src/idlerpg.py` (every random draw goes through a passed-in
   so the rule only confused people and was removed. Don't bring it back as
   a "faithful" touch. The only penalties left are leaving your own feed
   thread and leaving the server, and they cost that player alone.
+- **The map is the IRC bot's, rule for rule** (`move_players`,
+  `collision_fight`, ported from its `moveplayers`): a 0..500 grid that
+  wraps; every *running* character steps −1/0/+1 on each axis once a
+  second (the tick runs sixty of those steps); two characters on one square
+  fight with a 1-in-(players online) chance; a journey quest's party stops
+  wandering and each quester has a 1% chance a second to step toward
+  waypoint 1, then — once all are there — waypoint 2. Don't "optimise" the
+  per-second loop into one big jump: collisions only exist step by step.
+  The fork's map items and quadrant wars are patches, not the original, and
+  are deliberately absent. Landmarks, journey texts and the drawn map are
+  ours (`LANDMARKS`, `_JOURNEYS`); a journey must run between two
+  `LANDMARKS` keys. Positions are **not** a reason to save a row — they
+  ride along with whatever else saves it, at worst the five-minute
+  `last_seen` write. The map image appears on `!idle` / `!idle status`,
+  `!idle map`, `!idle quest` (journeys) and under a journey's announcement
+  (`Note.show_map`); `!profile` shows the character and its coordinates.
 - **`!idle` is `everyone`, `!idle admin …` is `server_admin`** — two JSON
   entries, resolved by the longest-prefix walk.
 - **Flavour text is ours.** The mechanics follow the classic IRC IdleRPG;

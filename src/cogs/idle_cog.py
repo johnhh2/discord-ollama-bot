@@ -21,6 +21,8 @@ written once per tick rather than per event.
 """
 from __future__ import annotations
 
+import asyncio
+import io
 import logging
 import random
 import re
@@ -35,6 +37,7 @@ from src import state
 from src.confirm_view import confirm_prompt
 from src.economy import _ct_today, next_daily_reset_ts
 from src.guild_config import get_guild_cfg
+from src.idle_map import MAP_FILENAME, render_map
 from src.helpers import emb, C_BLUE, C_GOLD, C_GREEN, C_GREY, C_RED, MemberConverter, format_duration, parse_duration
 from src.permissions import is_silenced
 from src.settings_views import pick_from_list
@@ -75,6 +78,11 @@ _RULES_TOPICS = {
         f"Each level-up finds an item for one of ten slots and may start a fight (always, from level {rpg.BATTLE_ALWAYS_LEVEL}).\n"
         "Both sides roll up to their item power. Win and your timer shrinks; lose and it grows.\n"
         f"`!idle duel @user` once a day: the loser hands {rpg.DUEL_PCT}% of their timer to the winner."
+    ),
+    "map": (
+        f"The realm is a {rpg.MAP_SIZE}×{rpg.MAP_SIZE} grid. Everyone online wanders one step a second, and the edges wrap.\n"
+        "Land on the same square as someone and you may fight them, there and then.\n"
+        "Some quests are journeys: the party stops wandering and walks to one landmark, then another. `!idle map` shows it all."
     ),
     "alignment": ALIGN_EFFECTS + "\nSet it with `!idle align`, once a day.",
     "quests": (
@@ -233,6 +241,9 @@ class IdleCog(commands.Cog):
             if self.rng.random() < rpg.TEAM_BATTLE_PER_DAY / TICKS_PER_DAY:
                 notes += rpg.team_battle(chars, self.rng, name, now)
             before = dict(quest)
+            # Positions ride along with whatever else saves the row (at worst
+            # the five-minute last_seen write) — never a write per step.
+            notes += rpg.move_players(chars, quest, self.rng, name, now, TICK_SECONDS)
             notes += rpg.tick_quest(chars, quest, self.rng, name, now)
             if quest != before:
                 self._dirty_quests.add(gid)
@@ -271,6 +282,8 @@ class IdleCog(commands.Cog):
             # Pings land in the channel only; the same line in a feed thread
             # shows the name without mentioning anyone a second time.
             await self._send(channel, [n.text for n in public], ping={uid for n in public for uid in n.ping})
+            if any(n.show_map for n in public):
+                await self._post_map(guild, channel)
         feeds: dict = {}
         for note in notes:
             for uid in note.uids:
@@ -279,6 +292,30 @@ class IdleCog(commands.Cog):
             thread = await self._thread_for(guild, channel, uid)
             if thread is not None:
                 await self._send(thread, lines)
+
+    async def _map_file(self, guild, highlight=()) -> discord.File:
+        """The realm as a PNG: every character, the landmarks, and a running
+        journey's waypoints. Drawn off the event loop."""
+        players = []
+        for uid, char in self._chars(guild.id).items():
+            if char.get("x") is None:
+                continue
+            member = guild.get_member(uid)
+            players.append((uid, member.display_name if member else str(uid), char["x"], char["y"]))
+        quest = self._quest(guild.id)
+        journey = dict(quest) if quest.get("kind") == "journey" else None
+        png = await asyncio.to_thread(render_map, players, highlight=tuple(highlight), quest=journey)
+        return discord.File(io.BytesIO(png), filename=MAP_FILENAME)
+
+    async def _post_map(self, guild, channel) -> None:
+        try:
+            await channel.send(file=await self._map_file(guild), silent=True, allowed_mentions=NO_MENTIONS)
+        except discord.HTTPException as e:
+            log.warning("idle: map post to %s failed (%s)", channel.id, type(e).__name__)
+
+    async def _send_with_map(self, ctx, embed: discord.Embed, highlight=()) -> None:
+        embed.set_image(url=f"attachment://{MAP_FILENAME}")
+        await ctx.send(embed=embed, file=await self._map_file(ctx.guild, highlight))
 
     @staticmethod
     async def _send(dest, lines: list, ping=()) -> None:
@@ -493,6 +530,9 @@ class IdleCog(commands.Cog):
             f"**Item power:** {rpg.item_sum(char):,}",
             f"**Adventuring since:** <t:{char['created_at']}:D>",
         ]
+        if char.get("x") is not None:
+            here = rpg.landmark_at((char["x"], char["y"]))
+            lines.insert(2, f"**Position:** [{char['x']}, {char['y']}]" + (f" — at {here}" if here else ""))
         if char["penalty_total"]:
             lines.insert(3, f"**Time lost to penalties:** {format_duration(char['penalty_total'])}")
         if char["prestige"]:
@@ -505,7 +545,7 @@ class IdleCog(commands.Cog):
 
     @commands.group(name="idle", aliases=["irpg"], invoke_without_command=True)
     async def cmd_idle(self, ctx: commands.Context):
-        """!idle join|status|items|top|align|duel|quest|prestige|leave|rules"""
+        """!idle join|status|items|map|top|align|duel|quest|prestige|leave|rules"""
         if not await self._ready(ctx):
             return
         char = self._chars(ctx.guild.id).get(ctx.author.id)
@@ -520,7 +560,7 @@ class IdleCog(commands.Cog):
             return
         now = int(time.time())
         self._seen(ctx.guild, ctx.author.id, char, now)
-        await ctx.send(embed=self._sheet(ctx.guild, ctx.author.id, char, now))
+        await self._send_with_map(ctx, self._sheet(ctx.guild, ctx.author.id, char, now), highlight=(ctx.author.id,))
 
     @cmd_idle.command(name="join")
     async def cmd_join(self, ctx: commands.Context, *, class_name: str = None):
@@ -551,6 +591,7 @@ class IdleCog(commands.Cog):
 
         now = int(time.time())
         char = rpg.new_character(class_name, now)
+        rpg.ensure_position(char, self.rng)
         chars[uid] = char   # claimed before the first await: a second !idle join sees it
         await persistence.save_idle_character(gid, uid)
         channel = self._channel(ctx.guild)
@@ -581,7 +622,18 @@ class IdleCog(commands.Cog):
         now = int(time.time())
         if target.id == ctx.author.id:
             self._seen(ctx.guild, target.id, char, now)
-        await ctx.send(embed=self._sheet(ctx.guild, target.id, char, now))
+        await self._send_with_map(ctx, self._sheet(ctx.guild, target.id, char, now), highlight=(target.id,))
+
+    @cmd_idle.command(name="map")
+    async def cmd_map(self, ctx: commands.Context):
+        if not await self._ready(ctx):
+            return
+        chars = self._chars(ctx.guild.id)
+        quest = self._quest(ctx.guild.id)
+        body = f"{len(chars)} adventurer{'' if len(chars) == 1 else 's'} in the realm. Everyone online wanders a step a second; meet someone on the same square and you may fight."
+        if quest.get("kind") == "journey":
+            body += f"\n📜 A party is on a journey — waypoint {quest['stage']} of 2 (`!idle quest`)."
+        await self._send_with_map(ctx, emb("🗺️ The Realm", body, C_BLUE), highlight=(ctx.author.id,))
 
     @cmd_idle.command(name="items")
     async def cmd_items(self, ctx: commands.Context, *, member: MemberConverter = None):
@@ -708,6 +760,17 @@ class IdleCog(commands.Cog):
         name = self._namer(ctx.guild)
         if rpg.quest_active(quest):
             party = ", ".join(name(u) for u in quest["members"])
+            if quest["kind"] == "journey":
+                goal = quest["p1"] if quest["stage"] == 1 else quest["p2"]
+                where = rpg.landmark_at(goal)
+                body = (
+                    f"{party} must {quest['description']}.\n"
+                    f"Waypoint {quest['stage']} of 2: {where + ' ' if where else ''}[{goal[0]}, {goal[1]}]. "
+                    f"It ends when all of them have arrived. "
+                    f"Each of them comes back {rpg.QUEST_REWARD_PCT}% closer to their next level."
+                )
+                await self._send_with_map(ctx, emb("📜 Quest", body, C_BLUE), highlight=quest["members"])
+                return
             body = (
                 f"{party} must {quest['description']}.\nIt ends <t:{quest['ends_at']}:R>. "
                 f"Each of them comes back {rpg.QUEST_REWARD_PCT}% closer to their next level."
@@ -795,7 +858,7 @@ class IdleCog(commands.Cog):
             "⏳ Your character levels on a timer while you're online.\n"
             "🎒 Items, fights and lucky breaks happen on their own.\n"
             "📜 High-level players get sent on quests for a big shortcut.\n\n"
-            "`!idle status` · `items` · `top` · `align` · `duel @user` · `quest`\n"
+            "`!idle status` · `items` · `map` · `top` · `align` · `duel @user` · `quest`\n"
             f"More: `!idle rules <{'|'.join(_RULES_TOPICS)}>`",
             C_BLUE,
         ))

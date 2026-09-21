@@ -45,6 +45,16 @@ class _Rng:
         return list(seq)[:k]
 
 
+class _WalkRng(_Rng):
+    """Every wander step is +1 on both axes."""
+    def randint(self, low, high):
+        return high
+
+
+def _sent_text(dest) -> str:
+    return "\n".join(call.args[0] for call in dest.send.call_args_list if call.args)
+
+
 def _world(*, presences: bool = False, channel: bool = True):
     guild = FakeGuild(gid=GID)
     guild.members = [FakeMember(ALICE, "alice"), FakeMember(BOB, "bob"), FakeMember(ADMIN, "boss", administrator=True)]
@@ -83,7 +93,7 @@ def _spawn(uid: int = ALICE, *, level: int = 0, left: int = 1000, **over) -> dic
 
 
 def _sent(dest) -> str:
-    return "\n".join(call.args[0] for call in dest.send.call_args_list)
+    return _sent_text(dest)
 
 
 def _message(guild, uid, content, channel):
@@ -378,7 +388,7 @@ async def test_a_talking_quester_leaves_the_quest_running():
     cog, guild, idle = _world()
     _spawn(ALICE, level=45, left=50_000), _spawn(BOB, level=45, left=50_000)
     now = int(time.time())
-    _state.idle_quests[GID] = {"members": [ALICE, BOB], "description": "wait", "ends_at": now + 9000, "not_before": 0}
+    _state.idle_quests[GID] = {**rpg.new_quest(), "members": [ALICE, BOB], "description": "wait", "kind": "vigil", "ends_at": now + 9000}
     await cog.on_message(_message(guild, ALICE, "still here", idle))
     await cog.tick(now)
     assert _state.idle_quests[GID]["ends_at"] == now + 9000
@@ -432,7 +442,7 @@ async def test_rules_stay_short_and_the_detail_lives_in_topics():
     await cog.cmd_rules.callback(cog, ctx)
     card = ctx.sent_embeds[-1].description
     assert len(card) < 600 and card.count("\n") <= 10
-    assert "!idle rules <levels|battles|alignment|quests|prestige>" in card
+    assert "!idle rules <levels|battles|map|alignment|quests|prestige>" in card
     assert "talk" not in card.lower()
 
     await cog.cmd_rules.callback(cog, ctx, "Quests")
@@ -548,6 +558,87 @@ async def test_leave_declined_keeps_the_character(monkeypatch):
     assert ALICE in _state.idle_characters[GID]
 
 
+# ── the map ──────────────────────────────────────────────────────────────────
+
+async def test_the_tick_walks_everyone_online_a_minute_and_leaves_the_paused_where_they_stand():
+    cog, guild, _idle = _world()
+    cog.rng = _WalkRng()
+    walker = _spawn(ALICE, left=50_000, x=100, y=100)
+    sleeper = _spawn(BOB, left=50_000, x=300, y=300)
+    rpg.pause(sleeper, int(time.time()))
+    guild.get_member(BOB).status = discord.Status.offline
+    cog.bot.intents.presences = True
+    sleeper["last_seen"] = 0
+
+    await cog.tick()
+
+    assert (walker["x"], walker["y"]) == (160, 160)      # +1 a second, sixty seconds
+    assert (sleeper["x"], sleeper["y"]) == (300, 300)
+
+
+async def test_a_character_from_before_the_map_is_placed_on_the_first_tick():
+    cog, guild, _idle = _world()
+    char = _spawn(left=50_000)
+    assert char["x"] is None
+    await cog.tick()
+    assert 0 <= char["x"] <= rpg.MAP_SIZE and 0 <= char["y"] <= rpg.MAP_SIZE
+
+
+async def test_status_map_and_quest_carry_the_map_image():
+    cog, guild, _idle = _world()
+    _spawn(ALICE, x=10, y=20), _spawn(BOB, x=90, y=120)
+    _state.idle_quests[GID] = {**rpg.new_quest(), "members": [BOB], "description": "walk", "kind": "journey", "p1": [90, 120], "p2": [410, 80]}
+
+    for command in (cog.cmd_status, cog.cmd_map, cog.cmd_quest, cog.cmd_idle):
+        ctx = _ctx(guild)
+        await command.callback(cog, ctx)
+        sent = ctx.send_mock.call_args.kwargs
+        assert sent["file"].filename == _idle_cog.MAP_FILENAME
+        assert ctx.sent_embeds[-1].image.url == f"attachment://{_idle_cog.MAP_FILENAME}"
+
+    ctx = _ctx(guild)
+    await cog.cmd_status.callback(cog, ctx, member=guild.get_member(BOB))
+    assert "**Position:** [90, 120] — at Afkhold Keep" in ctx.sent_embeds[-1].description
+    await cog.cmd_quest.callback(cog, ctx)
+    assert "Waypoint 1 of 2: Afkhold Keep [90, 120]" in ctx.sent_embeds[-1].description
+
+
+async def test_a_journey_is_announced_with_the_map_and_a_vigil_is_not():
+    for first, expect_map in ((rpg._JOURNEYS[0], True), (rpg._VIGILS[0], False)):
+        _state.idle_characters.clear()
+        _state.idle_quests.clear()
+        cog, guild, idle = _world()
+
+        class _Pick(_Rng):
+            def choice(self, seq):
+                return first if first in seq else seq[0]
+        cog.rng = _Pick()
+        _spawn(ALICE, level=45, left=50_000), _spawn(BOB, level=45, left=50_000)
+
+        await cog.tick()
+
+        files = [c.kwargs["file"] for c in idle.send.call_args_list if c.kwargs.get("file")]
+        assert bool(files) is expect_map
+        assert all(c.kwargs["silent"] is True for c in idle.send.call_args_list)
+        if expect_map:
+            assert _state.idle_quests[GID]["kind"] == "journey"
+            assert "must first reach Afkhold Keep [90, 120]" in _sent_text(idle)
+
+
+async def test_profile_mentions_the_idle_character(monkeypatch):
+    import src.cogs.profile_cog as _profile_cog
+    cog, guild, _idle = _world()
+    _spawn(ALICE, level=9, x=5, y=6)
+    monkeypatch.setattr(_profile_cog, "load_lottery", AsyncMock(return_value={}))
+    monkeypatch.setattr(_profile_cog, "load_records", AsyncMock(return_value={}))
+    member = guild.get_member(ALICE)
+    member.display_avatar = SimpleNamespace(url="https://example.invalid/a.png")
+    profile = _profile_cog.ProfileCog(None)
+    ctx = _ctx(guild)
+    await profile.cmd_profile.callback(profile, ctx)
+    assert "⚔️ Idle RPG: **Lv 9 Bard** · [5, 6]" in ctx.sent_embeds[-1].description
+
+
 # ── admin ────────────────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -619,10 +710,14 @@ async def test_settings_channel_idle_sets_and_clears(monkeypatch):
 # ── persistence ──────────────────────────────────────────────────────────────
 
 async def test_characters_and_quests_round_trip_through_the_db(db):
-    char = _spawn(level=12, items={"ring": {"level": 9, "name": None}}, thread_id=900, law="chaotic")
+    char = _spawn(level=12, items={"ring": {"level": 9, "name": None}}, thread_id=900, law="chaotic", x=17, y=499)
     paused = _spawn(BOB)
     rpg.pause(paused, int(time.time()))
-    _state.idle_quests[GID] = {"members": [ALICE, BOB], "description": "wait", "ends_at": 123, "not_before": 45}
+    _state.idle_quests[GID] = {
+        "members": [ALICE, BOB], "description": "walk", "kind": "journey", "ends_at": None,
+        "stage": 2, "p1": [90, 120], "p2": [410, 80], "not_before": 45,
+    }
+    expected_quest = dict(_state.idle_quests[GID])
     await _persistence.save_idle_character(GID, ALICE)
     await _persistence.save_idle_character(GID, BOB)
     await _persistence.save_idle_quest(GID)
@@ -634,7 +729,7 @@ async def test_characters_and_quests_round_trip_through_the_db(db):
 
     assert _state.idle_characters[GID][ALICE] == expected
     assert _state.idle_characters[GID][BOB] == expected_paused
-    assert _state.idle_quests[GID]["members"] == [ALICE, BOB]
+    assert _state.idle_quests[GID] == expected_quest
 
     await _persistence.delete_idle_guild(GID)
     _state.idle_characters.clear()
