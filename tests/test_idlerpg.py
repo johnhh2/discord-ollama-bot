@@ -291,17 +291,17 @@ def test_two_characters_on_one_square_fight_with_a_one_in_online_chance():
 
 
 def test_journey_questers_walk_to_the_first_waypoint_then_the_second_and_are_paid():
-    chars = {1: _char(45, left=10_000, x=88, y=121), 2: _char(45, left=10_000, x=90, y=120), 3: _char(5, x=300, y=300)}
-    quest = {**rpg.new_quest(), "members": [1, 2], "description": "walk", "kind": "journey", "p1": [90, 120], "p2": [91, 120]}
+    chars = {1: _char(45, left=10_000, x=33, y=41), 2: _char(45, left=10_000, x=35, y=40), 3: _char(5, x=300, y=300)}
+    quest = {**rpg.new_quest(), "members": [1, 2], "description": "walk", "kind": "journey", "p1": [35, 40], "p2": [36, 40]}
     rng = _Walk(random_=0.0)             # every quester steps every second; bystanders stand still
 
     notes = rpg.move_players(chars, quest, rng, _name, NOW, 2)
-    assert (chars[1]["x"], chars[1]["y"]) == (90, 120)   # diagonal first, then straight
+    assert (chars[1]["x"], chars[1]["y"]) == (35, 40)   # diagonal first, then straight
     assert quest["stage"] == 1 and notes == []
 
     notes = rpg.move_players(chars, quest, rng, _name, NOW, 1)   # the second they are all found at p1
-    assert quest["stage"] == 2 and "have reached Afkhold Keep [90, 120]" in notes[0].text
-    assert (chars[1]["x"], chars[2]["x"]) == (90, 90)            # …is spent on that: nobody moved
+    assert quest["stage"] == 2 and "have reached Denmark [35, 40]" in notes[0].text
+    assert (chars[1]["x"], chars[2]["x"]) == (35, 35)            # …is spent on that: nobody moved
 
     notes = rpg.move_players(chars, quest, rng, _name, NOW, 2)
     assert "completed their journey" in notes[-1].text
@@ -324,7 +324,7 @@ def test_a_started_journey_names_its_waypoints_and_asks_for_the_map():
     quest = rpg.new_quest()
     notes = rpg.tick_quest(chars, quest, _PickJourney(), _name, NOW)
     assert quest["kind"] == "journey" and quest["ends_at"] is None and quest["stage"] == 1
-    assert quest["p1"] == list(rpg.LANDMARKS["Afkhold Keep"])
+    assert quest["p1"] == list(rpg.LANDMARKS["Denmark"])
     assert notes[0].show_map and notes[0].ping == (1, 2)
 
 
@@ -339,5 +339,12 @@ def test_the_map_renders_a_png_for_an_empty_realm_and_a_busy_one():
     from src.idle_map import render_map
     assert render_map([])[:4] == b"\x89PNG"
     crowd = [(uid, f"player{uid}", uid * 7 % 501, uid * 13 % 501) for uid in range(60)]
-    quest = {"members": [1, 2], "stage": 2, "p1": [90, 120], "p2": [410, 80]}
+    quest = {"members": [1, 2], "stage": 2, "p1": [35, 40], "p2": [410, 80]}
     assert render_map(crowd, highlight=(3,), quest=quest)[:4] == b"\x89PNG"
+
+
+def test_the_map_background_ships_at_one_pixel_per_map_unit():
+    from PIL import Image
+    from src import idle_map
+    with Image.open(idle_map._BACKGROUND_PATH) as art:
+        assert art.size == (rpg.MAP_SIZE, rpg.MAP_SIZE)

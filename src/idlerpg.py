@@ -125,26 +125,30 @@ _ITEM_BOONS = (
 _ITEM_BANES = (
     "Rust crept into", "A gremlin chewed on", "Rain warped",
 )
+# The places drawn on the map (assets/idle_map.png), at the coordinates the
+# IRC game's own journeys used for them; the Towers and T'rnalvph sit on
+# their drawings rather than their captions.
 LANDMARKS = {
-    "Afkhold Keep": (90, 120),
-    "the Pinged Plains": (280, 90),
-    "Dozing Dragon Pass": (410, 80),
-    "Port Brb": (40, 270),
-    "the Great Library of Hush": (250, 250),
-    "the Muted Mountains": (460, 300),
-    "the Sunken Tower": (130, 400),
-    "Lurker's Fen": (330, 430),
+    "Denmark": (35, 40),
+    "the Mountains of Qwok": (290, 65),
+    "the land of Qwok": (430, 60),
+    "Jow Botzi territory": (155, 155),
+    "Velvragh": (325, 270),
+    "the Secret Passage to Bharash": (70, 315),
+    "the Great Shahlil mountains": (50, 350),
+    "the Towers of Ankh-Allor": (255, 425),
+    "T'rnalvph": (470, 400),
 }
 _LANDMARK_NAMES = {point: label for label, point in LANDMARKS.items()}
 
 # (first waypoint, second waypoint, what the party was chosen to do)
 _JOURNEYS = (
-    ("Afkhold Keep", "Dozing Dragon Pass", "carry the keep's last lantern to the dragon's door without waking it"),
-    ("Port Brb", "the Great Library of Hush", "return a book that is four centuries overdue, and face the librarian"),
-    ("the Sunken Tower", "the Muted Mountains", "haul the tower's drowned bell up to where nobody will hear it"),
-    ("Lurker's Fen", "the Pinged Plains", "lead the fen's lost sheep home across the plains"),
-    ("the Pinged Plains", "Port Brb", "deliver an urgent message that stopped being urgent a week ago"),
-    ("the Muted Mountains", "Afkhold Keep", "escort a very old king home from a very long holiday"),
+    ("Denmark", "Velvragh", "deliver a strongly worded letter from the Danes to the elders of Velvragh"),
+    ("the Secret Passage to Bharash", "the Towers of Ankh-Allor", "smuggle a sleeping wizard back into his own tower"),
+    ("Jow Botzi territory", "the land of Qwok", "trade a cart of turnips for whatever Qwok thinks is fair"),
+    ("the Great Shahlil mountains", "the Mountains of Qwok", "settle, on foot and with a rope, which mountains are taller"),
+    ("T'rnalvph", "Velvragh", "chart the dark lands and bring the map home before the ink runs"),
+    ("the Towers of Ankh-Allor", "Denmark", "return a borrowed ladder, several centuries late"),
 )
 
 _VIGILS = (

@@ -589,8 +589,8 @@ async def test_a_character_from_before_the_map_is_placed_on_the_first_tick():
 
 async def test_status_map_and_quest_carry_the_map_image():
     cog, guild, _idle = _world()
-    _spawn(ALICE, x=10, y=20), _spawn(BOB, x=90, y=120)
-    _state.idle_quests[GID] = {**rpg.new_quest(), "members": [BOB], "description": "walk", "kind": "journey", "p1": [90, 120], "p2": [410, 80]}
+    _spawn(ALICE, x=10, y=20), _spawn(BOB, x=35, y=40)
+    _state.idle_quests[GID] = {**rpg.new_quest(), "members": [BOB], "description": "walk", "kind": "journey", "p1": [35, 40], "p2": [410, 80]}
 
     for command in (cog.cmd_status, cog.cmd_map, cog.cmd_quest, cog.cmd_idle):
         ctx = _ctx(guild)
@@ -601,9 +601,9 @@ async def test_status_map_and_quest_carry_the_map_image():
 
     ctx = _ctx(guild)
     await cog.cmd_status.callback(cog, ctx, member=guild.get_member(BOB))
-    assert "**Position:** [90, 120] — at Afkhold Keep" in ctx.sent_embeds[-1].description
+    assert "**Position:** [35, 40] — at Denmark" in ctx.sent_embeds[-1].description
     await cog.cmd_quest.callback(cog, ctx)
-    assert "Waypoint 1 of 2: Afkhold Keep [90, 120]" in ctx.sent_embeds[-1].description
+    assert "Waypoint 1 of 2: Denmark [35, 40]" in ctx.sent_embeds[-1].description
 
 
 async def test_a_journey_is_announced_with_the_map_and_a_vigil_is_not():
@@ -625,7 +625,7 @@ async def test_a_journey_is_announced_with_the_map_and_a_vigil_is_not():
         assert all(c.kwargs["silent"] is True for c in idle.send.call_args_list)
         if expect_map:
             assert _state.idle_quests[GID]["kind"] == "journey"
-            assert "must first reach Afkhold Keep [90, 120]" in _sent_text(idle)
+            assert "must first reach Denmark [35, 40]" in _sent_text(idle)
 
 
 async def test_profile_mentions_the_idle_character(monkeypatch):
@@ -718,7 +718,7 @@ async def test_characters_and_quests_round_trip_through_the_db(db):
     rpg.pause(paused, int(time.time()))
     _state.idle_quests[GID] = {
         "members": [ALICE, BOB], "description": "walk", "kind": "journey", "ends_at": None,
-        "stage": 2, "p1": [90, 120], "p2": [410, 80], "not_before": 45,
+        "stage": 2, "p1": [35, 40], "p2": [410, 80], "not_before": 45,
     }
     expected_quest = dict(_state.idle_quests[GID])
     await _persistence.save_idle_character(GID, ALICE)

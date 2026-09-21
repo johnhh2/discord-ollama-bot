@@ -740,9 +740,12 @@ tables from migrations 0070–0071.
   waypoint 1, then — once all are there — waypoint 2. Don't "optimise" the
   per-second loop into one big jump: collisions only exist step by step.
   The fork's map items and quadrant wars are patches, not the original, and
-  are deliberately absent. Landmarks, journey texts and the drawn map are
-  ours (`LANDMARKS`, `_JOURNEYS`); a journey must run between two
-  `LANDMARKS` keys. Positions are **not** a reason to save a row — they
+  are deliberately absent. The background, `assets/idle_map.png`, is the
+  original site's 500×500 map (its package README releases it to the
+  public domain); one map unit is one of its pixels, so don't resize or
+  swap it without moving `LANDMARKS`, which names the places drawn on it
+  at the coordinates the IRC journeys used. The journey *texts* are ours;
+  a journey must run between two `LANDMARKS` keys. Positions are **not** a reason to save a row — they
   ride along with whatever else saves it, at worst the five-minute
   `last_seen` write. The map image appears on `!idle` / `!idle status`,
   `!idle map`, `!idle quest` (journeys) and under a journey's announcement
