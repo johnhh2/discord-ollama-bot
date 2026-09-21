@@ -76,8 +76,9 @@ _RULES_TOPICS = {
     ),
     "battles": (
         f"Each level-up finds an item for one of ten slots and may start a fight (always, from level {rpg.BATTLE_ALWAYS_LEVEL}).\n"
-        "Both sides roll up to their item power. Win and your timer shrinks; lose and it grows.\n"
-        f"`!idle duel @user` once a day: the loser hands {rpg.DUEL_PCT}% of their timer to the winner."
+        "Each side rolls a number from 0 up to their item power (`!idle items`), shown as \"rolled 12 of 40\"; the higher roll wins. "
+        "Win and your timer shrinks; lose and it grows.\n"
+        f"`!idle duel @user` once a day: the loser hands {rpg.DUEL_PCT}% of their timer to the winner. A tie is a coin toss."
     ),
     "map": (
         f"The realm is a {rpg.MAP_SIZE}×{rpg.MAP_SIZE} grid. Everyone online wanders one step a second, and the edges wrap.\n"

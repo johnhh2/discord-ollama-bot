@@ -378,6 +378,12 @@ def _steal(thief: dict, victim: dict, rng) -> "str | None":
 
 # ── battles ──────────────────────────────────────────────────────────────────
 
+def _rolled(roll: int, power: int) -> str:
+    """How a fighter's roll reads in the feed. The IRC bot printed a bare
+    `[roll/power]`, which nobody could decode."""
+    return f"(rolled {roll} of {power})" if power else "(no gear)"
+
+
 def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int) -> "list[Note]":
     me = chars[uid]
     if me["level"] < BATTLE_ALWAYS_LEVEL and rng.random() >= BATTLE_CHANCE_BELOW:
@@ -398,7 +404,7 @@ def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int) -> "list
     my_sum = battle_sum(me)
     my_roll, opp_roll = rng.randint(0, my_sum), rng.randint(0, opp_sum)
     involved = (uid,) if opp is None else (uid, opp_uid)
-    head = f"⚔️ {name(uid)} [{my_roll}/{my_sum}] challenged {opp_name} [{opp_roll}/{opp_sum}]"
+    head = f"⚔️ {name(uid)} {_rolled(my_roll, my_sum)} challenged {opp_name} {_rolled(opp_roll, opp_sum)}"
     if my_roll < opp_roll:
         lost = scale(me, now, lose_pct)
         return [Note(involved, f"{head} and lost. {format_duration(lost)} added to their clock.", True)]
@@ -422,13 +428,18 @@ def duel(uid: int, target_uid: int, chars: dict, rng, name: NameFn, now: int) ->
     a, b = chars[uid], chars[target_uid]
     a_sum, b_sum = battle_sum(a), battle_sum(b)
     a_roll, b_roll = rng.randint(0, a_sum), rng.randint(0, b_sum)
-    (w_uid, winner), (l_uid, loser) = ((uid, a), (target_uid, b)) if a_roll >= b_roll else ((target_uid, b), (uid, a))
+    # A tie is a coin toss, not the challenger's: a duel needs no consent, and
+    # two gearless characters always tie — the IRC rule would hand every new
+    # player a free win over any other.
+    a_wins = a_roll > b_roll or (a_roll == b_roll and rng.random() < 0.5)
+    (w_uid, winner), (l_uid, loser) = ((uid, a), (target_uid, b)) if a_wins else ((target_uid, b), (uid, a))
     stake = scale(loser, now, DUEL_PCT)
+    tied = " It was dead even, so a coin toss settled it." if a_roll == b_roll else ""
     shift(winner, -min(stake, time_left(winner, now)))
     return [Note(
         (uid, target_uid),
-        f"🤺 {name(uid)} [{a_roll}/{a_sum}] duelled {name(target_uid)} [{b_roll}/{b_sum}] — "
-        f"{name(w_uid)} takes {format_duration(stake)} from {name(l_uid)}.",
+        f"🤺 {name(uid)} {_rolled(a_roll, a_sum)} duelled {name(target_uid)} {_rolled(b_roll, b_sum)}.{tied} "
+        f"{name(w_uid)} wins and takes {format_duration(stake)} off {name(l_uid)}'s clock.",
         True,
     )]
 
@@ -451,7 +462,7 @@ def team_battle(chars: dict, rng, name: NameFn, now: int) -> "list[Note]":
         shift(chars[u], loss)
 
     def _side(i):
-        return ", ".join(name(u) for u in teams[i]) + f" [{rolls[i]}/{sums[i]}]"
+        return ", ".join(name(u) for u in teams[i]) + f" {_rolled(rolls[i], sums[i])}"
     return [Note(
         tuple(picked),
         f"🛡️ Team battle! {_side(win)} beat {_side(lose)}. "
@@ -586,7 +597,7 @@ def collision_fight(uid: int, opp_uid: int, chars: dict, rng, name: NameFn, now:
     my_roll = rng.randrange(my_sum) if my_sum else 0
     opp_roll = rng.randrange(opp_sum) if opp_sum else 0
     involved = (uid, opp_uid)
-    head = f"⚔️ {name(uid)} [{my_roll}/{my_sum}] came upon {name(opp_uid)} [{opp_roll}/{opp_sum}] at [{me['x']}, {me['y']}]"
+    head = f"⚔️ {name(uid)} {_rolled(my_roll, my_sum)} came upon {name(opp_uid)} {_rolled(opp_roll, opp_sum)} at [{me['x']}, {me['y']}]"
     if my_roll < opp_roll:
         lost = scale(me, now, max(opp["level"] // 7, 7))
         return [Note(involved, f"{head} and was defeated. {format_duration(lost)} added to their clock.", True)]

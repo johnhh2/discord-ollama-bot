@@ -161,6 +161,19 @@ def test_duel_moves_the_same_seconds_from_loser_to_winner():
     assert notes[0].uids == (1, 2) and notes[0].public
 
 
+def test_a_tied_duel_is_a_coin_toss_and_the_rolls_read_plainly():
+    def _fight(random_):
+        chars = {1: _char(0, left=600), 2: _char(0, left=600)}
+        notes = rpg.duel(1, 2, chars, _Scripted(random_=random_), _name, NOW)
+        return chars, notes[0].text
+
+    chars, text = _fight(0.4)
+    assert rpg.time_left(chars[2], NOW) == 630 and "P1 wins" in text
+    chars, text = _fight(0.6)                       # no gear either side: the challenger can lose
+    assert rpg.time_left(chars[1], NOW) == 630 and "P2 wins" in text
+    assert "(no gear)" in text and "coin toss" in text and "[0/0]" not in text
+
+
 def test_team_battle_needs_six_running_characters():
     chars = {uid: _char(10) for uid in range(1, 6)}
     assert rpg.team_battle(chars, random.Random(1), _name, NOW) == []
