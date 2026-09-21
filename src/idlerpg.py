@@ -377,8 +377,8 @@ def find_item(uid: int, char: dict, rng, name: NameFn) -> Note:
     held = char["items"].get(slot, {}).get("level", 0)
     if found > held:
         char["items"][slot] = {"level": found, "name": None}
-        return Note((uid,), f"🎒 {name(uid)} found a level {found} {slot} (was level {held}).")
-    return Note((uid,), f"🎒 {name(uid)} found a level {found} {slot}, but their level {held} one is better.")
+        return Note((uid,), f"{name(uid)} found a level {found} {slot} (was level {held}).")
+    return Note((uid,), f"{name(uid)} found a level {found} {slot}, but their level {held} one is better.")
 
 
 def _item_label(slot: str, item: dict) -> str:

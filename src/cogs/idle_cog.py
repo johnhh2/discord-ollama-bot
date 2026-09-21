@@ -656,7 +656,7 @@ class IdleCog(commands.Cog):
             else:
                 lines.append(f"**{slot.title()}:** level {item['level']}")
         lines.append(f"\n**Item power:** {rpg.item_sum(char):,}")
-        await ctx.send(embed=emb(f"🎒 {self._title(ctx.guild, target.id, char)}", "\n".join(lines), C_BLUE))
+        await ctx.send(embed=emb(f"{self._title(ctx.guild, target.id, char)} — Items", "\n".join(lines), C_BLUE))
 
     @cmd_idle.command(name="top")
     async def cmd_top(self, ctx: commands.Context):
@@ -858,7 +858,7 @@ class IdleCog(commands.Cog):
             "📖 Idle RPG",
             "**Do nothing. Level up.**\n\n"
             "⏳ Your character levels on a timer while you're online.\n"
-            "🎒 Items, fights and lucky breaks happen on their own.\n"
+            "⚔️ Items, fights and lucky breaks happen on their own.\n"
             "📜 High-level players get sent on quests for a big shortcut.\n\n"
             "`!idle status` · `items` · `map` · `top` · `align` · `duel @user` · `quest`\n"
             f"More: `!idle rules <{'|'.join(_RULES_TOPICS)}>`",
