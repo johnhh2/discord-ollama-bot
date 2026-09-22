@@ -16,7 +16,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from src.idlerpg import LANDMARKS, MAP_SIZE, MARKET_RADIUS, TOWNS
+from src.idlerpg import LANDMARKS, MAP_SIZE, MARKET_RADIUS, TOWNS, signed_gap
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +55,9 @@ def _load_background() -> "Image.Image":
 
 
 def _px(x: int, y: int) -> "tuple[int, int]":
-    # Coordinates run 0..MAP_SIZE inclusive; the last one shares the edge pixel.
+    # Coordinates run 0..MAP_SIZE inclusive; the last one shares the edge
+    # pixel. A route that crosses an edge asks for points outside that range
+    # on purpose — Pillow clips them, which is what draws the two halves.
     return min(x * _SCALE, _SIDE - 1), min(y * _SCALE, _SIDE - 1)
 
 
@@ -83,6 +85,16 @@ def _label(draw, x: int, y: int, text: str, font, offset: int) -> None:
     draw.text((left + 4, top + 2), text, font=font, fill=_PARCHMENT)
 
 
+def _route(draw, start, end, colour) -> None:
+    """A route takes the short way and may leave by one edge and come back at
+    the other, so it is drawn twice — once from each end — and Pillow clips
+    whichever half falls off the sheet."""
+    dx, dy = signed_gap(start[0], end[0]), signed_gap(start[1], end[1])
+    draw.line((*_px(*start), *_px(start[0] + dx, start[1] + dy)), fill=colour, width=3)
+    if (start[0] + dx, start[1] + dy) != tuple(end):
+        draw.line((*_px(end[0] - dx, end[1] - dy), *_px(*end)), fill=colour, width=3)
+
+
 def render_map(players: list, *, highlight=(), quest: "dict | None" = None, routes=()) -> bytes:
     """`players` is [(uid, name, x, y)]; `highlight` the uids drawn large;
     `quest` a journey dict ({members, stage, p1, p2}) or None; `routes` the
@@ -98,12 +110,12 @@ def render_map(players: list, *, highlight=(), quest: "dict | None" = None, rout
         draw.ellipse((cx - reach, cy - reach, cx + reach, cy + reach), outline=_MARKET, width=2)
 
     for x, y, to_x, to_y in routes:
-        draw.line((*_px(x, y), *_px(to_x, to_y)), fill=_HIGHLIGHT, width=2)
+        _route(draw, (x, y), (to_x, to_y), _HIGHLIGHT)
 
     questers: set = set()
     if quest and quest.get("p1") and quest.get("p2"):
         questers = set(quest.get("members") or ())
-        draw.line((*_px(*quest["p1"]), *_px(*quest["p2"])), fill=_ROUTE, width=3)
+        _route(draw, quest["p1"], quest["p2"], _ROUTE)
         for number, point in (("1", quest["p1"]), ("2", quest["p2"])):
             cx, cy = _px(*point)
             reached = number == "1" and quest.get("stage") == 2

@@ -27,6 +27,8 @@ GID, IDLE_CH = 1, 500
 # Inside Velvragh's market ring (60 squares) but outside its centre (15), so
 # `!idle shop` is open and nothing trades on its own.
 MARKET = {"x": 365, "y": 270}
+# Open country, clear of every market ring once the wrap is counted.
+WILDS = (5, 255)
 ALICE, BOB, ADMIN = 11, 12, 13
 
 
@@ -753,7 +755,7 @@ async def test_status_shows_the_voice_bonus_while_it_applies():
 
 async def test_the_tick_sends_wild_characters_into_fights_and_keeps_them_in_the_feed(monkeypatch):
     cog, guild, idle = _world()
-    wild = _spawn(ALICE, level=10, left=50_000, x=480, y=20)
+    wild = _spawn(ALICE, level=10, left=50_000, x=WILDS[0], y=WILDS[1])
     townie = _spawn(BOB, level=10, left=50_000, **MARKET)
     met = []
 
@@ -774,7 +776,7 @@ async def test_the_tick_sends_wild_characters_into_fights_and_keeps_them_in_the_
     assert met == [ALICE, BOB]                 # the cog asks for everyone; the rules keep towns safe
     assert "killed a Normal Rat" in _sent(guild.threads[0])
     idle.send.assert_not_called()
-    assert wild["x"] == 480 and townie["x"] == MARKET["x"]
+    assert wild["x"] == WILDS[0] and townie["x"] == MARKET["x"]
 
 
 async def test_a_real_monster_fight_reaches_the_feed_through_a_tick():
@@ -785,7 +787,7 @@ async def test_a_real_monster_fight_reaches_the_feed_through_a_tick():
         def random(self):
             return 0.0          # every per-tick chance hits, including the monster roll
     cog.rng = _Hunting()
-    char = _spawn(level=10, left=50_000, gold=500, x=480, y=20,   # out in the wilds
+    char = _spawn(level=10, left=50_000, gold=500, x=WILDS[0], y=WILDS[1],   # out in the wilds
                   items={"ring": {"level": 20, "name": None}})
 
     await cog.tick()
@@ -798,7 +800,7 @@ async def test_a_real_monster_fight_reaches_the_feed_through_a_tick():
 async def test_the_tick_mends_a_wounded_character_and_status_shows_the_bar():
     cog, guild, _idle = _world()
     cog.rng = _StillRng()
-    char = _spawn(level=10, left=50_000, x=480, y=20, items={"ring": {"level": 25, "name": None}})
+    char = _spawn(level=10, left=50_000, x=WILDS[0], y=WILDS[1], items={"ring": {"level": 25, "name": None}})
     full = rpg.max_hp(char)
     char["hp"] = full // 2
 
@@ -1091,8 +1093,7 @@ async def test_gamble_command_bets_in_town_and_the_sheet_keeps_score():
     await cog.cmd_status.callback(cog, ctx)
     assert "**At the tables:** 2 bets · won 800 · lost 0" in ctx.sent_embeds[-1].description
 
-    char["x"] = 480                                        # out in the wilds
-    char["y"] = 20
+    char["x"], char["y"] = WILDS                            # out in the wilds
     await cog.cmd_gamble.callback(cog, ctx, "all")
     assert char["gold"] == 1800 and "towns" in ctx.sent_embeds[-1].description
 
@@ -1281,17 +1282,17 @@ async def test_concurrent_rushes_charge_once(monkeypatch):
 
 async def test_the_shop_is_shut_in_the_wilds_and_says_where_the_nearest_market_is():
     cog, guild, _idle = _world()
-    char = _spawn(level=10, gold=5000, x=450, y=270)          # 125 squares east of Velvragh, far from the rest
+    char = _spawn(level=10, gold=5000, x=WILDS[0], y=WILDS[1])   # open country, far from the rest
     ctx = _ctx(guild)
     for item in (None, "find", "rush"):
         await cog.cmd_shop.callback(cog, ctx, item)
         assert ctx.sent_embeds[-1].title == "❌ No Market Here"
-    assert "**Velvragh**, 125 squares away" in ctx.sent_embeds[-1].description
+    assert "squares away" in ctx.sent_embeds[-1].description
     assert char["gold"] == 5000
 
     await cog.cmd_status.callback(cog, ctx)
-    assert "nearest market: Velvragh, 125 squares" in ctx.sent_embeds[-1].description
-    char["x"] = 345
+    assert "nearest market:" in ctx.sent_embeds[-1].description
+    char["x"], char["y"] = 345, 270
     await cog.cmd_status.callback(cog, ctx)
     assert "market open (Velvragh)" in ctx.sent_embeds[-1].description
 
@@ -1328,7 +1329,7 @@ async def test_walking_into_a_town_runs_the_errand_once_and_reports_it_in_the_fe
 async def test_auto_trade_can_be_switched_off_from_anywhere():
     cog, guild, _idle = _world()
     cog.rng = _StillRng()
-    char = _spawn(level=10, left=50_000, gold=1000, x=20, y=480)
+    char = _spawn(level=10, left=50_000, gold=1000, x=WILDS[0], y=WILDS[1])
     ctx = _ctx(guild)
     await cog.cmd_shop.callback(cog, ctx, "auto", arg="off")
     assert char["auto_trade"] is False

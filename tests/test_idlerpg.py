@@ -396,8 +396,13 @@ def test_a_poor_visit_is_not_stamped_and_the_ring_and_the_wilds_do_not_trade():
 
 # ── monsters ─────────────────────────────────────────────────────────────────
 
+# The most remote Plains square there is: outside every market ring even
+# counting the wrap, so a monster can actually find you.
+WILDS = (5, 255)
+
+
 def _wanderer(level=10, gear=25, gold=1000, **over):
-    char = _char(level, left=10 ** 6, x=480, y=20, gold=gold, **over)
+    char = _char(level, left=10 ** 6, x=WILDS[0], y=WILDS[1], gold=gold, **over)
     if gear:
         char["items"] = {"ring": {"level": gear, "name": None}}
     char["hp"] = rpg.max_hp(char)
@@ -456,7 +461,7 @@ def test_falling_costs_clock_and_gold_and_carries_you_to_a_town_patched_up():
     rng = random.Random(3)
     for _ in range(4000):
         char = _wanderer(gold=1200)
-        char["x"], char["y"] = 480, 150
+        char["x"], char["y"] = WILDS
         char["next_level_at"] = NOW + 10_000
         char["hp"] = rpg.max_hp(char) // 2               # wounded, but still willing
         notes = rpg.mob_encounter(1, char, rng, _name, NOW)
@@ -616,7 +621,7 @@ def test_monsters_come_about_ninety_a_day_in_the_wilds_and_never_in_town():
                 char["x"], char["y"] = spot                  # a fall carries them townward
         return fights / days
 
-    wilds = (480, 20)
+    wilds = WILDS
     town = (rpg.LANDMARKS["Velvragh"][0] + 30, rpg.LANDMARKS["Velvragh"][1])
     assert 80 <= _fights(rpg.PACES["lively"], wilds) <= 100      # sizzlorox's own rate
     assert 25 <= _fights(rpg.CLASSIC, wilds) <= 36
@@ -697,6 +702,55 @@ class _Walk(_Scripted):
         if (low, high) == (-1, 1):
             return self._steps.pop(0) if self._steps else 0
         return super().randint(low, high)
+
+
+def test_every_distance_takes_the_short_way_round_the_globe():
+    assert rpg.axis_gap(499, 2) == 4 and rpg.axis_gap(10, 20) == 10   # 499 -> 500 -> 0 -> 1 -> 2
+    assert rpg.axis_gap(0, rpg.MAP_SIZE) == 1            # a step apart, not the width of the realm
+    assert rpg.signed_gap(499, 2) == 4 and rpg.signed_gap(2, 499) == -4
+    assert rpg.signed_gap(10, 20) == 10 and rpg.signed_gap(20, 10) == -10
+
+    # Neighbours across the east edge fight each other like any others.
+    assert rpg.in_battle_range({"x": 499, "y": 250}, {"x": 2, "y": 250})
+    assert not rpg.in_battle_range({"x": 499, "y": 250}, {"x": 40, "y": 250})
+
+    # And Denmark's market reaches around the corner.
+    outside = _char(x=499, y=40)
+    assert rpg.nearest_town(outside) == ("Denmark", 37) and rpg.market_in_reach(outside) == "Denmark"
+    assert rpg.travel_steps(outside, "Denmark") == 37
+
+
+def test_a_traveller_and_a_beaten_character_both_use_the_edge():
+    walker = _char(x=499, y=40, travel_to="Denmark")
+    for _ in range(3):
+        walker["x"], walker["y"] = rpg._toward(walker["x"], 35), rpg._toward(walker["y"], 40)
+    assert walker["x"] == 1                              # 499 -> 500 -> 0 -> 1, not the long way
+
+    # Carried townward from the far side of the edge, the short way.
+    fallen = _char(x=300, y=490, items={"ring": {"level": 5, "name": None}})
+    town = rpg._to_town_outskirts(fallen)
+    assert rpg.nearest_town(fallen)[1] <= rpg.MOB_RESPAWN_DISTANCE
+    assert 0 <= fallen["x"] <= rpg.MAP_SIZE and 0 <= fallen["y"] <= rpg.MAP_SIZE and town in rpg.TOWNS
+
+
+def test_a_route_that_crosses_an_edge_is_drawn_from_both_sides():
+    from PIL import Image
+    import io
+    from src import idle_map
+
+    def _red_columns(quest):
+        png = idle_map.render_map([], quest=quest)
+        with Image.open(io.BytesIO(png)) as art:
+            px = art.load()
+            return {x for x in range(art.width) for y in range(art.height)
+                    if px[x, y][0] > 150 and px[x, y][1] < 90}
+
+    # The Towers to Denmark is shorter over the bottom edge than down the map.
+    wrapped = _red_columns({"members": [1], "stage": 1, "p1": [255, 425], "p2": [35, 40]})
+    straight = _red_columns({"members": [1], "stage": 1, "p1": [255, 425], "p2": [255, 300]})
+    assert wrapped and straight
+    # Drawn from both ends, so ink reaches nearer each edge than a single line could.
+    assert min(wrapped) < min(straight)
 
 
 def test_wandering_wraps_at_the_edges_like_the_original():

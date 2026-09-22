@@ -102,8 +102,12 @@ QUEST_MIN_SECS, QUEST_MAX_SECS = 12 * 3600, 24 * 3600
 QUEST_REWARD_PCT = 25
 QUEST_REST_SECS = 6 * 3600     # before the next one
 
-# The map: coordinates run 0..MAP_SIZE on both axes and wrap at the edges.
+# The map: coordinates run 0..MAP_SIZE on both axes and wrap at the edges —
+# a step off one is a step onto the other, so the realm is a globe and every
+# distance on it is the short way round. MAP_SPAN is how many squares that
+# makes: 0..MAP_SIZE inclusive.
 MAP_SIZE = 500
+MAP_SPAN = MAP_SIZE + 1
 JOURNEY_STEP_CHANCE = 0.01     # per quester per second
 COLLISION_CRIT_ODDS = 35       # 1-in-N on a won collision fight
 COLLISION_STEAL_ODDS = 25      # …else 1-in-N to swap an item, from COLLISION_STEAL_LEVEL up
@@ -495,13 +499,26 @@ def _steal(thief: dict, victim: dict, rng) -> "str | None":
 
 # ── battles ──────────────────────────────────────────────────────────────────
 
+def axis_gap(a: int, b: int) -> int:
+    """Squares between two coordinates on one wrapped axis, the short way."""
+    gap = abs(a - b) % MAP_SPAN
+    return min(gap, MAP_SPAN - gap)
+
+
+def signed_gap(origin: int, point: int) -> int:
+    """Which way to walk from `origin` to reach `point` soonest, and how far:
+    negative goes down and may leave by the near edge."""
+    gap = (point - origin) % MAP_SPAN
+    return gap if gap <= MAP_SPAN // 2 else gap - MAP_SPAN
+
+
 def in_battle_range(a: dict, b: dict) -> bool:
     """Close enough on the map to meet. A character the tick has not placed
     yet (`ensure_position` runs in `move_players`) is out of everyone's
     reach until it has one."""
     if a.get("x") is None or b.get("x") is None:
         return False
-    return (a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2 <= BATTLE_RANGE ** 2
+    return axis_gap(a["x"], b["x"]) ** 2 + axis_gap(a["y"], b["y"]) ** 2 <= BATTLE_RANGE ** 2
 
 
 def _rolled(roll: int, power: int) -> str:
@@ -818,12 +835,13 @@ def buy_class(char: dict, class_name: str) -> "tuple[bool, str]":
 
 
 def nearest_town(char: dict) -> "tuple[str, int] | None":
-    """(town, straight-line distance in squares), or None before the
+    """(town, distance in squares the short way round), or None before the
     character has a position."""
     if char.get("x") is None:
         return None
     return min(
-        ((town, int(((char["x"] - LANDMARKS[town][0]) ** 2 + (char["y"] - LANDMARKS[town][1]) ** 2) ** 0.5)) for town in TOWNS),
+        ((town, int((axis_gap(char["x"], LANDMARKS[town][0]) ** 2
+                     + axis_gap(char["y"], LANDMARKS[town][1]) ** 2) ** 0.5)) for town in TOWNS),
         key=lambda pair: pair[1],
     )
 
@@ -1079,7 +1097,8 @@ def _to_town_outskirts(char: dict) -> str:
     tx, ty = LANDMARKS[town]
     if distance > MOB_RESPAWN_DISTANCE:
         pull = MOB_RESPAWN_DISTANCE / distance
-        char["x"], char["y"] = int(tx + (char["x"] - tx) * pull), int(ty + (char["y"] - ty) * pull)
+        char["x"] = int(tx + signed_gap(tx, char["x"]) * pull) % MAP_SPAN
+        char["y"] = int(ty + signed_gap(ty, char["y"]) * pull) % MAP_SPAN
     return town
 
 
@@ -1232,7 +1251,7 @@ def manual_gamble(char: dict, stake: int, rng) -> "tuple[bool | None, str]":
 
 def ensure_position(char: dict, rng) -> None:
     if char.get("x") is None or char.get("y") is None:
-        char["x"], char["y"] = rng.randrange(MAP_SIZE), rng.randrange(MAP_SIZE)
+        char["x"], char["y"] = rng.randrange(MAP_SPAN), rng.randrange(MAP_SPAN)
 
 
 def _wander(value: int, rng) -> int:
@@ -1245,7 +1264,10 @@ def _wander(value: int, rng) -> int:
 
 
 def _toward(value: int, goal: int) -> int:
-    return value if value == goal else value + (1 if value < goal else -1)
+    """One step the short way, which may be off the edge and onto the other."""
+    if value == goal:
+        return value
+    return (value + (1 if signed_gap(value, goal) > 0 else -1)) % MAP_SPAN
 
 
 def landmark_at(point) -> "str | None":
@@ -1269,9 +1291,10 @@ def match_place(text: str) -> "str | None":
 
 
 def travel_steps(char: dict, town: str) -> int:
-    """Steps left to `town`. A step moves one square on both axes at once."""
+    """Steps left to `town` the short way. A step moves one square on both
+    axes at once, and may cross an edge."""
     goal = LANDMARKS[town]
-    return max(abs(char["x"] - goal[0]), abs(char["y"] - goal[1]))
+    return max(axis_gap(char["x"], goal[0]), axis_gap(char["y"], goal[1]))
 
 
 def travel_eta_secs(char: dict, town: str) -> int:
