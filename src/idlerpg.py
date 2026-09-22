@@ -1635,7 +1635,12 @@ MOB_EASY_LEVEL = 5             # at or below it, monsters fight at half strength
 MOB_DROP_CHANCE = 0.15         # a won fight turns up an item
 MOB_GEAR_DAMAGE_CHANCE = 0.15  # a lost one dents one
 MOB_DEATH_GOLD_DIVISOR = 12
-MOB_WIN_CLOCK_DIVISOR = 10   # a kill is worth tier/10 % of the clock; falling still costs the whole tier
+# A kill is worth tier/N % of the time left; falling costs the whole tier, so
+# this is the ratio between the two and nothing else. It sets the win rate at
+# which fighting starts paying for itself: at 10 that was ~90.8%, which sat
+# too close to the ~96% characters actually manage once initiative is rolled —
+# most of the margin went to the few deaths. At 6 it is ~85.5%.
+MOB_WIN_CLOCK_DIVISOR = 6
 MOB_DEATH_GOLD_CAP_PER_LEVEL = 5    # …but never more than half a level-up's worth: a fat purse isn't bled dry
 MOB_GOLD_PER_LEVEL = 0.4       # × tier × the prefix's gold multiplier
 MOB_DANGER_GOLD_BONUS = 1.5    # the dangerous biomes pay for the risk

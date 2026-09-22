@@ -951,10 +951,18 @@ tables from migrations 0070–0077.
   0 to several hundred while a flat jitter would mean nothing at one end
   and everything at the other. Before it, the character swung first every
   round unconditionally and anything killed by an opening blow never swung
-  back. It is not free: re-simulating gave −1% won and +30% deaths at level
-  40+, and roughly halved what fighting takes off a high-level clock,
-  because a death costs `tier` percent while a kill returns
-  `tier/MOB_WIN_CLOCK_DIVISOR`. Re-run the sim before touching either.
+  back.
+- **`MOB_WIN_CLOCK_DIVISOR` is the win:loss ratio, and nothing else.** A
+  kill moves the clock back `tier/N` percent *of the time still remaining*;
+  a death moves it forward the whole `tier` percent. So it sets the win
+  rate at which fighting starts paying for itself — ~90.8% at 10, ~85.5% at
+  6, near enough regardless of tier since both sides scale with it. It was
+  10 while the character always struck first; once initiative was rolled
+  that sat too close to the ~96% characters actually manage, and most of
+  the clock gain went to the few deaths (level 60 fell to −1%/day). At 6
+  the sim gives a flat ≈−7%/day from level 5 to 60, which is the figure
+  this game was tuned to. Re-run the sim before touching this, the tiers,
+  or the fight rate.
 - **The rare kills each leave something only they leave**
   (`SIGNATURE_DROPS`, after sizzlorox's `droppedBy` item table). A generic
   find on every kill made a Basilisk worth exactly as much as a rat with
