@@ -1402,6 +1402,25 @@ async def test_status_shows_gold_and_admin_can_adjust_it():
 
 # ── admin ────────────────────────────────────────────────────────────────────
 
+async def test_admin_move_sets_a_character_down_by_place_or_coordinates():
+    cog, guild, _idle = _world()
+    char = _spawn(BOB, travel_to="Denmark", x=1, y=1)
+    ctx = _ctx(guild, ADMIN)
+
+    await cog.cmd_admin_move.callback(cog, ctx, "bob", where="velvragh")
+    assert (char["x"], char["y"]) == rpg.LANDMARKS["Velvragh"] and char["travel_to"] is None
+    assert "Velvragh" in ctx.sent_embeds[-1].description and "market is open" in ctx.sent_embeds[-1].description
+
+    await cog.cmd_admin_move.callback(cog, ctx, "bob", where=f"{WILDS[0]} {WILDS[1]}")
+    assert (char["x"], char["y"]) == WILDS
+    assert "Open country" in ctx.sent_embeds[-1].description and "Plains" in ctx.sent_embeds[-1].description
+
+    for bad in ("atlantis", "900 20", "1 2 3"):
+        await cog.cmd_admin_move.callback(cog, ctx, "bob", where=bad)
+        assert ctx.sent_embeds[-1].title == "❌ Idle Admin", bad
+    assert (char["x"], char["y"]) == WILDS
+
+
 async def test_admin_push_moves_a_clock_both_ways():
     cog, guild, _idle = _world()
     char = _spawn(left=10_000)

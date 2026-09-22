@@ -1349,6 +1349,7 @@ class IdleCog(commands.Cog):
             "`!idle admin hog <name>` — a Hand of God, now\n"
             "`!idle admin push <name> <±time>` — move a clock (`-2h` sooner, `+1d` later)\n"
             "`!idle admin gold <name> <±amount>` — give or take gold\n"
+            "`!idle admin move <name> <place|x y>` — set a character down somewhere\n"
             "`!idle admin remove <name>` — delete a character\n"
             "`!idle admin reset` — wipe this server's game\n"
             "Names, not mentions — part of a name is enough, and one with spaces goes in quotes: `!idle admin push \"Rat King\" -5m`.",
@@ -1396,6 +1397,38 @@ class IdleCog(commands.Cog):
         await persistence.save_idle_character(ctx.guild.id, uid)
         await ctx.send(embed=emb(
             "🛠️ Gold", f"{self._namer(ctx.guild)(uid)} now has **{char['gold']:,}** gold ({delta:+,}).", C_GREEN,
+        ))
+
+    @cmd_admin.command(name="move", aliases=["teleport", "tp"])
+    async def cmd_admin_move(self, ctx: commands.Context, who: str = None, *, where: str = None):
+        usage = "`!idle admin move <name> <place|x y>` — `velvragh`, `trnalvph`, or `120 300`"
+        found = await self._admin_target(ctx, who, usage)
+        if found is None:
+            return
+        uid, char = found
+        parts = (where or "").split()
+        if len(parts) == 2 and all(p.lstrip("-").isdigit() for p in parts):
+            x, y = (int(p) for p in parts)
+            if not (0 <= x <= rpg.MAP_SIZE and 0 <= y <= rpg.MAP_SIZE):
+                await ctx.send(embed=emb("❌ Idle Admin", f"The realm runs 0–{rpg.MAP_SIZE} on both axes.", C_RED))
+                return
+            place = rpg.landmark_at((x, y)) or rpg.biome_at(x, y)
+        else:
+            spot = rpg.match_place(where or "")
+            if spot is None:
+                await ctx.send(embed=emb("❌ Idle Admin", f"Usage: {usage}\n**Places:** {', '.join(rpg.LANDMARKS)}", C_RED))
+                return
+            x, y = rpg.LANDMARKS[spot]
+            place = spot
+        char["x"], char["y"] = x, y
+        char["travel_to"] = None      # they are there; nothing left to walk to
+        await persistence.save_idle_character(ctx.guild.id, uid)
+        market = rpg.market_in_reach(char)
+        await ctx.send(embed=emb(
+            "🛠️ Moved",
+            f"{self._namer(ctx.guild)(uid)} now stands at **[{x}, {y}]** — {place}."
+            + (f" {market}'s market is open here." if market else " Open country: monsters can find them."),
+            C_GREEN,
         ))
 
     @cmd_admin.command(name="push")
