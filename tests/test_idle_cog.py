@@ -88,6 +88,9 @@ def _world(*, presences: bool = False, channel: bool = True):
     bot = SimpleNamespace(intents=SimpleNamespace(presences=presences), get_guild=lambda gid: guild if gid == GID else None)
     cog = IdleCog(bot)
     cog.rng = _Rng()
+    # The standings board would otherwise post on the first tick of every
+    # test; the board's own tests clear this to let it through.
+    cog._board_at[GID] = time.monotonic()
     return cog, guild, idle
 
 
@@ -727,7 +730,7 @@ async def test_gold_earned_by_the_tick_is_a_tenth_larger_in_voice_and_the_feed_s
 
     assert (talker["gold"], lurker["gold"]) == (77, 70)          # level 7 pays 70
     feeds = {t.name.split(" ")[0]: _sent(t) for t in guild.threads}
-    assert "+10% this minute: 7 gold more" in feeds["alice"] and "this minute" not in feeds["bob"]
+    assert "+10% this minute: +7 gold" in feeds["alice"] and "this minute" not in feeds["bob"]
 
 
 async def test_the_afk_channel_and_a_paused_clock_earn_nothing_and_voice_counts_as_being_seen():
@@ -1775,3 +1778,117 @@ async def test_a_hunter_walks_at_its_country_instead_of_wandering():
     rpg.move_players(_state.idle_characters[GID], cog._quest(GID), cog.rng, cog._namer(guild), int(time.time()), 5)
     assert abs(char["x"] - goal[0]) + abs(char["y"] - goal[1]) == was - 10   # five steps, both axes
     assert char["hunt_x"] == goal[0]          # still walking: the coast is further than five steps
+
+
+# ── the standings board ──────────────────────────────────────────────────────
+
+async def test_the_board_is_posted_once_pinned_and_then_edited_in_place(monkeypatch):
+    cog, guild, idle = _world()
+    _spawn(ALICE, level=12, gold=900, mob_kills=40,
+           items={"ring": {"level": 30, "name": "Sturdy Iron Ring"}}, **MARKET)
+    _spawn(BOB, level=7, gold=50, **MARKET)
+    monkeypatch.setattr(rpg, "random_events", lambda *args: [])
+    monkeypatch.setattr(rpg, "mob_encounter", lambda *args, **kw: [])
+    monkeypatch.setattr(rpg, "tick_world", lambda *args: [])
+    posted = []
+
+    async def _send(*args, **kwargs):
+        message = SimpleNamespace(id=4242, edit=AsyncMock(), pin=AsyncMock())
+        posted.append((kwargs.get("embed"), message))
+        return message
+    idle.send = AsyncMock(side_effect=_send)
+    idle.fetch_message = AsyncMock(side_effect=lambda mid: posted[0][1])
+
+    del cog._board_at[GID]                     # let the sweep through
+    await cog.tick()
+
+    assert len(posted) == 1
+    embed = posted[0][0]
+    assert embed.title == "🏔️ The Realm's Standings" and "alice" in embed.description
+    assert [f.name for f in embed.fields] == ["Gold", "Monsters slain", "Item power"]
+    posted[0][1].pin.assert_awaited_once()
+    assert get_guild_cfg(GID)["idle_board_message"] == 4242
+
+    # The next sweep edits that message rather than posting a second one.
+    cog._board_at[GID] -= 10_000
+    await cog.tick()
+    assert len(posted) == 1 and posted[0][1].edit.await_count == 1
+
+
+async def test_the_board_waits_out_its_interval():
+    cog, guild, idle = _world()
+    _spawn(ALICE, level=5, **MARKET)
+    idle.send.reset_mock()
+    await cog._sweep_board(guild)              # inside the interval _world() stamped
+    idle.send.assert_not_called()
+
+
+async def test_a_deleted_board_is_posted_again(monkeypatch):
+    cog, guild, idle = _world()
+    _spawn(ALICE, level=5, **MARKET)
+    get_guild_cfg(GID)["idle_board_message"] = 111
+    idle.fetch_message = AsyncMock(side_effect=discord.NotFound(
+        SimpleNamespace(status=404, reason="gone"), "gone"))
+    made = SimpleNamespace(id=222, edit=AsyncMock(), pin=AsyncMock())
+    idle.send = AsyncMock(return_value=made)
+
+    del cog._board_at[GID]
+    await cog._sweep_board(guild)
+
+    idle.send.assert_awaited_once()
+    assert get_guild_cfg(GID)["idle_board_message"] == 222
+
+
+async def test_the_board_survives_a_realm_with_nobody_in_it():
+    cog, guild, _idle = _world()
+    embed = cog._board_embed(guild)
+    assert "Nobody is adventuring here yet" in embed.description and not embed.fields
+
+
+# ── lore ─────────────────────────────────────────────────────────────────────
+
+async def test_lore_reads_a_place_and_lists_them_all_when_asked_vaguely():
+    cog, guild, _idle = _world()
+
+    ctx = _ctx(guild)
+    await cog.cmd_lore.callback(cog, ctx, where="velvragh")
+    assert ctx.sent_embeds[-1].title == "📜 Velvragh"
+    assert rpg.LORE["Velvragh"] in ctx.sent_embeds[-1].description
+    assert "a market town" in ctx.sent_embeds[-1].description
+
+    ctx = _ctx(guild)
+    await cog.cmd_lore.callback(cog, ctx)
+    assert all(place in ctx.sent_embeds[-1].description for place in rpg.LANDMARKS)
+
+    ctx = _ctx(guild)
+    await cog.cmd_lore.callback(cog, ctx, where="atlantis")
+    assert "Nowhere on the map goes by that name" in ctx.sent_embeds[-1].description
+
+
+async def test_lore_names_the_country_of_a_wild_place():
+    cog, guild, _idle = _world()
+    ctx = _ctx(guild)
+    await cog.cmd_lore.callback(cog, ctx, where="trnalvph")
+    assert ctx.sent_embeds[-1].title == "📜 T'rnalvph"
+    assert "Darklands country" in ctx.sent_embeds[-1].description
+
+
+# ── a world event keeps to its hours through the cog ─────────────────────────
+
+async def test_the_tick_offers_only_the_kinds_the_hour_allows(monkeypatch):
+    cog, guild, _idle = _world()
+    _spawn(ALICE, level=5, left=50_000, **MARKET)
+    monkeypatch.setattr(rpg, "random_events", lambda *args: [])
+    monkeypatch.setattr(rpg, "mob_encounter", lambda *args, **kw: [])
+    seen = {}
+
+    def _spy(rows, rng, now, ticks_per_day, hour=0):
+        seen["hour"] = hour
+        return []
+    monkeypatch.setattr(rpg, "tick_world", _spy)
+    monkeypatch.setattr(_idle_cog, "_ct_now", lambda: SimpleNamespace(hour=21))
+
+    await cog.tick()
+
+    assert seen["hour"] == 21                  # the cog hands the rules a CT hour
+    assert "blood_moon" in rpg.world_kinds_at(21)

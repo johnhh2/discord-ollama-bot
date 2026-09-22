@@ -329,7 +329,7 @@ def test_a_collision_win_also_lifts_five_percent_of_the_losers_purse():
     rng = _Walk([(0, 0), (-1, -1)], random_=0.4, randrange=10 ** 9)
     notes = rpg.move_players(chars, rpg.new_quest(), rng, _name, NOW, 1)
     assert chars[1]["gold"] == 950 and chars[2]["gold"] == 50 + 50
-    assert "plus 50 from P1's purse" in notes[0].text
+    assert "plus 50 lifted from P1's purse" in notes[0].text
 
 
 def test_a_finished_quest_pays_every_quester_by_party_size():
@@ -421,7 +421,7 @@ def test_godsends_and_calamities_are_sometimes_about_gold():
     assert "purse" in rpg.godsend(1, rich, rng, _name, NOW).text and rich[1]["gold"] == 1200
 
     rng = _Luck([0.9, 0.9, 0.1], randint=lambda low, high: high)
-    assert "120 gold gone" in rpg.calamity(1, rich, rng, _name, NOW).text and rich[1]["gold"] == 1080
+    assert "120 gold lost" in rpg.calamity(1, rich, rng, _name, NOW).text and rich[1]["gold"] == 1080
     assert rpg.time_left(rich[1], NOW) == 10_000        # neither touched the clock
 
     broke = _purse(gold=0)
@@ -537,7 +537,7 @@ def test_a_hurt_character_makes_camp_instead_of_fighting():
     char["hp"] = rpg.max_hp(char) * rpg.CAMP_HP_PCT // 100
     assert rpg.needs_rest(char)
     notes = rpg.mob_encounter(1, char, random.Random(1), _name, NOW)
-    assert len(notes) == 1 and "made camp" in notes[0].text and not notes[0].public
+    assert len(notes) == 1 and notes[0].text.startswith("⛺") and not notes[0].public
     assert char["mob_kills"] == 0 and not rpg.needs_rest(char)
 
 
@@ -996,34 +996,34 @@ def _world_rng(kind: str):
 
 def test_a_world_event_is_told_as_an_omen_then_a_beginning_then_an_end():
     rows = []
-    omen = rpg.tick_world(rows, _world_rng("blood_moon"), NOW, 1440)
+    omen = rpg.tick_world(rows, _world_rng("blood_moon"), NOW, 1440, 21)
     assert len(omen) == 1 and omen[0].public and not omen[0].uids
     assert rpg.running_world(rows, NOW) is None          # an omen is not yet weather
     assert rpg.world_effect(rows, NOW) is None
 
     start = NOW + rpg.WORLD_OMEN_SECS
-    began = rpg.tick_world(rows, _world_rng("blood_moon"), start, 1440)
+    began = rpg.tick_world(rows, _world_rng("blood_moon"), start, 1440, 21)
     assert "Blood moon" in began[0].text and rpg.world_effect(rows, start) is not None
-    assert rpg.tick_world(rows, _world_rng("blood_moon"), start + 1, 1440) == []   # nothing new to say
+    assert rpg.tick_world(rows, _world_rng("blood_moon"), start + 1, 1440, 21) == []   # nothing new to say
 
-    ended = rpg.tick_world(rows, _world_rng("blood_moon"), rows[0]["ends_at"], 1440)
+    ended = rpg.tick_world(rows, _world_rng("blood_moon"), rows[0]["ends_at"], 1440, 21)
     assert "pale again" in ended[0].text and rows == []
 
 
 def test_an_event_slept_through_is_still_told_from_both_ends():
     rows = []
-    rpg.tick_world(rows, _world_rng("power_hour"), NOW, 1440)
+    rpg.tick_world(rows, _world_rng("power_hour"), NOW, 1440, 18)
     long_after = rows[0]["ends_at"] + 10_000
-    began = rpg.tick_world(rows, _world_rng("power_hour"), long_after, 1440)
+    began = rpg.tick_world(rows, _world_rng("power_hour"), long_after, 1440, 18)
     assert "Power hour" in began[0].text and rows            # staged first, never ended unannounced
-    ended = rpg.tick_world(rows, _world_rng("power_hour"), long_after, 1440)
+    ended = rpg.tick_world(rows, _world_rng("power_hour"), long_after, 1440, 18)
     assert "back to its own pace" in ended[0].text and rows == []
 
 
 def test_only_one_world_event_runs_at_a_time():
     rows = []
     for _ in range(20):
-        rpg.tick_world(rows, _world_rng("storm"), NOW, 1440)
+        rpg.tick_world(rows, _world_rng("storm"), NOW, 1440, 3)
     assert len([r for r in rows if r["kind"] in rpg.WORLD_EVENTS]) == 1
 
 
@@ -1044,7 +1044,7 @@ def test_a_storm_is_only_weather_where_it_is_raining():
 
 def test_an_invasion_puts_its_kind_anywhere_and_never_a_rare_one():
     rows = []
-    rpg.tick_world(rows, _world_rng("invasion"), NOW, 1440)
+    rpg.tick_world(rows, _world_rng("invasion"), NOW, 1440, 12)
     assert rows[0]["detail"] not in rpg.RARE_KILLS
     effect = (rpg.WORLD_EVENTS["invasion"], "Pirate")   # coast-only, so the biome must give way
     assert rpg.roll_monster(20, "Mountains", _world_rng("x"), effect)[1] == "Pirate"
@@ -1173,3 +1173,153 @@ def test_a_finished_hunt_is_reported_by_the_encounter_that_finished_it(monkeypat
     char["x"], char["y"] = 90, 250
     texts = [n.text for n in rpg.mob_encounter(1, char, _world_rng("x"), _name, NOW)]
     assert any("finished the hunt" in t for t in texts) and not rpg.hunting(char)
+
+
+# ── initiative, and what a fall costs ────────────────────────────────────────
+
+def test_initiative_leans_to_the_stronger_side_without_ever_being_certain():
+    rng = random.Random(4)
+    even = sum(rpg.strikes_first(100, 100, rng) for _ in range(2000))
+    strong = sum(rpg.strikes_first(300, 100, rng) for _ in range(2000))
+    weak = sum(rpg.strikes_first(100, 300, rng) for _ in range(2000))
+    assert 900 < even < 1100                       # a match is a coin toss
+    assert 1400 < strong < 1600 and 400 < weak < 600
+    # Scale-free: the share is what counts, not the gap.
+    assert abs(sum(rpg.strikes_first(3, 1, rng) for _ in range(2000)) - strong) < 150
+
+
+def test_a_monster_can_land_the_first_blow(monkeypatch):
+    """The character used to swing first every round unconditionally, so
+    anything killed by an opening blow never swung back at all."""
+    monkeypatch.setattr(rpg, "strikes_first", lambda mine, theirs, rng: False)
+    char = _wanderer(level=20, gear=60)
+    char["hp"] = 2                                 # one blow from anything is fatal
+    _rounds, killed, _marks = rpg.fight_monster(char, 10_000, 1, random.Random(1))
+    assert not killed and rpg.hp_of(char) <= 0     # it got there first
+
+
+def test_being_struck_down_costs_the_bag_and_says_so_in_plain_words(monkeypatch):
+    monkeypatch.setattr(rpg, "roll_monster", lambda level, biome, rng, effect=None: ("Normal", "Rat", 50.0, 1, 3))
+    def _fatal(char, their_power, their_hp, rng):
+        char["hp"] = 0
+        return 2, False, "··"
+    monkeypatch.setattr(rpg, "fight_monster", _fatal)
+    char = _wanderer(level=20, gear=60, gold=1200)
+    char["loot"] = [{"slot": "ring", "level": 10, "name": "Crude Iron Ring"},
+                    {"slot": "boots", "level": 5, "name": "Plain Bone Boots"}]
+    worth = rpg.loot_value(char)
+
+    text = " ".join(n.text for n in rpg.mob_encounter(1, char, random.Random(2), _name, NOW))
+
+    assert char["loot"] == [] and char["mob_deaths"] == 1
+    assert "2 pieces in their bag lost" in text and f"(worth {worth:,} gold)" in text
+    # Every number on the line says which way it went.
+    assert "added to their clock" in text and "gold lost" in text
+    assert "and 23 gold;" not in text
+
+
+def test_a_kill_line_marks_its_gold_as_a_gain(monkeypatch):
+    monkeypatch.setattr(rpg, "fight_monster", lambda c, p, hp, rng: (1, True, ""))
+    char = _wanderer(level=20, gear=400)
+    text = rpg.mob_encounter(1, char, random.Random(5), _name, NOW)[0].text
+    assert "+" in text.split("gold")[0].split(".")[-1]
+
+
+# ── events keep hours ────────────────────────────────────────────────────────
+
+def test_each_kind_of_world_event_keeps_its_own_hours():
+    assert rpg.world_kinds_at(21) == sorted(["blood_moon", "power_hour", "storm"])
+    assert rpg.world_kinds_at(12) == sorted(["invasion", "storm"])
+    assert rpg.world_kinds_at(3) == ["storm"]          # the small hours: only weather
+    for hour in range(24):
+        assert rpg.world_kinds_at(hour), hour          # something is always possible
+
+
+def test_a_blood_moon_only_rises_at_night():
+    day, night = [], []
+    for hour, into in ((12, day), (21, night)):
+        for seed in range(30):
+            rows = []
+            rpg.tick_world(rows, _world_rng("blood_moon"), NOW, 1, hour)
+            into.append(rows[0]["kind"])
+    assert "blood_moon" not in day and "blood_moon" in night
+
+
+# ── signature drops ──────────────────────────────────────────────────────────
+
+def test_only_the_rare_kills_leave_a_trophy_and_it_lands_or_is_bagged():
+    rng = random.Random(1)
+    char = _wanderer(level=40, gear=5)
+    for _ in range(50):
+        note = rpg.signature_drop(1, char, "Dragon", rng, _name)
+        if note is not None:
+            break
+    assert note is not None and "Wingcase Shield" in note.text and note.public
+    assert char["items"]["shield"]["name"] == "Wingcase Shield"
+
+    # A second one, beneath what is already worn, goes in the bag instead.
+    char["items"]["shield"] = {"level": 10 ** 4, "name": None}
+    for _ in range(50):
+        note = rpg.signature_drop(1, char, "Dragon", rng, _name)
+        if note is not None and "into the bag" in note.text:
+            break
+    assert char["loot"] and char["loot"][-1]["name"] == "Wingcase Shield"
+
+
+def test_an_ordinary_monster_leaves_no_trophy():
+    rng = random.Random(1)
+    char = _wanderer(level=40, gear=5)
+    assert all(rpg.signature_drop(1, char, "Rat", rng, _name) is None for _ in range(200))
+
+
+def test_every_trophy_belongs_to_a_rare_kill_and_a_real_slot():
+    for kind, (slot, title, low, high) in rpg.SIGNATURE_DROPS.items():
+        assert kind in rpg.RARE_KILLS and slot in rpg.ITEM_SLOTS and 0 < low < high
+        assert title in rpg.SIGNATURE_NAMES
+
+
+# ── lore and flavour ─────────────────────────────────────────────────────────
+
+def test_every_place_on_the_map_has_lore_and_it_is_not_boilerplate():
+    assert set(rpg.LORE) == set(rpg.LANDMARKS)
+    for place, text in rpg.LORE.items():
+        assert len(text) > 120 and text.strip() == text, place
+    assert len(set(rpg.LORE.values())) == len(rpg.LORE)     # no two places share a paragraph
+
+
+def test_camping_does_not_say_the_same_thing_every_time():
+    char = _wanderer(level=20, gear=60)
+    seen = set()
+    for seed in range(60):
+        char["hp"] = 1
+        note = rpg.mob_encounter(1, char, random.Random(seed), _name, NOW)[0]
+        assert note.text.startswith("⛺")
+        seen.add(note.text.split(". ")[0])
+    assert len(seen) >= 5
+
+
+# ── the standings board ──────────────────────────────────────────────────────
+
+def test_a_board_column_ranks_by_its_own_number_and_skips_the_scoreless():
+    chars = {
+        1: _char(10, gold=500, mob_kills=3),
+        2: _char(10, gold=900, mob_kills=0),
+        3: _char(10, gold=0, mob_kills=9),
+    }
+    _heading, read_gold, show = rpg.BOARD_COLUMNS[0]
+    assert rpg.board_ranking(chars, read_gold) == [(2, 900), (1, 500)]   # uid 3 has none
+    assert show(900) == "900"
+    _heading, read_kills, _show = rpg.BOARD_COLUMNS[1]
+    assert rpg.board_ranking(chars, read_kills) == [(3, 9), (1, 3)]
+
+
+def test_a_board_tie_is_broken_on_the_lower_id_so_it_stops_shuffling():
+    chars = {7: _char(10, gold=100), 3: _char(10, gold=100)}
+    _heading, read, _show = rpg.BOARD_COLUMNS[0]
+    assert rpg.board_ranking(chars, read) == [(3, 100), (7, 100)]
+
+
+def test_the_table_column_shows_which_way_a_gambler_is_up():
+    _heading, read, show = rpg.BOARD_COLUMNS[4]
+    assert show(read(_char(10, gamble_won=500, gamble_lost=200))) == "+300"
+    assert show(read(_char(10, gamble_won=100, gamble_lost=900))) == "-800"

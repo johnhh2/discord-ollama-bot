@@ -903,9 +903,14 @@ tables from migrations 0070–0077.
   (`WORLD_EVENT_PER_DAY`) a guild gets one world event — a blood moon,
   an invasion, a storm over one biome, a power hour — and never two: they
   are rows in `state.idle_guild_events`, and `world_row` is defined to find
-  the one. Each is told twice, an omen `WORLD_OMEN_SECS` ahead and again
-  when it lands, both `Note`s with **no uids**: the whole realm's news
-  belongs in the channel and in nobody's feed. `tick_world` only speaks
+  the one. **Each keeps its own hours** (`World.hours`, CT, after
+  sizzlorox's cron table): a blood moon only rises at night, a horde arrives
+  around midday, a storm keeps no hours at all — which is also what
+  guarantees every hour has something possible. The hour picks the *kind*,
+  never whether anything happens, so the rate stays `WORLD_EVENT_PER_DAY`
+  and only the mix moves with the clock. Each is told twice, an omen
+  `WORLD_OMEN_SECS` ahead and again when it lands, both `Note`s with **no
+  uids**: the whole realm's news belongs in the channel and in nobody's feed. `tick_world` only speaks
   when it changed something, which is also the cog's signal to save. A
   world event reaches the rules through exactly two doors — `world_here`
   (which is what makes a storm weather only where it is raining) and the
@@ -932,12 +937,44 @@ tables from migrations 0070–0077.
   inside one would park it where nothing spawns. This is the only errand
   that works below `QUEST_MIN_LEVEL` or alone, so don't gate it like the
   party journeys.
-- **The bag.** A find worse than what's worn goes into `loot` (capped at
-  `LOOT_MAX`, worst spilled first) instead of being thrown away, and the
-  town errand empties it for gold. Selling runs **whether or not
-  `auto_trade` is on** — that switch is about spending the player's gold,
-  and a bag carried past every market for good is just a find event
-  quietly binned.
+- **The bag, and what it costs to carry.** A find worse than what's worn
+  goes into `loot` (capped at `LOOT_MAX`, worst spilled first) instead of
+  being thrown away, and the town errand empties it for gold. Selling runs
+  **whether or not `auto_trade` is on** — that switch is about spending the
+  player's gold, and a bag carried past every market for good is just a
+  find event quietly binned. Being struck down **loses the whole bag**
+  (sizzlorox empties the entire inventory on a death): it is the only thing
+  at stake on the walk to a market, and without it the bag is free money
+  that merely takes a while to arrive.
+- **Who swings first is rolled.** `strikes_first` leans to the stronger
+  side by the share of the two powers — scale-free, because item power runs
+  0 to several hundred while a flat jitter would mean nothing at one end
+  and everything at the other. Before it, the character swung first every
+  round unconditionally and anything killed by an opening blow never swung
+  back. It is not free: re-simulating gave −1% won and +30% deaths at level
+  40+, and roughly halved what fighting takes off a high-level clock,
+  because a death costs `tier` percent while a kill returns
+  `tier/MOB_WIN_CLOCK_DIVISOR`. Re-run the sim before touching either.
+- **The rare kills each leave something only they leave**
+  (`SIGNATURE_DROPS`, after sizzlorox's `droppedBy` item table). A generic
+  find on every kill made a Basilisk worth exactly as much as a rat with
+  better odds. A trophy beneath what's worn goes in the bag like any find.
+- **The standings board** is one message in the idle channel, edited in
+  place on `BOARD_INTERVAL` and pinned once, its id in the guild cfg
+  (`idle_board_message`). Never repost it — a channel filling with stale
+  ladders is worse than no ladder. Columns live in `BOARD_COLUMNS`; a
+  column nobody has scored in is left out rather than printed as noughts,
+  and ties break on the lower user id so the board stops shuffling between
+  sweeps. `_world()` in the tests stamps `_board_at` so it doesn't fire in
+  every unrelated test.
+- **Say which way the number went.** Gold that arrives reads `+N gold`,
+  gold that leaves reads `N gold lost`; a line that tallies several costs
+  goes through `_and_list`. "22s added to their clock and 23 gold" is the
+  bug this exists to prevent — it reads as a reward.
+- **Lore** (`LORE`, one paragraph per `LANDMARKS` key, asserted complete at
+  module load) is read by `!idle lore` and nothing else. Keep the two
+  dicts in step; a new landmark needs a paragraph or the assert fails at
+  import.
 - **Titles** are earned once by passing a mark in `TITLES` and then kept on
   the character. Do not recompute them from the stats: the stats behind
   them fall again, and a purse spent must not cost somebody Gold Hoarder.
@@ -951,8 +988,10 @@ tables from migrations 0070–0077.
 - **`!idle` is `everyone`, `!idle admin …` is `server_admin`** — two JSON
   entries, resolved by the longest-prefix walk.
 - **Flavour text is ours.** The mechanics follow the classic IRC IdleRPG
-  and sizzlorox's fork; their item names and event lines are not copied,
-  and shouldn't be.
+  and sizzlorox's fork; their item names, location lore and event lines are
+  not copied, and shouldn't be. Where a line repeats often — camping most
+  of all, several times a day for months — it wants a tuple of variants
+  (`_CAMPS`, `_GODSENDS`, `_CALAMITIES`), not one fixed string.
 
 Coverage: [tests/test_idlerpg.py](tests/test_idlerpg.py) (rules) and
 [tests/test_idle_cog.py](tests/test_idle_cog.py).

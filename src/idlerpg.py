@@ -224,6 +224,21 @@ _AMBUSHES = (
     "argued with a badger and lost",
     "was thrown by a horse with opinions",
 )
+# Camping is the single most repeated line in the game — a hurt character
+# does it several times a day, for months. sizzlorox/Idle-RPG-Bot keeps about
+# fifteen of these for exactly that reason; one fixed string wears out.
+_CAMPS = (
+    "was in no state to fight and made camp",
+    "found an abandoned hut with half a roof and took it",
+    "built a small fire and sat with their back to a rock",
+    "spent the evening picking gravel out of a bad cut",
+    "traded a story to a shepherd for a night in the fold",
+    "slept badly under a hedge and called it rest",
+    "boiled something nameless and ate it anyway",
+    "sat out a downpour under a ledge, counting the thunder",
+    "sharpened everything they owned, twice, and felt better for it",
+    "dug in for the night and let the wilds get on without them",
+)
 _GOOD_RUNS = (
     "cannot put a foot wrong today",
     "has the road, the wind and the weather all going the same way",
@@ -257,6 +272,59 @@ LANDMARKS = {
     "T'rnalvph": (470, 400),
 }
 _LANDMARK_NAMES = {point: label for label, point in LANDMARKS.items()}
+
+# A paragraph behind each name, after sizzlorox/Idle-RPG-Bot's per-location
+# lore — the words are ours. Nothing reads it but `!idle lore`; it exists
+# because nine evocative names with nothing behind them is a waste of nine
+# evocative names.
+LORE = {
+    "Denmark": (
+        "Not the one you are thinking of, and the mapmakers have long since stopped apologising. "
+        "A cold bright coast of fishing towns that all keep the same three quarrels going. The "
+        "market is the oldest in the realm and prices everything in salt cod first, gold second."
+    ),
+    "the Mountains of Qwok": (
+        "A wall of grey teeth standing between the low country and the land that shares its name. "
+        "Nothing grows above the third ridge. Trolls winter in the passes, and the surveyors who "
+        "named the peaks were never heard from again, so the peaks are still numbered."
+    ),
+    "the land of Qwok": (
+        "Broad farmland that has been invaded eleven times and has kept its own accent through all "
+        "of it. The people are unhurried in a way outsiders find insulting. They will sell you "
+        "anything, and they will tell you exactly what they think of the price you offered."
+    ),
+    "Jow Botzi territory": (
+        "A wide grass plain held by a people who keep no capital and move their market four times a "
+        "year. Ask where Jow Botzi is and you will be told, correctly, that you are standing in it. "
+        "Their horses are the best in the realm and are not for sale."
+    ),
+    "Velvragh": (
+        "A city grown into a forest rather than cleared out of one, so the streets bend around trunks "
+        "older than the walls. Its elders meet in a hall with no roof. Strangers are welcome, watched, "
+        "and charged slightly more."
+    ),
+    "the Secret Passage to Bharash": (
+        "Secret in the way a thing can be when everyone knows it and nobody will say it aloud. A cave "
+        "mouth in the western hills, a week of dark, and Bharash at the other end — assuming the far "
+        "end is still where it was. Something down there moves the markers."
+    ),
+    "the Great Shahlil mountains": (
+        "Older and meaner than Qwok's, and far emptier. The Shahlil have no passes worth the name, "
+        "only routes that have not killed anyone recently. Every cairn on the way up was built by "
+        "someone who was coming back down and did not."
+    ),
+    "the Towers of Ankh-Allor": (
+        "Nine towers on a haunted plain, built by an order that left no record of what the towers "
+        "were for. Eight are empty. The ninth is not, and the scholars who go to settle the question "
+        "keep sending back notes that stop mid-sentence."
+    ),
+    "T'rnalvph": (
+        "The dark country in the far corner, which has had that name longer than anyone has had a "
+        "language to say it in. Maps of it disagree with each other and with themselves. What comes "
+        "out of T'rnalvph is worth a great deal, and is never quite what went in."
+    ),
+}
+assert set(LORE) == set(LANDMARKS), sorted(set(LANDMARKS) ^ set(LORE))
 
 # The settlements among them have markets. `!idle shop` works within
 # MARKET_RADIUS of one; walking into its centre (TOWN_CORE_RADIUS) makes the
@@ -487,6 +555,30 @@ def running(chars: dict) -> list:
     return [uid for uid, c in chars.items() if not is_paused(c)]
 
 
+# The standings board's columns, after sizzlorox/Idle-RPG-Bot's nine
+# leaderboards. Only totals that mean something on their own belong here —
+# a column nobody can move on purpose is just noise on a pinned message.
+# (heading, how to read it off a character, how to print the number)
+BOARD_COLUMNS = (
+    ("Gold", lambda c: c["gold"], lambda v: f"{v:,}"),
+    ("Monsters slain", lambda c: c.get("mob_kills", 0), lambda v: f"{v:,}"),
+    ("Hunts finished", lambda c: c.get("hunts_done", 0), lambda v: f"{v:,}"),
+    ("Item power", item_sum, lambda v: f"{v:,}"),
+    ("At the tables", lambda c: c.get("gamble_won", 0) - c.get("gamble_lost", 0),
+     lambda v: f"{'+' if v > 0 else ''}{v:,}"),
+)
+BOARD_SIZE = 5
+
+
+def board_ranking(chars: dict, read, limit: int = BOARD_SIZE) -> list:
+    """The top `limit` (uid, value) pairs by `read`, ties broken on the lower
+    user id so the board doesn't shuffle between sweeps. Zeroes are left out:
+    a column nobody has scored in prints as empty rather than as a list of
+    noughts."""
+    scored = [(uid, read(char)) for uid, char in chars.items() if read(char)]
+    return sorted(scored, key=lambda pair: (-pair[1], pair[0]))[:limit]
+
+
 # ── alignment ────────────────────────────────────────────────────────────────
 
 def alignment_label(char: dict) -> str:
@@ -617,6 +709,14 @@ def _item_label(slot: str, item: dict) -> str:
 def _item_short(slot: str, item: dict) -> str:
     """The name alone, where the line already quotes the level."""
     return item.get("name") or f"{slot}"
+
+
+def _and_list(parts: list) -> str:
+    """"a", "a and b", "a, b and c" — for lines that tally up what something
+    cost, where a bare comma would read as another sentence."""
+    if len(parts) <= 2:
+        return " and ".join(parts)
+    return f"{', '.join(parts[:-1])} and {parts[-1]}"
 
 
 def _steal(thief: dict, victim: dict, rng) -> "str | None":
@@ -771,7 +871,7 @@ def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int, pace: Pa
     won = -scale(me, now, -win_pct * factor)
     prize = GOLD_HOUSE_WIN if opp is None else GOLD_PER_WIN * max(opp["level"], 1)
     me["gold"] += prize
-    notes = [Note(involved, f"{head} and {_how(factor)}won! {format_duration(won)} off their clock, and {prize:,} gold.", news)]
+    notes = [Note(involved, f"{head} and {_how(factor)}won! {format_duration(won)} off their clock, and +{prize:,} gold.", news)]
     if opp is None:
         return notes
     if not rng.randrange(CRIT_ODDS[me["moral"]]):
@@ -925,7 +1025,7 @@ def godsend(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
     elif rng.random() < GOLD_EVENT_CHANCE:
         purse = GOLD_GODSEND_PER_LEVEL * max(char["level"], 1)
         char["gold"] += purse
-        return Note((uid,), f"🌟 {name(uid)} found a purse somebody dropped in a hurry: {purse:,} gold.")
+        return Note((uid,), f"🌟 {name(uid)} found a purse somebody dropped in a hurry: +{purse:,} gold.")
     moved = -scale(char, now, -rng.randint(5, 12))
     return Note((uid,), f"🌟 {name(uid)} {rng.choice(_GODSENDS)}. {format_duration(moved)} off their clock.")
 
@@ -951,7 +1051,7 @@ def calamity(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
     elif char["gold"] and rng.random() < GOLD_EVENT_CHANCE:
         lost = max(1, char["gold"] * rng.randint(5, 10) // 100)
         char["gold"] -= lost
-        return Note((uid,), f"🌧️ {name(uid)} was pickpocketed at a crossroads fair: {lost:,} gold gone.")
+        return Note((uid,), f"🌧️ {name(uid)} was pickpocketed at a crossroads fair: {lost:,} gold lost.")
     moved = scale(char, now, rng.randint(5, 12))
     return Note((uid,), f"🌧️ {name(uid)} {rng.choice(_CALAMITIES)}. {format_duration(moved)} added to their clock.")
 
@@ -1030,6 +1130,7 @@ class World(NamedTuple):
     omen: str
     begins: str
     ends: str
+    hours: tuple = ()         # the CT hours its omen may appear in; () is any
     boost_pct: int = 0        # …to everyone's clock and gold, while it runs
     mob_power_pct: int = 0    # monsters are this much stronger…
     mob_gold_pct: int = 0     # …and worth this much more
@@ -1037,18 +1138,25 @@ class World(NamedTuple):
     invasion: bool = False    # `detail` names a kind that then spawns anywhere
 
 
+# The hours are sizzlorox's cron table, which is the whole point of it: their
+# blood moon is rolled at 21:00 and nothing else, their invasion at 13:00,
+# their power hour warned at 13:30. An event that can only begin when it makes
+# sense reads as a world with a clock rather than a shuffled bag. Hours are CT
+# (the bot's day boundary — see CLAUDE.md: Timezones), and the storm keeps
+# none: weather happens whenever it likes, which also guarantees that every
+# hour has at least one thing that could occur.
 WORLD_EVENTS = {
     "blood_moon": World(
         omen="🌑 The moon is coming up wrong tonight — low, and the colour of a bruise.",
         begins="🔴 **Blood moon.** Everything out in the dark is stronger tonight, and carrying more.",
         ends="🌒 The moon has gone pale again, and the night is only a night.",
-        mob_power_pct=35, mob_gold_pct=125,
+        hours=(20, 21, 22, 23), mob_power_pct=35, mob_gold_pct=125,
     ),
     "invasion": World(
         omen="🚩 Riders keep arriving from the border with the same story: {detail}s, more than anyone has counted.",
         begins="⚔️ **The {detail}s are everywhere.** They have come down out of their own country and they are not going back to it.",
         ends="🏳️ The last of the {detail}s have been driven off. The roads are ordinary again.",
-        mob_gold_pct=60, invasion=True,
+        hours=(10, 11, 12, 13, 14), mob_gold_pct=60, invasion=True,
     ),
     "storm": World(
         omen="🌥️ The sky over the {detail} has gone the colour of an old coin.",
@@ -1060,7 +1168,7 @@ WORLD_EVENTS = {
         omen="✨ Something is building. The air has the feeling it gets before lightning.",
         begins="⚡ **Power hour.** Everything the realm has to give, it gives twice as fast.",
         ends="💤 The charge has gone out of the air, and the realm is back to its own pace.",
-        boost_pct=100,
+        hours=(16, 17, 18, 19, 20, 21), boost_pct=100,
     ),
 }
 
@@ -1073,8 +1181,13 @@ def new_world_row(kind: str, detail: str, now: int, rng) -> dict:
     }
 
 
-def _roll_world_kind(rng) -> "tuple[str, str]":
-    kind = rng.choice(sorted(WORLD_EVENTS))
+def world_kinds_at(hour: int) -> list:
+    """The kinds whose hour has come. Never empty — the storm keeps no hours."""
+    return sorted(k for k, w in WORLD_EVENTS.items() if not w.hours or hour in w.hours)
+
+
+def _roll_world_kind(rng, hour: int) -> "tuple[str, str]":
+    kind = rng.choice(world_kinds_at(hour))
     if kind == "invasion":
         # Never one of the rare kills: a realm briefly full of dragons would
         # be the best week the game ever had, and every week after a letdown.
@@ -1146,11 +1259,14 @@ def boost_pct(char: dict, guild_pct: int, now: int) -> int:
     return min(guild_pct + own, BOOST_MAX_PCT)
 
 
-def tick_world(rows: list, rng, now: int, ticks_per_day: int) -> "list[Note]":
+def tick_world(rows: list, rng, now: int, ticks_per_day: int, hour: int = 0) -> "list[Note]":
     """A guild's world clock for one tick: retire what is over, announce what
-    has arrived, and now and then set something new coming. Mutates `rows`,
-    and every change it makes produces a note — so a non-empty return is also
-    the signal to save."""
+    has arrived, and now and then set something new coming. `hour` is the
+    hour in CT, which decides *which* kinds are on the table (see
+    WORLD_EVENTS) — not whether anything happens, so the rate stays
+    WORLD_EVENT_PER_DAY and only the mix moves with the clock. Mutates
+    `rows`, and every change it makes produces a note — so a non-empty return
+    is also the signal to save."""
     notes = []
     for row in [r for r in rows if r["kind"] == "bless" and r["ends_at"] <= now]:
         rows.remove(row)
@@ -1159,7 +1275,7 @@ def tick_world(rows: list, rng, now: int, ticks_per_day: int) -> "list[Note]":
     row = world_row(rows)
     if row is None:
         if rng.random() < WORLD_EVENT_PER_DAY / ticks_per_day:
-            kind, detail = _roll_world_kind(rng)
+            kind, detail = _roll_world_kind(rng, hour)
             rows.append(new_world_row(kind, detail, now, rng))
             notes.append(Note((), WORLD_EVENTS[kind].omen.format(detail=detail), True))
         return notes
@@ -1291,7 +1407,7 @@ def auto_trade(uid: int, char: dict, rng, name: NameFn, now: int) -> "Note | Non
     done, spent = [], 0
     pieces, paid = sell_loot(char)
     if pieces:
-        done.append(f"Sold {pieces} piece{'' if pieces == 1 else 's'} out of their bag for {paid:,} gold.")
+        done.append(f"Sold {pieces} piece{'' if pieces == 1 else 's'} out of their bag for +{paid:,} gold.")
     if char.get("auto_trade", True):
         budget = char["gold"] * AUTO_TRADE_BUDGET_PCT // 100
         price = shop_prices(char)["find"]
@@ -1394,6 +1510,19 @@ def monster_hp(char: dict, tier: int, strength: float) -> int:
     return max(1, round(max_hp(char) * bulk))
 
 
+def strikes_first(my_power: int, their_power: int, rng) -> bool:
+    """Who gets the round's first blow, leaning to the stronger side.
+    sizzlorox/Idle-RPG-Bot rolls initiative from dexterity plus jitter; there
+    is no dexterity here, and item power runs from 0 to several hundred, so a
+    flat jitter would mean nothing at one end and everything at the other —
+    the share of the two powers is the same idea at every scale.
+
+    It matters more than it looks: the character used to swing first every
+    round unconditionally, which meant anything killed by an opening blow
+    never swung back at all."""
+    return rng.random() < my_power / max(my_power + their_power, 1)
+
+
 def fight_monster(char: dict, their_power: int, their_hp: int, rng) -> "tuple[int, bool, str]":
     """Up to MOB_MAX_ROUNDS of blows both ways. Returns (rounds, the monster
     fell, a compact record of the exchange). The character's own hit points
@@ -1401,16 +1530,20 @@ def fight_monster(char: dict, their_power: int, their_hp: int, rng) -> "tuple[in
     my_power, my_max = max(battle_sum(char), 1), max_hp(char)
     marks = []
     for rounds in range(1, MOB_MAX_ROUNDS + 1):
-        dealt, mark = _blow(my_power, their_power, my_max, rng)
-        their_hp -= dealt
-        marks.append(mark)
-        if their_hp <= 0:
-            return rounds, True, "".join(marks)
-        taken, mark = _blow(their_power, my_power, my_max, rng)
-        char["hp"] = hp_of(char) - taken
-        marks.append(mark.lower())
-        if char["hp"] <= 0:
-            return rounds, False, "".join(marks)
+        mine_first = strikes_first(my_power, their_power, rng)
+        for mine in (mine_first, not mine_first):
+            if mine:
+                dealt, mark = _blow(my_power, their_power, my_max, rng)
+                their_hp -= dealt
+                marks.append(mark)
+                if their_hp <= 0:
+                    return rounds, True, "".join(marks)
+            else:
+                taken, mark = _blow(their_power, my_power, my_max, rng)
+                char["hp"] = hp_of(char) - taken
+                marks.append(mark.lower())
+                if char["hp"] <= 0:
+                    return rounds, False, "".join(marks)
     return MOB_MAX_ROUNDS, False, "".join(marks)
 
 # ── monsters ─────────────────────────────────────────────────────────────────
@@ -1483,6 +1616,20 @@ MOB_TYPES = (
 # Killing one of these is channel news; every other fight stays in the feed.
 RARE_KILLS = frozenset({"Dragon", "Basilisk", "Mountain Troll", "Cave Troll", "Golem"})
 
+# …and each leaves something only it leaves, after sizzlorox/Idle-RPG-Bot's
+# `droppedBy` item table. A generic find on every kill made a Basilisk worth
+# exactly as much as a rat with better odds. (kind → slot, name, level range)
+SIGNATURE_DROPS = {
+    "Dragon": ("shield", "Wingcase Shield", 120, 200),
+    "Basilisk": ("amulet", "Unblinking Eye", 130, 210),
+    "Mountain Troll": ("gloves", "Ridgebreaker Gauntlets", 90, 160),
+    "Cave Troll": ("helm", "Lantern-Jaw Helm", 90, 160),
+    "Golem": ("tunic", "Coat of Fitted Stone", 100, 175),
+}
+SIGNATURE_DROP_CHANCE = 0.35   # of a kill, on top of the ordinary drop roll
+SIGNATURE_NAMES = frozenset(name for _slot, name, _lo, _hi in SIGNATURE_DROPS.values())
+assert not set(SIGNATURE_DROPS) - RARE_KILLS, sorted(set(SIGNATURE_DROPS) - RARE_KILLS)
+
 MOB_GROUP_CHANCE = 0.25
 MOB_EASY_LEVEL = 5             # at or below it, monsters fight at half strength
 MOB_DROP_CHANCE = 0.15         # a won fight turns up an item
@@ -1537,6 +1684,24 @@ def mob_power(char: dict, strength: float, extra_pct: int = 0) -> int:
     base = max(battle_sum(char), char["level"] * 2, 4)
     power = base / 1.2 * (0.6 + 0.4 * strength) * (100 + extra_pct) / 100
     return max(1, int(power * (0.5 if char["level"] <= MOB_EASY_LEVEL else 1)))
+
+
+def signature_drop(uid: int, char: dict, kind: str, rng, name: NameFn) -> "Note | None":
+    """What a rare kill leaves behind. Worse than what's worn goes in the bag
+    like any other find — the trophy is still a trophy, and it sells."""
+    spoil = SIGNATURE_DROPS.get(kind)
+    if spoil is None or rng.random() >= SIGNATURE_DROP_CHANCE:
+        return None
+    slot, title, low, high = spoil
+    found = {"level": rng.randint(low, high), "name": title}
+    held = char["items"].get(slot, {}).get("level", 0)
+    if found["level"] > held:
+        char["items"][slot] = found
+        return Note((uid,), f"🏆 The {kind} left the **{title}** — a level {found['level']} {slot} "
+                            f"for {name(uid)} (was level {held}).", True)
+    spilled = bag_item(char, slot, found)
+    return Note((uid,), f"🏆 The {kind} left the **{title}** (level {found['level']}), but "
+                        f"{name(uid)}'s level {held} {slot} is better — into the bag.{spilled}")
 
 
 def _to_town_outskirts(char: dict) -> str:
@@ -1645,7 +1810,7 @@ def finish_hunt(uid: int, char: dict, name: NameFn, now: int) -> Note:
     saved = -scale(char, now, -HUNT_REWARD_PCT)
     clear_hunt(char, now)
     return Note((uid,), f"📜 {name(uid)} has finished the hunt — {count} {beast}s, as asked. "
-                        f"{format_duration(saved)} off their clock, and {purse:,} gold.")
+                        f"{format_duration(saved)} off their clock, and +{purse:,} gold.")
 
 
 def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None) -> "list[Note]":
@@ -1656,7 +1821,7 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None
         return []   # towns are safe ground
     if needs_rest(char):
         got = heal(char, max(1, max_hp(char) * CAMP_HEAL_PCT // 100))
-        return [Note((uid,), f"⛺ {name(uid)} was in no state to fight and made camp. +{got} HP ({hp_of(char)}/{max_hp(char)}).")]
+        return [Note((uid,), f"⛺ {name(uid)} {rng.choice(_CAMPS)}. +{got} HP ({hp_of(char)}/{max_hp(char)}).")]
 
     biome = biome_at(char["x"], char["y"])
     rules = world_here(effect, biome)
@@ -1667,7 +1832,7 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None
     # changes nothing about what walks up.
     quarry = char["hunt_mob"] if hunting(char) and biome in hunt_biomes(char) else None
 
-    slain, gold, saved, rare, fell_to, broke_off = [], 0, 0, False, None, None
+    slain, gold, saved, rare, fell_to, broke_off, trophies = [], 0, 0, False, None, None, []
     for _ in range(count):
         if quarry is not None and rng.random() < HUNT_QUARRY_CHANCE:
             prefix, beast, strength, gold_mult, tier = beast_named(quarry, rng)
@@ -1689,6 +1854,9 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None
         gold += max(1, int(tier * gold_mult * max(char["level"], 1) * MOB_GOLD_PER_LEVEL * bonus))
         saved += -scale(char, now, -tier / MOB_WIN_CLOCK_DIVISOR)
         rare = rare or beast in RARE_KILLS
+        trophy = signature_drop(uid, char, beast, rng, name)
+        if trophy is not None:
+            trophies.append(trophy)
         if hunting(char) and beast == char["hunt_mob"]:
             char["hunt_killed"] += 1   # wherever it was met, not only in the country it was pointed at
 
@@ -1699,10 +1867,11 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None
     notes = []
     if slain:
         clock = f" {format_duration(saved)} off their clock," if saved else ""
-        text = f"🗡️ {where} {name(uid)} killed a {', then a '.join(slain)}.{clock} {gold:,} gold. {body}."
+        text = f"🗡️ {where} {name(uid)} killed a {', then a '.join(slain)}.{clock} +{gold:,} gold. {body}."
         if broke_off:
             text += f" Then {broke_off}."
         notes.append(Note((uid,), text, rare))
+        notes += trophies
         if fell_to is None and rng.random() < MOB_DROP_CHANCE:
             notes.append(find_item(uid, char, rng, name))
     elif broke_off:
@@ -1720,13 +1889,23 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None
             item = char["items"][slot]
             item["level"] = max(1, item["level"] * 9 // 10)
             dented = f" Their {_item_label(slot, item)} was dented in the fall."
+        # Whatever was being carried to market is lost with the fall —
+        # sizzlorox empties the whole inventory on a death. It is the only
+        # thing at stake on the walk to a town, and without it the bag is
+        # free money that merely takes a while to arrive.
+        bagged, bag_worth = len(char.get("loot") or []), loot_value(char)
+        char["loot"] = []
         town = _to_town_outskirts(char)
         char["hp"] = max_hp(char)   # patched up on the way, as sizzlorox does
-        purse = f" and {lost_gold:,} gold" if lost_gold else ""
+        cost = [f"{format_duration(lost_time)} added to their clock"]
+        if lost_gold:
+            cost.append(f"{lost_gold:,} gold lost")
+        if bagged:
+            cost.append(f"{bagged} piece{'' if bagged == 1 else 's'} in their bag lost (worth {bag_worth:,} gold)")
         notes.append(Note(
             (uid,),
-            f"☠️ {where} A {mob} struck {name(uid)} down in {rounds} rounds. {format_duration(lost_time)} added to their clock"
-            f"{purse}; they were carried to the outskirts of {town} and patched up.{dented}",
+            f"☠️ {where} A {mob} struck {name(uid)} down in {rounds} rounds. "
+            f"{_and_list(cost)}; they were carried to the outskirts of {town} and patched up.{dented}",
         ))
     if hunting(char) and char["hunt_killed"] >= char["hunt_count"]:
         notes.append(finish_hunt(uid, char, name, now))
@@ -1874,8 +2053,8 @@ def collision_fight(uid: int, opp_uid: int, chars: dict, rng, name: NameFn, now:
     opp["gold"] -= spoils
     prize = GOLD_PER_WIN * max(opp["level"], 1)
     me["gold"] += prize + spoils
-    took = f", plus {spoils:,} from {name(opp_uid)}'s purse" if spoils else ""
-    notes = [Note(involved, f"{head} and took them in combat! {format_duration(won)} off their clock, and {prize:,} gold{took}.", True)]
+    took = f", plus {spoils:,} lifted from {name(opp_uid)}'s purse" if spoils else ""
+    notes = [Note(involved, f"{head} and took them in combat! {format_duration(won)} off their clock, and +{prize:,} gold{took}.", True)]
     if not rng.randrange(COLLISION_CRIT_ODDS):
         hurt = scale(opp, now, 5 + rng.randrange(20))
         notes.append(Note(involved, f"💥 A critical strike! {name(opp_uid)} is set back {format_duration(hurt)}.", True))
@@ -1909,7 +2088,7 @@ def _journey_step(chars: dict, quest: dict, now: int, name: NameFn) -> "tuple[li
         return [Note(tuple(members), f"🧭 {_names(members, name)} have reached {_place(quest['p1'])}. Onward to {_place(quest['p2'])}.", True)], True
     purse = _pay_questers(chars, members, now)
     _end_quest(quest, now + QUEST_REST_SECS)
-    return [Note(tuple(members), f"🏆 {_names(members, name)} have completed their journey! Each is {QUEST_REWARD_PCT}% closer to their next level and {purse:,} gold richer.", True)], True
+    return [Note(tuple(members), f"🏆 {_names(members, name)} have completed their journey! Each is {QUEST_REWARD_PCT}% closer to their next level and +{purse:,} gold richer.", True)], True
 
 
 def move_players(chars: dict, quest: dict, rng, name: NameFn, now: int, seconds: int) -> "list[Note]":
@@ -2016,7 +2195,7 @@ def tick_quest(chars: dict, quest: dict, rng, name: NameFn, now: int) -> "list[N
         members = tuple(quest["members"])
         purse = _pay_questers(chars, members, now)
         _end_quest(quest, now + QUEST_REST_SECS)
-        return [Note(members, f"🏆 {_names(members, name)} completed their quest! Each is {QUEST_REWARD_PCT}% closer to their next level and {purse:,} gold richer.", True)]
+        return [Note(members, f"🏆 {_names(members, name)} completed their quest! Each is {QUEST_REWARD_PCT}% closer to their next level and +{purse:,} gold richer.", True)]
 
     if now < quest.get("not_before", 0):
         return []

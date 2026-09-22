@@ -35,7 +35,7 @@ import src.persistence as persistence
 from src import idlerpg as rpg
 from src import state
 from src.confirm_view import confirm_prompt
-from src.economy import _ct_today, next_daily_reset_ts
+from src.economy import _ct_now, _ct_today, next_daily_reset_ts
 from src.guild_config import get_guild_cfg
 from src.idle_map import MAP_FILENAME, render_map
 from src.helpers import (
@@ -61,6 +61,9 @@ THREAD_NAME_MAX = 100
 # Discord allows two renames per thread per ten minutes (see CLAUDE.md:
 # Gambling threads) — titles are brought up to date by the tick, never inline.
 RENAME_INTERVAL = 300.0
+# The standings board is one edited message, so it is cheap — but a channel
+# whose pinned post rewrites itself every minute is its own kind of noise.
+BOARD_INTERVAL = 600.0
 MESSAGE_MAX = 1900
 LEADERBOARD_SIZE = 10
 CLASS_MAX = 30
@@ -102,6 +105,10 @@ f"A fight runs up to {rpg.MOB_MAX_ROUNDS} rounds of blows both ways and costs **
         f"and mend about {100 // rpg.HP_REGEN_DIVISOR}% of yourself a minute. Kill it: gold, a little off your clock, sometimes an item. "
         f"Run out of health: the clock, some gold, and you wake at a town's edge.\n"
         f"At or under {rpg.CAMP_HP_PCT}% health your character makes camp instead of fighting, so it takes a bad run to fall.\n"
+        "Who swings first each round is rolled, leaning to whoever is stronger — a monster can land the opening blow.\n"
+        "Being struck down also costs you **everything in your bag**, so a full bag is a reason to head for a market.\n"
+        f"The {len(rpg.SIGNATURE_DROPS)} worst things in the realm each leave something only they leave: a Dragon its "
+        "Wingcase Shield, a Basilisk its Unblinking Eye, and so on.\n"
         f"From level 11 a quarter of fights are against a group. Up to level {rpg.MOB_EASY_LEVEL} monsters fight at half strength.\n"
         "Roughly one every quarter hour while you're out in the wilds — none at all inside a town's ring."
     ),
@@ -132,9 +139,10 @@ f"A fight runs up to {rpg.MOB_MAX_ROUNDS} rounds of blows both ways and costs **
     ),
     "world": (
         "Every few days something happens to the whole realm — a blood moon, a horde coming down out of its own "
-        "country, a storm over one region, an hour where everything comes twice as fast. It is announced when it's "
-        "coming and again when it lands, and it changes what the monsters are worth, or what everyone's clock is "
-        f"doing. `!idle world` says what's going on.\n"
+        "country, a storm over one region, an hour where everything comes twice as fast. Each keeps its own hours: "
+        "the moon only rises at night, hordes arrive around midday, storms whenever they like. It is announced when "
+        "it's coming and again when it lands, and it changes what the monsters are worth, or what everyone's clock "
+        f"is doing. `!idle world` says what's going on.\n"
         f"🕊️ `!idle bless` spends **{rpg.BLESS_COST:,}** of your gold on +{rpg.BLESS_BOOST_PCT}% clock and gold for "
         f"**everyone here**, for {format_duration(rpg.BLESS_SECS)}. They stack up to {rpg.BLESS_MAX}. It is the only "
         "thing in the game you can buy for somebody else."
@@ -186,6 +194,7 @@ class IdleCog(commands.Cog):
         self._creating: set = set()         # (guild_id, uid) with a thread being created
         self._rename_due: set = set()
         self._renamed_at: dict = {}
+        self._board_at: dict = {}
 
     async def cog_load(self):
         # Started here (not __init__) so tests constructing the cog don't spawn the loop.
@@ -291,6 +300,7 @@ class IdleCog(commands.Cog):
             notes = self._advance(guild, now)
             await self._deliver(guild, notes)
             await self._sweep_renames(guild)
+            await self._sweep_board(guild)
         await self._flush()
 
     async def _enroll(self, guild, now: int) -> None:
@@ -331,7 +341,9 @@ class IdleCog(commands.Cog):
         notes: list = []
         events = self._events(gid)
         if enabled:
-            world = rpg.tick_world(events, self.rng, now, TICKS_PER_DAY)
+            # The hour decides which kinds are on the table — a blood moon
+            # only rises at night (see idlerpg.WORLD_EVENTS).
+            world = rpg.tick_world(events, self.rng, now, TICKS_PER_DAY, _ct_now().hour)
             if world:
                 self._dirty_events.add(gid)   # tick_world only speaks when it changed something
                 notes += world
@@ -416,7 +428,7 @@ class IdleCog(commands.Cog):
             if bonus:
                 char["gold"] += bonus
                 mark = "🎙️" if uid in voiced else "✨"
-                notes.append(rpg.Note((uid,), f"{mark} +{pct}% this minute: {bonus:,} gold more for {name(uid)}."))
+                notes.append(rpg.Note((uid,), f"{mark} +{pct}% this minute: +{bonus:,} gold for {name(uid)}."))
 
         if enabled:
             # After the voice bonus on purpose: table winnings aren't earnings to top up.
@@ -615,6 +627,74 @@ class IdleCog(commands.Cog):
                 log.warning("idle: rename of thread %s failed (%s)", thread.id, type(e).__name__)
                 self._rename_due.add(key)
 
+    # ── the standings board ──────────────────────────────────────────────
+    #
+    # One message in the idle channel, edited in place every BOARD_INTERVAL
+    # rather than reposted — sizzlorox/Idle-RPG-Bot keeps nine of these and
+    # edits them on a ten-minute cron. Editing beats posting for the same
+    # reason the thread titles are swept: Discord rate-limits either way, and
+    # a channel that fills up with stale ladders is worse than no ladder.
+
+    def _board_embed(self, guild) -> discord.Embed:
+        now = int(time.time())
+        chars = self._chars(guild.id)
+        name = self._namer(guild)
+        ranked = rpg.ladder(chars, now, rpg.BOARD_SIZE)
+        lines = []
+        for i, (uid, char) in enumerate(ranked, 1):
+            stars = "★" * char["prestige"] + " " if char["prestige"] else ""
+            clock = "⏸️" if rpg.is_paused(char) else f"next <t:{char['next_level_at']}:R>"
+            lines.append(f"**{i}.** {name(uid)} — {stars}Lv {char['level']} {char['class']} · {clock}")
+        embed = emb(
+            "🏔️ The Realm's Standings",
+            "\n".join(lines) or "Nobody is adventuring here yet. `!idle join <class>`.",
+            C_GOLD,
+        )
+        for heading, read, show in rpg.BOARD_COLUMNS:
+            top = rpg.board_ranking(chars, read)
+            if top:
+                embed.add_field(
+                    name=heading,
+                    value="\n".join(f"{i}. {name(uid)} — {show(value)}" for i, (uid, value) in enumerate(top, 1)),
+                    inline=True,
+                )
+        embed.set_footer(text="Updated every few minutes")
+        return embed
+
+    async def _sweep_board(self, guild) -> None:
+        channel = self._channel(guild)
+        if channel is None:
+            return
+        key = guild.id
+        now = time.monotonic()
+        if now - self._board_at.get(key, -BOARD_INTERVAL) < BOARD_INTERVAL:
+            return
+        self._board_at[key] = now      # the slot is spent whether or not the edit lands
+        cfg = get_guild_cfg(key)
+        embed = self._board_embed(guild)
+        message_id = cfg.get("idle_board_message")
+        if message_id:
+            try:
+                message = await channel.fetch_message(message_id)
+                await message.edit(embed=embed)
+                return
+            except discord.NotFound:
+                pass                    # deleted, or the idle channel moved — post a new one
+            except discord.HTTPException as e:
+                log.warning("idle: board edit in %s failed (%s)", channel.id, type(e).__name__)
+                return
+        try:
+            posted = await channel.send(embed=embed, silent=True, allowed_mentions=NO_MENTIONS)
+        except discord.HTTPException as e:
+            log.warning("idle: board post to %s failed (%s)", channel.id, type(e).__name__)
+            return
+        cfg["idle_board_message"] = posted.id
+        await persistence.save_guild_settings(key)
+        try:
+            await posted.pin()
+        except discord.HTTPException:
+            pass                        # a full pin list or no Manage Messages; the board still works
+
     # ── listeners ────────────────────────────────────────────────────────
 
     def _penalize(self, guild, uid: int, base: int, now: int) -> int:
@@ -797,7 +877,7 @@ class IdleCog(commands.Cog):
 
     @commands.group(name="idle", aliases=["irpg"], invoke_without_command=True)
     async def cmd_idle(self, ctx: commands.Context):
-        """!idle join|status|items|map|travel|shop|gamble|top|align|duel|world|bless|title|quest|prestige|leave|rules"""
+        """!idle join|status|items|map|travel|shop|gamble|top|align|duel|world|bless|title|lore|quest|prestige|leave|rules"""
         if not await self._ready(ctx):
             return
         char = self._chars(ctx.guild.id).get(ctx.author.id)
@@ -920,6 +1000,27 @@ class IdleCog(commands.Cog):
         if quest.get("kind") == "journey":
             body += f"\n📜 A party is on a journey — waypoint {quest['stage']} of 2 (`!idle quest`)."
         await self._send_with_map(ctx, emb("🗺️ The Realm", body, C_BLUE), highlight=(ctx.author.id,))
+
+    @cmd_idle.command(name="lore")
+    async def cmd_lore(self, ctx: commands.Context, *, where: str = None):
+        if not await self._ready(ctx):
+            return
+        place = rpg.match_place(where) if where else None
+        if place is None:
+            listed = "\n".join(f"• {name}" for name in rpg.LANDMARKS)
+            await ctx.send(embed=emb(
+                "📜 Lore",
+                ("Nowhere on the map goes by that name.\n\n" if where else "")
+                + f"`!idle lore <place>`\n{listed}",
+                C_GREY if where else C_BLUE,
+            ))
+            return
+        kind = "a market town" if place in rpg.TOWNS else f"{rpg.biome_at(*rpg.LANDMARKS[place])} country"
+        await ctx.send(embed=emb(
+            f"📜 {place}",
+            f"{rpg.LORE[place]}\n\n*{kind}, at {list(rpg.LANDMARKS[place])} — `!idle travel {place}`*",
+            C_BLUE,
+        ))
 
     @cmd_idle.command(name="world", aliases=["boost"])
     async def cmd_world(self, ctx: commands.Context):
@@ -1397,7 +1498,7 @@ class IdleCog(commands.Cog):
         if item == "sell":
             pieces, paid = rpg.sell_loot(char)
             bought = bool(pieces)
-            text = (f"Sold {pieces} piece{'' if pieces == 1 else 's'} for {paid:,} gold."
+            text = (f"Sold {pieces} piece{'' if pieces == 1 else 's'} for +{paid:,} gold."
                     if pieces else "Your bag is empty.")
         elif item == "find":
             bought, text = rpg.buy_find(uid, char, self.rng, self._namer(ctx.guild))
@@ -1557,7 +1658,7 @@ class IdleCog(commands.Cog):
             "📜 High-level players get sent on quests for a big shortcut.\n\n"
             f"{start}"
             "`!idle status` · `items` · `map` · `travel` · `shop` · `gamble` · `top` · `align` · `duel <name>`\n"
-            "`!idle world` · `bless` · `title` · `quest` · `prestige`\n"
+            "`!idle world` · `bless` · `title` · `lore` · `quest` · `prestige`\n"
             f"More: `!idle rules <{'|'.join(_RULES_TOPICS)}>`",
             C_BLUE,
         ))
