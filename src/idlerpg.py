@@ -53,6 +53,7 @@ VOICE_BONUS_PCT = 10
 
 ALIGN_COOLDOWN_SECS = 86_400
 DUEL_PCT = 5
+DUEL_MAX_ROUNDS = 5
 
 # ── gold ─────────────────────────────────────────────────────────────────────
 # The game's own currency: per character, earned only by playing, never
@@ -600,28 +601,66 @@ def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int, pace: Pa
     return notes
 
 
-def duel(uid: int, target_uid: int, chars: dict, rng, name: NameFn, now: int, wager: int = 0) -> "list[Note]":
-    """The loser hands DUEL_PCT of their remaining time to the winner, and
-    the `wager` in gold if one was agreed (the caller has checked both can
-    cover it)."""
-    a, b = chars[uid], chars[target_uid]
-    a_sum, b_sum = battle_sum(a), battle_sum(b)
-    a_roll, b_roll = rng.randint(0, a_sum), rng.randint(0, b_sum)
-    # A tie is a coin toss, not the challenger's: a duel needs no consent, and
-    # two gearless characters always tie — the IRC rule would hand every new
-    # player a free win over any other.
-    a_wins = a_roll > b_roll or (a_roll == b_roll and rng.random() < 0.5)
-    (w_uid, winner), (l_uid, loser) = ((uid, a), (target_uid, b)) if a_wins else ((target_uid, b), (uid, a))
-    stake = scale(loser, now, DUEL_PCT)
-    tied = " It was dead even, so a coin toss settled it." if a_roll == b_roll else ""
-    loser["gold"] -= wager
-    winner["gold"] += wager
+def duel(uid: int, target_uid: int, chars: dict, rng, name: NameFn, now: int,
+         wager: int = 0) -> "tuple[list[str], list[Note]]":
+    """A duel fought blow by blow: (the story, the notes). The loser hands
+    DUEL_PCT of their remaining time to the winner and the wager with it.
+
+    Hit points here are for the telling only — both walk away as whole as
+    they arrived. A duel is a match, not a mugging, and an unwagered one
+    needs no consent: leaving real wounds would make it a way to send a
+    rival into the wilds half dead.
+    """
+    power = {u: max(battle_sum(chars[u]), 1) for u in (uid, target_uid)}
+    body = {u: max_hp(chars[u]) for u in (uid, target_uid)}
+    left, dealt = dict(body), {uid: 0, target_uid: 0}
+    story = [
+        f"🤺 {name(uid)} ({power[uid]} power) squares up to {name(target_uid)} ({power[target_uid]} power) — "
+        f"first to drop, or the most damage after {DUEL_MAX_ROUNDS} rounds."
+    ]
+
+    fought = 0
+    for fought in range(1, DUEL_MAX_ROUNDS + 1):
+        blows = []
+        for striker, victim in ((uid, target_uid), (target_uid, uid)):
+            if min(left.values()) <= 0:
+                continue          # the round ends the moment someone goes down
+            hit, mark = _blow(power[striker], power[victim], body[victim], rng)
+            left[victim] -= hit
+            dealt[striker] += hit
+            if mark == "·":
+                blows.append(f"{name(striker)} swings and misses")
+            elif mark:
+                blows.append(f"{name(striker)} lands a critical strike for **{hit}**")
+            else:
+                blows.append(f"{name(striker)} hits for **{hit}**")
+        story.append(
+            f"**Round {fought}** — {'; '.join(blows)}. "
+            f"`{max(left[uid], 0)}/{body[uid]}` vs `{max(left[target_uid], 0)}/{body[target_uid]}`"
+        )
+        if min(left.values()) <= 0:
+            break
+
+    if left[uid] <= 0 or left[target_uid] <= 0:
+        w_uid = target_uid if left[uid] <= 0 else uid
+        how = f"{name(target_uid if w_uid == uid else uid)} goes down in round {fought}"
+    elif dealt[uid] != dealt[target_uid]:
+        w_uid = uid if dealt[uid] > dealt[target_uid] else target_uid
+        how = f"{DUEL_MAX_ROUNDS} rounds, decided on damage — {dealt[w_uid]} to {dealt[target_uid if w_uid == uid else uid]}"
+    else:
+        w_uid = uid if rng.random() < 0.5 else target_uid
+        how = "dead even after every round, so a coin toss settled it"
+    l_uid = target_uid if w_uid == uid else uid
+
+    stake = scale(chars[l_uid], now, DUEL_PCT)
+    shift(chars[w_uid], -min(stake, time_left(chars[w_uid], now)))
+    chars[l_uid]["gold"] -= wager
+    chars[w_uid]["gold"] += wager
     staked = f" and the {wager:,} gold on the table" if wager else ""
-    shift(winner, -min(stake, time_left(winner, now)))
-    return [Note(
+    return story, [Note(
         (uid, target_uid),
-        f"🤺 {name(uid)} {_rolled(a_roll, a_sum)} duelled {name(target_uid)} {_rolled(b_roll, b_sum)}.{tied} "
-        f"{name(w_uid)} wins, taking {format_duration(stake)} from {name(l_uid)}'s clock{staked}.",
+        f"🤺 {name(uid)} duelled {name(target_uid)} — {how}. {name(w_uid)} wins, taking "
+        f"{format_duration(stake)} off {name(l_uid)}'s clock{staked}.",
         True,
     )]
 

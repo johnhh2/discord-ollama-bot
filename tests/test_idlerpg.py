@@ -227,23 +227,27 @@ def test_duel_moves_the_same_seconds_from_loser_to_winner():
         1: _char(10, left=10_000, items={"ring": {"level": 10, "name": None}}),
         2: _char(10, left=20_000),
     }
-    notes = rpg.duel(1, 2, chars, _Scripted(), _name, NOW)   # 1 rolls its max, 2 has nothing to roll
-    assert rpg.time_left(chars[2], NOW) == 21_000            # +5% of 20,000
-    assert rpg.time_left(chars[1], NOW) == 9000
+    whole = {u: rpg.hp_of(c) for u, c in chars.items()}
+    story, notes = rpg.duel(1, 2, chars, _Scripted(randrange=5), _name, NOW)   # never a dodge, never a crit
+    assert rpg.time_left(chars[2], NOW) == 21_000            # the loser gives up 5% of 20,000…
+    assert rpg.time_left(chars[1], NOW) == 9000              # …and the winner takes the same
     assert notes[0].uids == (1, 2) and notes[0].public
+    assert len(story) >= 2 and story[0].startswith("🤺") and "**Round 1**" in story[1]
+    assert {u: rpg.hp_of(c) for u, c in chars.items()} == whole   # a match, not a mugging
 
 
-def test_a_tied_duel_is_a_coin_toss_and_the_rolls_read_plainly():
+def test_a_duel_nobody_wins_on_damage_falls_to_a_coin_toss():
     def _fight(random_):
+        # Identical and gearless: every blow lands for the same 1, so the
+        # five rounds end dead level and the toss decides.
         chars = {1: _char(0, left=600), 2: _char(0, left=600)}
-        notes = rpg.duel(1, 2, chars, _Scripted(random_=random_), _name, NOW)
+        _story, notes = rpg.duel(1, 2, chars, _Scripted(random_=random_, randrange=5), _name, NOW)
         return chars, notes[0].text
 
     chars, text = _fight(0.4)
-    assert rpg.time_left(chars[2], NOW) == 630 and "P1 wins" in text
-    chars, text = _fight(0.6)                       # no gear either side: the challenger can lose
+    assert rpg.time_left(chars[2], NOW) == 630 and "P1 wins" in text and "coin toss" in text
+    chars, text = _fight(0.6)                       # the challenger has no edge to fall back on
     assert rpg.time_left(chars[1], NOW) == 630 and "P2 wins" in text
-    assert "(no gear)" in text and "coin toss" in text and "[0/0]" not in text
 
 
 def test_team_battle_needs_six_running_characters():

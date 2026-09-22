@@ -67,6 +67,7 @@ CLASS_MAX = 30
 _CLASS_RE = re.compile(r"[\w][\w '\-]*")
 NOT_YOURS = "Not your prompt."
 WAGER_ACCEPT_SECS = 120.0
+DUEL_ROUND_SECS = 3.0   # a beat between rounds, so a duel reads as a fight
 NO_MENTIONS = discord.AllowedMentions.none()
 
 ALIGN_EFFECTS = (
@@ -90,7 +91,8 @@ _RULES_TOPICS = {
         "Win and your timer shrinks; lose and it grows.\n"
         f"You only run into another player if they are within {rpg.BATTLE_RANGE} squares of you on the map — otherwise you face "
         "the Idle Warden, who is always your own match. A fight with the Warden stays in your own thread.\n"
-        f"`!idle duel <name>` once a day: the loser hands {rpg.DUEL_PCT}% of their timer to the winner. A tie is a coin toss."
+        f"`!idle duel <name>` once a day: {rpg.DUEL_MAX_ROUNDS} rounds of blows, played out in both feeds, and the loser hands "
+        f"{rpg.DUEL_PCT}% of their timer to the winner. Nobody is left hurt by it — a duel is a match, not a mugging."
     ),
     "monsters": (
         "Out in the wilds your character runs into monsters — rats and bandits on the plains, trolls and dragons in the mountains, "
@@ -988,11 +990,32 @@ class IdleCog(commands.Cog):
                 if accepted:
                     await ctx.send(embed=emb("❌ Duel", "The duel fell through — someone can no longer cover the wager.", C_RED))
                 return
-        notes = rpg.duel(uid, member.id, chars, self.rng, self._namer(ctx.guild), int(time.time()), stake)
+        # Fought and settled in one breath; what follows is only the telling,
+        # so a restart mid-story costs nothing but the story.
+        story, notes = rpg.duel(uid, member.id, chars, self.rng, self._namer(ctx.guild), int(time.time()), stake)
         await persistence.save_idle_character(gid, uid)
         await persistence.save_idle_character(gid, member.id)
+        await ctx.send(embed=emb("🤺 Duel", story[0], C_GOLD))
+        await self._narrate(ctx.guild, (uid, member.id), story)
         await ctx.send(embed=emb("🤺 Duel", "\n".join(n.text for n in notes), C_GOLD))
         await self._deliver(ctx.guild, notes, skip_main=self._in_idle_channel(ctx))
+
+    async def _narrate(self, guild, uids, story: list) -> None:
+        """Play a settled fight out in the duellists' own feeds, a beat
+        between rounds. Their threads only — the channel hears the result."""
+        channel = self._channel(guild)
+        if channel is None:
+            return
+        threads = []
+        for uid in uids:
+            thread = await self._thread_for(guild, channel, uid)
+            if thread is not None:
+                threads.append(thread)
+        for round_no, line in enumerate(story):
+            if round_no:
+                await asyncio.sleep(DUEL_ROUND_SECS)
+            for thread in threads:
+                await self._send(thread, [line])
 
     # ── !idle gamble ─────────────────────────────────────────────────────
 

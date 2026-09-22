@@ -542,6 +542,34 @@ async def test_duel_is_once_a_day_and_not_against_the_sleeping():
     assert "offline" in ctx.sent_embeds[-1].description and alice["duel_day"] is None
 
 
+async def test_a_duel_plays_out_round_by_round_in_both_feeds_and_only_the_result_in_the_room(monkeypatch):
+    cog, guild, idle = _world()
+    _spawn(ALICE, left=50_000, items={"ring": {"level": 40, "name": None}})
+    _spawn(BOB, left=50_000, items={"ring": {"level": 30, "name": None}})
+    beats = []
+    real_sleep = _idle_cog.asyncio.sleep
+
+    async def _counted(secs):
+        beats.append(secs)
+        await real_sleep(0)
+    monkeypatch.setattr(_idle_cog.asyncio, "sleep", _counted)
+
+    ctx = _ctx(guild)
+    await cog.cmd_duel.callback(cog, ctx, member=guild.get_member(BOB))
+
+    feeds = {t.name.split(" ")[0]: _sent(t) for t in guild.threads}
+    assert set(feeds) == {"alice", "bob"}                    # both duellists watch it
+    for who, feed in feeds.items():
+        assert "squares up to" in feed, who
+        assert "**Round 1**" in feed and "hits for" in feed, who
+        assert "wins, taking" in feed, who                   # and the result lands after it
+    assert beats and len(beats) == feeds["alice"].count("**Round ")   # a beat before each round
+
+    room = _sent(idle)
+    assert "**Round 1**" not in room and "squares up to" not in room
+    assert "duelled" in room and "wins, taking" in room      # the room hears the result only
+
+
 async def test_duel_run_in_the_idle_channel_is_not_posted_twice():
     cog, guild, idle = _world()
     _spawn(ALICE), _spawn(BOB)

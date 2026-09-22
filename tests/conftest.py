@@ -257,6 +257,7 @@ def reset_bot_state(monkeypatch):
     # !idle: confirms auto-accept, the alignment dropdown is dismissed.
     import src.cogs.idle_cog as _idle_cog_mod
     monkeypatch.setattr(_idle_cog_mod, "confirm_prompt", _auto_confirm)
+    monkeypatch.setattr(_idle_cog_mod, "DUEL_ROUND_SECS", 0)   # duels narrate without the beat
 
     async def _no_pick(*args, **kwargs):
         return None
