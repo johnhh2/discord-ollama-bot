@@ -235,12 +235,17 @@ class FakeCtx:
             "qualified_name": command_name,
         })()
         self.message = FakeMessage()
+        # Real Contexts carry this; None is the prefix-invocation value that
+        # the hybrid commands branch on.
+        self.interaction = None
         self.sent_embeds: list[Any] = []
         self.sent_messages: list[str] = []
         self.sent_views: list[Any] = []
         self._send_mock = AsyncMock(side_effect=self._record_send)
         # ctx.reply (used by _wrong_channel_reply) records like send.
         self.reply = AsyncMock(side_effect=self._record_send)
+        # A no-op on prefix Contexts, so hybrid commands can call it blind.
+        self.defer = AsyncMock()
 
     async def _record_send(self, content=None, *, embed=None, view=None, **kwargs):
         if embed is not None:

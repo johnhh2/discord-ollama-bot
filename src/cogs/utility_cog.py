@@ -102,6 +102,133 @@ async def get_or_create_gamblers_role(guild: discord.Guild) -> discord.Role | No
 PUZZLE_RIDDLE_REWARD = 20
 
 
+async def build_ai_overview_embed(ctx: commands.Context) -> discord.Embed:
+    """The `!ai` overview embed — connection status, token budget and the
+    cost of every AI command. `!ask` shows it verbatim when the AI is
+    switched off, so the two can't drift."""
+    ai_connected = await check_ollama_connected()
+    ask_model = get_guild_ask_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
+    roleplay_model = get_guild_roleplay_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
+    coding_model = get_guild_coding_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
+
+    ai_enabled = state.bot_settings.get("ai_enabled", True)
+    ai_status = "Online" if ai_connected else "Offline"
+    ai_status_emoji = "🟢" if (ai_connected and ai_enabled) else "🔴"
+    passive_status = "Enabled" if ai_enabled else "**Disabled**"
+    embed_color = C_BLUE if ai_enabled else C_RED
+
+    embed = discord.Embed(title="🤖 AI Commands", color=embed_color)
+
+    embed.add_field(
+        name=f"{ai_status_emoji} Connection",
+        value=f"Status: **{ai_status}** · Passive responses: {passive_status}",
+        inline=False
+    )
+
+    tokens_left = _peek_token_budget(ctx.author.id)
+    if tokens_left >= TOKEN_BUCKET_MAX:
+        budget_value = (
+            f"✅ **{int(tokens_left):,} / {TOKEN_BUCKET_MAX:,}** tokens — "
+            f"refills 512 per minute"
+        )
+    else:
+        seconds_to_full = (TOKEN_BUCKET_MAX - tokens_left) / TOKEN_BUCKET_REFILL_PER_SEC
+        budget_value = (
+            f"⏳ **{int(tokens_left):,} / {TOKEN_BUCKET_MAX:,}** tokens "
+            f"(full in {seconds_to_full:.0f}s) — refills 512 per minute"
+        )
+    embed.add_field(
+        name="🪙 Your Token Budget",
+        value=budget_value,
+        inline=False
+    )
+
+    # Costs come from FEATURE_COSTS, never hardcoded, so this menu can't
+    # drift from the real prices.
+    from src.ai import FEATURE_COSTS
+
+    embed.add_field(
+        name="💬 !ask",
+        value=(
+            f"Ask the AI a question\n"
+            f"Cost: **{FEATURE_COSTS['ask']:,} 🪙**\n"
+            f"Model: `{ask_model}`\n"
+            f"Usage: `!ask <question>`"
+        ),
+        inline=False
+    )
+
+    story_aliases = get_guild_cfg(ctx.guild.id).get("story_aliases", {}) if ctx.guild else {}
+    aliases_line = (
+        "Aliases: " + ", ".join(f"`!{k}`" for k in story_aliases)
+        if story_aliases
+        else "Server admins can register custom-prompt aliases via `!settings story-alias`"
+    )
+    embed.add_field(
+        name="📖 !story",
+        value=(
+            f"Generate an original short story on any topic\n"
+            f"Cost: **{FEATURE_COSTS['story']:,} 🪙** · `!continue` for next chapter ({FEATURE_COSTS['continue']:,} 🪙) · `!tldr` to summarize\n"
+            f"Model: `{ask_model}`\n"
+            f"Usage: `!story <prompt>`\n"
+            f"{aliases_line}"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎭 !roleplay",
+        value=(
+            f"Start an AI roleplay session\n"
+            f"Cost: **{FEATURE_COSTS['roleplay']:,} 🪙** · `!tldr` to summarize the last response\n"
+            f"Model: `{roleplay_model}`\n"
+            f"Usage: `!roleplay <character> [@user1 @user2 ...]`"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🗺️ !rpg",
+        value=(
+            f"Start an interactive text adventure game\n"
+            f"Cost: **{FEATURE_COSTS['rpg']:,} 🪙**\n"
+            f"Model: `{roleplay_model}`\n"
+            f"Usage: `!rpg [@user1 @user2 ...]`\n"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🧩 !puzzle coding / riddle",
+        value=(
+            f"AI-generated puzzles\n"
+            f"`!puzzle coding [easy|medium|hard|extreme] [@user …]` — figure out the code output · **10–50 🪙**\n"
+            f"`!puzzle riddle [@user …]` — curated one-word riddle · **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
+            f"`!puzzle riddleai [@user …]` — AI-generated riddle · **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
+            f"Model: `{coding_model}`\n"
+            f"Only the creator can answer by default; mention users to invite them."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="⏹️ !closeall",
+        value=(
+            "Close every AI thread you own (ask/story/roleplay/rpg) in this server\n"
+            "Runs from any AI channel"
+        ),
+        inline=False
+    )
+
+    if is_admin(ctx):
+        embed.add_field(
+            name="⚙️ !ai on / !ai off (bot admin)",
+            value="Toggle passive AI responses globally.",
+            inline=False,
+        )
+    return embed
+
+
 class UtilityCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -259,128 +386,7 @@ class UtilityCog(commands.Cog):
 
     @commands.group(name="ai", invoke_without_command=True)
     async def cmd_ai(self, ctx: commands.Context):
-        ai_connected = await check_ollama_connected()
-        ask_model = get_guild_ask_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
-        roleplay_model = get_guild_roleplay_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
-        coding_model = get_guild_coding_model(ctx.guild.id) if ctx.guild else OLLAMA_MODEL
-
-        ai_enabled = state.bot_settings.get("ai_enabled", True)
-        ai_status = "Online" if ai_connected else "Offline"
-        ai_status_emoji = "🟢" if (ai_connected and ai_enabled) else "🔴"
-        passive_status = "Enabled" if ai_enabled else "**Disabled**"
-        embed_color = C_BLUE if ai_enabled else C_RED
-
-        embed = discord.Embed(title="🤖 AI Commands", color=embed_color)
-
-        embed.add_field(
-            name=f"{ai_status_emoji} Connection",
-            value=f"Status: **{ai_status}** · Passive responses: {passive_status}",
-            inline=False
-        )
-
-        tokens_left = _peek_token_budget(ctx.author.id)
-        if tokens_left >= TOKEN_BUCKET_MAX:
-            budget_value = (
-                f"✅ **{int(tokens_left):,} / {TOKEN_BUCKET_MAX:,}** tokens — "
-                f"refills 512 per minute"
-            )
-        else:
-            seconds_to_full = (TOKEN_BUCKET_MAX - tokens_left) / TOKEN_BUCKET_REFILL_PER_SEC
-            budget_value = (
-                f"⏳ **{int(tokens_left):,} / {TOKEN_BUCKET_MAX:,}** tokens "
-                f"(full in {seconds_to_full:.0f}s) — refills 512 per minute"
-            )
-        embed.add_field(
-            name="🪙 Your Token Budget",
-            value=budget_value,
-            inline=False
-        )
-
-        # Costs come from FEATURE_COSTS, never hardcoded, so this menu can't
-        # drift from the real prices.
-        from src.ai import FEATURE_COSTS
-
-        embed.add_field(
-            name="💬 !ask",
-            value=(
-                f"Ask the AI a question\n"
-                f"Cost: **{FEATURE_COSTS['ask']:,} 🪙**\n"
-                f"Model: `{ask_model}`\n"
-                f"Usage: `!ask <question>`"
-            ),
-            inline=False
-        )
-
-        story_aliases = get_guild_cfg(ctx.guild.id).get("story_aliases", {}) if ctx.guild else {}
-        aliases_line = (
-            "Aliases: " + ", ".join(f"`!{k}`" for k in story_aliases)
-            if story_aliases
-            else "Server admins can register custom-prompt aliases via `!settings story-alias`"
-        )
-        embed.add_field(
-            name="📖 !story",
-            value=(
-                f"Generate an original short story on any topic\n"
-                f"Cost: **{FEATURE_COSTS['story']:,} 🪙** · `!continue` for next chapter ({FEATURE_COSTS['continue']:,} 🪙) · `!tldr` to summarize\n"
-                f"Model: `{ask_model}`\n"
-                f"Usage: `!story <prompt>`\n"
-                f"{aliases_line}"
-            ),
-            inline=False
-        )
-
-        embed.add_field(
-            name="🎭 !roleplay",
-            value=(
-                f"Start an AI roleplay session\n"
-                f"Cost: **{FEATURE_COSTS['roleplay']:,} 🪙** · `!tldr` to summarize the last response\n"
-                f"Model: `{roleplay_model}`\n"
-                f"Usage: `!roleplay <character> [@user1 @user2 ...]`"
-            ),
-            inline=False
-        )
-
-        embed.add_field(
-            name="🗺️ !rpg",
-            value=(
-                f"Start an interactive text adventure game\n"
-                f"Cost: **{FEATURE_COSTS['rpg']:,} 🪙**\n"
-                f"Model: `{roleplay_model}`\n"
-                f"Usage: `!rpg [@user1 @user2 ...]`\n"
-            ),
-            inline=False
-        )
-
-        embed.add_field(
-            name="🧩 !puzzle coding / riddle",
-            value=(
-                f"AI-generated puzzles\n"
-                f"`!puzzle coding [easy|medium|hard|extreme] [@user …]` — figure out the code output · **10–50 🪙**\n"
-                f"`!puzzle riddle [@user …]` — curated one-word riddle · **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
-                f"`!puzzle riddleai [@user …]` — AI-generated riddle · **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
-                f"Model: `{coding_model}`\n"
-                f"Only the creator can answer by default; mention users to invite them."
-            ),
-            inline=False
-        )
-
-        embed.add_field(
-            name="⏹️ !closeall",
-            value=(
-                "Close every AI thread you own (ask/story/roleplay/rpg) in this server\n"
-                "Runs from any AI channel"
-            ),
-            inline=False
-        )
-
-        if is_admin(ctx):
-            embed.add_field(
-                name="⚙️ !ai on / !ai off (bot admin)",
-                value="Toggle passive AI responses globally.",
-                inline=False,
-            )
-
-        await send_ephemeral(ctx, embed=embed)
+        await send_ephemeral(ctx, embed=await build_ai_overview_embed(ctx))
 
     @cmd_ai.command(name="on", aliases=["online"])
     @requires_perm

@@ -82,6 +82,15 @@ async def test_no_duplicate_top_level_command_names(loaded_bot):
     assert duplicates == set(), f"duplicate top-level commands: {duplicates}"
 
 
+async def test_slash_ask_is_registered_in_the_command_tree(loaded_bot):
+    """Discord keeps an app's global commands until the app says otherwise, so
+    a `/name` in the picker with nothing behind it answers "The application did
+    not respond" forever. setup_hook syncs the tree on every boot; this pins
+    the one command it has to publish."""
+    tree_names = {cmd.name for cmd in loaded_bot.tree.get_commands()}
+    assert "ask" in tree_names, f"app commands: {sorted(tree_names)}"
+
+
 async def test_known_top_level_commands_are_registered(loaded_bot):
     """Spot-check that the surface every test relies on actually exists.
     A typo in @commands.command(name=...) would silently rename the command

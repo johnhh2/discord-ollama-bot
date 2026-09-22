@@ -1106,6 +1106,45 @@ whatever command was replying. `src/discord_retry.py` handles it:
 
 Coverage: [tests/test_discord_retry.py](tests/test_discord_retry.py).
 
+## Slash commands: the tree is synced every boot
+
+`!ask` is the one command that is also a slash command (`/ask`), declared with
+`@commands.hybrid_command` and published by `self.tree.sync()` in
+`Bot.setup_hook`.
+
+Discord keeps an app's **global** application commands until the app replaces
+them. An old `bot.py` registered `/ask` and a later rewrite dropped the
+handler without unregistering it, so `/ask` sat in every user's picker for
+months answering "The application did not respond". Syncing on every boot is
+what keeps the picker equal to the code — delete a hybrid command and the next
+sync removes it from Discord too. A failed sync is logged and never blocks
+boot.
+
+Writing one:
+
+- **`ctx.interaction is not None` is the slash path.** Acknowledge it with
+  `await ctx.defer()` before anything slow: Discord kills an interaction that
+  hasn't answered in three seconds, and an Ollama ping or a channel-history
+  read routinely outlasts that. `ctx.send` then posts the followup and still
+  returns an editable `Message`.
+- **The `Context` carries a synthetic `Message`.** It has the interaction's id
+  and doesn't exist on Discord, so `ctx.message.reply(...)` and
+  `ctx.message.create_thread(...)` 404. `_try_create_thread` returns None on
+  that path (a slash `/ask` answers in the channel, like the no-permission
+  fallback), and `respond(..., placeholder=...)` takes the followup to stream
+  into instead of replying.
+- **The gates still apply.** Hybrid invocation runs `command.prepare(ctx)`, so
+  `_command_perm_gate`, `_level_gate` and `EventsCog.bot_check` all fire and
+  errors reach `on_command_error` as usual — a slash command needs no separate
+  permission wiring.
+- The callback signature must be app-command-compatible (annotated,
+  keyword-only for the trailing text argument) and needs a `description=`;
+  `@app_commands.describe(...)` names the parameters in Discord's UI.
+
+Coverage: `test_slash_ask_is_registered_in_the_command_tree`
+([tests/test_bot_startup.py](tests/test_bot_startup.py)) and the `/ask` tests
+in [tests/test_ai_thread_flow.py](tests/test_ai_thread_flow.py).
+
 ## Docker
 
 ```bash

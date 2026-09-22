@@ -7,11 +7,12 @@ from zoneinfo import ZoneInfo
 import aiohttp
 import chess
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_BLUE, C_GREY,
-    _edit_board, _delete_after, _log_audit, log_bot_permission_error,
+    send_ephemeral, _edit_board, _delete_after, _log_audit, log_bot_permission_error,
 )
 from src.economy import (
     add_balance, get_guild_ask_model, get_guild_roleplay_model,
@@ -26,6 +27,7 @@ from src.persistence import (
     delete_chess_game, save_chess_report, save_ai_threads, save_recap_usage,
 )
 from src.guild_config import get_guild_cfg
+from src.cogs.utility_cog import build_ai_overview_embed
 from src.ai import (
     enforce_cost, refund_cost, keep_typing,
     stream_ollama, finalize, respond,
@@ -67,6 +69,11 @@ async def _try_create_thread(ctx, name: str):
     """
     if not (ctx.guild and isinstance(ctx.channel, discord.TextChannel)):
         return None
+    # A slash invocation's Context carries a synthetic Message that doesn't
+    # exist on Discord, so create_thread on it always 404s — skip the call
+    # and let the caller answer in the channel.
+    if ctx.interaction is not None:
+        return None
     try:
         return await ctx.message.create_thread(name=name)
     except discord.HTTPException as e:
@@ -80,10 +87,26 @@ class AICog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="ask")
+    @commands.hybrid_command(name="ask", description="Ask the AI a question")
+    @app_commands.describe(question="What you want to ask")
     async def cmd_ask(self, ctx: commands.Context, *, question: str = None):
+        # Discord kills a slash invocation that hasn't answered in three
+        # seconds ("The application did not respond"). Everything below can
+        # outlast that — the AI overview pings Ollama, the ask reads channel
+        # history — so acknowledge first and reply through the followup.
+        if ctx.interaction is not None:
+            await ctx.defer()
+
         if await check_ai_channel(ctx):
             return
+
+        # AI switched off: show `!ai` rather than charge for a request
+        # stream_ollama would refuse anyway. /ask stays in Discord's command
+        # picker whether or not the AI is up, so this branch is reached often.
+        if not state.bot_settings.get("ai_enabled", True):
+            await send_ephemeral(ctx, embed=await build_ai_overview_embed(ctx))
+            return
+
         if question is None:
             await ctx.send("Usage: `!ask <question>`")
             return
@@ -130,7 +153,11 @@ class AICog(commands.Cog):
             await respond(thread, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name, refund_feature="ask")
             await thread.send(embed=emb("💬 Ask Thread", "Keep talking — I'll remember the conversation.\n`!invite @user` — let someone else join · `!stop` — end the thread", C_BLUE))
         else:
-            await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name, refund_feature="ask")
+            # `respond` replies to the invoking message when it has no
+            # placeholder; a slash invocation has no real message to reply to,
+            # so hand it the followup we own instead.
+            placeholder = await ctx.send("...") if ctx.interaction is not None else None
+            await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name, refund_feature="ask", placeholder=placeholder)
 
 
     @commands.command(name="story")

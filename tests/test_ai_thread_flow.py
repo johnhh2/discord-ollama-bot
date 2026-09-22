@@ -188,6 +188,57 @@ async def test_ask_with_no_question_replies_usage(_stub_respond_and_costs):
     assert any("Usage" in m for m in ctx.sent_messages)
 
 
+async def test_ask_with_ai_off_shows_the_ai_overview(_stub_respond_and_costs, monkeypatch):
+    """`/ask` is listed in Discord's picker whether or not the AI is up, so a
+    switched-off AI answers with `!ai` instead of charging for a request
+    stream_ollama would refuse."""
+    import src.helpers as _helpers
+    import src.cogs.utility_cog as _utility_cog
+
+    async def _stub_connected():
+        return False
+    monkeypatch.setattr(_utility_cog, "check_ollama_connected", _stub_connected)
+    # helpers binds add_ephemeral_msg at import, so conftest's patch of the
+    # persistence module never reaches send_ephemeral.
+    async def _noop(*a, **kw):
+        return None
+    monkeypatch.setattr(_helpers, "add_ephemeral_msg", _noop)
+    monkeypatch.setitem(_state.bot_settings, "ai_enabled", False)
+
+    cog = AICog(bot=None)
+    asker = FakeMember(uid=1004)
+    ctx = _make_ctx_with_text_channel(asker, message_content="!ask hello")
+    ctx.channel.history = lambda limit=11: _empty_async_iter()
+
+    await cog.cmd_ask.callback(cog, ctx, question="What is AI?")
+
+    ctx.message.create_thread.assert_not_awaited()
+    assert _state.ai_threads == {}
+    assert _stub_respond_and_costs == []
+    assert [e.title for e in ctx.sent_embeds] == ["🤖 AI Commands"]
+
+
+async def test_slash_ask_defers_and_answers_in_the_channel(_stub_respond_and_costs):
+    """A slash invocation carries a synthetic Message: it can't be replied to
+    and can't hold a thread. The command acknowledges the interaction first,
+    then hands respond() the followup to stream into."""
+    cog = AICog(bot=None)
+    asker = FakeMember(uid=1005, display_name="asker")
+    ctx = _make_ctx_with_text_channel(asker, message_content="")
+    ctx.channel.history = lambda limit=11: _empty_async_iter()
+    ctx.interaction = object()
+
+    await cog.cmd_ask.callback(cog, ctx, question="What is AI?")
+
+    ctx.defer.assert_awaited_once()
+    ctx.message.create_thread.assert_not_awaited()
+    assert _state.ai_threads == {}
+    assert len(_stub_respond_and_costs) == 1
+    call = _stub_respond_and_costs[0]
+    assert call["channel"] is ctx.channel
+    assert call["placeholder"] is not None
+
+
 def _empty_async_iter():
     """Helper for FakeTextChannel.history() when the cog needs an iterator
     but the channel has no prior messages."""

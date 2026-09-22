@@ -430,7 +430,12 @@ async def respond(
     guild_id: int = None,
     author_name: str = None,
     refund_feature: str = None,
+    placeholder: discord.Message = None,
 ):
+    """placeholder: the message the answer streams into. Left None it is the
+    reply to `reply_to` (or, in a thread, a fresh message) — pass one when
+    `reply_to` can't be replied to, as with a slash command's synthetic
+    Message."""
     from src.helpers import get_system_prompt
     channel_id = channel.id
     request_id = new_request_id()
@@ -462,7 +467,8 @@ async def respond(
     history.append({"role": "user", "content": formatted_content})
     messages = [{"role": "system", "content": sp}] + list(history)
 
-    placeholder = await channel.send("...") if isinstance(channel, discord.Thread) else None
+    if placeholder is None and isinstance(channel, discord.Thread):
+        placeholder = await channel.send("...")
     await _execute_ollama_stream(
         channel, reply_to, messages, history,
         model=model, guild_id=guild_id, placeholder=placeholder,

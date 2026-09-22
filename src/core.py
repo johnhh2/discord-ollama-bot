@@ -91,6 +91,20 @@ class Bot(commands.Bot):
         # setup_hook runs exactly once, before the gateway connects.
         await _load_extensions(self)
 
+        # Publish the slash commands the hybrid commands declare. Discord
+        # keeps an app's global commands until an app tells it otherwise, so
+        # a command dropped from the code stays in every user's picker and
+        # dead-airs with "The application did not respond" — which is exactly
+        # what /ask did for the months it had no handler. Syncing every boot
+        # keeps the picker equal to the code. Never fatal: a failed sync
+        # leaves the previous registration in place, and the prefix commands
+        # are unaffected.
+        try:
+            synced = await self.tree.sync()
+            logging.info("app_commands_synced count=%d", len(synced))
+        except Exception as e:
+            logging.warning("app_commands_sync_failed error=%s", type(e).__name__)
+
         # Start the localhost-only /healthz server before login so Docker's
         # HEALTHCHECK has something to talk to during the start-period window.
         from src.health import start_health_server
