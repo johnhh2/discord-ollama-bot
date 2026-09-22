@@ -655,17 +655,6 @@ async def test_profile_mentions_the_idle_character(monkeypatch):
     assert "⚔️ Idle RPG: **Lv 9 Bard** · [5, 6]" in shown[order[2]]
 
 
-@pytest.fixture
-def _member_lookup(monkeypatch):
-    async def _convert(self, ctx, argument):
-        digits = argument.strip("<@!>")
-        member = ctx.guild.get_member(int(digits)) if digits.isdigit() else None
-        if member is None:
-            raise discord.ext.commands.BadArgument("not found")
-        return member
-    monkeypatch.setattr(_idle_cog.MemberConverter, "convert", _convert)
-
-
 # ── voice bonus ──────────────────────────────────────────────────────────────
 
 def _join_voice(guild, uid, channel=None, *, company=(ADMIN,)):
@@ -934,6 +923,67 @@ async def test_optouts_survive_a_reload(db):
     _state.idle_optouts.clear()
     await _persistence.init_db_state()
     assert _state.idle_optouts == {}
+
+
+# ── names, not mentions ──────────────────────────────────────────────────────
+
+async def test_a_typed_at_name_part_of_a_name_or_an_id_finds_the_player():
+    cog, guild, _idle = _world()
+    char = _spawn(BOB, left=10_000)
+    ctx = _ctx(guild, ADMIN)
+    for who in ("@bob", "ob", "  @BOB ", str(BOB), f"<@{BOB}>"):
+        due = char["next_level_at"]
+        await cog.cmd_admin_push.callback(cog, ctx, who, "-1m")
+        assert char["next_level_at"] == due - 60, who
+
+
+async def test_an_ambiguous_name_prefers_whoever_is_playing_and_otherwise_lists_the_candidates():
+    cog, guild, _idle = _world()
+    bob = _spawn(BOB, left=10_000, x=1, y=1)
+    due = bob["next_level_at"]
+    ctx = _ctx(guild)
+
+    await cog.cmd_status.callback(cog, ctx, member="bo")             # bob plays, boss doesn't: no contest
+    assert "bob" in ctx.sent_embeds[-1].title
+
+    _spawn(ADMIN, left=10_000, x=2, y=2)                              # now both do
+    await cog.cmd_status.callback(cog, ctx, member="bo")
+    said = ctx.sent_embeds[-1]
+    assert said.title == "❌ Who?" and "**bob**" in said.description and "**boss**" in said.description
+
+    _spawn(ALICE, left=10_000)
+    await cog.cmd_duel.callback(cog, ctx, member="bo")               # a duel with "one of them" is no duel
+    assert ctx.sent_embeds[-1].title == "❌ Who?"
+    assert bob["next_level_at"] == due and _state.idle_characters[GID][ALICE]["duel_day"] is None
+
+    await cog.cmd_status.callback(cog, ctx, member="bob")             # an exact name beats a partial one
+    assert "bob" in ctx.sent_embeds[-1].title
+    await cog.cmd_items.callback(cog, ctx, member="zelda")
+    assert "Nobody here is called `zelda`" in ctx.sent_embeds[-1].description
+
+    admin = _ctx(guild, ADMIN)
+    await cog.cmd_admin_push.callback(cog, admin, "bo", "-1m")
+    assert "could be" in admin.sent_embeds[-1].description and bob["next_level_at"] == due
+
+
+async def test_names_are_read_live_and_a_rename_retitles_the_feed_thread():
+    cog, guild, _idle = _world()
+    char = _spawn(ALICE, level=4, thread_id=900)
+    thread = FakeThread(thread_id=900, name="alice — Lv 4 Bard", parent_id=IDLE_CH)
+    guild.threads.append(thread)
+    assert "name" not in char and "display_name" not in char          # nothing to go stale
+
+    member = guild.get_member(ALICE)
+    member.guild = guild
+    before = SimpleNamespace(display_name="alice")
+    member.display_name = "Alice the Bold"
+    await cog.on_member_update(before, member)
+    await cog.tick()
+
+    assert thread.edit.call_args.kwargs["name"] == "Alice the Bold — Lv 4 Bard"
+    ctx = _ctx(guild)
+    await cog.cmd_top.callback(cog, ctx)
+    assert "Alice the Bold" in ctx.sent_embeds[-1].description
 
 
 # ── !lb idle ─────────────────────────────────────────────────────────────────
@@ -1287,7 +1337,7 @@ async def test_a_declined_or_uncoverable_wager_costs_nothing_not_even_the_daily_
     assert alice["duel_day"] is None and (alice["gold"], bob["gold"]) == (500, 50)
 
 
-async def test_status_shows_gold_and_admin_can_adjust_it(_member_lookup):
+async def test_status_shows_gold_and_admin_can_adjust_it():
     cog, guild, _idle = _world()
     char = _spawn(gold=1250, x=1, y=1)
     ctx = _ctx(guild)
@@ -1303,7 +1353,7 @@ async def test_status_shows_gold_and_admin_can_adjust_it(_member_lookup):
 
 # ── admin ────────────────────────────────────────────────────────────────────
 
-async def test_admin_push_moves_a_clock_both_ways(_member_lookup):
+async def test_admin_push_moves_a_clock_both_ways():
     cog, guild, _idle = _world()
     char = _spawn(left=10_000)
     due = char["next_level_at"]
@@ -1316,7 +1366,7 @@ async def test_admin_push_moves_a_clock_both_ways(_member_lookup):
     assert ctx.sent_embeds[-1].title == "❌ Idle Admin"
 
 
-async def test_admin_remove_reaches_someone_who_left_the_server(_member_lookup):
+async def test_admin_remove_reaches_someone_who_left_the_server():
     cog, guild, _idle = _world()
     _spawn(uid=4040)
     await cog.cmd_admin_remove.callback(cog, _ctx(guild, ADMIN), who="4040")

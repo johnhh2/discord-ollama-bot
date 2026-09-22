@@ -40,7 +40,7 @@ from src.guild_config import get_guild_cfg
 from src.idle_map import MAP_FILENAME, render_map
 from src.helpers import (
     emb, C_BLUE, C_GOLD, C_GREEN, C_GREY, C_RED,
-    MemberConverter, format_duration, parse_duration, parse_int_amount,
+    format_duration, parse_duration, parse_int_amount,
 )
 from src.permissions import is_silenced
 from src.settings_views import pick_from_list
@@ -88,7 +88,7 @@ _RULES_TOPICS = {
         f"Each level-up finds an item for one of ten slots and may start a fight (always, from level {rpg.BATTLE_ALWAYS_LEVEL}).\n"
         "Each side rolls a number from 0 up to their item power (`!idle items`), shown as \"rolled 12 of 40\"; the higher roll wins. "
         "Win and your timer shrinks; lose and it grows.\n"
-        f"`!idle duel @user` once a day: the loser hands {rpg.DUEL_PCT}% of their timer to the winner. A tie is a coin toss."
+        f"`!idle duel <name>` once a day: the loser hands {rpg.DUEL_PCT}% of their timer to the winner. A tie is a coin toss."
     ),
     "monsters": (
         "Out in the wilds your character runs into monsters — rats and bandits on the plains, trolls and dragons in the mountains, "
@@ -111,7 +111,7 @@ _RULES_TOPICS = {
         f"`!idle shop` spends it, but only within {rpg.MARKET_RADIUS} squares of a town (the rings on `!idle map`): an extra item find, "
         "sharpening an item, a once-a-day rush, a second duel, a new class. Walk right into a town and your character "
         f"trades on its own with up to {rpg.AUTO_TRADE_BUDGET_PCT}% of its gold — `!idle shop auto off` stops that. "
-        "`!idle duel @user 200` bets gold, anywhere.\n"
+        "`!idle duel <name> 200` bets gold, anywhere.\n"
         f"Towns have gambling tables, too. In one, your character bets on its own now and then — a bigger share the richer it is, "
         f"but never more than {rpg.GAMBLE_VISIT_CAP_PCT}% of the purse it arrived with per visit — and `!idle gamble <gold>` bets by hand. "
         f"Even money; the house wins {rpg.GAMBLE_LOSE_BELOW} in 100."
@@ -584,6 +584,13 @@ class IdleCog(commands.Cog):
         ))
 
     @commands.Cog.listener()
+    async def on_member_update(self, before, after):
+        # Names are never stored — every line reads the member's current one —
+        # but a thread title is text Discord holds, so it has to be refreshed.
+        if before.display_name != after.display_name and after.id in state.idle_characters.get(after.guild.id, {}):
+            self._rename_due.add((after.guild.id, after.id))
+
+    @commands.Cog.listener()
     async def on_member_remove(self, member):
         char = state.idle_characters.get(member.guild.id, {}).get(member.id)
         if char is None:
@@ -619,15 +626,43 @@ class IdleCog(commands.Cog):
         self._seen(ctx.guild, ctx.author.id, char, int(time.time()))
         return char
 
-    async def _target_uid(self, ctx, text: "str | None") -> "int | None":
-        """A member, or the raw id of someone who already left the server."""
+    def _match_player(self, guild, who: str) -> "tuple[int | None, str | None]":
+        """(uid, None), or (None, what to tell the caller). Names are the
+        point: the game pings nobody, and a mention in a command pings its
+        target before the bot has read it — so a typed `@Name`, part of a
+        name, or an id all work (a real mention still resolves; refusing it
+        wouldn't un-send the ping). An exact name wins; then members with a
+        character here are preferred, which settles most clashes; what is
+        still ambiguous is listed rather than guessed at."""
+        text = who.strip().lstrip("@").strip()
+        digits = text.strip("<@!>")
+        if digits.isdigit():
+            return int(digits), None       # an id may belong to someone who already left
         if not text:
-            return None
-        try:
-            return (await MemberConverter().convert(ctx, text)).id
-        except commands.BadArgument:
-            digits = text.strip("<@!>")
-            return int(digits) if digits.isdigit() else None
+            return None, "Give me a name."
+        query = text.lower()
+        named = [m for m in guild.members if not m.bot and query in (m.display_name.lower(), m.name.lower())]
+        found = named or [m for m in guild.members if not m.bot and (query in m.display_name.lower() or query in m.name.lower())]
+        playing = [m for m in found if m.id in self._chars(guild.id)]
+        found = playing or found
+        if len(found) == 1:
+            return found[0].id, None
+        if not found:
+            return None, f"Nobody here is called `{text}`."
+        names = ", ".join(f"**{discord.utils.escape_markdown(m.display_name)}**" for m in found[:6])
+        more = f" and {len(found) - 6} more" if len(found) > 6 else ""
+        return None, f"`{text}` could be {names}{more}. Give me a little more of the name."
+
+    async def _find_member(self, ctx, who):
+        """The member a player command was pointed at; replies and returns
+        None when the name doesn't settle on one. (Tests hand in members.)"""
+        if not isinstance(who, str):
+            return who
+        uid, problem = self._match_player(ctx.guild, who)
+        member = ctx.guild.get_member(uid) if uid else None
+        if member is None:
+            await ctx.send(embed=emb("❌ Who?", problem or f"Nobody here has the id `{uid}`.", C_RED))
+        return member
 
     def _sheet(self, guild, uid: int, char: dict, now: int) -> discord.Embed:
         if not rpg.is_paused(char):
@@ -769,10 +804,12 @@ class IdleCog(commands.Cog):
         ))
 
     @cmd_idle.command(name="status", aliases=["info"])
-    async def cmd_status(self, ctx: commands.Context, *, member: MemberConverter = None):
+    async def cmd_status(self, ctx: commands.Context, *, member: str = None):
         if not await self._ready(ctx):
             return
-        target = member or ctx.author
+        target = await self._find_member(ctx, member) if member else ctx.author
+        if target is None:
+            return
         char = self._chars(ctx.guild.id).get(target.id)
         if char is None:
             await ctx.send(embed=emb("❌ No Character", f"{target.display_name} has no character here.", C_RED))
@@ -794,10 +831,12 @@ class IdleCog(commands.Cog):
         await self._send_with_map(ctx, emb("🗺️ The Realm", body, C_BLUE), highlight=(ctx.author.id,))
 
     @cmd_idle.command(name="items")
-    async def cmd_items(self, ctx: commands.Context, *, member: MemberConverter = None):
+    async def cmd_items(self, ctx: commands.Context, *, member: str = None):
         if not await self._ready(ctx):
             return
-        target = member or ctx.author
+        target = await self._find_member(ctx, member) if member else ctx.author
+        if target is None:
+            return
         char = self._chars(ctx.guild.id).get(target.id)
         if char is None:
             await ctx.send(embed=emb("❌ No Character", f"{target.display_name} has no character here.", C_RED))
@@ -874,14 +913,17 @@ class IdleCog(commands.Cog):
         await ctx.send(embed=emb("⚖️ Alignment", f"You are now **{rpg.alignment_label(char)}**.\n\n{ALIGN_EFFECTS}", C_GREEN))
 
     @cmd_idle.command(name="duel")
-    async def cmd_duel(self, ctx: commands.Context, member: MemberConverter = None, wager: str = None):
+    async def cmd_duel(self, ctx: commands.Context, member: str = None, wager: str = None):
         if not await self._ready(ctx, need_channel=True):
             return
         char = await self._own_char(ctx)
         if char is None:
             return
         if member is None:
-            await ctx.send(embed=emb("❌ Usage", "`!idle duel @user [gold]` — one challenge a day; add an amount to bet gold on it.", C_RED))
+            await ctx.send(embed=emb("❌ Usage", "`!idle duel <name> [gold]` — one challenge a day; add an amount to bet gold on it. Put a name with spaces in quotes: `!idle duel \"Rat King\" 200`.", C_RED))
+            return
+        member = await self._find_member(ctx, member)
+        if member is None:
             return
         gid, uid = ctx.guild.id, ctx.author.id
         chars = self._chars(gid)
@@ -902,7 +944,7 @@ class IdleCog(commands.Cog):
         if problem is None and wager is not None:
             stake = parse_int_amount(wager) or 0
             if stake <= 0:
-                problem = "The wager is an amount of gold — `!idle duel @user 200`."
+                problem = "The wager is an amount of gold — `!idle duel <name> 200`."
             elif char["gold"] < stake:
                 problem = f"You only have {char['gold']:,} gold."
             elif target["gold"] < stake:
@@ -1275,7 +1317,7 @@ class IdleCog(commands.Cog):
             "⏳ Your character levels on a timer while you're online.\n"
             "⚔️ Items, fights and lucky breaks happen on their own.\n"
             "📜 High-level players get sent on quests for a big shortcut.\n\n"
-            "`!idle status` · `items` · `map` · `travel` · `shop` · `gamble` · `top` · `align` · `duel @user` · `quest`\n"
+            "`!idle status` · `items` · `map` · `travel` · `shop` · `gamble` · `top` · `align` · `duel <name>` · `quest`\n"
             f"More: `!idle rules <{'|'.join(_RULES_TOPICS)}>`",
             C_BLUE,
         ))
@@ -1286,27 +1328,31 @@ class IdleCog(commands.Cog):
     async def cmd_admin(self, ctx: commands.Context):
         await ctx.send(embed=emb(
             "🛠️ Idle RPG Admin",
-            "`!idle admin hog @user` — a Hand of God, now\n"
-            "`!idle admin push @user <±time>` — move a clock (`-2h` sooner, `+1d` later)\n"
-            "`!idle admin gold @user <±amount>` — give or take gold\n"
-            "`!idle admin remove @user` — delete a character\n"
-            "`!idle admin reset` — wipe this server's game",
+            "`!idle admin hog <name>` — a Hand of God, now\n"
+            "`!idle admin push <name> <±time>` — move a clock (`-2h` sooner, `+1d` later)\n"
+            "`!idle admin gold <name> <±amount>` — give or take gold\n"
+            "`!idle admin remove <name>` — delete a character\n"
+            "`!idle admin reset` — wipe this server's game\n"
+            "Names, not mentions — part of a name is enough, and one with spaces goes in quotes: `!idle admin push \"Rat King\" -5m`.",
             C_GREY,
         ))
 
     async def _admin_target(self, ctx, who: "str | None", usage: str) -> "tuple[int, dict] | None":
         if not await self._ready(ctx):
             return None
-        uid = await self._target_uid(ctx, who)
+        if not who:
+            await ctx.send(embed=emb("❌ Idle Admin", f"Usage: {usage}", C_RED))
+            return None
+        uid, problem = self._match_player(ctx.guild, who)
         char = self._chars(ctx.guild.id).get(uid) if uid else None
         if char is None:
-            await ctx.send(embed=emb("❌ Idle Admin", f"No character found. Usage: {usage}", C_RED))
+            await ctx.send(embed=emb("❌ Idle Admin", problem or f"They have no character here. Usage: {usage}", C_RED))
             return None
         return uid, char
 
     @cmd_admin.command(name="hog")
     async def cmd_admin_hog(self, ctx: commands.Context, *, who: str = None):
-        found = await self._admin_target(ctx, who, "`!idle admin hog @user`")
+        found = await self._admin_target(ctx, who, "`!idle admin hog <name>`")
         if found is None:
             return
         uid, _char = found
@@ -1317,7 +1363,7 @@ class IdleCog(commands.Cog):
 
     @cmd_admin.command(name="gold")
     async def cmd_admin_gold(self, ctx: commands.Context, who: str = None, amount: str = None):
-        usage = "`!idle admin gold @user <±amount>`"
+        usage = "`!idle admin gold <name> <±amount>`"
         found = await self._admin_target(ctx, who, usage)
         if found is None:
             return
@@ -1336,7 +1382,7 @@ class IdleCog(commands.Cog):
 
     @cmd_admin.command(name="push")
     async def cmd_admin_push(self, ctx: commands.Context, who: str = None, amount: str = None):
-        usage = "`!idle admin push @user <±time>` — `-2h` sooner, `+1d` later"
+        usage = "`!idle admin push <name> <±time>` — `-2h` sooner, `+1d` later"
         found = await self._admin_target(ctx, who, usage)
         if found is None:
             return
@@ -1360,7 +1406,7 @@ class IdleCog(commands.Cog):
 
     @cmd_admin.command(name="remove")
     async def cmd_admin_remove(self, ctx: commands.Context, *, who: str = None):
-        found = await self._admin_target(ctx, who, "`!idle admin remove @user`")
+        found = await self._admin_target(ctx, who, "`!idle admin remove <name>`")
         if found is None:
             return
         uid, char = found
