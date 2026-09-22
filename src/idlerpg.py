@@ -23,6 +23,7 @@ from src.helpers import format_duration
 # ── the curve ────────────────────────────────────────────────────────────────
 
 BASE_TTL = 600           # seconds from level 0 to level 1
+START_JITTER_SECS = 600  # …plus up to this much at birth, so characters made together don't level in step
 LEVEL_MULT = 1.12        # each level takes this much longer (level 60 ≈ 52 idle days in all)
 SOFT_CAP = 60
 POST_CAP_MULT = 1.25     # past the soft cap the curve steepens
@@ -257,8 +258,18 @@ def level_is_news(level: int, prestige: int = 0) -> bool:
     return level % MILESTONE_EVERY == 0 or ttl(level - 1, prestige) >= RARE_LEVEL_SECS
 
 
-def new_character(class_name: str, now: int) -> dict:
+UNCLAIMED_CLASS = "Adventurer"
+
+
+def stagger_start(char: dict, rng) -> None:
+    """Characters that share a clock level — and roll their battles — in the
+    same minute, every level, for good. A random head start breaks the step."""
+    shift(char, rng.randrange(START_JITTER_SECS))
+
+
+def new_character(class_name: str, now: int, claimed: bool = True) -> dict:
     return {
+        "claimed": claimed,       # False: enrolled by the bot, not yet taken up with !idle join
         "class": class_name,
         "level": 0,
         "next_level_at": now + ttl(0),
@@ -491,7 +502,8 @@ MARGIN_FULL_AT = 0.5
 # Nobody is picked as a level-up opponent twice inside this window; the house
 # steps in instead. In a two-player server the pool is one person, and early
 # levels come every few minutes — without it one player is fought constantly.
-CHALLENGED_COOLDOWN_SECS = 3 * 3600
+# An hour: three starved a seven-player server of opponents by its second hour.
+CHALLENGED_COOLDOWN_SECS = 3600
 
 
 def margin_factor(my_roll: int, opp_roll: int, my_sum: int, opp_sum: int) -> float:
@@ -1291,8 +1303,11 @@ def tick_quest(chars: dict, quest: dict, rng, name: NameFn, now: int) -> "list[N
     if len(eligible) < QUEST_MIN_PARTY:
         return []
     members = rng.sample(eligible, min(QUEST_MAX_PARTY, len(eligible)))
-    # Mentions, not names: being picked is the one thing worth a badge.
-    called = ", ".join(f"<@{u}>" for u in members)
+    # Being picked is the one thing in the game worth a mention badge — and
+    # only for someone who claimed their character. An enrolled member who
+    # never asked to play is named, never mentioned.
+    pinged = tuple(u for u in members if chars[u].get("claimed", True))
+    called = ", ".join(f"<@{u}>" if u in pinged else name(u) for u in members)
     picked = rng.choice(_VIGILS + _JOURNEYS)   # every quest is equally likely, as in the original
     if isinstance(picked, str):
         quest.update(
@@ -1304,7 +1319,7 @@ def tick_quest(chars: dict, quest: dict, rng, name: NameFn, now: int) -> "list[N
             f"📜 {called} have been chosen to {picked}. "
             f"It ends <t:{quest['ends_at']}:R>, and each of them comes back {QUEST_REWARD_PCT}% closer to their next level.",
             True,
-            tuple(members),
+            pinged,
         )]
     start, end, text = picked
     for u in members:
@@ -1319,6 +1334,6 @@ def tick_quest(chars: dict, quest: dict, rng, name: NameFn, now: int) -> "list[N
         f"then {_place(quest['p2'])} — `!idle map` follows their journey. "
         f"Each of them comes back {QUEST_REWARD_PCT}% closer to their next level.",
         True,
-        tuple(members),
+        pinged,
         True,
     )]

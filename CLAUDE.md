@@ -683,7 +683,7 @@ online, and there is nothing else to do. The rules are pure
 functions in `src/idlerpg.py` (every random draw goes through a passed-in
 `rng`); `src/cogs/idle_cog.py` is the Discord half and `src/idle_map.py`
 draws the map. `state.idle_characters` / `state.idle_quests` mirror the
-tables from migrations 0070–0076.
+tables from migrations 0070–0077.
 
 - **Everything is per-guild**, keyed `(guild_id, user_id)` like counters. No
   record mirroring, and no *coins*: the bot's wallet is global, so buying
@@ -761,6 +761,27 @@ tables from migrations 0070–0076.
   once per tick; don't add a per-message or per-presence-event DB write.
   Commands save immediately, and claim before their first await (`join`
   puts the character in `state` first; `duel` stamps `duel_day` first).
+- **Nobody is ever notified, with one exception.** Every post the game
+  makes is `silent=True` with mentions off (unread-white, no push, no
+  sound), and every command reply is a `ctx.send`, silent by default. The
+  single mention in the game is a quest start, and only for questers who
+  **claimed** their character. Two things that aren't messages notify as
+  well, and the code is arranged around them: being *added to a thread*
+  pings like a mention, and a created thread drops a system line in the
+  channel. A new feature that posts must go through `_send` / `Note`, and
+  must not `add_user`, DM, or mention anyone.
+- **Auto-enrollment (`!settings idle-enroll`, off by default).** The tick's
+  `_enroll` hands an "Adventurer" to members holding any role in
+  `state.bot_roles` — whoever has taken part in the bot's economy —
+  `ENROLL_PER_TICK` at a time, so a whole server doesn't level, fight and
+  shop in the same minute. Such a character is `claimed = False`: it plays
+  like any other (opponent, quester, ladder entry marked *unclaimed*) but
+  has **no feed thread** — `_thread_for` refuses — so its player is never
+  added to one, and it is named, never mentioned, in a quest start.
+  `!idle join <class>` claims it: same character, free class, thread made,
+  player added (they asked). `_remove_character` records the player in
+  `idle_optouts` so the sweep doesn't hand them another a minute later;
+  `!idle join` clears it. An admin `reset` keeps the opt-outs.
 - **Posting is batched**: one message per destination per tick, item finds
   in the feed thread only. A level-up is channel news only on every tenth
   level, and on every level once one takes a week (`level_is_news` — level

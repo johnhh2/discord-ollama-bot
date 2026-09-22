@@ -93,6 +93,8 @@ from src.persistence.idlerpg import (  # noqa: F401
     save_idle_character,
     delete_idle_character,
     delete_idle_guild,
+    save_idle_optout,
+    delete_idle_optout,
     save_idle_quest,
 )
 from src.persistence.quotes import (  # noqa: F401

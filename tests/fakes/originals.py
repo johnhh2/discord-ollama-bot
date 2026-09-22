@@ -31,6 +31,7 @@ _PERSISTENCE_SAVE_NAMES = [
     "save_counter", "delete_counter", "save_counter_value",
     "save_counter_perm", "delete_counter_perm",
     "save_idle_character", "delete_idle_character", "delete_idle_guild", "save_idle_quest",
+    "save_idle_optout", "delete_idle_optout",
     "save_quote_log", "save_saved_quotes", "save_lottery", "save_records",
     "save_lottery_ticket_grant",
     "save_leveling", "save_command_perms", "save_channel_prompts",

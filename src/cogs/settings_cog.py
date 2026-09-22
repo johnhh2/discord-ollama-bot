@@ -40,6 +40,7 @@ _SETTINGS_PANELS = (
     ("🪙 Dailies channel", "settings_dailies_channel", ()),
     ("⚔️ Idle RPG channel", "settings_channel_idle", ()),
     ("⚔️ Idle RPG pace", "settings_idle_pace", ()),
+    ("⚔️ Idle RPG auto-enroll", "settings_idle_enroll", ()),
     ("🔞 Remove NSFW aliases", "settings_nsfw_alias", ("remove",)),
     ("📖 Remove story aliases", "settings_story_alias", ("remove",)),
     ("🏷️ Remove tax aliases", "settings_tax_aliases", ("remove",)),
@@ -151,7 +152,7 @@ class SettingsCog(commands.Cog):
         embed.add_field(
             name="⚔️ Idle RPG",
             value=(f"<#{idle_channel_id}>" if idle_channel_id else "❌ disabled")
-            + f" · pace: **{cfg.get('idle_pace') or 'lively'}**"
+            + f" · pace: **{cfg.get('idle_pace') or 'lively'}** · auto-enroll: **{'on' if cfg.get('idle_enroll') else 'off'}**"
             + "\n*Set with: `!settings-channel idle #channel / clear` · `!settings idle-pace lively|classic`*",
             inline=False,
         )
@@ -231,6 +232,36 @@ class SettingsCog(commands.Cog):
             f"`!lb` now defaults to **{scope.lower()}** scope. Users can still override with `!lb server` or `!lb global`.",
             C_GREEN,
         ))
+
+    # ── !settings idle-enroll ─────────────────────────────────────────────────
+    @cmd_settings.command(name="idle-enroll")
+    @requires_perm
+    async def settings_idle_enroll(self, ctx: commands.Context, choice: str = None):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        usage = "`!settings idle-enroll on|off`"
+        what = (
+            "Give every member who holds one of my roles (a shop role, the gambler role…) an idle RPG character, "
+            "a few at a time. They are never pinged or messaged about it: an enrolled character has no feed thread "
+            "until its player runs `!idle join <class>`, which also sets its class for free. "
+            "Anyone who `!idle leave`s is left alone."
+        )
+        if choice is None:
+            choice = await self._on_off_choice(ctx, title="⚔️ Idle RPG Auto-Enroll", what=what, current=bool(cfg.get("idle_enroll")), usage=usage)
+            if choice is None:
+                return
+        if choice.lower() not in ("on", "off"):
+            await ctx.send(embed=emb("⚔️ Idle RPG Auto-Enroll", f"Usage: {usage}\n\n{what}", C_GREY))
+            return
+        cfg["idle_enroll"] = choice.lower() == "on"
+        await save_guild_settings()
+        if cfg["idle_enroll"] and not cfg.get("idle_channel"):
+            note = " It starts once an idle channel is set (`!settings-channel idle #channel`)."
+        else:
+            note = " Characters already made stay; only new enrollment stops." if not cfg["idle_enroll"] else ""
+        await ctx.send(embed=emb("⚔️ Idle RPG Auto-Enroll", f"Auto-enroll is now **{choice.lower()}**.{note}", C_GREEN))
 
     # ── !settings idle-pace ───────────────────────────────────────────────────
     @cmd_settings.command(name="idle-pace")

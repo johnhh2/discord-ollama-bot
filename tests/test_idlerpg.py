@@ -643,6 +643,19 @@ def test_quest_starts_with_two_high_level_players_and_pays_out():
     assert not rpg.quest_active(quest) and quest["not_before"] == done + rpg.QUEST_REST_SECS
 
 
+def test_a_quest_never_pings_a_character_nobody_claimed():
+    chars = {1: _char(40), 2: _char(50, claimed=False)}
+    for picked in (rpg._VIGILS[0], rpg._JOURNEYS[0]):
+        class _Pick(_Scripted):
+            def choice(self, seq):
+                return picked
+        for char in chars.values():
+            char["travel_to"] = None
+        note = rpg.tick_quest(chars, rpg.new_quest(), _Pick(), _name, NOW)[0]
+        assert note.ping == (1,) and "<@1>" in note.text and "<@2>" not in note.text and "P2" in note.text
+        assert note.uids == (1, 2)                                   # still a quester, still paid
+
+
 def test_no_quest_with_one_eligible_player_or_during_the_drought():
     quest = rpg.new_quest()
     assert rpg.tick_quest({1: _char(40), 2: _char(3)}, quest, random.Random(1), _name, NOW) == []
@@ -759,3 +772,14 @@ def test_the_map_background_ships_at_one_pixel_per_map_unit():
     from src import idle_map
     with Image.open(idle_map._BACKGROUND_PATH) as art:
         assert art.size == (rpg.MAP_SIZE, rpg.MAP_SIZE)
+
+
+def test_characters_made_together_do_not_level_in_step():
+    rng = random.Random(2)
+    clocks = set()
+    for _ in range(7):
+        char = rpg.new_character(rpg.UNCLAIMED_CLASS, NOW, claimed=False)
+        rpg.stagger_start(char, rng)
+        assert NOW + rpg.ttl(0) <= char["next_level_at"] < NOW + rpg.ttl(0) + rpg.START_JITTER_SECS
+        clocks.add(char["next_level_at"] // 60)
+    assert len(clocks) >= 5                       # seven characters, spread over the minutes

@@ -448,7 +448,8 @@ class EconomyCog(commands.Cog):
             who = member.display_name if member else f"User {uid}"
             stars = "★" * char["prestige"] + " " if char["prestige"] else ""
             clock = "paused" if idlerpg.is_paused(char) else f"next <t:{char['next_level_at']}:R>"
-            lines.append(f"{prefix} **{who}** — {stars}Lv {char['level']} {char['class']} · {clock}")
+            unclaimed = "" if char.get("claimed", True) else " · *unclaimed*"
+            lines.append(f"{prefix} **{who}** — {stars}Lv {char['level']} {char['class']} · {clock}{unclaimed}")
         lines.append("\n*Ranked by prestige, then level · `!idle status` for a character · `!lb` for coins*")
         await ctx.send(embed=emb(title, "\n".join(lines), C_GREEN))
 

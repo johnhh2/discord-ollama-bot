@@ -641,15 +641,16 @@ async def _init_db_state_inner(state, run_migrations):
                 "prestige, penalty_total, last_seen, last_penalty_at, thread_id, created_at, "
                 "align_changed_at, duel_day, items_json, x, y, gold, rush_day, extra_duel_day, "
                 "auto_trade, traded_at, travel_to, mob_kills, mob_deaths, gamble_town, gamble_visit_at, "
-                "gamble_budget, gambles, gamble_won, gamble_lost FROM idle_characters"
+                "gamble_budget, gambles, gamble_won, gamble_lost, claimed FROM idle_characters"
             )
             for (gid, uid, class_name, level, next_level_at, remaining, law, moral, prestige,
                  penalty_total, last_seen, last_penalty_at, thread_id, created_at,
                  align_changed_at, duel_day, items_json, x, y, gold, rush_day,
                  extra_duel_day, auto_trade, traded_at, travel_to, mob_kills,
                  mob_deaths, gamble_town, gamble_visit_at, gamble_budget, gambles, gamble_won,
-                 gamble_lost) in await cur.fetchall():
+                 gamble_lost, claimed) in await cur.fetchall():
                 state.idle_characters.setdefault(int(gid), {})[int(uid)] = {
+                    "claimed": bool(claimed),
                     "class": class_name,
                     "level": int(level),
                     "next_level_at": None if next_level_at is None else int(next_level_at),
@@ -682,6 +683,9 @@ async def _init_db_state_inner(state, run_migrations):
                     "gamble_won": int(gamble_won),
                     "gamble_lost": int(gamble_lost),
                 }
+            await cur.execute("SELECT guild_id, user_id FROM idle_optouts")
+            for gid, uid in await cur.fetchall():
+                state.idle_optouts.setdefault(int(gid), set()).add(int(uid))
             await cur.execute(
                 "SELECT guild_id, members_json, description, ends_at, not_before, kind, stage, "
                 "p1x, p1y, p2x, p2y FROM idle_quests"

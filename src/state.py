@@ -189,6 +189,9 @@ idle_characters: dict = {}
 # {guild_id: {members: [uid], description, ends_at: int|None, not_before}} —
 # ends_at is None while no quest is running.
 idle_quests: dict = {}
+# {guild_id: {uid}} — members who retired a character; the enrollment sweep
+# (!settings idle-enroll) leaves them alone until they !idle join again.
+idle_optouts: dict = {}
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 bot_start_time = time.monotonic()

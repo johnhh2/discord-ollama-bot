@@ -51,6 +51,10 @@ TICK_SECONDS = 60
 TICKS_PER_DAY = 86_400 // TICK_SECONDS
 # A late boot may owe a character many levels; past this the rest wait a tick.
 MAX_LEVELS_PER_TICK = 25
+# With !settings idle-enroll on, this many members a tick are handed a
+# character: a whole server made at once would all level, fight and shop in
+# the same minute.
+ENROLL_PER_TICK = 3
 SEEN_SAVE_SECS = 300            # how stale the persisted last_seen may get
 THREAD_AUTO_ARCHIVE_MINUTES = 10080   # Discord's maximum; a send un-archives the thread anyway
 THREAD_NAME_MAX = 100
@@ -229,14 +233,43 @@ class IdleCog(commands.Cog):
 
     async def tick(self, now: "int | None" = None) -> None:
         now = int(time.time() if now is None else now)
-        for gid in list(state.idle_characters):
+        enrolling = {int(gid) for gid, cfg in state.guild_settings.items() if cfg.get("idle_enroll")}
+        for gid in sorted(set(state.idle_characters) | enrolling):
             guild = self.bot.get_guild(gid)
             if guild is None:
                 continue
+            await self._enroll(guild, now)
             notes = self._advance(guild, now)
             await self._deliver(guild, notes)
             await self._sweep_renames(guild)
         await self._flush()
+
+    async def _enroll(self, guild, now: int) -> None:
+        """Hand a character to members who hold one of the bot's own roles
+        (state.bot_roles — whoever has taken part in the bot's economy) and
+        have none. Nothing is sent to them, now or later: an unclaimed
+        character has no feed thread and is never mentioned. `!idle join
+        <class>` is how its player takes it up."""
+        gid = guild.id
+        if not get_guild_cfg(gid).get("idle_enroll") or self._channel(guild) is None:
+            return
+        chars, opted_out = self._chars(gid), state.idle_optouts.get(gid, set())
+        made = 0
+        for member in list(getattr(guild, "members", ())):
+            if made >= ENROLL_PER_TICK:
+                break
+            if (
+                member.bot or member.id in chars or member.id in opted_out
+                or is_silenced(member.id, gid)
+                or not any(role.id in state.bot_roles for role in getattr(member, "roles", ()))
+            ):
+                continue
+            char = rpg.new_character(rpg.UNCLAIMED_CLASS, now, claimed=False)
+            rpg.ensure_position(char, self.rng)
+            rpg.stagger_start(char, self.rng)
+            chars[member.id] = char
+            made += 1
+            await persistence.save_idle_character(gid, member.id)
 
     def _advance(self, guild, now: int) -> list:
         """One tick of the rules for one guild. Synchronous on purpose: no
@@ -420,7 +453,8 @@ class IdleCog(commands.Cog):
         """The character's feed thread under `channel`, made (or remade — it
         was deleted, or the idle channel moved) when there isn't one."""
         char = self._chars(guild.id).get(uid)
-        if char is None:
+        if char is None or not char["claimed"]:
+            # Unclaimed: no thread, because adding a member to one notifies them.
             return None
         tid = char["thread_id"]
         if tid:
@@ -608,6 +642,8 @@ class IdleCog(commands.Cog):
             f"**Item power:** {rpg.item_sum(char):,} · **Gold:** {char['gold']:,}",
             f"**Adventuring since:** <t:{char['created_at']}:D>",
         ]
+        if not char["claimed"]:
+            lines.append("*Unclaimed — its player can take it up with `!idle join <class>`.*")
         if self._in_voice(guild, uid):
             lines.append(f"🎙️ **In voice:** clock and gold +{rpg.VOICE_BONUS_PCT}%")
         if char.get("x") is not None:
@@ -658,14 +694,19 @@ class IdleCog(commands.Cog):
             return
         gid, uid = ctx.guild.id, ctx.author.id
         chars = self._chars(gid)
-        if uid in chars:
-            feed = f" Your feed is <#{chars[uid]['thread_id']}>." if chars[uid]["thread_id"] else ""
+        waiting = chars.get(uid)
+        if waiting is not None and waiting["claimed"]:
+            feed = f" Your feed is <#{waiting['thread_id']}>." if waiting["thread_id"] else ""
             await ctx.send(embed=emb("❌ Already Adventuring", f"You already have a character here.{feed}", C_RED))
             return
         if not class_name:
+            head = (
+                f"A level {waiting['level']} {waiting['class']} has been adventuring in your name. Name a class to make it yours: "
+                if waiting is not None else "Say what you are: "
+            )
             await ctx.send(embed=emb(
                 "❌ Pick a Class",
-                f"Say what you are: `!idle join <class>`. It's yours to invent, up to {CLASS_MAX} characters — "
+                f"{head}`!idle join <class>`. It's yours to invent, up to {CLASS_MAX} characters — "
                 "`!idle join Drunken Bard`, `!idle join Tax Wizard`.",
                 C_RED,
             ))
@@ -680,6 +721,12 @@ class IdleCog(commands.Cog):
             return
 
         now = int(time.time())
+        if state.idle_optouts.get(gid) and uid in state.idle_optouts[gid]:
+            state.idle_optouts[gid].discard(uid)
+            await persistence.delete_idle_optout(gid, uid)
+        if waiting is not None:
+            await self._claim(ctx, waiting, class_name, now)
+            return
         char = rpg.new_character(class_name, now)
         rpg.ensure_position(char, self.rng)
         chars[uid] = char   # claimed before the first await: a second !idle join sees it
@@ -699,6 +746,27 @@ class IdleCog(commands.Cog):
         ))
         if not self._in_idle_channel(ctx):
             await self._send(channel, [f"🆕 {name} the {class_name} has joined the realm. Level 1 in {first}."])
+
+    async def _claim(self, ctx, char: dict, class_name: str, now: int) -> None:
+        """`!idle join <class>` by a member the bot enrolled: the character
+        keeps everything it has earned, takes the class for free, and gets
+        its feed thread — the player asked, so being added to it is fair."""
+        gid, uid = ctx.guild.id, ctx.author.id
+        char["claimed"], char["class"] = True, class_name   # before the first await: a second join sees "claimed"
+        self._seen(ctx.guild, uid, char, now)
+        await persistence.save_idle_character(gid, uid)
+        channel = self._channel(ctx.guild)
+        thread = await self._create_thread(ctx.guild, channel, uid, char)
+        where = (
+            f"Your story unfolds in {thread.mention}." if thread is not None
+            else f"I couldn't open your feed thread — check that I have **Create Public Threads** in {channel.mention}."
+        )
+        await ctx.send(embed=emb(
+            "⚔️ Character Claimed",
+            f"{self._namer(ctx.guild)(uid)} takes up their level {char['level']} adventurer as a **{class_name}** — "
+            f"items, gold and all.\n{where}",
+            C_GREEN,
+        ))
 
     @cmd_idle.command(name="status", aliases=["info"])
     async def cmd_status(self, ctx: commands.Context, *, member: MemberConverter = None):
@@ -760,7 +828,8 @@ class IdleCog(commands.Cog):
         for i, (uid, char) in enumerate(ranked, 1):
             stars = "★" * char["prestige"] + " " if char["prestige"] else ""
             clock = "⏸️ paused" if rpg.is_paused(char) else f"next <t:{char['next_level_at']}:R>"
-            lines.append(f"**{i}.** {name(uid)} — {stars}Lv {char['level']} {char['class']} · {clock}")
+            unclaimed = "" if char["claimed"] else " · *unclaimed*"
+            lines.append(f"**{i}.** {name(uid)} — {stars}Lv {char['level']} {char['class']} · {clock}{unclaimed}")
         await ctx.send(embed=emb("🏔️ Idle Ladder", "\n".join(lines), C_GOLD))
 
     @cmd_idle.command(name="align", aliases=["alignment"])
@@ -1187,6 +1256,9 @@ class IdleCog(commands.Cog):
         if chars.get(uid) is not char:
             return False   # already gone, or replaced, while a prompt was open
         del chars[uid]
+        # Remembered, or the enrollment sweep would hand them another in a minute.
+        state.idle_optouts.setdefault(guild.id, set()).add(uid)
+        await persistence.save_idle_optout(guild.id, uid)
         await persistence.delete_idle_character(guild.id, uid)
         await self._archive_thread(guild, char["thread_id"])
         return True

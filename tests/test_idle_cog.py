@@ -788,6 +788,154 @@ async def test_status_shows_the_biome_and_the_monster_tally():
     assert "[300, 100] — Mountains" in sheet and "**Monsters slain:** 12 · **Struck down:** 3" in sheet
 
 
+# ── auto-enrollment ──────────────────────────────────────────────────────────
+
+BOT_ROLE = 7001
+
+
+def _enrolling_world(**kwargs):
+    from tests.fakes.discord import FakeRole
+    cog, guild, idle = _world(**kwargs)
+    cog.rng = _StillRng()
+    _state.bot_roles.add(BOT_ROLE)
+    get_guild_cfg(GID)["idle_enroll"] = True
+    for uid in (ALICE, BOB):
+        guild.get_member(uid).roles = [FakeRole(BOT_ROLE)]
+    return cog, guild, idle
+
+
+async def test_members_with_a_bot_role_are_enrolled_silently_and_nobody_else_is():
+    cog, guild, idle = _enrolling_world()
+    guild.get_member(BOB).bot = True                              # a bot holding the role is not a player
+
+    await cog.tick()
+
+    chars = _state.idle_characters[GID]
+    assert set(chars) == {ALICE}                                  # ADMIN has no bot role
+    assert chars[ALICE]["class"] == "Adventurer" and chars[ALICE]["claimed"] is False
+    assert chars[ALICE]["x"] is not None and not rpg.is_paused(chars[ALICE])
+    idle.send.assert_not_called()
+    idle.create_thread.assert_not_called()
+
+
+async def test_enrollment_needs_the_setting_and_a_channel_and_is_paced():
+    cog, guild, _idle = _enrolling_world()
+    get_guild_cfg(GID)["idle_enroll"] = False
+    await cog.tick()
+    assert _state.idle_characters.get(GID, {}) == {}
+
+    from tests.fakes.discord import FakeRole
+    get_guild_cfg(GID)["idle_enroll"] = True
+    for uid in range(100, 110):
+        extra = FakeMember(uid, f"m{uid}")
+        extra.roles, extra.status = [FakeRole(BOT_ROLE)], discord.Status.online
+        guild.members.append(extra)
+    await cog.tick()
+    assert len(_state.idle_characters[GID]) == _idle_cog.ENROLL_PER_TICK
+    await cog.tick()
+    assert len(_state.idle_characters[GID]) == 2 * _idle_cog.ENROLL_PER_TICK
+
+
+async def test_an_unclaimed_character_levels_without_a_thread_a_member_add_or_a_mention():
+    cog, guild, idle = _enrolling_world()
+    _spawn(ALICE, level=9, left=-10, claimed=False, **MARKET)     # level 10 is channel news
+
+    await cog.tick()
+
+    assert _state.idle_characters[GID][ALICE]["level"] == 10
+    idle.create_thread.assert_not_called()                         # no thread, so nobody is added to one
+    assert "reached **level 10**" in _sent(idle)
+    for call in idle.send.call_args_list:
+        assert call.kwargs["silent"] is True and call.kwargs["allowed_mentions"].to_dict() == {"parse": []}
+
+
+async def test_a_quest_mentions_only_the_questers_who_claimed_their_character():
+    cog, guild, idle = _world()
+    _spawn(ALICE, level=45, left=50_000), _spawn(BOB, level=45, left=50_000, claimed=False)
+
+    await cog.tick()
+
+    call = idle.send.call_args
+    assert f"<@{ALICE}>" in call.args[0] and f"<@{BOB}>" not in call.args[0] and "**bob**" in call.args[0]
+    assert call.kwargs["allowed_mentions"].to_dict()["users"] == [ALICE]
+    assert [t.name for t in guild.threads] == [guild.threads[0].name] and "alice" in guild.threads[0].name
+
+
+async def test_idle_join_claims_the_waiting_character_with_a_free_class_and_a_thread():
+    cog, guild, _idle = _enrolling_world()
+    waiting = _spawn(ALICE, level=14, gold=900, claimed=False, items={"ring": {"level": 9, "name": None}},
+                     **{"class": rpg.UNCLAIMED_CLASS})
+    ctx = _ctx(guild)
+
+    await cog.cmd_join.callback(cog, ctx)                          # no class: told what is waiting
+    assert "level 14 Adventurer has been adventuring in your name" in ctx.sent_embeds[-1].description
+    assert waiting["claimed"] is False
+
+    await cog.cmd_join.callback(cog, ctx, class_name="Tax Wizard")
+    assert _state.idle_characters[GID][ALICE] is waiting           # the same character, not a new one
+    assert (waiting["claimed"], waiting["class"], waiting["level"], waiting["gold"]) == (True, "Tax Wizard", 14, 900)
+    thread = guild.threads[0]
+    assert waiting["thread_id"] == thread.id and "Tax Wizard" in thread.name
+    thread.add_user.assert_awaited_once()
+    assert ctx.sent_embeds[-1].title == "⚔️ Character Claimed"
+
+    await cog.cmd_join.callback(cog, ctx, class_name="Bard")       # and only once
+    assert ctx.sent_embeds[-1].title == "❌ Already Adventuring" and waiting["class"] == "Tax Wizard"
+
+
+async def test_leaving_is_remembered_until_the_player_joins_again():
+    cog, guild, _idle = _enrolling_world()
+    guild.get_member(BOB).roles = []
+    _spawn(ALICE, claimed=False)
+
+    await cog.cmd_leave.callback(cog, _ctx(guild))
+    assert ALICE in _state.idle_optouts[GID]
+    await cog.tick()
+    assert ALICE not in _state.idle_characters[GID]                # not handed another
+
+    await cog.cmd_join.callback(cog, _ctx(guild), class_name="Bard")
+    assert _state.idle_characters[GID][ALICE]["claimed"] is True and ALICE not in _state.idle_optouts[GID]
+
+
+async def test_the_sheet_and_the_ladder_mark_an_unclaimed_character():
+    cog, guild, _idle = _world()
+    _spawn(ALICE, level=30), _spawn(BOB, level=12, claimed=False, x=1, y=1)
+    ctx = _ctx(guild)
+    await cog.cmd_status.callback(cog, ctx, member=guild.get_member(BOB))
+    assert "Unclaimed" in ctx.sent_embeds[-1].description
+    await cog.cmd_top.callback(cog, ctx)
+    lines = ctx.sent_embeds[-1].description.split("\n")
+    assert "unclaimed" not in lines[0] and lines[1].endswith("*unclaimed*")
+
+
+async def test_settings_idle_enroll_toggles(monkeypatch):
+    import src.cogs.settings_cog as _settings_cog
+    monkeypatch.setattr(_settings_cog, "save_guild_settings", AsyncMock())
+    guild = FakeGuild(gid=GID)
+    guild.members = [FakeMember(ADMIN, "boss", administrator=True)]
+    cog = SettingsCog(None)
+    ctx = FakeCtx(author=guild.get_member(ADMIN), guild=guild, command_name="settings idle-enroll")
+    await cog.settings_idle_enroll.callback(cog, ctx, "on")
+    assert get_guild_cfg(GID)["idle_enroll"] is True and "idle channel is set" in ctx.sent_embeds[-1].description
+    await cog.settings_idle_enroll.callback(cog, ctx, "maybe")
+    assert get_guild_cfg(GID)["idle_enroll"] is True
+    await cog.settings_idle_enroll.callback(cog, ctx, "OFF")
+    assert get_guild_cfg(GID)["idle_enroll"] is False
+
+
+async def test_optouts_survive_a_reload(db):
+    _state.idle_optouts.setdefault(GID, set()).add(ALICE)
+    await _persistence.save_idle_optout(GID, ALICE)
+    await _persistence.save_idle_optout(GID, ALICE)                # twice is fine
+    _state.idle_optouts.clear()
+    await _persistence.init_db_state()
+    assert _state.idle_optouts == {GID: {ALICE}}
+    await _persistence.delete_idle_optout(GID, ALICE)
+    _state.idle_optouts.clear()
+    await _persistence.init_db_state()
+    assert _state.idle_optouts == {}
+
+
 # ── !lb idle ─────────────────────────────────────────────────────────────────
 
 async def test_lb_idle_ranks_this_servers_characters_by_prestige_then_level(monkeypatch):
@@ -1250,7 +1398,7 @@ async def test_settings_idle_pace_sets_validates_and_prompts(monkeypatch):
 async def test_characters_and_quests_round_trip_through_the_db(db):
     char = _spawn(level=12, items={"ring": {"level": 9, "name": None}}, thread_id=900, law="chaotic", x=17, y=499,
                   gold=4321, rush_day="2026-09-21", extra_duel_day="2026-09-20", auto_trade=False, traded_at=1234, travel_to="Velvragh", mob_kills=12, mob_deaths=3,
-                  gamble_town="Denmark", gamble_visit_at=99, gamble_budget=40, gambles=7, gamble_won=300, gamble_lost=450)
+                  gamble_town="Denmark", gamble_visit_at=99, gamble_budget=40, gambles=7, gamble_won=300, gamble_lost=450, claimed=False)
     paused = _spawn(BOB)
     rpg.pause(paused, int(time.time()))
     _state.idle_quests[GID] = {
