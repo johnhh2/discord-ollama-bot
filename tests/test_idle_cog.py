@@ -243,8 +243,10 @@ async def test_tick_catches_up_several_levels_in_one_post():
     assert char["level"] == 11
     assert idle.send.await_count == 1
     assert "level 10" in _sent(idle) and "level 9" not in _sent(idle) and "level 11" not in _sent(idle)
+    assert "The next one takes" not in _sent(idle)      # the room doesn't need a countdown
     feed = _sent(guild.threads[0])
     assert all(f"level {n}" in feed for n in (9, 10, 11))
+    assert "The next one takes" in feed                 # the player's own thread does
 
 
 async def test_tick_does_nothing_with_the_game_off_but_freeze_clocks():

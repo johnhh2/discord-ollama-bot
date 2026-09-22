@@ -310,11 +310,13 @@ class IdleCog(commands.Cog):
                 earned = rpg.level_gold(char["level"])
                 char["gold"] += earned
                 self._rename_due.add((gid, uid))
+                reached = f"🎉 {name(uid)} the {char['class']} reached **level {char['level']}**! +{earned:,} gold."
                 notes.append(rpg.Note(
                     (uid,),
-                    f"🎉 {name(uid)} the {char['class']} reached **level {char['level']}**! +{earned:,} gold. "
-                    f"The next one takes {format_duration(rpg.ttl(char['level'], char['prestige']))}.",
+                    f"{reached} The next one takes {format_duration(rpg.ttl(char['level'], char['prestige']))}.",
                     rpg.level_is_news(char["level"], char["prestige"]),
+                    # The room doesn't need the player's own countdown; their feed does.
+                    public_text=reached,
                 ))
                 notes.append(rpg.find_item(uid, char, self.rng, name))
                 notes += rpg.level_up_battle(uid, chars, self.rng, name, now, pace)
@@ -392,7 +394,7 @@ class IdleCog(commands.Cog):
             public = [n for n in notes if n.public]
             # Pings land in the channel only; the same line in a feed thread
             # shows the name without mentioning anyone a second time.
-            await self._send(channel, [n.text for n in public], ping={uid for n in public for uid in n.ping})
+            await self._send(channel, [n.public_text or n.text for n in public], ping={uid for n in public for uid in n.ping})
             if any(n.show_map for n in public):
                 await self._post_map(guild, channel)
         feeds: dict = {}

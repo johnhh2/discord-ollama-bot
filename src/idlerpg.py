@@ -248,6 +248,7 @@ class Note(NamedTuple):
     public: bool = False
     ping: tuple = ()
     show_map: bool = False   # post the map under it (a journey's start)
+    public_text: "str | None" = None   # said in the channel instead, when the room needs less than the feed
 
 
 NameFn = Callable[[int], str]
