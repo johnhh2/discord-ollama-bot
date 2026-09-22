@@ -205,8 +205,8 @@ async def test_tick_levels_up_finds_an_item_and_posts_once_per_destination(monke
     thread = guild.threads[0]                     # made lazily: the character had none
     story = [call.args[0] for call in thread.send.call_args_list]
     assert len(story) == 2                        # the opening line, then one batched post
-    assert "reached **level 1**" in story[1] and "(was level 0)" in story[1]
-    assert "(was level 0)" not in _sent(idle)     # item finds stay in the feed
+    assert "reached **level 1**" in story[1] and "their first ring" in story[1]
+    assert "their first ring" not in _sent(idle)  # item finds stay in the feed
     assert (GID, ALICE) in saved
 
 
@@ -565,12 +565,12 @@ async def test_a_duel_plays_out_round_by_round_in_both_feeds_and_only_the_result
     for who, feed in feeds.items():
         assert "squares up to" in feed, who
         assert "**Round 1**" in feed and "hits for" in feed, who
-        assert "wins, taking" in feed, who                   # and the result lands after it
+        assert "wins." in feed, who                          # and the result lands after it
     assert beats and len(beats) == feeds["alice"].count("**Round ")   # a beat before each round
 
     room = _sent(idle)
     assert "**Round 1**" not in room and "squares up to" not in room
-    assert "duelled" in room and "wins, taking" in room      # the room hears the result only
+    assert "duelled" in room and "wins." in room             # the room hears the result only
 
 
 async def test_duel_run_in_the_idle_channel_is_not_posted_twice():
@@ -781,7 +781,7 @@ async def test_status_shows_the_voice_bonus_while_it_applies():
     assert "In voice" not in ctx.sent_embeds[-1].description
     _join_voice(guild, ALICE)
     await cog.cmd_status.callback(cog, ctx)
-    assert "🎙️ **In voice:** clock and gold +10%" in ctx.sent_embeds[-1].description
+    assert "🎙️ **In voice:** levelling and gold 10% faster" in ctx.sent_embeds[-1].description
 
 
 # ── monsters ─────────────────────────────────────────────────────────────────
@@ -858,7 +858,7 @@ async def test_status_shows_the_biome_and_the_monster_tally():
     ctx = _ctx(guild)
     await cog.cmd_status.callback(cog, ctx)
     sheet = ctx.sent_embeds[-1].description
-    assert "[300, 100] — Mountains" in sheet and "**Monsters slain:** 12 · **Struck down:** 3" in sheet
+    assert "[300, 100] — in Mountains country" in sheet and "**Monsters slain:** 12 · **Struck down:** 3" in sheet
 
 
 # ── auto-enrollment ──────────────────────────────────────────────────────────
@@ -941,7 +941,7 @@ async def test_idle_join_claims_the_waiting_character_with_a_free_class_and_a_th
     ctx = _ctx(guild)
 
     await cog.cmd_join.callback(cog, ctx)                          # no class: told what is waiting
-    assert "level 14 Adventurer has been adventuring in your name" in ctx.sent_embeds[-1].description
+    assert "level 14 Adventurer has been playing in your name" in ctx.sent_embeds[-1].description
     assert waiting["claimed"] is False
 
     await cog.cmd_join.callback(cog, ctx, class_name="Tax Wizard")
@@ -1204,7 +1204,7 @@ async def test_no_travel_on_a_journey_quest_or_to_where_you_stand():
     char = _spawn(x=gx, y=gy)
     ctx = _ctx(guild)
     await cog.cmd_travel.callback(cog, ctx, where="denmark")
-    assert "already standing" in ctx.sent_embeds[-1].description and char["travel_to"] is None
+    assert "already in Denmark" in ctx.sent_embeds[-1].description and char["travel_to"] is None
 
     _state.idle_quests[GID] = {**rpg.new_quest(), "members": [ALICE], "description": "walk", "kind": "journey", "p1": [1, 1], "p2": [2, 2]}
     await cog.cmd_travel.callback(cog, ctx, where="velvragh")
@@ -1277,7 +1277,7 @@ async def test_shop_second_duel_only_after_the_first_and_once_a_day():
     alice, _bob = _spawn(ALICE, level=10, gold=1000, **MARKET), _spawn(BOB)
     ctx = _ctx(guild)
     await cog.cmd_shop.callback(cog, ctx, "duel")
-    assert "still have today's duel" in ctx.sent_embeds[-1].description and alice["gold"] == 1000
+    assert "haven't used today's duel" in ctx.sent_embeds[-1].description and alice["gold"] == 1000
 
     await cog.cmd_duel.callback(cog, ctx, member=guild.get_member(BOB))
     await cog.cmd_shop.callback(cog, ctx, "duel")
@@ -1641,7 +1641,7 @@ async def test_a_blessing_speeds_up_everybodys_clock_and_shows_in_the_sheet(monk
 
     ctx = _ctx(guild)
     await cog.cmd_status.callback(cog, ctx)
-    assert "✨ **Boosted:** clock and gold +25%" in ctx.sent_embeds[-1].description
+    assert "✨ **Boosted:** levelling and gold 25% faster" in ctx.sent_embeds[-1].description
 
 
 async def test_bless_charges_the_caster_and_tells_the_room():
@@ -1674,8 +1674,8 @@ async def test_world_reports_the_omen_the_blessings_and_your_own_boost():
     ctx = _ctx(guild)
     await cog.cmd_world.callback(cog, ctx)
     body = ctx.sent_embeds[-1].description
-    assert "The realm is quiet" in body and "unblessed" in body
-    assert "**Your clock and gold:** +50%" in body
+    assert "The realm is quiet" in body and "No blessing is on the realm" in body
+    assert "levelling and earning **50% faster**" in body
 
 
 # ── titles ───────────────────────────────────────────────────────────────────

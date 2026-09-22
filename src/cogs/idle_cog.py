@@ -83,19 +83,19 @@ ALIGN_EFFECTS = (
 _RULES_TOPICS = {
     "levels": (
         f"Level 1 takes {format_duration(rpg.ttl(0))}; each level after takes {int((rpg.LEVEL_MULT - 1) * 100)}% longer.\n"
-        f"The timer runs while you've been online in the last {format_duration(rpg.GRACE_SECS)} — idle and do-not-disturb count. "
+        f"The clock runs while you've been online in the last {format_duration(rpg.GRACE_SECS)} — idle and do-not-disturb count. "
         "After that it pauses and picks up where it stopped. Being away never costs you anything.\n"
-        f"Share one of the server's voice channels with someone (not the AFK one, and not alone) and your timer runs {rpg.VOICE_BONUS_PCT}% faster, "
+        f"Share one of the server's voice channels with someone (not the AFK one, and not alone) and your clock runs {rpg.VOICE_BONUS_PCT}% faster, "
         f"with {rpg.VOICE_BONUS_PCT}% more gold from everything you earn."
     ),
     "battles": (
         f"Each level-up finds an item for one of ten slots and may start a fight (always, from level {rpg.BATTLE_ALWAYS_LEVEL}).\n"
         "Each side rolls a number from 0 up to their item power (`!idle items`), shown as \"rolled 12 of 40\"; the higher roll wins. "
-        "Win and your timer shrinks; lose and it grows.\n"
+        "Win and time comes off your clock (`-2min`); lose and it goes on (`+2min`).\n"
         f"You only run into another player if they are within {rpg.BATTLE_RANGE} squares of you on the map — otherwise you face "
         "the Idle Warden, who is always your own match. A fight with the Warden stays in your own thread.\n"
         f"`!idle duel <name>` once a day: {rpg.DUEL_MAX_ROUNDS} rounds of blows, played out in both feeds, and the loser hands "
-        f"{rpg.DUEL_PCT}% of their timer to the winner. Nobody is left hurt by it — a duel is a match, not a mugging."
+        f"{rpg.DUEL_PCT}% of their clock to the winner. Nobody is left hurt by it — a duel is a match, not a mugging."
     ),
     "monsters": (
         "Out in the wilds your character runs into monsters — rats and bandits on the plains, trolls and dragons in the mountains, "
@@ -103,14 +103,14 @@ _RULES_TOPICS = {
         "A monster is sized to you, so gear alone doesn't make them easy; its prefix (Veteran, Elite … Corrupted) and kind set how much harder. "
 f"A fight runs up to {rpg.MOB_MAX_ROUNDS} rounds of blows both ways and costs **health**, not time — you carry your wounds between fights "
         f"and mend about {100 // rpg.HP_REGEN_DIVISOR}% of yourself a minute. Kill it: gold, a little off your clock, sometimes an item. "
-        f"Run out of health: the clock, some gold, and you wake at a town's edge.\n"
+        f"Lose and it costs you time, some gold and everything in your bag, and you wake at a town's edge.\n"
         f"At or under {rpg.CAMP_HP_PCT}% health your character makes camp instead of fighting, so it takes a bad run to fall.\n"
         "Who swings first each round is rolled, leaning to whoever is stronger — a monster can land the opening blow.\n"
-        "Being struck down also costs you **everything in your bag**, so a full bag is a reason to head for a market.\n"
+        "That bag is the one thing at stake on the walk to a market — a full one is a reason to go.\n"
         f"The {len(rpg.SIGNATURE_DROPS)} worst things in the realm each leave something only they leave: a Dragon its "
         "Wingcase Shield, a Basilisk its Unblinking Eye, and so on.\n"
         f"From level 11 a quarter of fights are against a group. Up to level {rpg.MOB_EASY_LEVEL} monsters fight at half strength.\n"
-        "Roughly one every quarter hour while you're out in the wilds — none at all inside a town's ring."
+        "Roughly one every quarter of an hour while you're out in the wilds — none at all inside a town's ring."
     ),
     "map": (
         f"The realm is a {rpg.MAP_SIZE}×{rpg.MAP_SIZE} grid. Everyone online wanders one step a second, and the edges wrap.\n"
@@ -143,7 +143,7 @@ f"A fight runs up to {rpg.MOB_MAX_ROUNDS} rounds of blows both ways and costs **
         "the moon only rises at night, hordes arrive around midday, storms whenever they like. It is announced when "
         "it's coming and again when it lands, and it changes what the monsters are worth, or what everyone's clock "
         f"is doing. `!idle world` says what's going on.\n"
-        f"🕊️ `!idle bless` spends **{rpg.BLESS_COST:,}** of your gold on +{rpg.BLESS_BOOST_PCT}% clock and gold for "
+        f"🕊️ `!idle bless` spends **{rpg.BLESS_COST:,}** of your gold on {rpg.BLESS_BOOST_PCT}% faster levelling and gold for "
         f"**everyone here**, for {format_duration(rpg.BLESS_SECS)}. They stack up to {rpg.BLESS_MAX}. It is the only "
         "thing in the game you can buy for somebody else."
     ),
@@ -167,7 +167,7 @@ f"A fight runs up to {rpg.MOB_MAX_ROUNDS} rounds of blows both ways and costs **
     "alignment": ALIGN_EFFECTS + "\nSet it with `!idle align`, once a day.",
     "quests": (
         f"Now and then, {rpg.QUEST_MIN_PARTY}–{rpg.QUEST_MAX_PARTY} online players of level {rpg.QUEST_MIN_LEVEL}+ are sent on a 12–24 hour quest.\n"
-        f"Finish and each quester's timer drops {rpg.QUEST_REWARD_PCT}%. There is nothing to do, and nothing to get wrong."
+        f"Finish and each quester's clock drops {rpg.QUEST_REWARD_PCT}%, with gold on top. There is nothing to do, and nothing to get wrong."
     ),
     "prestige": (
         f"At level {rpg.PRESTIGE_LEVEL}, `!idle prestige` sends you back to level 0 without your items. "
@@ -739,7 +739,7 @@ class IdleCog(commands.Cog):
         seconds = self._penalize(guild, member.id, rpg.PEN_PART, int(time.time()))
         self._pending.setdefault(guild.id, []).append(rpg.Note(
             (member.id,),
-            f"🚪 {self._namer(guild)(member.id)} walked out on their own story. {format_duration(seconds)} added to their clock.",
+            f"🚪 {self._namer(guild)(member.id)} walked out on their own story.{rpg.clock_tail(seconds)}",
         ))
 
     @commands.Cog.listener()
@@ -757,8 +757,8 @@ class IdleCog(commands.Cog):
         seconds = self._penalize(member.guild, member.id, rpg.PEN_QUIT, int(time.time()))
         self._pending.setdefault(member.guild.id, []).append(rpg.Note(
             (member.id,),
-            f"🏃 **{discord.utils.escape_markdown(member.display_name)}** fled the realm. "
-            f"{format_duration(seconds)} added to their clock.",
+            f"🏃 **{discord.utils.escape_markdown(member.display_name)}** fled the realm."
+            f"{rpg.clock_tail(seconds)}",
             True,
         ))
 
@@ -839,21 +839,22 @@ class IdleCog(commands.Cog):
         if not char["claimed"]:
             lines.append("*Unclaimed — its player can take it up with `!idle join <class>`.*")
         if self._in_voice(guild, uid):
-            lines.append(f"🎙️ **In voice:** clock and gold +{rpg.VOICE_BONUS_PCT}%")
+            lines.append(f"🎙️ **In voice:** levelling and gold {rpg.VOICE_BONUS_PCT}% faster")
         boost = self._boost(guild, char, now)
         if boost:
             own = f", {char['boost_pct']}% of it theirs until <t:{char['boost_until']}:t>" if now < char.get("boost_until", 0) else ""
-            lines.append(f"✨ **Boosted:** clock and gold +{boost}%{own} — `!idle world`")
+            lines.append(f"✨ **Boosted:** levelling and gold {boost}% faster{own} — `!idle world`")
         if rpg.hunting(char):
             how = "walking there" if char.get("hunt_x") is not None else "hunting"
             lines.append(f"📜 **Hunt:** {char['hunt_killed']}/{char['hunt_count']} {char['hunt_mob']}s — {how}")
         if char.get("loot"):
-            lines.append(f"🎒 **Bag:** {len(char['loot'])} piece(s) worth {rpg.loot_value(char):,} gold at a market")
+            pieces = len(char["loot"])
+            lines.append(f"🎒 **Bag:** {pieces} piece{'' if pieces == 1 else 's'} worth {rpg.loot_value(char):,} gold at a market")
         if char.get("x") is not None:
             here = rpg.landmark_at((char["x"], char["y"]))
             town, away = rpg.nearest_town(char)
             market = f"market open ({town})" if away <= rpg.MARKET_RADIUS else f"nearest market: {town}, {away} squares"
-            where = f"at {here}" if here else rpg.biome_at(char["x"], char["y"])
+            where = f"at {here}" if here else f"in {rpg.biome_at(char['x'], char['y'])} country"
             lines.insert(2, f"**Position:** [{char['x']}, {char['y']}] — {where} · {market}")
             if char.get("travel_to") in rpg.LANDMARKS:
                 eta = format_duration(rpg.travel_eta_secs(char, char["travel_to"]))
@@ -907,7 +908,7 @@ class IdleCog(commands.Cog):
             return
         if not class_name:
             head = (
-                f"A level {waiting['level']} {waiting['class']} has been adventuring in your name. Name a class to make it yours: "
+                f"A level {waiting['level']} {waiting['class']} has been playing in your name. Name a class to make it yours: "
                 if waiting is not None else "Say what you are: "
             )
             await ctx.send(embed=emb(
@@ -1042,7 +1043,8 @@ class IdleCog(commands.Cog):
         char = self._chars(ctx.guild.id).get(ctx.author.id)
         if char is not None:
             boost = self._boost(ctx.guild, char, now)
-            lines.append(f"\n**Your clock and gold:** +{boost}%" + (" (nothing extra)" if not boost else ""))
+            lines.append("\nYou are levelling and earning at the usual rate." if not boost
+                         else f"\nYou are levelling and earning **{boost}% faster**.")
         await ctx.send(embed=emb("🌍 The Realm Today", "\n".join(lines), C_BLUE))
 
     @cmd_idle.command(name="bless")
@@ -1066,7 +1068,7 @@ class IdleCog(commands.Cog):
             title="🕊️ Bless the Realm",
             description=(
                 f"**{rpg.BLESS_COST:,}** of your gold buys **everyone** here "
-                f"+{rpg.BLESS_BOOST_PCT}% clock and gold for {format_duration(rpg.BLESS_SECS)} — "
+                f"{rpg.BLESS_BOOST_PCT}% faster levelling and gold for {format_duration(rpg.BLESS_SECS)} — "
                 f"you included, and stacking with anyone else's up to {rpg.BLESS_MAX}.\n\n"
                 f"{rpg.bless_line(rpg.bless_count(self._events(gid), now))}\n"
                 f"You have **{char['gold']:,}** gold."
@@ -1400,7 +1402,7 @@ class IdleCog(commands.Cog):
             await ctx.send(embed=emb("❌ Travel", "You're on a journey quest — it decides where you walk until it's done.", C_RED))
             return
         if rpg.travel_steps(char, town) == 0:
-            await ctx.send(embed=emb("🧭 Travel", f"You're already standing at {town}.", C_GREY))
+            await ctx.send(embed=emb("🧭 Travel", f"You're already {'in' if town in rpg.TOWNS else 'at'} {town}.", C_GREY))
             return
         char["travel_to"] = town
         await persistence.save_idle_character(gid, uid)
@@ -1421,7 +1423,7 @@ class IdleCog(commands.Cog):
     def _shop_lines(char: dict) -> list:
         prices = rpg.shop_prices(char)
         bag = char.get("loot") or []
-        return ([("sell", f"Sell — empty your bag of {len(bag)} · +{rpg.loot_value(char):,} gold")] if bag else []) + [
+        return ([("sell", f"Sell — empty your bag of {len(bag)} piece{'' if len(bag) == 1 else 's'} · +{rpg.loot_value(char):,} gold")] if bag else []) + [
             ("find", f"Find — one more item roll · {prices['find']:,} gold"),
             ("sharpen", f"Sharpen — +{rpg.SHARPEN_PCT}% to one of your items · {rpg.PRICE_SHARPEN_PER_ITEM_LEVEL} gold per item level"),
             ("rush", f"Rush — {rpg.RUSH_PCT}% off your clock, once a day · {prices['rush']:,} gold"),
@@ -1546,7 +1548,7 @@ class IdleCog(commands.Cog):
         quest = self._quest(ctx.guild.id)
         name = self._namer(ctx.guild)
         if rpg.quest_active(quest):
-            party = ", ".join(name(u) for u in quest["members"])
+            party = rpg.and_list([name(u) for u in quest["members"]])
             if quest["kind"] == "journey":
                 goal = quest["p1"] if quest["stage"] == 1 else quest["p2"]
                 where = rpg.landmark_at(goal)
@@ -1583,11 +1585,12 @@ class IdleCog(commands.Cog):
             await ctx.send(embed=emb("❌ Prestige", f"Prestige opens at level {rpg.PRESTIGE_LEVEL}. You're level {char['level']}.", C_RED))
             return
         maxed = char["prestige"] >= rpg.PRESTIGE_MAX_RANKS
-        perk = "no further speed bonus (you're at the cap), just the star" if maxed else f"levelling {rpg.PRESTIGE_BONUS_PCT}% faster, for good"
+        perk = ("another ★ — you're at the speed cap, so no further bonus" if maxed
+                else f"a ★ and levelling {rpg.PRESTIGE_BONUS_PCT}% faster, for good")
         if not await confirm_prompt(
             ctx,
             title="🌟 Prestige",
-            description=f"You go back to **level 0** and lose **every item**. In return: a ★ and {perk}.",
+            description=f"You go back to **level 0** and lose **every item**. In return: {perk}.",
             payer=ctx.author,
             not_yours=NOT_YOURS,
         ):
@@ -1615,7 +1618,7 @@ class IdleCog(commands.Cog):
         if not await confirm_prompt(
             ctx,
             title="🪦 Retire Your Character",
-            description=f"Your level {char['level']} {char['class']} and everything they carry is deleted for good.",
+            description=f"Your level {char['level']} {char['class']} and everything they carry are deleted for good.",
             payer=ctx.author,
             not_yours=NOT_YOURS,
         ):
@@ -1770,11 +1773,10 @@ class IdleCog(commands.Cog):
             seconds = -min(seconds, rpg.time_left(char, now))
         rpg.shift(char, seconds)
         await persistence.save_idle_character(ctx.guild.id, uid)
-        direction = "later" if seconds > 0 else "sooner"
         await ctx.send(embed=emb(
             "🛠️ Clock Moved",
-            f"{self._namer(ctx.guild)(uid)} levels {format_duration(abs(seconds))} {direction} — "
-            f"{format_duration(rpg.time_left(char, now))} to go.",
+            f"{self._namer(ctx.guild)(uid)} has {format_duration(rpg.time_left(char, now))} to go. "
+            f"{rpg.clock_delta(seconds) or '±0sec'}",
             C_GREEN,
         ))
 
@@ -1804,7 +1806,7 @@ class IdleCog(commands.Cog):
         if not await confirm_prompt(
             ctx,
             title="💥 Reset the Idle RPG",
-            description=f"This deletes all **{count}** character(s), their items and the current quest in this server. There is no undo.",
+            description=f"This deletes all **{count}** character{'' if count == 1 else 's'}, their items and the current quest in this server. There is no undo.",
             payer=ctx.author,
             not_yours=NOT_YOURS,
         ):
@@ -1819,7 +1821,8 @@ class IdleCog(commands.Cog):
         await persistence.delete_idle_guild(gid)
         for char in chars.values():
             await self._archive_thread(ctx.guild, char["thread_id"])
-        await ctx.send(embed=emb("💥 Idle RPG Reset", f"{len(chars)} character(s) deleted. A new age begins.", C_GREY))
+        gone = len(chars)
+        await ctx.send(embed=emb("💥 Idle RPG Reset", f"{gone} character{'' if gone == 1 else 's'} deleted. A new age begins.", C_GREY))
 
 
 async def setup(bot):

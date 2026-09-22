@@ -18,8 +18,6 @@ import math
 import re
 from typing import Callable, NamedTuple
 
-from src.helpers import format_duration
-
 # ── the curve ────────────────────────────────────────────────────────────────
 
 BASE_TTL = 600           # seconds from level 0 to level 1
@@ -479,6 +477,30 @@ def scale(char: dict, now: int, pct: float) -> int:
     return seconds
 
 
+# A clock move is written as a signed amount at the very end of the line,
+# after the gold and the drops — never in the prose. "22s added to their
+# clock" read as a reward to half the people who saw it, and a line that
+# ends in ±time can be scanned down a feed as a column.
+DELTA_UNITS = (("day", 86_400), ("hr", 3600), ("min", 60), ("sec", 1))
+
+
+def clock_delta(seconds: int) -> str:
+    """`-1min 3sec` sooner, `+22sec` later, `""` for no move at all — the two
+    largest units, as format_duration does. Callers put it last."""
+    left, parts = abs(int(seconds)), []
+    for label, size in DELTA_UNITS:
+        if left >= size:
+            qty, left = divmod(left, size)
+            parts.append(f"{qty}{label}")
+    return f"{'+' if seconds > 0 else '-'}{' '.join(parts[:2])}" if parts else ""
+
+
+def clock_tail(seconds: int) -> str:
+    """The same, ready to append to a finished sentence."""
+    delta = clock_delta(seconds)
+    return f" {delta}" if delta else ""
+
+
 def pause(char: dict, at: int) -> None:
     if not is_paused(char):
         char["remaining"] = max(0, char["next_level_at"] - at)
@@ -667,13 +689,24 @@ def find_item(uid: int, char: dict, rng, name: NameFn) -> Note:
     slot = rng.choice(ITEM_SLOTS)
     found = {"level": roll_item_level(char["level"], rng), "name": None}
     found["name"] = item_name(slot, found["level"], char["level"], rng)
-    held = char["items"].get(slot, {}).get("level", 0)
-    if found["level"] > held:
+    worn = char["items"].get(slot)
+    if found["level"] > (worn or {}).get("level", 0):
         char["items"][slot] = found
-        return Note((uid,), f"{name(uid)} found {_item_label(slot, found)} (was level {held}).")
+        return Note((uid,), f"{name(uid)} found {_a(_item_label(slot, found))}"
+                            f"{_displaced(char, slot, worn)}")
     spilled = bag_item(char, slot, found)
-    return Note((uid,), f"{name(uid)} found {_item_label(slot, found)}, but their level {held} one is "
-                        f"better — into the bag for the next town.{spilled}")
+    return Note((uid,), f"{name(uid)} found {_a(_item_label(slot, found))}, but their "
+                        f"{_item_label(slot, worn)} is better — into the bag for the next town.{spilled}")
+
+
+def _displaced(char: dict, slot: str, worn: "dict | None") -> str:
+    """What became of the piece a better find has just replaced: it goes in
+    the bag to be sold, like a find nobody will wear. An empty slot has
+    nothing to say — "(was level 0)" only ever meant "you had no boots"."""
+    if worn is None:
+        return f" — their first {slot}."
+    spilled = bag_item(char, slot, worn)
+    return f" — their {_item_label(slot, worn)} is now in their bag.{spilled}"
 
 
 def bag_item(char: dict, slot: str, item: dict) -> str:
@@ -706,12 +739,25 @@ def _item_label(slot: str, item: dict) -> str:
     return f"{named} (level {item['level']})" if named else f"level {item['level']} {slot}"
 
 
+def _sentence(text: str) -> str:
+    """Capitalise the first letter and leave the rest — str.capitalize() would
+    lowercase the monster's name along with it."""
+    return text[:1].upper() + text[1:]
+
+
+def _a(text: str) -> str:
+    """"a Goblin", "an Elite Goblin" — three monster prefixes (Elite, Undead,
+    Omega) and a couple of item rarities start with a vowel, and every one of
+    them used to read "a Elite Banshee"."""
+    return f"{'an' if text[:1].upper() in 'AEIOU' else 'a'} {text}"
+
+
 def _item_short(slot: str, item: dict) -> str:
     """The name alone, where the line already quotes the level."""
     return item.get("name") or f"{slot}"
 
 
-def _and_list(parts: list) -> str:
+def and_list(parts: list) -> str:
     """"a", "a and b", "a, b and c" — for lines that tally up what something
     cost, where a bare comma would read as another sentence."""
     if len(parts) <= 2:
@@ -866,17 +912,17 @@ def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int, pace: Pa
     factor = margin_factor(my_roll, opp_roll, my_sum, opp_sum)
     if my_roll < opp_roll:
         lost = scale(me, now, lose_pct * factor)
-        return [Note(involved, f"{head} and {_how(factor)}lost. {format_duration(lost)} added to their clock.", news)]
+        return [Note(involved, f"{head} and {_how(factor)}lost.{clock_tail(lost)}", news)]
 
     won = -scale(me, now, -win_pct * factor)
     prize = GOLD_HOUSE_WIN if opp is None else GOLD_PER_WIN * max(opp["level"], 1)
     me["gold"] += prize
-    notes = [Note(involved, f"{head} and {_how(factor)}won! {format_duration(won)} off their clock, and +{prize:,} gold.", news)]
+    notes = [Note(involved, f"{head} and {_how(factor)}won! +{prize:,} gold.{clock_tail(-won)}", news)]
     if opp is None:
         return notes
     if not rng.randrange(CRIT_ODDS[me["moral"]]):
         hurt = scale(opp, now, rng.randint(5, 25))
-        notes.append(Note(involved, f"💥 A critical strike! {opp_name} is set back {format_duration(hurt)}.", True))
+        notes.append(Note(involved, f"💥 A critical strike! {opp_name} is set back.{clock_tail(hurt)}", True))
     if rng.random() < STEAL_CHANCE:
         taken = _steal(me, opp, rng)
         if taken:
@@ -936,14 +982,17 @@ def duel(uid: int, target_uid: int, chars: dict, rng, name: NameFn, now: int,
     l_uid = target_uid if w_uid == uid else uid
 
     stake = scale(chars[l_uid], now, DUEL_PCT)
-    shift(chars[w_uid], -min(stake, time_left(chars[w_uid], now)))
+    won = min(stake, time_left(chars[w_uid], now))
+    shift(chars[w_uid], -won)
     chars[l_uid]["gold"] -= wager
     chars[w_uid]["gold"] += wager
-    staked = f" and the {wager:,} gold on the table" if wager else ""
+    staked = f", and takes the {wager:,} gold on the table" if wager else ""
+    # Both clocks move, in opposite directions, so the tail names each one.
+    moves = ", ".join(f"{name(u)} {clock_delta(d)}" for u, d in ((w_uid, -won), (l_uid, stake)) if d)
     return story, [Note(
         (uid, target_uid),
-        f"🤺 {name(uid)} duelled {name(target_uid)} — {how}. {name(w_uid)} wins, taking "
-        f"{format_duration(stake)} off {name(l_uid)}'s clock{staked}.",
+        f"🤺 {name(uid)} duelled {name(target_uid)} — {how}. {name(w_uid)} wins{staked}."
+        + (f" {moves}" if moves else ""),
         True,
     )]
 
@@ -967,11 +1016,11 @@ def team_battle(chars: dict, rng, name: NameFn, now: int, pace: Pace = CLASSIC) 
         shift(chars[u], loss)
 
     def _side(i):
-        return ", ".join(name(u) for u in teams[i]) + f" {_rolled(rolls[i], sums[i])}"
+        return and_list([name(u) for u in teams[i]]) + f" {_rolled(rolls[i], sums[i])}"
     return [Note(
         tuple(picked),
         f"🛡️ Team battle! {_side(win)} beat {_side(lose)}. "
-        f"Winners gain {format_duration(gain)}; losers are set back {format_duration(loss)}.",
+        f"Winners {clock_delta(-gain) or '±0sec'}, losers {clock_delta(loss) or '±0sec'}",
         True,
     )]
 
@@ -983,9 +1032,9 @@ def hand_of_god(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
     pct = rng.randint(5, 75)
     if rng.random() < 0.8:
         moved = -scale(char, now, -pct)
-        return Note((uid,), f"🙌 The Hand of God lifts {name(uid)} {format_duration(moved)} closer to level {char['level'] + 1}!", True)
+        return Note((uid,), f"🙌 The Hand of God lifts {name(uid)} closer to level {char['level'] + 1}!{clock_tail(-moved)}", True)
     moved = scale(char, now, pct)
-    return Note((uid,), f"🔥 The Hand of God swats {name(uid)} {format_duration(moved)} away from level {char['level'] + 1}.", True)
+    return Note((uid,), f"🔥 The Hand of God swats {name(uid)} away from level {char['level'] + 1}.{clock_tail(moved)}", True)
 
 
 def _item_event(uid: int, char: dict, rng, name: NameFn, good: bool) -> "Note | None":
@@ -996,7 +1045,7 @@ def _item_event(uid: int, char: dict, rng, name: NameFn, good: bool) -> "Note | 
     before = item["level"]
     item["level"] = max(1, int(before * (1.1 if good else 0.9)))
     lead = rng.choice(_ITEM_BOONS if good else _ITEM_BANES)
-    verb = "gains" if good else "loses"
+    verb = "gained" if good else "lost"
     return Note((uid,), f"{'🌟' if good else '🌧️'} {lead} {name(uid)}'s {_item_short(slot, item)}: it {verb} 10% ({before} → {item['level']}).")
 
 
@@ -1016,8 +1065,8 @@ def godsend(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
     if rng.random() < LUCK_BOOST_CHANCE:
         char["boost_pct"] = rng.choice(BOOST_GODSEND_PCTS)
         char["boost_until"] = now + rng.randint(BOOST_GODSEND_MIN_SECS, BOOST_GODSEND_MAX_SECS)
-        return Note((uid,), f"🌟 {name(uid)} {rng.choice(_GOOD_RUNS)}. Their clock and their gold run "
-                            f"+{char['boost_pct']}% until <t:{char['boost_until']}:t>.")
+        return Note((uid,), f"🌟 {name(uid)} {rng.choice(_GOOD_RUNS)}. They level and earn "
+                            f"{char['boost_pct']}% faster until <t:{char['boost_until']}:t>.")
     if rng.random() < 0.1:
         note = _item_event(uid, char, rng, name, good=True)
         if note:
@@ -1027,7 +1076,7 @@ def godsend(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
         char["gold"] += purse
         return Note((uid,), f"🌟 {name(uid)} found a purse somebody dropped in a hurry: +{purse:,} gold.")
     moved = -scale(char, now, -rng.randint(5, 12))
-    return Note((uid,), f"🌟 {name(uid)} {rng.choice(_GODSENDS)}. {format_duration(moved)} off their clock.")
+    return Note((uid,), f"🌟 {name(uid)} {rng.choice(_GODSENDS)}.{clock_tail(-moved)}")
 
 
 def calamity(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
@@ -1053,7 +1102,7 @@ def calamity(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
         char["gold"] -= lost
         return Note((uid,), f"🌧️ {name(uid)} was pickpocketed at a crossroads fair: {lost:,} gold lost.")
     moved = scale(char, now, rng.randint(5, 12))
-    return Note((uid,), f"🌧️ {name(uid)} {rng.choice(_CALAMITIES)}. {format_duration(moved)} added to their clock.")
+    return Note((uid,), f"🌧️ {name(uid)} {rng.choice(_CALAMITIES)}.{clock_tail(moved)}")
 
 
 def _blessing(uid: int, chars: dict, rng, name: NameFn, now: int) -> "Note | None":
@@ -1076,7 +1125,7 @@ def _temptation(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
             return Note((uid, mark), f"🦹 {name(uid)} crept into {name(mark)}'s camp and stole their {taken}!", True)
         return Note((uid,), f"🦹 {name(uid)} rifled through {name(mark)}'s pack and found nothing worth taking.")
     moved = scale(chars[uid], now, rng.randint(1, 5))
-    return Note((uid,), f"🦹 {name(uid)} was forsaken by their dark patron. {format_duration(moved)} added to their clock.")
+    return Note((uid,), f"🦹 {name(uid)} was forsaken by their dark patron.{clock_tail(moved)}")
 
 
 def random_events(uid: int, chars: dict, rng, name: NameFn, now: int, ticks_per_day: int,
@@ -1159,9 +1208,9 @@ WORLD_EVENTS = {
         hours=(10, 11, 12, 13, 14), mob_gold_pct=60, invasion=True,
     ),
     "storm": World(
-        omen="🌥️ The sky over the {detail} has gone the colour of an old coin.",
-        begins="⛈️ **A storm has settled over the {detail}.** What lives there is meaner in weather like this, and better paid.",
-        ends="🌤️ The storm over the {detail} has blown itself out.",
+        omen="🌥️ The sky over the {detail} country has gone the colour of an old coin.",
+        begins="⛈️ **A storm has settled over the {detail} country.** What lives there is meaner in weather like this, and better paid.",
+        ends="🌤️ The storm over the {detail} country has blown itself out.",
         mob_power_pct=40, mob_gold_pct=150, biome_only=True,
     ),
     "power_hour": World(
@@ -1228,10 +1277,10 @@ def bless_count(rows: list, now: int) -> int:
 
 def bless_line(live: int) -> str:
     if not live:
-        return "The realm is unblessed again."
-    over = f" — {live} are up, but {BLESS_MAX} is as high as it goes" if live > BLESS_MAX else ""
-    return (f"{live} blessing{'' if live == 1 else 's'} on the realm: everyone's clock and gold "
-            f"+{BLESS_BOOST_PCT * min(live, BLESS_MAX)}%{over}.")
+        return "No blessing is on the realm."
+    over = f" — {BLESS_MAX} is as high as they stack" if live > BLESS_MAX else ""
+    return (f"{live} blessing{'' if live == 1 else 's'} on the realm: everyone levels and earns "
+            f"{BLESS_BOOST_PCT * min(live, BLESS_MAX)}% faster{over}.")
 
 
 def cast_bless(uid: int, char: dict, rows: list, now: int) -> "tuple[bool, str]":
@@ -1350,12 +1399,12 @@ def buy_rush(char: dict, now: int, today: str) -> "tuple[bool, str]":
         return False, broke
     char["rush_day"] = today
     saved = -scale(char, now, -RUSH_PCT)
-    return True, f"{format_duration(saved)} off your clock."
+    return True, f"Your next level comes sooner. {clock_delta(-saved) or '±0sec'}"
 
 
 def buy_second_duel(char: dict, today: str) -> "tuple[bool, str]":
     if char["duel_day"] != today:
-        return False, "You still have today's duel."
+        return False, "You haven't used today's duel yet."
     if char["extra_duel_day"] == today:
         return False, "You've already bought a second duel today."
     broke = _pay(char, shop_prices(char)["duel"])
@@ -1414,7 +1463,8 @@ def auto_trade(uid: int, char: dict, rng, name: NameFn, now: int) -> "Note | Non
         if price <= budget:
             budget -= price
             spent += price
-            done.append(buy_find(uid, char, rng, name)[1])
+            # Mid-paragraph, the finder's own name a second time reads as someone else.
+            done.append(buy_find(uid, char, rng, lambda u: "They" if u == uid else name(u))[1])
         if char["items"]:
             slot = min(char["items"], key=lambda s: (char["items"][s]["level"], s))
             sharpen = sharpen_price(char["items"][slot])
@@ -1699,14 +1749,14 @@ def signature_drop(uid: int, char: dict, kind: str, rng, name: NameFn) -> "Note 
         return None
     slot, title, low, high = spoil
     found = {"level": rng.randint(low, high), "name": title}
-    held = char["items"].get(slot, {}).get("level", 0)
-    if found["level"] > held:
+    worn = char["items"].get(slot)
+    if found["level"] > (worn or {}).get("level", 0):
         char["items"][slot] = found
-        return Note((uid,), f"🏆 The {kind} left the **{title}** — a level {found['level']} {slot} "
-                            f"for {name(uid)} (was level {held}).", True)
+        return Note((uid,), f"🏆 The {kind} left the **{title}** for {name(uid)}, a level "
+                            f"{found['level']} {slot}{_displaced(char, slot, worn)}", True)
     spilled = bag_item(char, slot, found)
     return Note((uid,), f"🏆 The {kind} left the **{title}** (level {found['level']}), but "
-                        f"{name(uid)}'s level {held} {slot} is better — into the bag.{spilled}")
+                        f"{name(uid)}'s {_item_label(slot, worn)} is better — into the bag.{spilled}")
 
 
 def _to_town_outskirts(char: dict) -> str:
@@ -1804,7 +1854,7 @@ def offer_hunt(uid: int, char: dict, rng, name: NameFn, now: int, ticks_per_hour
     # nothing spawns inside a market ring, so the errand is to get out of it.
     char["hunt_x"], char["hunt_y"] = nearest_biome_point(char, beast[4])
     return Note((uid,), f"📜 [{town}] {name(uid)} was asked to deal with {char['hunt_count']} {beast[0]}s. "
-                        f"The nearest of them are out at [{char['hunt_x']}, {char['hunt_y']}], and they set off.")
+                        f"The nearest are out at [{char['hunt_x']}, {char['hunt_y']}], and {name(uid)} set off.")
 
 
 def finish_hunt(uid: int, char: dict, name: NameFn, now: int) -> Note:
@@ -1815,7 +1865,7 @@ def finish_hunt(uid: int, char: dict, name: NameFn, now: int) -> Note:
     saved = -scale(char, now, -HUNT_REWARD_PCT)
     clear_hunt(char, now)
     return Note((uid,), f"📜 {name(uid)} has finished the hunt — {count} {beast}s, as asked. "
-                        f"{format_duration(saved)} off their clock, and +{purse:,} gold.")
+                        f"+{purse:,} gold.{clock_tail(-saved)}")
 
 
 def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None) -> "list[Note]":
@@ -1851,9 +1901,9 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None
             fell_to = (mob, tier, rounds)
             break
         if not killed:
-            broke_off = f"a {mob} shook {name(uid)} off after {rounds} rounds{blows}"
+            broke_off = f"{_a(mob)} shook {name(uid)} off after {rounds} rounds{blows}"
             break
-        slain.append(f"{mob} ({rounds}r{blows})")
+        slain.append(f"{_a(mob)} ({rounds}r{blows})")
         bonus = MOB_DANGER_GOLD_BONUS if biome in DANGEROUS_BIOMES else 1
         bonus *= (100 + (rules.mob_gold_pct if rules else 0)) / 100
         gold += max(1, int(tier * gold_mult * max(char["level"], 1) * MOB_GOLD_PER_LEVEL * bonus))
@@ -1871,16 +1921,15 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None
     where = f"[{biome}]"
     notes = []
     if slain:
-        clock = f" {format_duration(saved)} off their clock," if saved else ""
-        text = f"🗡️ {where} {name(uid)} killed a {', then a '.join(slain)}.{clock} +{gold:,} gold. {body}."
+        text = f"🗡️ {where} {name(uid)} killed {', then '.join(slain)}. +{gold:,} gold. {body}."
         if broke_off:
             text += f" Then {broke_off}."
-        notes.append(Note((uid,), text, rare))
+        notes.append(Note((uid,), f"{text}{clock_tail(-saved)}", rare))
         notes += trophies
         if fell_to is None and rng.random() < MOB_DROP_CHANCE:
             notes.append(find_item(uid, char, rng, name))
     elif broke_off:
-        notes.append(Note((uid,), f"🗡️ {where} {broke_off[0].upper()}{broke_off[1:]}. {body}."))
+        notes.append(Note((uid,), f"🗡️ {where} {_sentence(broke_off)}. {body}."))
 
     if fell_to is not None:
         mob, tier, rounds = fell_to
@@ -1902,15 +1951,16 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None
         char["loot"] = []
         town = _to_town_outskirts(char)
         char["hp"] = max_hp(char)   # patched up on the way, as sizzlorox does
-        cost = [f"{format_duration(lost_time)} added to their clock"]
+        cost = []
         if lost_gold:
             cost.append(f"{lost_gold:,} gold lost")
         if bagged:
-            cost.append(f"{bagged} piece{'' if bagged == 1 else 's'} in their bag lost (worth {bag_worth:,} gold)")
+            cost.append(f"{bagged} piece{'' if bagged == 1 else 's'} lost from their bag (worth {bag_worth:,} gold)")
+        toll = f"{and_list(cost)}; they were" if cost else "They were"
         notes.append(Note(
             (uid,),
-            f"☠️ {where} A {mob} struck {name(uid)} down in {rounds} rounds. "
-            f"{_and_list(cost)}; they were carried to the outskirts of {town} and patched up.{dented}",
+            f"☠️ {where} {_sentence(_a(mob))} struck {name(uid)} down in {rounds} rounds. "
+            f"{toll} carried to the outskirts of {town} and patched up.{dented}{clock_tail(lost_time)}",
         ))
     if hunting(char) and char["hunt_killed"] >= char["hunt_count"]:
         notes.append(finish_hunt(uid, char, name, now))
@@ -2052,17 +2102,17 @@ def collision_fight(uid: int, opp_uid: int, chars: dict, rng, name: NameFn, now:
     factor = margin_factor(my_roll, opp_roll, my_sum, opp_sum)
     if my_roll < opp_roll:
         lost = scale(me, now, max(opp["level"] // 7, 7) * factor)
-        return [Note(involved, f"{head} and was {_how(factor)}defeated. {format_duration(lost)} added to their clock.", True)]
+        return [Note(involved, f"{head} and was {_how(factor)}defeated.{clock_tail(lost)}", True)]
     won = -scale(me, now, -max(opp["level"] // 4, 7) * factor)
     spoils = opp["gold"] * GOLD_SPOILS_PCT // 100
     opp["gold"] -= spoils
     prize = GOLD_PER_WIN * max(opp["level"], 1)
     me["gold"] += prize + spoils
     took = f", plus {spoils:,} lifted from {name(opp_uid)}'s purse" if spoils else ""
-    notes = [Note(involved, f"{head} and took them in combat! {format_duration(won)} off their clock, and +{prize:,} gold{took}.", True)]
+    notes = [Note(involved, f"{head} and took them in combat! +{prize:,} gold{took}.{clock_tail(-won)}", True)]
     if not rng.randrange(COLLISION_CRIT_ODDS):
         hurt = scale(opp, now, 5 + rng.randrange(20))
-        notes.append(Note(involved, f"💥 A critical strike! {name(opp_uid)} is set back {format_duration(hurt)}.", True))
+        notes.append(Note(involved, f"💥 A critical strike! {name(opp_uid)} is set back.{clock_tail(hurt)}", True))
     elif not rng.randrange(COLLISION_STEAL_ODDS) and me["level"] >= COLLISION_STEAL_LEVEL:
         taken = _steal(me, opp, rng)
         if taken:
@@ -2093,7 +2143,7 @@ def _journey_step(chars: dict, quest: dict, now: int, name: NameFn) -> "tuple[li
         return [Note(tuple(members), f"🧭 {_names(members, name)} have reached {_place(quest['p1'])}. Onward to {_place(quest['p2'])}.", True)], True
     purse = _pay_questers(chars, members, now)
     _end_quest(quest, now + QUEST_REST_SECS)
-    return [Note(tuple(members), f"🏆 {_names(members, name)} have completed their journey! Each is {QUEST_REWARD_PCT}% closer to their next level and +{purse:,} gold richer.", True)], True
+    return [Note(tuple(members), f"🏆 {_names(members, name)} have completed their journey! Each is {QUEST_REWARD_PCT}% closer to their next level and {purse:,} gold richer.", True)], True
 
 
 def move_players(chars: dict, quest: dict, rng, name: NameFn, now: int, seconds: int) -> "list[Note]":
@@ -2173,7 +2223,7 @@ def quest_active(quest: dict) -> bool:
 
 
 def _names(uids, name: NameFn) -> str:
-    return ", ".join(name(u) for u in uids)
+    return and_list([name(u) for u in uids])
 
 
 def _end_quest(quest: dict, not_before: int) -> None:
@@ -2200,7 +2250,7 @@ def tick_quest(chars: dict, quest: dict, rng, name: NameFn, now: int) -> "list[N
         members = tuple(quest["members"])
         purse = _pay_questers(chars, members, now)
         _end_quest(quest, now + QUEST_REST_SECS)
-        return [Note(members, f"🏆 {_names(members, name)} completed their quest! Each is {QUEST_REWARD_PCT}% closer to their next level and +{purse:,} gold richer.", True)]
+        return [Note(members, f"🏆 {_names(members, name)} have completed their quest! Each is {QUEST_REWARD_PCT}% closer to their next level and {purse:,} gold richer.", True)]
 
     if now < quest.get("not_before", 0):
         return []
@@ -2212,7 +2262,7 @@ def tick_quest(chars: dict, quest: dict, rng, name: NameFn, now: int) -> "list[N
     # only for someone who claimed their character. An enrolled member who
     # never asked to play is named, never mentioned.
     pinged = tuple(u for u in members if chars[u].get("claimed", True))
-    called = ", ".join(f"<@{u}>" if u in pinged else name(u) for u in members)
+    called = and_list([f"<@{u}>" if u in pinged else name(u) for u in members])
     picked = rng.choice(_VIGILS + _JOURNEYS)   # every quest is equally likely, as in the original
     if isinstance(picked, str):
         quest.update(

@@ -273,7 +273,7 @@ class SettingsCog(commands.Cog):
         cfg = get_guild_cfg(ctx.guild.id)
         usage = "`!settings idle-pace lively|classic`"
         what = (
-            "**Lively** (default) — a godsend and a calamity about once a day per player, a monster every half hour in the wilds, "
+            "**Lively** (default) — a godsend and a calamity about once a day per player, a monster every quarter of an hour in the wilds, "
             "team battles from four players. Built for a handful of players.\n"
             "**Classic** — the IRC odds: an event every week or so. Built for dozens."
         )

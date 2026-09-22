@@ -939,7 +939,9 @@ tables from migrations 0070–0077.
   party journeys.
 - **The bag, and what it costs to carry.** A find worse than what's worn
   goes into `loot` (capped at `LOOT_MAX`, worst spilled first) instead of
-  being thrown away, and the town errand empties it for gold. Selling runs
+  being thrown away, and so does the piece a better find has just replaced
+  (`_displaced`) — nothing a character finds is ever binned outright. The
+  town errand empties it for gold. Selling runs
   **whether or not `auto_trade` is on** — that switch is about spending the
   player's gold, and a bag carried past every market for good is just a
   find event quietly binned. Being struck down **loses the whole bag**
@@ -977,8 +979,20 @@ tables from migrations 0070–0077.
   every unrelated test.
 - **Say which way the number went.** Gold that arrives reads `+N gold`,
   gold that leaves reads `N gold lost`; a line that tallies several costs
-  goes through `_and_list`. "22s added to their clock and 23 gold" is the
+  goes through `and_list`. "22s added to their clock and 23 gold" is the
   bug this exists to prevent — it reads as a reward.
+- **A clock move is a signed amount at the end of the line, never prose in
+  the middle of it.** `clock_delta` / `clock_tail` render it (`-1min 3sec`
+  sooner, `+22sec` later, `""` for no move); the sentence says what
+  happened and the tail says what it cost, after the gold, the drops and
+  the HP. "22s added to their clock" read as a reward however the rest of
+  the line was worded, and a feed of lines that all end in ±time can be
+  scanned as a column. Prose keeps `format_duration` only for a *duration*
+  — time left on a clock, how long a level takes, an ETA.
+- **`a` or `an`, and a sentence's first letter.** Monster names are built
+  from a prefix (`Elite`, `Undead`, `Omega` start with vowels), so they go
+  through `_a`; a line that opens with one uses `_sentence`, not
+  `str.capitalize`, which would lowercase the beast's own name.
 - **Lore** (`LORE`, one paragraph per `LANDMARKS` key, asserted complete at
   module load) is read by `!idle lore` and nothing else. Keep the two
   dicts in step; a new landmark needs a paragraph or the assert fails at

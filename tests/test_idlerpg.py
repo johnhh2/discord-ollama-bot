@@ -1,6 +1,7 @@
 """The idle RPG ruleset (src/idlerpg.py): the curve, clocks, penalties, items,
 battles, alignment and quests. Pure functions — no Discord, no DB."""
 import random
+import re
 
 import pytest
 
@@ -1101,7 +1102,7 @@ def test_a_godsend_can_hand_out_a_spell_of_good_running():
     for _ in range(500):
         note = rpg.godsend(1, chars, rng, _name, NOW)
         if char["boost_until"] > NOW:
-            assert char["boost_pct"] in rpg.BOOST_GODSEND_PCTS and "+" in note.text
+            assert char["boost_pct"] in rpg.BOOST_GODSEND_PCTS and "faster" in note.text
             assert rpg.boost_pct(char, 0, NOW) == char["boost_pct"]
             return
     raise AssertionError("no boost among 500 godsends")
@@ -1209,13 +1210,15 @@ def test_being_struck_down_costs_the_bag_and_says_so_in_plain_words(monkeypatch)
                     {"slot": "boots", "level": 5, "name": "Plain Bone Boots"}]
     worth = rpg.loot_value(char)
 
-    text = " ".join(n.text for n in rpg.mob_encounter(1, char, random.Random(2), _name, NOW))
+    notes = rpg.mob_encounter(1, char, random.Random(2), _name, NOW)
+    text = next(n.text for n in notes if n.text.startswith("☠"))
 
     assert char["loot"] == [] and char["mob_deaths"] == 1
-    assert "2 pieces in their bag lost" in text and f"(worth {worth:,} gold)" in text
-    # Every number on the line says which way it went.
-    assert "added to their clock" in text and "gold lost" in text
-    assert "and 23 gold;" not in text
+    assert "2 pieces lost from their bag" in text and f"(worth {worth:,} gold)" in text
+    # Every number says which way it went, and the clock move is a signed
+    # amount at the very end rather than prose in the middle of the line.
+    assert "gold lost" in text and "added to their clock" not in text
+    assert re.search(r"\+(\d+(day|hr|min|sec) ?)+$", text)
 
 
 def test_a_kill_line_marks_its_gold_as_a_gain(monkeypatch):
@@ -1223,6 +1226,36 @@ def test_a_kill_line_marks_its_gold_as_a_gain(monkeypatch):
     char = _wanderer(level=20, gear=400)
     text = rpg.mob_encounter(1, char, random.Random(5), _name, NOW)[0].text
     assert "+" in text.split("gold")[0].split(".")[-1]
+
+
+def test_a_clock_move_is_a_signed_amount_and_nothing_when_it_is_zero():
+    assert rpg.clock_delta(63) == "+1min 3sec" and rpg.clock_delta(-63) == "-1min 3sec"
+    assert rpg.clock_delta(3) == "+3sec" and rpg.clock_delta(-90_000) == "-1day 1hr"
+    assert rpg.clock_delta(0) == "" and rpg.clock_tail(0) == ""     # no move, nothing said
+    assert rpg.clock_tail(-3) == " -3sec"                           # ready to append
+
+
+def test_monster_lines_get_the_right_article():
+    assert rpg._a("Elite Bat") == "an Elite Bat" and rpg._a("Normal Rat") == "a Normal Rat"
+    assert rpg._a("Undead Ogre").startswith("an") and rpg._a("Omega Rat").startswith("an")
+    # str.capitalize() would have lowercased the beast's own name with it.
+    assert rpg._sentence(rpg._a("Elite Bat")) == "An Elite Bat"
+
+
+def test_a_better_find_puts_what_it_replaced_in_the_bag():
+    char = _wanderer(level=30, gear=0)
+    char["items"] = {slot: {"level": 1, "name": f"Cracked Wooden {slot.title()}"} for slot in rpg.ITEM_SLOTS}
+    text = rpg.find_item(1, char, random.Random(2), _name).text
+    worn = next(item for item in char["loot"])
+    assert worn["level"] == 1 and "is now in their bag" in text
+    assert char["items"][worn["slot"]]["level"] > 1                 # …and the better one is worn
+
+
+def test_an_empty_slot_says_so_rather_than_quoting_level_zero():
+    char = _wanderer(level=30, gear=0)
+    char["items"] = {}
+    text = rpg.find_item(1, char, random.Random(2), _name).text
+    assert "their first" in text and "level 0" not in text and char["loot"] == []
 
 
 # ── events keep hours ────────────────────────────────────────────────────────
