@@ -75,8 +75,8 @@ async def test_effects_view_no_effects():
 async def test_effects_view_lists_active_with_duration():
     cog = EffectsCog(bot=None)
     uid = 7001
-    _state.active_spellchecks[(42, uid)] = {
-        "started_by": 9, "days": 1, "channel_id": None,
+    _state.active_taxes[(42, uid)] = {
+        "master": 9, "type": "tax", "emoji": "💰", "channel_id": None,
         "activated_at": time.time(), "expires_at": time.time() + 3600,
     }
     _state.active_curses[(42, uid)] = {"cursed_by": 9, "remaining": 3, "channel_id": None}
@@ -85,7 +85,7 @@ async def test_effects_view_lists_active_with_duration():
     await cog.cmd_effects.callback(cog, ctx)
 
     desc = ctx.sent_embeds[-1].description
-    assert "spellcheck" in desc
+    assert "tax" in desc
     assert "curse" in desc
     assert "left" in desc          # remaining time / count shown
 
@@ -128,11 +128,11 @@ async def test_effects_view_other_user():
 
 @_aio
 async def test_effects_view_is_guild_scoped():
-    """A spellcheck in guild 42 is invisible from guild 99."""
+    """A tax in guild 42 is invisible from guild 99."""
     cog = EffectsCog(bot=None)
     uid = 7005
-    _state.active_spellchecks[(42, uid)] = {
-        "started_by": 9, "days": 1, "channel_id": None,
+    _state.active_taxes[(42, uid)] = {
+        "master": 9, "type": "tax", "emoji": "💰", "channel_id": None,
         "activated_at": time.time(), "expires_at": time.time() + 3600,
     }
     ctx = FakeCtx(author=FakeMember(uid=uid), guild=FakeGuild(gid=99))
@@ -156,7 +156,7 @@ async def test_effects_list_shows_all_for_admin():
     ctx = FakeCtx(author=FakeMember(uid=1, administrator=True), guild=FakeGuild(gid=42))
     await cog.cmd_effects.callback(cog, ctx, "list")
     desc = ctx.sent_embeds[-1].description
-    for name in ("spellcheck", "tax", "insurance", "mock", "curse", "ragebait"):
+    for name in ("tax", "insurance", "mock", "curse", "ragebait"):
         assert name in desc
 
 
@@ -183,9 +183,9 @@ async def test_effects_add_with_duration(db):
     cog = EffectsCog(bot=None)
     target = FakeMember(uid=7101, display_name="t")
     ctx = _admin_ctx()
-    await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "add", "spellcheck", "2h")
+    await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "add", "tax", "2h")
 
-    entry = _state.active_spellchecks[(42, target.id)]
+    entry = _state.active_taxes[(42, target.id)]
     assert entry["expires_at"] is not None
     assert 7000 < entry["expires_at"] - time.time() <= 7200
     assert any("Effect Added" in (e.title or "") for e in ctx.sent_embeds)
@@ -233,13 +233,13 @@ async def test_effects_add_insurance_denied_for_mere_server_admin(db):
 async def test_effects_remove(db):
     cog = EffectsCog(bot=None)
     target = FakeMember(uid=7104, display_name="t")
-    _state.active_spellchecks[(42, target.id)] = {
-        "started_by": 9, "days": None, "channel_id": None,
+    _state.active_taxes[(42, target.id)] = {
+        "master": 9, "type": "tax", "emoji": "💰", "channel_id": None,
         "activated_at": time.time(), "expires_at": None,
     }
     ctx = _admin_ctx()
-    await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "remove", "spellcheck")
-    assert (42, target.id) not in _state.active_spellchecks
+    await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "remove", "tax")
+    assert (42, target.id) not in _state.active_taxes
     assert any("Removed" in (e.title or "") for e in ctx.sent_embeds)
 
 
@@ -258,8 +258,8 @@ async def test_effects_add_rejects_bad_duration(db):
     cog = EffectsCog(bot=None)
     target = FakeMember(uid=7106, display_name="t")
     ctx = _admin_ctx()
-    await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "add", "spellcheck", "bogus")
-    assert (42, target.id) not in _state.active_spellchecks
+    await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "add", "tax", "bogus")
+    assert (42, target.id) not in _state.active_taxes
     assert any("Bad Duration" in (e.title or "") for e in ctx.sent_embeds)
 
 
@@ -268,8 +268,8 @@ async def test_effects_add_requires_admin(db):
     cog = EffectsCog(bot=None)
     target = FakeMember(uid=7107, display_name="t")
     ctx = FakeCtx(author=FakeMember(uid=2, administrator=False), guild=FakeGuild(gid=42))
-    await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "add", "spellcheck", "1d")
-    assert (42, target.id) not in _state.active_spellchecks
+    await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "add", "tax", "1d")
+    assert (42, target.id) not in _state.active_taxes
     assert any("No Permission" in (e.title or "") for e in ctx.sent_embeds)
 
 

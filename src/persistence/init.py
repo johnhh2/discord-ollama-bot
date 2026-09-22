@@ -281,24 +281,6 @@ async def _init_db_state_inner(state, run_migrations):
             logging.error(f"[init_db_state] shop_effects.tax failed: {e}", exc_info=True)
             raise
 
-        # ── shop_effects: spellcheck ──────────────────────────────────────
-        try:
-            await cur.execute(
-                "SELECT guild_id, user_id, master_id, remaining, channel_id, activated_at, expires_at"
-                " FROM shop_effects WHERE effect_type='spellcheck'"
-            )
-            for guild_id, uid, master_id, remaining, channel_id, activated_at, expires_at in await cur.fetchall():
-                state.active_spellchecks[(int(guild_id), int(uid))] = {
-                    "started_by": master_id,
-                    "days": remaining,
-                    "channel_id": channel_id,
-                    "activated_at": activated_at,
-                    "expires_at": expires_at,
-                }
-        except Exception as e:
-            logging.error(f"[init_db_state] shop_effects.spellcheck failed: {e}", exc_info=True)
-            raise
-
         # ── bounties (+ their in-flight claims) ───────────────────────────
         # Load every open bounty with its non-terminal claims attached so
         # reactions and the expiry loop keep working after a reboot. Keyed by

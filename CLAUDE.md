@@ -205,7 +205,7 @@ XP, or change a game's state, it needs the gate. `on_message` is not a chokepoin
 it entirely.
 
 Bots are separately excluded from the `on_message` side-effect chain (xp, mock,
-tax, curse, ragebait, spellcheck) — a mocked bot and this bot would otherwise echo
+tax, curse, ragebait) — a mocked bot and this bot would otherwise echo
 each other forever. Interceptors and AI routing stay open to bots as before.
 
 Regression coverage: [tests/test_blocklist_enforcement.py](tests/test_blocklist_enforcement.py).
@@ -443,7 +443,7 @@ Insurance comes in three tiers (`SHOP_INSURANCE_TIERS` in `src/config.py`):
 basic 50% for 1k/day (100k cap), standard 75% for 3k/day (200k cap),
 premium 100% for 6k/day (400k cap). Every tier still blocks the non-crime
 effects outright (`INSURANCE_PROTECTS` — mock, ragebait, nickname, role,
-tax, spellcheck, mute, curse; `is_insured` gates those as before). A policy
+tax, mute, curse; `is_insured` gates those as before). A policy
 row stores that list as of purchase and `init_db_state` unions it with the
 current constant on load, so a new shop effect aimed at another user goes in
 `INSURANCE_PROTECTS` **and** gets an `is_insured` check in its command (mute

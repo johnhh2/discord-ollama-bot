@@ -297,8 +297,8 @@ class BountyCog(commands.Cog):
             return
 
         # Optional leading duration: the 2nd token is the expiry only if it parses
-        # as a duration AND condition text follows (as in `!shop spellcheck @user
-        # [days]`). A condition starting with a duration-like word can be reordered.
+        # as a duration AND condition text follows. A condition starting with a
+        # duration-like word can be reordered.
         rest = list(args[1:])
         expires_at = None
         duration_secs = parse_duration(rest[0])

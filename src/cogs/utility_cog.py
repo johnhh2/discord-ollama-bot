@@ -193,7 +193,7 @@ class UtilityCog(commands.Cog):
         fun_lines = [
             "`!dog` — Random dog picture",
             "`!cat` — Random cat picture",
-            "`!effects [@user]` — View active shop effects (mock, tax, curse, spellcheck, …)",
+            "`!effects [@user]` — View active shop effects (mock, tax, curse, …)",
             "`!quote` — Save a quoted message (reply) or display a random saved quote",
             "`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote",
         ]
@@ -871,7 +871,7 @@ class UtilityCog(commands.Cog):
         admin_embed.add_field(name="✨ Effects", inline=False, value=(
             "`!effects list` — List every available effect type\n"
             "`!effects @user add <effect> [duration]` — Grant a duration-based effect "
-            "(spellcheck, tax, insurance); no duration = permanent\n"
+            "(tax, insurance); no duration = permanent\n"
             "`!effects @user remove <effect>` — Clear an effect from a user"
         ))
         if is_admin(ctx):

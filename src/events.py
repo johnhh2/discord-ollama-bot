@@ -21,7 +21,7 @@ from src.permissions import (
     is_silenced,
 )
 from src.persistence import (
-    init_db_state, save_economy, save_ragebait, save_mock, save_tax, save_curse, save_spellcheck, load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs,
+    init_db_state, save_economy, save_ragebait, save_mock, save_tax, save_curse, load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs,
     insert_issue,
 )
 from src.guild_config import get_guild_cfg
@@ -29,7 +29,7 @@ from src.discord_retry import is_transient_server_error
 from src.reactions import seed_reactions
 from src.ai import (
     check_ollama_connected, keep_typing,
-    stream_ollama, finalize, respond, ollama_complete,
+    stream_ollama, finalize, respond,
     _norm_puzzle_answer,
 )
 from src.config import (
@@ -696,7 +696,6 @@ class EventsCog(commands.Cog):
             self._handle_mock,
             self._handle_tax,
             self._handle_curse,
-            self._handle_spellcheck,
             self._handle_auto_daily,
         ):
             try:
@@ -840,85 +839,6 @@ class EventsCog(commands.Cog):
             del state.active_curses[key]
         await save_curse(state.active_curses)
         await message.channel.send(curse_font(message.content))
-
-    async def _handle_spellcheck(self, message: discord.Message):
-        """Reply with an AI-corrected version of a spellchecked user's message.
-
-        Fires on every non-command message from a user with an active
-        spellcheck, except in blacklisted channels (or, if a whitelist is set,
-        channels not in it). Posts ``<corrected sentence> *`` only when the AI
-        finds spelling/grammar errors; clean messages are left alone.
-        """
-        if message.guild is None:
-            return
-        uid = message.author.id
-        key = (message.guild.id, uid)
-        sc = state.active_spellchecks.get(key)
-        if not (sc and not message.content.startswith("!")):
-            return
-
-        # Expire by explicit expires_at (set on purchase / by admin grant).
-        if _effect_expired(sc):
-            del state.active_spellchecks[key]
-            await save_spellcheck()
-            return
-
-        if await is_insured(uid,"spellcheck"):
-            return
-
-        # Channel gating: blacklist denies, a whitelist (if set) allows only
-        # its members. Mirrors the global command-channel check.
-        cfg = get_guild_cfg(message.guild.id)
-        if message.channel.id in cfg.get("command_blacklist", []):
-            return
-        whitelist = cfg.get("command_whitelist", [])
-        if whitelist and message.channel.id not in whitelist:
-            return
-
-        content = message.content.strip()
-        if not content:
-            return
-
-        system_prompt = (
-            "You are a conservative spelling and grammar checker for casual chat "
-            "messages. You will be given one message. Only fix mistakes that are "
-            "UNAMBIGUOUS errors no matter the context — a clearly misspelled common "
-            "word (e.g. 'teh' -> 'the', 'recieve' -> 'receive') or a clear grammar "
-            "mistake (e.g. 'i has' -> 'i have', 'should of' -> 'should have').\n\n"
-            "Do NOT change anything that could be intentional or that you simply "
-            "don't recognize. Leave these EXACTLY as written: proper nouns and the "
-            "names of people, places, games, shows, songs, brands, characters, and "
-            "usernames; slang, abbreviations, internet shorthand (lol, idk, tbh, "
-            "gonna, imma); deliberate stylization, emoji, emoticons, and casing; "
-            "and any unfamiliar word that might be a real name or term. When you are "
-            "not sure whether something is an error, treat it as correct.\n\n"
-            "If — and only if — the message contains at least one unambiguous error, "
-            "reply with ONLY the corrected message: no quotes, no explanation, no "
-            "preamble, and change nothing except the actual errors. Otherwise reply "
-            "with exactly the single word: CORRECT."
-        )
-        async def _run_spellcheck():
-            corrected = (await ollama_complete([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": content},
-            ])).strip()
-            # Treat any "CORRECT"-ish no-op signal as "leave it alone" (the model
-            # sometimes adds punctuation, e.g. "CORRECT.").
-            if not corrected or corrected.strip(" .!").upper() == "CORRECT":
-                return
-            # The model occasionally echoes the input instead of "CORRECT" — skip if
-            # nothing meaningful changed (ignore surrounding whitespace).
-            if corrected == content or corrected.strip() == content.strip():
-                return
-            try:
-                await message.channel.send(f"{corrected} *")
-            except discord.HTTPException:
-                pass
-
-        # Fire-and-forget: awaiting the full Ollama round-trip here would
-        # delay the blackjack/puzzle/hangman interceptors and
-        # process_commands for every message from a spellchecked user.
-        asyncio.create_task(_run_spellcheck())
 
     async def _handle_auto_daily(self, message: discord.Message):
         """Auto-claim daily reward on the first qualifying interaction each day."""

@@ -34,7 +34,6 @@ active_ragebaits: dict = {}     # (guild_id, uid) -> {remaining, started_by, his
 active_mocks: dict = {}         # (guild_id, uid) -> {remaining, started_by, channel_id}
 active_taxes: dict = {}         # (guild_id, uid) -> {master, type, emoji, channel_id, activated_at}
 active_curses: dict = {}        # (guild_id, uid) -> {cursed_by, remaining, channel_id}
-active_spellchecks: dict = {}   # (guild_id, uid) -> {started_by, days, channel_id, activated_at}
 # Open bounties (!shop bounty / !bounty), keyed by the bounty embed's
 # message_id. Value is the bounty row dict from src.persistence.bounties
 # (status, author_id, amount, condition, optional expires_at, claim_log) with a

@@ -57,17 +57,3 @@ async def save_tax(tax_data: dict):
                  data.get("emoji", "💰"), data.get("channel_id"), data.get("activated_at"),
                  data.get("expires_at")),
             )
-
-
-async def save_spellcheck():
-    """Persist active spellchecks. `remaining` holds the number of purchased
-    days; expiry is stored in expires_at (also recomputable from activated_at)."""
-    async with with_transaction() as cur:
-        await cur.execute("DELETE FROM shop_effects WHERE effect_type='spellcheck'")
-        for (guild_id, uid), data in state.active_spellchecks.items():
-            await cur.execute(
-                "INSERT INTO shop_effects (guild_id, user_id, effect_type, master_id, remaining, channel_id, activated_at, expires_at)"
-                " VALUES (%s,%s,'spellcheck',%s,%s,%s,%s,%s)",
-                (int(guild_id), int(uid), data.get("started_by"), data.get("days"),
-                 data.get("channel_id"), data.get("activated_at"), data.get("expires_at")),
-            )

@@ -12,8 +12,8 @@ and persists via the same save_* helpers the shop uses.
 
 Aliases: !state, !effect.
 
-Admin add/remove is limited to the time-based effects (spellcheck, tax,
-insurance); counter-based effects (mock, curse, ragebait) are view-only.
+Admin add/remove is limited to the time-based effects (tax, insurance);
+counter-based effects (mock, curse, ragebait) are view-only.
 """
 import time
 
@@ -26,7 +26,7 @@ from src.helpers import (
 )
 from src.permissions import requires_perm, is_admin, is_server_admin, is_global_admin
 from src.persistence import (
-    save_mock, save_curse, save_tax, save_spellcheck, save_ragebait, save_insurance,
+    save_mock, save_curse, save_tax, save_ragebait, save_insurance,
 )
 from src.config import (
     SHOP_MOCK_MESSAGES, SHOP_CURSE_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
@@ -37,10 +37,6 @@ from src import state
 # Every effect type, with the state dict it lives in, its save fn, whether an
 # admin may add/remove it (duration-based), and a short description for !effects list.
 _EFFECTS = {
-    "spellcheck": {
-        "store": "active_spellchecks", "save": save_spellcheck, "admin_settable": True,
-        "emoji": "📝", "desc": "AI corrects the target's messages",
-    },
     "tax": {
         "store": "active_taxes", "save": save_tax, "admin_settable": True,
         "emoji": "💰", "desc": "Target pays coins per message to the master",
@@ -195,7 +191,7 @@ class EffectsCog(commands.Cog):
             await ctx.send(embed=emb(
                 "❌ Not Settable",
                 f"`{effect}` is counter-based and can't be set by duration. "
-                "Admin add/remove only supports: spellcheck, tax, insurance.",
+                "Admin add/remove only supports: tax, insurance.",
                 C_RED,
             ))
             return
@@ -266,11 +262,6 @@ class EffectsCog(commands.Cog):
             # Admin grant: the admin becomes the master (receives the coins).
             return {
                 "master": ctx.author.id, "type": "tax", "emoji": "💰",
-                "channel_id": ctx.channel.id, "activated_at": now, "expires_at": expires_at,
-            }
-        if effect == "spellcheck":
-            return {
-                "started_by": ctx.author.id, "days": None,
                 "channel_id": ctx.channel.id, "activated_at": now, "expires_at": expires_at,
             }
         raise ValueError(f"not admin-settable: {effect}")
