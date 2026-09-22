@@ -162,8 +162,8 @@ def test_the_house_is_the_challengers_own_match_not_the_best_players():
 def test_the_stake_follows_the_margin_of_the_win():
     def _fight(mine, theirs):
         chars = {
-            1: _char(25, left=10_000, items={"ring": {"level": 40, "name": None}}),   # 25: a fight on every level-up
-            2: _char(25, left=10_000, items={"ring": {"level": 40, "name": None}}),
+            1: _char(25, left=10_000, x=100, y=100, items={"ring": {"level": 40, "name": None}}),   # 25: a fight on every level-up
+            2: _char(25, left=10_000, x=100, y=110, items={"ring": {"level": 40, "name": None}}),      # …within reach of each other
         }
         notes = rpg.level_up_battle(1, chars, _Scripted(randint=_rolls(mine, theirs, 5), randrange=0, random_=0.9), _name, NOW)   # the spare 5 feeds a critical strike's roll
         return rpg.time_left(chars[1], NOW), notes[0].text
@@ -178,7 +178,7 @@ def test_the_stake_follows_the_margin_of_the_win():
 
 
 def test_nobody_is_challenged_twice_inside_the_cooldown():
-    chars = {1: _char(30), 2: _char(30)}
+    chars = {1: _char(30, x=100, y=100), 2: _char(30, x=100, y=110)}
     rng = _Scripted(randrange=0)                      # always the first in the pool
     first = rpg.level_up_battle(1, chars, rng, _name, NOW)
     assert 2 in first[0].uids and chars[2]["challenged_at"] == NOW
@@ -186,6 +186,22 @@ def test_nobody_is_challenged_twice_inside_the_cooldown():
     assert again[0].uids == (1,) and rpg.HOUSE_NAME in again[0].text
     later = rpg.level_up_battle(1, chars, rng, _name, NOW + rpg.CHALLENGED_COOLDOWN_SECS)
     assert 2 in later[0].uids
+
+
+def test_a_player_out_of_range_is_never_the_opponent():
+    def _fight(gap, **over):
+        chars = {1: _char(30, x=100, y=100), 2: _char(30, x=100, y=100 + gap, **over)}
+        return rpg.level_up_battle(1, chars, _Scripted(randrange=0), _name, NOW)[0]
+
+    assert 2 in _fight(rpg.BATTLE_RANGE).uids                       # just inside: a real opponent
+    far = _fight(rpg.BATTLE_RANGE + 1)
+    assert far.uids == (1,) and rpg.HOUSE_NAME in far.text          # a step further: the house instead
+    assert rpg.BATTLE_RANGE == rpg.MARKET_RADIUS // 2
+
+    # Before the tick has placed a character, nobody can reach it.
+    unplaced = {1: _char(30, x=100, y=100), 2: _char(30)}
+    assert rpg.HOUSE_NAME in rpg.level_up_battle(1, unplaced, _Scripted(randrange=0), _name, NOW)[0].text
+    assert not rpg.in_battle_range(_char(), _char(x=1, y=1))
 
 
 def test_battles_below_the_threshold_are_only_sometimes():
@@ -292,7 +308,7 @@ def test_winning_a_level_up_battle_pays_by_the_opponents_level_and_the_house_pay
     rpg.level_up_battle(1, chars, rng, _name, NOW)
     assert chars[1]["gold"] == rpg.GOLD_HOUSE_WIN
 
-    chars = {1: _char(30, items={"ring": {"level": 50, "name": None}}), 2: _char(12)}
+    chars = {1: _char(30, x=100, y=100, items={"ring": {"level": 50, "name": None}}), 2: _char(12, x=100, y=110)}
     rng = _Scripted(randint=lambda low, high: high if high == 50 else 0, randrange=0)   # randrange 0 picks player 2… and crits
     notes = rpg.level_up_battle(1, chars, rng, _name, NOW)
     assert chars[1]["gold"] == 60 and "60 gold" in notes[0].text and chars[2]["gold"] == 0

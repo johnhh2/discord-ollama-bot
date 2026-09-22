@@ -88,6 +88,8 @@ _RULES_TOPICS = {
         f"Each level-up finds an item for one of ten slots and may start a fight (always, from level {rpg.BATTLE_ALWAYS_LEVEL}).\n"
         "Each side rolls a number from 0 up to their item power (`!idle items`), shown as \"rolled 12 of 40\"; the higher roll wins. "
         "Win and your timer shrinks; lose and it grows.\n"
+        f"You only run into another player if they are within {rpg.BATTLE_RANGE} squares of you on the map — otherwise you face "
+        "the Idle Warden, who is always your own match.\n"
         f"`!idle duel <name>` once a day: the loser hands {rpg.DUEL_PCT}% of their timer to the winner. A tie is a coin toss."
     ),
     "monsters": (
@@ -1317,7 +1319,8 @@ class IdleCog(commands.Cog):
         elif not char["claimed"]:
             start = f"▶️ **Start:** a level {char['level']} {char['class']} is already adventuring in your name — `!idle join <class>` makes it yours.\n\n"
         else:
-            start = ""
+            # Shown to players too: they are the ones who pass this card on.
+            start = "▶️ **New here?** `!idle join <class>` starts a character — the class is yours to invent.\n\n"
         await ctx.send(embed=emb(
             "📖 Idle RPG",
             "**Do nothing. Level up.**\n\n"

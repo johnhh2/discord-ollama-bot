@@ -846,7 +846,10 @@ tables from migrations 0070–0077.
   A level-up battle is one roll a side — near a coin flip at low power —
   and the original staked a flat 7% of a level on it. With two players
   every swing lands on the same pair and snowballs. Three rules keep that
-  in check; don't undo them for "faithfulness": the stake follows the
+  in check; don't undo them for "faithfulness": a player is only a
+  possible opponent within `BATTLE_RANGE` (half a market ring) on the map,
+  which is what makes the frequency bearable — everyone else meets the
+  house; the stake follows the
   margin (`margin_factor`: a win by a hair moves a quarter of it, a rout all
   of it — level-up and collision fights both); the house is the challenger's
   own match, not the best-geared player's; and nobody is picked as a

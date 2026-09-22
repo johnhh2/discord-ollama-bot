@@ -203,6 +203,11 @@ _LANDMARK_NAMES = {point: label for label, point in LANDMARKS.items()}
 TOWNS = ("Denmark", "the land of Qwok", "Velvragh", "the Towers of Ankh-Allor", "Jow Botzi territory")
 MARKET_RADIUS = 60
 TOWN_CORE_RADIUS = 15
+# Two players only run into each other in a level-up battle within half a
+# market ring of one another. Without it the pool was "everyone online", so
+# in a small server every level-up was a fight with the same rival; now the
+# map decides who you meet, and an empty stretch of wilderness is quiet.
+BATTLE_RANGE = MARKET_RADIUS // 2
 AUTO_TRADE_COOLDOWN_SECS = 12 * 3600
 AUTO_TRADE_BUDGET_PCT = 50     # an errand never spends more than this share of the purse
 
@@ -486,6 +491,15 @@ def _steal(thief: dict, victim: dict, rng) -> "str | None":
 
 # ── battles ──────────────────────────────────────────────────────────────────
 
+def in_battle_range(a: dict, b: dict) -> bool:
+    """Close enough on the map to meet. A character the tick has not placed
+    yet (`ensure_position` runs in `move_players`) is out of everyone's
+    reach until it has one."""
+    if a.get("x") is None or b.get("x") is None:
+        return False
+    return (a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2 <= BATTLE_RANGE ** 2
+
+
 def _rolled(roll: int, power: int) -> str:
     """How a fighter's roll reads in the feed. The IRC bot printed a bare
     `[roll/power]`, which nobody could decode."""
@@ -522,6 +536,7 @@ def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int, pace: Pa
     pool = [
         u for u in running(chars)
         if u != uid and now - chars[u].get("challenged_at", 0) >= CHALLENGED_COOLDOWN_SECS
+        and in_battle_range(me, chars[u])
     ]
     # The house is one more contender, so a lone player still gets fights.
     pick = rng.randrange(len(pool) + 1)

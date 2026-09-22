@@ -461,7 +461,8 @@ async def test_rules_stay_short_and_the_detail_lives_in_topics():
     assert "level 3 Adventurer is already adventuring in your name" in ctx.sent_embeds[-1].description
     _state.idle_characters[GID][ALICE]["claimed"] = True
     await cog.cmd_rules.callback(cog, ctx)
-    assert "**Start:**" not in ctx.sent_embeds[-1].description       # a player needs no start line
+    # A player sees it too — they are the one who passes this card on.
+    assert "**New here?** `!idle join <class>`" in ctx.sent_embeds[-1].description
     assert "!idle rules <levels|battles|monsters|map|gold|alignment|quests|prestige>" in card
     assert "talk" not in card.lower()
 
