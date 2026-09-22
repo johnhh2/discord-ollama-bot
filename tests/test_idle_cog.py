@@ -453,14 +453,22 @@ async def test_rules_stay_short_and_the_detail_lives_in_topics():
     ctx = _ctx(guild)
     await cog.cmd_rules.callback(cog, ctx)
     card = ctx.sent_embeds[-1].description
-    assert len(card) < 600 and card.count("\n") <= 10
+    assert len(card) < 700 and card.count("\n") <= 12
+    assert "**Start:** `!idle join <class>`" in card                 # a stranger is told how to begin
+
+    _spawn(ALICE, level=3, claimed=False, **{"class": rpg.UNCLAIMED_CLASS})
+    await cog.cmd_rules.callback(cog, ctx)
+    assert "level 3 Adventurer is already adventuring in your name" in ctx.sent_embeds[-1].description
+    _state.idle_characters[GID][ALICE]["claimed"] = True
+    await cog.cmd_rules.callback(cog, ctx)
+    assert "**Start:**" not in ctx.sent_embeds[-1].description       # a player needs no start line
     assert "!idle rules <levels|battles|monsters|map|gold|alignment|quests|prestige>" in card
     assert "talk" not in card.lower()
 
     await cog.cmd_rules.callback(cog, ctx, "Quests")
     assert ctx.sent_embeds[-1].title == "📖 Idle RPG — Quests"
     await cog.cmd_rules.callback(cog, ctx, "nonsense")
-    assert ctx.sent_embeds[-1].description == card
+    assert ctx.sent_embeds[-1].description.endswith(card.split("\n\n")[-1])   # the card again, start line aside
 
 
 async def test_status_of_a_paused_character_says_why():

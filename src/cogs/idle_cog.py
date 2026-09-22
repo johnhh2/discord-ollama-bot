@@ -1311,12 +1311,20 @@ class IdleCog(commands.Cog):
         if detail is not None:
             await ctx.send(embed=emb(f"📖 Idle RPG — {topic.title()}", detail, C_BLUE))
             return
+        char = self._chars(ctx.guild.id).get(ctx.author.id) if ctx.guild else None
+        if char is None:
+            start = "▶️ **Start:** `!idle join <class>` — invent your class: `!idle join Drunken Bard`.\n\n"
+        elif not char["claimed"]:
+            start = f"▶️ **Start:** a level {char['level']} {char['class']} is already adventuring in your name — `!idle join <class>` makes it yours.\n\n"
+        else:
+            start = ""
         await ctx.send(embed=emb(
             "📖 Idle RPG",
             "**Do nothing. Level up.**\n\n"
             "⏳ Your character levels on a timer while you're online.\n"
             "⚔️ Items, fights and lucky breaks happen on their own.\n"
             "📜 High-level players get sent on quests for a big shortcut.\n\n"
+            f"{start}"
             "`!idle status` · `items` · `map` · `travel` · `shop` · `gamble` · `top` · `align` · `duel <name>` · `quest`\n"
             f"More: `!idle rules <{'|'.join(_RULES_TOPICS)}>`",
             C_BLUE,
