@@ -120,12 +120,15 @@ class Pace(NamedTuple):
     hand_of_god_per_day: float
     battle_chance_below: float   # chance a level-up under BATTLE_ALWAYS_LEVEL means a fight
     min_team_size: int           # team battles shrink to this when too few are online
-    mob_fights_per_day: float    # monster encounters per character, outside the towns
+    mob_fights_per_day: float    # monster encounters per character, per day spent outside the towns
 
 
 PACES = {
-    "lively": Pace(1.0, 1.0, 1 / 5, BATTLE_CHANCE_BELOW, 2, 8.0),
-    "classic": Pace(GODSEND_PER_DAY, CALAMITY_PER_DAY, HAND_OF_GOD_PER_DAY, BATTLE_CHANCE_BELOW, TEAM_SIZE, 2.0),
+    # sizzlorox's own ~90 a day — one every sixteen minutes of wilds time.
+    # It only works because a fight spends hit points rather than clock; at
+    # the old stakes this would have levelled a character by itself.
+    "lively": Pace(1.0, 1.0, 1 / 5, BATTLE_CHANCE_BELOW, 2, 90.0),
+    "classic": Pace(GODSEND_PER_DAY, CALAMITY_PER_DAY, HAND_OF_GOD_PER_DAY, BATTLE_CHANCE_BELOW, TEAM_SIZE, 30.0),
 }
 DEFAULT_PACE = "lively"
 CLASSIC = PACES["classic"]
@@ -298,6 +301,7 @@ def new_character(class_name: str, now: int, claimed: bool = True) -> dict:
         "auto_trade": True,
         "traded_at": 0,
         "travel_to": None,   # a LANDMARKS key while the player has it walking there (!idle travel)
+        "hp": HP_BASE,
         "mob_kills": 0,
         "mob_deaths": 0,
         "gamble_town": None,      # the town visit the budget below belongs to
@@ -857,6 +861,106 @@ def auto_trade(uid: int, char: dict, rng, name: NameFn, now: int) -> "Note | Non
                         f"{before - char['gold']:,} gold spent, {char['gold']:,} left.")
 
 
+# ── hit points ───────────────────────────────────────────────────────────────
+#
+# sizzlorox/Idle-RPG-Bot's, and the reason ninety fights a day is playable: a
+# character carries its wounds between fights, so a fight costs blood rather
+# than clock. Only a kill moves the clock (a little) and only falling moves
+# it much. Below a quarter of its body a character makes camp instead of
+# fighting, so death takes a run of bad luck, not one bad roll.
+#
+# Their damage is `attack² / (attack + defence)` against a flat pool of hit
+# points. Ours reads that as a *share* of the body it lands on, because item
+# power here runs from 0 to several hundred while a body does not — without
+# it a fight would last twenty rounds at level 1 and two at level 40.
+
+HP_BASE = 100               # sizzlorox's 100 + 5·level…
+HP_PER_LEVEL = 5
+HP_PER_ITEM_POWER = 1       # …plus armour, so gear doesn't outgrow the body wearing it
+HP_REGEN_DIVISOR = 40       # of a full body, per minute: whole again inside an hour
+CAMP_HP_PCT = 25            # at or under this a character rests instead of fighting
+CAMP_HEAL_PCT = 20
+
+MOB_MAX_ROUNDS = 5          # sizzlorox's, per monster
+EVEN_BLOW_PCT = 18          # an evenly matched blow costs this much of a full body
+MOB_CRIT_ODDS = 12          # 1-in-N a round: ×1.75, as theirs
+MOB_CRIT_MULT = 1.75
+MOB_DODGE_ODDS = 12         # 1-in-N a round the blow misses altogether
+
+
+def max_hp(char: dict) -> int:
+    return HP_BASE + HP_PER_LEVEL * char["level"] + HP_PER_ITEM_POWER * item_sum(char)
+
+
+def hp_of(char: dict) -> int:
+    """Never more than the body can hold — losing gear shrinks it."""
+    return max(0, min(int(char.get("hp", HP_BASE)), max_hp(char)))
+
+
+def hp_pct(char: dict) -> int:
+    return hp_of(char) * 100 // max(max_hp(char), 1)
+
+
+def heal(char: dict, amount: int) -> int:
+    """Returns what actually went in."""
+    before = hp_of(char)
+    char["hp"] = min(before + amount, max_hp(char))
+    return char["hp"] - before
+
+
+def regen_hp(char: dict) -> None:
+    heal(char, max(1, max_hp(char) // HP_REGEN_DIVISOR))
+
+
+def needs_rest(char: dict) -> bool:
+    return hp_pct(char) <= CAMP_HP_PCT
+
+
+def _blow(attack: int, defence: int, body: int, rng) -> "tuple[int, str]":
+    """One strike: (damage, a mark for the round line). sizzlorox's curve,
+    normalised so an even match costs EVEN_BLOW_PCT of a body. `body` is the
+    character's own, for blows in both directions — it is the one currency
+    wounds are counted in, and a monster's bulk is quoted in it too.
+    Measuring a blow against its own victim would make every monster take
+    the same five rounds however big it is."""
+    if not rng.randrange(MOB_DODGE_ODDS):
+        return 0, "·"
+    attack = max(1, attack)
+    swing = max(1, rng.randint(attack // 2, attack))
+    share = swing * swing / (swing + max(defence, 1)) / max(swing, defence, 1)
+    damage = max(1, round(body * EVEN_BLOW_PCT / 100 * share / 0.5))
+    if not rng.randrange(MOB_CRIT_ODDS):
+        return round(damage * MOB_CRIT_MULT), "✳"
+    return damage, ""
+
+
+def monster_hp(char: dict, tier: int, strength: float) -> int:
+    """Monsters are bulky in proportion to the character they meet, so a rat
+    falls in a round at any level and the worst things in the realm cannot be
+    put down inside five."""
+    bulk = (0.08 + 0.10 * tier) * strength / 1.2
+    return max(1, round(max_hp(char) * bulk))
+
+
+def fight_monster(char: dict, their_power: int, their_hp: int, rng) -> "tuple[int, bool, str]":
+    """Up to MOB_MAX_ROUNDS of blows both ways. Returns (rounds, the monster
+    fell, a compact record of the exchange). The character's own hit points
+    are spent in place."""
+    my_power, my_max = max(battle_sum(char), 1), max_hp(char)
+    marks = []
+    for rounds in range(1, MOB_MAX_ROUNDS + 1):
+        dealt, mark = _blow(my_power, their_power, my_max, rng)
+        their_hp -= dealt
+        marks.append(mark)
+        if their_hp <= 0:
+            return rounds, True, "".join(marks)
+        taken, mark = _blow(their_power, my_power, my_max, rng)
+        char["hp"] = hp_of(char) - taken
+        marks.append(mark.lower())
+        if char["hp"] <= 0:
+            return rounds, False, "".join(marks)
+    return MOB_MAX_ROUNDS, False, "".join(marks)
+
 # ── monsters ─────────────────────────────────────────────────────────────────
 #
 # The encounter design is sizzlorox/Idle-RPG-Bot's (MIT): a monster is a
@@ -932,8 +1036,9 @@ MOB_EASY_LEVEL = 5             # at or below it, monsters fight at half strength
 MOB_DROP_CHANCE = 0.15         # a won fight turns up an item
 MOB_GEAR_DAMAGE_CHANCE = 0.15  # a lost one dents one
 MOB_DEATH_GOLD_DIVISOR = 12
+MOB_WIN_CLOCK_DIVISOR = 10   # a kill is worth tier/10 % of the clock; falling still costs the whole tier
 MOB_DEATH_GOLD_CAP_PER_LEVEL = 5    # …but never more than half a level-up's worth: a fat purse isn't bled dry
-MOB_GOLD_PER_LEVEL = 2         # × tier × the prefix's gold multiplier
+MOB_GOLD_PER_LEVEL = 0.4       # × tier × the prefix's gold multiplier
 MOB_DANGER_GOLD_BONUS = 1.5    # the dangerous biomes pay for the risk
 MOB_RESPAWN_DISTANCE = 40      # squares from the town's centre: inside the market ring, outside the errand's
 
@@ -980,51 +1085,56 @@ def _to_town_outskirts(char: dict) -> str:
 
 def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int) -> "list[Note]":
     """One encounter in the wild: a monster or, a quarter of the time from
-    level 11, a group fought one after another until one of them wins."""
+    level 11, a group fought one after another until the character falls,
+    breaks off, or has seen them all off."""
     if char.get("x") is None or market_in_reach(char):
         return []   # towns are safe ground
+    if needs_rest(char):
+        got = heal(char, max(1, max_hp(char) * CAMP_HEAL_PCT // 100))
+        return [Note((uid,), f"⛺ {name(uid)} was in no state to fight and made camp. +{got} HP ({hp_of(char)}/{max_hp(char)}).")]
+
     biome = biome_at(char["x"], char["y"])
     count = 1
     if rng.random() < MOB_GROUP_CHANCE:
         count = rng.randint(1, int(char["level"] * 0.0912) + 1)
 
-    slain, gold, saved, rare, ending = [], 0, 0, False, None
+    slain, gold, saved, rare, fell_to, broke_off = [], 0, 0, False, None, None
     for _ in range(count):
         prefix, beast, strength, gold_mult, tier = roll_monster(char["level"], biome, rng)
         mob = f"{prefix} {beast}"
-        their_sum, my_sum = mob_power(char, strength), max(battle_sum(char), 1)
-        my_roll, their_roll = rng.randint(0, my_sum), rng.randint(0, their_sum)
-        margin = max(1, max(my_sum, their_sum) // 10)
-        rolls = f"{_rolled(my_roll, my_sum)} against its {their_roll} of {their_sum}"
-        if abs(my_roll - their_roll) < margin:
-            # Too close to call: nobody falls, and whoever was behind breaks off.
-            ending = f"the {mob} fled {rolls}" if my_roll >= their_roll else f"{name(uid)} fled from a {mob} {rolls}"
+        their_power = mob_power(char, strength)
+        rounds, killed, marks = fight_monster(char, their_power, monster_hp(char, tier, strength), rng)
+        blows = f" `{marks}`" if marks.strip("·") else ""
+        if hp_of(char) <= 0:
+            fell_to = (mob, tier, rounds)
             break
-        if my_roll < their_roll:
-            ending = (mob, tier, rolls)
+        if not killed:
+            broke_off = f"a {mob} shook {name(uid)} off after {rounds} rounds{blows}"
             break
-        slain.append(f"{mob} {rolls}")
+        slain.append(f"{mob} ({rounds}r{blows})")
         bonus = MOB_DANGER_GOLD_BONUS if biome in DANGEROUS_BIOMES else 1
         gold += max(1, int(tier * gold_mult * max(char["level"], 1) * MOB_GOLD_PER_LEVEL * bonus))
-        saved += -scale(char, now, -tier)
+        saved += -scale(char, now, -tier / MOB_WIN_CLOCK_DIVISOR)
         rare = rare or beast in RARE_KILLS
 
     char["gold"] += gold
     char["mob_kills"] = char.get("mob_kills", 0) + len(slain)
+    body = f"{hp_of(char)}/{max_hp(char)} HP"
     where = f"[{biome}]"
     notes = []
     if slain:
-        text = f"🗡️ {where} {name(uid)} killed a {', then a '.join(slain)}. {format_duration(saved)} off their clock and {gold:,} gold."
-        if isinstance(ending, str):
-            text += f" Then {ending}."
+        clock = f" {format_duration(saved)} off their clock," if saved else ""
+        text = f"🗡️ {where} {name(uid)} killed a {', then a '.join(slain)}.{clock} {gold:,} gold. {body}."
+        if broke_off:
+            text += f" Then {broke_off}."
         notes.append(Note((uid,), text, rare))
-        if not isinstance(ending, tuple) and rng.random() < MOB_DROP_CHANCE:
+        if fell_to is None and rng.random() < MOB_DROP_CHANCE:
             notes.append(find_item(uid, char, rng, name))
-    elif isinstance(ending, str):
-        notes.append(Note((uid,), f"🗡️ {where} {ending[0].upper()}{ending[1:]}."))
+    elif broke_off:
+        notes.append(Note((uid,), f"🗡️ {where} {broke_off[0].upper()}{broke_off[1:]}. {body}."))
 
-    if isinstance(ending, tuple):
-        mob, tier, rolls = ending
+    if fell_to is not None:
+        mob, tier, rounds = fell_to
         lost_time = scale(char, now, tier)
         lost_gold = min(-(-char["gold"] // MOB_DEATH_GOLD_DIVISOR), MOB_DEATH_GOLD_CAP_PER_LEVEL * max(char["level"], 1))
         char["gold"] -= lost_gold
@@ -1036,11 +1146,12 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int) -> "list[No
             item["level"] = max(1, item["level"] * 9 // 10)
             dented = f" Their {_item_label(slot, item)} was dented in the fall."
         town = _to_town_outskirts(char)
+        char["hp"] = max_hp(char)   # patched up on the way, as sizzlorox does
         purse = f" and {lost_gold:,} gold" if lost_gold else ""
         notes.append(Note(
             (uid,),
-            f"☠️ {where} A {mob} struck {name(uid)} down {rolls}. {format_duration(lost_time)} added to their clock{purse};"
-            f" they were carried to the outskirts of {town}.{dented}",
+            f"☠️ {where} A {mob} struck {name(uid)} down in {rounds} rounds. {format_duration(lost_time)} added to their clock"
+            f"{purse}; they were carried to the outskirts of {town} and patched up.{dented}",
         ))
     return notes
 

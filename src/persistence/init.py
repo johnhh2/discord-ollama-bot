@@ -641,16 +641,17 @@ async def _init_db_state_inner(state, run_migrations):
                 "prestige, penalty_total, last_seen, last_penalty_at, thread_id, created_at, "
                 "align_changed_at, duel_day, items_json, x, y, gold, rush_day, extra_duel_day, "
                 "auto_trade, traded_at, travel_to, mob_kills, mob_deaths, gamble_town, gamble_visit_at, "
-                "gamble_budget, gambles, gamble_won, gamble_lost, claimed FROM idle_characters"
+                "gamble_budget, gambles, gamble_won, gamble_lost, claimed, hp FROM idle_characters"
             )
             for (gid, uid, class_name, level, next_level_at, remaining, law, moral, prestige,
                  penalty_total, last_seen, last_penalty_at, thread_id, created_at,
                  align_changed_at, duel_day, items_json, x, y, gold, rush_day,
                  extra_duel_day, auto_trade, traded_at, travel_to, mob_kills,
                  mob_deaths, gamble_town, gamble_visit_at, gamble_budget, gambles, gamble_won,
-                 gamble_lost, claimed) in await cur.fetchall():
+                 gamble_lost, claimed, hp) in await cur.fetchall():
                 state.idle_characters.setdefault(int(gid), {})[int(uid)] = {
                     "claimed": bool(claimed),
+                    "hp": int(hp),
                     "class": class_name,
                     "level": int(level),
                     "next_level_at": None if next_level_at is None else int(next_level_at),

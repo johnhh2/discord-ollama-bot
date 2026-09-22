@@ -777,6 +777,45 @@ async def test_the_tick_sends_wild_characters_into_fights_and_keeps_them_in_the_
     assert wild["x"] == 480 and townie["x"] == MARKET["x"]
 
 
+async def test_a_real_monster_fight_reaches_the_feed_through_a_tick():
+    """No stub for mob_encounter: the whole path, cog to rules to thread."""
+    cog, guild, idle = _world()
+
+    class _Hunting(_StillRng):
+        def random(self):
+            return 0.0          # every per-tick chance hits, including the monster roll
+    cog.rng = _Hunting()
+    char = _spawn(level=10, left=50_000, gold=500, x=480, y=20,   # out in the wilds
+                  items={"ring": {"level": 20, "name": None}})
+
+    await cog.tick()
+
+    feed = _sent(guild.threads[0])
+    assert "🗡️" in feed or "☠️" in feed, feed
+    assert char["mob_kills"] or char["mob_deaths"] or "fled" in feed
+
+
+async def test_the_tick_mends_a_wounded_character_and_status_shows_the_bar():
+    cog, guild, _idle = _world()
+    cog.rng = _StillRng()
+    char = _spawn(level=10, left=50_000, x=480, y=20, items={"ring": {"level": 25, "name": None}})
+    full = rpg.max_hp(char)
+    char["hp"] = full // 2
+
+    await cog.tick()
+    assert rpg.hp_of(char) == full // 2 + max(1, full // rpg.HP_REGEN_DIVISOR)
+
+    ctx = _ctx(guild)
+    await cog.cmd_status.callback(cog, ctx)
+    sheet = ctx.sent_embeds[-1].description
+    assert "**Health:**" in sheet and f"/{full:,}" in sheet and "█" in sheet
+    assert "too hurt to fight" not in sheet
+
+    char["hp"] = full // 10                               # under the camp line
+    await cog.cmd_status.callback(cog, ctx)
+    assert "too hurt to fight" in ctx.sent_embeds[-1].description
+
+
 async def test_status_shows_the_biome_and_the_monster_tally():
     cog, guild, _idle = _world()
     _spawn(x=300, y=100, mob_kills=12, mob_deaths=3)

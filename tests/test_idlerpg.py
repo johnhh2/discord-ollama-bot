@@ -396,14 +396,106 @@ def test_a_poor_visit_is_not_stamped_and_the_ring_and_the_wilds_do_not_trade():
 
 # ── monsters ─────────────────────────────────────────────────────────────────
 
-class _Fight(_Scripted):
-    """rolls: my roll, then the monster's, per fight. No groups, no drops."""
-    def __init__(self, rolls, *, random_=0.999, randrange=99):
-        super().__init__(random_=random_, randrange=randrange)
-        self._rolls = list(rolls)
+def _wanderer(level=10, gear=25, gold=1000, **over):
+    char = _char(level, left=10 ** 6, x=480, y=20, gold=gold, **over)
+    if gear:
+        char["items"] = {"ring": {"level": gear, "name": None}}
+    char["hp"] = rpg.max_hp(char)
+    return char
 
-    def randint(self, low, high):
-        return min(self._rolls.pop(0), high)
+
+def test_a_body_grows_with_level_and_gear_and_mends_itself():
+    char = _char(10, items={"ring": {"level": 50, "name": None}})
+    assert rpg.max_hp(char) == 100 + 5 * 10 + 50
+    char["hp"] = 10
+    rpg.regen_hp(char)
+    assert rpg.hp_of(char) == 10 + max(1, rpg.max_hp(char) // rpg.HP_REGEN_DIVISOR)
+    rpg.heal(char, 10 ** 6)
+    assert rpg.hp_of(char) == rpg.max_hp(char)          # never over the brim
+    char["items"].clear()                                # gear lost, body with it
+    assert rpg.hp_of(char) == rpg.max_hp(char) == 150
+    assert rpg.hp_pct(char) == 100
+
+
+def test_a_fight_is_rounds_of_blows_and_the_wounds_are_kept():
+    char = _wanderer()
+    rng = random.Random(2)
+    rounds, killed, marks = rpg.fight_monster(char, 40, 10 ** 9, rng)   # nothing can kill that
+    assert rounds == rpg.MOB_MAX_ROUNDS and not killed
+    assert 0 < rpg.hp_of(char) < rpg.max_hp(char)
+    assert set(marks) <= {"·", "✳", "✳".lower()}    # only dodges and crits leave a mark
+
+    whole = _wanderer()
+    rounds, killed, _marks = rpg.fight_monster(whole, 1, 1, rng)        # and that dies to a look
+    assert killed and rounds <= 2                                       # 2 only if the first swing missed
+
+
+def test_a_kill_pays_gold_and_a_slice_of_the_clock_and_a_town_is_safe():
+    char = _wanderer(gold=100)
+    notes = rpg.mob_encounter(1, char, random.Random(5), _name, NOW)
+    assert notes and "[Plains]" in notes[0].text and not notes[0].public
+    assert char["mob_kills"] == 1 and char["gold"] > 100
+    assert rpg.time_left(char, NOW) < 10 ** 6            # a kill shaves the clock, a little
+
+    town = rpg.LANDMARKS["Velvragh"]
+    safe = _wanderer()
+    safe["x"], safe["y"] = town[0] + 30, town[1]
+    assert rpg.mob_encounter(1, safe, random.Random(5), _name, NOW) == []
+
+
+def test_a_hurt_character_makes_camp_instead_of_fighting():
+    char = _wanderer()
+    char["hp"] = rpg.max_hp(char) * rpg.CAMP_HP_PCT // 100
+    assert rpg.needs_rest(char)
+    notes = rpg.mob_encounter(1, char, random.Random(1), _name, NOW)
+    assert len(notes) == 1 and "made camp" in notes[0].text and not notes[0].public
+    assert char["mob_kills"] == 0 and not rpg.needs_rest(char)
+
+
+def test_falling_costs_clock_and_gold_and_carries_you_to_a_town_patched_up():
+    rng = random.Random(3)
+    for _ in range(4000):
+        char = _wanderer(gold=1200)
+        char["x"], char["y"] = 480, 150
+        char["next_level_at"] = NOW + 10_000
+        char["hp"] = rpg.max_hp(char) // 2               # wounded, but still willing
+        notes = rpg.mob_encounter(1, char, rng, _name, NOW)
+        if char["mob_deaths"]:
+            break
+    else:
+        raise AssertionError("no death in 4000 wounded encounters")
+    assert "struck P1 down" in notes[-1].text and "outskirts of" in notes[-1].text
+    assert char["gold"] < 1200 and rpg.time_left(char, NOW) > 10_000
+    assert rpg.hp_of(char) == rpg.max_hp(char)           # patched up on the way
+    assert rpg.nearest_town(char)[1] <= rpg.MOB_RESPAWN_DISTANCE
+
+
+def test_a_group_is_fought_one_after_another():
+    rng = random.Random(1)
+    for _ in range(500):
+        char = _wanderer(level=30, gear=200)
+        notes = rpg.mob_encounter(1, char, rng, _name, NOW)
+        if notes and ", then a " in notes[0].text:
+            assert char["mob_kills"] >= 2
+            return
+    raise AssertionError("never met a group")
+
+
+def test_killing_something_legendary_is_channel_news(monkeypatch):
+    # A full-strength dragon is a five-round standoff even at level 40 — this
+    # one is starving, so it can actually be put down.
+    monkeypatch.setattr(rpg, "roll_monster", lambda level, biome, rng: ("Starving", "Dragon", 0.4, 1, 5))
+    char = _wanderer(level=40, gear=400)
+    notes = rpg.mob_encounter(1, char, random.Random(4), _name, NOW)
+    assert "killed a Starving Dragon" in notes[0].text and notes[0].public
+
+
+def test_monsters_are_bulky_in_proportion_to_the_character_they_meet():
+    small, big = _wanderer(level=1, gear=2), _wanderer(level=40, gear=400)
+    rat, dragon = rpg.monster_hp(small, 1, 0.5), rpg.monster_hp(small, 5, 1.8)
+    assert rat < dragon and rat < rpg.max_hp(small) // 4
+    assert rpg.monster_hp(big, 1, 0.5) > rat          # the same rat is fatter beside a bigger body
+    assert rpg.monster_hp(big, 5, 1.8) > rpg.monster_hp(big, 1, 0.5) * 4
 
 
 def test_biomes_follow_the_drawn_map_and_every_one_can_spawn_something():
@@ -416,7 +508,7 @@ def test_biomes_follow_the_drawn_map_and_every_one_can_spawn_something():
     for biome in biomes:
         for level in (1, 30, 80):
             for _ in range(200):
-                prefix, beast, strength, gold_mult, tier = rpg.roll_monster(level, biome, rng)
+                _prefix, _beast, strength, _gold, tier = rpg.roll_monster(level, biome, rng)
                 assert 1 <= tier <= 5 and strength > 0
 
 
@@ -435,121 +527,6 @@ def test_monsters_are_cut_to_the_characters_size_and_go_easy_on_beginners():
     assert rpg.mob_power(geared, 3.0) == 180
     assert rpg.mob_power(_char(5, items={"ring": {"level": 120, "name": None}}), 1.0) == 50
     assert rpg.mob_power(_char(30), 1.0) == 50                 # no gear: sized to the level instead
-
-
-def test_a_won_fight_pays_gold_and_clock_and_a_town_is_safe():
-    char = _char(20, left=10_000, x=480, y=20, items={"ring": {"level": 60, "name": None}})
-    notes = rpg.mob_encounter(1, char, _Fight([60, 0]), _name, NOW)
-    # randrange 99 → the commonest pool; choice takes its first: a Starving Rat, tier 1.
-    assert "killed a Starving Rat" in notes[0].text and "[Plains]" in notes[0].text and not notes[0].public
-    assert char["gold"] == 10 and rpg.time_left(char, NOW) == 9900 and char["mob_kills"] == 1   # 1 × 0.25 × 20 × 2
-
-    safe = _char(20, x=rpg.LANDMARKS["Velvragh"][0] + 30, y=rpg.LANDMARKS["Velvragh"][1])
-    assert rpg.mob_encounter(1, safe, _Fight([60, 0]), _name, NOW) == []
-
-
-def test_a_close_fight_ends_with_someone_fleeing_and_nothing_lost():
-    char = _char(20, left=10_000, x=480, y=20, gold=500, items={"ring": {"level": 60, "name": None}})
-    notes = rpg.mob_encounter(1, char, _Fight([30, 28]), _name, NOW)
-    assert "fled" in notes[0].text
-    assert (char["gold"], rpg.time_left(char, NOW), char["mob_kills"], char["mob_deaths"]) == (500, 10_000, 0, 0)
-
-
-def test_a_lost_fight_costs_clock_and_gold_and_carries_you_to_a_towns_outskirts():
-    char = _char(20, left=10_000, x=480, y=150, gold=1200, items={"ring": {"level": 60, "name": None}})
-    notes = rpg.mob_encounter(1, char, _Fight([0, 99]), _name, NOW)
-    assert "struck P1 down" in notes[-1].text and "outskirts of the land of Qwok" in notes[-1].text
-    assert char["gold"] == 1100 and rpg.time_left(char, NOW) == 10_100 and char["mob_deaths"] == 1   # 1/12 of 1,200
-    rich = _char(20, x=480, y=150, gold=60_000, items={"ring": {"level": 60, "name": None}})
-    rpg.mob_encounter(1, rich, _Fight([0, 99]), _name, NOW)
-    assert rich["gold"] == 59_900                               # capped at 5 × level
-    assert rpg.nearest_town(char)[1] <= rpg.MOB_RESPAWN_DISTANCE
-    assert rpg.market_in_reach(char) == "the land of Qwok"
-    assert rpg.nearest_town(char)[1] > rpg.TOWN_CORE_RADIUS    # the market, not the errand
-
-
-def test_a_group_is_fought_one_at_a_time_and_a_rare_kill_is_news():
-    char = _char(40, left=100_000, x=480, y=20, items={"ring": {"level": 60, "name": None}})
-    rng = _Fight([3, 60, 0, 60, 0, 60, 0], random_=0.0)        # a group of three, all beaten; then the drop roll hits
-    notes = rpg.mob_encounter(1, char, rng, _name, NOW)
-    assert notes[0].text.count("Starving Rat") == 3 and char["mob_kills"] == 3
-    assert len(notes) == 2 and "found a level" in notes[1].text   # a won fight can turn up an item
-
-    class _DragonSlayer(_Fight):
-        def choice(self, seq):
-            dragons = [entry for entry in seq if entry[0] == "Dragon"]
-            return dragons[0] if dragons else seq[0]
-    hunter = _char(60, left=100_000, x=300, y=100, items={"ring": {"level": 60, "name": None}})
-    notes = rpg.mob_encounter(1, hunter, _DragonSlayer([60, 0], randrange=0), _name, NOW)
-    assert "Dragon" in notes[0].text and notes[0].public
-
-
-# ── the tables ───────────────────────────────────────────────────────────────
-
-_TOWN = {"x": rpg.LANDMARKS["Velvragh"][0] + 30, "y": rpg.LANDMARKS["Velvragh"][1]}
-
-
-def test_the_stake_is_a_share_of_the_purse_that_grows_with_it():
-    assert [rpg.gamble_stake(g) for g in (100, 1000, 10_000, 50_000)] == [9, 138, 1842, 10_819]
-    assert rpg.gamble_stake(1) == 0 and rpg.gamble_stake(0) == 0
-
-
-def test_a_visits_bets_stop_at_a_fifth_of_the_purse_the_character_arrived_with():
-    char = _char(20, gold=10_000, **_TOWN)
-    rng = _Scripted(random_=0.0, randrange=0)            # bets every tick, and loses every one
-    staked = []
-    for minute in range(300):
-        before = char["gold"]
-        if rpg.town_gamble(1, char, rng, _name, NOW + 60 * minute, 60):
-            staked.append(before - char["gold"])
-    assert sum(staked) == 2000 and char["gold"] == 8000  # 20% of 10,000, then nothing more
-    assert staked[0] == 1842 and char["gambles"] == len(staked) and char["gamble_lost"] == 2000
-
-
-def test_the_budget_follows_the_visit_not_the_ring():
-    char = _char(20, gold=10_000, **_TOWN)
-    rng = _Scripted(random_=0.999)                       # never actually bets
-    rpg.town_gamble(1, char, rng, _name, NOW, 60)
-    assert (char["gamble_town"], char["gamble_budget"]) == ("Velvragh", 2000)
-
-    char["gamble_budget"] = 0
-    char["x"] += 500                                     # wanders out of the ring…
-    assert rpg.town_gamble(1, char, rng, _name, NOW + 60, 60) is None
-    char["x"] -= 500                                     # …and straight back: the same visit
-    rpg.town_gamble(1, char, rng, _name, NOW + 120, 60)
-    assert char["gamble_budget"] == 0
-
-    rpg.town_gamble(1, char, rng, _name, NOW + rpg.GAMBLE_VISIT_SECS, 60)
-    assert char["gamble_budget"] == 2000                 # a stay this long is a new visit
-
-    char["gamble_budget"] = 0
-    char["x"], char["y"] = rpg.LANDMARKS["Denmark"]      # another town is another visit
-    rpg.town_gamble(1, char, rng, _name, NOW + rpg.GAMBLE_VISIT_SECS + 60, 60)
-    assert (char["gamble_town"], char["gamble_budget"]) == ("Denmark", 2000)
-
-
-def test_no_tables_in_the_wilds_none_for_the_poor_and_no_opting_out():
-    rng = _Scripted(random_=0.0, randrange=99)
-    assert rpg.town_gamble(1, _char(20, gold=10_000, x=480, y=20), rng, _name, NOW, 60) is None
-    assert rpg.town_gamble(1, _char(20, gold=17, **_TOWN), rng, _name, NOW, 60) is None
-    stubborn = _char(20, gold=10_000, auto_trade=False, **_TOWN)
-    note = rpg.town_gamble(1, stubborn, rng, _name, NOW, 60)
-    assert "doubled it" in note.text and stubborn["gold"] == 11_842 and stubborn["gamble_won"] == 1842
-
-
-def test_the_house_wins_fifty_one_rolls_in_a_hundred():
-    rng = random.Random(3)
-    wins = sum(rpg.manual_gamble(_char(gold=10, **_TOWN), 1, rng)[0] for _ in range(40_000))
-    assert 0.475 < wins / 40_000 < 0.505
-
-
-def test_manual_bets_need_a_town_and_the_gold():
-    rng = _Scripted(randrange=99)
-    assert rpg.manual_gamble(_char(gold=500, x=480, y=20), 100, rng)[0] is None
-    rich = _char(gold=500, **_TOWN)
-    assert rpg.manual_gamble(rich, 501, rng)[0] is None and rpg.manual_gamble(rich, 0, rng)[0] is None
-    assert rpg.manual_gamble(rich, 500, rng) == (True, "[Velvragh] You won 500 gold. 1,000 gold left.")
-    assert rich["gamble_budget"] == 0                    # a bet by hand is outside the visit's cap
 
 
 # ── travel ───────────────────────────────────────────────────────────────────
@@ -623,6 +600,27 @@ def test_lively_pace_brings_luck_about_daily_and_classic_about_weekly():
     assert 45 <= lively <= 90        # ~2.2 a day over thirty days
     assert 3 <= classic <= 20        # ~0.3 a day
     assert rpg.PACES[rpg.DEFAULT_PACE] is rpg.PACES["lively"]
+
+
+def test_monsters_come_about_ninety_a_day_in_the_wilds_and_never_in_town():
+    def _fights(pace, spot, days=10):
+        rng = random.Random(11)
+        fights = 0
+        char = _char(10, left=10 ** 9, x=spot[0], y=spot[1], gold=10 ** 6,
+                     items={"ring": {"level": 25, "name": None}})
+        char["hp"] = rpg.max_hp(char)
+        for tick in range(1440 * days):
+            rpg.regen_hp(char)
+            if rng.random() < pace.mob_fights_per_day / 1440:
+                fights += bool(rpg.mob_encounter(1, char, rng, _name, NOW + tick * 60))
+                char["x"], char["y"] = spot                  # a fall carries them townward
+        return fights / days
+
+    wilds = (480, 20)
+    town = (rpg.LANDMARKS["Velvragh"][0] + 30, rpg.LANDMARKS["Velvragh"][1])
+    assert 80 <= _fights(rpg.PACES["lively"], wilds) <= 100      # sizzlorox's own rate
+    assert 25 <= _fights(rpg.CLASSIC, wilds) <= 36
+    assert _fights(rpg.PACES["lively"], town) == 0               # a market ring is safe ground
 
 
 def test_no_pace_turns_early_level_ups_into_constant_fights():

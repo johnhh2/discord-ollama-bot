@@ -821,6 +821,22 @@ tables from migrations 0070–0077.
   `last_seen` write. The map image appears on `!idle` / `!idle status`,
   `!idle map`, `!idle quest` (journeys) and under a journey's announcement
   (`Note.show_map`); `!profile` shows the character and its coordinates.
+- **Hit points.** sizzlorox's, and the reason ninety monster fights a day is
+  playable: a character carries its wounds between fights (`hp`, mended
+  `max_hp/HP_REGEN_DIVISOR` a minute by the tick), so a fight spends blood
+  rather than clock — a kill is worth `tier/MOB_WIN_CLOCK_DIVISOR` % of the
+  clock, only falling costs the whole tier. Under `CAMP_HP_PCT` a character
+  makes camp instead of fighting, which is what keeps deaths to about one a
+  day. Their damage is `attack²/(attack+defence)` against a flat pool; ours
+  reads it as a *share of the character's own body*, in both directions, and
+  quotes a monster's bulk in the same currency (`monster_hp`). Don't
+  normalise a blow against its own victim — item power here runs 0 to
+  several hundred while a body does not, and measuring each side against
+  itself makes every monster take exactly five rounds however big it is
+  (it did, and nothing could be killed). The balance — ~90% kills, ~1 death
+  a day, −7% clock, monster gold a few times a level-up's — was set by
+  simulation; re-run it before changing `EVEN_BLOW_PCT`, the bulk curve,
+  `MOB_GOLD_PER_LEVEL` or the rate.
 - **Monsters.** The encounter design is sizzlorox/Idle-RPG-Bot's (MIT; its
   source, not its README, is the reference): prefix + type names, spawn
   pools by biome, its two-roll rarity threshold eased by half the level,
@@ -834,8 +850,7 @@ tables from migrations 0070–0077.
   everywhere-at-rarity-100 entry is what keeps every pool non-empty, so
   don't remove it. Frequency is `Pace.mob_fights_per_day` (8 lively, 2
   classic — their bot runs ~90 a day, which a timer game can't absorb).
-  The gold numbers were set by simulation: a day of fights nets a little
-  gold and ~3% of the clock at every level, the dangerous biomes pay more
+  The gold numbers were set by simulation (see Hit points), the dangerous biomes pay more
   for a worse win rate, and the death tax (1/12 of the purse) is capped at
   5 × level so a saver isn't bled. Re-run that sum before changing them. A
   beaten character lands `MOB_RESPAWN_DISTANCE` from the town's centre —

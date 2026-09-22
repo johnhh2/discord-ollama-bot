@@ -32,9 +32,9 @@ async def save_idle_character(guild_id: int, user_id: int) -> None:
             "law, moral, prestige, penalty_total, last_seen, last_penalty_at, thread_id, created_at, "
             "align_changed_at, duel_day, items_json, x, y, gold, rush_day, extra_duel_day, "
             "auto_trade, traded_at, travel_to, mob_kills, mob_deaths, gamble_town, gamble_visit_at, "
-            "gamble_budget, gambles, gamble_won, gamble_lost, claimed) "
+            "gamble_budget, gambles, gamble_won, gamble_lost, claimed, hp) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-            "%s,%s,%s,%s,%s,%s,%s) "
+            "%s,%s,%s,%s,%s,%s,%s,%s) "
             "ON DUPLICATE KEY UPDATE class_name=VALUES(class_name), level=VALUES(level), "
             "next_level_at=VALUES(next_level_at), remaining=VALUES(remaining), law=VALUES(law), "
             "moral=VALUES(moral), prestige=VALUES(prestige), penalty_total=VALUES(penalty_total), "
@@ -47,7 +47,7 @@ async def save_idle_character(guild_id: int, user_id: int) -> None:
             "mob_kills=VALUES(mob_kills), mob_deaths=VALUES(mob_deaths), "
             "gamble_town=VALUES(gamble_town), gamble_visit_at=VALUES(gamble_visit_at), "
             "gamble_budget=VALUES(gamble_budget), gambles=VALUES(gambles), "
-            "gamble_won=VALUES(gamble_won), gamble_lost=VALUES(gamble_lost), claimed=VALUES(claimed)",
+            "gamble_won=VALUES(gamble_won), gamble_lost=VALUES(gamble_lost), claimed=VALUES(claimed), hp=VALUES(hp)",
             (
                 int(guild_id), int(user_id), c["class"], int(c["level"]), c["next_level_at"], c["remaining"],
                 c["law"], c["moral"], int(c["prestige"]), int(c["penalty_total"]), int(c["last_seen"]),
@@ -57,7 +57,7 @@ async def save_idle_character(guild_id: int, user_id: int) -> None:
                 int(c["auto_trade"]), int(c["traded_at"]), c["travel_to"],
                 int(c["mob_kills"]), int(c["mob_deaths"]),
                 c["gamble_town"], int(c["gamble_visit_at"]), int(c["gamble_budget"]),
-                int(c["gambles"]), int(c["gamble_won"]), int(c["gamble_lost"]), int(c["claimed"]),
+                int(c["gambles"]), int(c["gamble_won"]), int(c["gamble_lost"]), int(c["claimed"]), int(c["hp"]),
             ),
         )
 

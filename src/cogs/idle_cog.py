@@ -96,9 +96,12 @@ _RULES_TOPICS = {
         "Out in the wilds your character runs into monsters — rats and bandits on the plains, trolls and dragons in the mountains, "
         "worse in the caves, the haunted ground and T'rnalvph, where the rewards are better too. Towns (the rings on `!idle map`) are safe.\n"
         "A monster is sized to you, so gear alone doesn't make them easy; its prefix (Veteran, Elite … Corrupted) and kind set how much harder. "
-        "Both sides roll up to their power. Win: gold, time off your clock, sometimes an item. Too close to call: someone flees, nothing lost. "
-        f"Lose: time added, some gold (1/{rpg.MOB_DEATH_GOLD_DIVISOR} of it, capped by your level), and you're carried to the nearest town's outskirts.\n"
-        f"From level 11 a quarter of fights are against a group. Up to level {rpg.MOB_EASY_LEVEL} monsters fight at half strength."
+f"A fight runs up to {rpg.MOB_MAX_ROUNDS} rounds of blows both ways and costs **health**, not time — you carry your wounds between fights "
+        f"and mend about {100 // rpg.HP_REGEN_DIVISOR}% of yourself a minute. Kill it: gold, a little off your clock, sometimes an item. "
+        f"Run out of health: the clock, some gold, and you wake at a town's edge.\n"
+        f"At or under {rpg.CAMP_HP_PCT}% health your character makes camp instead of fighting, so it takes a bad run to fall.\n"
+        f"From level 11 a quarter of fights are against a group. Up to level {rpg.MOB_EASY_LEVEL} monsters fight at half strength.\n"
+        "Roughly one every quarter hour while you're out in the wilds — none at all inside a town's ring."
     ),
     "map": (
         f"The realm is a {rpg.MAP_SIZE}×{rpg.MAP_SIZE} grid. Everyone online wanders one step a second, and the edges wrap.\n"
@@ -297,6 +300,7 @@ class IdleCog(commands.Cog):
                 continue
             if uid in voiced:
                 rpg.voice_speedup(char, TICK_SECONDS)
+            rpg.regen_hp(char)
             here = rpg.logged_in(char, now)
             horizon = now if here else char["last_seen"] + rpg.GRACE_SECS
             for _ in range(MAX_LEVELS_PER_TICK):
@@ -694,6 +698,9 @@ class IdleCog(commands.Cog):
                 lines.insert(3, f"**Travelling to:** {char['travel_to']} — about {eta} of walking left")
         if char["gambles"]:
             lines.append(f"**At the tables:** {char['gambles']:,} bets · won {char['gamble_won']:,} · lost {char['gamble_lost']:,}")
+        bar = "█" * (rpg.hp_pct(char) // 10) + "░" * (10 - rpg.hp_pct(char) // 10)
+        lines.insert(2, f"**Health:** `{bar}` {rpg.hp_of(char):,}/{rpg.max_hp(char):,}"
+                        + (" — resting, too hurt to fight" if rpg.needs_rest(char) else ""))
         if char["mob_kills"] or char["mob_deaths"]:
             lines.append(f"**Monsters slain:** {char['mob_kills']:,} · **Struck down:** {char['mob_deaths']:,}")
         if char["penalty_total"]:
