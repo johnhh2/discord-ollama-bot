@@ -704,53 +704,27 @@ class _Walk(_Scripted):
         return super().randint(low, high)
 
 
-def test_every_distance_takes_the_short_way_round_the_globe():
+def test_only_two_characters_meeting_measure_round_the_edge():
     assert rpg.axis_gap(499, 2) == 4 and rpg.axis_gap(10, 20) == 10   # 499 -> 500 -> 0 -> 1 -> 2
     assert rpg.axis_gap(0, rpg.MAP_SIZE) == 1            # a step apart, not the width of the realm
-    assert rpg.signed_gap(499, 2) == 4 and rpg.signed_gap(2, 499) == -4
-    assert rpg.signed_gap(10, 20) == 10 and rpg.signed_gap(20, 10) == -10
 
-    # Neighbours across the east edge fight each other like any others.
+    # Neighbours across the east edge fight each other like any others…
     assert rpg.in_battle_range({"x": 499, "y": 250}, {"x": 2, "y": 250})
     assert not rpg.in_battle_range({"x": 499, "y": 250}, {"x": 40, "y": 250})
 
-    # And Denmark's market reaches around the corner.
+    # …but a town belongs to the corner it is drawn in. Denmark is at (35, 40)
+    # and stays a long walk from the far edge, however the ground wraps.
     outside = _char(x=499, y=40)
-    assert rpg.nearest_town(outside) == ("Denmark", 37) and rpg.market_in_reach(outside) == "Denmark"
-    assert rpg.travel_steps(outside, "Denmark") == 37
+    assert rpg.market_in_reach(outside) is None
+    assert rpg.nearest_town(outside)[1] > rpg.MARKET_RADIUS
+    assert rpg.travel_steps(outside, "Denmark") == 464   # the long way, as drawn
 
 
-def test_a_traveller_and_a_beaten_character_both_use_the_edge():
+def test_a_traveller_walks_the_map_as_drawn():
     walker = _char(x=499, y=40, travel_to="Denmark")
     for _ in range(3):
-        walker["x"], walker["y"] = rpg._toward(walker["x"], 35), rpg._toward(walker["y"], 40)
-    assert walker["x"] == 1                              # 499 -> 500 -> 0 -> 1, not the long way
-
-    # Carried townward from the far side of the edge, the short way.
-    fallen = _char(x=300, y=490, items={"ring": {"level": 5, "name": None}})
-    town = rpg._to_town_outskirts(fallen)
-    assert rpg.nearest_town(fallen)[1] <= rpg.MOB_RESPAWN_DISTANCE
-    assert 0 <= fallen["x"] <= rpg.MAP_SIZE and 0 <= fallen["y"] <= rpg.MAP_SIZE and town in rpg.TOWNS
-
-
-def test_a_route_that_crosses_an_edge_is_drawn_from_both_sides():
-    from PIL import Image
-    import io
-    from src import idle_map
-
-    def _red_columns(quest):
-        png = idle_map.render_map([], quest=quest)
-        with Image.open(io.BytesIO(png)) as art:
-            px = art.load()
-            return {x for x in range(art.width) for y in range(art.height)
-                    if px[x, y][0] > 150 and px[x, y][1] < 90}
-
-    # The Towers to Denmark is shorter over the bottom edge than down the map.
-    wrapped = _red_columns({"members": [1], "stage": 1, "p1": [255, 425], "p2": [35, 40]})
-    straight = _red_columns({"members": [1], "stage": 1, "p1": [255, 425], "p2": [255, 300]})
-    assert wrapped and straight
-    # Drawn from both ends, so ink reaches nearer each edge than a single line could.
-    assert min(wrapped) < min(straight)
+        walker["x"] = rpg._toward(walker["x"], 35)
+    assert walker["x"] == 496                            # west across the sheet, not over the edge
 
 
 def test_wandering_wraps_at_the_edges_like_the_original():

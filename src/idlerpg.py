@@ -500,16 +500,12 @@ def _steal(thief: dict, victim: dict, rng) -> "str | None":
 # ── battles ──────────────────────────────────────────────────────────────────
 
 def axis_gap(a: int, b: int) -> int:
-    """Squares between two coordinates on one wrapped axis, the short way."""
+    """Squares between two coordinates on one wrapped axis, the short way.
+    Only two characters meeting measure like this: they really do walk off
+    one edge onto the other. Places do not — a town sits where it is drawn,
+    and Denmark is reached from its own corner, not around the back."""
     gap = abs(a - b) % MAP_SPAN
     return min(gap, MAP_SPAN - gap)
-
-
-def signed_gap(origin: int, point: int) -> int:
-    """Which way to walk from `origin` to reach `point` soonest, and how far:
-    negative goes down and may leave by the near edge."""
-    gap = (point - origin) % MAP_SPAN
-    return gap if gap <= MAP_SPAN // 2 else gap - MAP_SPAN
 
 
 def in_battle_range(a: dict, b: dict) -> bool:
@@ -835,13 +831,14 @@ def buy_class(char: dict, class_name: str) -> "tuple[bool, str]":
 
 
 def nearest_town(char: dict) -> "tuple[str, int] | None":
-    """(town, distance in squares the short way round), or None before the
-    character has a position."""
+    """(town, distance in squares straight across the map), or None before
+    the character has a position. Deliberately not the wrapped distance: a
+    market belongs to the corner it is drawn in, and being one step off the
+    far edge should not put you in Denmark's."""
     if char.get("x") is None:
         return None
     return min(
-        ((town, int((axis_gap(char["x"], LANDMARKS[town][0]) ** 2
-                     + axis_gap(char["y"], LANDMARKS[town][1]) ** 2) ** 0.5)) for town in TOWNS),
+        ((town, int(((char["x"] - LANDMARKS[town][0]) ** 2 + (char["y"] - LANDMARKS[town][1]) ** 2) ** 0.5)) for town in TOWNS),
         key=lambda pair: pair[1],
     )
 
@@ -1097,8 +1094,7 @@ def _to_town_outskirts(char: dict) -> str:
     tx, ty = LANDMARKS[town]
     if distance > MOB_RESPAWN_DISTANCE:
         pull = MOB_RESPAWN_DISTANCE / distance
-        char["x"] = int(tx + signed_gap(tx, char["x"]) * pull) % MAP_SPAN
-        char["y"] = int(ty + signed_gap(ty, char["y"]) * pull) % MAP_SPAN
+        char["x"], char["y"] = int(tx + (char["x"] - tx) * pull), int(ty + (char["y"] - ty) * pull)
     return town
 
 
@@ -1264,10 +1260,9 @@ def _wander(value: int, rng) -> int:
 
 
 def _toward(value: int, goal: int) -> int:
-    """One step the short way, which may be off the edge and onto the other."""
-    if value == goal:
-        return value
-    return (value + (1 if signed_gap(value, goal) > 0 else -1)) % MAP_SPAN
+    """One step straight at the goal. A traveller walks the map as drawn and
+    never takes the edge as a short cut — see nearest_town."""
+    return value if value == goal else value + (1 if value < goal else -1)
 
 
 def landmark_at(point) -> "str | None":
@@ -1291,10 +1286,10 @@ def match_place(text: str) -> "str | None":
 
 
 def travel_steps(char: dict, town: str) -> int:
-    """Steps left to `town` the short way. A step moves one square on both
-    axes at once, and may cross an edge."""
+    """Steps left to `town` straight across the map, matching what
+    `nearest_town` reports. A step moves one square on both axes at once."""
     goal = LANDMARKS[town]
-    return max(axis_gap(char["x"], goal[0]), axis_gap(char["y"], goal[1]))
+    return max(abs(char["x"] - goal[0]), abs(char["y"] - goal[1]))
 
 
 def travel_eta_secs(char: dict, town: str) -> int:

@@ -712,13 +712,13 @@ tables from migrations 0070–0077.
   (usable anywhere) disables it. The ring is wide because nobody steers on
   this map: it is the player's window to spend the gold their own way
   before the errand does. A visit too poor to buy anything isn't stamped.
-  Distances are the short way round the globe (`axis_gap` /
-  `signed_gap`): the grid wraps for movement, so it wraps for measuring
-  too — neighbours across an edge fight each other, Denmark's market
-  reaches around the corner, `!idle travel` steps off one edge onto the
-  other, and a route on the map is drawn from both ends so Pillow clips
-  the half that falls off the sheet. Use those two helpers for any new
-  measurement rather than subtracting coordinates.
+  The grid wraps for *movement*, so two characters either side of an edge
+  are neighbours and `in_battle_range` measures with `axis_gap`. Places
+  do not wrap: `nearest_town`, `market_in_reach` and `travel_steps` all
+  measure straight across the sheet, by the owner's decision — a market
+  belongs to the corner it is drawn in, and Denmark should stay a long
+  walk from the far edge. Keep a new measurement on whichever side of
+  that line it belongs to.
 - **The tables.** Town gambling is sizzlorox's: inside a market ring a
   character bets on its own (`town_gamble`, ~0.75 an hour), the stake
   `2·ln(gold)·gold/100` — a share that grows with the purse — at even money
