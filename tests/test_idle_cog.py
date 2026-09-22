@@ -202,8 +202,8 @@ async def test_tick_levels_up_finds_an_item_and_posts_once_per_destination(monke
     thread = guild.threads[0]                     # made lazily: the character had none
     story = [call.args[0] for call in thread.send.call_args_list]
     assert len(story) == 2                        # the opening line, then one batched post
-    assert "reached **level 1**" in story[1] and "found a level" in story[1]
-    assert "found a level" not in _sent(idle)     # item finds stay in the feed
+    assert "reached **level 1**" in story[1] and "(was level 0)" in story[1]
+    assert "(was level 0)" not in _sent(idle)     # item finds stay in the feed
     assert (GID, ALICE) in saved
 
 
@@ -467,7 +467,7 @@ async def test_rules_stay_short_and_the_detail_lives_in_topics():
     await cog.cmd_rules.callback(cog, ctx)
     # A player sees it too — they are the one who passes this card on.
     assert "**New here?** `!idle join <class>`" in ctx.sent_embeds[-1].description
-    assert "!idle rules <levels|battles|monsters|map|gold|luck|alignment|quests|prestige>" in card
+    assert "!idle rules <levels|battles|monsters|map|gold|luck|world|hunts|titles|alignment|quests|prestige>" in card
     assert "talk" not in card.lower()
 
     await cog.cmd_rules.callback(cog, ctx, "Quests")
@@ -727,7 +727,7 @@ async def test_gold_earned_by_the_tick_is_a_tenth_larger_in_voice_and_the_feed_s
 
     assert (talker["gold"], lurker["gold"]) == (77, 70)          # level 7 pays 70
     feeds = {t.name.split(" ")[0]: _sent(t) for t in guild.threads}
-    assert "Voice bonus: +7 gold" in feeds["alice"] and "Voice bonus" not in feeds["bob"]
+    assert "+10% this minute: 7 gold more" in feeds["alice"] and "this minute" not in feeds["bob"]
 
 
 async def test_the_afk_channel_and_a_paused_clock_earn_nothing_and_voice_counts_as_being_seen():
@@ -789,7 +789,7 @@ async def test_the_tick_sends_wild_characters_into_fights_and_keeps_them_in_the_
     townie = _spawn(BOB, level=10, left=50_000, **MARKET)
     met = []
 
-    def _encounter(uid, char, rng, name, now):
+    def _encounter(uid, char, rng, name, now, effect=None):
         met.append(uid)
         return [rpg.Note((uid,), f"🗡️ {name(uid)} killed a Normal Rat.")]
     monkeypatch.setattr(rpg, "mob_encounter", _encounter)
@@ -800,6 +800,7 @@ async def test_the_tick_sends_wild_characters_into_fights_and_keeps_them_in_the_
     cog.rng = _Eager()
     monkeypatch.setattr(rpg, "random_events", lambda *args: [])
     monkeypatch.setattr(rpg, "team_battle", lambda *args: [])
+    monkeypatch.setattr(rpg, "tick_world", lambda *args: [])
 
     await cog.tick()
 
@@ -1140,13 +1141,14 @@ async def test_the_tick_gambles_for_a_character_in_town_in_the_feed_and_without_
     import src.idlerpg as _rpg
     char = _spawn(level=10, left=50_000, gold=1000, auto_trade=False, x=MARKET["x"], y=MARKET["y"])
     _join_voice(guild, ALICE)
-    real_events, real_team = _rpg.random_events, _rpg.team_battle
+    real_events, real_team, real_world = _rpg.random_events, _rpg.team_battle, _rpg.tick_world
     _rpg.random_events = lambda *args: []
     _rpg.team_battle = lambda *args: []
+    _rpg.tick_world = lambda *args: []
     try:
         await cog.tick()
     finally:
-        _rpg.random_events, _rpg.team_battle = real_events, real_team
+        _rpg.random_events, _rpg.team_battle, _rpg.tick_world = real_events, real_team, real_world
 
     assert char["gold"] == 1138                           # +138, and not a coin more for being in voice
     assert "sat down at the tables with 138 gold and doubled it" in _sent(guild.threads[0])
@@ -1349,7 +1351,7 @@ async def test_walking_into_a_town_runs_the_errand_once_and_reports_it_in_the_fe
     # Half the purse at most: a find (250), then the weakest item sharpened (5 × 20 = 100).
     assert char["gold"] == 650 and char["items"]["ring"]["level"] == 6 and char["items"]["helm"]["level"] == 40
     feed = _sent(guild.threads[0])
-    assert "wandered into Velvragh and did some trading" in feed and "350 gold spent, 650 left" in feed
+    assert "wandered into Velvragh and did some trading" in feed and "350 gold spent, 650 gold left" in feed
     idle.send.assert_not_called()                             # the player's own business
 
     await cog.tick()                                          # still in town: not again for twelve hours
@@ -1579,3 +1581,197 @@ async def test_items_sheet_shows_the_purse_too():
     ctx = _ctx(guild)
     await cog.cmd_items.callback(cog, ctx)
     assert "**Item power:** 9 · **Gold:** 1,250" in ctx.sent_embeds[-1].description
+
+
+# ── the world, blessings and the boost ───────────────────────────────────────
+
+class _Eager(_StillRng):
+    """Every chance fires — a tick rolls the world event and the town errand
+    it would otherwise not see for days — but nobody wanders out of town
+    while it happens."""
+    def random(self):
+        return 0.0
+
+
+async def test_a_world_event_is_channel_news_and_reaches_no_feed(monkeypatch):
+    cog, guild, idle = _world()
+    await cog.cmd_join.callback(cog, _ctx(guild), class_name="Bard")
+    _state.idle_characters[GID][ALICE].update(level=5, next_level_at=int(time.time()) + 50_000, **MARKET)
+    cog.rng = _Eager()
+    monkeypatch.setattr(rpg, "random_events", lambda *args: [])
+    monkeypatch.setattr(rpg, "mob_encounter", lambda *args, **kw: [])
+    idle.send.reset_mock()
+
+    await cog.tick()
+
+    row = _state.idle_guild_events[GID][0]
+    assert row["kind"] in rpg.WORLD_EVENTS and row["stage"] == 0
+    posted = _sent(idle)
+    assert posted and posted == rpg.WORLD_EVENTS[row["kind"]].omen.format(detail=row["detail"])
+    assert posted not in _sent(guild.threads[0])      # the whole realm's news, nobody's feed
+
+    # Only once it lands does it bite.
+    await cog.tick(now=row["starts_at"])
+    assert _state.idle_guild_events[GID][0]["stage"] == 1
+    assert rpg.WORLD_EVENTS[row["kind"]].begins.format(detail=row["detail"]) in _sent(idle)
+    assert rpg.world_effect(_state.idle_guild_events[GID], row["starts_at"]) is not None
+
+
+async def test_a_blessing_speeds_up_everybodys_clock_and_shows_in_the_sheet(monkeypatch):
+    cog, guild, idle = _world()
+    alice = _spawn(ALICE, level=5, left=50_000, **MARKET)
+    bob = _spawn(BOB, level=5, left=50_000, **MARKET)
+    _state.idle_guild_events[GID] = [{
+        "kind": "bless", "detail": "", "cast_by": ALICE, "stage": 1,
+        "starts_at": int(time.time()), "ends_at": int(time.time()) + 3600,
+    }]
+    monkeypatch.setattr(rpg, "random_events", lambda *args: [])
+    monkeypatch.setattr(rpg, "mob_encounter", lambda *args, **kw: [])
+    monkeypatch.setattr(rpg, "tick_world", lambda *args: [])
+    before = (alice["next_level_at"], bob["next_level_at"])
+
+    await cog.tick()
+
+    # A minute at +25% is fifteen seconds off, for everyone here.
+    assert before[0] - alice["next_level_at"] == 15
+    assert before[1] - bob["next_level_at"] == 15
+
+    ctx = _ctx(guild)
+    await cog.cmd_status.callback(cog, ctx)
+    assert "✨ **Boosted:** clock and gold +25%" in ctx.sent_embeds[-1].description
+
+
+async def test_bless_charges_the_caster_and_tells_the_room():
+    cog, guild, idle = _world()
+    char = _spawn(ALICE, level=30, gold=rpg.BLESS_COST + 7, **MARKET)
+    ctx = _ctx(guild)
+
+    await cog.cmd_bless.callback(cog, ctx)
+
+    assert char["gold"] == 7
+    assert rpg.bless_count(_state.idle_guild_events[GID], int(time.time())) == 1
+    assert ctx.sent_embeds[-1].title == "🕊️ Blessed"
+    assert "has blessed the realm" in _sent(idle)
+
+
+async def test_bless_is_refused_without_the_gold_and_takes_nothing():
+    cog, guild, idle = _world()
+    char = _spawn(ALICE, level=30, gold=rpg.BLESS_COST - 1, **MARKET)
+    ctx = _ctx(guild)
+
+    await cog.cmd_bless.callback(cog, ctx)
+
+    assert char["gold"] == rpg.BLESS_COST - 1 and not _state.idle_guild_events.get(GID)
+    assert ctx.sent_embeds[-1].title == "❌ Not Enough Gold"
+
+
+async def test_world_reports_the_omen_the_blessings_and_your_own_boost():
+    cog, guild, _idle = _world()
+    _spawn(ALICE, level=5, boost_pct=50, boost_until=int(time.time()) + 600, **MARKET)
+    ctx = _ctx(guild)
+    await cog.cmd_world.callback(cog, ctx)
+    body = ctx.sent_embeds[-1].description
+    assert "The realm is quiet" in body and "unblessed" in body
+    assert "**Your clock and gold:** +50%" in body
+
+
+# ── titles ───────────────────────────────────────────────────────────────────
+
+async def test_the_tick_awards_a_title_publicly_and_it_shows_in_the_thread_name(monkeypatch):
+    cog, guild, idle = _world()
+    await cog.cmd_join.callback(cog, _ctx(guild), class_name="Bard")
+    char = _state.idle_characters[GID][ALICE]
+    char.update(level=5, next_level_at=int(time.time()) + 50_000, gold=50_000, **MARKET)
+    monkeypatch.setattr(rpg, "random_events", lambda *args: [])
+    monkeypatch.setattr(rpg, "mob_encounter", lambda *args, **kw: [])
+    monkeypatch.setattr(rpg, "tick_world", lambda *args: [])
+    idle.send.reset_mock()
+
+    await cog.tick()
+
+    assert char["titles"] == ["hoarder"] and char["title"] == "hoarder"
+    assert "earned the title **Gold Hoarder**" in _sent(idle)
+    assert "alice the Gold Hoarder" in cog._title(guild, ALICE, char)
+
+
+async def test_title_lists_what_is_earned_and_wears_the_one_asked_for():
+    cog, guild, _idle = _world()
+    char = _spawn(ALICE, level=5, titles=["hoarder", "hunter"], title="hoarder", **MARKET)
+
+    ctx = _ctx(guild)
+    await cog.cmd_title.callback(cog, ctx)
+    body = ctx.sent_embeds[-1].description
+    assert "🎖️ **Gold Hoarder** ← worn" in body and "🔒 Tracker" in body
+
+    ctx = _ctx(guild)
+    await cog.cmd_title.callback(cog, ctx, which="monster hunter")
+    assert char["title"] == "hunter" and "Monster Hunter" in ctx.sent_embeds[-1].description
+
+    ctx = _ctx(guild)
+    await cog.cmd_title.callback(cog, ctx, which="none")
+    assert char["title"] is None
+
+
+async def test_an_unearned_title_is_refused():
+    cog, guild, _idle = _world()
+    char = _spawn(ALICE, level=5, titles=["hoarder"], title="hoarder", **MARKET)
+    ctx = _ctx(guild)
+    await cog.cmd_title.callback(cog, ctx, which="Tracker")
+    assert ctx.sent_embeds[-1].title == "❌ No Such Title" and char["title"] == "hoarder"
+
+
+# ── the bag ──────────────────────────────────────────────────────────────────
+
+async def test_shop_sell_empties_the_bag_and_items_lists_it():
+    cog, guild, _idle = _world()
+    char = _spawn(ALICE, level=10, gold=0, **MARKET)
+    char["loot"] = [{"slot": "ring", "level": 4, "name": "Crude Iron Ring"}]
+
+    ctx = _ctx(guild)
+    await cog.cmd_items.callback(cog, ctx)
+    assert "Crude Iron Ring (4)" in ctx.sent_embeds[-1].description
+
+    ctx = _ctx(guild)
+    await cog.cmd_shop.callback(cog, ctx, item="sell")
+    assert char["loot"] == [] and char["gold"] == 4 * rpg.LOOT_GOLD_PER_LEVEL
+    assert "Sold 1 piece" in ctx.sent_embeds[-1].description
+
+
+# ── hunts ────────────────────────────────────────────────────────────────────
+
+async def test_a_tick_in_town_hands_out_a_hunt_and_the_sheet_shows_it(monkeypatch):
+    cog, guild, idle = _world()
+    await cog.cmd_join.callback(cog, _ctx(guild), class_name="Bard")
+    char = _state.idle_characters[GID][ALICE]
+    char.update(level=10, next_level_at=int(time.time()) + 50_000, **MARKET)
+    cog.rng = _Eager()
+    monkeypatch.setattr(rpg, "random_events", lambda *args: [])
+    monkeypatch.setattr(rpg, "mob_encounter", lambda *args, **kw: [])
+    monkeypatch.setattr(rpg, "tick_world", lambda *args: [])
+
+    await cog.tick()
+
+    assert rpg.hunting(char)
+    assert "asked to deal with" in _sent(guild.threads[0])
+    assert "asked to deal with" not in _sent(idle)      # an errand is the player's own business
+
+    ctx = _ctx(guild)
+    await cog.cmd_status.callback(cog, ctx)
+    assert f"0/{char['hunt_count']} {char['hunt_mob']}s" in ctx.sent_embeds[-1].description
+
+
+async def test_a_hunter_walks_at_its_country_instead_of_wandering():
+    cog, guild, _idle = _world()
+    char = _spawn(ALICE, level=10, left=50_000, x=WILDS[0], y=WILDS[1], hunt_mob="Crab", hunt_count=3)
+    goal = rpg.nearest_biome_point(char, rpg.hunt_biomes(char))   # the Crab is a coast animal
+    char["hunt_x"], char["hunt_y"] = goal
+    was = abs(char["x"] - goal[0]) + abs(char["y"] - goal[1])
+
+    class _Stride(_Rng):
+        def random(self):
+            return 0.0            # every step of the walk is taken
+
+    cog.rng = _Stride()
+    rpg.move_players(_state.idle_characters[GID], cog._quest(GID), cog.rng, cog._namer(guild), int(time.time()), 5)
+    assert abs(char["x"] - goal[0]) + abs(char["y"] - goal[1]) == was - 10   # five steps, both axes
+    assert char["hunt_x"] == goal[0]          # still walking: the coast is further than five steps

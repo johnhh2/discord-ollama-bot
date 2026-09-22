@@ -191,6 +191,11 @@ idle_quests: dict = {}
 # {guild_id: {uid}} — members who retired a character; the enrollment sweep
 # (!settings idle-enroll) leaves them alone until they !idle join again.
 idle_optouts: dict = {}
+# {guild_id: [row]} — what is true of a whole server for a while: at most one
+# world event (blood moon, invasion, storm, power hour) plus any number of
+# blessings. Row shape and rules in src.idlerpg; mirrored whole to the
+# idle_guild_events table.
+idle_guild_events: dict = {}
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 bot_start_time = time.monotonic()

@@ -95,6 +95,7 @@ from src.persistence.idlerpg import (  # noqa: F401
     save_idle_optout,
     delete_idle_optout,
     save_idle_quest,
+    save_idle_guild_events,
 )
 from src.persistence.quotes import (  # noqa: F401
     save_quote_log,

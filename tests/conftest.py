@@ -109,6 +109,7 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "idle_characters", {})
     monkeypatch.setattr(_state, "idle_quests", {})
     monkeypatch.setattr(_state, "idle_optouts", {})
+    monkeypatch.setattr(_state, "idle_guild_events", {})
     monkeypatch.setattr(_state, "channel_prompts", {})
     monkeypatch.setattr(_state, "command_streak", {})
     monkeypatch.setattr(_state, "crime_today_by_user", {})
@@ -149,7 +150,7 @@ def reset_bot_state(monkeypatch):
     "save_counter", "delete_counter", "save_counter_value",
     "save_counter_perm", "delete_counter_perm",
         "save_idle_character", "delete_idle_character", "delete_idle_guild", "save_idle_quest",
-        "save_idle_optout", "delete_idle_optout",
+        "save_idle_optout", "delete_idle_optout", "save_idle_guild_events",
         "save_quote_log", "save_saved_quotes", "save_lottery", "save_records",
         "save_lottery_ticket_grant",
         "save_leveling", "save_command_perms", "save_channel_prompts",

@@ -88,12 +88,12 @@ def test_prestige_resets_level_and_items_but_keeps_the_rank():
 
 def test_voice_speeds_a_running_clock_and_leaves_a_paused_one_alone():
     char = _char(left=1000)
-    rpg.voice_speedup(char, 60)
+    rpg.apply_boost(char, 60, rpg.VOICE_BONUS_PCT)
     assert rpg.time_left(char, NOW) == 994
     rpg.pause(char, NOW)
-    rpg.voice_speedup(char, 60)
+    rpg.apply_boost(char, 60, rpg.VOICE_BONUS_PCT)
     assert char["remaining"] == 994
-    assert rpg.voice_gold_bonus(70) == 7 and rpg.voice_gold_bonus(9) == 0 and rpg.voice_gold_bonus(-50) == 0
+    assert rpg.gold_bonus(70, rpg.VOICE_BONUS_PCT) == 7 and rpg.gold_bonus(9, rpg.VOICE_BONUS_PCT) == 0
 
 
 # ── penalties ────────────────────────────────────────────────────────────────
@@ -128,7 +128,8 @@ def test_unique_needs_the_level_and_lands_in_its_slot():
     rng = _Scripted(randrange=0)   # every unique roll hits
     low = _char(24)
     rpg.find_item(1, low, rng, _name)
-    assert not any(item.get("name") for item in low["items"].values())
+    # Every find is named; only these eight are the named ones that matter.
+    assert not any(item["name"] in rpg.UNIQUE_NAMES for item in low["items"].values())
     high = _char(25)
     note = rpg.find_item(1, high, rng, _name)
     assert high["items"]["helm"]["name"] == rpg.UNIQUES[0][2] and note.public
@@ -572,7 +573,7 @@ def test_a_group_is_fought_one_after_another():
 def test_killing_something_legendary_is_channel_news(monkeypatch):
     # A full-strength dragon is a five-round standoff even at level 40 — this
     # one is starving, so it can actually be put down.
-    monkeypatch.setattr(rpg, "roll_monster", lambda level, biome, rng: ("Starving", "Dragon", 0.4, 1, 5))
+    monkeypatch.setattr(rpg, "roll_monster", lambda level, biome, rng, effect=None: ("Starving", "Dragon", 0.4, 1, 5))
     char = _wanderer(level=40, gear=400)
     notes = rpg.mob_encounter(1, char, random.Random(4), _name, NOW)
     assert "killed a Starving Dragon" in notes[0].text and notes[0].public
@@ -910,3 +911,265 @@ def test_characters_made_together_do_not_level_in_step():
         assert NOW + rpg.ttl(0) <= char["next_level_at"] < NOW + rpg.ttl(0) + rpg.START_JITTER_SECS
         clocks.add(char["next_level_at"] // 60)
     assert len(clocks) >= 5                       # seven characters, spread over the minutes
+
+
+# ── named finds and the bag ──────────────────────────────────────────────────
+
+def test_a_find_is_named_for_what_it_was_worth_to_the_finder():
+    assert rpg.item_name("boots", 30, 20, random.Random(11)).endswith(" Boots")
+    # The same roll reads as a triumph at one level and as junk at another.
+    great = rpg.item_name("ring", 30, 20, random.Random(3)).split()[0]
+    poor = rpg.item_name("ring", 3, 60, random.Random(3)).split()[0]
+    assert rpg.ITEM_RARITIES.index(great) > rpg.ITEM_RARITIES.index(poor)
+    assert poor == rpg.ITEM_RARITIES[0]
+
+
+def test_a_worse_find_goes_in_the_bag_and_a_full_bag_spills_the_worst():
+    char = _char(20, items={"ring": {"level": 99, "name": None}})
+    rng = _Scripted(random_=0.999, randrange=1)   # never a unique, lowest roll, choice → "ring"
+    note = rpg.find_item(1, char, rng, _name)
+    assert "into the bag" in note.text and len(char["loot"]) == 1
+    assert char["items"]["ring"]["level"] == 99   # the good one is still worn
+
+    for _ in range(rpg.LOOT_MAX):
+        rpg.find_item(1, char, rng, _name)
+    assert len(char["loot"]) == rpg.LOOT_MAX
+    char["loot"][0]["level"] = 50                 # the worst goes, not the newest
+    note = rpg.find_item(1, char, rng, _name)
+    assert "left in the road" in note.text
+    assert len(char["loot"]) == rpg.LOOT_MAX and char["loot"][-1]["level"] == 50
+
+
+def test_selling_the_bag_pays_by_item_level_and_empties_it():
+    char = _char(20, gold=100, loot=[{"slot": "ring", "level": 4, "name": None},
+                                     {"slot": "boots", "level": 6, "name": None}])
+    assert rpg.loot_value(char) == 10 * rpg.LOOT_GOLD_PER_LEVEL
+    pieces, paid = rpg.sell_loot(char)
+    assert (pieces, paid) == (2, 10 * rpg.LOOT_GOLD_PER_LEVEL)
+    assert char["loot"] == [] and char["gold"] == 100 + paid
+    assert rpg.sell_loot(char) == (0, 0)
+
+
+def test_the_town_errand_sells_the_bag_even_with_auto_trading_off():
+    town = rpg.LANDMARKS["Velvragh"]
+    char = _char(10, gold=0, auto_trade=False, x=town[0], y=town[1],
+                 loot=[{"slot": "ring", "level": 5, "name": None}])
+    note = rpg.auto_trade(1, char, random.Random(1), _name, NOW)
+    assert "Sold 1 piece" in note.text and char["gold"] == 5 * rpg.LOOT_GOLD_PER_LEVEL
+    assert char["loot"] == [] and "gold spent" not in note.text
+
+
+# ── titles ───────────────────────────────────────────────────────────────────
+
+def test_a_title_is_earned_once_worn_at_once_and_outlives_the_stat():
+    char = _char(10, gold=1000)
+    assert rpg.check_titles(1, char, _name) == []
+    char["gold"] = 50_000
+    notes = rpg.check_titles(1, char, _name)
+    assert len(notes) == 1 and "Gold Hoarder" in notes[0].text and notes[0].public
+    assert char["title"] == "hoarder" and rpg.title_of(char) == "Gold Hoarder"
+    assert rpg.check_titles(1, char, _name) == []      # never twice
+    char["gold"] = 0
+    assert rpg.title_of(char) == "Gold Hoarder"        # a purse spent doesn't cost you it
+
+
+def test_a_second_title_does_not_replace_the_one_being_worn():
+    char = _char(10, gold=50_000, mob_kills=250)
+    rpg.check_titles(1, char, _name)
+    assert char["title"] == "hoarder" and set(char["titles"]) == {"hoarder", "hunter"}
+    assert rpg.titled(char, "P1") == "P1 the Gold Hoarder"
+    assert rpg.titled(_char(1), "P1") == "P1"
+
+
+# ── the world, blessings and the boost ───────────────────────────────────────
+
+def _world_rng(kind: str):
+    """An rng whose every chance fires and whose choice() takes `kind`."""
+    class _Rng(random.Random):
+        def random(self):
+            return 0.0
+
+        def choice(self, seq):
+            return kind if kind in seq else list(seq)[0]
+    return _Rng(5)
+
+
+def test_a_world_event_is_told_as_an_omen_then_a_beginning_then_an_end():
+    rows = []
+    omen = rpg.tick_world(rows, _world_rng("blood_moon"), NOW, 1440)
+    assert len(omen) == 1 and omen[0].public and not omen[0].uids
+    assert rpg.running_world(rows, NOW) is None          # an omen is not yet weather
+    assert rpg.world_effect(rows, NOW) is None
+
+    start = NOW + rpg.WORLD_OMEN_SECS
+    began = rpg.tick_world(rows, _world_rng("blood_moon"), start, 1440)
+    assert "Blood moon" in began[0].text and rpg.world_effect(rows, start) is not None
+    assert rpg.tick_world(rows, _world_rng("blood_moon"), start + 1, 1440) == []   # nothing new to say
+
+    ended = rpg.tick_world(rows, _world_rng("blood_moon"), rows[0]["ends_at"], 1440)
+    assert "pale again" in ended[0].text and rows == []
+
+
+def test_an_event_slept_through_is_still_told_from_both_ends():
+    rows = []
+    rpg.tick_world(rows, _world_rng("power_hour"), NOW, 1440)
+    long_after = rows[0]["ends_at"] + 10_000
+    began = rpg.tick_world(rows, _world_rng("power_hour"), long_after, 1440)
+    assert "Power hour" in began[0].text and rows            # staged first, never ended unannounced
+    ended = rpg.tick_world(rows, _world_rng("power_hour"), long_after, 1440)
+    assert "back to its own pace" in ended[0].text and rows == []
+
+
+def test_only_one_world_event_runs_at_a_time():
+    rows = []
+    for _ in range(20):
+        rpg.tick_world(rows, _world_rng("storm"), NOW, 1440)
+    assert len([r for r in rows if r["kind"] in rpg.WORLD_EVENTS]) == 1
+
+
+def test_a_blood_moon_makes_monsters_stronger_and_richer_everywhere():
+    char = _wanderer(level=20, gear=60)
+    rules = rpg.WORLD_EVENTS["blood_moon"]
+    assert rpg.world_here((rules, ""), "Plains") is rules      # not weather; the moon is over everyone
+    assert rpg.mob_power(char, 1.0, rules.mob_power_pct) > rpg.mob_power(char, 1.0)
+    assert rules.mob_gold_pct > 0
+
+
+def test_a_storm_is_only_weather_where_it_is_raining():
+    rules = rpg.WORLD_EVENTS["storm"]
+    assert rpg.world_here((rules, "Caves"), "Caves") is rules
+    assert rpg.world_here((rules, "Caves"), "Plains") is None
+    assert rpg.world_here(None, "Caves") is None
+
+
+def test_an_invasion_puts_its_kind_anywhere_and_never_a_rare_one():
+    rows = []
+    rpg.tick_world(rows, _world_rng("invasion"), NOW, 1440)
+    assert rows[0]["detail"] not in rpg.RARE_KILLS
+    effect = (rpg.WORLD_EVENTS["invasion"], "Pirate")   # coast-only, so the biome must give way
+    assert rpg.roll_monster(20, "Mountains", _world_rng("x"), effect)[1] == "Pirate"
+    # Without the horde, a pirate is not something the mountains produce.
+    assert rpg.roll_monster(20, "Mountains", random.Random(2))[1] != "Pirate"
+
+
+def test_a_blessing_costs_gold_stacks_for_everyone_and_wears_off():
+    rows, char = [], _char(10, gold=rpg.BLESS_COST * 2)
+    assert rpg.guild_boost_pct(rows, NOW) == 0
+    cast, text = rpg.cast_bless(7, char, rows, NOW)
+    assert cast and char["gold"] == rpg.BLESS_COST and str(rpg.BLESS_BOOST_PCT) in text
+    assert rpg.guild_boost_pct(rows, NOW) == rpg.BLESS_BOOST_PCT
+
+    rpg.cast_bless(8, _char(10, gold=rpg.BLESS_COST), rows, NOW)
+    assert rpg.guild_boost_pct(rows, NOW) == rpg.BLESS_BOOST_PCT * 2
+    assert rpg.guild_boost_pct(rows, NOW + rpg.BLESS_SECS) == 0     # both have lapsed
+
+    notes = rpg.tick_world(rows, _Scripted(random_=1.0), NOW + rpg.BLESS_SECS, 1440)
+    assert len([n for n in notes if "worn off" in n.text]) == 2 and not rows
+
+
+def test_blessings_stack_only_so_far_and_a_pauper_casts_nothing():
+    rows = [{"kind": "bless", "detail": "", "cast_by": i, "stage": 1,
+             "starts_at": NOW, "ends_at": NOW + 60} for i in range(rpg.BLESS_MAX + 3)]
+    assert rpg.guild_boost_pct(rows, NOW) == rpg.BLESS_BOOST_PCT * rpg.BLESS_MAX
+    poor = _char(10, gold=rpg.BLESS_COST - 1)
+    cast, why = rpg.cast_bless(1, poor, rows, NOW)
+    assert not cast and "costs" in why and poor["gold"] == rpg.BLESS_COST - 1
+
+
+def test_a_personal_boost_adds_to_the_guilds_and_the_whole_stack_is_capped():
+    char = _char(10, boost_pct=50, boost_until=NOW + 600)
+    assert rpg.boost_pct(char, 25, NOW) == 75
+    assert rpg.boost_pct(char, 25, NOW + 601) == 25          # theirs has run out
+    assert rpg.boost_pct(char, 10 ** 4, NOW) == rpg.BOOST_MAX_PCT
+
+
+def test_a_boost_moves_the_clock_and_pays_on_what_was_earned():
+    char = _char(10, left=1000)
+    rpg.apply_boost(char, 60, 50)
+    assert rpg.time_left(char, NOW) == 1000 - 30
+    rpg.pause(char, NOW)
+    rpg.apply_boost(char, 60, 50)
+    assert char["remaining"] == 970                          # a paused clock is left where it is
+    assert rpg.gold_bonus(100, 50) == 50
+    assert rpg.gold_bonus(-100, 50) == 0                     # a tick that lost money pays nothing
+    assert rpg.gold_bonus(100, 0) == 0
+
+
+def test_a_godsend_can_hand_out_a_spell_of_good_running():
+    char = _char(10)
+    chars, rng = {1: char}, random.Random(0)
+    for _ in range(500):
+        note = rpg.godsend(1, chars, rng, _name, NOW)
+        if char["boost_until"] > NOW:
+            assert char["boost_pct"] in rpg.BOOST_GODSEND_PCTS and "+" in note.text
+            assert rpg.boost_pct(char, 0, NOW) == char["boost_pct"]
+            return
+    raise AssertionError("no boost among 500 godsends")
+
+
+# ── hunts ────────────────────────────────────────────────────────────────────
+
+def _in_town(level=20, **over):
+    town = rpg.LANDMARKS["Velvragh"]
+    return _char(level, left=10 ** 6, x=town[0], y=town[1], **over)
+
+
+def test_a_town_hands_out_a_hunt_and_points_it_at_huntable_country():
+    char = _in_town()
+    note = rpg.offer_hunt(1, char, _world_rng("x"), _name, NOW, 60)
+    assert note is not None and "asked to deal with" in note.text
+    assert rpg.hunting(char) and rpg.HUNT_MIN <= char["hunt_count"] <= rpg.HUNT_MAX
+    # It always walks: nothing spawns inside the ring the errand was given in.
+    goal = {"x": char["hunt_x"], "y": char["hunt_y"]}
+    assert rpg.market_in_reach(goal) is None
+    assert rpg.biome_at(goal["x"], goal["y"]) in rpg.hunt_biomes(char)
+
+
+def test_a_town_offers_nothing_to_a_character_hunting_resting_or_out_of_reach():
+    busy = _in_town(hunt_mob="Rat", hunt_count=3)
+    assert rpg.offer_hunt(1, busy, _world_rng("x"), _name, NOW, 60) is None
+    rested = _in_town(hunt_at=NOW - rpg.HUNT_REST_SECS + 60)
+    assert rpg.offer_hunt(1, rested, _world_rng("x"), _name, NOW, 60) is None
+    assert rpg.offer_hunt(1, _wanderer(), _world_rng("x"), _name, NOW, 60) is None   # no town, no errand
+
+
+def test_the_quarry_pool_widens_with_level_and_is_never_empty():
+    assert [b[0] for b in rpg.hunt_quarries(0)] == ["Rat", "Slime", "Crab"]
+    assert len(rpg.hunt_quarries(40)) > len(rpg.hunt_quarries(10))
+
+
+def test_finishing_a_hunt_pays_clock_and_gold_and_starts_the_rest():
+    char = _wanderer(level=20, gear=400, gold=0, hunt_mob="Rat", hunt_count=2, hunt_killed=2)
+    before = rpg.time_left(char, NOW)
+    note = rpg.finish_hunt(1, char, _name, NOW)
+    assert "finished the hunt" in note.text and not note.public
+    assert char["gold"] == rpg.HUNT_GOLD_PER_KILL_PER_LEVEL * 2 * 20
+    assert rpg.time_left(char, NOW) < before and char["hunts_done"] == 1
+    assert not rpg.hunting(char) and char["hunt_at"] == NOW
+
+
+def test_hunting_draws_the_quarry_out_and_a_kill_anywhere_counts(monkeypatch):
+    monkeypatch.setattr(rpg, "fight_monster", lambda c, p, hp, rng: (1, True, ""))
+    char = _wanderer(level=20, gear=400, hunt_mob="Bat", hunt_count=10 ** 6)
+    char["x"], char["y"] = 90, 250              # Caves, where a Bat lives
+    assert rpg.biome_at(char["x"], char["y"]) in rpg.hunt_biomes(char)
+    for seed in range(40):
+        rpg.mob_encounter(1, char, random.Random(seed), _name, NOW)
+    drawn_out = char["hunt_killed"]
+    assert drawn_out > 0
+
+    # The same character standing where no bat lives meets far fewer of them.
+    plain = _wanderer(level=20, gear=400, hunt_mob="Bat", hunt_count=10 ** 6)
+    plain["x"], plain["y"] = 440, 150           # Plains: not Bat country
+    for seed in range(40):
+        rpg.mob_encounter(1, plain, random.Random(seed), _name, NOW)
+    assert plain["hunt_killed"] < drawn_out
+
+
+def test_a_finished_hunt_is_reported_by_the_encounter_that_finished_it(monkeypatch):
+    monkeypatch.setattr(rpg, "fight_monster", lambda c, p, hp, rng: (1, True, ""))
+    monkeypatch.setattr(rpg, "beast_named", lambda kind, rng: ("Normal", kind, 1.0, 1, 1))
+    char = _wanderer(level=20, gear=400, gold=0, hunt_mob="Bat", hunt_count=1)
+    char["x"], char["y"] = 90, 250
+    texts = [n.text for n in rpg.mob_encounter(1, char, _world_rng("x"), _name, NOW)]
+    assert any("finished the hunt" in t for t in texts) and not rpg.hunting(char)

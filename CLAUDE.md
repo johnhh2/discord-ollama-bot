@@ -899,10 +899,60 @@ tables from migrations 0070–0077.
   `!settings idle-pace`; the engine functions default to `CLASSIC` so the
   rules tests pin the original numbers, and the cog passes the guild's.
   Add a new tunable to `Pace`, not as a bare constant read by one path.
+- **The world, and the one thing here that is everybody's.** Every few days
+  (`WORLD_EVENT_PER_DAY`) a guild gets one world event — a blood moon,
+  an invasion, a storm over one biome, a power hour — and never two: they
+  are rows in `state.idle_guild_events`, and `world_row` is defined to find
+  the one. Each is told twice, an omen `WORLD_OMEN_SECS` ahead and again
+  when it lands, both `Note`s with **no uids**: the whole realm's news
+  belongs in the channel and in nobody's feed. `tick_world` only speaks
+  when it changed something, which is also the cog's signal to save. A
+  world event reaches the rules through exactly two doors — `world_here`
+  (which is what makes a storm weather only where it is raining) and the
+  `effect` passed down to `roll_monster` / `mob_encounter`. Add a new kind
+  by adding a `World` to `WORLD_EVENTS`, not a branch somewhere.
+  🕊️ A **blessing** (`!idle bless`, `BLESS_COST` gold, an hour, stacking to
+  `BLESS_MAX`) is the same sort of row and the only cooperative thing in
+  the game: one player's gold buying everybody an hour. Keep it that way —
+  a blessing that only paid its caster would just be a worse shop item.
+- **One boost, one place.** Voice, blessings, a power hour and a godsend's
+  personal multiplier all add up in `boost_pct` (capped at
+  `BOOST_MAX_PCT`), reach the clock through `apply_boost` and the purse
+  through `gold_bonus` — one snapshot of the purse per tick covers every
+  source of gold without touching any of them. A new thing that makes a
+  character faster or richer belongs in that sum, not in a second one.
+- **Hunts are the errand a lone player can be on.** A town inside its
+  market ring hands over "kill N of a kind" (`offer_hunt`) and the
+  character walks to the nearest country that kind lives in, then hunts
+  there — `HUNT_QUARRY_CHANCE` of its encounters are the quarry, though a
+  kill *anywhere* counts. It is accepted on the spot because there is
+  nobody here to accept it. The goal from `nearest_biome_point` is always
+  outside every market ring, and the steering only clears once the
+  character is both in the right country and out of a ring — stopping
+  inside one would park it where nothing spawns. This is the only errand
+  that works below `QUEST_MIN_LEVEL` or alone, so don't gate it like the
+  party journeys.
+- **The bag.** A find worse than what's worn goes into `loot` (capped at
+  `LOOT_MAX`, worst spilled first) instead of being thrown away, and the
+  town errand empties it for gold. Selling runs **whether or not
+  `auto_trade` is on** — that switch is about spending the player's gold,
+  and a bag carried past every market for good is just a find event
+  quietly binned.
+- **Titles** are earned once by passing a mark in `TITLES` and then kept on
+  the character. Do not recompute them from the stats: the stats behind
+  them fall again, and a purse spent must not cost somebody Gold Hoarder.
+  `check_titles` wears the first one automatically and never replaces a
+  chosen one.
+- **Every find carries a name** (`item_name`: a rarity word and a material,
+  from what the find was worth *to its finder*). It is decided once and
+  never re-derived — sharpening does not rename an object. "Has a name" no
+  longer means "is a unique"; that is `UNIQUE_NAMES`. Items found before
+  names existed keep the plain "level N slot" label, and that is fine.
 - **`!idle` is `everyone`, `!idle admin …` is `server_admin`** — two JSON
   entries, resolved by the longest-prefix walk.
-- **Flavour text is ours.** The mechanics follow the classic IRC IdleRPG;
-  its item names and event lines are not copied, and shouldn't be.
+- **Flavour text is ours.** The mechanics follow the classic IRC IdleRPG
+  and sizzlorox's fork; their item names and event lines are not copied,
+  and shouldn't be.
 
 Coverage: [tests/test_idlerpg.py](tests/test_idlerpg.py) (rules) and
 [tests/test_idle_cog.py](tests/test_idle_cog.py).

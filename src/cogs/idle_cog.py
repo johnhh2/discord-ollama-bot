@@ -130,6 +130,32 @@ f"A fight runs up to {rpg.MOB_MAX_ROUNDS} rounds of blows both ways and costs **
         "🙌 The **Hand of God** is rarer and much bigger — 5–75% of a level, four times in five for the better — and the whole server hears it.\n"
         "Alignment bends how often the first two find you: `!idle rules alignment`."
     ),
+    "world": (
+        "Every few days something happens to the whole realm — a blood moon, a horde coming down out of its own "
+        "country, a storm over one region, an hour where everything comes twice as fast. It is announced when it's "
+        "coming and again when it lands, and it changes what the monsters are worth, or what everyone's clock is "
+        f"doing. `!idle world` says what's going on.\n"
+        f"🕊️ `!idle bless` spends **{rpg.BLESS_COST:,}** of your gold on +{rpg.BLESS_BOOST_PCT}% clock and gold for "
+        f"**everyone here**, for {format_duration(rpg.BLESS_SECS)}. They stack up to {rpg.BLESS_MAX}. It is the only "
+        "thing in the game you can buy for somebody else."
+    ),
+    "hunts": (
+        f"Walk into a town's ring and sooner or later someone asks you to deal with {rpg.HUNT_MIN}–{rpg.HUNT_MAX} of "
+        "a particular kind of monster. You take it on the spot — there's nobody here to accept it — and your "
+        "character sets off for the nearest country that kind lives in.\n"
+        "Once there it hunts: that kind turns up far more often than it otherwise would, and a kill anywhere counts.\n"
+        f"Finish and you get {rpg.HUNT_REWARD_PCT}% off your clock and "
+        f"{rpg.HUNT_GOLD_PER_KILL_PER_LEVEL} gold per kill per level. A town has another errand "
+        f"{format_duration(rpg.HUNT_REST_SECS)} later."
+    ),
+    "titles": (
+        "Six of them, each earned once by passing a mark and then yours for good — a purse you later spend doesn't "
+        "cost you Gold Hoarder.\n"
+        + "\n".join(f"🎖️ **{title}** — {need:,} {what}" for (_k, title, need, _r), what in zip(
+            rpg.TITLES, ("gold held at once", "monsters slain", "hunts finished", "bets at the tables",
+                         "prestige", "times struck down")))
+        + "\n\n`!idle title` shows how far off you are; `!idle title <name>` wears one."
+    ),
     "alignment": ALIGN_EFFECTS + "\nSet it with `!idle align`, once a day.",
     "quests": (
         f"Now and then, {rpg.QUEST_MIN_PARTY}–{rpg.QUEST_MAX_PARTY} online players of level {rpg.QUEST_MIN_LEVEL}+ are sent on a 12–24 hour quest.\n"
@@ -154,6 +180,7 @@ class IdleCog(commands.Cog):
         self.rng = random.Random()
         self._dirty: set = set()            # (guild_id, uid) rows to save at the next flush
         self._dirty_quests: set = set()
+        self._dirty_events: set = set()     # guild_ids whose world rows changed
         self._pending: dict = {}            # guild_id -> notes queued by listeners
         self._seen_saved: dict = {}
         self._creating: set = set()         # (guild_id, uid) with a thread being created
@@ -176,6 +203,10 @@ class IdleCog(commands.Cog):
     @staticmethod
     def _quest(guild_id: int) -> dict:
         return state.idle_quests.setdefault(guild_id, rpg.new_quest())
+
+    @staticmethod
+    def _events(guild_id: int) -> list:
+        return state.idle_guild_events.setdefault(guild_id, [])
 
     @staticmethod
     def _channel(guild):
@@ -210,7 +241,11 @@ class IdleCog(commands.Cog):
         member = guild.get_member(uid)
         who = member.display_name if member else str(uid)
         stars = "★" * char["prestige"] + " " if char["prestige"] else ""
-        return f"{stars}{who} — Lv {char['level']} {char['class']}"[:THREAD_NAME_MAX]
+        return f"{stars}{rpg.titled(char, who)} — Lv {char['level']} {char['class']}"[:THREAD_NAME_MAX]
+
+    def _boost(self, guild, char: dict, now: int) -> int:
+        """What this character's clock and gold are running at over par."""
+        return rpg.boost_pct(char, rpg.guild_boost_pct(self._events(guild.id), now), now)
 
     def _seen(self, guild, uid: int, char: dict, now: int) -> None:
         """The player is provably here: stamp them, and wake a paused clock."""
@@ -294,8 +329,19 @@ class IdleCog(commands.Cog):
         name = self._namer(guild)
         pace = rpg.PACES.get(get_guild_cfg(gid).get("idle_pace"), rpg.PACES[rpg.DEFAULT_PACE])
         notes: list = []
-        # Whoever is in voice this tick, with the purse they started it on.
-        voiced = {uid: char["gold"] for uid, char in chars.items() if self._in_voice(guild, uid)}
+        events = self._events(gid)
+        if enabled:
+            world = rpg.tick_world(events, self.rng, now, TICKS_PER_DAY)
+            if world:
+                self._dirty_events.add(gid)   # tick_world only speaks when it changed something
+                notes += world
+        guild_pct = rpg.guild_boost_pct(events, now)
+        effect = rpg.world_effect(events, now)
+        voiced = {uid for uid in chars if self._in_voice(guild, uid)}
+        # uid -> (the boost it is running at, the purse it started the tick
+        # on). One snapshot pays the bonus on everything earned since,
+        # whatever earned it — levels, fights, hunts, luck.
+        boosted: dict = {}
 
         for uid, char in list(chars.items()):
             # Voice proves presence too — a phone in a call often shows offline.
@@ -307,8 +353,10 @@ class IdleCog(commands.Cog):
                 rpg.pause(char, now)
                 self._dirty.add((gid, uid))
                 continue
-            if uid in voiced:
-                rpg.voice_speedup(char, TICK_SECONDS)
+            pct = rpg.boost_pct(char, guild_pct, now) + (rpg.VOICE_BONUS_PCT if uid in voiced else 0)
+            if pct:
+                boosted[uid] = (pct, char["gold"])
+                rpg.apply_boost(char, TICK_SECONDS, pct)
             rpg.regen_hp(char)
             here = rpg.logged_in(char, now)
             horizon = now if here else char["last_seen"] + rpg.GRACE_SECS
@@ -351,17 +399,24 @@ class IdleCog(commands.Cog):
                 errand = rpg.auto_trade(uid, chars[uid], self.rng, name, now)
                 if errand:
                     notes.append(errand)
+                asked = rpg.offer_hunt(uid, chars[uid], self.rng, name, now, 3600 // TICK_SECONDS)
+                if asked:
+                    notes.append(asked)
                 if self.rng.random() < pace.mob_fights_per_day / TICKS_PER_DAY:
-                    notes += rpg.mob_encounter(uid, chars[uid], self.rng, name, now)
+                    notes += rpg.mob_encounter(uid, chars[uid], self.rng, name, now, effect)
             notes += rpg.tick_quest(chars, quest, self.rng, name, now)
             if quest != before:
                 self._dirty_quests.add(gid)
+            for uid, char in chars.items():
+                notes += rpg.check_titles(uid, char, name)
 
-        for uid, before in voiced.items():
-            bonus = rpg.voice_gold_bonus(chars[uid]["gold"] - before) if uid in chars else 0
+        for uid, (pct, before) in boosted.items():
+            char = chars.get(uid)
+            bonus = rpg.gold_bonus(char["gold"] - before, pct) if char else 0
             if bonus:
-                chars[uid]["gold"] += bonus
-                notes.append(rpg.Note((uid,), f"🎙️ Voice bonus: +{bonus:,} gold for {name(uid)}."))
+                char["gold"] += bonus
+                mark = "🎙️" if uid in voiced else "✨"
+                notes.append(rpg.Note((uid,), f"{mark} +{pct}% this minute: {bonus:,} gold more for {name(uid)}."))
 
         if enabled:
             # After the voice bonus on purpose: table winnings aren't earnings to top up.
@@ -390,6 +445,13 @@ class IdleCog(commands.Cog):
             self._dirty_quests.discard(gid)
             if gid in state.idle_quests:
                 await persistence.save_idle_quest(gid)
+        for gid in list(self._dirty_events):
+            self._dirty_events.discard(gid)
+            try:
+                await persistence.save_idle_guild_events(gid)
+            except Exception:
+                log.exception("idle: save of %s's world rows failed", gid)
+                self._dirty_events.add(gid)
 
     # ── posting ──────────────────────────────────────────────────────────
 
@@ -698,6 +760,15 @@ class IdleCog(commands.Cog):
             lines.append("*Unclaimed — its player can take it up with `!idle join <class>`.*")
         if self._in_voice(guild, uid):
             lines.append(f"🎙️ **In voice:** clock and gold +{rpg.VOICE_BONUS_PCT}%")
+        boost = self._boost(guild, char, now)
+        if boost:
+            own = f", {char['boost_pct']}% of it theirs until <t:{char['boost_until']}:t>" if now < char.get("boost_until", 0) else ""
+            lines.append(f"✨ **Boosted:** clock and gold +{boost}%{own} — `!idle world`")
+        if rpg.hunting(char):
+            how = "walking there" if char.get("hunt_x") is not None else "hunting"
+            lines.append(f"📜 **Hunt:** {char['hunt_killed']}/{char['hunt_count']} {char['hunt_mob']}s — {how}")
+        if char.get("loot"):
+            lines.append(f"🎒 **Bag:** {len(char['loot'])} piece(s) worth {rpg.loot_value(char):,} gold at a market")
         if char.get("x") is not None:
             here = rpg.landmark_at((char["x"], char["y"]))
             town, away = rpg.nearest_town(char)
@@ -726,7 +797,7 @@ class IdleCog(commands.Cog):
 
     @commands.group(name="idle", aliases=["irpg"], invoke_without_command=True)
     async def cmd_idle(self, ctx: commands.Context):
-        """!idle join|status|items|map|travel|shop|gamble|top|align|duel|quest|prestige|leave|rules"""
+        """!idle join|status|items|map|travel|shop|gamble|top|align|duel|world|bless|title|quest|prestige|leave|rules"""
         if not await self._ready(ctx):
             return
         char = self._chars(ctx.guild.id).get(ctx.author.id)
@@ -850,6 +921,111 @@ class IdleCog(commands.Cog):
             body += f"\n📜 A party is on a journey — waypoint {quest['stage']} of 2 (`!idle quest`)."
         await self._send_with_map(ctx, emb("🗺️ The Realm", body, C_BLUE), highlight=(ctx.author.id,))
 
+    @cmd_idle.command(name="world", aliases=["boost"])
+    async def cmd_world(self, ctx: commands.Context):
+        if not await self._ready(ctx):
+            return
+        now = int(time.time())
+        events = self._events(ctx.guild.id)
+        row = rpg.world_row(events)
+        if row is None:
+            lines = ["The realm is quiet. Something happens to it every few days, and there is no telling what."]
+        else:
+            rules = rpg.WORLD_EVENTS[row["kind"]]
+            if row["starts_at"] > now:
+                lines = [rules.omen.format(detail=row["detail"]), f"It arrives <t:{row['starts_at']}:R>."]
+            else:
+                lines = [rules.begins.format(detail=row["detail"]), f"It passes <t:{row['ends_at']}:R>."]
+        lines.append(f"\n🕊️ {rpg.bless_line(rpg.bless_count(events, now))}")
+        lines.append(f"`!idle bless` buys the whole server an hour of it for {rpg.BLESS_COST:,} gold.")
+        char = self._chars(ctx.guild.id).get(ctx.author.id)
+        if char is not None:
+            boost = self._boost(ctx.guild, char, now)
+            lines.append(f"\n**Your clock and gold:** +{boost}%" + (" (nothing extra)" if not boost else ""))
+        await ctx.send(embed=emb("🌍 The Realm Today", "\n".join(lines), C_BLUE))
+
+    @cmd_idle.command(name="bless")
+    async def cmd_bless(self, ctx: commands.Context):
+        if not await self._ready(ctx, need_channel=True):
+            return
+        char = await self._own_char(ctx)
+        if char is None:
+            return
+        gid, uid = ctx.guild.id, ctx.author.id
+        now = int(time.time())
+        if char["gold"] < rpg.BLESS_COST:
+            await ctx.send(embed=emb(
+                "❌ Not Enough Gold",
+                f"A blessing costs **{rpg.BLESS_COST:,}** gold and you have **{char['gold']:,}**.",
+                C_RED,
+            ))
+            return
+        agreed = await confirm_prompt(
+            ctx,
+            title="🕊️ Bless the Realm",
+            description=(
+                f"**{rpg.BLESS_COST:,}** of your gold buys **everyone** here "
+                f"+{rpg.BLESS_BOOST_PCT}% clock and gold for {format_duration(rpg.BLESS_SECS)} — "
+                f"you included, and stacking with anyone else's up to {rpg.BLESS_MAX}.\n\n"
+                f"{rpg.bless_line(rpg.bless_count(self._events(gid), now))}\n"
+                f"You have **{char['gold']:,}** gold."
+            ),
+            payer=ctx.author,
+        )
+        if not agreed:
+            return
+        # The prompt was a long await: the character, and its purse, again.
+        char = self._chars(gid).get(uid)
+        if char is None:
+            return
+        cast, text = rpg.cast_bless(uid, char, self._events(gid), int(time.time()))
+        if not cast:
+            await ctx.send(embed=emb("❌ Not Enough Gold", text, C_RED))
+            return
+        await persistence.save_idle_character(gid, uid)
+        await persistence.save_idle_guild_events(gid)
+        await ctx.send(embed=emb("🕊️ Blessed", f"{text}\nYou have {char['gold']:,} gold left.", C_GREEN))
+        channel = self._channel(ctx.guild)
+        if channel is not None:
+            await self._send(channel, [f"🕊️ {self._namer(ctx.guild)(uid)} has blessed the realm. {text}"])
+
+    @cmd_idle.command(name="title", aliases=["titles"])
+    async def cmd_title(self, ctx: commands.Context, *, which: str = None):
+        if not await self._ready(ctx):
+            return
+        char = await self._own_char(ctx)
+        if char is None:
+            return
+        gid, uid = ctx.guild.id, ctx.author.id
+        earned = char.get("titles") or []
+        if which is None:
+            lines = []
+            for key, title, need, read in rpg.TITLES:
+                worn = " ← worn" if char.get("title") == key else ""
+                lines.append(f"🎖️ **{title}**{worn}" if key in earned
+                             else f"🔒 {title} — {read(char):,} of {need:,}")
+            lines.append("\n`!idle title <name>` to wear one, `!idle title none` to take it off.")
+            await ctx.send(embed=emb(f"🎖️ {ctx.author.display_name}'s Titles", "\n".join(lines), C_BLUE))
+            return
+        wanted = which.strip().lower()
+        if wanted in ("none", "clear", "off"):
+            char["title"] = None
+            await persistence.save_idle_character(gid, uid)
+            await ctx.send(embed=emb("🎖️ Titles", "You go by your own name again.", C_GREEN))
+            return
+        picked = next((key for key in earned if rpg.TITLE_NAMES[key].lower() == wanted or key == wanted), None)
+        if picked is None:
+            await ctx.send(embed=emb(
+                "❌ No Such Title",
+                "You haven't earned that one. `!idle title` lists what you have and what's left.",
+                C_RED,
+            ))
+            return
+        char["title"] = picked
+        await persistence.save_idle_character(gid, uid)
+        self._rename_due.add((gid, uid))
+        await ctx.send(embed=emb("🎖️ Titles", f"You are **{rpg.TITLE_NAMES[picked]}** from now on.", C_GREEN))
+
     @cmd_idle.command(name="items")
     async def cmd_items(self, ctx: commands.Context, *, member: str = None):
         if not await self._ready(ctx):
@@ -867,10 +1043,16 @@ class IdleCog(commands.Cog):
             if item is None:
                 lines.append(f"**{slot.title()}:** —")
             elif item.get("name"):
-                lines.append(f"**{slot.title()}:** ✨ {item['name']} (level {item['level']})")
+                mark = "✨ " if item["name"] in rpg.UNIQUE_NAMES else ""
+                lines.append(f"**{slot.title()}:** {mark}{item['name']} (level {item['level']})")
             else:
                 lines.append(f"**{slot.title()}:** level {item['level']}")
         lines.append(f"\n**Item power:** {rpg.item_sum(char):,} · **Gold:** {char['gold']:,}")
+        bag = char.get("loot") or []
+        if bag:
+            carried = ", ".join(f"{item['name'] or item['slot']} ({item['level']})" for item in bag)
+            lines.append(f"\n🎒 **Bag** ({len(bag)}/{rpg.LOOT_MAX}) — {carried}\n"
+                         f"Worth **{rpg.loot_value(char):,}** gold; sold on the next town errand, or with `!idle shop sell`.")
         await ctx.send(embed=emb(f"{self._title(ctx.guild, target.id, char)} — Items", "\n".join(lines), C_BLUE))
 
     @cmd_idle.command(name="top")
@@ -1137,7 +1319,8 @@ class IdleCog(commands.Cog):
     @staticmethod
     def _shop_lines(char: dict) -> list:
         prices = rpg.shop_prices(char)
-        return [
+        bag = char.get("loot") or []
+        return ([("sell", f"Sell — empty your bag of {len(bag)} · +{rpg.loot_value(char):,} gold")] if bag else []) + [
             ("find", f"Find — one more item roll · {prices['find']:,} gold"),
             ("sharpen", f"Sharpen — +{rpg.SHARPEN_PCT}% to one of your items · {rpg.PRICE_SHARPEN_PER_ITEM_LEVEL} gold per item level"),
             ("rush", f"Rush — {rpg.RUSH_PCT}% off your clock, once a day · {prices['rush']:,} gold"),
@@ -1153,7 +1336,7 @@ class IdleCog(commands.Cog):
         if char is None:
             return
         gid, uid = ctx.guild.id, ctx.author.id
-        usage = "`!idle shop find` · `sharpen <slot>` · `rush` · `duel` · `class <name>` · `auto on|off`"
+        usage = "`!idle shop sell` · `find` · `sharpen <slot>` · `rush` · `duel` · `class <name>` · `auto on|off`"
         if item is not None and item.lower() == "auto":
             choice = (arg or "").lower()
             if choice not in ("on", "off"):
@@ -1162,7 +1345,8 @@ class IdleCog(commands.Cog):
                     "🛒 Idle Shop",
                     f"Auto-trading is **{state_now}**. In a town's centre your character spends up to "
                     f"{rpg.AUTO_TRADE_BUDGET_PCT}% of its gold on a find and a sharpening, at most once every "
-                    f"{format_duration(rpg.AUTO_TRADE_COOLDOWN_SECS)}. `!idle shop auto on|off`",
+                    f"{format_duration(rpg.AUTO_TRADE_COOLDOWN_SECS)}. `!idle shop auto on|off`\n"
+                    "Your bag is emptied on that same errand either way — selling is income, not spending.",
                     C_BLUE,
                 ))
                 return
@@ -1210,7 +1394,12 @@ class IdleCog(commands.Cog):
         char = self._chars(gid).get(uid)
         if char is None or rpg.market_in_reach(char) is None:
             return   # retired, or wandered out of the market, while a menu was open
-        if item == "find":
+        if item == "sell":
+            pieces, paid = rpg.sell_loot(char)
+            bought = bool(pieces)
+            text = (f"Sold {pieces} piece{'' if pieces == 1 else 's'} for {paid:,} gold."
+                    if pieces else "Your bag is empty.")
+        elif item == "find":
             bought, text = rpg.buy_find(uid, char, self.rng, self._namer(ctx.guild))
         elif item == "sharpen":
             slot = arg.lower()
@@ -1367,7 +1556,8 @@ class IdleCog(commands.Cog):
             "⚔️ Items, fights and lucky breaks happen on their own.\n"
             "📜 High-level players get sent on quests for a big shortcut.\n\n"
             f"{start}"
-            "`!idle status` · `items` · `map` · `travel` · `shop` · `gamble` · `top` · `align` · `duel <name>` · `quest`\n"
+            "`!idle status` · `items` · `map` · `travel` · `shop` · `gamble` · `top` · `align` · `duel <name>`\n"
+            "`!idle world` · `bless` · `title` · `quest` · `prestige`\n"
             f"More: `!idle rules <{'|'.join(_RULES_TOPICS)}>`",
             C_BLUE,
         ))
@@ -1520,6 +1710,10 @@ class IdleCog(commands.Cog):
             return
         chars = state.idle_characters.pop(gid, {})
         state.idle_quests.pop(gid, None)
+        # The rows go with the DB's; leaving them would write a blood moon
+        # back out on the next flush, over a realm that no longer has anyone in it.
+        state.idle_guild_events.pop(gid, None)
+        self._dirty_events.discard(gid)
         self._pending.pop(gid, None)
         await persistence.delete_idle_guild(gid)
         for char in chars.values():

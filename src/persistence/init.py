@@ -14,7 +14,7 @@ from src.persistence.history import (
     load_today_crime_row, load_today_gambling_row, load_today_levelups_row,
 )
 from src.persistence.gambling_threads import parse_tally
-from src.persistence.idlerpg import parse_items, parse_members
+from src.persistence.idlerpg import parse_items, parse_list, parse_members
 
 
 async def init_db_state():
@@ -623,14 +623,18 @@ async def _init_db_state_inner(state, run_migrations):
                 "prestige, penalty_total, last_seen, last_penalty_at, thread_id, created_at, "
                 "align_changed_at, duel_day, items_json, x, y, gold, rush_day, extra_duel_day, "
                 "auto_trade, traded_at, travel_to, mob_kills, mob_deaths, gamble_town, gamble_visit_at, "
-                "gamble_budget, gambles, gamble_won, gamble_lost, claimed, hp FROM idle_characters"
+                "gamble_budget, gambles, gamble_won, gamble_lost, claimed, hp, loot_json, titles_json, "
+                "title, boost_pct, boost_until, hunt_mob, hunt_count, hunt_killed, hunt_x, hunt_y, "
+                "hunt_at, hunts_done FROM idle_characters"
             )
             for (gid, uid, class_name, level, next_level_at, remaining, law, moral, prestige,
                  penalty_total, last_seen, last_penalty_at, thread_id, created_at,
                  align_changed_at, duel_day, items_json, x, y, gold, rush_day,
                  extra_duel_day, auto_trade, traded_at, travel_to, mob_kills,
                  mob_deaths, gamble_town, gamble_visit_at, gamble_budget, gambles, gamble_won,
-                 gamble_lost, claimed, hp) in await cur.fetchall():
+                 gamble_lost, claimed, hp, loot_json, titles_json, title, boost_pct, boost_until,
+                 hunt_mob, hunt_count, hunt_killed, hunt_x, hunt_y, hunt_at,
+                 hunts_done) in await cur.fetchall():
                 state.idle_characters.setdefault(int(gid), {})[int(uid)] = {
                     "claimed": bool(claimed),
                     "hp": int(hp),
@@ -665,10 +669,35 @@ async def _init_db_state_inner(state, run_migrations):
                     "gambles": int(gambles),
                     "gamble_won": int(gamble_won),
                     "gamble_lost": int(gamble_lost),
+                    "loot": parse_list(loot_json),
+                    "titles": parse_list(titles_json),
+                    "title": title,
+                    "boost_pct": int(boost_pct),
+                    "boost_until": int(boost_until),
+                    "hunt_mob": hunt_mob,
+                    "hunt_count": int(hunt_count),
+                    "hunt_killed": int(hunt_killed),
+                    "hunt_x": None if hunt_x is None else int(hunt_x),
+                    "hunt_y": None if hunt_y is None else int(hunt_y),
+                    "hunt_at": int(hunt_at),
+                    "hunts_done": int(hunts_done),
                 }
             await cur.execute("SELECT guild_id, user_id FROM idle_optouts")
             for gid, uid in await cur.fetchall():
                 state.idle_optouts.setdefault(int(gid), set()).add(int(uid))
+            await cur.execute(
+                "SELECT guild_id, kind, detail, cast_by, stage, starts_at, ends_at "
+                "FROM idle_guild_events ORDER BY starts_at"
+            )
+            for gid, kind, detail, cast_by, stage, starts_at, ends_at in await cur.fetchall():
+                state.idle_guild_events.setdefault(int(gid), []).append({
+                    "kind": kind,
+                    "detail": detail or "",
+                    "cast_by": None if cast_by is None else int(cast_by),
+                    "stage": int(stage),
+                    "starts_at": int(starts_at),
+                    "ends_at": int(ends_at),
+                })
             await cur.execute(
                 "SELECT guild_id, members_json, description, ends_at, not_before, kind, stage, "
                 "p1x, p1y, p2x, p2y FROM idle_quests"
