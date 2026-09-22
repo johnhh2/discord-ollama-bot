@@ -849,7 +849,8 @@ tables from migrations 0070–0077.
   in check; don't undo them for "faithfulness": a player is only a
   possible opponent within `BATTLE_RANGE` (half a market ring) on the map,
   which is what makes the frequency bearable — everyone else meets the
-  house; the stake follows the
+  house (a fight nobody else has a stake in, so it stays in the player's
+  own feed — only a player-vs-player one is channel news); the stake follows the
   margin (`margin_factor`: a win by a hair moves a quarter of it, a rout all
   of it — level-up and collision fights both); the house is the challenger's
   own match, not the best-geared player's; and nobody is picked as a

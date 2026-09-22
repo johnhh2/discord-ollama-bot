@@ -145,7 +145,7 @@ def _rolls(*values):
 def test_a_lone_player_fights_the_house_and_a_win_shortens_the_clock():
     chars = {1: _char(30, left=10_000, items={"ring": {"level": 50, "name": None}})}
     notes = rpg.level_up_battle(1, chars, _Scripted(randint=_rolls(50, 0)), _name, NOW)
-    assert rpg.HOUSE_NAME in notes[0].text and notes[0].public
+    assert rpg.HOUSE_NAME in notes[0].text and not notes[0].public   # the house concerns nobody else
     assert rpg.time_left(chars[1], NOW) == 8000      # a decisive win over the house is worth 20%
 
 
@@ -193,9 +193,11 @@ def test_a_player_out_of_range_is_never_the_opponent():
         chars = {1: _char(30, x=100, y=100), 2: _char(30, x=100, y=100 + gap, **over)}
         return rpg.level_up_battle(1, chars, _Scripted(randrange=0), _name, NOW)[0]
 
-    assert 2 in _fight(rpg.BATTLE_RANGE).uids                       # just inside: a real opponent
+    near = _fight(rpg.BATTLE_RANGE)                                 # just inside: a real opponent
+    assert 2 in near.uids and near.public                           # …and worth telling the channel
     far = _fight(rpg.BATTLE_RANGE + 1)
     assert far.uids == (1,) and rpg.HOUSE_NAME in far.text          # a step further: the house instead
+    assert not far.public                                           # which stays in the feed
     assert rpg.BATTLE_RANGE == rpg.MARKET_RADIUS // 2
 
     # Before the tick has placed a character, nobody can reach it.

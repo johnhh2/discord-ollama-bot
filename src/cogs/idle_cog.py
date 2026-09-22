@@ -89,7 +89,7 @@ _RULES_TOPICS = {
         "Each side rolls a number from 0 up to their item power (`!idle items`), shown as \"rolled 12 of 40\"; the higher roll wins. "
         "Win and your timer shrinks; lose and it grows.\n"
         f"You only run into another player if they are within {rpg.BATTLE_RANGE} squares of you on the map — otherwise you face "
-        "the Idle Warden, who is always your own match.\n"
+        "the Idle Warden, who is always your own match. A fight with the Warden stays in your own thread.\n"
         f"`!idle duel <name>` once a day: the loser hands {rpg.DUEL_PCT}% of their timer to the winner. A tie is a coin toss."
     ),
     "monsters": (

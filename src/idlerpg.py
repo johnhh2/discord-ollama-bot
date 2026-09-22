@@ -557,16 +557,19 @@ def level_up_battle(uid: int, chars: dict, rng, name: NameFn, now: int, pace: Pa
     my_sum = battle_sum(me)
     my_roll, opp_roll = rng.randint(0, my_sum), rng.randint(0, opp_sum)
     involved = (uid,) if opp is None else (uid, opp_uid)
+    # A fight with the house concerns nobody else — it stays in the player's
+    # own feed. Only a fight between two players is channel news.
+    news = opp is not None
     head = f"⚔️ {name(uid)} {_rolled(my_roll, my_sum)} challenged {opp_name} {_rolled(opp_roll, opp_sum)}"
     factor = margin_factor(my_roll, opp_roll, my_sum, opp_sum)
     if my_roll < opp_roll:
         lost = scale(me, now, lose_pct * factor)
-        return [Note(involved, f"{head} and {_how(factor)}lost. {format_duration(lost)} added to their clock.", True)]
+        return [Note(involved, f"{head} and {_how(factor)}lost. {format_duration(lost)} added to their clock.", news)]
 
     won = -scale(me, now, -win_pct * factor)
     prize = GOLD_HOUSE_WIN if opp is None else GOLD_PER_WIN * max(opp["level"], 1)
     me["gold"] += prize
-    notes = [Note(involved, f"{head} and {_how(factor)}won! {format_duration(won)} off their clock, and {prize:,} gold.", True)]
+    notes = [Note(involved, f"{head} and {_how(factor)}won! {format_duration(won)} off their clock, and {prize:,} gold.", news)]
     if opp is None:
         return notes
     if not rng.randrange(CRIT_ODDS[me["moral"]]):
