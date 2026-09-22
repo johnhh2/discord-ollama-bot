@@ -123,6 +123,13 @@ f"A fight runs up to {rpg.MOB_MAX_ROUNDS} rounds of blows both ways and costs **
         f"but never more than {rpg.GAMBLE_VISIT_CAP_PCT}% of the purse it arrived with per visit — and `!idle gamble <gold>` bets by hand. "
         f"Even money; the house wins {rpg.GAMBLE_LOSE_BELOW} in 100."
     ),
+    "luck": (
+        "🌟 **Godsends** and 🌧️ **calamities** find you about once a day each, in your own feed.\n"
+        "A godsend may take time off your clock, hand you gold or an item, mend your wounds, or put you on a cart to a town. "
+        "A calamity may add time, lift your purse, dent your gear, leave you hurt (never dead) or set you down lost in the wilds.\n"
+        "🙌 The **Hand of God** is rarer and much bigger — 5–75% of a level, four times in five for the better — and the whole server hears it.\n"
+        "Alignment bends how often the first two find you: `!idle rules alignment`."
+    ),
     "alignment": ALIGN_EFFECTS + "\nSet it with `!idle align`, once a day.",
     "quests": (
         f"Now and then, {rpg.QUEST_MIN_PARTY}–{rpg.QUEST_MAX_PARTY} online players of level {rpg.QUEST_MIN_LEVEL}+ are sent on a 12–24 hour quest.\n"

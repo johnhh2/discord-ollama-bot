@@ -67,6 +67,17 @@ GOLD_HOUSE_WIN = 10
 GOLD_QUEST_PER_MEMBER = 250    # × party size, to each quester
 GOLD_GODSEND_PER_LEVEL = 20
 GOLD_EVENT_CHANCE = 0.2        # share of godsends / calamities that are about gold
+# Luck used to move nothing but the clock. These shares give it the rest of
+# the game to play with — a body to mend or hurt, and a map to move you
+# about. Each falls through to the next when it has nothing to do (no
+# wounds to heal, no gold to lift), so no roll is ever wasted.
+LUCK_HEAL_CHANCE = 0.25        # of godsends, when there is anything to mend
+LUCK_CARAVAN_CHANCE = 0.2      # …carried to a town: keep it rarer than walking there
+LUCK_FIND_CHANCE = 0.15        # …an item turned up in the road
+LUCK_AMBUSH_CHANCE = 0.25      # of calamities: a wound, never a killing one
+LUCK_LOST_CHANCE = 0.15        # …set down somewhere far from any market
+LUCK_HEAL_PCT = 35             # of a full body
+LUCK_AMBUSH_PCT = 25
 GOLD_SPOILS_PCT = 5            # of the loser's purse, to a collision fight's winner
 
 PRICE_FIND_PER_LEVEL = 25
@@ -180,6 +191,30 @@ _CALAMITIES = (
     "walked in circles around a suspiciously familiar rock",
     "ate the mushrooms",
     "was held up at a border for improper paperwork",
+)
+_HEALERS = (
+    "was stitched up by a hedge-witch who asked for nothing",
+    "slept a night in a barn that smelled of clean straw",
+    "was fed broth by a shepherd until they could stand",
+    "found a spring the maps do not mark",
+)
+_CARAVANS = (
+    "flagged down a passing caravan",
+    "was bundled onto a merchant's wagon",
+    "followed a pilgrim who knew the roads",
+    "woke on the back of a cart going the right way",
+)
+_AMBUSHES = (
+    "was jumped by bandits who took only blood",
+    "misjudged a scree slope and came down the hard way",
+    "argued with a badger and lost",
+    "was thrown by a horse with opinions",
+)
+_WANDERINGS = (
+    "followed a light that turned out to be nothing",
+    "took a road that was not on any map",
+    "was turned around by fog for a day and a night",
+    "trusted directions from a very confident goose",
 )
 _ITEM_BOONS = (
     "A wandering smith polished", "A blessing settled on", "Moonlight tempered",
@@ -719,6 +754,17 @@ def _item_event(uid: int, char: dict, rng, name: NameFn, good: bool) -> "Note | 
 
 def godsend(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
     char = chars[uid]
+    if hp_of(char) < max_hp(char) and rng.random() < LUCK_HEAL_CHANCE:
+        got = heal(char, max(1, max_hp(char) * LUCK_HEAL_PCT // 100))
+        return Note((uid,), f"🌟 {name(uid)} {rng.choice(_HEALERS)}. +{got} HP ({hp_of(char)}/{max_hp(char)}).")
+    if char.get("x") is not None and rng.random() < LUCK_CARAVAN_CHANCE:
+        town = rng.choice(sorted(TOWNS))
+        char["x"], char["y"] = LANDMARKS[town]
+        char["travel_to"] = None
+        return Note((uid,), f"🌟 {name(uid)} {rng.choice(_CARAVANS)} and was set down in {town}.")
+    if rng.random() < LUCK_FIND_CHANCE:
+        found = find_item(uid, char, rng, name)
+        return Note((uid,), f"🌟 Lying in the road — {found.text}", found.public)
     if rng.random() < 0.1:
         note = _item_event(uid, char, rng, name, good=True)
         if note:
@@ -733,6 +779,18 @@ def godsend(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
 
 def calamity(uid: int, chars: dict, rng, name: NameFn, now: int) -> Note:
     char = chars[uid]
+    if hp_of(char) > 1 and rng.random() < LUCK_AMBUSH_CHANCE:
+        # Never a killing blow: luck can send you to camp, not to a grave.
+        hurt = min(hp_of(char) - 1, max(1, max_hp(char) * LUCK_AMBUSH_PCT // 100))
+        char["hp"] = hp_of(char) - hurt
+        rest = " They will have to make camp." if needs_rest(char) else ""
+        return Note((uid,), f"🌧️ {name(uid)} {rng.choice(_AMBUSHES)}. −{hurt} HP ({hp_of(char)}/{max_hp(char)}).{rest}")
+    if char.get("x") is not None and market_in_reach(char) is None and rng.random() < LUCK_LOST_CHANCE:
+        char["x"], char["y"] = rng.randrange(MAP_SPAN), rng.randrange(MAP_SPAN)
+        char["travel_to"] = None
+        town, away = nearest_town(char)
+        return Note((uid,), f"🌧️ {name(uid)} {rng.choice(_WANDERINGS)} and is now [{char['x']}, {char['y']}] "
+                            f"in {biome_at(char['x'], char['y'])} country — {town} is {away} squares off.")
     if rng.random() < 0.1:
         note = _item_event(uid, char, rng, name, good=False)
         if note:

@@ -467,7 +467,7 @@ async def test_rules_stay_short_and_the_detail_lives_in_topics():
     await cog.cmd_rules.callback(cog, ctx)
     # A player sees it too — they are the one who passes this card on.
     assert "**New here?** `!idle join <class>`" in ctx.sent_embeds[-1].description
-    assert "!idle rules <levels|battles|monsters|map|gold|alignment|quests|prestige>" in card
+    assert "!idle rules <levels|battles|monsters|map|gold|luck|alignment|quests|prestige>" in card
     assert "talk" not in card.lower()
 
     await cog.cmd_rules.callback(cog, ctx, "Quests")

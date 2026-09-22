@@ -338,15 +338,94 @@ def test_a_finished_quest_pays_every_quester_by_party_size():
     assert [c["gold"] for c in chars.values()] == [750, 750, 750] and "750 gold" in notes[0].text
 
 
-def test_godsends_and_calamities_are_sometimes_about_gold():
-    chars = {1: _char(10, left=10_000, gold=1000)}
-    rng = _Scripted(random_=0.15, randint=lambda low, high: high)   # past the 10% item roll, inside the 20% gold one
-    assert "1,200" not in rpg.godsend(1, chars, rng, _name, NOW).text and chars[1]["gold"] == 1200
-    assert "120 gold gone" in rpg.calamity(1, chars, rng, _name, NOW).text and chars[1]["gold"] == 1080
-    assert rpg.time_left(chars[1], NOW) == 10_000
+class _Luck(_Scripted):
+    """random() answers from a queue, then settles on one value — enough to
+    steer luck down whichever branch a test is about."""
+    def __init__(self, randoms, **kw):
+        super().__init__(**kw)
+        self._queue = list(randoms)
 
-    broke = {1: _char(10, left=10_000)}
-    rpg.calamity(1, broke, rng, _name, NOW)      # nothing to steal: the ordinary kind
+    def random(self):
+        return self._queue.pop(0) if self._queue else self._random
+
+
+def _lucky(hp=None, **over):
+    char = _char(12, left=10_000, x=5, y=255, gold=500,
+                 items={"ring": {"level": 30, "name": None}}, **over)
+    char["hp"] = rpg.max_hp(char) if hp is None else hp
+    return char
+
+
+def test_a_godsend_mends_a_wounded_character_and_leaves_a_whole_one_alone():
+    hurt = _lucky(hp=50)
+    note = rpg.godsend(1, {1: hurt}, _Luck([0.1]), _name, NOW)
+    assert "HP (" in note.text and rpg.hp_of(hurt) > 50 and not note.public
+
+    whole = _lucky()
+    note = rpg.godsend(1, {1: whole}, _Luck([0.1]), _name, NOW)   # nothing to mend: the next kind instead
+    assert "HP (" not in note.text and rpg.hp_of(whole) == rpg.max_hp(whole)
+
+
+def test_a_godsend_can_put_you_on_a_cart_to_a_town():
+    char = _lucky(travel_to="Denmark")
+    note = rpg.godsend(1, {1: char}, _Luck([0.1]), _name, NOW)
+    assert "set down in" in note.text and char["travel_to"] is None
+    assert (char["x"], char["y"]) in [rpg.LANDMARKS[t] for t in rpg.TOWNS]
+    assert rpg.market_in_reach(char) is not None
+
+
+def test_a_godsend_can_turn_up_an_item_in_the_road():
+    char = _lucky()
+    char["items"] = {}
+    note = rpg.godsend(1, {1: char}, _Luck([0.9, 0.1]), _name, NOW)
+    assert "Lying in the road" in note.text and char["items"]
+
+
+def test_a_calamity_can_wound_but_never_kill():
+    char = _lucky()
+    note = rpg.calamity(1, {1: char}, _Luck([0.1]), _name, NOW)
+    assert "HP (" in note.text and 0 < rpg.hp_of(char) < rpg.max_hp(char)
+
+    dying = _lucky(hp=2)
+    rpg.calamity(1, {1: dying}, _Luck([0.1]), _name, NOW)
+    assert rpg.hp_of(dying) == 1                       # a wound, never a grave
+    untouchable = _lucky(hp=1)
+    rpg.calamity(1, {1: untouchable}, _Luck([0.1]), _name, NOW)
+    assert rpg.hp_of(untouchable) == 1
+
+
+def test_a_calamity_can_leave_you_lost_but_not_while_you_are_in_town():
+    char = _lucky(travel_to="Denmark")
+    note = rpg.calamity(1, {1: char}, _Luck([0.9, 0.1]), _name, NOW)
+    assert "squares off" in note.text and char["travel_to"] is None
+    assert 0 <= char["x"] <= rpg.MAP_SIZE and 0 <= char["y"] <= rpg.MAP_SIZE
+
+    town = rpg.LANDMARKS["Velvragh"]
+    safe = _lucky()
+    safe["x"], safe["y"] = town
+    note = rpg.calamity(1, {1: safe}, _Luck([0.9, 0.1]), _name, NOW)
+    assert "squares off" not in note.text and (safe["x"], safe["y"]) == town
+
+
+def test_godsends_and_calamities_are_sometimes_about_gold():
+    # No wounds and nowhere on the map, so heal, cart and lost all fall
+    # through; the queue then steps past the item roll to the gold one.
+    def _purse(gold=1000):
+        char = _char(10, left=10_000, gold=gold)
+        char["hp"] = rpg.max_hp(char)
+        return {1: char}
+
+    rich = _purse()
+    rng = _Luck([0.9, 0.9, 0.1], randint=lambda low, high: high)
+    assert "purse" in rpg.godsend(1, rich, rng, _name, NOW).text and rich[1]["gold"] == 1200
+
+    rng = _Luck([0.9, 0.9, 0.1], randint=lambda low, high: high)
+    assert "120 gold gone" in rpg.calamity(1, rich, rng, _name, NOW).text and rich[1]["gold"] == 1080
+    assert rpg.time_left(rich[1], NOW) == 10_000        # neither touched the clock
+
+    broke = _purse(gold=0)
+    rng = _Luck([0.9, 0.9, 0.1], randint=lambda low, high: high)
+    rpg.calamity(1, broke, rng, _name, NOW)             # nothing to steal: the ordinary kind
     assert broke[1]["gold"] == 0 and rpg.time_left(broke[1], NOW) > 10_000
 
 
