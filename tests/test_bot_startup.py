@@ -121,6 +121,8 @@ async def test_known_top_level_commands_are_registered(loaded_bot):
         "slots", "flip", "scratchoff",
         # Lottery / leveling
         "lottery", "lvl", "levels",
+        # Idle RPG: the subcommands registered bare (idle_cog._TOP_ALIASES).
+        "idle", "status", "map", "travel", "gamble", "quest", "prestige", "rules",
     }
     actual = {cmd.name for cmd in loaded_bot.commands}
     missing = expected_subset - actual

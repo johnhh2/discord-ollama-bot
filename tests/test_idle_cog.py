@@ -1892,3 +1892,160 @@ async def test_the_tick_offers_only_the_kinds_the_hour_allows(monkeypatch):
 
     assert seen["hour"] == 21                  # the cog hands the rules a CT hour
     assert "blood_moon" in rpg.world_kinds_at(21)
+
+
+# ── bare commands, feed threads and the cards' menus ─────────────────────────
+
+def _interaction(guild, uid: int, channel=None):
+    response = SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock(), send_modal=AsyncMock(),
+                               defer=AsyncMock(), is_done=lambda: False)
+    return SimpleNamespace(user=guild.get_member(uid), guild=guild, channel=channel or guild.channels[0],
+                           response=response, followup=SimpleNamespace(send=AsyncMock()))
+
+
+def _ctx_in(guild, uid: int, channel, command_name: str) -> FakeCtx:
+    return FakeCtx(author=guild.get_member(uid), guild=guild, channel=channel, command_name=command_name)
+
+
+async def test_every_subcommand_but_admin_shop_and_help_is_registered_bare():
+    # Registration happens in the constructor and unload undoes it; add_cog
+    # would also start the tick loop, which has no gateway to wait on here.
+    bot = discord.ext.commands.Bot(command_prefix="!", intents=discord.Intents.none(), help_command=None)
+    cog = IdleCog(bot)
+    try:
+        assert bot.get_command("map").callback is IdleCog.cmd_map.callback
+        assert bot.get_command("info").callback is IdleCog.cmd_status.callback      # aliases travel too
+        assert bot.get_command("map").cog is cog                                     # bound, so `self` isn't the ctx
+        for absent in ("admin", "shop", "help"):
+            assert bot.get_command(absent) is None
+        assert set(_idle_cog.FEED_THREAD_COMMANDS) >= {"idle", "help", "shop", "map", "travel", "rules"}
+        # The bare form runs the same code.
+        guild = _world()[1]
+        cog.rng = _Rng()
+        ctx = _ctx(guild)
+        await bot.get_command("map")(ctx)
+        assert ctx.sent_embeds[-1].title == "🗺️ The Realm"
+    finally:
+        cog.cog_unload()
+    assert bot.get_command("map") is None                                            # unload takes them with it
+
+
+async def test_a_feed_thread_only_runs_the_idle_game():
+    cog, guild, idle = _world()
+    _spawn(ALICE, thread_id=900)
+    feed = FakeThread(thread_id=900, parent_id=IDLE_CH)
+    other = FakeThread(thread_id=901, parent_id=IDLE_CH)
+
+    for allowed in ("idle", "idle status", "idle admin hog", "map", "status", "travel", "help", "shop"):
+        assert await cog.bot_check(_ctx_in(guild, BOB, feed, allowed)) is True
+    for refused in ("slots", "shop insurance", "insurance", "ask"):
+        ctx = _ctx_in(guild, BOB, feed, refused)
+        with pytest.raises(_idle_cog.IdleThreadOnly):
+            await cog.bot_check(ctx)
+        assert ctx.sent_embeds[-1].title == "⚔️ Idle Feed"
+    # Only a character's feed thread is gated — not another thread, not the channel.
+    assert await cog.bot_check(_ctx_in(guild, BOB, other, "slots")) is True
+    assert await cog.bot_check(_ctx_in(guild, BOB, idle, "slots")) is True
+
+
+async def test_help_and_a_bare_shop_are_the_games_in_idle_context():
+    from src.cogs.shop_cog import ShopCog
+    from src.cogs.utility_cog import UtilityCog
+    cog, guild, idle = _world()
+    char = _spawn(ALICE, thread_id=900)
+    char["auto_trade"] = False
+    feed = FakeThread(thread_id=900, parent_id=IDLE_CH)
+    elsewhere = FakeTextChannel(ch_id=77, name="general")
+    assert cog.in_idle_context(_ctx(guild, channel=idle))
+    assert cog.in_idle_context(_ctx(guild, channel=feed))
+    assert not cog.in_idle_context(_ctx(guild, channel=elsewhere))
+    assert not cog.in_idle_context(FakeCtx(author=guild.get_member(ALICE), guild=None, channel=elsewhere))
+
+    bot = SimpleNamespace(get_cog=lambda name: cog if name == "IdleCog" else None, add_command=lambda c: None)
+    util = UtilityCog(bot)
+    ctx = _ctx(guild, channel=feed)
+    await util.cmd_help.callback(util, ctx)
+    assert ctx.sent_embeds[-1].title == "📖 Idle RPG"
+    assert isinstance(ctx.sent_views[-1], _idle_cog._HelpView)
+
+    shop = ShopCog(bot)
+    ctx = _ctx(guild, channel=idle)
+    ctx.message = FakeMessage(content="!shop auto", author=guild.get_member(ALICE), channel=idle)
+    await shop.cmd_shop.callback(shop, ctx)
+    assert ctx.sent_embeds[-1].title == "🛒 Idle Shop" and "Auto-trading is **off**" in ctx.sent_embeds[-1].description
+
+
+async def test_the_sheet_carries_an_action_menu_for_its_invoker():
+    cog, guild, _idle = _world()
+    _spawn(ALICE, gold=500)
+    ctx = _ctx(guild)
+    await cog.cmd_idle.callback(cog, ctx)
+    view = ctx.sent_views[-1]
+    assert isinstance(view, _idle_cog._ActionView) and view.message is not None
+    select = view.children[0]
+    values = [option.value for option in select.options]
+    assert {"cmd_status", "cmd_items", "cmd_map", "cmd_travel", "cmd_shop", "cmd_rules"} <= set(values)
+    assert all(hasattr(IdleCog, value) for value in values)
+
+    assert await view.interaction_check(_interaction(guild, BOB)) is False          # Bob can't shop with Alice's gold
+    picked = _interaction(guild, ALICE)
+    select._values = ["cmd_items"]
+    await select.callback(picked)
+    picked.response.edit_message.assert_awaited_once()                              # the pick is cleared, not kept
+    assert "Bard" in ctx.sent_embeds[-1].title and "power" in ctx.sent_embeds[-1].description.lower()
+    select._values = ["cmd_status"]
+    await select.callback(_interaction(guild, ALICE))
+    assert isinstance(ctx.sent_views[-1], _idle_cog._ActionView)                    # a refreshed sheet has a menu too
+
+
+async def test_the_help_card_reads_topics_and_joins():
+    cog, guild, idle = _world()
+    ctx = _ctx(guild, channel=idle)
+    await cog.cmd_rules.callback(cog, ctx)
+    view = ctx.sent_views[-1]
+    assert isinstance(view, _idle_cog._HelpView)
+    select, join = view.children
+    assert [option.value for option in select.options] == list(_idle_cog._RULES_TOPICS)
+    reader = _interaction(guild, BOB)
+    select._values = ["battles"]
+    await select.callback(reader)
+    kwargs = reader.response.send_message.await_args.kwargs
+    assert kwargs["ephemeral"] and kwargs["embed"].title == "📖 Idle RPG — Battles"
+
+    # Anyone may join from the card: a modal asks for the class.
+    click = _interaction(guild, BOB, idle)
+    await join.callback(click)
+    modal = click.response.send_modal.await_args.args[0]
+    assert isinstance(modal, _idle_cog._JoinModal)
+    modal.class_name._value = "  Tax   Wizard "
+    submit = _interaction(guild, BOB, idle)
+    await modal.on_submit(submit)
+    sent = submit.response.send_message.await_args.kwargs
+    assert sent["embed"].title == "⚔️ A New Adventurer" and not sent["ephemeral"]
+    assert _state.idle_characters[GID][BOB]["class"] == "Tax Wizard"
+    idle.create_thread.assert_awaited_once()
+    assert not idle.send.called                              # the card was in the idle channel: no second announcement
+
+    # A refusal is private; a player already in the game gets one without a modal.
+    again = _interaction(guild, BOB, idle)
+    await join.callback(again)
+    again.response.send_modal.assert_not_called()
+    assert again.response.send_message.await_args.kwargs["ephemeral"]
+    assert again.response.send_message.await_args.kwargs["embed"].title == "❌ Already Adventuring"
+    bad = _idle_cog._JoinModal(cog)
+    bad.class_name._value = "**bold**"
+    refusal = _interaction(guild, ALICE, idle)
+    await bad.on_submit(refusal)
+    assert refusal.response.send_message.await_args.kwargs["ephemeral"]
+    assert ALICE not in _state.idle_characters[GID]
+
+
+async def test_the_join_button_says_when_the_game_is_off():
+    cog, guild, idle = _world(channel=False)
+    ctx = _ctx(guild)
+    await cog.cmd_rules.callback(cog, ctx)
+    join = ctx.sent_views[-1].children[1]
+    click = _interaction(guild, BOB)
+    await join.callback(click)
+    click.response.send_modal.assert_not_called()
+    assert click.response.send_message.await_args.kwargs["embed"].title == "💤 Idle RPG Is Off"

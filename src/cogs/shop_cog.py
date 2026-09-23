@@ -301,6 +301,13 @@ class ShopCog(commands.Cog):
 
     @commands.group(name="shop", aliases=["store"], invoke_without_command=True)
     async def cmd_shop(self, ctx: commands.Context):
+        # In the idle channel and its feed threads a bare `!shop` is the
+        # game's market. Subcommands (`!shop insurance`) never come through
+        # here and stay the coin shop everywhere.
+        idle = getattr(self.bot, "get_cog", lambda _name: None)("IdleCog")
+        if idle is not None and idle.in_idle_context(ctx):
+            await idle.shop_from(ctx)
+            return
         if ctx.guild:
             cfg = get_guild_cfg(ctx.guild.id)
             # Handle !shop <alias> @user for guild-configured tax aliases

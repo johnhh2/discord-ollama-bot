@@ -29,6 +29,7 @@ import re
 import time
 
 import discord
+from discord import ui
 from discord.ext import commands, tasks
 
 import src.persistence as persistence
@@ -42,7 +43,7 @@ from src.helpers import (
     emb, C_BLUE, C_GOLD, C_GREEN, C_GREY, C_RED,
     format_duration, parse_duration, parse_int_amount,
 )
-from src.permissions import is_silenced
+from src.permissions import _wrong_channel_reply, is_silenced
 from src.settings_views import pick_from_list
 
 log = logging.getLogger(__name__)
@@ -72,6 +73,65 @@ NOT_YOURS = "Not your prompt."
 WAGER_ACCEPT_SECS = 120.0
 DUEL_ROUND_SECS = 3.0   # a beat between rounds, so a duel reads as a fight
 NO_MENTIONS = discord.AllowedMentions.none()
+MENU_TIMEOUT = 300.0     # the status card's action menu
+HELP_TIMEOUT = 900.0     # the help card's topic menu and Join button
+
+# `!idle <sub>` also answers to a bare `!<sub>`. Every subcommand but three:
+# `admin` (a bare `!admin` would be nobody's idea of an idle command), and
+# `shop` and `help`, which are real commands elsewhere — ShopCog and
+# UtilityCog hand those over in idle context instead (`shop_from`,
+# `cmd_rules`). Registered on the bot at construction, as ShopCog does with
+# `_SHOP_TOP_ALIASES`; the copies share the subcommand's callback, so a fix
+# lands in both spellings.
+_TOP_ALIASES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("join", "cmd_join", ()),
+    ("status", "cmd_status", ("info",)),
+    ("map", "cmd_map", ()),
+    ("lore", "cmd_lore", ()),
+    ("world", "cmd_world", ("boost",)),
+    ("bless", "cmd_bless", ()),
+    ("title", "cmd_title", ("titles",)),
+    ("items", "cmd_items", ()),
+    ("top", "cmd_top", ()),
+    ("align", "cmd_align", ("alignment",)),
+    ("duel", "cmd_duel", ()),
+    ("gamble", "cmd_gamble", ("bet",)),
+    ("travel", "cmd_travel", ()),
+    ("quest", "cmd_quest", ()),
+    ("prestige", "cmd_prestige", ()),
+    ("leave", "cmd_leave", ()),
+    ("rules", "cmd_rules", ()),
+)
+# What runs inside a character's feed thread: `!idle …`, the bare forms
+# above, and the two shared names that redirect to the game there. `shop`
+# means the bare group only — `!shop insurance` is the coin shop anywhere.
+FEED_THREAD_COMMANDS = frozenset({"idle", "help", "shop", *(name for name, _attr, _aliases in _TOP_ALIASES)})
+FEED_THREAD_ONLY = (
+    "Only the idle game plays in a feed thread — `!idle …`, or `!status`, `!map`, `!travel` and the rest bare. "
+    "Everything else goes in the channel."
+)
+# The status card's menu: (label, description, subcommand attribute). Only
+# actions that need no argument — travel, shop and alignment open their own
+# picker when run bare.
+_ACTIONS = (
+    ("Refresh", "This sheet and the map again", "cmd_status"),
+    ("Items", "The ten slots and their power", "cmd_items"),
+    ("Map", "The realm and everyone in it", "cmd_map"),
+    ("Travel", "Walk to a town, or out into the wilds", "cmd_travel"),
+    ("Shop", "The market, if you're inside a town's ring", "cmd_shop"),
+    ("Quest", "What the party is up to", "cmd_quest"),
+    ("World", "What's happening to the realm, and your boosts", "cmd_world"),
+    ("Ladder", "The top ten here", "cmd_top"),
+    ("Titles", "Earned, worn, and how far off the rest are", "cmd_title"),
+    ("Alignment", "Pick a law and a moral, once a day", "cmd_align"),
+    ("Lore", "The places on the map", "cmd_lore"),
+    ("Rules", "How the game works", "cmd_rules"),
+)
+
+
+class IdleThreadOnly(commands.CheckFailure):
+    """Raised by the feed-thread gate for a command that isn't the game's.
+    The gate has already replied; on_command_error swallows this."""
 
 ALIGN_EFFECTS = (
     "**Good** +10% item power in battle, prayers with other good players, rarer critical strikes.\n"
@@ -182,6 +242,124 @@ def _clean_class(text: str) -> "str | None":
     return text if len(text) <= CLASS_MAX and _CLASS_RE.fullmatch(text) else None
 
 
+def _off_embed() -> discord.Embed:
+    return emb(
+        "💤 Idle RPG Is Off",
+        "No idle channel is set here. An admin can turn the game on with `!settings-channel idle #channel`.",
+        C_GREY,
+    )
+
+
+# ── the cards' components ────────────────────────────────────────────────
+# A menu on a card the command already sent, so a player can move on from
+# the sheet or the help without typing the next command. Picks run the
+# subcommand's callback with the card's ctx, so a pick and its typed form
+# can't drift. The card keeps its components until the view times out.
+
+class _CardView(ui.View):
+    def __init__(self, cog, timeout: float):
+        super().__init__(timeout=timeout)
+        self.cog = cog
+        self.message = None
+
+    async def on_timeout(self) -> None:
+        if self.message is None:
+            return
+        try:
+            await self.message.edit(view=None)
+        except discord.HTTPException:
+            pass  # cosmetic — the card stays, the menu is dead either way
+
+
+class _ActionSelect(ui.Select):
+    def __init__(self):
+        super().__init__(
+            placeholder="Do something…", min_values=1, max_values=1,
+            options=[discord.SelectOption(label=label, description=text, value=attr) for label, text, attr in _ACTIONS],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        view: _ActionView = self.view  # type: ignore[assignment]
+        # Re-rendering the same view clears the pick: it reads as a button press, not a setting.
+        await interaction.response.edit_message(view=view)
+        await view.cog._act(view.ctx, self.values[0], view.target)
+
+
+class _ActionView(_CardView):
+    """The sheet's menu. Shop, travel and alignment act on the invoker's
+    character, so only the invoker may use it; `target` is whose sheet
+    Refresh shows again."""
+
+    def __init__(self, cog, ctx, target):
+        super().__init__(cog, MENU_TIMEOUT)
+        self.ctx = ctx
+        self.target = target
+        self.add_item(_ActionSelect())
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.ctx.author.id:
+            return True
+        await interaction.response.send_message(NOT_YOURS, ephemeral=True)
+        return False
+
+
+class _TopicSelect(ui.Select):
+    def __init__(self):
+        super().__init__(
+            placeholder="Read more about…", min_values=1, max_values=1,
+            options=[discord.SelectOption(label=topic.title(), value=topic) for topic in _RULES_TOPICS],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        topic = self.values[0]
+        # Private: the card is shared, and a topic is one reader's question.
+        await interaction.response.send_message(embed=emb(f"📖 Idle RPG — {topic.title()}", _RULES_TOPICS[topic], C_BLUE), ephemeral=True)
+
+
+class _JoinModal(ui.Modal, title="Join the Idle RPG"):
+    class_name = ui.TextInput(label="Your class — invent one", placeholder="Drunken Bard, Tax Wizard…", max_length=CLASS_MAX)
+
+    def __init__(self, cog):
+        super().__init__()
+        self.cog = cog
+
+    async def on_submit(self, interaction: discord.Interaction):
+        async def send(embed: discord.Embed, *, error: bool = False) -> None:
+            if interaction.response.is_done():
+                await interaction.followup.send(embed=embed, ephemeral=error)
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=error)
+        await self.cog._join(interaction.guild, interaction.user, str(self.class_name.value), interaction.channel, send)
+
+
+class _JoinButton(ui.Button):
+    def __init__(self):
+        super().__init__(label="Join", style=discord.ButtonStyle.success, emoji="⚔️")
+
+    async def callback(self, interaction: discord.Interaction):
+        cog = self.view.cog
+        guild = interaction.guild
+        char = cog._chars(guild.id).get(interaction.user.id)
+        if char is not None and char["claimed"]:
+            feed = f" Your feed is <#{char['thread_id']}>." if char["thread_id"] else ""
+            await interaction.response.send_message(embed=emb("❌ Already Adventuring", f"You already have a character here.{feed}", C_RED), ephemeral=True)
+            return
+        if cog._channel(guild) is None:
+            await interaction.response.send_message(embed=_off_embed(), ephemeral=True)
+            return
+        await interaction.response.send_modal(_JoinModal(cog))
+
+
+class _HelpView(_CardView):
+    """The help card's menu: anyone may read a topic or join — the card is
+    the one players pass on."""
+
+    def __init__(self, cog):
+        super().__init__(cog, HELP_TIMEOUT)
+        self.add_item(_TopicSelect())
+        self.add_item(_JoinButton())
+
+
 class IdleCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -195,6 +373,14 @@ class IdleCog(commands.Cog):
         self._rename_due: set = set()
         self._renamed_at: dict = {}
         self._board_at: dict = {}
+        # Tests hand in a bare namespace and call the callbacks directly.
+        if isinstance(bot, commands.Bot):
+            for name, attr, aliases in _TOP_ALIASES:
+                # cog=self is load-bearing (see ShopCog): without it discord.py
+                # binds `self` to the Context.
+                alias = commands.Command(getattr(self, attr).callback, name=name, aliases=list(aliases))
+                alias.cog = self
+                bot.add_command(alias)
 
     async def cog_load(self):
         # Started here (not __init__) so tests constructing the cog don't spawn the loop.
@@ -202,6 +388,24 @@ class IdleCog(commands.Cog):
 
     def cog_unload(self):
         self._loop.cancel()
+        if isinstance(self.bot, commands.Bot):
+            for name, _attr, _aliases in _TOP_ALIASES:
+                self.bot.remove_command(name)
+
+    async def bot_check(self, ctx: commands.Context) -> bool:
+        """Bot-wide gate (a Cog special method, registered for every
+        command): inside a character's feed thread only the idle game runs —
+        the thread is that story, not a second copy of the channel."""
+        if ctx.command is None or ctx.guild is None or not self._is_feed_thread(ctx.guild.id, ctx.channel.id):
+            return True
+        name = ctx.command.qualified_name
+        if name.split(" ")[0] == "idle" or name in FEED_THREAD_COMMANDS:
+            return True
+        try:
+            await _wrong_channel_reply(ctx, FEED_THREAD_ONLY, title="⚔️ Idle Feed")
+        except discord.HTTPException:
+            pass  # can't reply here (thread locked, no send rights) — still deny
+        raise IdleThreadOnly()
 
     # ── lookups ──────────────────────────────────────────────────────────
 
@@ -221,6 +425,34 @@ class IdleCog(commands.Cog):
     def _channel(guild):
         cid = get_guild_cfg(guild.id).get("idle_channel")
         return guild.get_channel(cid) if cid else None
+
+    @staticmethod
+    def _is_feed_thread(guild_id: int, channel_id: int) -> bool:
+        return any(char.get("thread_id") == channel_id for char in state.idle_characters.get(guild_id, {}).values())
+
+    def in_idle_context(self, ctx) -> bool:
+        """The idle channel or one of its feed threads — where `!help` and a
+        bare `!shop` mean the game's (UtilityCog and ShopCog ask)."""
+        if ctx.guild is None:
+            return False
+        channel = self._channel(ctx.guild)
+        return (channel is not None and ctx.channel.id == channel.id) or self._is_feed_thread(ctx.guild.id, ctx.channel.id)
+
+    async def shop_from(self, ctx) -> None:
+        """A bare `!shop …` in idle context, handed over by ShopCog: the words
+        after the command are the market's `item` and `arg`."""
+        parts = (getattr(ctx.message, "content", "") or "").split(None, 2)
+        item = parts[1] if len(parts) > 1 else None
+        arg = parts[2] if len(parts) > 2 else None
+        await self.cmd_shop.callback(self, ctx, item, arg=arg)
+
+    async def _act(self, ctx, action: str, target) -> None:
+        """A pick from the sheet's menu: the subcommand, run bare."""
+        command = getattr(self, action)
+        if action == "cmd_status":
+            await command.callback(self, ctx, member=target)
+        else:
+            await command.callback(self, ctx)
 
     @staticmethod
     def _namer(guild):
@@ -515,9 +747,12 @@ class IdleCog(commands.Cog):
         except discord.HTTPException as e:
             log.warning("idle: map post to %s failed (%s)", channel.id, type(e).__name__)
 
-    async def _send_with_map(self, ctx, embed: discord.Embed, highlight=()) -> None:
+    async def _send_with_map(self, ctx, embed: discord.Embed, highlight=(), view: "_CardView | None" = None) -> None:
         embed.set_image(url=f"attachment://{MAP_FILENAME}")
-        await ctx.send(embed=embed, file=await self._map_file(ctx.guild, highlight))
+        extra = {"view": view} if view is not None else {}
+        message = await ctx.send(embed=embed, file=await self._map_file(ctx.guild, highlight), **extra)
+        if view is not None:
+            view.message = message
 
     @staticmethod
     async def _send(dest, lines: list, ping=()) -> None:
@@ -769,11 +1004,7 @@ class IdleCog(commands.Cog):
             await ctx.send(embed=emb("❌ Server Only", "The idle RPG is played in a server.", C_RED))
             return False
         if need_channel and self._channel(ctx.guild) is None:
-            await ctx.send(embed=emb(
-                "💤 Idle RPG Is Off",
-                "No idle channel is set here. An admin can turn the game on with `!settings-channel idle #channel`.",
-                C_GREY,
-            ))
+            await ctx.send(embed=_off_embed())
             return False
         return True
 
@@ -878,7 +1109,7 @@ class IdleCog(commands.Cog):
 
     @commands.group(name="idle", aliases=["irpg"], invoke_without_command=True)
     async def cmd_idle(self, ctx: commands.Context):
-        """!idle join|status|items|map|travel|shop|gamble|top|align|duel|world|bless|title|lore|quest|prestige|leave|rules"""
+        """!idle join|status|items|map|travel|shop|gamble|top|align|duel|world|bless|title|lore|quest|prestige|leave|rules — each also works bare (`!map`)"""
         if not await self._ready(ctx):
             return
         char = self._chars(ctx.guild.id).get(ctx.author.id)
@@ -893,38 +1124,49 @@ class IdleCog(commands.Cog):
             return
         now = int(time.time())
         self._seen(ctx.guild, ctx.author.id, char, now)
-        await self._send_with_map(ctx, self._sheet(ctx.guild, ctx.author.id, char, now), highlight=(ctx.author.id,))
+        await self._send_with_map(ctx, self._sheet(ctx.guild, ctx.author.id, char, now), highlight=(ctx.author.id,),
+                                  view=_ActionView(self, ctx, ctx.author))
 
     @cmd_idle.command(name="join")
     async def cmd_join(self, ctx: commands.Context, *, class_name: str = None):
         if not await self._ready(ctx, need_channel=True):
             return
-        gid, uid = ctx.guild.id, ctx.author.id
+
+        async def send(embed: discord.Embed, *, error: bool = False) -> None:
+            await ctx.send(embed=embed)
+        await self._join(ctx.guild, ctx.author, class_name, ctx.channel, send)
+
+    async def _join(self, guild, member, class_name: "str | None", here, send) -> None:
+        """`!idle join` and the help card's Join button. `send(embed, error=)`
+        is the reply path — a refusal is flagged so the button can answer it
+        privately; `here` is where the reply lands, so the join news isn't
+        posted twice under it."""
+        gid, uid = guild.id, member.id
         chars = self._chars(gid)
         waiting = chars.get(uid)
         if waiting is not None and waiting["claimed"]:
             feed = f" Your feed is <#{waiting['thread_id']}>." if waiting["thread_id"] else ""
-            await ctx.send(embed=emb("❌ Already Adventuring", f"You already have a character here.{feed}", C_RED))
+            await send(emb("❌ Already Adventuring", f"You already have a character here.{feed}", C_RED), error=True)
             return
         if not class_name:
             head = (
                 f"A level {waiting['level']} {waiting['class']} has been playing in your name. Name a class to make it yours: "
                 if waiting is not None else "Say what you are: "
             )
-            await ctx.send(embed=emb(
+            await send(emb(
                 "❌ Pick a Class",
                 f"{head}`!idle join <class>`. It's yours to invent, up to {CLASS_MAX} characters — "
                 "`!idle join Drunken Bard`, `!idle join Tax Wizard`.",
                 C_RED,
-            ))
+            ), error=True)
             return
         class_name = _clean_class(class_name)
         if class_name is None:
-            await ctx.send(embed=emb(
+            await send(emb(
                 "❌ Pick a Class",
                 f"A class is up to {CLASS_MAX} characters: letters, digits, spaces, `'` and `-`.",
                 C_RED,
-            ))
+            ), error=True)
             return
 
         now = int(time.time())
@@ -932,45 +1174,45 @@ class IdleCog(commands.Cog):
             state.idle_optouts[gid].discard(uid)
             await persistence.delete_idle_optout(gid, uid)
         if waiting is not None:
-            await self._claim(ctx, waiting, class_name, now)
+            await self._claim(guild, uid, waiting, class_name, now, send)
             return
         char = rpg.new_character(class_name, now)
         rpg.ensure_position(char, self.rng)
         chars[uid] = char   # claimed before the first await: a second !idle join sees it
         await persistence.save_idle_character(gid, uid)
-        channel = self._channel(ctx.guild)
-        thread = await self._create_thread(ctx.guild, channel, uid, char)
-        name = self._namer(ctx.guild)(uid)
+        channel = self._channel(guild)
+        thread = await self._create_thread(guild, channel, uid, char)
+        name = self._namer(guild)(uid)
         first = format_duration(rpg.ttl(0))
         if thread is not None:
             where = f"Your story unfolds in {thread.mention}."
         else:
             where = f"I couldn't open your feed thread — check that I have **Create Public Threads** in {channel.mention}. You're in the game regardless."
-        await ctx.send(embed=emb(
+        await send(emb(
             "⚔️ A New Adventurer",
             f"{name} the {class_name} sets out. Level 1 is {first} away.\n{where}",
             C_GREEN,
         ))
-        if not self._in_idle_channel(ctx):
+        if here.id != channel.id:
             await self._send(channel, [f"🆕 {name} the {class_name} has joined the realm. Level 1 in {first}."])
 
-    async def _claim(self, ctx, char: dict, class_name: str, now: int) -> None:
+    async def _claim(self, guild, uid: int, char: dict, class_name: str, now: int, send) -> None:
         """`!idle join <class>` by a member the bot enrolled: the character
         keeps everything it has earned, takes the class for free, and gets
         its feed thread — the player asked, so being added to it is fair."""
-        gid, uid = ctx.guild.id, ctx.author.id
+        gid = guild.id
         char["claimed"], char["class"] = True, class_name   # before the first await: a second join sees "claimed"
-        self._seen(ctx.guild, uid, char, now)
+        self._seen(guild, uid, char, now)
         await persistence.save_idle_character(gid, uid)
-        channel = self._channel(ctx.guild)
-        thread = await self._create_thread(ctx.guild, channel, uid, char)
+        channel = self._channel(guild)
+        thread = await self._create_thread(guild, channel, uid, char)
         where = (
             f"Your story unfolds in {thread.mention}." if thread is not None
             else f"I couldn't open your feed thread — check that I have **Create Public Threads** in {channel.mention}."
         )
-        await ctx.send(embed=emb(
+        await send(emb(
             "⚔️ Character Claimed",
-            f"{self._namer(ctx.guild)(uid)} takes up their level {char['level']} adventurer as a **{class_name}** — "
+            f"{self._namer(guild)(uid)} takes up their level {char['level']} adventurer as a **{class_name}** — "
             f"items, gold and all.\n{where}",
             C_GREEN,
         ))
@@ -989,7 +1231,8 @@ class IdleCog(commands.Cog):
         now = int(time.time())
         if target.id == ctx.author.id:
             self._seen(ctx.guild, target.id, char, now)
-        await self._send_with_map(ctx, self._sheet(ctx.guild, target.id, char, now), highlight=(target.id,))
+        await self._send_with_map(ctx, self._sheet(ctx.guild, target.id, char, now), highlight=(target.id,),
+                                  view=_ActionView(self, ctx, target))
 
     @cmd_idle.command(name="map")
     async def cmd_map(self, ctx: commands.Context):
@@ -1653,7 +1896,8 @@ class IdleCog(commands.Cog):
         else:
             # Shown to players too: they are the ones who pass this card on.
             start = "▶️ **New here?** `!idle join <class>` starts a character — the class is yours to invent.\n\n"
-        await ctx.send(embed=emb(
+        view = _HelpView(self)
+        view.message = await ctx.send(embed=emb(
             "📖 Idle RPG",
             "**Do nothing. Level up.**\n\n"
             "⏳ Your character levels on a timer while you're online.\n"
@@ -1661,10 +1905,10 @@ class IdleCog(commands.Cog):
             "📜 High-level players get sent on quests for a big shortcut.\n\n"
             f"{start}"
             "`!idle status` · `items` · `map` · `travel` · `shop` · `gamble` · `top` · `align` · `duel <name>`\n"
-            "`!idle world` · `bless` · `title` · `lore` · `quest` · `prestige`\n"
-            f"More: `!idle rules <{'|'.join(_RULES_TOPICS)}>`",
+            "`!idle world` · `bless` · `title` · `lore` · `quest` · `prestige` — each works bare too (`!map`, `!travel`).\n"
+            f"More: pick a topic below, or `!idle rules <{'|'.join(_RULES_TOPICS)}>`",
             C_BLUE,
-        ))
+        ), view=view)
 
     # ── !idle admin ──────────────────────────────────────────────────────
 

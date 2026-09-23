@@ -524,7 +524,8 @@ class EventsCog(commands.Cog):
         from src.level_unlocks import LevelLocked
         from src.permissions import PermissionDenied
         from src.gambling.session import GamblingThreadOnly
-        if isinstance(error, (LevelLocked, PermissionDenied, GamblingThreadOnly)):
+        from src.cogs.idle_cog import IdleThreadOnly
+        if isinstance(error, (LevelLocked, PermissionDenied, GamblingThreadOnly, IdleThreadOnly)):
             return  # gate already sent its own message (or is hidden-silent)
         if isinstance(error, commands.CheckFailure):
             cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}

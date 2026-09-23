@@ -276,6 +276,11 @@ class UtilityCog(commands.Cog):
 
     @commands.command(name="help", aliases=["h"])
     async def cmd_help(self, ctx: commands.Context):
+        # The idle channel and its feed threads get the game's card instead.
+        idle = getattr(self.bot, "get_cog", lambda _name: None)("IdleCog")
+        if idle is not None and idle.in_idle_context(ctx):
+            await idle.cmd_rules.callback(idle, ctx)
+            return
         from src.level_unlocks import fmt_line
         gid = ctx.guild.id if ctx.guild else 0
         uid = ctx.author.id
