@@ -1072,8 +1072,9 @@ tables from migrations 0070–0077.
   rolls are within a tenth of the bigger side, and the stakes are clock and
   gold. `biome_at` reads the regions drawn on the map art; the Rat's
   everywhere-at-rarity-100 entry is what keeps every pool non-empty, so
-  don't remove it. Frequency is `Pace.mob_fights_per_day` (8 lively, 2
-  classic — their bot runs ~90 a day, which a timer game can't absorb).
+  don't remove it. Frequency is `Pace.mob_fights_per_day` (90 lively,
+  their own rate, 30 classic — affordable only because a fight spends hit
+  points rather than clock; see Hit points).
   The gold numbers were set by simulation (see Hit points), the dangerous biomes pay more
   for a worse win rate, and the death tax (1/12 of the purse) is capped at
   5 × level so a saver isn't bled. Re-run that sum before changing them. A
@@ -1112,7 +1113,7 @@ tables from migrations 0070–0077.
 - **Pace.** The IRC odds (a godsend a week) assume dozens of players for
   months; with a handful nothing ever happens. `idlerpg.PACES` holds two
   sets: `lively` (the default — a godsend and a calamity about daily per
-  player, a Hand of God every five days, monster fights eight times a day,
+  player, a Hand of God every five days, monster fights ninety times a day,
   team battles from four players) and `classic`. A guild picks with
   `!settings idle-pace`; the engine functions default to `CLASSIC` so the
   rules tests pin the original numbers, and the cog passes the guild's.
@@ -1152,7 +1153,15 @@ tables from migrations 0070–0077.
   nobody here to accept it. The goal from `nearest_biome_point` is always
   outside every market ring, and the steering only clears once the
   character is both in the right country and out of a ring — stopping
-  inside one would park it where nothing spawns. This is the only errand
+  inside one would park it where nothing spawns. From there the hunter
+  **keeps to the country**: a wander step that would leave it, or enter a
+  ring, isn't taken (`hunting_ground`). The nearest point of a country is
+  on its border, and a free wander from there drifted out within minutes
+  and spent most of the hunt where the quarry never spawns. A hunter found
+  outside with no `hunt_x` (carried to a town after a fall, back from a
+  journey or `!idle travel`) is pointed back by `move_players` — that
+  rule, not a migration, is what recovers a hunter left outside by an
+  older version. This is the only errand
   that works below `QUEST_MIN_LEVEL` or alone, so don't gate it like the
   party journeys.
 - **The bag, and what it costs to carry.** A find worse than what's worn

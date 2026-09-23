@@ -1167,6 +1167,33 @@ def test_hunting_draws_the_quarry_out_and_a_kill_anywhere_counts(monkeypatch):
     assert plain["hunt_killed"] < drawn_out
 
 
+def test_a_hunter_keeps_to_the_quarry_s_country():
+    # (170, 320) is the corner of Haunted country: a step west or south leaves it.
+    char = _wanderer(hunt_mob="Zombie", hunt_count=5)
+    char["x"], char["y"] = 170, 320
+    chars = {1: char}
+    rpg.move_players(chars, rpg.new_quest(), _Walk([(-1, -1)] * 100, random_=0.5), _name, NOW, 100)
+    assert (char["x"], char["y"]) == (170, 320)      # every step out was refused
+    rpg.move_players(chars, rpg.new_quest(), _Walk([(1, 1)] * 5, random_=0.5), _name, NOW, 5)
+    assert (char["x"], char["y"]) == (175, 325)      # steps inside are taken as usual
+    assert char["hunt_x"] is None                    # still hunting, not walking
+
+
+def test_a_hunter_found_outside_its_country_is_steered_back():
+    # A hunt from before the steering held, or a character carried to a town
+    # after a fall: no hunt_x, standing in Caves country with Zombies to find.
+    char = _wanderer(hunt_mob="Zombie", hunt_count=5)
+    char["x"], char["y"] = 100, 300
+    chars = {1: char}
+    notes = rpg.move_players(chars, rpg.new_quest(), _Walk(random_=0.0), _name, NOW, 1)
+    assert [n.text for n in notes] == ["📜 P1 has strayed from the hunt and heads back to Haunted country for the Zombies."]
+    assert char["hunt_x"] is not None and (char["x"], char["y"]) == (101, 301)
+    notes = rpg.move_players(chars, rpg.new_quest(), _Walk(random_=0.0), _name, NOW, 60)
+    assert any("reached Haunted country" in n.text for n in notes)
+    assert char["hunt_x"] is None and rpg.hunting_ground(char, char["x"], char["y"])
+    assert not any("strayed" in n.text for n in notes)   # said once, when it set off
+
+
 def test_a_finished_hunt_is_reported_by_the_encounter_that_finished_it(monkeypatch):
     monkeypatch.setattr(rpg, "fight_monster", lambda c, p, hp, rng: (1, True, ""))
     monkeypatch.setattr(rpg, "beast_named", lambda kind, rng: ("Normal", kind, 1.0, 1, 1))

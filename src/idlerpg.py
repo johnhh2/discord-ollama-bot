@@ -1834,6 +1834,12 @@ def hunt_biomes(char: dict) -> tuple:
     return next((b[4] for b in MOB_TYPES if b[0] == char.get("hunt_mob")), ())
 
 
+def hunting_ground(char: dict, x: int, y: int) -> bool:
+    """Whether (x, y) is somewhere the quarry can be met: its country, and
+    out of every market ring (towns are safe ground, so nothing spawns)."""
+    return biome_at(x, y) in hunt_biomes(char) and market_in_reach({"x": x, "y": y}) is None
+
+
 def clear_hunt(char: dict, now: int) -> None:
     char.update(hunt_mob=None, hunt_count=0, hunt_killed=0, hunt_x=None, hunt_y=None, hunt_at=now)
 
@@ -2179,19 +2185,37 @@ def move_players(chars: dict, quest: dict, rng, name: NameFn, now: int, seconds:
                         char["travel_to"] = None
                         notes.append(Note((uid,), f"🧭 {name(uid)} arrived {'in' if town in TOWNS else 'at'} {town}."))
                 continue
-            if char.get("hunt_x") is not None:
-                # Walking to the quarry's country, the same way and at the
-                # same pace as a traveller. The steering stops at the border,
-                # not at the point: from there they wander it and hunt.
-                if rng.random() < JOURNEY_STEP_CHANCE:
-                    char["x"] = _toward(char["x"], char["hunt_x"])
-                    char["y"] = _toward(char["y"], char["hunt_y"])
-                    if biome_at(char["x"], char["y"]) in hunt_biomes(char) and market_in_reach(char) is None:
-                        char["hunt_x"] = char["hunt_y"] = None
-                        notes.append(Note((uid,), f"📜 {name(uid)} has reached {biome_at(char['x'], char['y'])} "
-                                                  f"country and starts looking for {char['hunt_mob']}s."))
-                continue
-            char["x"], char["y"] = _wander(char["x"], rng), _wander(char["y"], rng)
+            if hunting(char):
+                if char.get("hunt_x") is None and not hunting_ground(char, char["x"], char["y"]):
+                    # Strayed — carried to a town after a fall, back from a
+                    # journey or a `!idle travel` — so point it back. This
+                    # is also what recovers a hunter left outside by a reboot
+                    # or an older rule: no row is marked, the ground is.
+                    char["hunt_x"], char["hunt_y"] = nearest_biome_point(char, hunt_biomes(char))
+                    notes.append(Note((uid,), f"📜 {name(uid)} has strayed from the hunt and heads back to "
+                                              f"{biome_at(char['hunt_x'], char['hunt_y'])} country for the {char['hunt_mob']}s."))
+                if char.get("hunt_x") is not None:
+                    # Walking to the quarry's country, the same way and at the
+                    # same pace as a traveller. The steering stops at the border,
+                    # not at the point: from there they wander it and hunt.
+                    if rng.random() < JOURNEY_STEP_CHANCE:
+                        char["x"] = _toward(char["x"], char["hunt_x"])
+                        char["y"] = _toward(char["y"], char["hunt_y"])
+                        if hunting_ground(char, char["x"], char["y"]):
+                            char["hunt_x"] = char["hunt_y"] = None
+                            notes.append(Note((uid,), f"📜 {name(uid)} has reached {biome_at(char['x'], char['y'])} "
+                                                      f"country and starts looking for {char['hunt_mob']}s."))
+                    continue
+                # On the hunt the wander keeps to the country: a step out
+                # of it, or into a market ring, isn't taken. The nearest
+                # point of a country is on its border, and from there a
+                # free wander drifted out within minutes and spent most of
+                # the hunt where the quarry never spawns.
+                x, y = _wander(char["x"], rng), _wander(char["y"], rng)
+                if hunting_ground(char, x, y):
+                    char["x"], char["y"] = x, y
+            else:
+                char["x"], char["y"] = _wander(char["x"], rng), _wander(char["y"], rng)
             spot = (char["x"], char["y"])
             held = squares.get(spot)
             if held is not None and not held["battled"]:
