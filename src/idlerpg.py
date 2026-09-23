@@ -2098,6 +2098,19 @@ def travel_eta_secs(char: dict, town: str) -> int:
     return int(travel_steps(char, town) / JOURNEY_STEP_CHANCE)
 
 
+def walking_to(uid: int, char: dict, quest: dict) -> "tuple[int, int] | None":
+    """Where the character is steering — a journey's current waypoint, the
+    place of an `!idle travel`, or a hunt's country while still walking
+    there — or None while it wanders. Same precedence as move_players."""
+    if quest.get("kind") == "journey" and uid in (quest.get("members") or ()):
+        return tuple(quest["p1"] if quest.get("stage") == 1 else quest["p2"])
+    if char.get("travel_to") in LANDMARKS:
+        return LANDMARKS[char["travel_to"]]
+    if char.get("hunt_x") is not None:
+        return (char["hunt_x"], char["hunt_y"])
+    return None
+
+
 def collision_fight(uid: int, opp_uid: int, chars: dict, rng, name: NameFn, now: int) -> "list[Note]":
     me, opp = chars[uid], chars[opp_uid]
     my_sum, opp_sum = battle_sum(me), battle_sum(opp)

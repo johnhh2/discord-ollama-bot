@@ -639,6 +639,38 @@ async def test_the_tick_walks_everyone_online_a_minute_and_leaves_the_paused_whe
     assert (sleeper["x"], sleeper["y"]) == (300, 300)
 
 
+async def test_the_map_draws_only_the_viewer_s_own_route(monkeypatch):
+    cog, guild, _idle = _world()
+    drawn = []
+
+    def _render(players, **kwargs):
+        drawn.append(kwargs["routes"])
+        return b"PNG"
+
+    monkeypatch.setattr(_idle_cog, "render_map", _render)
+    alice = _spawn(ALICE, x=10, y=20, travel_to="Velvragh")
+    _spawn(BOB, x=100, y=100, travel_to="Denmark")
+
+    await cog.cmd_map.callback(cog, _ctx(guild))
+    assert drawn[-1] == [(10, 20, *rpg.LANDMARKS["Velvragh"])]
+    # Bob's sheet: neither his route (his to know) nor Alice's (not her picture).
+    await cog.cmd_status.callback(cog, _ctx(guild), member=guild.get_member(BOB))
+    assert drawn[-1] == []
+
+    # A hunt still walking to its country is a route too…
+    alice["travel_to"], alice["hunt_mob"], alice["hunt_count"] = None, "Crab", 3
+    alice["hunt_x"], alice["hunt_y"] = 0, 60
+    await cog.cmd_status.callback(cog, _ctx(guild))
+    assert drawn[-1] == [(10, 20, 0, 60)]
+    # …and a journey quest's current waypoint outranks it, as it does in move_players.
+    _state.idle_quests[GID] = {**rpg.new_quest(), "members": [ALICE], "description": "walk", "kind": "journey",
+                               "stage": 1, "p1": [35, 40], "p2": [410, 80]}
+    await cog.cmd_quest.callback(cog, _ctx(guild))
+    assert drawn[-1] == [(10, 20, 35, 40)]
+    await cog.cmd_quest.callback(cog, _ctx(guild, BOB))
+    assert drawn[-1] == []                    # Bob is highlighted with the party, but it isn't his route
+
+
 async def test_a_character_from_before_the_map_is_placed_on_the_first_tick():
     cog, guild, _idle = _world()
     char = _spawn(left=50_000)

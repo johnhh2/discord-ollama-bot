@@ -724,9 +724,9 @@ class IdleCog(commands.Cog):
             if thread is not None:
                 await self._send(thread, lines)
 
-    async def _map_file(self, guild, highlight=()) -> discord.File:
-        """The realm as a PNG: every character, the landmarks, and a running
-        journey's waypoints. Drawn off the event loop."""
+    async def _map_file(self, guild, highlight=(), viewer=None) -> discord.File:
+        """The realm as a PNG: every character, the landmarks, a running
+        journey's waypoints, and the viewer's own route. Drawn off the event loop."""
         players = []
         for uid, char in self._chars(guild.id).items():
             if char.get("x") is None:
@@ -735,12 +735,13 @@ class IdleCog(commands.Cog):
             players.append((uid, member.display_name if member else str(uid), char["x"], char["y"]))
         quest = self._quest(guild.id)
         journey = dict(quest) if quest.get("kind") == "journey" else None
-        # Only the travellers this picture is about: everyone's lines would bury the map.
+        # Only the viewer's own route, and only on a picture of their character:
+        # where somebody else is walking is theirs to know.
         routes = []
-        for uid in highlight:
-            char = self._chars(guild.id).get(uid)
-            if char and char.get("travel_to") in rpg.LANDMARKS and char.get("x") is not None:
-                routes.append((char["x"], char["y"], *rpg.LANDMARKS[char["travel_to"]]))
+        char = self._chars(guild.id).get(viewer) if viewer in highlight else None
+        goal = rpg.walking_to(viewer, char, quest) if char and char.get("x") is not None else None
+        if goal is not None:
+            routes.append((char["x"], char["y"], *goal))
         png = await asyncio.to_thread(render_map, players, highlight=tuple(highlight), quest=journey, routes=routes)
         return discord.File(io.BytesIO(png), filename=MAP_FILENAME)
 
@@ -753,7 +754,7 @@ class IdleCog(commands.Cog):
     async def _send_with_map(self, ctx, embed: discord.Embed, highlight=(), view: "_CardView | None" = None) -> None:
         embed.set_image(url=f"attachment://{MAP_FILENAME}")
         extra = {"view": view} if view is not None else {}
-        message = await ctx.send(embed=embed, file=await self._map_file(ctx.guild, highlight), **extra)
+        message = await ctx.send(embed=embed, file=await self._map_file(ctx.guild, highlight, viewer=ctx.author.id), **extra)
         if view is not None:
             view.message = message
 
@@ -1242,7 +1243,7 @@ class IdleCog(commands.Cog):
         if not await self._ready(ctx):
             return
         # The picture alone: an embed would shrink it to the embed's width.
-        await ctx.send(file=await self._map_file(ctx.guild, highlight=(ctx.author.id,)))
+        await ctx.send(file=await self._map_file(ctx.guild, highlight=(ctx.author.id,), viewer=ctx.author.id))
 
     @cmd_idle.command(name="lore")
     async def cmd_lore(self, ctx: commands.Context, *, where: str = None):

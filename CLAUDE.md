@@ -1048,6 +1048,12 @@ tables from migrations 0070–0077.
   `last_seen` write. The map image appears on `!idle` / `!idle status`,
   `!idle map`, `!idle quest` (journeys) and under a journey's announcement
   (`Note.show_map`); `!profile` shows the character and its coordinates.
+  A route line (`walking_to`: a journey's current waypoint, an `!idle
+  travel`, or a hunt's walk to its country) is drawn for the **viewer's
+  own character only**, and only on a picture of it — `!idle status
+  @other` draws neither theirs nor yours; where somebody else is walking
+  is theirs to know. Channel posts (`_post_map`) have no viewer, so no
+  routes.
 - **Hit points.** sizzlorox's, and the reason ninety monster fights a day is
   playable: a character carries its wounds between fights (`hp`, mended
   `max_hp/HP_REGEN_DIVISOR` a minute by the tick), so a fight spends blood
