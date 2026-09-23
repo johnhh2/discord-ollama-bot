@@ -253,6 +253,23 @@ async def count_pvp_wins_in_guild(uid: int, guild_id: int, bot_user_id: int) -> 
     return int(row[0]) if row and row[0] is not None else 0
 
 
+async def load_recent_chess_reports(uid: int, guild_id: int, limit: int = 25) -> list[dict]:
+    """The user's most recent finished games in this guild, newest first —
+    what the `!chess view` / `pgn` pickers offer."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT report_id, white_id, black_id, winner_id, result, finished_at "
+            "FROM chess_reports WHERE guild_id=%s AND (white_id=%s OR black_id=%s) "
+            "ORDER BY report_id DESC LIMIT %s",
+            (int(guild_id), int(uid), int(uid), int(limit)),
+        )
+        rows = await cur.fetchall()
+    return [
+        {"report_id": r[0], "white_id": r[1], "black_id": r[2], "winner_id": r[3], "result": r[4], "finished_at": r[5]}
+        for r in rows or []
+    ]
+
+
 async def load_chess_report(report_id: int) -> dict | None:
     async with with_cursor() as cur:
         await cur.execute(

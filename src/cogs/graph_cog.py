@@ -6,6 +6,8 @@ import discord
 from discord.ext import commands, tasks
 
 from src.helpers import emb, C_BLUE, C_GOLD, C_RED
+from src.graph_hub import GraphHub
+from src.panel import open_panel
 from src.permissions import requires_perm, is_admin
 from src.economy import snapshot_all
 from src.graph_series import (
@@ -150,32 +152,12 @@ class GraphCog(commands.Cog):
     @commands.group(name="graph", invoke_without_command=True)
     @requires_perm
     async def cmd_graph(self, ctx: commands.Context):
-        lines = [
-            "**Subcommands:**",
-            "`!graph balance [@user]` — Wallet balance over the last 2 weeks",
-            "`!graph economy` — Total economy (wallet + savings + property) over the last 2 weeks",
-            "`!graph assets [@user]` — Property portfolio value and lifetime revenue",
-            "`!graph crime [@user]` — Coins gained/lost via !steal and !mug",
-            "`!graph gambling [@user]` — Net P/L from games and gambling",
-            "`!graph levels [@user]` — Level-ups per day in this server",
-            "`!graph commands` — Command usage by category over the last 2 weeks",
-            "`!graph server` — Daily message and command counts over the last 2 weeks",
-            "`!graph memory` — Bot memory usage (MB) over the last 2 weeks",
-            "`!graph ping` — Discord gateway ping (ms) over the last 2 weeks",
-            "`!graph minecraft` — Minecraft ping over 2 weeks (hourly avg for the last 7 days, daily avg beyond, min/max band, 0 = downtime) with daily bars for peak players, joins, and player-hours",
-            "`!graph ai` — Daily AI response count and uptime over the last 2 weeks",
-        ]
-        if is_admin(ctx):
-            lines.append("`!graph wallet|savings|total [N|@users…]` — per-user breakout (bot admin)")
-            lines.append("`!graph balance|economy all [N|@users…]` — same, via the user-facing names")
-        lines.extend([
-            "",
-            "**Combine compatible graphs** by listing multiple names:",
-            "`!graph balance crime [@user]` — overlay coins-group graphs",
-            "`!graph commands server ai` — grouped stacked bars for counts-group graphs",
-            "Coins, counts, MB, and ms graphs cannot be mixed (different y-axes).",
-        ])
-        await ctx.send(embed=emb("📊 Graph", "\n".join(lines), C_GOLD))
+        """Bare: the panel (src/graph_hub.py) — every graph as a pick; the
+        typed subcommands below are what its picks forward to."""
+        if ctx.guild is None:
+            await ctx.send(embed=emb("📊 Graph", "Usage: `!graph <balance|economy|assets|crime|gambling|commands|server|ai|memory|ping|minecraft> [@user]`", C_GOLD))
+            return
+        await open_panel(ctx, GraphHub(self, ctx))
 
     @cmd_graph.command(name="balance", aliases=["bal"])
     @requires_perm

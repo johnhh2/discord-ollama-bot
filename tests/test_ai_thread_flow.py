@@ -176,16 +176,22 @@ async def test_ask_skips_thread_creation_when_user_is_out_of_tokens(_stub_respon
     )
 
 
-async def test_ask_with_no_question_replies_usage(_stub_respond_and_costs):
+async def test_ask_with_no_question_offers_a_form_with_the_usage(_stub_respond_and_costs, monkeypatch):
     cog = AICog(bot=None)
     asker = FakeMember(uid=1002)
     ctx = _make_ctx_with_text_channel(asker)
+    forms = []
+
+    async def _form(ctx_, **kwargs):
+        forms.append(kwargs)
+        return None  # dismissed
+    monkeypatch.setattr(_ai_cog, "open_form", _form)
 
     await cog.cmd_ask.callback(cog, ctx, question=None)
 
     assert _state.ai_threads == {}
     assert _stub_respond_and_costs == []
-    assert any("Usage" in m for m in ctx.sent_messages)
+    assert "Usage" in forms[0]["description"] and forms[0]["fields"][0].key == "question"
 
 
 async def test_ask_with_ai_off_shows_the_ai_overview(_stub_respond_and_costs, monkeypatch):
@@ -281,10 +287,17 @@ async def test_story_with_no_prompt_emits_usage_with_alias_hint(monkeypatch, _st
         lambda gid: {"story_aliases": {"fanfic": "edgy prompt", "scifi": "hard scifi"}},
     )
 
+    forms = []
+
+    async def _form(ctx_, **kwargs):
+        forms.append(kwargs)
+        return None  # dismissed
+    monkeypatch.setattr(_ai_cog, "open_form", _form)
+
     await cog.cmd_story.callback(cog, ctx, prompt=None)
 
     assert _state.ai_threads == {}
-    sent = " ".join(ctx.sent_messages)
+    sent = forms[0]["description"]
     assert "Usage:" in sent
     assert "!fanfic" in sent and "!scifi" in sent
 

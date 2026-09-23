@@ -30,6 +30,7 @@ from src.guild_config import get_guild_cfg
 from src.features import feature_enabled
 from src.cogs.utility_cog import build_ai_overview_embed
 from src.ai_thread_view import attach_row
+from src.settings_views import Field, open_form
 from src.ai import (
     THREAD_POST_HOOKS,
     enforce_cost, refund_cost, keep_typing,
@@ -118,8 +119,13 @@ class AICog(commands.Cog):
             return
 
         if question is None:
-            await ctx.send("Usage: `!ask <question>`")
-            return
+            values = await open_form(
+                ctx, title="💬 Ask", description="Usage: `!ask <question>` — or fill in the form.",
+                fields=[Field("question", "Your question", kind="paragraph", max_length=1500)], button="Ask…",
+            )
+            if not values or not values.get("question"):
+                return
+            question = values["question"]
 
         if not await check_token_budget_or_notify(ctx, question):
             return
@@ -190,6 +196,7 @@ class AICog(commands.Cog):
         prompt: str,
         system_prompt: str,
         alias_name: str | None,
+        invited_users: list | None = None,
     ):
         """Shared body for !story and any guild-defined story aliases.
 
@@ -202,12 +209,22 @@ class AICog(commands.Cog):
 
         if await check_ai_channel(ctx):
             return
-        if prompt is None:
-            await ctx.send(usage + self._story_alias_hint(ctx, alias_name))
-            return
-
         uid = ctx.author.id
-        invited_users = [m for m in ctx.message.mentions if m.id != uid]
+        if prompt is None:
+            values = await open_form(
+                ctx, title=f"📖 {cmd_label.capitalize()}",
+                description=usage + self._story_alias_hint(ctx, alias_name) + "\n\n…or fill in the form.",
+                fields=[Field("prompt", "What is the story about?", kind="paragraph", max_length=1500),
+                        Field("users", "Co-authors (optional)", kind="users", required=False, max_values=10)],
+                button="Start a story…",
+            )
+            if not values or not values.get("prompt"):
+                return
+            prompt = values["prompt"]
+            invited_users = [m for m in (ctx.guild.get_member(i) for i in values.get("users") or []) if m is not None] if ctx.guild else []
+        if invited_users is None:
+            invited_users = [m for m in ctx.message.mentions if m.id != uid]
+        invited_users = [m for m in invited_users if m.id != uid]
         clean_prompt = prompt
         for m in ctx.message.mentions:
             clean_prompt = clean_prompt.replace(f"<@{m.id}>", "").replace(f"<@!{m.id}>", "")
@@ -357,11 +374,20 @@ class AICog(commands.Cog):
         if await check_ai_channel(ctx):
             return
         uid = ctx.author.id
+        invited_users = None
         if character_prompt is None:
-            await ctx.send("Usage: `!roleplay <character prompt> [@user1 @user2 ...]`")
-            return
-
-        invited_users = [m for m in ctx.message.mentions if m.id != uid]
+            values = await open_form(
+                ctx, title="🎭 Roleplay", description="Usage: `!roleplay <character prompt> [@user1 @user2 ...]` — or fill in the form.",
+                fields=[Field("prompt", "Who am I playing?", kind="paragraph", max_length=1500),
+                        Field("users", "Participants (optional)", kind="users", required=False, max_values=10)],
+                button="Start a roleplay…",
+            )
+            if not values or not values.get("prompt"):
+                return
+            character_prompt = values["prompt"]
+            invited_users = [m for m in (ctx.guild.get_member(i) for i in values.get("users") or []) if m is not None and m.id != uid] if ctx.guild else []
+        if invited_users is None:
+            invited_users = [m for m in ctx.message.mentions if m.id != uid]
         clean_prompt = character_prompt
         for m in ctx.message.mentions:
             clean_prompt = clean_prompt.replace(f"<@{m.id}>", "").replace(f"<@!{m.id}>", "")

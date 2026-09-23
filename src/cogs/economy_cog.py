@@ -37,6 +37,8 @@ from src.jail_reasons import format_steal_reason, format_mug_reason, format_bank
 from src.artifacts import bail_cost, steal_success_chance, crime_catch_chance, has_heist_partner
 from src.properties import bank_property_revenue
 from src.confirm_view import confirm_purchase
+from src.scope_view import send_scoped
+from src.wallet_view import WalletView
 from src.reactions import seed_reactions
 from src import idlerpg
 from src import state
@@ -435,15 +437,22 @@ class EconomyCog(commands.Cog):
         await ctx.send(embed=emb("🏠 Dailies Stake", body, C_GREEN))
 
 
-    @commands.command(name="balance", aliases=["bal", "b", "!", "$"])
+    @commands.command(name="balance", aliases=["bal", "b", "!", "$", "wallet"])
     async def cmd_balance(self, ctx: commands.Context, target: OptionalMember = None):
         target = target or ctx.author
         if self.bot.user and target.id == self.bot.user.id and ctx.guild:
             bal = get_guild_house_balance(ctx.guild.id)
             await ctx.send(embed=emb("🏦 House Pot", f"**{ctx.guild.name}**: {bal:,} 🪙", C_GOLD))
-        else:
-            bal = await get_balance(target.id)
-            await ctx.send(embed=emb("💰 Balance", f"**{target.display_name}**: {bal:,} 🪙", C_GREEN))
+            return
+
+        async def _card():
+            return emb("💰 Balance", f"**{target.display_name}**: {await get_balance(target.id):,} 🪙", C_GREEN)
+        if target.id != ctx.author.id or ctx.guild is None:
+            await ctx.send(embed=await _card())
+            return
+        # Your own wallet carries its actions (src/wallet_view.py).
+        view = WalletView(self, render=_card, pay=True, shop=feature_enabled(ctx.guild.id, "shop"))
+        view.message = await ctx.send(embed=await _card(), view=view)
 
 
     @commands.command(name="leaderboard", aliases=["leaderboards", "lb"])
@@ -453,15 +462,19 @@ class EconomyCog(commands.Cog):
             return
 
         if scope is not None and scope.lower() in ("idle", "irpg", "idlerpg"):
-            await self._idle_leaderboard(ctx)
-            return
-
-        cfg = get_guild_cfg(ctx.guild.id)
-        default_scope = cfg.get("leaderboard_default_scope", "global")
-        if scope is not None and scope.lower() in ("server", "global"):
+            scope = "idle"
+        elif scope is not None and scope.lower() in ("server", "global"):
             scope = scope.lower()
         else:
-            scope = default_scope
+            scope = get_guild_cfg(ctx.guild.id).get("leaderboard_default_scope", "global")
+        await send_scoped(
+            ctx, lambda s: self._leaderboard_embed(ctx, s),
+            [("Server", "server"), ("Global", "global"), ("Idle RPG", "idle")], scope,
+        )
+
+    async def _leaderboard_embed(self, ctx: commands.Context, scope: str) -> discord.Embed:
+        if scope == "idle":
+            return await self._idle_leaderboard(ctx)
         server_only = scope == "server"
 
         lottery = await load_lottery(ctx.guild.id)
@@ -479,8 +492,7 @@ class EconomyCog(commands.Cog):
         title = "🪙 Server Leaderboard" if server_only else "🪙 Leaderboard"
         if not sorted_users:
             empty_msg = "No members on the leaderboard yet." if server_only else "No users yet."
-            await ctx.send(embed=emb(title, empty_msg, C_GREEN))
-            return
+            return emb(title, empty_msg, C_GREEN)
         medals = ["🥇", "🥈", "🥉"]
 
         async def resolve_name(uid_str: str) -> str:
@@ -501,19 +513,17 @@ class EconomyCog(commands.Cog):
             tickets = lottery_players.get(uid_str, 0)
             ticket_str = f" • {tickets:,} 🎟️" if tickets else ""
             lines.append(f"{prefix} **{name}** — {data['balance']:,} 🪙{ticket_str}")
-        other_scope = "global" if server_only else "server"
-        lines.append(f"\n*Scope: **{scope}** · try `!lb {other_scope}` · `!lb idle` idle RPG · `!levels` XP · `!lbr` roles*")
-        await ctx.send(embed=emb(title, "\n".join(lines), C_GREEN))
+        lines.append(f"\n*Scope: **{scope}** · `!levels` XP · `!lbr` roles*")
+        return emb(title, "\n".join(lines), C_GREEN)
 
-    async def _idle_leaderboard(self, ctx: commands.Context):
+    async def _idle_leaderboard(self, ctx: commands.Context) -> discord.Embed:
         """`!lb idle` — this server's idle RPG ladder. Characters are per
         guild, so there is no global scope to offer."""
         now = int(time.time())
         ranked = idlerpg.ladder(state.idle_characters.get(ctx.guild.id, {}), now, 10)
         title = "⚔️ Idle RPG Leaderboard"
         if not ranked:
-            await ctx.send(embed=emb(title, "Nobody is adventuring here yet. `!idle join <class>` starts a character.", C_GREEN))
-            return
+            return emb(title, "Nobody is adventuring here yet. `!idle join <class>` starts a character.", C_GREEN)
         medals = ["🥇", "🥈", "🥉"]
         members = await asyncio.gather(*(fetch_member(ctx.guild, uid) for uid, _ in ranked))
         lines = []
@@ -524,8 +534,8 @@ class EconomyCog(commands.Cog):
             clock = "paused" if idlerpg.is_paused(char) else f"next <t:{char['next_level_at']}:R>"
             unclaimed = "" if char.get("claimed", True) else " · *unclaimed*"
             lines.append(f"{prefix} **{who}** — {stars}Lv {char['level']} {char['class']} · {clock}{unclaimed}")
-        lines.append("\n*Ranked by prestige, then level · `!idle status` for a character · `!lb` for coins*")
-        await ctx.send(embed=emb(title, "\n".join(lines), C_GREEN))
+        lines.append("\n*Ranked by prestige, then level · `!idle status` for a character*")
+        return emb(title, "\n".join(lines), C_GREEN)
 
 
     # ── !crime ────────────────────────────────────────────────────────────────
@@ -1559,14 +1569,19 @@ class EconomyCog(commands.Cog):
                 C_RED,
             ))
             return
+        if scope == "server" and ctx.guild is None:
+            await ctx.send(embed=emb("🏆 Records", "Server records are only available in servers.", C_RED))
+            return
+        if ctx.guild is None:
+            await ctx.send(embed=await self._records_embed(ctx, scope))
+            return
+        await send_scoped(ctx, lambda s: self._records_embed(ctx, s), [("Server", "server"), ("Global", "global")], scope)
 
+    async def _records_embed(self, ctx: commands.Context, scope: str) -> discord.Embed:
         if scope == "global":
             r = await load_global_records()
             title = "🏆 Global All-Time Records"
         else:
-            if ctx.guild is None:
-                await ctx.send(embed=emb("🏆 Records", "Server records are only available in servers.", C_RED))
-                return
             r = await load_records(ctx.guild.id)
             title = "🏆 All-Time Records"
 
@@ -1635,7 +1650,7 @@ class EconomyCog(commands.Cog):
         embed.description = "\n\n".join(
             f"__**{header}**__\n" + "\n".join(entries) for header, entries in sections
         )
-        await ctx.send(embed=embed)
+        return embed
 
     @commands.command(name="savings", aliases=["piggybank"])
     @requires_perm
@@ -1718,7 +1733,14 @@ class EconomyCog(commands.Cog):
                     "`!savings principals` — show deposit breakdown\n\n"
                     f"*{rate_pct} compound interest per day{rate_note}, compounded on each deposit separately.*"
                 )
-            await send_ephemeral(ctx, embed=emb("🐷 Piggy Bank", desc, C_GREEN))
+            if ctx.guild is None:
+                await send_ephemeral(ctx, embed=emb("🐷 Piggy Bank", desc, C_GREEN))
+                return
+
+            async def _card():
+                return emb("🐷 Piggy Bank", f"**{ctx.author.display_name}**'s piggy bank: **{int(await get_savings_value(uid)):,} 🪙**", C_GREEN)
+            view = WalletView(self, render=_card)
+            view.message = await send_ephemeral(ctx, embed=emb("🐷 Piggy Bank", desc, C_GREEN), view=view)
             return
 
         if amount is None or not amount.strip():

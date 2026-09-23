@@ -819,9 +819,38 @@ command, so gates, side effects and replies can't drift. The pieces live in
   only. The view is not persistent: after a restart an old row stops
   answering and the typed commands still work.
 
+- **`!graph` is a panel** (`src/graph_hub.py`, on `Panel`): every graph a
+  pick, graphs that take a user open a user picker, and a second page of
+  per-user breakouts for bot admins. Picks forward to the `!graph <name>`
+  subcommands, which keep working typed (and are the only way to combine
+  graphs).
+- **`!records` and `!leaderboard` carry scope buttons** (`src/scope_view.py`,
+  `ScopeView`): Server / Global (and Idle RPG on the leaderboard), anyone
+  may press, the current scope's button is disabled. The commands build
+  their embed in `_records_embed` / `_leaderboard_embed` so a press
+  re-renders without a second command.
+- **Your own `!balance` (alias `!wallet`) and `!savings` cards carry
+  actions** (`src/wallet_view.py`, `WalletView`): Deposit and Withdraw on
+  both, Pay and Shop on the wallet. Each runs the typed command *for the
+  presser* through `button_context` and `refusal_for` — the `savings` level
+  lock and the economy switch apply to a press exactly as to a typed
+  `!deposit` — then redraws the card. Someone else's balance gets no
+  buttons.
+- **Bare commands open a picker or a form instead of a usage line:**
+  `!chess view` / `!chess pgn` (a dropdown of your recent games here,
+  `load_recent_chess_reports`), `!chess shop` (the listing, then a dropdown
+  of the items you can afford), `!puzzle` (the kinds and coding
+  difficulties), `!issue` (kind dropdown + description), `!bugreport` and
+  `!featurerequest` (description), `!ask` (question), `!story` and
+  `!roleplay` (prompt + optional participants — `_story_with_prompt` takes
+  `invited_users` so the form's picks stand in for @mentions). The typed
+  forms are unchanged; the usage line moves into the prompt's description.
+  Each pick or submit runs the same branch the typed form does.
+
 Coverage: [tests/test_admin_hub.py](tests/test_admin_hub.py),
 [tests/test_invites.py](tests/test_invites.py),
-[tests/test_ai_thread_row.py](tests/test_ai_thread_row.py) and the lobby
+[tests/test_ai_thread_row.py](tests/test_ai_thread_row.py),
+[tests/test_click_forms.py](tests/test_click_forms.py) and the lobby
 tests in [tests/test_money_flows.py](tests/test_money_flows.py).
 
 ## Counters (!count / !counter)

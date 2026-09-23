@@ -276,6 +276,15 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_shop_cog_mod, "open_shop_hub", _dismissed)  # the `!shop` panel, likewise
     import src.cogs.admin_cog as _admin_cog_mod
     monkeypatch.setattr(_admin_cog_mod, "open_panel", _dismissed)  # the `!admin` panel, likewise
+    import src.cogs.graph_cog as _graph_cog_mod
+    monkeypatch.setattr(_graph_cog_mod, "open_panel", _dismissed)  # the `!graph` panel
+    import src.games.chess as _chess_mod
+    monkeypatch.setattr(_chess_mod, "pick_from_list", _dismissed)  # `!chess view` / `pgn` / `shop` pickers
+    import src.cogs.utility_cog as _utility_cog_mod
+    for _prompt in ("pick_from_list", "open_form"):  # `!puzzle`, `!issue`, `!bugreport`, `!featurerequest`
+        monkeypatch.setattr(_utility_cog_mod, _prompt, _dismissed)
+    import src.cogs.ai_cog as _ai_cog_mod
+    monkeypatch.setattr(_ai_cog_mod, "open_form", _dismissed)  # `!ask`, `!story`, `!roleplay` forms
 
 
 @pytest_asyncio.fixture

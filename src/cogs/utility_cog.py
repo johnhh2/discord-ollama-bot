@@ -12,6 +12,7 @@ from discord.ext import commands
 
 from src.discord_retry import send_dm
 from src.reactions import seed_reactions
+from src.settings_views import Field, open_form, pick_from_list
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_BLUE, C_GREY,
     send_ephemeral, toggle_member_role, get_memory_mb, format_uptime, _log_audit,
@@ -544,6 +545,17 @@ class UtilityCog(commands.Cog):
                 inline=False,
             )
             await ctx.send(embed=embed)
+            # A dropdown of the kinds (and coding difficulties); the pick runs
+            # the typed form for the same invoker and invitees.
+            picked = await pick_from_list(
+                ctx, title="🧩 Start a puzzle", description="Pick a puzzle.",
+                options=[("Coding — easy", "coding easy"), ("Coding — medium", "coding medium"),
+                         ("Coding — hard", "coding hard"), ("Coding — extreme", "coding extreme"),
+                         ("Riddle", "riddle"), ("AI riddle", "riddleai")],
+                placeholder="Puzzle…", multi=False,
+            )
+            if picked:
+                await self.cmd_puzzle.callback(self, ctx, *picked[0].split(), *(f"<@{uid}>" for uid in invited_ids if uid != ctx.author.id))
             return
 
         if subcommand.lower() not in ("coding", "riddle", "riddleai"):
@@ -1034,12 +1046,13 @@ class UtilityCog(commands.Cog):
         """
         title = "📖 Feature Request"
         if description is None or not description.strip():
-            await ctx.send(embed=emb(
-                title,
-                "Usage: `!featurerequest <description of the feature>`",
-                C_GREY,
-            ))
-            return
+            values = await open_form(
+                ctx, title=title, description="Usage: `!featurerequest <description of the feature>` — or fill in the form.",
+                fields=[Field("description", "What would you like?", kind="paragraph", max_length=1500)], button="Request…",
+            )
+            if not values or not values.get("description"):
+                return
+            description = values["description"]
         if ctx.guild is None:
             await ctx.send(embed=emb(title, "Feature requests can only be filed in a server.", C_RED))
             return
@@ -1123,12 +1136,20 @@ class UtilityCog(commands.Cog):
             return
         if kind_norm not in _ISSUE_KINDS:
             allowed = "|".join(_ISSUE_KINDS)
-            await ctx.send(embed=emb(
-                "📒 Issue",
-                f"Usage: `!issue <{allowed}> <description>` or `!issue delete <N>`",
-                C_GREY,
-            ))
-            return
+            usage = f"Usage: `!issue <{allowed}> <description>` or `!issue delete <N>`"
+            if kind_norm:
+                await ctx.send(embed=emb("📒 Issue", usage, C_GREY))
+                return
+            values = await open_form(
+                ctx, title="📒 Issue", description=usage + " — or fill in the form.",
+                fields=[Field("kind", "Kind", kind="choices",
+                              options=tuple((f"{m['emoji']} {m['title']}", k) for k, m in _ISSUE_KINDS.items())),
+                        Field("report", "Description", kind="paragraph", max_length=1500)],
+                button="Log an issue…",
+            )
+            if not values or not values.get("kind") or not values.get("report"):
+                return
+            kind_norm, rest = values["kind"][0], values["report"]
         await self._submit_issue(ctx, kind=kind_norm, report=rest)
 
     @commands.command(name="issues")
@@ -1218,9 +1239,13 @@ class UtilityCog(commands.Cog):
         title = f"{meta['emoji']} {meta['title']}"
 
         if report is None or not report.strip():
-            usage = meta["usage"]
-            await ctx.send(embed=emb(title, f"Usage: {usage}", C_GREY))
-            return
+            values = await open_form(
+                ctx, title=title, description=f"Usage: {meta['usage']} — or fill in the form.",
+                fields=[Field("report", meta["report_label"], kind="paragraph", max_length=1500)], button="Write it…",
+            )
+            if not values or not values.get("report"):
+                return
+            report = values["report"]
 
         chan_id = state.bot_settings.get("internal_issue_channel")
         if not chan_id:

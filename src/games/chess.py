@@ -18,6 +18,8 @@ from src.helpers import (
     _delete_after, send_ephemeral, announce_record, parse_int_amount,
 )
 from src.confirm_view import confirm_prompt
+from src.settings_views import pick_from_list
+from src.persistence.chess import load_recent_chess_reports
 from src.config import EPHEMERAL_DELETE_AFTER
 from src.economy import (
     add_balance, record_gambling_event, _ct_now, _ct_today, next_daily_reset_ts,
@@ -1044,10 +1046,32 @@ class ChessCog(commands.Cog):
         await ctx.send(embed=emb("♟️ Chess Threats", desc, C_GREY), file=file)
 
     # ── !chess view <report_id> ─────────────────────────────────────────────
+    async def _pick_report(self, ctx: commands.Context, *, usage: str, placeholder: str) -> "str | None":
+        """Bare `!chess view` / `pgn`: the usage line, then a dropdown of the
+        invoker's recent games here. Returns the picked report id, or None."""
+        await send_ephemeral(ctx, embed=emb("❌ Usage", usage, C_RED))
+        if ctx.guild is None:
+            return None
+        reports = await load_recent_chess_reports(ctx.author.id, ctx.guild.id)
+        if not reports:
+            return None
+
+        def _name(uid):
+            member = ctx.guild.get_member(int(uid)) if uid is not None else None
+            return member.display_name if member else (f"User {uid}" if uid is not None else "?")
+        options = [(f"#{r['report_id']} · {_name(r['white_id'])} vs {_name(r['black_id'])} · {r['result'] or '?'}"[:100], str(r["report_id"]))
+                   for r in reports]
+        picked = await pick_from_list(ctx, title="♟️ Your recent games", description="Pick a game.", options=options,
+                                      placeholder=placeholder, multi=False)
+        return picked[0] if picked else None
+
     async def _cmd_view(self, ctx: commands.Context, args: tuple[str, ...]):
         if not args:
-            await send_ephemeral(ctx, embed=emb("❌ Usage", "Use `!chess view <report_id>` to replay a finished game.", C_RED))
-            return
+            picked = await self._pick_report(ctx, usage="Use `!chess view <report_id>` to replay a finished game — or pick one below.",
+                                             placeholder="Replay…")
+            if picked is None:
+                return
+            args = (picked,)
         try:
             report_id = int(args[0])
         except ValueError:
@@ -1124,8 +1148,11 @@ class ChessCog(commands.Cog):
     # ── !chess pgn <report_id>: full headered PGN for lichess import ─────────
     async def _cmd_pgn(self, ctx: commands.Context, args: tuple[str, ...]):
         if not args:
-            await send_ephemeral(ctx, embed=emb("❌ Usage", "Use `!chess pgn <report_id>` to get the full headered PGN.", C_RED))
-            return
+            picked = await self._pick_report(ctx, usage="Use `!chess pgn <report_id>` to get the full headered PGN — or pick one below.",
+                                             placeholder="PGN of…")
+            if picked is None:
+                return
+            args = (picked,)
         try:
             report_id = int(args[0])
         except ValueError:
@@ -1196,6 +1223,16 @@ class ChessCog(commands.Cog):
                 "preview with `!chess shop view <number or name>`."
             )
             await send_ephemeral(ctx, embed=emb("♟️ Chess Shop", "\n".join(lines), C_PURPLE))
+            # The items in reach, as a dropdown — the pick runs the typed buy.
+            buyable = [it for it in CHESS_SHOP_ITEMS
+                       if it["cost"] > 0 and not has_chess_unlock(uid, it["id"]) and elo_requirement_met(uid, it)]
+            if buyable and ctx.guild is not None:
+                picked = await pick_from_list(
+                    ctx, title="♟️ Unlock", description=f"Pick an item to unlock — you have **{chess_elo_balance(uid):,} {RANK_TOTAL_EMOJI}** to spend.",
+                    options=[(f"{it['name']} — {it['cost']:,} Elo", it["name"]) for it in buyable], placeholder="Unlock…", multi=False,
+                )
+                if picked:
+                    await self._cmd_shop(ctx, ("buy", picked[0]))
             return
 
         if args[0].lower() in ("view", "preview") and len(args) >= 2:
