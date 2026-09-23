@@ -2088,11 +2088,14 @@ def match_place(text: str) -> "str | None":
     return hits[0] if len(hits) == 1 else None
 
 
-def travel_steps(char: dict, town: str) -> int:
-    """Steps left to `town` straight across the map, matching what
+def steps_to(char: dict, goal) -> int:
+    """Steps left to `goal` straight across the map, matching what
     `nearest_town` reports. A step moves one square on both axes at once."""
-    goal = LANDMARKS[town]
     return max(abs(char["x"] - goal[0]), abs(char["y"] - goal[1]))
+
+
+def travel_steps(char: dict, town: str) -> int:
+    return steps_to(char, LANDMARKS[town])
 
 
 def travel_eta_secs(char: dict, town: str) -> int:

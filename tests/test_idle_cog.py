@@ -1843,6 +1843,10 @@ async def test_a_hunter_walks_at_its_country_instead_of_wandering():
     rpg.move_players(_state.idle_characters[GID], cog._quest(GID), cog.rng, cog._namer(guild), int(time.time()), 5)
     assert abs(char["x"] - goal[0]) + abs(char["y"] - goal[1]) == was - 10   # five steps, both axes
     assert char["hunt_x"] == goal[0]          # still walking: the coast is further than five steps
+    ctx = _ctx(guild)
+    await cog.cmd_status.callback(cog, ctx)
+    steps = rpg.steps_to(char, goal)
+    assert f"0/3 Crabs — walking to [{goal[0]}, {goal[1]}], {steps} squares, about" in ctx.sent_embeds[-1].description
 
 
 # ── the standings board ──────────────────────────────────────────────────────

@@ -1082,7 +1082,14 @@ class IdleCog(commands.Cog):
             own = f", {char['boost_pct']}% of it theirs until <t:{char['boost_until']}:t>" if now < char.get("boost_until", 0) else ""
             lines.append(f"✨ **Boosted:** levelling and gold {boost}% faster{own} — `!idle world`")
         if rpg.hunting(char):
-            how = "walking there" if char.get("hunt_x") is not None else "hunting"
+            if char.get("hunt_x") is not None and char.get("x") is not None:
+                # Silent for the whole walk, so say how far: an hour of quiet
+                # at the journey pace looked like a hang.
+                steps = rpg.steps_to(char, (char["hunt_x"], char["hunt_y"]))
+                how = (f"walking to [{char['hunt_x']}, {char['hunt_y']}], {steps} squares, about "
+                       f"{format_duration(int(steps / rpg.JOURNEY_STEP_CHANCE))} away")
+            else:
+                how = "hunting"
             lines.append(f"📜 **Hunt:** {char['hunt_killed']}/{char['hunt_count']} {char['hunt_mob']}s — {how}")
         if char.get("loot"):
             pieces = len(char["loot"])
