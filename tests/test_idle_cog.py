@@ -454,6 +454,13 @@ async def test_bare_idle_pitches_to_strangers_and_shows_the_sheet_to_players():
     await cog.cmd_idle.callback(cog, ctx)
     assert "Lv 7 Bard" in ctx.sent_embeds[-1].title
 
+    # Where no idle channel is set the game is off: no pitch, just that.
+    off_cog, off_guild, _ = _world(channel=False)
+    get_guild_cfg(GID).pop("idle_channel", None)  # the first _world() above set it
+    off_ctx = _ctx(off_guild)
+    await off_cog.cmd_idle.callback(off_cog, off_ctx)
+    assert off_ctx.sent_embeds[-1].title == "💤 Idle RPG Is Off"
+
 
 async def test_rules_stay_short_and_the_detail_lives_in_topics():
     cog, guild, _idle = _world()
@@ -1117,8 +1124,28 @@ async def test_gamble_command_bets_in_town_and_the_sheet_keeps_score():
     char = _spawn(gold=1000, **MARKET)
     ctx = _ctx(guild)
 
-    await cog.cmd_gamble.callback(cog, ctx)               # bare: the terms, no bet
-    assert "even money" in ctx.sent_embeds[-1].description and char["gold"] == 1000
+    # Bare: the terms with stake buttons; the pick bets like the typed word.
+    prompts = []
+
+    async def _half(ctx_, **kwargs):
+        prompts.append(kwargs)
+        return "half"
+    _idle_cog.confirm_choice = _half
+    await cog.cmd_gamble.callback(cog, ctx)
+    assert "even money" in prompts[0]["description"] and [c["value"] for c in prompts[0]["choices"]] == ["250", "half", "all", "other"]
+    assert char["gold"] == 1500 and "won 500 gold" in ctx.sent_embeds[-1].description
+    char["gold"] = 1000
+
+    async def _other(ctx_, **kwargs):
+        return "other"
+
+    async def _form(ctx_, **kwargs):
+        return {"amount": "100"}
+    _idle_cog.confirm_choice = _other
+    _idle_cog.open_form = _form
+    await cog.cmd_gamble.callback(cog, ctx)
+    assert char["gold"] == 1100
+    char["gold"] = 1000
 
     await cog.cmd_gamble.callback(cog, ctx, "200")
     assert char["gold"] == 1200 and "won 200 gold" in ctx.sent_embeds[-1].description
@@ -1130,7 +1157,7 @@ async def test_gamble_command_bets_in_town_and_the_sheet_keeps_score():
     assert char["gold"] == 1800
 
     await cog.cmd_status.callback(cog, ctx)
-    assert "**At the tables:** 2 bets · won 800 · lost 0" in ctx.sent_embeds[-1].description
+    assert "**At the tables:** 4 bets · won 1,400 · lost 0" in ctx.sent_embeds[-1].description
 
     char["x"], char["y"] = WILDS                            # out in the wilds
     await cog.cmd_gamble.callback(cog, ctx, "all")
@@ -2065,3 +2092,19 @@ async def test_the_join_button_says_when_the_game_is_off():
     await join.callback(click)
     click.response.send_modal.assert_not_called()
     assert click.response.send_message.await_args.kwargs["embed"].title == "💤 Idle RPG Is Off"
+
+
+async def test_help_lists_the_idle_rpg_only_where_a_channel_is_set(db):
+    from src.cogs.utility_cog import UtilityCog
+    utility = UtilityCog(bot=None)
+    _cog, guild, _idle = _world(channel=False)
+    ctx = _ctx(guild)
+    await utility.cmd_help.callback(utility, ctx)
+    fields = {f.name: f.value for f in ctx.sent_embeds[-1].fields}
+    assert "!idle" not in fields["🔧 Utility"]
+
+    _cog, guild, _idle = _world()
+    ctx = _ctx(guild)
+    await utility.cmd_help.callback(utility, ctx)
+    fields = {f.name: f.value for f in ctx.sent_embeds[-1].fields}
+    assert "!idle" in fields["🔧 Utility"]

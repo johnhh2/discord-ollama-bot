@@ -349,14 +349,17 @@ class UtilityCog(commands.Cog):
             fun_lines.append("`!minecraft` — Minecraft server status (players, ping)")
         fun_lines.append("`!tips` — Show a random tip about hidden commands")
         help_embed.add_field(name="🎉 Fun", inline=False, value="\n".join(fun_lines))
-        utility_val = (
-            "`!stats` — Show bot statistics\n"
-            "`!stop` — Stop roleplay / forfeit active game\n"
-            "`!subscribe [voice-channel]` — DM you when a voice channel fills up\n"
-            "`!count [counter] [@user]` — This server's custom counters\n"
-            "`!idle` — Idle RPG: level up by doing nothing (`!idle rules`)\n"
-            "`!bugreport <message>` — Send a bug report to the maintainer"
-        )
+        utility_lines = [
+            "`!stats` — Show bot statistics",
+            "`!stop` — Stop roleplay / forfeit active game",
+            "`!subscribe [voice-channel]` — DM you when a voice channel fills up",
+            "`!count [counter] [@user]` — This server's custom counters",
+        ]
+        # The idle RPG is off until `!settings channel idle` names a channel.
+        if ctx.guild and get_guild_cfg(ctx.guild.id).get("idle_channel"):
+            utility_lines.append("`!idle` — Idle RPG: level up by doing nothing (`!idle rules`)")
+        utility_lines.append("`!bugreport <message>` — Send a bug report to the maintainer")
+        utility_val = "\n".join(utility_lines)
         help_embed.add_field(name="🔧 Utility", inline=False, value=utility_val)
         await send_ephemeral(ctx, embed=help_embed)
 

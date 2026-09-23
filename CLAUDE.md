@@ -964,7 +964,10 @@ tables from migrations 0070–0077.
   don't add a faster or paid variant without rethinking the market ring.
 - **Off until `!settings channel idle` names a channel.** News posts there
   and each character's public feed thread opens under it. Clearing it
-  freezes every clock; nothing expires while the game is off.
+  freezes every clock; nothing expires while the game is off. Off means
+  unadvertised too: bare `!idle` answers with the off embed instead of the
+  pitch (`_ready(need_channel=True)`), and `!help` lists `!idle` only where
+  the channel is set.
 - **A clock is `next_level_at` (running) or `remaining` (paused) — exactly
   one is set.** Change one only through `idlerpg.shift` / `scale` / `pause`
   / `resume`, which handle both. `level_up` starts the next clock where the
@@ -1256,7 +1259,11 @@ tables from migrations 0070–0077.
   `thread_id`s, so nothing extra is registered.
 - **The cards carry their buttons.** `!idle` / `!idle status` attach an
   `_ActionView` (invoker-only: store, gamble, travel and prestige spend
-  that player's gold or clock) with a button per action in `_ACTIONS`
+  that player's gold or clock) with a button per action in `_ACTIONS`.
+  A press runs the subcommand *bare*, so every subcommand's bare form must
+  be a prompt, never a usage line — `gamble` offers Quarter / Half / All /
+  Other amount (`confirm_choice` + `open_form`) and re-reads the purse
+  after the prompt, since the character keeps playing meanwhile
   that `_available` says the invoker could take right now — a market in
   reach, gold for the tables, no journey walking them, a running quest,
   the prestige level; the ladder always. A press runs the subcommand

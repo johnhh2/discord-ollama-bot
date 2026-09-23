@@ -263,6 +263,8 @@ def reset_bot_state(monkeypatch):
     async def _no_pick(*args, **kwargs):
         return None
     monkeypatch.setattr(_idle_cog_mod, "pick_from_list", _no_pick)
+    monkeypatch.setattr(_idle_cog_mod, "confirm_choice", _no_pick)  # the tables' stake buttons
+    monkeypatch.setattr(_idle_cog_mod, "open_form", _no_pick)
 
     # The settings prompts (src/settings_views.py) wait on a click that never
     # comes in tests: dismiss them by default, as if the admin pressed Cancel.

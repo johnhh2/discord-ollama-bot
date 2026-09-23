@@ -35,7 +35,7 @@ from discord.ext import commands, tasks
 import src.persistence as persistence
 from src import idlerpg as rpg
 from src import state
-from src.confirm_view import confirm_prompt
+from src.confirm_view import confirm_choice, confirm_prompt
 from src.economy import _ct_now, _ct_today, next_daily_reset_ts
 from src.guild_config import get_guild_cfg
 from src.idle_map import MAP_FILENAME, render_map
@@ -44,7 +44,7 @@ from src.helpers import (
     format_duration, parse_duration, parse_int_amount,
 )
 from src.permissions import _wrong_channel_reply, is_silenced
-from src.settings_views import pick_from_list
+from src.settings_views import Field, open_form, pick_from_list
 
 log = logging.getLogger(__name__)
 
@@ -1113,7 +1113,7 @@ class IdleCog(commands.Cog):
     @commands.group(name="idle", aliases=["irpg"], invoke_without_command=True)
     async def cmd_idle(self, ctx: commands.Context):
         """!idle join|status|items|map|travel|shop|gamble|top|align|duel|world|bless|title|lore|quest|prestige|leave|rules — each also works bare (`!map`)"""
-        if not await self._ready(ctx):
+        if not await self._ready(ctx, need_channel=True):
             return
         char = self._chars(ctx.guild.id).get(ctx.author.id)
         if char is None:
@@ -1561,15 +1561,39 @@ class IdleCog(commands.Cog):
         if char is None:
             return
         if amount is None:
-            await ctx.send(embed=emb(
-                "🎲 The Tables",
+            terms = (
                 f"`!idle gamble <gold|half|all>` — even money, the house wins {rpg.GAMBLE_LOSE_BELOW} rolls in 100. "
                 f"Only within {rpg.MARKET_RADIUS} squares of a town. You have **{char['gold']:,}** gold.\n"
                 f"In town your character also bets on its own now and then — never more than "
-                f"{rpg.GAMBLE_VISIT_CAP_PCT}% of the purse it arrived with per visit.",
-                C_BLUE,
-            ))
-            return
+                f"{rpg.GAMBLE_VISIT_CAP_PCT}% of the purse it arrived with per visit."
+            )
+            gold = char["gold"]
+            picked = await confirm_choice(
+                ctx, title="🎲 The Tables", description=terms,
+                choices=[
+                    {"label": f"Quarter ({gold // 4:,})", "value": str(gold // 4)},
+                    {"label": f"Half ({gold // 2:,})", "value": "half", "default": True},
+                    {"label": f"All ({gold:,})", "value": "all"},
+                    {"label": "Other amount…", "value": "other"},
+                ],
+                payer=ctx.author, not_yours=NOT_YOURS,
+            )
+            if picked is None:
+                return
+            if picked == "other":
+                values = await open_form(
+                    ctx, title="🎲 The Tables", description=f"You have **{gold:,}** gold.",
+                    fields=[Field("amount", "Stake", placeholder="200, 1.5k, half, all", max_length=12)], button="Bet…",
+                )
+                if not values or not values.get("amount"):
+                    return
+                picked = values["amount"]
+            # Re-read the purse: the prompt was a long await and the character
+            # keeps playing (see CLAUDE.md: Idle RPG, markets).
+            char = await self._own_char(ctx)
+            if char is None:
+                return
+            amount = picked
         word = amount.lower()
         stake = char["gold"] if word == "all" else char["gold"] // 2 if word == "half" else parse_int_amount(amount)
         if stake is None:
