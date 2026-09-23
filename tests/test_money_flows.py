@@ -11,6 +11,7 @@ suite; the *outcome* is what matters, not the frame timing.
 import asyncio
 import random
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -21,7 +22,7 @@ import src.economy as _economy
 from src.cogs.economy_cog import EconomyCog
 
 from tests.fakes.discord import (
-    FakeCtx, FakeChannel, FakeListenerBot, FakeMember, FakeGuild, FakeMessage, raw_reaction,
+    FakeCtx, FakeChannel, FakeMember, FakeGuild, FakeMessage,
 )
 
 
@@ -837,22 +838,30 @@ async def test_bankheist_bot_target_rejected(db):
 
 
 def _lobby_ctx(cog, host, victim, *clicks):
-    """A !bankheist ctx whose lobby message delivers each of `clicks` —
-    (emoji, user) pairs — while the bot is still seeding the first button,
-    i.e. before the lobby's reactions have finished appearing. Returns the
-    ctx and a dict that receives the heist state once the lobby exists."""
+    """A !bankheist ctx whose lobby, once posted, receives `clicks` —
+    (button label, user) pairs — as presses on its view. Returns the ctx
+    and a dict that receives the heist state and the view once the lobby
+    exists."""
     ctx = _make_ctx(host, victim, content="!bankheist @victim")
-    ctx.bot = FakeListenerBot()
     lobby = FakeMessage(message_id=77)
-    ctx._send_mock = AsyncMock(return_value=lobby)
     captured: dict = {}
 
-    async def _add(emoji):
-        if not captured:
-            captured["hstate"] = cog._active_heists[ctx.channel.id]
-            for click_emoji, user in clicks:
-                await ctx.bot.dispatch("raw_reaction_add", raw_reaction(lobby.id, click_emoji, user))
-    lobby.add_reaction = AsyncMock(side_effect=_add)
+    def _interaction(user):
+        return SimpleNamespace(user=user, response=SimpleNamespace(
+            edit_message=AsyncMock(), defer=AsyncMock(), send_message=AsyncMock(),
+        ))
+
+    async def _send(content=None, *, embed=None, view=None, **kwargs):
+        captured["hstate"] = cog._active_heists[ctx.channel.id]
+        captured["view"] = view
+
+        async def _press():
+            for label, user in clicks:
+                button = next(b for b in view.children if b.label == label)
+                await button.callback(_interaction(user))
+        asyncio.get_running_loop().create_task(_press())
+        return lobby
+    ctx.send = _send
     return ctx, captured
 
 
@@ -871,43 +880,44 @@ async def test_bankheist_lobby_rejects_jailed_joiner(db):
     }
     # `free` has no economy row at all — never jailed, must still be let in.
     ctx, captured = _lobby_ctx(
-        cog, host, victim, ("2️⃣", jailed), ("2️⃣", free), ("❌", host),  # host cancels — nothing resolves
+        cog, host, victim, ("Join", jailed), ("Join", free), ("Join", victim), ("Cancel", host),  # host cancels — nothing resolves
     )
 
     await cog.cmd_bankheist.callback(cog, ctx, target=victim)
 
     hstate = captured["hstate"]
     assert hstate["slots"][1] is free
-    assert jailed not in hstate["slots"]
+    assert jailed not in hstate["slots"] and victim not in hstate["slots"]
     assert hstate["cancelled"] is True
     assert ctx.channel.id not in cog._active_heists
+    assert captured["view"].is_finished()
 
 
-async def test_bankheist_lobby_counts_a_join_that_lands_during_seeding(db, monkeypatch):
-    """The five lobby buttons take over a second to appear. A joiner who
-    clicks 2️⃣ while 🚀 is still being added (and a host who hits 🚀 right
-    after) used to be ignored: `wait_for` only started listening once
-    seeding had finished. The collector queues both."""
+async def test_bankheist_lobby_join_leave_and_start(db, monkeypatch):
+    """Join takes the first open seat, Leave frees it, and the host's Start
+    resolves the heist with whoever is aboard."""
     cog = EconomyCog(bot=_StubBot())
     host = FakeMember(uid=870, display_name="host")
     victim = FakeMember(uid=871, display_name="victim")
     joiner = FakeMember(uid=872, display_name="joiner")
+    quitter = FakeMember(uid=873, display_name="quitter")
     _grant_level(victim.id, 9)
     resolved: dict = {}
 
     async def _resolve(ctx_arg, hstate):
         resolved["hstate"] = hstate
     monkeypatch.setattr(cog, "_bankheist_resolve", _resolve)
-    ctx, captured = _lobby_ctx(cog, host, victim, ("2️⃣", joiner), ("🚀", host))
+    ctx, captured = _lobby_ctx(
+        cog, host, victim, ("Join", quitter), ("Join", joiner), ("Leave", quitter), ("Start", joiner), ("Start", host),
+    )
 
     await cog.cmd_bankheist.callback(cog, ctx, target=victim)
 
     hstate = resolved["hstate"]
     assert hstate is captured["hstate"]
-    assert hstate["slots"][1] is joiner
-    assert hstate["started"] is True
+    assert hstate["slots"][1] is None and hstate["slots"][2] is joiner  # the quitter's seat freed
+    assert hstate["started"] is True  # the joiner's Start was refused; the host's counted
     assert ctx.channel.id not in cog._active_heists
-    assert ctx.bot.listeners["on_raw_reaction_add"] == []
 
 
 async def test_bankheist_chance_formula_party_size_and_levels(db):
@@ -975,7 +985,7 @@ async def test_silas_rides_along_in_slot_four_while_crew_is_short(db):
     assert "3️⃣ — open —" in header
     assert "4️⃣ Silas  (Lv 1) (+0.0%; up to 3%)" in header
     lobby = cog._bankheist_render(hstate, 42, 10_000)
-    assert "Silas rides along in 4️⃣" in lobby.description
+    assert "Silas rides along in the last seat" in lobby.description
 
     hstate = _make_hstate(host, target, [j1, j2])
     hstate["silas"] = True
@@ -1021,10 +1031,10 @@ async def test_silas_resolve_success_house_takes_his_cut_and_he_dodges_jail(db, 
     assert "0" not in _state.economy["users"]  # no phantom row for id 0
 
 
-async def test_silas_lobby_fourth_slot_click_lands_in_first_open_slot(db, monkeypatch):
-    """Silas holds 4️⃣ until 2️⃣ and 3️⃣ are taken: the first two 4️⃣ clicks
-    fill those, the third replaces him, and the lobby then auto-starts with
-    a full human crew."""
+async def test_silas_lobby_joiners_fill_seats_in_order_and_the_third_takes_his(db, monkeypatch):
+    """Silas holds the last seat until the other two are taken: Join fills
+    the first open seat, so the third joiner replaces him, and the lobby
+    then auto-starts with a full human crew."""
     from src.cogs.economy_cog import SILAS
     cog = EconomyCog(bot=_StubBot())
     host = FakeMember(uid=887, display_name="host")
@@ -1037,7 +1047,7 @@ async def test_silas_lobby_fourth_slot_click_lands_in_first_open_slot(db, monkey
     async def _resolve(ctx_arg, hstate):
         resolved["hstate"] = hstate
     monkeypatch.setattr(cog, "_bankheist_resolve", _resolve)
-    ctx, captured = _lobby_ctx(cog, host, victim, ("4️⃣", a), ("4️⃣", b), ("4️⃣", c))
+    ctx, captured = _lobby_ctx(cog, host, victim, ("Join", a), ("Join", b), ("Join", c))
 
     await cog.cmd_bankheist.callback(cog, ctx, target=victim)
 
@@ -1049,7 +1059,7 @@ async def test_silas_lobby_fourth_slot_click_lands_in_first_open_slot(db, monkey
 
 
 async def test_silas_lobby_starts_short_handed_with_silas(db, monkeypatch):
-    """A host who starts with one joiner in 3️⃣ takes Silas along in 4️⃣."""
+    """A host who starts with one joiner takes Silas along in the last seat."""
     from src.cogs.economy_cog import SILAS
     cog = EconomyCog(bot=_StubBot())
     host = FakeMember(uid=892, display_name="host")
@@ -1062,29 +1072,29 @@ async def test_silas_lobby_starts_short_handed_with_silas(db, monkeypatch):
     async def _resolve(ctx_arg, hstate):
         resolved["hstate"] = hstate
     monkeypatch.setattr(cog, "_bankheist_resolve", _resolve)
-    ctx, _captured = _lobby_ctx(cog, host, victim, ("3️⃣", joiner), ("🚀", host))
+    ctx, _captured = _lobby_ctx(cog, host, victim, ("Join", joiner), ("Start", host))
 
     await cog.cmd_bankheist.callback(cog, ctx, target=victim)
 
     hstate = resolved["hstate"]
-    assert hstate["slots"] == [host, None, joiner, None]
+    assert hstate["slots"] == [host, joiner, None, None]
     assert cog._bankheist_joiners(hstate) == [joiner, SILAS]
 
 
-async def test_lobby_without_silas_fourth_slot_click_is_direct(db):
-    """No artifact, no redirect: a 4️⃣ click fills 4️⃣ as it always has."""
+async def test_lobby_without_silas_join_takes_the_first_seat(db):
+    """No artifact: Join fills the first open seat and nobody else rides."""
     cog = EconomyCog(bot=_StubBot())
     host = FakeMember(uid=895, display_name="host")
     victim = FakeMember(uid=896, display_name="victim")
     joiner = FakeMember(uid=897, display_name="joiner")
     _grant_level(victim.id, 9)
-    ctx, captured = _lobby_ctx(cog, host, victim, ("4️⃣", joiner), ("❌", host))
+    ctx, captured = _lobby_ctx(cog, host, victim, ("Join", joiner), ("Cancel", host))
 
     await cog.cmd_bankheist.callback(cog, ctx, target=victim)
 
     hstate = captured["hstate"]
     assert hstate["silas"] is False
-    assert hstate["slots"] == [host, None, None, joiner]
+    assert hstate["slots"] == [host, joiner, None, None]
     assert cog._bankheist_joiners(hstate) == [joiner]
 
 

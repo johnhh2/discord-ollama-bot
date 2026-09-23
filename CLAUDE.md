@@ -237,9 +237,14 @@ that window used to be ignored everywhere. Helpers live in
   permission or missing-message error stops the loop; the return says whether
   every emoji landed. Order is preserved (number emojis, 🎟️ last on dailies).
 
+Reactions remain on the flows that must survive a restart or be pressed by
+anyone: the dailies embed, `!event` coin drops, bounty claims and polls,
+issue and feature-request triage. Invites and the bankheist lobby moved to
+buttons (see "Buttons that run commands" below).
+
 Coverage: [tests/test_reactions.py](tests/test_reactions.py), plus the
-early-click tests in `test_money_flows.py` (bankheist), `test_dailies.py`,
-`test_bounty.py` and `test_schedulers.py` (`!event`).
+early-click tests in `test_dailies.py`, `test_bounty.py` and
+`test_schedulers.py` (`!event`).
 
 ## Schema migrations
 
@@ -401,11 +406,10 @@ block and `save_user_artifact`'s first insert only).
   copy and the math can't drift.
 - **Silas is an NPC, never a Member.** The heist-partner artifact puts
   `SILAS` (`_NpcCrewMember` in `src/cogs/economy_cog.py`, Lv 1) in the
-  host's 4️⃣ slot while fewer than three players have joined. He lives only
+  host's last seat while fewer than three players have joined. He lives only
   in `_bankheist_joiners(hstate)` — `hstate["slots"]` holds real members
-  only, so "lobby full" still means four humans, and a 4️⃣ click while 2️⃣ or
-  3️⃣ is open is redirected to the first open slot; only the third joiner
-  replaces him. He counts for party size and takes an equal cut, paid to
+  only, so "lobby full" still means four humans, and Join takes the first
+  open seat, so only the third joiner replaces him. He counts for party size and takes an equal cut, paid to
   the guild house pot (`add_guild_house`), and is skipped by the jail roll,
   `add_balance` and `record_crime_event`; the crime record lists him with
   `id: None`. Any new per-participant side effect must branch on `_is_npc`
@@ -768,7 +772,57 @@ name, colour, topic, price or bounty condition — whose submit forwards.
 
 Coverage: [tests/test_shop_hub.py](tests/test_shop_hub.py).
 
-Coverage: [tests/test_settings_views.py](tests/test_settings_views.py).
+## Buttons that run commands: forward, never reimplement
+
+Every button, dropdown and modal in the bot that *does* something ends in
+the typed command's own callback — a click is another way to type the
+command, so gates, side effects and replies can't drift. The pieces live in
+`src/forwarding.py` and `src/panel.py`:
+
+- **`forwarding.forward(ctx, command, *args, **kwargs)`** sets `ctx.command`
+  and `ctx.invoked_with` and calls the callback with the command's cog.
+  **`refusal_for(ctx, command)`** is the gate a direct call skips —
+  permission tier (`permitted_for`), feature switch, and the level lock —
+  returned as text for the caller to show ephemerally. **`CapturingContext`**
+  swallows `ctx.send` so a panel can show the reply itself.
+  **`button_context(bot, interaction, command, content=, mentions=)`** builds
+  a real `SilentContext` for a *clicker* — the click has no message, so the
+  stand-in carries what commands read off `ctx.message` (author, channel,
+  guild, `mentions`, a `content` for the audit log). Converters never run
+  on a direct call: a command typed as `user: OptionalMember` must be given
+  the `Member`, not a mention (the admin panel's `_member`).
+- **`panel.Panel`** is the page-dropdown / item-dropdown / Close shape the
+  settings and shop panels grew separately; a new panel subclasses it
+  (`pages`, `items`, `embed`, `on_pick`) — `!admin` is the model.
+- **`!admin` / `/admin`** (`src/admin_hub.py`): moderation, effects,
+  permissions & locks, economy and counters as pickers and forms, each row
+  listed only if `permitted_for` allows the invoker its command, and
+  refused again at pick time. Replies are captured into the panel except
+  for `say` and `event`, whose reply *is* the action (`public=True`).
+- **Invites are buttons** (`src/invites.py`, `InviteView`): Accept /
+  Decline, invitees only, `_wait_for_confirmations` returns the accepters
+  when everyone has answered or the window closes; `_send_invite` is the
+  open-ended form calling `on_join` per acceptance. Every game and AI
+  invite goes through these two, so keep it that way.
+- **The bankheist lobby is buttons** (`_HeistLobbyView` in
+  `src/cogs/economy_cog.py`): Join / Leave for the crew, Start / Cancel for
+  the host. A press edits the lobby embed itself and sets `changed`, which
+  wakes the lobby loop; a joiner takes the first open seat, which is what
+  keeps Silas in the last one until a third joiner. The jail gate applies
+  to joiners at press time.
+- **AI threads carry Continue / Invite / Stop** under the latest post
+  (`src/ai_thread_view.py`). `respond` in `src/ai.py` calls
+  `THREAD_POST_HOOKS` after every streamed answer in a registered thread;
+  `AICog` registers `attach_row`, which moves the row to the new post and
+  strips it from the old. Buttons run `cmd_continue` / `cmd_invite_activity`
+  / `cmd_stop` for the clicker through `button_context`, group members
+  only. The view is not persistent: after a restart an old row stops
+  answering and the typed commands still work.
+
+Coverage: [tests/test_admin_hub.py](tests/test_admin_hub.py),
+[tests/test_invites.py](tests/test_invites.py),
+[tests/test_ai_thread_row.py](tests/test_ai_thread_row.py) and the lobby
+tests in [tests/test_money_flows.py](tests/test_money_flows.py).
 
 ## Counters (!count / !counter)
 

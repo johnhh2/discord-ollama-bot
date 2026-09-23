@@ -904,6 +904,7 @@ class UtilityCog(commands.Cog):
         admin_embed = discord.Embed(title="⚙️ Admin Commands", color=C_GOLD)
         admin_embed.add_field(name="🔧 Server Settings", inline=False, value=(
             "`!settings` — Every server setting in one panel: pick a category, pick a setting, done. `/settings` opens it just for you\n"
+            "`!admin` — Moderation, effects, permissions, grants and counters as pickers and forms. `/admin` opens it just for you\n"
             "`!settings features` — Turn the economy, gambling, savings, assets, shop, artifacts or AI on/off\n"
             "`!settings channel` — Every channel setting\n"
             "`!settings setup` — Re-run the first-run questions"

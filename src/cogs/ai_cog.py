@@ -29,7 +29,9 @@ from src.persistence import (
 from src.guild_config import get_guild_cfg
 from src.features import feature_enabled
 from src.cogs.utility_cog import build_ai_overview_embed
+from src.ai_thread_view import attach_row
 from src.ai import (
+    THREAD_POST_HOOKS,
     enforce_cost, refund_cost, keep_typing,
     stream_ollama, finalize, respond,
     check_token_budget_or_notify,
@@ -87,6 +89,13 @@ async def _try_create_thread(ctx, name: str):
 class AICog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # Every streamed answer in an AI thread gets the Continue / Invite /
+        # Stop row (src/ai_thread_view.py). Keyed, so a second construction
+        # (tests) replaces rather than stacks.
+        THREAD_POST_HOOKS["ai_cog"] = self._attach_thread_row
+
+    async def _attach_thread_row(self, message, thread_id: int) -> None:
+        await attach_row(self, message, thread_id)
 
     @commands.hybrid_command(name="ask", description="Ask the AI a question")
     @app_commands.describe(question="What you want to ask")

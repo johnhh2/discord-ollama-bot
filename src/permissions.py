@@ -217,7 +217,13 @@ def command_permitted(ctx: commands.Context) -> bool:
     """Whether the author's tier covers `ctx.command` — the decision alone,
     for a caller that answers its own way (the `/settings` entry replies
     ephemerally). `check_command_permission` is this plus the reply."""
-    tier = get_command_perm(ctx.command.qualified_name).get("tier", "everyone")
+    return permitted_for(ctx, ctx.command.qualified_name)
+
+
+def permitted_for(ctx, qualified_name: str) -> bool:
+    """`command_permitted` for a command named rather than the one on ctx —
+    what a panel asks before listing an item."""
+    tier = get_command_perm(qualified_name).get("tier", "everyone")
     if tier == "everyone":
         return True
     if tier == "server_admin":

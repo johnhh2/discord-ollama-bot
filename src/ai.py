@@ -200,6 +200,13 @@ async def refund_cost(uid: int, feature: str, guild_id=None) -> None:
         )
 
 
+# Called with (message, thread_id) after every streamed answer in a
+# registered AI thread — how src/ai_thread_view.py hangs its buttons under
+# the latest post without this module knowing about views. Keyed so a cog
+# constructed twice (tests) registers once.
+THREAD_POST_HOOKS: dict = {}
+
+
 async def check_ollama_connected() -> bool:
     try:
         async with aiohttp.ClientSession() as session:
@@ -506,6 +513,13 @@ async def respond(
     )
     if ai_thread is not None:
         await save_ai_threads()
+        if placeholder is not None:
+            for hook in list(THREAD_POST_HOOKS.values()):
+                try:
+                    await hook(placeholder, channel_id)
+                except Exception:
+                    log.exception("ai_thread_post_hook_failed", extra={"request_id": request_id})
+    return placeholder
 
 
 def _norm_puzzle_answer(s: str) -> str:

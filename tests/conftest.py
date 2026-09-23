@@ -274,6 +274,8 @@ def reset_bot_state(monkeypatch):
                     "pick_users", "toggle_panel", "confirm_choice", "confirm_prompt"):
         monkeypatch.setattr(_settings_cog_mod, _prompt, _dismissed)
     monkeypatch.setattr(_shop_cog_mod, "open_shop_hub", _dismissed)  # the `!shop` panel, likewise
+    import src.cogs.admin_cog as _admin_cog_mod
+    monkeypatch.setattr(_admin_cog_mod, "open_panel", _dismissed)  # the `!admin` panel, likewise
 
 
 @pytest_asyncio.fixture

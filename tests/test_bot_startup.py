@@ -88,7 +88,7 @@ async def test_slash_ask_is_registered_in_the_command_tree(loaded_bot):
     not respond" forever. setup_hook syncs the tree on every boot; this pins
     the one command it has to publish."""
     tree_names = {cmd.name for cmd in loaded_bot.tree.get_commands()}
-    assert {"ask", "settings", "shop"} <= tree_names, f"app commands: {sorted(tree_names)}"
+    assert {"ask", "settings", "shop", "admin"} <= tree_names, f"app commands: {sorted(tree_names)}"
 
 
 async def test_known_top_level_commands_are_registered(loaded_bot):

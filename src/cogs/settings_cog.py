@@ -131,7 +131,7 @@ class SettingsCog(commands.Cog):
         """Run a settings command in its typed form for the panel and return
         its reply instead of sending it. `method` is a SettingsCog attribute,
         or `bot:<qualified name>` for another cog's command."""
-        from src.settings_hub import _CapturingContext
+        from src.forwarding import CapturingContext as _CapturingContext
         if method.startswith("bot:"):
             command = self.bot.get_command(method[4:]) if self.bot is not None else None
         else:

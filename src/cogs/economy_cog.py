@@ -37,7 +37,7 @@ from src.jail_reasons import format_steal_reason, format_mug_reason, format_bank
 from src.artifacts import bail_cost, steal_success_chance, crime_catch_chance, has_heist_partner
 from src.properties import bank_property_revenue
 from src.confirm_view import confirm_purchase
-from src.reactions import ReactionCollector, seed_reactions
+from src.reactions import seed_reactions
 from src import idlerpg
 from src import state
 
@@ -252,6 +252,79 @@ class _StealTierButton(discord.ui.Button):
         view.stop()
         await view.cog._run_steal(view.ctx, view.target, self.tier)
 
+
+
+class _HeistLobbyView(discord.ui.View):
+    """The bankheist lobby's buttons: Join / Leave for the crew, Start /
+    Cancel for the host. Each press edits the lobby embed itself and sets
+    `changed`, which wakes `cmd_bankheist`'s loop to re-check the crew, the
+    verdict and the clock. A joiner takes the first open seat, so with Silas
+    aboard (see _bankheist_joiners) only the third joiner takes his."""
+
+    def __init__(self, cog, hstate: dict, guild_id: int, savings_value: float, *, timeout: float):
+        super().__init__(timeout=timeout)
+        self.cog = cog
+        self.hstate = hstate
+        self.guild_id = guild_id
+        self.savings_value = savings_value
+        self.changed = asyncio.Event()
+
+    async def _refuse(self, interaction: discord.Interaction, text: str) -> None:
+        await interaction.response.send_message(text, ephemeral=True)
+
+    async def _redraw(self, interaction: discord.Interaction) -> None:
+        await interaction.response.edit_message(embed=self.cog._bankheist_render(
+            self.hstate, self.guild_id, self.savings_value, last_call=self.hstate["warned"],
+        ))
+        self.changed.set()
+
+    async def _verdict(self, interaction: discord.Interaction, key: str) -> None:
+        if interaction.user.id != self.hstate["host"].id:
+            await self._refuse(interaction, "Only the host decides that.")
+            return
+        self.hstate[key] = True
+        await interaction.response.defer()
+        self.stop()
+        self.changed.set()
+
+    @discord.ui.button(label="Join", style=discord.ButtonStyle.success, emoji="🧑‍🤝‍🧑")
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user = interaction.user
+        h = self.hstate
+        slots = h["slots"]
+        if user.id == h["target"].id:
+            await self._refuse(interaction, "You're the one being robbed.")
+        elif user.id == h["host"].id:
+            await self._refuse(interaction, "You're the host — press **Start** when the crew is ready.")
+        elif user.id in {m.id for m in slots if m is not None}:
+            await self._refuse(interaction, "You're already in the crew.")
+        elif _is_jailed(user.id):
+            # Same gate as the host: a jailed player would take a full share
+            # with nothing at stake — another jail roll costs nothing inside.
+            await self._refuse(interaction, "You're in jail — no heists from a cell.")
+        elif None not in slots[1:]:
+            await self._refuse(interaction, "The crew is full.")
+        else:
+            slots[slots.index(None, 1)] = user
+            await self._redraw(interaction)
+
+    @discord.ui.button(label="Leave", style=discord.ButtonStyle.secondary)
+    async def leave(self, interaction: discord.Interaction, button: discord.ui.Button):
+        slots = self.hstate["slots"]
+        for i in range(1, len(slots)):
+            if slots[i] is not None and slots[i].id == interaction.user.id:
+                slots[i] = None
+                await self._redraw(interaction)
+                return
+        await self._refuse(interaction, "You're not in this crew.")
+
+    @discord.ui.button(label="Start", style=discord.ButtonStyle.primary, emoji="🚀")
+    async def start(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._verdict(interaction, "started")
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="❌")
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._verdict(interaction, "cancelled")
 
 
 class EconomyCog(commands.Cog):
@@ -752,7 +825,7 @@ class EconomyCog(commands.Cog):
 
     # ── !bankheist ────────────────────────────────────────────────────────────
     # Lobby/party heist: host opens a 4-slot window (slot 1 = host, slots 2–4
-    # joinable via 2️⃣/3️⃣/4️⃣ reactions). Host starts with 🚀 or cancels with ❌;
+    # taken with the Join button, in order). Host presses Start or Cancel;
     # auto-starts at 60s with a 10s last-call warning. On success, seizes 20%
     # of the target's savings via seize_from_savings and splits evenly among
     # participants (host gets the integer-division remainder). Failure leaves
@@ -763,14 +836,13 @@ class EconomyCog(commands.Cog):
     # Silas: a host who owns the heist-partner artifact gets SILAS (Lv 1, an
     # NPC) in slot 4 whenever fewer than three players have joined. `slots`
     # only ever holds real members — he's appended by _bankheist_joiners at
-    # read time — so "lobby full" still means four humans. A 4️⃣ click while
-    # 2️⃣ or 3️⃣ is open lands in the first open slot instead; only the third
-    # joiner takes his place. He counts for party size and takes an equal
+    # read time — so "lobby full" still means four humans. A joiner takes the
+    # first open seat, so only the third joiner takes his place. He counts
+    # for party size and takes an equal
     # cut (paid to the guild house pot), but can't be jailed.
 
-    BANKHEIST_JOIN_EMOJIS = ["2️⃣", "3️⃣", "4️⃣"]
-    BANKHEIST_START_EMOJI = "🚀"
-    BANKHEIST_CANCEL_EMOJI = "❌"
+    BANKHEIST_CREW_SLOTS = 3  # seats besides the host
+    BANKHEIST_SEAT_EMOJIS = ["2️⃣", "3️⃣", "4️⃣"]  # the crew lines' markers
     BANKHEIST_LOBBY_TIMEOUT = 60.0
     BANKHEIST_LAST_CALL = 10.0
     BANKHEIST_SEIZE_PCT = 0.20
@@ -788,7 +860,7 @@ class EconomyCog(commands.Cog):
         """The crew besides the host: every filled slot, plus Silas while the
         host's artifact is active and fewer than three players have joined."""
         joiners = [m for m in hstate["slots"][1:] if m is not None]
-        if hstate.get("silas") and len(joiners) < len(self.BANKHEIST_JOIN_EMOJIS):
+        if hstate.get("silas") and len(joiners) < self.BANKHEIST_CREW_SLOTS:
             joiners.append(SILAS)
         return joiners
 
@@ -826,8 +898,8 @@ class EconomyCog(commands.Cog):
         # renders on the last line, since that's the slot he holds.
         humans = [j for j in joiners if not _is_npc(j)]
         npcs = [j for j in joiners if _is_npc(j)]
-        last = len(self.BANKHEIST_JOIN_EMOJIS) - 1
-        for i, emoji in enumerate(self.BANKHEIST_JOIN_EMOJIS):
+        last = self.BANKHEIST_CREW_SLOTS - 1
+        for i, emoji in enumerate(self.BANKHEIST_SEAT_EMOJIS):
             member = humans[i] if i < len(humans) else None
             if member is None and i == last and npcs:
                 member = npcs[0]
@@ -859,11 +931,11 @@ class EconomyCog(commands.Cog):
         body = (
             self._bankheist_header(host, target, joiners, guild_id, savings_value)
             + "\n\n"
-            f"React 2️⃣–4️⃣ to join. Host: 🚀 to start, ❌ to cancel.\n"
+            f"Press **Join** to ride along (**Leave** to step out). Host: **Start** or **Cancel**.\n"
             f"{target.display_name} cannot join.\n"
         )
         if hstate.get("silas"):
-            body += "🎩 Silas rides along in 4️⃣ until a third player takes his place.\n"
+            body += "🎩 Silas rides along in the last seat until a third player takes his place.\n"
         body += f"Auto-starts <t:{deadline_ts}:R>."
         if last_call:
             body += f"\n\n⚠️ **Last call** — auto-starting <t:{deadline_ts}:R>!"
@@ -1029,9 +1101,8 @@ class EconomyCog(commands.Cog):
         if target is None:
             await ctx.send(embed=emb(
                 "🏦 Bank Heist",
-                "Usage: `!bankheist @user` — opens a 4-slot lobby. Up to 3 others react "
-                "2️⃣/3️⃣/4️⃣ to join, then host reacts 🚀 to start (or ❌ to cancel). "
-                "Auto-starts in 60s.",
+                "Usage: `!bankheist @user` — opens a 4-slot lobby. Up to 3 others press "
+                "**Join**, then the host presses **Start** (or **Cancel**). Auto-starts in 60s.",
                 C_BLUE,
             ))
             return
@@ -1100,109 +1171,56 @@ class EconomyCog(commands.Cog):
 
         try:
             savings_value = await get_savings_value(target.id)
-            lobby_msg = await ctx.send(embed=self._bankheist_render(hstate, gid, savings_value))
+            view = _HeistLobbyView(self, hstate, gid, savings_value, timeout=self.BANKHEIST_LOBBY_TIMEOUT)
+            lobby_msg = await ctx.send(embed=self._bankheist_render(hstate, gid, savings_value), view=view)
             hstate["message"] = lobby_msg
 
-            def wanted(emoji_s: str, user) -> bool:
-                """Which reactions the lobby acts on. Evaluated when the
-                reaction is dequeued, so the slot check sees the current
-                crew. (The collector already drops bots.)"""
-                if user.id == target.id:
-                    return False
-                if emoji_s in self.BANKHEIST_JOIN_EMOJIS:
-                    if user.id == host.id:
-                        return False
-                    # Same gate as the host: a jailed player can't join the
-                    # crew. They'd take a full share with nothing at stake —
-                    # another jail roll costs nothing while already inside.
-                    if _is_jailed(user.id):
-                        return False
-                    return user.id not in {m.id for m in slots if m is not None}
-                if emoji_s in (self.BANKHEIST_START_EMOJI, self.BANKHEIST_CANCEL_EMOJI):
-                    return user.id == host.id
-                return False
+            while True:
+                if all(s is not None for s in slots):
+                    break  # auto-start when full
 
-            # Listen before seeding: the five buttons take over a second to
-            # appear, and the collector queues a click that lands while they're
-            # still being added or while the lobby is editing its embed after
-            # the previous join (see src/reactions.py).
-            async with ReactionCollector(ctx.bot, lobby_msg) as reactions:
-                await seed_reactions(
-                    lobby_msg,
-                    [*self.BANKHEIST_JOIN_EMOJIS, self.BANKHEIST_START_EMOJI, self.BANKHEIST_CANCEL_EMOJI],
-                    what="bankheist lobby",
-                )
-                while True:
-                    if all(s is not None for s in slots):
-                        break  # auto-start when full
+                elapsed = asyncio.get_running_loop().time() - hstate["opened_at"]
+                time_left = self.BANKHEIST_LOBBY_TIMEOUT - elapsed
+                if time_left <= 0:
+                    break
 
-                    elapsed = asyncio.get_running_loop().time() - hstate["opened_at"]
-                    time_left = self.BANKHEIST_LOBBY_TIMEOUT - elapsed
-                    if time_left <= 0:
-                        break
-
-                    if not hstate["warned"] and time_left <= self.BANKHEIST_LAST_CALL:
-                        hstate["warned"] = True
-                        try:
-                            await lobby_msg.edit(embed=self._bankheist_render(
-                                hstate, gid, savings_value, last_call=True,
-                            ))
-                        except Exception:
-                            pass  # best-effort refresh — a failed edit mustn't end the lobby
-                        wait_for_timeout = time_left
-                    else:
-                        time_until_warning = max(0.0, time_left - self.BANKHEIST_LAST_CALL)
-                        wait_for_timeout = time_until_warning if not hstate["warned"] else time_left
-                        if wait_for_timeout <= 0:
-                            wait_for_timeout = time_left
-
+                if not hstate["warned"] and time_left <= self.BANKHEIST_LAST_CALL:
+                    hstate["warned"] = True
                     try:
-                        emoji_s, user = await reactions.next(timeout=wait_for_timeout)
-                    except asyncio.TimeoutError:
-                        continue  # loop re-evaluates time_left / warning state
-                    if not wanted(emoji_s, user):
-                        continue
+                        await lobby_msg.edit(embed=self._bankheist_render(
+                            hstate, gid, savings_value, last_call=True,
+                        ), view=view)
+                    except Exception:
+                        pass  # best-effort refresh — a failed edit mustn't end the lobby
+                    wait_for_timeout = time_left
+                else:
+                    time_until_warning = max(0.0, time_left - self.BANKHEIST_LAST_CALL)
+                    wait_for_timeout = time_until_warning if not hstate["warned"] else time_left
+                    if wait_for_timeout <= 0:
+                        wait_for_timeout = time_left
 
-                    if emoji_s == self.BANKHEIST_CANCEL_EMOJI:
-                        hstate["cancelled"] = True
-                        break
-                    if emoji_s == self.BANKHEIST_START_EMOJI:
-                        hstate["started"] = True
-                        break
-                    # Slot reaction — fill the matching index.
-                    slot_idx = self.BANKHEIST_JOIN_EMOJIS.index(emoji_s) + 1
-                    if slot_idx == len(slots) - 1 and hstate["silas"] and None in slots[1:-1]:
-                        # Silas holds 4️⃣ until 2️⃣ and 3️⃣ are taken: a click
-                        # on his slot lands in the first open one instead,
-                        # so only the third joiner ever takes his place.
-                        slot_idx = slots.index(None, 1)
-                    if slots[slot_idx] is None:
-                        slots[slot_idx] = user
-                        try:
-                            await lobby_msg.edit(embed=self._bankheist_render(
-                                hstate, gid, savings_value, last_call=hstate["warned"],
-                            ))
-                        except Exception:
-                            pass
+                # The buttons edit the lobby themselves; the loop only wakes
+                # to re-check the crew, the host's verdict and the clock.
+                try:
+                    await asyncio.wait_for(view.changed.wait(), wait_for_timeout)
+                except asyncio.TimeoutError:
+                    continue  # loop re-evaluates time_left / warning state
+                view.changed.clear()
+                if hstate["cancelled"] or hstate["started"]:
+                    break
 
-            # Lobby phase is over — clear the join/start/cancel reactions so
-            # nobody can react after the fact. Best-effort: in DMs the bot
-            # lacks Manage Messages and Forbidden is fine to swallow.
-            try:
-                await lobby_msg.clear_reactions()
-            except Exception:
-                pass
+            view.stop()  # lobby phase over — the buttons stop answering
 
             if hstate["cancelled"]:
                 await lobby_msg.edit(embed=emb(
                     "🏦 Bank Heist — Cancelled",
                     f"{host.display_name} called it off.",
                     C_GREY,
-                ))
+                ), view=None)
                 return
 
             result_embed = await self._bankheist_resolve(ctx, hstate)
-            await lobby_msg.edit(embed=result_embed)
+            await lobby_msg.edit(embed=result_embed, view=None)
         finally:
             self._active_heists.pop(ch_id, None)
 

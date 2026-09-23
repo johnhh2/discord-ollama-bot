@@ -3,7 +3,11 @@ import re
 from datetime import datetime, timezone
 
 import discord
+from discord import app_commands
 from discord.ext import commands
+
+from src.admin_hub import AdminHub
+from src.panel import open_panel
 from discord import ui
 
 from src.helpers import (
@@ -12,6 +16,7 @@ from src.helpers import (
 )
 from src.permissions import (
     is_admin, is_bannable, is_server_admin, requires_perm,
+    is_silenced, permitted_for,
 )
 from src.persistence import (
     save_guild_settings,
@@ -32,6 +37,31 @@ from src import state
 class AdminCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    @commands.command(name="admin", aliases=["adminpanel"])
+    @requires_perm
+    async def cmd_admin(self, ctx: commands.Context):
+        """The admin panel (src/admin_hub.py): moderation, effects,
+        permissions, economy and counter actions as pickers and forms."""
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "The admin panel only works in servers.", C_RED))
+            return
+        await open_panel(ctx, AdminHub(self, ctx))
+
+    @app_commands.command(name="admin", description="The admin panel — only you see it")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def slash_admin(self, interaction: discord.Interaction):
+        """The same panel, ephemeral, with the gates a slash command skips
+        applied here (see the `/settings` entry)."""
+        if is_silenced(interaction.user.id, interaction.guild_id):
+            return
+        ctx = await self.bot.get_context(interaction)
+        ctx.command = self.cmd_admin
+        if not permitted_for(ctx, "admin"):
+            await interaction.response.send_message(embed=emb("❌ No Permission", "", C_RED), ephemeral=True)
+            return
+        await open_panel(ctx, AdminHub(self, ctx), ephemeral=True)
 
     @commands.command(name="godmode")
     @requires_perm

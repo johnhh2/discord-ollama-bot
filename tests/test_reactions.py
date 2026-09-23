@@ -12,10 +12,9 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 
-from src.invites import _send_invite, _wait_for_confirmations
 from src.reactions import ReactionCollector, seed_reactions
 from tests.fakes.discord import (
-    FakeCtx, FakeGuild, FakeListenerBot, FakeMember, FakeMessage, raw_reaction,
+    FakeListenerBot, FakeMember, FakeMessage, raw_reaction,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -123,59 +122,3 @@ async def test_seed_reactions_all_landed():
     msg = FakeMessage()
     assert await seed_reactions(msg, ["1", "2"], what="t") is True
     assert msg.add_reaction.await_count == 2
-
-
-# ── invites ───────────────────────────────────────────────────────────────────
-
-def _invite_ctx(invite_msg: FakeMessage) -> FakeCtx:
-    ctx = FakeCtx(author=FakeMember(uid=1, display_name="host"), guild=FakeGuild(gid=42))
-    ctx.bot = FakeListenerBot()
-    ctx._send_mock = AsyncMock(return_value=invite_msg)
-    return ctx
-
-
-async def test_wait_for_confirmations_counts_a_click_during_seeding():
-    """The invitee clicks ✅ the instant it appears — before the seeding
-    call has even returned. Under wait_for that click was lost and the
-    invite timed out."""
-    invite_msg = FakeMessage(message_id=60)
-    ctx = _invite_ctx(invite_msg)
-    invitee = FakeMember(uid=2, display_name="guest")
-    _click_during_seeding(ctx.bot, invite_msg, ("✅", invitee))
-
-    confirmed = await _wait_for_confirmations(ctx, [invitee], timeout=5.0)
-
-    assert confirmed == {invitee.id}
-    invite_msg.delete.assert_awaited_once()
-    assert ctx.bot.listeners["on_raw_reaction_add"] == []
-
-
-async def test_wait_for_confirmations_ignores_uninvited_users_and_other_emojis():
-    invite_msg = FakeMessage(message_id=60)
-    ctx = _invite_ctx(invite_msg)
-    invitee = FakeMember(uid=2, display_name="guest")
-    stranger = FakeMember(uid=3, display_name="stranger")
-    _click_during_seeding(ctx.bot, invite_msg, ("✅", stranger), ("❌", invitee))
-
-    confirmed = await _wait_for_confirmations(ctx, [invitee], timeout=0.05)
-
-    assert confirmed == set()
-
-
-async def test_send_invite_joins_a_click_that_lands_during_seeding():
-    invite_msg = FakeMessage(message_id=61)
-    ctx = _invite_ctx(invite_msg)
-    invitee = FakeMember(uid=2, display_name="guest")
-    _click_during_seeding(ctx.bot, invite_msg, ("✅", invitee))
-    joined: asyncio.Future = asyncio.get_running_loop().create_future()
-
-    async def _on_join(user):
-        joined.set_result(user)
-
-    await _send_invite(ctx, [invitee], on_join=_on_join)
-
-    assert await asyncio.wait_for(joined, timeout=1.0) is invitee
-    # Every invitee joined → the background listener has already let go.
-    for _ in range(5):
-        await asyncio.sleep(0)
-    assert ctx.bot.listeners["on_raw_reaction_add"] == []

@@ -30,6 +30,7 @@
   "saved":         {"tier": "bot_admin", "hidden": false},
   "invitelink":    {"tier": "server_admin", "hidden": false},
   "clear":         {"tier": "server_admin", "hidden": false},
+  "admin":         {"tier": "server_admin", "hidden": false},
   "settings":      {"tier": "server_admin", "hidden": false},
   "settings-channel": {"tier": "server_admin", "hidden": false},
   "settings channel admin-log": {"tier": "bot_admin", "hidden": true},

@@ -7,7 +7,7 @@ off`, `settings channel lottery <#id>`, `tax-aliases add rent 💰` — and
 forwarded through `SettingsCog._forward`, so the subcommand's own
 `@requires_perm` and side effects (the lottery seed, the dailies refresh,
 the gambler role) run exactly as they would for a typed command. The
-command's reply is captured (`_CapturingContext`) and shown in the panel
+command's reply is captured (`CapturingContext`, src/forwarding.py) and shown in the panel
 instead of posted to the channel.
 
 Two kinds of pick: a *toggle* applies at once (on ↔ off, server ↔ global);
@@ -320,26 +320,6 @@ def items_for(category: str, ctx, *, models: list[str] | None = None, bot=None) 
 
 
 # ── the view ─────────────────────────────────────────────────────────────────
-
-class _CapturingContext:
-    """The command's ctx with `send` swallowed: a forwarded settings command
-    replies into the panel, not the channel. Everything else — author,
-    guild, channel, `command` (which `_forward` assigns) — is the real ctx's."""
-
-    def __init__(self, ctx):
-        object.__setattr__(self, "_ctx", ctx)
-        object.__setattr__(self, "captured", [])
-
-    def __getattr__(self, name):
-        return getattr(self._ctx, name)
-
-    def __setattr__(self, name, value):
-        setattr(self._ctx, name, value)
-
-    async def send(self, content=None, *, embed=None, **kwargs):
-        self.captured.append(embed if embed is not None else content)
-        return None
-
 
 def _describe(reply) -> str:
     if isinstance(reply, discord.Embed):
