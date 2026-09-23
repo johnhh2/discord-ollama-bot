@@ -728,6 +728,46 @@ advertise the old spellings; the menus only print the new.
 Coverage: [tests/test_settings_hub.py](tests/test_settings_hub.py) and
 [tests/test_settings_views.py](tests/test_settings_views.py).
 
+## Shop: one panel, every purchase still confirmed
+
+Bare `!shop` (and `/shop`, ephemeral) opens the panel in `src/shop_hub.py`:
+a section dropdown (overview, nicknames, roles, channels, fun & social,
+insurance, leveling, artifacts, assets tiers 1–2, assets tiers 3–5, my
+properties, bounties) and an item dropdown whose options carry the price and
+status (🔒 level, ✅ owned, 🏷️ listed by a player). `!shop roles`, `!shop
+channels` and `!shop assets` open it on their page. A *buy* pick forwards at
+once; a *form* pick opens a modal — a user picker for the target, a dropdown
+of the bot's own roles or channels (Discord's picker past 25), text for a
+name, colour, topic, price or bounty condition — whose submit forwards.
+
+- **The panel never charges.** Every pick becomes the typed form — `shop
+  mock <@id>`, `shop rolerename <@&id> | Name`, `shop insurance standard 3`,
+  `artifacts buy 3`, `assets buy <id>` — and runs through `ShopCog.forward`,
+  so the lottery-channel guard, per-item disable check, insurance
+  protection, confirm prompt and claim-before-charge blocks are the typed
+  path's. Replies are **not** captured (unlike settings): a mock activation,
+  a confirm prompt and a record announcement are public and post to the
+  channel; the panel rebuilds itself afterwards. `items_for` is the one
+  catalog; a new item is a `ShopItem` there (a buy with `args` / `kwargs`,
+  or a form with `fields` + `call`).
+- **`forward` applies the gates a direct call skips.** Permission tier,
+  feature switch (`disabled_feature_for`) and the level lock
+  (`is_locked_for`) are `bot.check`s that only run under `process_commands`;
+  `forward` runs them itself and returns a refusal string the panel shows
+  ephemerally. It also sets `ctx.invoked_with`, which roleup/roledown and
+  the tax aliases read. Locked items are listed and marked, and refused on a
+  pick. Commands from other cogs (`bot:assets buy`, `bot:bounties`) run with
+  their own cog as `self`; the assets `buy` / `upgrade` / `unlist` names are
+  keyword-only, hence `kwargs`.
+- **`/shop`** gates itself like `/settings`: `is_silenced`, the shop feature
+  switch and the lottery-channel rule, answered ephemerally. Purchases made
+  from it post publicly as followups of the slash interaction.
+- **Tests:** conftest dismisses `open_shop_hub` by default. `forward` is the
+  seam — patch `cog.forward` to see what a pick sends, or call it directly
+  with typed args.
+
+Coverage: [tests/test_shop_hub.py](tests/test_shop_hub.py).
+
 Coverage: [tests/test_settings_views.py](tests/test_settings_views.py).
 
 ## Counters (!count / !counter)

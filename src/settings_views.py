@@ -226,10 +226,11 @@ MODAL_FIELDS = 5  # Discord's cap on top-level modal components
 @dataclass(frozen=True)
 class Field:
     """One modal field. `kind` is `text` / `paragraph` (a text box),
-    `choices` (a dropdown over `options`), or `channels` / `users` (Discord's
-    own pickers). Text kinds submit a stripped string; select kinds a list —
-    of option values, or of channel / user ids. An optional select submits
-    `[]`, which is how a channel setting is cleared from a form."""
+    `choices` (a dropdown over `options`), or `channels` / `users` / `roles`
+    (Discord's own pickers). Text kinds submit a stripped string; select
+    kinds a list — of option values, or of channel / user / role ids. An
+    optional select submits `[]`, which is how a channel setting is cleared
+    from a form."""
     key: str
     label: str                                 # ≤45 chars
     kind: str = "text"
@@ -267,6 +268,11 @@ def _component(f: Field):
         )
     if f.kind == "users":
         return ui.UserSelect(
+            placeholder=f.placeholder, min_values=min_values, max_values=f.max_values,
+            default_values=defaults, required=f.required,
+        )
+    if f.kind == "roles":
+        return ui.RoleSelect(
             placeholder=f.placeholder, min_values=min_values, max_values=f.max_values,
             default_values=defaults, required=f.required,
         )

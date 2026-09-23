@@ -6,6 +6,7 @@ import re
 
 import aiohttp
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from src.helpers import (
@@ -26,7 +27,7 @@ from src.leveling import (
     xp_for_level, best_level_elsewhere,
 )
 from src.permissions import (
-    _wrong_channel_reply,
+    _wrong_channel_reply, command_permitted, is_silenced,
 )
 from src.persistence import (
     save_insurance, save_insurance_subs, save_guild_settings,
@@ -37,7 +38,8 @@ from src.persistence import (
 from src.artifacts import ARTIFACTS, owned_qty, owned_artifact_count
 from src.confirm_view import confirm_purchase, confirm_choice
 from src.guild_config import get_guild_cfg
-from src.features import feature_enabled
+from src.features import feature_enabled, disabled_feature_for
+from src.shop_hub import open_shop_hub
 from src.ai import (
     keep_typing,
     stream_ollama, finalize,
@@ -321,7 +323,78 @@ class ShopCog(commands.Cog):
                 await _wrong_channel_reply(ctx, "Shop commands are not allowed in the lottery channel.")
                 return
 
-        _si = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
+        embed = self._overview_embed(ctx)
+        if embed is None:
+            await send_ephemeral(ctx, embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE))
+            return
+        if ctx.guild is None:  # the panel's pickers need a server
+            await send_ephemeral(ctx, embed=embed)
+            return
+        await open_shop_hub(ctx, self, overview=self._overview_embed)
+
+    @app_commands.command(name="shop", description="Browse the shop — only you see the panel")
+    @app_commands.guild_only()
+    async def slash_shop(self, interaction: discord.Interaction):
+        """The same panel, ephemeral. A slash command skips `process_commands`,
+        so the gates a typed `!shop` meets are applied here: the blocklist,
+        the shop feature switch and the lottery-channel rule. Purchases made
+        from it post their confirm prompt and result publicly, as typed
+        ones do."""
+        if is_silenced(interaction.user.id, interaction.guild_id):
+            return
+        ctx = await self.bot.get_context(interaction)
+        ctx.command = self.cmd_shop
+        gid = interaction.guild_id
+        feature = disabled_feature_for("shop", gid)
+        if feature is not None:
+            await interaction.response.send_message(embed=emb(
+                "🚫 Turned Off", f"The shop needs **{feature.label}**, which is off in this server.", C_GREY,
+            ), ephemeral=True)
+            return
+        if get_guild_cfg(gid).get("lottery_channel") == interaction.channel_id:
+            await interaction.response.send_message("Shop commands are not allowed in the lottery channel.", ephemeral=True)
+            return
+        embed = self._overview_embed(ctx)
+        if embed is None:
+            await interaction.response.send_message(embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE), ephemeral=True)
+            return
+        await open_shop_hub(ctx, self, overview=self._overview_embed, ephemeral=True)
+
+    async def forward(self, ctx, method: str, *args, invoked_with: "str | None" = None, **kwargs) -> "str | None":
+        """Run a shop command in its typed form for the panel. `method` is a
+        ShopCog attribute, or `bot:<qualified name>` for another cog's
+        command (`assets buy`, `bounties`). The gates `process_commands`
+        would have applied — permission tier, feature switch, level lock —
+        are `bot.check`s a direct call skips, so they run here; a refusal
+        is returned as text for the panel to show privately, None means the
+        command ran. `ctx.invoked_with` is set because roleup/roledown and
+        the tax aliases read it."""
+        if method.startswith("bot:"):
+            command = self.bot.get_command(method[4:]) if self.bot is not None else None
+        else:
+            command = getattr(self, method, None)
+        if command is None:
+            return "That item isn't available right now."
+        ctx.command = command
+        ctx.invoked_with = invoked_with or command.name
+        if not command_permitted(ctx):
+            return "❌ You can't use that command."
+        gid = ctx.guild.id if ctx.guild else None
+        feature = disabled_feature_for(command.qualified_name, gid)
+        if feature is not None:
+            return f"🚫 That needs **{feature.label}**, which is off in this server."
+        from src.level_unlocks import is_locked_for
+        required = is_locked_for(ctx.invoked_with, ctx.author.id, gid) if gid else None
+        if required is not None:
+            return f"🔒 That unlocks at **level {required}** in this server."
+        await command.callback(command.cog or self, ctx, *args, **kwargs)
+        return None
+
+    def _overview_embed(self, ctx: commands.Context) -> "discord.Embed | None":
+        """The `!shop` overview — every section with its typed forms. None
+        when nothing is for sale."""
+        cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
+        _si = cfg.get("shop_items", {})
         _gid = ctx.guild.id if ctx.guild else 0
         _uid = ctx.author.id
         sections = {}
@@ -388,12 +461,17 @@ class ShopCog(commands.Cog):
                 "`!bounties` — List the server's open bounties and their rewards",
             ]
 
+        # Assets — unique deeds, listed on their own pages of the panel.
+        if feature_enabled(_gid, "assets"):
+            sections["🏘️ Assets"] = [
+                "`!shop assets` — Real-estate deeds that pay daily rent (`!assets browse` / `!assets buy <name>`)"
+            ]
+
         if not sections:
-            await send_ephemeral(ctx, embed=emb("🛒 Shop", "No shop items are currently available.", C_PURPLE))
-            return
+            return None
 
         desc = "\n\n".join(f"**{section}**\n" + "\n".join(items) for section, items in sections.items())
-        await send_ephemeral(ctx, embed=emb("🛒 Shop", desc, C_PURPLE))
+        return emb("🛒 Shop", desc, C_PURPLE)
 
     # ── !shop roles ───────────────────────────────────────────────────────────
     @cmd_shop.command(name="roles", aliases=["role"])
@@ -405,7 +483,10 @@ class ShopCog(commands.Cog):
         if not lines:
             await send_ephemeral(ctx, embed=emb("👑 Role Shop", "No role shop items are currently available.", C_PURPLE))
             return
-        await send_ephemeral(ctx, embed=emb("👑 Role Shop", "\n".join(lines), C_PURPLE))
+        if ctx.guild is None:
+            await send_ephemeral(ctx, embed=emb("👑 Role Shop", "\n".join(lines), C_PURPLE))
+            return
+        await open_shop_hub(ctx, self, page="roles", overview=self._overview_embed)
 
     # ── !shop channels ────────────────────────────────────────────────────────
     @cmd_shop.command(name="channels", aliases=["channel"])
@@ -417,7 +498,36 @@ class ShopCog(commands.Cog):
         if not lines:
             await send_ephemeral(ctx, embed=emb("📢 Channel Shop", "No channel shop items are currently available.", C_PURPLE))
             return
-        await send_ephemeral(ctx, embed=emb("📢 Channel Shop", "\n".join(lines), C_PURPLE))
+        if ctx.guild is None:
+            await send_ephemeral(ctx, embed=emb("📢 Channel Shop", "\n".join(lines), C_PURPLE))
+            return
+        await open_shop_hub(ctx, self, page="channels", overview=self._overview_embed)
+
+    # ── !shop assets ──────────────────────────────────────────────────────────
+    @cmd_shop.command(name="assets", aliases=["asset", "properties", "property"])
+    @_shop_subcommand(None)
+    async def shop_assets(self, ctx: commands.Context, sub: str = None, *args):
+        """The assets section of the shop. Bare, the panel on the deeds
+        pages; `!shop assets <browse|buy|sell|upgrade|unlist|rename> …`
+        forwards to the matching `!assets` subcommand."""
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
+            return
+        if sub is None:
+            await open_shop_hub(ctx, self, page="assets_low", overview=self._overview_embed)
+            return
+        assets = self.bot.get_command("assets") if self.bot is not None else None
+        target = assets.get_command(sub.lower()) if assets is not None else None
+        if target is None:
+            await ctx.send(embed=emb("🏘️ Real Estate", "Usage: `!shop assets` to browse, or `!shop assets <browse|buy|sell|upgrade|unlist|rename> …`", C_PURPLE))
+            return
+        # `buy`, `upgrade` and `unlist` take their name keyword-only.
+        if target.name in ("buy", "upgrade", "unlist"):
+            refusal = await self.forward(ctx, f"bot:assets {target.name}", name=" ".join(args) or None)
+        else:
+            refusal = await self.forward(ctx, f"bot:assets {target.name}", *args)
+        if refusal:
+            await ctx.send(embed=emb("🏘️ Real Estate", refusal, C_GREY))
 
     # ── !shop artifacts ───────────────────────────────────────────────────────
     @cmd_shop.command(name="artifacts")

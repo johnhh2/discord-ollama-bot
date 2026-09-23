@@ -320,7 +320,7 @@ class UtilityCog(commands.Cog):
             ))
         if on["shop"]:
             help_embed.add_field(name="🛒 Shop", inline=False, value=(
-                "`!shop` — Browse items"
+                "`!shop` — The shop panel: pick a section, pick an item (`/shop` opens it just for you)"
             ))
 
         if ctx.guild:

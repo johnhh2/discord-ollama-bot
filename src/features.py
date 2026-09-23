@@ -103,7 +103,7 @@ COMMAND_FEATURES: dict[str, tuple[str, ...]] = {
     "savings": ("savings",), "save": ("savings",), "deposit": ("savings",), "withdraw": ("savings",),
     "bankheist": ("savings",), "graph savings": ("savings",), "graph admin savings": ("savings",),
     # assets
-    "assets": ("assets",), "daily property": ("assets",),
+    "assets": ("assets",), "daily property": ("assets",), "shop assets": ("assets",),
     "graph assets": ("assets",), "graph admin assets": ("assets",),
     # shop
     "shop": ("shop",), "effects": ("shop",), "roles": ("shop",), "tax": ("shop",),

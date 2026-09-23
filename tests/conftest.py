@@ -273,6 +273,7 @@ def reset_bot_state(monkeypatch):
     for _prompt in ("open_settings_hub", "open_form", "list_editor", "pick_channels", "pick_from_list",
                     "pick_users", "toggle_panel", "confirm_choice", "confirm_prompt"):
         monkeypatch.setattr(_settings_cog_mod, _prompt, _dismissed)
+    monkeypatch.setattr(_shop_cog_mod, "open_shop_hub", _dismissed)  # the `!shop` panel, likewise
 
 
 @pytest_asyncio.fixture
