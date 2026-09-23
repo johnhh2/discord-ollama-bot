@@ -78,11 +78,11 @@ HELP_TIMEOUT = 900.0     # the help card's topic menu and Join button
 
 # `!idle <sub>` also answers to a bare `!<sub>`. Every subcommand but three:
 # `admin` (a bare `!admin` would be nobody's idea of an idle command), and
-# `shop` and `help`, which are real commands elsewhere — ShopCog and
-# UtilityCog hand those over in idle context instead (`shop_from`,
-# `cmd_rules`). Registered on the bot at construction, as ShopCog does with
-# `_SHOP_TOP_ALIASES`; the copies share the subcommand's callback, so a fix
-# lands in both spellings.
+# `shop` and `help`, which are real commands elsewhere — the market is
+# `!store` bare (the coin shop gave up that alias for it), and UtilityCog
+# hands `!help` over in idle context (`cmd_rules`). Registered on the bot at
+# construction, as ShopCog does with `_SHOP_TOP_ALIASES`; the copies share
+# the subcommand's callback, so a fix lands in both spellings.
 _TOP_ALIASES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("join", "cmd_join", ()),
     ("status", "cmd_status", ("info",)),
@@ -97,35 +97,29 @@ _TOP_ALIASES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("duel", "cmd_duel", ()),
     ("gamble", "cmd_gamble", ("bet",)),
     ("travel", "cmd_travel", ()),
+    ("store", "cmd_shop", ()),
     ("quest", "cmd_quest", ()),
     ("prestige", "cmd_prestige", ()),
     ("leave", "cmd_leave", ()),
     ("rules", "cmd_rules", ()),
 )
 # What runs inside a character's feed thread: `!idle …`, the bare forms
-# above, and the two shared names that redirect to the game there. `shop`
-# means the bare group only — `!shop insurance` is the coin shop anywhere.
-FEED_THREAD_COMMANDS = frozenset({"idle", "help", "shop", *(name for name, _attr, _aliases in _TOP_ALIASES)})
+# above, and `!help`, which shows the game's card there.
+FEED_THREAD_COMMANDS = frozenset({"idle", "help", *(name for name, _attr, _aliases in _TOP_ALIASES)})
 FEED_THREAD_ONLY = (
     "Only the idle game plays in a feed thread — `!idle …`, or `!status`, `!map`, `!travel` and the rest bare. "
     "Everything else goes in the channel."
 )
-# The status card's menu: (label, description, subcommand attribute). Only
-# actions that need no argument — travel, shop and alignment open their own
-# picker when run bare.
+# The sheet's buttons: (label, emoji, subcommand attribute). Each is shown
+# only while the invoker could use it (`_available`), so the card reads as
+# what you can do now, not a command list.
 _ACTIONS = (
-    ("Refresh", "This sheet and the map again", "cmd_status"),
-    ("Items", "The ten slots and their power", "cmd_items"),
-    ("Map", "The realm and everyone in it", "cmd_map"),
-    ("Travel", "Walk to a town, or out into the wilds", "cmd_travel"),
-    ("Shop", "The market, if you're inside a town's ring", "cmd_shop"),
-    ("Quest", "What the party is up to", "cmd_quest"),
-    ("World", "What's happening to the realm, and your boosts", "cmd_world"),
-    ("Ladder", "The top ten here", "cmd_top"),
-    ("Titles", "Earned, worn, and how far off the rest are", "cmd_title"),
-    ("Alignment", "Pick a law and a moral, once a day", "cmd_align"),
-    ("Lore", "The places on the map", "cmd_lore"),
-    ("Rules", "How the game works", "cmd_rules"),
+    ("Store", "🛒", "cmd_shop"),
+    ("Gamble", "🎲", "cmd_gamble"),
+    ("Travel", "🧭", "cmd_travel"),
+    ("Quest", "📜", "cmd_quest"),
+    ("Top", "🏆", "cmd_top"),
+    ("Prestige", "★", "cmd_prestige"),
 )
 
 
@@ -271,30 +265,27 @@ class _CardView(ui.View):
             pass  # cosmetic — the card stays, the menu is dead either way
 
 
-class _ActionSelect(ui.Select):
-    def __init__(self):
-        super().__init__(
-            placeholder="Do something…", min_values=1, max_values=1,
-            options=[discord.SelectOption(label=label, description=text, value=attr) for label, text, attr in _ACTIONS],
-        )
+class _ActionButton(ui.Button):
+    def __init__(self, label: str, emoji: str, action: str):
+        super().__init__(label=label, emoji=emoji, style=discord.ButtonStyle.secondary)
+        self.action = action
 
     async def callback(self, interaction: discord.Interaction):
         view: _ActionView = self.view  # type: ignore[assignment]
-        # Re-rendering the same view clears the pick: it reads as a button press, not a setting.
-        await interaction.response.edit_message(view=view)
-        await view.cog._act(view.ctx, self.values[0], view.target)
+        await interaction.response.defer()
+        await view.cog._act(view.ctx, self.action)
 
 
 class _ActionView(_CardView):
-    """The sheet's menu. Shop, travel and alignment act on the invoker's
-    character, so only the invoker may use it; `target` is whose sheet
-    Refresh shows again."""
+    """The sheet's buttons. Store, gamble, travel and prestige act on the
+    invoker's character, so only the invoker may press them."""
 
-    def __init__(self, cog, ctx, target):
+    def __init__(self, cog, ctx, actions):
         super().__init__(cog, MENU_TIMEOUT)
         self.ctx = ctx
-        self.target = target
-        self.add_item(_ActionSelect())
+        for label, emoji, action in _ACTIONS:
+            if action in actions:
+                self.add_item(_ActionButton(label, emoji, action))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == self.ctx.author.id:
@@ -431,28 +422,39 @@ class IdleCog(commands.Cog):
         return any(char.get("thread_id") == channel_id for char in state.idle_characters.get(guild_id, {}).values())
 
     def in_idle_context(self, ctx) -> bool:
-        """The idle channel or one of its feed threads — where `!help` and a
-        bare `!shop` mean the game's (UtilityCog and ShopCog ask)."""
+        """The idle channel or one of its feed threads — where `!help` means
+        the game's card (UtilityCog asks)."""
         if ctx.guild is None:
             return False
         channel = self._channel(ctx.guild)
         return (channel is not None and ctx.channel.id == channel.id) or self._is_feed_thread(ctx.guild.id, ctx.channel.id)
 
-    async def shop_from(self, ctx) -> None:
-        """A bare `!shop …` in idle context, handed over by ShopCog: the words
-        after the command are the market's `item` and `arg`."""
-        parts = (getattr(ctx.message, "content", "") or "").split(None, 2)
-        item = parts[1] if len(parts) > 1 else None
-        arg = parts[2] if len(parts) > 2 else None
-        await self.cmd_shop.callback(self, ctx, item, arg=arg)
+    def _available(self, guild, uid: int) -> set:
+        """The sheet's buttons the invoker could press right now. The ladder
+        is always there; the rest need a character, and each what its
+        command would otherwise refuse: a market in reach (the tables also
+        want gold), not being walked by a journey, a running quest, the
+        prestige level."""
+        actions = {"cmd_top"}
+        char = self._chars(guild.id).get(uid)
+        if char is None:
+            return actions
+        quest = self._quest(guild.id)
+        if rpg.quest_active(quest):
+            actions.add("cmd_quest")
+        if not (quest.get("kind") == "journey" and uid in quest["members"]):
+            actions.add("cmd_travel")
+        if rpg.market_in_reach(char) is not None:
+            actions.add("cmd_shop")
+            if char["gold"] > 0:
+                actions.add("cmd_gamble")
+        if char["level"] >= rpg.PRESTIGE_LEVEL:
+            actions.add("cmd_prestige")
+        return actions
 
-    async def _act(self, ctx, action: str, target) -> None:
-        """A pick from the sheet's menu: the subcommand, run bare."""
-        command = getattr(self, action)
-        if action == "cmd_status":
-            await command.callback(self, ctx, member=target)
-        else:
-            await command.callback(self, ctx)
+    async def _act(self, ctx, action: str) -> None:
+        """A press on the sheet: the subcommand, run bare."""
+        await getattr(self, action).callback(self, ctx)
 
     @staticmethod
     def _namer(guild):
@@ -1125,7 +1127,7 @@ class IdleCog(commands.Cog):
         now = int(time.time())
         self._seen(ctx.guild, ctx.author.id, char, now)
         await self._send_with_map(ctx, self._sheet(ctx.guild, ctx.author.id, char, now), highlight=(ctx.author.id,),
-                                  view=_ActionView(self, ctx, ctx.author))
+                                  view=_ActionView(self, ctx, self._available(ctx.guild, ctx.author.id)))
 
     @cmd_idle.command(name="join")
     async def cmd_join(self, ctx: commands.Context, *, class_name: str = None):
@@ -1232,18 +1234,14 @@ class IdleCog(commands.Cog):
         if target.id == ctx.author.id:
             self._seen(ctx.guild, target.id, char, now)
         await self._send_with_map(ctx, self._sheet(ctx.guild, target.id, char, now), highlight=(target.id,),
-                                  view=_ActionView(self, ctx, target))
+                                  view=_ActionView(self, ctx, self._available(ctx.guild, ctx.author.id)))
 
     @cmd_idle.command(name="map")
     async def cmd_map(self, ctx: commands.Context):
         if not await self._ready(ctx):
             return
-        chars = self._chars(ctx.guild.id)
-        quest = self._quest(ctx.guild.id)
-        body = f"{len(chars)} adventurer{'' if len(chars) == 1 else 's'} in the realm. Everyone online wanders a step a second; meet someone on the same square and you may fight."
-        if quest.get("kind") == "journey":
-            body += f"\n📜 A party is on a journey — waypoint {quest['stage']} of 2 (`!idle quest`)."
-        await self._send_with_map(ctx, emb("🗺️ The Realm", body, C_BLUE), highlight=(ctx.author.id,))
+        # The picture alone: an embed would shrink it to the embed's width.
+        await ctx.send(file=await self._map_file(ctx.guild, highlight=(ctx.author.id,)))
 
     @cmd_idle.command(name="lore")
     async def cmd_lore(self, ctx: commands.Context, *, where: str = None):
@@ -1905,7 +1903,7 @@ class IdleCog(commands.Cog):
             "📜 High-level players get sent on quests for a big shortcut.\n\n"
             f"{start}"
             "`!idle status` · `items` · `map` · `travel` · `shop` · `gamble` · `top` · `align` · `duel <name>`\n"
-            "`!idle world` · `bless` · `title` · `lore` · `quest` · `prestige` — each works bare too (`!map`, `!travel`).\n"
+            "`!idle world` · `bless` · `title` · `lore` · `quest` · `prestige` — each works bare too (`!map`, `!travel`, `!store`).\n"
             f"More: pick a topic below, or `!idle rules <{'|'.join(_RULES_TOPICS)}>`",
             C_BLUE,
         ), view=view)

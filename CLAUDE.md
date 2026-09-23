@@ -1015,28 +1015,34 @@ tables from migrations 0070–0077.
   the way ShopCog's `_SHOP_TOP_ALIASES` does, and `cog_unload` removes
   them. A bare name reaches the perm gate as itself (`"map"`, not
   `"idle map"`), which is why `admin` stays out — a bare `!admin` would
-  default to `everyone`. `shop` and `help` are real commands elsewhere;
-  in **idle context** (the idle channel or a character's feed thread —
-  `in_idle_context`) ShopCog hands a bare `!shop …` to `shop_from` and
-  UtilityCog's `!help` sends the game's card. `!shop insurance` and the
-  other coin-shop subcommands never redirect. A new subcommand goes in
-  `_TOP_ALIASES` unless its name is taken (`test_no_duplicate_top_level_command_names`
-  fails the boot otherwise).
+  default to `everyone`. `shop` and `help` are real commands elsewhere:
+  the market is `!store` bare (the coin shop's `store` alias was given
+  up for it), and in **idle context** (the idle channel or a character's
+  feed thread — `in_idle_context`) UtilityCog's `!help` sends the game's
+  card. A new subcommand goes in `_TOP_ALIASES` unless its name is taken
+  (`test_no_duplicate_top_level_command_names` fails the boot otherwise).
 - **A feed thread runs only the idle game.** `IdleCog.bot_check` refuses
   every command in a character's thread except `!idle …`, the bare forms
-  and the two redirecting names (`FEED_THREAD_COMMANDS`), replying like the
-  gambling-thread gate and raising `IdleThreadOnly` (swallowed by
-  `on_command_error`). Whether a channel is a feed thread is read off the
-  characters' `thread_id`s, so nothing extra is registered.
-- **The cards carry their menus.** `!idle` / `!idle status` attach an
-  `_ActionView` (invoker-only: shop, travel and alignment spend that
-  player's gold) whose picks run the subcommand callbacks bare, with the
-  card's ctx; `!idle rules` / `!idle help` attach a `_HelpView` anyone can
-  use — topics answer privately, and **Join** opens a class-name modal that
+  and `!help` (`FEED_THREAD_COMMANDS`), replying like the gambling-thread
+  gate and raising `IdleThreadOnly` (swallowed by `on_command_error`).
+  Whether a channel is a feed thread is read off the characters'
+  `thread_id`s, so nothing extra is registered.
+- **The cards carry their buttons.** `!idle` / `!idle status` attach an
+  `_ActionView` (invoker-only: store, gamble, travel and prestige spend
+  that player's gold or clock) with a button per action in `_ACTIONS`
+  that `_available` says the invoker could take right now — a market in
+  reach, gold for the tables, no journey walking them, a running quest,
+  the prestige level; the ladder always. A press runs the subcommand
+  callback bare with the card's ctx, so a button and its typed form can't
+  drift. `!idle rules` / `!idle help` attach a `_HelpView` anyone can use
+  — topics answer privately, and **Join** opens a class-name modal that
   runs the same `_join` as the typed command, so a button can never do
   what `!idle join` can't. `_join` takes a `send(embed, error=)` callable:
   the typed form ignores the flag, the modal answers refusals ephemerally.
   Menus time out (`MENU_TIMEOUT`, `HELP_TIMEOUT`) and strip themselves.
+- **`!idle map` is the picture alone**, no embed — an embed would shrink
+  it to the embed's width. The sheet, `!idle quest` and travel keep the
+  map as their embed image.
 - **Flavour text is ours.** The mechanics follow the classic IRC IdleRPG
   and sizzlorox's fork; their item names, location lore and event lines are
   not copied, and shouldn't be. Where a line repeats often — camping most

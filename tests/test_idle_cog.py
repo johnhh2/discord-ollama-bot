@@ -645,12 +645,17 @@ async def test_status_map_and_quest_carry_the_map_image():
     _spawn(ALICE, x=10, y=20), _spawn(BOB, x=35, y=40)
     _state.idle_quests[GID] = {**rpg.new_quest(), "members": [BOB], "description": "walk", "kind": "journey", "p1": [35, 40], "p2": [410, 80]}
 
-    for command in (cog.cmd_status, cog.cmd_map, cog.cmd_quest, cog.cmd_idle):
+    for command in (cog.cmd_status, cog.cmd_quest, cog.cmd_idle):
         ctx = _ctx(guild)
         await command.callback(cog, ctx)
         sent = ctx.send_mock.call_args.kwargs
         assert sent["file"].filename == _idle_cog.MAP_FILENAME
         assert ctx.sent_embeds[-1].image.url == f"attachment://{_idle_cog.MAP_FILENAME}"
+    # `!idle map` is the picture alone — an embed would shrink it.
+    ctx = _ctx(guild)
+    await cog.cmd_map.callback(cog, ctx)
+    sent = ctx.send_mock.call_args.kwargs
+    assert sent["file"].filename == _idle_cog.MAP_FILENAME and sent.get("embed") is None and not ctx.sent_embeds
 
     ctx = _ctx(guild)
     await cog.cmd_status.callback(cog, ctx, member=guild.get_member(BOB))
@@ -1915,16 +1920,18 @@ async def test_every_subcommand_but_admin_shop_and_help_is_registered_bare():
     try:
         assert bot.get_command("map").callback is IdleCog.cmd_map.callback
         assert bot.get_command("info").callback is IdleCog.cmd_status.callback      # aliases travel too
+        assert bot.get_command("store").callback is IdleCog.cmd_shop.callback       # the coin shop has `!shop`
         assert bot.get_command("map").cog is cog                                     # bound, so `self` isn't the ctx
         for absent in ("admin", "shop", "help"):
             assert bot.get_command(absent) is None
-        assert set(_idle_cog.FEED_THREAD_COMMANDS) >= {"idle", "help", "shop", "map", "travel", "rules"}
+        assert set(_idle_cog.FEED_THREAD_COMMANDS) >= {"idle", "help", "store", "map", "travel", "rules"}
+        assert "shop" not in _idle_cog.FEED_THREAD_COMMANDS
         # The bare form runs the same code.
         guild = _world()[1]
         cog.rng = _Rng()
         ctx = _ctx(guild)
-        await bot.get_command("map")(ctx)
-        assert ctx.sent_embeds[-1].title == "🗺️ The Realm"
+        await bot.get_command("top")(ctx)
+        assert ctx.sent_embeds[-1].title.endswith("Idle Ladder")
     finally:
         cog.cog_unload()
     assert bot.get_command("map") is None                                            # unload takes them with it
@@ -1936,9 +1943,9 @@ async def test_a_feed_thread_only_runs_the_idle_game():
     feed = FakeThread(thread_id=900, parent_id=IDLE_CH)
     other = FakeThread(thread_id=901, parent_id=IDLE_CH)
 
-    for allowed in ("idle", "idle status", "idle admin hog", "map", "status", "travel", "help", "shop"):
+    for allowed in ("idle", "idle status", "idle admin hog", "map", "status", "travel", "help", "store"):
         assert await cog.bot_check(_ctx_in(guild, BOB, feed, allowed)) is True
-    for refused in ("slots", "shop insurance", "insurance", "ask"):
+    for refused in ("slots", "shop", "shop insurance", "insurance", "ask"):
         ctx = _ctx_in(guild, BOB, feed, refused)
         with pytest.raises(_idle_cog.IdleThreadOnly):
             await cog.bot_check(ctx)
@@ -1948,12 +1955,10 @@ async def test_a_feed_thread_only_runs_the_idle_game():
     assert await cog.bot_check(_ctx_in(guild, BOB, idle, "slots")) is True
 
 
-async def test_help_and_a_bare_shop_are_the_games_in_idle_context():
-    from src.cogs.shop_cog import ShopCog
+async def test_help_is_the_games_in_idle_context():
     from src.cogs.utility_cog import UtilityCog
     cog, guild, idle = _world()
-    char = _spawn(ALICE, thread_id=900)
-    char["auto_trade"] = False
+    _spawn(ALICE, thread_id=900)
     feed = FakeThread(thread_id=900, parent_id=IDLE_CH)
     elsewhere = FakeTextChannel(ch_id=77, name="general")
     assert cog.in_idle_context(_ctx(guild, channel=idle))
@@ -1961,41 +1966,52 @@ async def test_help_and_a_bare_shop_are_the_games_in_idle_context():
     assert not cog.in_idle_context(_ctx(guild, channel=elsewhere))
     assert not cog.in_idle_context(FakeCtx(author=guild.get_member(ALICE), guild=None, channel=elsewhere))
 
-    bot = SimpleNamespace(get_cog=lambda name: cog if name == "IdleCog" else None, add_command=lambda c: None)
+    bot = SimpleNamespace(get_cog=lambda name: cog if name == "IdleCog" else None)
     util = UtilityCog(bot)
     ctx = _ctx(guild, channel=feed)
     await util.cmd_help.callback(util, ctx)
     assert ctx.sent_embeds[-1].title == "📖 Idle RPG"
     assert isinstance(ctx.sent_views[-1], _idle_cog._HelpView)
 
-    shop = ShopCog(bot)
-    ctx = _ctx(guild, channel=idle)
-    ctx.message = FakeMessage(content="!shop auto", author=guild.get_member(ALICE), channel=idle)
-    await shop.cmd_shop.callback(shop, ctx)
-    assert ctx.sent_embeds[-1].title == "🛒 Idle Shop" and "Auto-trading is **off**" in ctx.sent_embeds[-1].description
+
+def _buttons(ctx) -> list:
+    return [button.action for button in ctx.sent_views[-1].children]
 
 
-async def test_the_sheet_carries_an_action_menu_for_its_invoker():
+async def test_the_sheet_shows_the_actions_open_to_its_invoker():
     cog, guild, _idle = _world()
-    _spawn(ALICE, gold=500)
     ctx = _ctx(guild)
+    # No character: only the ladder.
+    _spawn(BOB, **MARKET)
+    await cog.cmd_status.callback(cog, ctx, member=guild.get_member(BOB))
+    assert _buttons(ctx) == ["cmd_top"]
+
+    # Out in the wilds with no gold: no market, no tables, no prestige yet.
+    char = _spawn(ALICE, x=WILDS[0], y=WILDS[1], gold=0)
     await cog.cmd_idle.callback(cog, ctx)
+    assert _buttons(ctx) == ["cmd_travel", "cmd_top"]
     view = ctx.sent_views[-1]
     assert isinstance(view, _idle_cog._ActionView) and view.message is not None
-    select = view.children[0]
-    values = [option.value for option in select.options]
-    assert {"cmd_status", "cmd_items", "cmd_map", "cmd_travel", "cmd_shop", "cmd_rules"} <= set(values)
-    assert all(hasattr(IdleCog, value) for value in values)
+    assert await view.interaction_check(_interaction(guild, BOB)) is False          # Bob can't walk Alice's character
 
-    assert await view.interaction_check(_interaction(guild, BOB)) is False          # Bob can't shop with Alice's gold
-    picked = _interaction(guild, ALICE)
-    select._values = ["cmd_items"]
-    await select.callback(picked)
-    picked.response.edit_message.assert_awaited_once()                              # the pick is cleared, not kept
-    assert "Bard" in ctx.sent_embeds[-1].title and "power" in ctx.sent_embeds[-1].description.lower()
-    select._values = ["cmd_status"]
-    await select.callback(_interaction(guild, ALICE))
-    assert isinstance(ctx.sent_views[-1], _idle_cog._ActionView)                    # a refreshed sheet has a menu too
+    # In a market ring with gold, at the prestige level, with a quest on, on a journey: everything but travel.
+    char.update(MARKET, gold=50, level=rpg.PRESTIGE_LEVEL)
+    _state.idle_quests[GID] = {**rpg.new_quest(), "members": [ALICE], "description": "walk", "kind": "journey", "p1": [35, 40], "p2": [410, 80]}
+    await cog.cmd_idle.callback(cog, ctx)
+    assert _buttons(ctx) == ["cmd_shop", "cmd_gamble", "cmd_quest", "cmd_top", "cmd_prestige"]
+    assert all(button.label for button in ctx.sent_views[-1].children)
+    # Off the journey, the road opens again; broke, the tables close.
+    _state.idle_quests[GID]["members"] = [BOB]
+    char["gold"] = 0
+    await cog.cmd_idle.callback(cog, ctx)
+    assert _buttons(ctx) == ["cmd_shop", "cmd_travel", "cmd_quest", "cmd_top", "cmd_prestige"]
+
+    # A press runs the subcommand bare, for the invoker.
+    top = next(button for button in ctx.sent_views[-1].children if button.action == "cmd_top")
+    press = _interaction(guild, ALICE)
+    await top.callback(press)
+    press.response.defer.assert_awaited_once()
+    assert ctx.sent_embeds[-1].title.endswith("Idle Ladder")
 
 
 async def test_the_help_card_reads_topics_and_joins():
