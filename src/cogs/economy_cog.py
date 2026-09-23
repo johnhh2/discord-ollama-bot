@@ -1558,26 +1558,45 @@ class EconomyCog(commands.Cog):
         finally:
             self._crime_active.discard(uid)
 
+    # The records board's sections — the dropdown above it, and the typed
+    # `!records [server|global] [section]`. Keys match the section headers
+    # below by position.
+    RECORD_SECTIONS = (
+        ("all", "🏆 All records"), ("economy", "💰 Economy"), ("gambling", "🎰 Gambling"),
+        ("games", "🎮 Games"), ("assets", "🏠 Assets"),
+    )
+
     @commands.command(name="records", aliases=["record", "rec"])
-    async def cmd_records(self, ctx: commands.Context, scope: str = "server"):
-        """Display all-time records. `!records global` spans all servers; default is this server."""
-        scope = scope.lower()
-        if scope not in ("server", "global"):
-            await ctx.send(embed=emb(
-                "🏆 Records",
-                "Usage: `!records [server|global]` — `global` spans all servers, default is this server.",
-                C_RED,
-            ))
-            return
+    async def cmd_records(self, ctx: commands.Context, *args: str):
+        """Display all-time records. `!records global` spans all servers;
+        a section word (`gambling`, `games`…) shows one board."""
+        scope, section = "server", "all"
+        keys = {key for key, _ in self.RECORD_SECTIONS}
+        for word in (a.lower() for a in args):
+            if word in ("server", "global"):
+                scope = word
+            elif word in keys:
+                section = word
+            else:
+                await ctx.send(embed=emb(
+                    "🏆 Records",
+                    "Usage: `!records [server|global] [economy|gambling|games|assets]` — "
+                    "`global` spans all servers, default is this server.",
+                    C_RED,
+                ))
+                return
         if scope == "server" and ctx.guild is None:
             await ctx.send(embed=emb("🏆 Records", "Server records are only available in servers.", C_RED))
             return
         if ctx.guild is None:
-            await ctx.send(embed=await self._records_embed(ctx, scope))
+            await ctx.send(embed=await self._records_embed(ctx, scope, section))
             return
-        await send_scoped(ctx, lambda s: self._records_embed(ctx, s), [("Server", "server"), ("Global", "global")], scope)
+        await send_scoped(
+            ctx, lambda s, sec: self._records_embed(ctx, s, sec), [("Server", "server"), ("Global", "global")], scope,
+            sections=[(label, key) for key, label in self.RECORD_SECTIONS], section=section,
+        )
 
-    async def _records_embed(self, ctx: commands.Context, scope: str) -> discord.Embed:
+    async def _records_embed(self, ctx: commands.Context, scope: str, section: str = "all") -> discord.Embed:
         if scope == "global":
             r = await load_global_records()
             title = "🏆 Global All-Time Records"
@@ -1646,6 +1665,10 @@ class EconomyCog(commands.Cog):
             ]),
         ]
 
+        if section != "all":
+            label = dict(self.RECORD_SECTIONS)[section]
+            sections = [(header, entries) for header, entries in sections if header == label]
+            title += f" — {label.split(' ', 1)[1]}"
         embed = discord.Embed(title=title, color=C_GOLD)
         embed.description = "\n\n".join(
             f"__**{header}**__\n" + "\n".join(entries) for header, entries in sections

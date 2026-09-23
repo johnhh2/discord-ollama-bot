@@ -131,8 +131,25 @@ async def test_records_and_leaderboard_carry_scope_buttons(db):
     cog = EconomyCog(bot=SimpleNamespace(user=SimpleNamespace(id=999), fetch_user=AsyncMock()))
     ctx = _ctx("records")
     await cog.cmd_records.callback(cog, ctx, "server")
-    assert [b.label for b in ctx.sent_views[0].children] == ["Server", "Global"]
+    view = ctx.sent_views[0]
+    assert [getattr(b, "label", None) for b in view.children] == [None, "Server", "Global"]
     assert ctx.sent_embeds[0].title == "🏆 All-Time Records"
+    assert "__**💰 Economy**__" in ctx.sent_embeds[0].description and "__**🎰 Gambling**__" in ctx.sent_embeds[0].description
+
+    # The dropdown narrows the board to one section; a typed word does the same.
+    select = view.children[0]
+    select._values = ["gambling"]
+    interaction = _interaction()
+    await select.callback(interaction)
+    narrowed = interaction.response.edit_message.await_args.kwargs["embed"]
+    assert narrowed.title == "🏆 All-Time Records — Gambling"
+    assert "__**🎰 Gambling**__" in narrowed.description and "Economy" not in narrowed.description
+    typed = _ctx("records")
+    await cog.cmd_records.callback(cog, typed, "global", "games")
+    assert typed.sent_embeds[0].title == "🏆 Global All-Time Records — Games"
+    bad = _ctx("records")
+    await cog.cmd_records.callback(cog, bad, "nonsense")
+    assert "Usage" in bad.sent_embeds[0].description
 
     ctx = _ctx("leaderboard")
     await cog.cmd_leaderboard.callback(cog, ctx, "idle")

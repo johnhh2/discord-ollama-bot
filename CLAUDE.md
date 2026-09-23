@@ -826,9 +826,11 @@ command, so gates, side effects and replies can't drift. The pieces live in
   graphs).
 - **`!records` and `!leaderboard` carry scope buttons** (`src/scope_view.py`,
   `ScopeView`): Server / Global (and Idle RPG on the leaderboard), anyone
-  may press, the current scope's button is disabled. The commands build
-  their embed in `_records_embed` / `_leaderboard_embed` so a press
-  re-renders without a second command.
+  may press, the current scope's button is disabled. The records board
+  also has a section dropdown above the buttons (`EconomyCog.RECORD_SECTIONS`:
+  all, economy, gambling, games, assets — also typed, `!records global
+  gambling`). The commands build their embed in `_records_embed` /
+  `_leaderboard_embed` so a press re-renders without a second command.
 - **Your own `!balance` (alias `!wallet`) and `!savings` cards carry
   actions** (`src/wallet_view.py`, `WalletView`): Deposit and Withdraw on
   both, Pay and Shop on the wallet. Each runs the typed command *for the
