@@ -200,7 +200,7 @@ def test_a_player_out_of_range_is_never_the_opponent():
     far = _fight(rpg.BATTLE_RANGE + 1)
     assert far.uids == (1,) and rpg.HOUSE_NAME in far.text          # a step further: the house instead
     assert not far.public                                           # which stays in the feed
-    assert rpg.BATTLE_RANGE == rpg.MARKET_RADIUS // 2
+    assert rpg.BATTLE_RANGE == rpg.MARKET_RADIUS
 
     # Before the tick has placed a character, nobody can reach it.
     unplaced = {1: _char(30, x=100, y=100), 2: _char(30)}
@@ -795,7 +795,7 @@ def test_only_two_characters_meeting_measure_round_the_edge():
 
     # Neighbours across the east edge fight each other like any others…
     assert rpg.in_battle_range({"x": 499, "y": 250}, {"x": 2, "y": 250})
-    assert not rpg.in_battle_range({"x": 499, "y": 250}, {"x": 40, "y": 250})
+    assert not rpg.in_battle_range({"x": 499, "y": 250}, {"x": rpg.BATTLE_RANGE + 2, "y": 250})
 
     # …but a town belongs to the corner it is drawn in. Denmark is at (35, 40)
     # and stays a long walk from the far edge, however the ground wraps.

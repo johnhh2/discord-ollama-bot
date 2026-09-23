@@ -868,7 +868,7 @@ tables from migrations 0070–0077.
   and the original staked a flat 7% of a level on it. With two players
   every swing lands on the same pair and snowballs. Three rules keep that
   in check; don't undo them for "faithfulness": a player is only a
-  possible opponent within `BATTLE_RANGE` (half a market ring) on the map,
+  possible opponent within `BATTLE_RANGE` (a market ring's radius) on the map,
   which is what makes the frequency bearable — everyone else meets the
   house (a fight nobody else has a stake in, so it stays in the player's
   own feed — only a player-vs-player one is channel news); the stake follows the

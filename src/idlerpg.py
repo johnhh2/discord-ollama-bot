@@ -332,11 +332,11 @@ assert set(LORE) == set(LANDMARKS), sorted(set(LANDMARKS) ^ set(LORE))
 TOWNS = ("Denmark", "the land of Qwok", "Velvragh", "the Towers of Ankh-Allor", "Jow Botzi territory")
 MARKET_RADIUS = 60
 TOWN_CORE_RADIUS = 15
-# Two players only run into each other in a level-up battle within half a
-# market ring of one another. Without it the pool was "everyone online", so
+# Two players only run into each other in a level-up battle within a market
+# ring's radius of one another. Without it the pool was "everyone online", so
 # in a small server every level-up was a fight with the same rival; now the
 # map decides who you meet, and an empty stretch of wilderness is quiet.
-BATTLE_RANGE = MARKET_RADIUS // 2
+BATTLE_RANGE = MARKET_RADIUS
 AUTO_TRADE_COOLDOWN_SECS = 12 * 3600
 AUTO_TRADE_BUDGET_PCT = 50     # an errand never spends more than this share of the purse
 
