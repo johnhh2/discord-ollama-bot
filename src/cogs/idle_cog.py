@@ -1548,11 +1548,11 @@ class IdleCog(commands.Cog):
         await ctx.send(embed=emb("🤺 Duel", story[0], C_GOLD))
         await self._narrate(ctx.guild, (uid, member.id), story)
         await ctx.send(embed=emb("🤺 Duel", "\n".join(n.text for n in notes), C_GOLD))
-        await self._deliver(ctx.guild, notes, skip_main=self._in_idle_channel(ctx))
+        await self._deliver(ctx.guild, notes)
 
     async def _narrate(self, guild, uids, story: list) -> None:
         """Play a settled fight out in the duellists' own feeds, a beat
-        between rounds. Their threads only — the channel hears the result."""
+        between rounds. Their threads only — the channel hears nothing."""
         channel = self._channel(guild)
         if channel is None:
             return

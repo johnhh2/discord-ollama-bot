@@ -541,7 +541,7 @@ async def test_duel_is_once_a_day_and_not_against_the_sleeping():
     await cog.cmd_duel.callback(cog, ctx, member=guild.get_member(BOB))
     assert ctx.sent_embeds[-1].title == "🤺 Duel"
     assert alice["next_level_at"] != bob["next_level_at"]
-    assert "duelled" in _sent(idle)
+    idle.send.assert_not_called()                            # the room isn't told
 
     await cog.cmd_duel.callback(cog, ctx, member=guild.get_member(BOB))
     assert "today's duel" in ctx.sent_embeds[-1].description
@@ -552,7 +552,7 @@ async def test_duel_is_once_a_day_and_not_against_the_sleeping():
     assert "offline" in ctx.sent_embeds[-1].description and alice["duel_day"] is None
 
 
-async def test_a_duel_plays_out_round_by_round_in_both_feeds_and_only_the_result_in_the_room(monkeypatch):
+async def test_a_duel_plays_out_round_by_round_in_both_feeds_and_not_in_the_room(monkeypatch):
     cog, guild, idle = _world()
     _spawn(ALICE, left=50_000, items={"ring": {"level": 40, "name": None}})
     _spawn(BOB, left=50_000, items={"ring": {"level": 30, "name": None}})
@@ -575,9 +575,10 @@ async def test_a_duel_plays_out_round_by_round_in_both_feeds_and_only_the_result
         assert "wins." in feed, who                          # and the result lands after it
     assert beats and len(beats) == feeds["alice"].count("**Round ")   # a beat before each round
 
-    room = _sent(idle)
-    assert "**Round 1**" not in room and "squares up to" not in room
-    assert "duelled" in room and "wins." in room             # the room hears the result only
+    # Not the result either: a duel is the two players' business, up to
+    # twice a day each, and it says little to anyone who didn't watch it.
+    idle.send.assert_not_called()
+    assert ctx.sent_embeds[-1].title == "🤺 Duel"            # the challenger's reply still carries it
 
 
 async def test_duel_run_in_the_idle_channel_is_not_posted_twice():

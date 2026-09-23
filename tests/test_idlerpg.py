@@ -233,7 +233,7 @@ def test_duel_moves_the_same_seconds_from_loser_to_winner():
     story, notes = rpg.duel(1, 2, chars, _Scripted(randrange=5), _name, NOW)   # never a dodge, never a crit
     assert rpg.time_left(chars[2], NOW) == 21_000            # the loser gives up 5% of 20,000…
     assert rpg.time_left(chars[1], NOW) == 9000              # …and the winner takes the same
-    assert notes[0].uids == (1, 2) and notes[0].public
+    assert notes[0].uids == (1, 2) and not notes[0].public   # the duellists' feeds, not the room
     assert len(story) >= 2 and story[0].startswith("🤺") and "**Round 1**" in story[1]
     assert {u: rpg.hp_of(c) for u, c in chars.items()} == whole   # a match, not a mugging
 

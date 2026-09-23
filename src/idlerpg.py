@@ -989,11 +989,12 @@ def duel(uid: int, target_uid: int, chars: dict, rng, name: NameFn, now: int,
     staked = f", and takes the {wager:,} gold on the table" if wager else ""
     # Both clocks move, in opposite directions, so the tail names each one.
     moves = ", ".join(f"{name(u)} {clock_delta(d)}" for u, d in ((w_uid, -won), (l_uid, stake)) if d)
+    # Feeds only: a duel is one player's business, up to twice a day each,
+    # and a result without the rounds says little to the room.
     return story, [Note(
         (uid, target_uid),
         f"🤺 {name(uid)} duelled {name(target_uid)} — {how}. {name(w_uid)} wins{staked}."
         + (f" {moves}" if moves else ""),
-        True,
     )]
 
 
