@@ -25,6 +25,7 @@ from src.persistence import (
     insert_issue,
 )
 from src.guild_config import get_guild_cfg
+from src.features import feature_enabled
 from src.discord_retry import is_transient_server_error
 from src.reactions import seed_reactions
 from src.ai import (
@@ -467,11 +468,15 @@ class EventsCog(commands.Cog):
         try:
             await channel.send(embed=emb(
                 "👋 Hello!",
-                f"Thanks for adding me to **{guild.name}**! Run `!help` to see what I can do.",
+                f"Thanks for adding me to **{guild.name}**! Run `!help` to see what I can do.\n\n"
+                "A few questions first so I only run what you want here — any server admin can "
+                "answer them, and `!settings setup` asks again later.",
                 C_BLUE,
             ), silent=True)
         except (discord.Forbidden, discord.HTTPException):
-            pass
+            return
+        from src.setup_wizard import start_setup_after_join
+        await start_setup_after_join(guild, channel)
 
     async def bot_check(self, ctx: commands.Context) -> bool:
         """Global command-channel whitelist/blacklist gate.
@@ -484,7 +489,11 @@ class EventsCog(commands.Cog):
         """
         if ctx.guild is None:
             return True
-        if ctx.command and ctx.command.name in ("settings", "clear"):
+        # Settings must be reachable from a channel the whitelist locked the
+        # bot out of — the whole group, so `!settings channel whitelist` can
+        # undo the lock from anywhere.
+        root = getattr(ctx.command, "root_parent", None) or ctx.command
+        if root and root.name in ("settings", "settings-channel", "clear"):
             return True
 
         cfg = get_guild_cfg(ctx.guild.id)
@@ -525,7 +534,8 @@ class EventsCog(commands.Cog):
         from src.permissions import PermissionDenied
         from src.gambling.session import GamblingThreadOnly
         from src.cogs.idle_cog import IdleThreadOnly
-        if isinstance(error, (LevelLocked, PermissionDenied, GamblingThreadOnly, IdleThreadOnly)):
+        from src.features import FeatureDisabled
+        if isinstance(error, (LevelLocked, PermissionDenied, GamblingThreadOnly, IdleThreadOnly, FeatureDisabled)):
             return  # gate already sent its own message (or is hidden-silent)
         if isinstance(error, commands.CheckFailure):
             cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
@@ -691,13 +701,17 @@ class EventsCog(commands.Cog):
         # other indefinitely, and `!shop tax @somebot` would bill an account
         # that can't notice or object. The interceptors and AI routing below
         # stay open to bots.
+        #
+        # The shop effects and the auto-daily are feature-gated per guild
+        # (src/features.py): a bought mock must stop firing the moment the
+        # shop is switched off, not when its charges run out.
+        gid = message.guild.id if message.guild else None
+        shop_on = feature_enabled(gid, "shop")
+        economy_on = feature_enabled(gid, "economy")
         for handler in () if message.author.bot else (
             self._handle_msg_xp,
-            self._handle_ragebait,
-            self._handle_mock,
-            self._handle_tax,
-            self._handle_curse,
-            self._handle_auto_daily,
+            *((self._handle_ragebait, self._handle_mock, self._handle_tax, self._handle_curse) if shop_on else ()),
+            *((self._handle_auto_daily,) if economy_on else ()),
         ):
             try:
                 await handler(message)
@@ -932,8 +946,11 @@ class EventsCog(commands.Cog):
         delegate to process_commands. Always ends with process_commands."""
         uid = message.author.id
 
-        # Bot-wide AI off switch
+        # Bot-wide AI off switch, then the server's own (src/features.py).
         if not state.bot_settings.get("ai_enabled", True):
+            await self.bot.process_commands(message)
+            return
+        if message.guild is not None and not feature_enabled(message.guild.id, "ai"):
             await self.bot.process_commands(message)
             return
 

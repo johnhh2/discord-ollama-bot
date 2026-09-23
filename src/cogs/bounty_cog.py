@@ -267,7 +267,7 @@ class BountyCog(commands.Cog):
             await ctx.send(embed=emb(
                 "🎯 Bounties Not Enabled",
                 "No bounty channel is configured. A server admin can set one with "
-                "`!settings bounty-channel #channel`.",
+                "`!settings channel bounty #channel`.",
                 C_GREY,
             ))
             return
@@ -853,7 +853,7 @@ class BountyCog(commands.Cog):
             await ctx.send(embed=emb(
                 "🎯 Bounties Not Enabled",
                 "No bounty channel is configured. A server admin can set one with "
-                "`!settings bounty-channel #channel`.",
+                "`!settings channel bounty #channel`.",
                 C_GREY,
             ))
             return

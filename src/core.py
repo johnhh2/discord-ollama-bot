@@ -212,6 +212,26 @@ def create_bot() -> commands.Bot:
         return True
 
     @bot.check
+    async def _feature_gate(ctx: commands.Context) -> bool:
+        """Refuse commands of a feature the server switched off (see
+        src/features.py). Runs after the permission gate so a hidden admin
+        command stays invisible to users who can't run it anyway."""
+        if ctx.guild is None or ctx.command is None:
+            return True
+        from src.features import disabled_feature_for, FeatureDisabled
+        from src.helpers import emb, C_GREY
+        feature = disabled_feature_for(ctx.command.qualified_name, ctx.guild.id)
+        if feature is None:
+            return True
+        await ctx.send(embed=emb(
+            "🚫 Turned Off",
+            f"`!{ctx.command.qualified_name}` needs **{feature.label}**, which is off in this server. "
+            "A server admin can turn it on with `!settings features`.",
+            C_GREY,
+        ))
+        raise FeatureDisabled()
+
+    @bot.check
     async def _level_gate(ctx: commands.Context) -> bool:
         """Block commands the author hasn't unlocked yet."""
         if ctx.guild is None or ctx.command is None:

@@ -170,14 +170,8 @@ async def test_command_perms_subset_match_registered_commands(loaded_bot):
     from pathlib import Path
     perms = json.loads(Path("src/command_perms.json").read_text(encoding="utf-8"))
 
-    actual_commands = {cmd.name for cmd in loaded_bot.commands}
-    actual_qualified = set()
-    for cmd in loaded_bot.commands:
-        if hasattr(cmd, "commands"):  # Group: walk subcommands
-            for sub in cmd.commands:
-                actual_qualified.add(sub.qualified_name)
-
-    valid = actual_commands | actual_qualified
+    # walk_commands recurses into nested groups (`settings channel admin-log`).
+    valid = {cmd.qualified_name for cmd in loaded_bot.walk_commands()}
     stale = set(perms.keys()) - valid
     assert stale == set(), (
         f"command_perms.json has entries for commands that don't exist: {stale}. "

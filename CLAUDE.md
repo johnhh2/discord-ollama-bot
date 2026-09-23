@@ -606,16 +606,71 @@ closing. Logic lives in `src/gambling/session.py`.
   guild cache (deleted, or archived while the bot was down) is stale and is
   dropped on the owner's next `!session`.
 
+## Feature toggles: what a server has switched off stays off everywhere
+
+Seven per-guild switches in `src/features.py` — `economy`, and under it
+`gambling`, `savings`, `assets`, `shop` (with `artifacts` under the shop),
+plus `ai` — stored as `cfg["features"]`. A missing key is **on**, so every
+server that predates them keeps everything. A child is only on while its
+parent is (`feature_enabled` walks the chain), but keeps its own stored
+value, so switching the economy back on restores what the admin had picked.
+
+- **The gate is global.** `_feature_gate` (`src/core.py`, right after the
+  permission gate) asks `disabled_feature_for(qualified_name, guild_id)` for
+  every command and refuses with a "🚫 Turned Off" reply naming the
+  *outermost* switch (`!slots` with the economy off says Economy). Commands
+  map to features in `COMMAND_FEATURES`, with the same longest-prefix walk
+  as `command_perms` (`shop artifacts` → artifacts, `shop x` → shop). A
+  command absent from the map is always on: games, levels, the idle RPG,
+  moderation, every settings command. A new coin-spending or AI command
+  needs an entry, and a new feature needs a `Feature` in `FEATURES` — the
+  wizard, the toggle panel and the overview all read the catalog.
+- **Off means off, not "hidden".** Every menu that lists commands asks
+  `feature_enabled` before printing a line (`!help`, `!games`, `!economy`,
+  `!crime`, `!shop`, `!adminhelp`, the `!ai` overview, `!tips`, the
+  level-unlock predicates in `src/level_unlocks.py`), and every passive path
+  gates itself: the shop effects and the auto-daily in `on_message`, the
+  @mention AI routing, the story and tax alias listeners, the dailies embed
+  (only 🗓️ without gambling), the lottery loop, the level-up coin reward and
+  its artifact line. AI commands charge nothing where the economy is off
+  (`_cost_for` in `src/ai.py`, refunds included — a refund of a charge that
+  never happened would mint coins). Add the same check to a new passive path;
+  the gate only sees commands.
+- **DMs are always on.** There's no guild to configure, and balances are
+  global anyway.
+- **The setup wizard** (`src/setup_wizard.py`) runs from `on_guild_join`
+  after the hello message and from `!settings setup`: economy → (gambling,
+  savings, assets, shop → artifacts) → the `!settings shop` items hint →
+  AI, each a pair of buttons **any** server or bot admin may press
+  (`can_configure` in `src/permissions.py`, the ctx-free
+  `can_manage_settings`). Each answer saves as it lands; a question nobody
+  answers within `WIZARD_TIMEOUT` pauses the wizard and switches nothing off.
+
+Coverage: [tests/test_features.py](tests/test_features.py).
+
 ## Settings prompts: a bare command opens buttons
 
 A settings command run without its value opens a prompt from
 `src/settings_views.py` instead of printing a usage line: a channel dropdown
 for every channel setting (`pick_channels`), on/off toggles for
-`!settings shop` (`toggle_panel`), buttons for the on/off and either/or
-settings (`confirm_choice`), a dropdown for removing aliases, banned tags and
-rate-limited users (`pick_from_list`), a user picker (`pick_users`), and a
-Confirm on every alias `clear`. Bare `!settings` / `!settings-channel` end
-with a dropdown that opens any of them (`_open_panel`).
+`!settings shop` and `!settings features` (`toggle_panel`), buttons for the
+on/off and either/or settings (`confirm_choice`), a dropdown for removing
+aliases, banned tags and rate-limited users (`pick_from_list`), a user picker
+(`pick_users`), and a Confirm on every alias `clear`. Bare `!settings` shows
+one overview (features, channels, shop items, the rest) and ends with two
+action dropdowns — settings and channels — that open any of them
+(`pick_action` / `_open_actions`; a single select caps at 25 options). Bare
+`!settings channel` shows the channel overview with its own dropdown
+(`_open_panel`).
+
+Every channel setting is a `!settings channel <name>` subcommand
+(`cmd_settings_channel`, a nested group). The old spellings still work:
+`!settings-channel …` is a hidden top-level command that forwards to the
+subcommand, and `!settings bounty-channel` / `minecraft-channel` /
+`dailies-channel` forward to `!settings channel bounty` / `minecraft` /
+`dailies`. Forwarding goes through `_forward`, which sets `ctx.command` to
+the target so its `@requires_perm` (the hidden bot-admin log channels) still
+decides. Don't advertise the old spellings; the menus only print the new.
 
 - **The typed forms are unchanged and win.** `clear`, a #mention or an
   `on|off` argument never opens a prompt. A prompt only *chooses*: the
@@ -744,7 +799,7 @@ tables from migrations 0070–0077.
   journey quest overrides it: being picked clears `travel_to`, and the
   command refuses while on one. It is the only steering in the game —
   don't add a faster or paid variant without rethinking the market ring.
-- **Off until `!settings-channel idle` names a channel.** News posts there
+- **Off until `!settings channel idle` names a channel.** News posts there
   and each character's public feed thread opens under it. Clearing it
   freezes every clock; nothing expires while the game is off.
 - **A clock is `next_level_at` (running) or `remaining` (paused) — exactly

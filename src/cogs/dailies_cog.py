@@ -6,7 +6,7 @@ winnings); 🎰 also bets it on slots; 🏇 also races the bot for it (a coin
 flip with a track). 🎟️ is the exception: it only buys the player's
 once-a-day lottery ticket for this server, without claiming anything.
 
-Configured per-guild with `!settings dailies-channel #channel` — the channel id,
+Configured per-guild with `!settings channel dailies #channel` — the channel id,
 claim-message id, and last-reset day all live in the guild_settings JSON blob
 (no dedicated table/migration needed).
 
@@ -31,6 +31,7 @@ from src.helpers import emb, C_GOLD, fetch_member
 from src.economy import _ct_today, next_daily_reset_ts
 from src.persistence import save_guild_settings
 from src.guild_config import get_guild_cfg
+from src.features import feature_enabled
 from src.gambling.scratchoff import play_scratchoffs
 from src.gambling.flip import play_flip
 from src.gambling.slots import play_slots
@@ -84,22 +85,34 @@ async def _delete_unless_kept(message: discord.Message, delay: float):
         pass
 
 
-def _dailies_body() -> str:
-    return (
-        "React below to claim your daily reward and instantly use all of "
-        "your daily scratchoffs.\n\n"
+def _dailies_emojis(guild_id: int) -> tuple:
+    """The buttons a guild's claim embed gets: everything, or just 🗓️ where
+    gambling is off (scratchoffs are gambling, so the claim is the daily
+    reward alone there)."""
+    return DAILIES_ALL_EMOJIS if feature_enabled(guild_id, "gambling") else (DAILIES_CLAIM_EMOJI,)
+
+
+def _dailies_body(guild_id: int) -> str:
+    gambling = feature_enabled(guild_id, "gambling")
+    what = "claim your daily reward and instantly use all of your daily scratchoffs" if gambling else "claim your daily reward"
+    lines = [
+        f"React below to {what}.\n\n"
         "Results (and any other messages here) are cleared after 5 minutes — "
         f"except results where {DAILIES_KEEP_MIN:,} 🪙 or more was won or "
         "lost, which are kept until the dailies reset.\n"
         f"Dailies reset <t:{next_daily_reset_ts()}:R>.\n\n"
-        f"{DAILIES_CLAIM_EMOJI} claim dailies\n"
-        f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip the daily reward + all scratchoff winnings\n"
-        f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet the daily reward + all scratchoff winnings on slots\n"
-        f"{DAILIES_RACE_EMOJI} claim dailies, then race the bot for the daily reward + all scratchoff winnings (a win doubles it)\n"
-        f"{DAILIES_TICKETS_EMOJI} buy today's lottery ticket — {DAILY_TICKET_PRICE:,} 🪙, 1 per day\n\n"
-        "Property revenue banks with your claim but isn't gambled — "
-        "`!daily property` opts it into the 🪙/🎰/🏇 stake."
-    )
+        f"{DAILIES_CLAIM_EMOJI} claim dailies"
+    ]
+    if gambling:
+        lines += [
+            f"{DAILIES_FLIP_EMOJI} claim dailies, then coin-flip the daily reward + all scratchoff winnings",
+            f"{DAILIES_SLOTS_EMOJI} claim dailies, then bet the daily reward + all scratchoff winnings on slots",
+            f"{DAILIES_RACE_EMOJI} claim dailies, then race the bot for the daily reward + all scratchoff winnings (a win doubles it)",
+            f"{DAILIES_TICKETS_EMOJI} buy today's lottery ticket — {DAILY_TICKET_PRICE:,} 🪙, 1 per day\n",
+            "Property revenue banks with your claim but isn't gambled — "
+            "`!daily property` opts it into the 🪙/🎰/🏇 stake.",
+        ]
+    return "\n".join(lines)
 
 
 async def refresh_dailies_channel(bot, guild_id: int):
@@ -113,7 +126,7 @@ async def refresh_dailies_channel(bot, guild_id: int):
     """
     cfg = get_guild_cfg(guild_id)
     ch_id = cfg.get("dailies_channel")
-    if not ch_id:
+    if not ch_id or not feature_enabled(guild_id, "economy"):
         return
     try:
         channel = bot.get_channel(ch_id) or await bot.fetch_channel(ch_id)
@@ -148,7 +161,7 @@ async def refresh_dailies_channel(bot, guild_id: int):
         try:
             # Posted by the 5am reset / boot sweep — nobody asked for it, and
             # it pings nobody, so it must not push-notify channel subscribers.
-            claim_msg = await channel.send(embed=emb(DAILIES_TITLE, _dailies_body(), C_GOLD), silent=True)
+            claim_msg = await channel.send(embed=emb(DAILIES_TITLE, _dailies_body(guild_id), C_GOLD), silent=True)
         except (discord.Forbidden, discord.HTTPException):
             logging.warning("[dailies] guild=%s failed to post claim embed", guild_id)
             return
@@ -157,7 +170,7 @@ async def refresh_dailies_channel(bot, guild_id: int):
         # A seeding failure leaves the day unstamped, so the next minute tick
         # reposts; clicks on the half-seeded embed still work.
         cfg["dailies_message_id"] = claim_msg.id
-        if not await seed_reactions(claim_msg, DAILIES_ALL_EMOJIS, what=f"dailies guild={guild_id}"):
+        if not await seed_reactions(claim_msg, _dailies_emojis(guild_id), what=f"dailies guild={guild_id}"):
             return
 
     cfg["dailies_reset_day"] = today
@@ -235,6 +248,14 @@ class DailiesCog(commands.Cog):
         emoji = str(payload.emoji)
         if emoji not in DAILIES_ALL_EMOJIS:
             return
+        if not feature_enabled(payload.guild_id, "economy"):
+            return
+        if not feature_enabled(payload.guild_id, "gambling"):
+            # The embed only offers 🗓️ there; a hand-added 🪙/🎰/🏇 is a plain
+            # claim, and 🎟️ buys nothing.
+            if emoji == DAILIES_TICKETS_EMOJI:
+                return
+            emoji = DAILIES_CLAIM_EMOJI
         # Mirror the on_message blocklist silence for banned users.
         if payload.user_id in state.global_blocklist:
             return

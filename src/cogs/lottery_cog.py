@@ -24,6 +24,7 @@ from src.persistence import (
 import src.persistence as persistence
 from src.config import DAILY_RESET_HOUR, LOTTERY_SEED_POOL
 from src.guild_config import get_guild_cfg
+from src.features import feature_enabled
 from src.confirm_view import confirm_purchase
 from src import state, status_manager
 
@@ -225,7 +226,7 @@ class LotteryCog(commands.Cog):
     async def _run_guild_schedule(self, guild, now):
         cfg = get_guild_cfg(guild.id)
         lottery_channel_id = cfg.get("lottery_channel")
-        if not lottery_channel_id:
+        if not lottery_channel_id or not feature_enabled(guild.id, "gambling"):
             return
 
         try:

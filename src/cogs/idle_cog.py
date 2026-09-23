@@ -2,7 +2,7 @@
 is the Discord half: commands, the once-a-minute tick, the listeners that
 track who is online, and the feed threads.
 
-The game runs in the channel set with `!settings-channel idle` and is off
+The game runs in the channel set with `!settings channel idle` and is off
 while none is set (every clock freezes). Server-wide news is posted in that
 channel; each character also gets a public thread under it that carries
 everything concerning them.
@@ -239,7 +239,7 @@ def _clean_class(text: str) -> "str | None":
 def _off_embed() -> discord.Embed:
     return emb(
         "💤 Idle RPG Is Off",
-        "No idle channel is set here. An admin can turn the game on with `!settings-channel idle #channel`.",
+        "No idle channel is set here. An admin can turn the game on with `!settings channel idle #channel`.",
         C_GREY,
     )
 

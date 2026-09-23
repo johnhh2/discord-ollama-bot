@@ -170,6 +170,18 @@ def can_manage_settings(ctx: commands.Context) -> bool:
     return is_admin(ctx) or is_server_admin(ctx)
 
 
+def can_configure(user, guild_id: int) -> bool:
+    """ctx-free `can_manage_settings`, for button clicks on a prompt that any
+    admin may answer (the setup wizard): a Discord administrator, an
+    env-driven bot admin, or a `!setperm` override in this guild."""
+    if user.id in state.bot_admins:
+        return True
+    perms = getattr(user, "guild_permissions", None)
+    if perms is not None and perms.administrator:
+        return True
+    return state.user_perm_overrides.get((int(guild_id), int(user.id))) in ("server_admin", "bot_admin")
+
+
 def is_bannable(member) -> bool:
     """True if `member` may be added to a blocklist.
 

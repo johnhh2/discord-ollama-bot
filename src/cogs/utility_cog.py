@@ -38,6 +38,7 @@ from src.persistence import (
     list_feature_request_watchers,
 )
 from src.guild_config import get_guild_cfg
+from src.features import feature_enabled
 from src.ai import (
     check_ollama_connected, keep_typing,
     ollama_semaphore, OLLAMA_NUM_PREDICT, OLLAMA_REQUEST_TIMEOUT,
@@ -144,14 +145,19 @@ async def build_ai_overview_embed(ctx: commands.Context) -> discord.Embed:
     )
 
     # Costs come from FEATURE_COSTS, never hardcoded, so this menu can't
-    # drift from the real prices.
+    # drift from the real prices. Where the economy is off nothing is charged
+    # (enforce_cost), so no price is quoted.
     from src.ai import FEATURE_COSTS
+    economy_on = feature_enabled(ctx.guild.id if ctx.guild else 0, "economy")
+
+    def _cost(key: str) -> str:
+        return f"Cost: **{FEATURE_COSTS[key]:,} 🪙**" if economy_on else "Cost: free (economy off here)"
 
     embed.add_field(
         name="💬 !ask",
         value=(
             f"Ask the AI a question\n"
-            f"Cost: **{FEATURE_COSTS['ask']:,} 🪙**\n"
+            f"{_cost('ask')}\n"
             f"Model: `{ask_model}`\n"
             f"Usage: `!ask <question>`"
         ),
@@ -168,7 +174,7 @@ async def build_ai_overview_embed(ctx: commands.Context) -> discord.Embed:
         name="📖 !story",
         value=(
             f"Generate an original short story on any topic\n"
-            f"Cost: **{FEATURE_COSTS['story']:,} 🪙** · `!continue` for next chapter ({FEATURE_COSTS['continue']:,} 🪙) · `!tldr` to summarize\n"
+            f"{_cost('story')} · `!continue` for next chapter" + (f" ({FEATURE_COSTS['continue']:,} 🪙)" if economy_on else "") + " · `!tldr` to summarize\n"
             f"Model: `{ask_model}`\n"
             f"Usage: `!story <prompt>`\n"
             f"{aliases_line}"
@@ -180,7 +186,7 @@ async def build_ai_overview_embed(ctx: commands.Context) -> discord.Embed:
         name="🎭 !roleplay",
         value=(
             f"Start an AI roleplay session\n"
-            f"Cost: **{FEATURE_COSTS['roleplay']:,} 🪙** · `!tldr` to summarize the last response\n"
+            f"{_cost('roleplay')} · `!tldr` to summarize the last response\n"
             f"Model: `{roleplay_model}`\n"
             f"Usage: `!roleplay <character> [@user1 @user2 ...]`"
         ),
@@ -191,7 +197,7 @@ async def build_ai_overview_embed(ctx: commands.Context) -> discord.Embed:
         name="🗺️ !rpg",
         value=(
             f"Start an interactive text adventure game\n"
-            f"Cost: **{FEATURE_COSTS['rpg']:,} 🪙**\n"
+            f"{_cost('rpg')}\n"
             f"Model: `{roleplay_model}`\n"
             f"Usage: `!rpg [@user1 @user2 ...]`\n"
         ),
@@ -285,30 +291,37 @@ class UtilityCog(commands.Cog):
         gid = ctx.guild.id if ctx.guild else 0
         uid = ctx.author.id
 
+        # Every section lists only what this server has switched on
+        # (src/features.py) — a command that would only answer "Turned Off"
+        # doesn't belong in the menu.
+        on = {key: feature_enabled(gid, key) for key in ("economy", "gambling", "savings", "shop", "ai")}
         help_embed = discord.Embed(title="📖 Commands", color=0x3498db)
-        eco_lines = [
-            "`!economy` — Economy overview and command list",
-            fmt_line("savings", "`!savings` — 🐷 Piggy bank with " + SAVINGS_DAILY_PCT + " daily interest", uid, gid),
-            "`!crime` — Steal, mug, and jailbreak commands",
-        ]
-        help_embed.add_field(name="💰 Economy", inline=False, value="\n".join(eco_lines))
-        help_embed.add_field(name="🎮 Games / Gambling", inline=False, value=(
-            "`!games` — View all games and gambling commands"
+        if on["economy"]:
+            eco_lines = ["`!economy` — Economy overview and command list"]
+            if on["savings"]:
+                eco_lines.append(fmt_line("savings", "`!savings` — 🐷 Piggy bank with " + SAVINGS_DAILY_PCT + " daily interest", uid, gid))
+            eco_lines.append("`!crime` — Steal, mug, and jailbreak commands")
+            help_embed.add_field(name="💰 Economy", inline=False, value="\n".join(eco_lines))
+        help_embed.add_field(name="🎮 Games" + (" / Gambling" if on["gambling"] else ""), inline=False, value=(
+            "`!games` — View all games" + (" and gambling commands" if on["gambling"] else "")
         ))
-        lb_lines = [
-            "`!profile [@user]` — Player overview: coins, level, tickets, chess ranks",
-            "`!leaderboard` — Top 10 richest users (`!lb idle` for the idle RPG ladder)",
-            "`!roles` — View role thresholds and your progress",
-            "`!levels` — Top 10 users by XP level",
-            "`!records` — All-time records for economy and games",
-        ]
+        lb_lines = ["`!profile [@user]` — Player overview: coins, level, tickets, chess ranks"]
+        if on["economy"]:
+            lb_lines.append("`!leaderboard` — Top 10 richest users (`!lb idle` for the idle RPG ladder)")
+        if on["shop"]:
+            lb_lines.append("`!roles` — View role thresholds and your progress")
+        lb_lines.append("`!levels` — Top 10 users by XP level")
+        if on["economy"]:
+            lb_lines.append("`!records` — All-time records for economy and games")
         help_embed.add_field(name="🏆 Leaderboards", inline=False, value="\n".join(lb_lines))
-        help_embed.add_field(name="🤖 AI", inline=False, value=(
-            "`!ai` — View AI connection status and command info"
-        ))
-        help_embed.add_field(name="🛒 Shop", inline=False, value=(
-            "`!shop` — Browse items"
-        ))
+        if on["ai"]:
+            help_embed.add_field(name="🤖 AI", inline=False, value=(
+                "`!ai` — View AI connection status and command info"
+            ))
+        if on["shop"]:
+            help_embed.add_field(name="🛒 Shop", inline=False, value=(
+                "`!shop` — Browse items"
+            ))
 
         if ctx.guild:
             cfg = get_guild_cfg(ctx.guild.id)
@@ -325,10 +338,12 @@ class UtilityCog(commands.Cog):
         fun_lines = [
             "`!dog` — Random dog picture",
             "`!cat` — Random cat picture",
-            "`!effects [@user]` — View active shop effects (mock, tax, curse, …)",
-            "`!quote` — Save a quoted message (reply) or display a random saved quote",
-            "`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote",
         ]
+        if on["shop"]:
+            fun_lines.append("`!effects [@user]` — View active shop effects (mock, tax, curse, …)")
+        fun_lines.append("`!quote` — Save a quoted message (reply) or display a random saved quote")
+        if on["ai"]:
+            fun_lines.append("`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote")
         if MC_SERVER_HOST:
             fun_lines.append("`!minecraft` — Minecraft server status (players, ping)")
         fun_lines.append("`!tips` — Show a random tip about hidden commands")
@@ -410,48 +425,55 @@ class UtilityCog(commands.Cog):
 
     @commands.command(name="game", aliases=["games"])
     async def cmd_game(self, ctx: commands.Context):
-        embed = discord.Embed(title="🎮 Games & Gambling", color=C_BLUE)
+        gid = ctx.guild.id if ctx.guild else 0
+        gambling = feature_enabled(gid, "gambling")
+        economy = feature_enabled(gid, "economy")
+        ai = feature_enabled(gid, "ai")
+        embed = discord.Embed(title="🎮 Games & Gambling" if gambling else "🎮 Games", color=C_BLUE)
 
-        embed.add_field(
-            name="💰 Gambling",
-            value=(
-                "`!flip <amount>` — 50/50 coinflip\n"
-                "`!race @Bot [amount]` — Race the bot: a coin flip with a track (a win doubles the bet)\n"
-                "`!slots <amount>` — 3-reel slot machine with progressive jackpot\n"
-                "`!scratches` — Use all 3 daily scratchoffs at once\n"
-                "`!scratchoff` — Single scratchoff (3 attempts/day)\n"
-                "`!blackjack <amount>` — Interactive blackjack (Hit / Stand / Double Down buttons, or type `hit` / `stand` / `double`)\n"
-                "`!session` — Open a gambling thread: only the commands above, `!race` and `!stop` work inside"
-            ),
-            inline=False
-        )
+        if gambling:
+            embed.add_field(
+                name="💰 Gambling",
+                value=(
+                    "`!flip <amount>` — 50/50 coinflip\n"
+                    "`!race @Bot [amount]` — Race the bot: a coin flip with a track (a win doubles the bet)\n"
+                    "`!slots <amount>` — 3-reel slot machine with progressive jackpot\n"
+                    "`!scratches` — Use all 3 daily scratchoffs at once\n"
+                    "`!scratchoff` — Single scratchoff (3 attempts/day)\n"
+                    "`!blackjack <amount>` — Interactive blackjack (Hit / Stand / Double Down buttons, or type `hit` / `stand` / `double`)\n"
+                    "`!session` — Open a gambling thread: only the commands above, `!race` and `!stop` work inside"
+                ),
+                inline=False
+            )
 
+        # Wagers are coins, so the `[amount]` only reads where there are coins.
+        bet = " [amount]" if economy else ""
+        bet_note = " (optional bet)" if economy else ""
         embed.add_field(
             name="🎯 Competitive",
             value=(
                 "`!hangman [@user1 @user2]` — Start hangman\n"
-                "`!race @user1 [@user2 ...] [amount]` — Race against others (optional bet)\n"
-                "`!ttt @user [amount]` — Tic-Tac-Toe (use `!m <1-9>`)\n"
-                "`!c4 @user [amount]` — Connect 4 (use `!m <1-7>`)\n"
+                f"`!race @user1 [@user2 ...]{bet}` — Race against others{bet_note}\n"
+                f"`!ttt @user{bet}` — Tic-Tac-Toe (use `!m <1-9>`)\n"
+                f"`!c4 @user{bet}` — Connect 4 (use `!m <1-7>`)\n"
                 "`!chess` — Chess (PvP, vs Stockfish, view past games). Run `!chess` for the full menu.\n"
             ),
             inline=False
         )
 
-        embed.add_field(
-            name="🧩 Puzzles",
-            value=(
-                "`!puzzle coding [easy|medium|hard|extreme] [@user …]` — AI-generated coding puzzle\n"
-                "Reward: **10–50 🪙** depending on difficulty.\n"
-                f"`!puzzle riddle [@user …]` — curated one-word riddle · Reward: **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
-                f"`!puzzle riddleai [@user …]` — AI-generated riddle · Reward: **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
-                "Only the creator can answer by default; mention users to invite them."
-            ),
-            inline=False
-        )
+        riddle_reward = f" · Reward: **{PUZZLE_RIDDLE_REWARD:,} 🪙**" if economy else ""
+        puzzle_lines = []
+        if ai:
+            puzzle_lines.append("`!puzzle coding [easy|medium|hard|extreme] [@user …]` — AI-generated coding puzzle"
+                                + ("\nReward: **10–50 🪙** depending on difficulty." if economy else ""))
+        puzzle_lines.append(f"`!puzzle riddle [@user …]` — curated one-word riddle{riddle_reward}")
+        if ai:
+            puzzle_lines.append(f"`!puzzle riddleai [@user …]` — AI-generated riddle{riddle_reward}")
+        puzzle_lines.append("Only the creator can answer by default; mention users to invite them.")
+        embed.add_field(name="🧩 Puzzles", value="\n".join(puzzle_lines), inline=False)
 
         utility_val = "`!stop` — Forfeit/stop active game"
-        if ctx.guild and get_guild_cfg(ctx.guild.id).get("gambler_role_enabled", False):
+        if gambling and ctx.guild and get_guild_cfg(ctx.guild.id).get("gambler_role_enabled", False):
             utility_val += "\n`!gambler-role on|off` — Opt in/out of the Gamblers role"
         embed.add_field(
             name="🏁 Utility",
@@ -526,6 +548,15 @@ class UtilityCog(commands.Cog):
 
         if subcommand.lower() not in ("coding", "riddle", "riddleai"):
             await ctx.send(f"Unknown puzzle type `{subcommand}`. Try `!puzzle coding`, `!puzzle riddle`, or `!puzzle riddleai`.")
+            return
+        # The curated riddles need no model, so `!puzzle` itself isn't an AI
+        # command (src/features.py) — only the generated kinds are.
+        if subcommand.lower() != "riddle" and ctx.guild and not feature_enabled(ctx.guild.id, "ai"):
+            await ctx.send(embed=emb(
+                "🚫 Turned Off",
+                "AI-generated puzzles need **🤖 AI**, which is off in this server. `!puzzle riddle` still works.",
+                C_GREY,
+            ))
             return
 
         uid = ctx.author.id
@@ -869,9 +900,13 @@ class UtilityCog(commands.Cog):
     @commands.command(name="adminhelp", aliases=["helpadmin"])
     @requires_perm
     async def cmd_adminhelp(self, ctx: commands.Context):
+        gid = ctx.guild.id if ctx.guild else 0
         admin_embed = discord.Embed(title="⚙️ Admin Commands", color=C_GOLD)
         admin_embed.add_field(name="🔧 Server Settings", inline=False, value=(
-            "`!settings` — View current server settings"
+            "`!settings` — Every server setting, with dropdowns to change them\n"
+            "`!settings features` — Turn the economy, gambling, savings, assets, shop, artifacts or AI on/off\n"
+            "`!settings channel` — Every channel setting\n"
+            "`!settings setup` — Re-run the first-run questions"
         ))
         admin_embed.add_field(name="🔍 Moderation", inline=False, value=(
             "`!audit` — Last 5 failed command attempts\n"
@@ -886,16 +921,20 @@ class UtilityCog(commands.Cog):
             "`!effects @user remove <effect>` — Clear an effect from a user"
         ))
         if is_admin(ctx):
-            admin_embed.add_field(name="🪙 Economy", inline=False, value=(
-                "`!admingive @user <amount>` — Add or remove coins from a user\n"
-                "`!event <amount> [hours]` — Start a reaction event\n"
-                "`!adminragebait @user [n]` — Force ragebait on user (default 5 messages)"
-            ))
-            admin_embed.add_field(name="🤖 AI", inline=False, value=(
-                "`!model [name]` — View or change the AI model\n"
-                "`!roleplaymodel [name]` — View or change the roleplay model\n"
-                "`!codingmodel [name]` — View or change the coding puzzle model"
-            ))
+            if feature_enabled(gid, "economy"):
+                eco_lines = [
+                    "`!admingive @user <amount>` — Add or remove coins from a user",
+                    "`!event <amount> [hours]` — Start a reaction event",
+                ]
+                if feature_enabled(gid, "shop") and feature_enabled(gid, "ai"):
+                    eco_lines.append("`!adminragebait @user [n]` — Force ragebait on user (default 5 messages)")
+                admin_embed.add_field(name="🪙 Economy", inline=False, value="\n".join(eco_lines))
+            if feature_enabled(gid, "ai"):
+                admin_embed.add_field(name="🤖 AI", inline=False, value=(
+                    "`!model [name]` — View or change the AI model\n"
+                    "`!roleplaymodel [name]` — View or change the roleplay model\n"
+                    "`!codingmodel [name]` — View or change the coding puzzle model"
+                ))
             admin_embed.add_field(name="⚙️ Config", inline=False, value=(
                 "`!setprompt <prompt>` — Set a custom system prompt for this channel\n"
                 "`!clearprompt` — Reset this channel's prompt to default\n"
@@ -1009,7 +1048,7 @@ class UtilityCog(commands.Cog):
         if not chan_id:
             await ctx.send(embed=emb(
                 title,
-                "Feature requests are not configured for this server. Ask an admin to run `!settings-channel feature-request #channel`.",
+                "Feature requests are not configured for this server. Ask an admin to run `!settings channel feature-request #channel`.",
                 C_GREY,
             ))
             return

@@ -18,6 +18,7 @@ from typing import Callable, Optional
 from discord.ext import commands
 
 from src.guild_config import get_guild_cfg
+from src.features import feature_enabled
 from src.economy import SAVINGS_DAILY_PCT
 from src import state
 
@@ -30,16 +31,21 @@ class LevelLocked(commands.CheckFailure):
 # ── Per-family server-enabled predicates ──────────────────────────────────────
 
 def _shop_item_enabled(item_key: str) -> Callable[[int], bool]:
-    """True if the named shop_items toggle is on for the guild (default True)."""
+    """True if the shop is on for the guild and the named shop_items toggle
+    is too (default True)."""
     def _pred(guild_id: int) -> bool:
-        if not guild_id:
+        if not guild_id or not feature_enabled(guild_id, "shop"):
             return False
         return bool(get_guild_cfg(guild_id).get("shop_items", {}).get(item_key, True))
     return _pred
 
 
-def _always(_: int) -> bool:
-    return True
+def _feature(key: str) -> Callable[[int], bool]:
+    """True if the guild has the feature switched on (src/features.py) — a
+    switched-off command isn't advertised as an unlock."""
+    def _pred(guild_id: int) -> bool:
+        return bool(guild_id) and feature_enabled(guild_id, key)
+    return _pred
 
 
 # ── Catalog ───────────────────────────────────────────────────────────────────
@@ -55,7 +61,7 @@ def _always(_: int) -> bool:
 
 UNLOCKS: dict[str, dict] = {
     # Level 3 — savings (advertised: savings)
-    "savings":     {"level": 3, "enabled": _always,                       "usage": f"`!deposit` / `!withdraw <amount>` — piggy bank with {SAVINGS_DAILY_PCT} daily interest", "reward": True},
+    "savings":     {"level": 3, "enabled": _feature("savings"),                       "usage": f"`!deposit` / `!withdraw <amount>` — piggy bank with {SAVINGS_DAILY_PCT} daily interest", "reward": True},
 
     # Level 5 — role family (advertised: rolecreate). rolelock/roleunlock gated separately at 8.
     # !roles is the role leaderboard — never gated.
@@ -65,23 +71,23 @@ UNLOCKS: dict[str, dict] = {
     "roleassign":  {"level": 5, "enabled": _shop_item_enabled("assignrole"), "usage": "`!roleassign @user <name>` — assign an existing role"},
     "roleunassign":  {"level": 5, "enabled": _shop_item_enabled("unassignrole"), "usage": "`!roleunassign [@user] <name>` — remove a role"},
     "roledelete":  {"level": 5, "enabled": _shop_item_enabled("deleterole"), "usage": "`!roledelete <name>` — permanently delete a role"},
-    "rolerename":  {"level": 5, "enabled": _always,                       "usage": "`!rolerename <old> <new>` — rename a role"},
+    "rolerename":  {"level": 5, "enabled": _feature("shop"),                       "usage": "`!rolerename <old> <new>` — rename a role"},
     "rolecolor":   {"level": 5, "enabled": _shop_item_enabled("rolecolor"),  "usage": "`!rolecolor @role <hex>` — change a bot-created role's color"},
     "roleup":      {"level": 5, "enabled": _shop_item_enabled("roleup"),     "usage": "`!roleup <name>` — move role up one position"},
     "roledown":    {"level": 5, "enabled": _shop_item_enabled("roledown"),   "usage": "`!roledown <name>` — move role down one position"},
 
     # Level 8 — role locking
-    "rolelock":    {"level": 8, "enabled": _always,                      "usage": "`!rolelock <name>` — lock a role against changes", "reward": True},
-    "roleunlock":  {"level": 8, "enabled": _always,                      "usage": "`!roleunlock <name>` — unlock a role (lock owner only)"},
+    "rolelock":    {"level": 8, "enabled": _feature("shop"),                      "usage": "`!rolelock <name>` — lock a role against changes", "reward": True},
+    "roleunlock":  {"level": 8, "enabled": _feature("shop"),                      "usage": "`!roleunlock <name>` — unlock a role (lock owner only)"},
 
     # Level 10 — steal (advertised: steal)
-    "steal":       {"level": 10, "enabled": _always,                       "usage": "`!steal @user [tier]` — pick a pocket", "reward": True},
+    "steal":       {"level": 10, "enabled": _feature("economy"),                       "usage": "`!steal @user [tier]` — pick a pocket", "reward": True},
 
     # Level 13 — mug (advertised: mug)
-    "mug":         {"level": 13, "enabled": _always,                      "usage": "`!mug @user <amount>` — pay muggers to take an exact amount from a target (muggers keep it)", "reward": True},
+    "mug":         {"level": 13, "enabled": _feature("economy"),                      "usage": "`!mug @user <amount>` — pay muggers to take an exact amount from a target (muggers keep it)", "reward": True},
 
     # Level 15 — bankheist (advertised: bankheist)
-    "bankheist":   {"level": 15, "enabled": _always,                       "usage": "`!bankheist @user` — open a 4-slot lobby and split a cut of their savings", "reward": True},
+    "bankheist":   {"level": 15, "enabled": _feature("savings"),                       "usage": "`!bankheist @user` — open a 4-slot lobby and split a cut of their savings", "reward": True},
 
     # Level 18 — unoreverse (advertised: unoreverse)
     "unoreverse":  {"level": 18, "enabled": _shop_item_enabled("unoreverse"), "usage": "`!unoreverse @user` — redirect mock/ragebait/curse to someone else", "reward": True},
@@ -93,8 +99,8 @@ UNLOCKS: dict[str, dict] = {
     "rolechannel":   {"level": 20, "enabled": _shop_item_enabled("rolechannel"), "usage": "`!rolechannel @role <name>` — restrict a bot-created channel to a role"},
 
     # Level 25 — channel locking
-    "channellock":   {"level": 25, "enabled": _always,                    "usage": "`!channellock <name>` — lock a bot-created channel against changes", "reward": True},
-    "channelunlock": {"level": 25, "enabled": _always,                    "usage": "`!channelunlock <name>` — unlock a channel (lock owner only)"},
+    "channellock":   {"level": 25, "enabled": _feature("shop"),                    "usage": "`!channellock <name>` — lock a bot-created channel against changes", "reward": True},
+    "channelunlock": {"level": 25, "enabled": _feature("shop"),                    "usage": "`!channelunlock <name>` — unlock a channel (lock owner only)"},
 
     # Real-estate tier unlocks. The keys are deliberately NOT command names:
     # !assets is never level-gated (per-property gates live in
@@ -102,9 +108,9 @@ UNLOCKS: dict[str, dict] = {
     # entries gate nothing — they exist only to advertise the tiers in
     # level-up announcements and !level next-unlocks. Tiers 1–2 (levels
     # 5/10) are left out: the catalog itself already advertises them.
-    "assets tier 3": {"level": 15, "enabled": _always, "usage": "`!assets browse 3` — Tier 3 properties (120k–300k 🪙)", "reward": True},
-    "assets tier 4": {"level": 20, "enabled": _always, "usage": "`!assets browse 4` — Tier 4 properties (400k–1m 🪙)", "reward": True},
-    "assets tier 5": {"level": 25, "enabled": _always, "usage": "`!assets browse 5` — Tier 5 properties (1.3m–2m 🪙)", "reward": True},
+    "assets tier 3": {"level": 15, "enabled": _feature("assets"), "usage": "`!assets browse 3` — Tier 3 properties (120k–300k 🪙)", "reward": True},
+    "assets tier 4": {"level": 20, "enabled": _feature("assets"), "usage": "`!assets browse 4` — Tier 4 properties (400k–1m 🪙)", "reward": True},
+    "assets tier 5": {"level": 25, "enabled": _feature("assets"), "usage": "`!assets browse 5` — Tier 5 properties (1.3m–2m 🪙)", "reward": True},
 }
 
 # Also gate the !shop <subcommand> form. Maps "shop X" → same entry as "X".

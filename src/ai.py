@@ -8,6 +8,7 @@ import aiohttp
 import discord
 
 from src import state
+from src.features import feature_enabled
 from src.config import OLLAMA_BASE_URL, OLLAMA_MODEL
 from src.helpers import emb, C_RED, _log_audit
 from src.economy import (
@@ -156,10 +157,18 @@ _FEATURE_LABELS: dict = {
 }
 
 
+def _cost_for(uid: int, feature: str, guild_id) -> int:
+    """What `feature` costs this user here: nothing in godmode, and nothing
+    where the server has the economy off — there'd be no way to earn it."""
+    if uid in state.godmode_users or not feature_enabled(guild_id, "economy"):
+        return 0
+    return FEATURE_COSTS.get(feature, 0)
+
+
 async def enforce_cost(ctx, feature: str) -> bool:
     """Deduct the coin cost for *feature*. Returns True if the user can proceed."""
     uid = ctx.author.id
-    cost = 0 if uid in state.godmode_users else FEATURE_COSTS.get(feature, 0)
+    cost = _cost_for(uid, feature, ctx.guild.id if ctx.guild else None)
     if cost == 0:
         return True
     if not await deduct_balance(uid, cost):
@@ -177,10 +186,12 @@ async def enforce_cost(ctx, feature: str) -> bool:
     return True
 
 
-async def refund_cost(uid: int, feature: str) -> None:
+async def refund_cost(uid: int, feature: str, guild_id=None) -> None:
     """Refund a charge made by enforce_cost — for requests that produced
-    nothing (AI disabled, token budget denied, Ollama offline/errored)."""
-    cost = 0 if uid in state.godmode_users else FEATURE_COSTS.get(feature, 0)
+    nothing (AI disabled, token budget denied, Ollama offline/errored).
+    `guild_id` is where the charge was made: with the economy off there
+    was none, and a refund would mint coins."""
+    cost = _cost_for(uid, feature, guild_id)
     if cost > 0:
         await add_balance(uid, cost)
         log.info(
@@ -380,7 +391,7 @@ async def _execute_ollama_stream(
 
     async def _refund():
         if refund_feature and user_id:
-            await refund_cost(user_id, refund_feature)
+            await refund_cost(user_id, refund_feature, guild_id)
 
     try:
         async with aiohttp.ClientSession() as session:

@@ -23,6 +23,7 @@ from src.persistence import (
     save_quote_log, save_saved_quotes, load_saved_quotes
 )
 from src.guild_config import get_guild_cfg
+from src.features import disabled_feature_for
 from src.ai import (
     keep_typing,
     stream_ollama,
@@ -56,10 +57,12 @@ _tip_queue: list[str] = []
 _tip_pool_signature: frozenset[str] = frozenset()
 
 
-def _next_tip() -> str | None:
+def _next_tip(allowed=None) -> str | None:
     """Pop the next tip from a shuffled queue, reshuffling when exhausted.
 
-    Resets the cycle if the underlying tip file changes.
+    Resets the cycle if the underlying tip file changes. `allowed(tip)`
+    skips tips for features the asking server has off; a skipped tip goes
+    back to the front of the queue so other servers still get it.
     """
     global _tip_queue, _tip_pool_signature
     tips = _load_tips()
@@ -71,10 +74,19 @@ def _next_tip() -> str | None:
     if sig != _tip_pool_signature:
         _tip_pool_signature = sig
         _tip_queue = []
-    if not _tip_queue:
-        _tip_queue = list(tips)
-        random.shuffle(_tip_queue)
-    return _tip_queue.pop()
+    # Two passes: the rest of the current cycle, then a fresh full one.
+    for _ in range(2):
+        if not _tip_queue:
+            _tip_queue = list(tips)
+            random.shuffle(_tip_queue)
+        skipped = []
+        while _tip_queue:
+            tip = _tip_queue.pop()
+            if allowed is None or allowed(tip):
+                _tip_queue[:0] = skipped
+                return tip
+            skipped.append(tip)
+    return None
 
 async def _nsfw_fetch(session: aiohttp.ClientSession, search_tags: str) -> list[dict]:
     if not NSFW_API_URL:
@@ -502,7 +514,20 @@ class FunCog(commands.Cog):
 
     @commands.command(name="tips")
     async def cmd_tip(self, ctx: commands.Context):
-        tip = _next_tip()
+        gid = ctx.guild.id if ctx.guild else None
+        bot = self.bot
+
+        def _allowed(tip: str) -> bool:
+            # A tip about a command the server switched off would only send
+            # people into the "Turned Off" reply.
+            if not gid or bot is None:
+                return True
+            for word in re.findall(r"!([\w-]+)", tip):
+                cmd = bot.get_command(word)
+                if cmd is not None and disabled_feature_for(cmd.qualified_name, gid) is not None:
+                    return False
+            return True
+        tip = _next_tip(_allowed)
         if tip is None:
             await ctx.send(embed=emb("💡 Tip", "No tips available right now.", C_GREY))
             return

@@ -229,7 +229,7 @@ async def test_soundboard_add_and_remove_pickers(monkeypatch):
 
 async def test_menu_opens_the_panel_but_not_past_the_permission_check(monkeypatch):
     cog = SettingsCog(bot=None)
-    _state.command_perms["settings-channel"] = {"tier": "server_admin", "hidden": False}
+    _state.command_perms["settings"] = {"tier": "server_admin", "hidden": False}
     game_index = str([m for _, m, _ in _settings_cog._CHANNEL_PANELS].index("settings_channel_game"))
     _returns(monkeypatch, "pick_from_list", [game_index])
     _returns(monkeypatch, "pick_channels", [_channel(10)])

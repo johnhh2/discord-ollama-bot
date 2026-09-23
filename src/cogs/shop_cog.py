@@ -37,6 +37,7 @@ from src.persistence import (
 from src.artifacts import ARTIFACTS, owned_qty, owned_artifact_count
 from src.confirm_view import confirm_purchase, confirm_choice
 from src.guild_config import get_guild_cfg
+from src.features import feature_enabled
 from src.ai import (
     keep_typing,
     stream_ollama, finalize,
@@ -285,7 +286,7 @@ class ShopCog(commands.Cog):
         """Route !<alias> @user to shop_tax when the alias is a guild-configured tax alias."""
         if not isinstance(error, commands.CommandNotFound):
             return
-        if not ctx.guild:
+        if not ctx.guild or not feature_enabled(ctx.guild.id, "shop"):
             return
         parts = ctx.message.content.strip().split(None, 1)
         if not parts:
@@ -371,9 +372,10 @@ class ShopCog(commands.Cog):
             ]
 
         # Artifacts — permanent per-user upgrades, listed in their own menu.
-        sections["🏺 Artifacts"] = [
-            "`!artifacts` — Permanent artifacts with passive effects"
-        ]
+        if feature_enabled(_gid, "artifacts"):
+            sections["🏺 Artifacts"] = [
+                "`!artifacts` — Permanent artifacts with passive effects"
+            ]
 
         # Bounties — only surfaced where the feature is enabled (a bounty
         # channel is configured). The reward is escrowed from the poster, so

@@ -1,5 +1,5 @@
 """Button / dropdown prompts for the settings commands, so an admin can run a
-bare `!settings-channel game` and pick instead of remembering the syntax.
+bare `!settings channel game` and pick instead of remembering the syntax.
 
 Like confirm_view, a prompt never writes anything: it returns what the
 invoker chose and the command applies it through the same branch its typed
@@ -173,14 +173,14 @@ async def toggle_panel(ctx, *, title: str, description: str, items: dict, on_tog
 # ── pick from a list / pick users ────────────────────────────────────────────
 
 class _StringSelect(ui.Select):
-    def __init__(self, options: list[tuple[str, str]], placeholder: str, multi: bool):
+    def __init__(self, options: list[tuple[str, str]], placeholder: str, multi: bool, row: int = 0):
         shown = options[:MAX_OPTIONS]
         super().__init__(
             placeholder=placeholder,
             min_values=1,
             max_values=len(shown) if multi else 1,
             options=[discord.SelectOption(label=label[:100], value=value) for label, value in shown],
-            row=0,
+            row=row,
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -198,6 +198,20 @@ async def pick_from_list(ctx, *, title: str, description: str, options: list[tup
     view.add_item(_StringSelect(options, placeholder, multi))
     view.add_item(_CancelButton())
     return await _run(ctx, view, title, description)
+
+
+async def pick_action(ctx, *, title: str, description: str, menus: list[tuple[str, list[tuple[str, str]]]],
+                      timeout: float = PANEL_TIMEOUT) -> "str | None":
+    """Several dropdowns on one message (`(placeholder, [(label, value)])`
+    each, at most 25 options apiece — the settings overview outgrew one).
+    Returns the first value picked from any of them, or None on Cancel /
+    timeout."""
+    view = _OwnedView(ctx.author.id, timeout)
+    for row, (placeholder, options) in enumerate(menus):
+        view.add_item(_StringSelect(options, placeholder, multi=False, row=row))
+    view.add_item(_CancelButton())
+    picked = await _run(ctx, view, title, description)
+    return picked[0] if picked else None
 
 
 class _UserSelect(ui.UserSelect):

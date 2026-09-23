@@ -270,7 +270,7 @@ def reset_bot_state(monkeypatch):
     async def _dismissed(*args, **kwargs):
         return None
     import src.cogs.settings_cog as _settings_cog_mod
-    for _prompt in ("pick_channels", "pick_from_list", "pick_users", "toggle_panel",
+    for _prompt in ("pick_action", "pick_channels", "pick_from_list", "pick_users", "toggle_panel",
                     "confirm_choice", "confirm_prompt"):
         monkeypatch.setattr(_settings_cog_mod, _prompt, _dismissed)
 

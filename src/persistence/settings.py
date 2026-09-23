@@ -54,7 +54,7 @@ async def save_bot_settings():
                 " ON DUPLICATE KEY UPDATE value_text=VALUES(value_text)",
                 (k, str(v)),
             )
-        # Also delete rows for keys popped from state (e.g. `!settings-channel
+        # Also delete rows for keys popped from state (e.g. `!settings channel
         # X clear`) — upsert alone would resurrect them on the next reboot.
         if state.bot_settings:
             placeholders = ",".join(["%s"] * len(state.bot_settings))

@@ -27,6 +27,7 @@ from src.persistence import (
     delete_chess_game, save_chess_report, save_ai_threads, save_recap_usage,
 )
 from src.guild_config import get_guild_cfg
+from src.features import feature_enabled
 from src.cogs.utility_cog import build_ai_overview_embed
 from src.ai import (
     enforce_cost, refund_cost, keep_typing,
@@ -253,7 +254,7 @@ class AICog(commands.Cog):
         """Route !<alias> to cmd_story when the alias is a guild-configured story alias."""
         if not isinstance(error, commands.CommandNotFound):
             return
-        if not ctx.guild:
+        if not ctx.guild or not feature_enabled(ctx.guild.id, "ai"):
             return
         parts = ctx.message.content.strip().split(None, 1)
         if not parts:
@@ -530,7 +531,7 @@ class AICog(commands.Cog):
                 # Rate limited or AI disabled — placeholder explains why.
                 state.ai_threads.pop(rpg_channel_id, None)
                 await save_ai_threads()
-                await refund_cost(uid, "rpg")
+                await refund_cost(uid, "rpg", guild_id)
                 return
             # Add to history with a synthetic user turn so the conversation structure is valid
             t = state.ai_threads.get(rpg_channel_id)
@@ -543,13 +544,13 @@ class AICog(commands.Cog):
         except aiohttp.ClientError as e:
             state.ai_threads.pop(rpg_channel_id, None)
             await save_ai_threads()
-            await refund_cost(uid, "rpg")
+            await refund_cost(uid, "rpg", guild_id)
             _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"Ollama offline: {e}")
             await placeholder.edit(content="", embed=emb("", "The AI is currently offline", C_RED))
         except Exception as e:
             state.ai_threads.pop(rpg_channel_id, None)
             await save_ai_threads()
-            await refund_cost(uid, "rpg")
+            await refund_cost(uid, "rpg", guild_id)
             _log_audit(f"{ctx.author.display_name} ({ctx.author.id})", ctx.message.content[:100], f"{type(e).__name__}: {e}")
             await placeholder.edit(content=f"⚠️ Something went wrong: `{e}`")
         finally:

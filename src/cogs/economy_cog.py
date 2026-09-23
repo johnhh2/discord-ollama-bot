@@ -25,6 +25,7 @@ from src.permissions import (
     is_silenced,
 )
 from src.guild_config import get_guild_cfg
+from src.features import feature_enabled
 from src.persistence import (
     save_economy, save_rigged_steal,
     load_lottery, load_records, load_global_records, try_set_record,
@@ -475,8 +476,13 @@ class EconomyCog(commands.Cog):
             "",
             f"**`!mug @user <amount>`**{mug_lock} — Pay muggers `<amount>` 🪙 to take that amount from a target. The muggers keep it. 50% chance you get jailed 1 day.",
             "",
-            f"**`!bankheist @user`**{bankheist_lock} — Open a 4-slot lobby; rally a crew to split a cut of the target's savings.",
-            "",
+        ]
+        if feature_enabled(gid, "savings"):  # a heist raids savings — nothing to raid without them
+            lines += [
+                f"**`!bankheist @user`**{bankheist_lock} — Open a 4-slot lobby; rally a crew to split a cut of the target's savings.",
+                "",
+            ]
+        lines += [
             "**`!jailbreak`** — Attempt to escape jail (20% success). One attempt per day.",
             "",
             jail_status,
@@ -1835,12 +1841,20 @@ class EconomyCog(commands.Cog):
             "**Economy commands:**\n"
             "`!balance [@user]` — Check wallet\n"
             "`!pay @user <amount>` — Send coins\n"
-            f"{fmt_line('savings', '`!savings` — Piggy bank (' + SAVINGS_DAILY_PCT + ' daily interest)', uid_help, gid_help)}\n"
-            "`!assets` — Real estate (revenue with your daily)\n"
-            "`!crime` — Steal, mug, jailbreak\n"
-            "`!lottery` — Monthly lottery info\n"
-            "`!shop` — Spend coins"
         )
+        # Only the extensions this server has on (src/features.py).
+        on = {key: feature_enabled(gid_help, key) for key in ("savings", "assets", "gambling", "shop")}
+        command_lines = []
+        if on["savings"]:
+            command_lines.append(fmt_line('savings', '`!savings` — Piggy bank (' + SAVINGS_DAILY_PCT + ' daily interest)', uid_help, gid_help))
+        if on["assets"]:
+            command_lines.append("`!assets` — Real estate (revenue with your daily)")
+        command_lines.append("`!crime` — Steal, mug, jailbreak")
+        if on["gambling"]:
+            command_lines.append("`!lottery` — Monthly lottery info")
+        if on["shop"]:
+            command_lines.append("`!shop` — Spend coins")
+        stats += "\n".join(command_lines)
         await send_ephemeral(ctx, embed=emb("📊 Economy", stats, C_GOLD))
 
     @commands.command(name="pay", aliases=["give", "gift", "donate", "tip", "send"])

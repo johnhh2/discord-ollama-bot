@@ -8,6 +8,7 @@ from discord.ext import commands, tasks
 
 from src.helpers import emb, C_BLUE, C_GOLD, OptionalMember, fetch_member
 from src.guild_config import get_guild_cfg
+from src.features import feature_enabled
 from src.economy import add_balance, next_daily_reset_ts
 from src import state
 from src.leveling import (
@@ -81,8 +82,11 @@ class LevelingCog(commands.Cog):
         level-up channel — callers must not gate the call on the channel."""
         rec =state.leveling.get(str(guild_id), {}).get(str(member.id), {})
         lvl = display_level(rec.get("level", 0))
-        reward = levelup_coin_reward(lvl)
-        await add_balance(member.id, reward)
+        # No coin reward where the economy is off — it would land in a
+        # wallet nobody in this server can see.
+        reward = levelup_coin_reward(lvl) if feature_enabled(guild_id, "economy") else 0
+        if reward:
+            await add_balance(member.id, reward)
         cfg = get_guild_cfg(guild_id)
         channel_id = cfg.get("levelup_channel")
         if not channel_id:
@@ -90,17 +94,18 @@ class LevelingCog(commands.Cog):
         channel = self.bot.get_channel(channel_id)
         if channel is None:
             return
-        desc = f"{member.mention} reached **Level {lvl}**! +**{reward:,} 🪙**"
+        desc = f"{member.mention} reached **Level {lvl}**!" + (f" +**{reward:,} 🪙**" if reward else "")
 
         # List any commands unlocked at this exact level (server-enabled only)
         # plus artifacts that just became purchasable.
         from src.level_unlocks import unlocks_at_level
         from src.artifacts import artifacts_at_level
         lines = [info["usage"] for _cmd, info in unlocks_at_level(lvl, guild_id)]
-        lines += [
-            f"🏺 New artifact for sale: {art['effect']} — **{art['cost']:,} 🪙** (`!artifacts`)"
-            for art in artifacts_at_level(lvl)
-        ]
+        if feature_enabled(guild_id, "artifacts"):
+            lines += [
+                f"🏺 New artifact for sale: {art['effect']} — **{art['cost']:,} 🪙** (`!artifacts`)"
+                for art in artifacts_at_level(lvl)
+            ]
         if lines:
             desc += "\n\n**🔓 Unlocked**\n" + "\n".join(lines)
 

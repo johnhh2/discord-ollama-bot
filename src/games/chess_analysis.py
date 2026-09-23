@@ -13,7 +13,7 @@ chess_reports row so `!chess view` shows them forever after.
 Cheat flagging: a human who beats (or draws) a FLAG_MIN_BOT_ELO+ bot while
 playing at near-engine accuracy over enough non-trivial moves gets the game
 flagged. An alert embed goes to the global admin-log channel
-(`!settings-channel admin-log`) with the stats and the user's all-time
+(`!settings channel admin-log`) with the stats and the user's all-time
 flagged-game count. This is a heuristic tripwire for a human to review, NOT
 proof — thresholds are tuned to catch sustained master-level play, which the
 false-positive traps below can't reach:
