@@ -482,3 +482,32 @@ async def test_lottery_loop_and_dailies_refresh_skip_switched_off_guilds(monkeyp
     await lottery_cog.LotteryCog._run_guild_schedule(cog, SimpleNamespace(id=GID), None)
     fetched.assert_not_awaited()
     assert dailies_cog.feature_enabled(GID, "gambling") is False
+
+
+async def test_insurance_sweep_pauses_subscribers_whose_servers_all_have_the_shop_off():
+    import time as _t
+    import src.economy as _economy
+    from src.economy import insurance_billable, insurance_tier_cost, sweep_insurance_subs
+
+    uid = 8103
+    await _economy.add_balance(uid, 5000)
+    _state.insurance_subs[uid] = "basic"
+    expiry = int(_t.time() + 3600)
+    _state.insurance[uid] = {"expires_at": expiry, "protected_from": ["steal"], "tier": "basic"}
+    _state.leveling[str(GID)] = {str(uid): {"level": 3}}
+    set_feature(GID, "shop", False)
+
+    assert insurance_billable(uid) is False
+    _state.economy["last_insurance_sweep"] = "2020-01-01"
+    await sweep_insurance_subs()
+    assert await _economy.get_balance(uid) == 5000
+    assert _state.insurance[uid]["expires_at"] == expiry  # paused, not lapsed
+    assert "ins_lapsed_since_claim" not in _state.economy["users"].get(str(uid), {})
+
+    # One server with the shop on makes the subscription billable again.
+    _state.leveling["43"] = {str(uid): {"level": 1}}
+    assert insurance_billable(uid) is True
+    _state.economy["last_insurance_sweep"] = "2020-01-02"
+    await sweep_insurance_subs()
+    assert await _economy.get_balance(uid) == 5000 - insurance_tier_cost("basic")
+    assert insurance_billable(999_001) is True  # no guild activity: nowhere says the shop is off

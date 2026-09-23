@@ -274,6 +274,23 @@ def extend_insurance(uid: int, days: int, tier: str | None = None) -> int:
     return expires_at
 
 
+def insurance_billable(uid: int) -> bool:
+    """Whether the 5am sweep may charge `uid`'s subscription today.
+
+    Insurance is bot-wide but is bought in a shop, and a server can switch
+    its shop off (src/features.py). A subscriber active only in servers
+    with the shop off can neither see nor cancel the subscription, so it
+    pauses: no premium, no lapse, coverage not extended. Any one server
+    with the shop on makes it billable again. Membership is the leveling
+    proxy (see _mirror_guilds in src/persistence/records.py); a user with
+    no guild activity at all has nowhere that says the shop is off.
+    """
+    from src.features import feature_enabled
+    ukey = str(uid)
+    guilds = [int(gid) for gid, users in state.leveling.items() if ukey in users]
+    return not guilds or any(feature_enabled(gid, "shop") for gid in guilds)
+
+
 async def renew_insurance_subs(uid: int) -> tuple[int, int]:
     """Charge and renew `uid`'s insurance subscription, if they hold one.
 
@@ -352,6 +369,8 @@ async def sweep_insurance_subs() -> None:
     if prior is None:
         return
     for uid in list(state.insurance_subs):
+        if not insurance_billable(uid):
+            continue
         await _ensure_user(uid)
         charged, lapsed = await renew_insurance_subs(uid)
         user_data = state.economy["users"][str(uid)]

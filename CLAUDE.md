@@ -503,6 +503,12 @@ before any await. Do **not** re-attach
 premium charging to `!daily`/`_auto_daily` — the daily claim and the dailies
 flip/slots stake must never see insurance costs.
 
+A subscriber whose every active server has the shop switched off
+(`insurance_billable`, the leveling membership proxy) is skipped by the
+sweep — no premium, no lapse, no extension — because `!shop insurance` is
+gated off there and they couldn't cancel. One server with the shop on
+resumes billing.
+
 The one premium charged outside the sweep is a new subscriber's first day:
 `!shop insurance sub` buys it immediately when the user has no coverage
 **or** coverage that runs out before the next 5am sweep
