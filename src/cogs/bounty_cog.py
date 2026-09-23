@@ -836,7 +836,9 @@ class BountyCog(commands.Cog):
         await _pkg.init_done.wait()
 
     # ── Command surface ───────────────────────────────────────────────────────
-    @commands.command(name="bounty")
+    @commands.command(name="bounty",
+                      help="Post a coin bounty for a task in the bounty channel, the reward held until claimed or cancelled",
+                      usage="<coins> [duration] <condition>")
     async def cmd_bounty(self, ctx: commands.Context, *args):
         await self.create_bounty(ctx, args)
 

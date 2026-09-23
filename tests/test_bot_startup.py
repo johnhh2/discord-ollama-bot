@@ -82,6 +82,41 @@ async def test_no_duplicate_top_level_command_names(loaded_bot):
     assert duplicates == set(), f"duplicate top-level commands: {duplicates}"
 
 
+async def test_every_visible_command_has_help(loaded_bot):
+    """The AI's command reference (src/command_reference.py) is each visible
+    command's own `help`, so a command without one is a command the AI can't
+    explain. That, not a hand-kept list, is what keeps the reference current."""
+    missing = sorted(
+        cmd.qualified_name for cmd in loaded_bot.walk_commands()
+        if not cmd.hidden and not (cmd.help or "").strip()
+    )
+    assert missing == [], f"commands without help=: {missing}"
+
+
+async def test_uninformative_signatures_carry_a_usage(loaded_bot):
+    """A `*, args` parameter prints as `[args...]`, which tells the AI nothing
+    about what to type after the command."""
+    vague = sorted(
+        cmd.qualified_name for cmd in loaded_bot.walk_commands()
+        if not cmd.hidden and cmd.usage is None
+        and any(tok in cmd.signature for tok in ("[args...]", "[tokens...]", "[rest]", "[sub]", "[query]"))
+    )
+    assert vague == [], f"commands whose signature needs a usage=: {vague}"
+
+
+async def test_command_reference_covers_the_whole_visible_tree(loaded_bot):
+    from src.command_reference import build_command_reference
+    from src.permissions import get_command_perm
+    text = build_command_reference(loaded_bot)
+    for cmd in loaded_bot.walk_commands():
+        listed = f"!{cmd.qualified_name}" in text
+        visible = not cmd.hidden and not get_command_perm(cmd.qualified_name).get("hidden", False)
+        assert listed == visible, f"{cmd.qualified_name}: listed={listed} visible={visible}"
+    # `!map` shares `!idle map`'s callback: one line, not two.
+    assert "\n!map " not in text and "\n!map\n" not in text
+    assert "(also !map" in text
+
+
 async def test_slash_ask_is_registered_in_the_command_tree(loaded_bot):
     """Discord keeps an app's global commands until the app says otherwise, so
     a `/name` in the picker with nothing behind it answers "The application did

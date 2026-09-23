@@ -9,7 +9,7 @@ import discord
 
 from src import state
 from src.features import feature_enabled
-from src.config import OLLAMA_BASE_URL, OLLAMA_MODEL
+from src.config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_NUM_CTX
 from src.helpers import emb, C_RED, _log_audit
 from src.economy import (
     add_balance, deduct_balance, get_balance,
@@ -206,6 +206,22 @@ async def refund_cost(uid: int, feature: str, guild_id=None) -> None:
 # constructed twice (tests) registers once.
 THREAD_POST_HOOKS: dict = {}
 
+# guild_id | None -> the command reference (src/command_reference.py), set by
+# AICog, which has the bot to read the command tree from. None (no cog
+# built) means the prompts go out without it.
+COMMAND_REFERENCE_PROVIDER = None
+
+# The AI kinds that answer as the bot itself and so get the reference. A
+# story, roleplay or RPG thread is fiction and stays without it.
+COMMAND_AWARE_KINDS = ("channel", "ask")
+
+
+def with_command_reference(system_prompt: str, guild_id: int | None) -> str:
+    if COMMAND_REFERENCE_PROVIDER is None:
+        return system_prompt
+    reference = COMMAND_REFERENCE_PROVIDER(guild_id)
+    return f"{system_prompt}\n\n{reference}" if reference else system_prompt
+
 
 async def check_ollama_connected() -> bool:
     try:
@@ -307,7 +323,7 @@ async def stream_ollama(
             "model": used_model,
             "messages": messages,
             "stream": True,
-            "options": {"num_predict": OLLAMA_NUM_PREDICT},
+            "options": {"num_predict": OLLAMA_NUM_PREDICT, "num_ctx": OLLAMA_NUM_CTX},
         }
         prompt_tokens = _estimate_tokens(messages)
         log.info(
@@ -499,6 +515,11 @@ async def respond(
             "channel_id": channel_id, "kind": kind, "prompt_chars": len(content),
         },
     )
+
+    # Appended per request, never stored in the thread row, so a command
+    # added or renamed since the thread opened is reflected on its next turn.
+    if kind in COMMAND_AWARE_KINDS:
+        sp = with_command_reference(sp, guild_id)
 
     formatted_content = f"{author_name}: {content}" if author_name else content
     history.append({"role": "user", "content": formatted_content})

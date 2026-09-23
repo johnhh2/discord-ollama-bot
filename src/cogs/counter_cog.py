@@ -65,7 +65,9 @@ class CounterCog(commands.Cog):
 
     # ── !count ───────────────────────────────────────────────────────────
 
-    @commands.command(name="count")
+    @commands.command(name="count",
+                      help="Show a counter, add an amount or time to it, or list this server's counters when bare",
+                      usage="[counter] [@user] [±n]")
     async def cmd_count(self, ctx: commands.Context, name: str = None, *, rest: str = ""):
         """!count <counter> [user] [n] — view a counter, or add n to it."""
         await self._count(ctx, name, rest)
@@ -194,20 +196,23 @@ class CounterCog(commands.Cog):
 
     # ── !counter ─────────────────────────────────────────────────────────
 
-    @commands.group(name="counter", aliases=["counters"], invoke_without_command=True)
+    @commands.group(name="counter", aliases=["counters"], invoke_without_command=True,
+                    help="List this server's counters; the subcommands add and remove them and grant write access")
     async def cmd_counter(self, ctx: commands.Context):
         """!counter add|remove|addperm|removeperm|perms|list"""
         if ctx.guild is None:
             return
         await self._send_list(ctx)
 
-    @cmd_counter.command(name="list")
+    @cmd_counter.command(name="list", help="List this server's counters")
     async def cmd_counter_list(self, ctx: commands.Context):
         if ctx.guild is None:
             return
         await self._send_list(ctx)
 
-    @cmd_counter.command(name="add")
+    @cmd_counter.command(name="add",
+                         help="Create a counter, then choose whether entries need a user and whether it counts numbers or time",
+                         usage="<name> <description>")
     async def cmd_counter_add(self, ctx: commands.Context, ref: str = None, *, description: str = None):
         if ctx.guild is None:
             return
@@ -282,7 +287,8 @@ class CounterCog(commands.Cog):
         )
         await ctx.send(embed=emb("✅ Counter Added", f"{preview}\n\n{usage}", C_GREEN))
 
-    @cmd_counter.command(name="remove")
+    @cmd_counter.command(name="remove", help="Delete a counter and every value recorded on it, after a confirm",
+                         usage="<name>")
     async def cmd_counter_remove(self, ctx: commands.Context, ref: str = None):
         if ctx.guild is None:
             return
@@ -308,7 +314,7 @@ class CounterCog(commands.Cog):
         await persistence.delete_counter(gid, name)
         await ctx.send(embed=emb("🗑️ Counter Removed", f"`{name}` is gone.", C_GREY))
 
-    @cmd_counter.command(name="addperm")
+    @cmd_counter.command(name="addperm", help="Let a user change this server's counters", usage="<@user>")
     async def cmd_counter_addperm(self, ctx: commands.Context, *, member: MemberConverter = None):
         if ctx.guild is None:
             return
@@ -322,7 +328,8 @@ class CounterCog(commands.Cog):
         await persistence.save_counter_perm(ctx.guild.id, member.id, ctx.author.id)
         await ctx.send(embed=emb("✅ Counter Access", f"{member.mention} can now change this server's counters.", C_GREEN))
 
-    @cmd_counter.command(name="removeperm")
+    @cmd_counter.command(name="removeperm", help="Take away a user's access to change this server's counters",
+                         usage="<@user>")
     async def cmd_counter_removeperm(self, ctx: commands.Context, *, member: MemberConverter = None):
         if ctx.guild is None:
             return
@@ -333,7 +340,7 @@ class CounterCog(commands.Cog):
         await persistence.delete_counter_perm(ctx.guild.id, member.id)
         await ctx.send(embed=emb("✅ Counter Access", f"{member.mention} can no longer change counters.", C_GREY))
 
-    @cmd_counter.command(name="perms")
+    @cmd_counter.command(name="perms", help="List who may change this server's counters besides admins")
     async def cmd_counter_perms(self, ctx: commands.Context):
         if ctx.guild is None:
             return

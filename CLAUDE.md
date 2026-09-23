@@ -21,6 +21,7 @@ Key environment variables (all optional except `DISCORD_TOKEN`):
 | `OLLAMA_MODEL` | `dolphin3:8b` | Default model for `!ask` |
 | `SYSTEM_PROMPT` | `You are a helpful assistant.` | Default system prompt |
 | `HISTORY_LIMIT` | `20` | Per-channel message history depth |
+| `OLLAMA_NUM_CTX` | `16384` | Ollama context window; must hold the command reference plus the history |
 | `ACTIVE_CHANNEL_IDS` | _(all channels)_ | Comma-separated channel IDs for passive AI responses |
 | `NSFW_API_URL` | — | Optional; base URL for the NSFW image API (enables `!nsfw`) |
 | `NSFW_API_KEY` / `NSFW_API_USER_ID` | — | Optional; API credentials for the NSFW image endpoint |
@@ -1393,6 +1394,44 @@ whatever command was replying. `src/discord_retry.py` handles it:
   the bug-report path.
 
 Coverage: [tests/test_discord_retry.py](tests/test_discord_retry.py).
+
+## AI: DMs answer commands only, and every answer knows the commands
+
+`_handle_ai_routing` (`src/events.py`) sends a DM straight to
+`process_commands`: a DM that isn't a command gets no reply, and a plain DM
+no longer counts as the day's first interaction for the auto-daily. `/ask`
+(or `!ask`) is the way to talk to the AI in a DM. In a server the passive
+path is unchanged: an @mention at the start of the message, or a message in
+an AI thread.
+
+When the AI answers as itself — the @mention chat and `!ask`, the
+`COMMAND_AWARE_KINDS` in `src/ai.py`; story, roleplay and RPG threads are
+fiction and stay out — `respond` appends the **command reference** to the
+system prompt. It is built by `src/command_reference.py` from the live
+command tree on every request, for the guild the answer goes to, and never
+stored in a thread row, so it can't drift from the code: one line per
+command with its usage, aliases and `help`, plus notes for the permission
+tier, a feature the server switched off, the idle channel and level locks,
+under a rule block that says these are the only commands and never to
+invent one. Bare forms that share a subcommand's callback (`!map` for
+`!idle map`, `!mock` for `!shop mock`) are folded into that line as
+aliases; `hidden=True` commands and `hidden` entries in
+`command_perms.json` are left out. `AICog` hands `src.ai` the provider
+(`COMMAND_REFERENCE_PROVIDER`) because it has the bot to read the tree
+from; with none set the prompts go out without it.
+
+- **Every visible command needs `help="…"`** — one user-facing sentence —
+  and `usage="…"` whenever the auto signature would print `[args...]`.
+  `test_every_visible_command_has_help` (`tests/test_bot_startup.py`)
+  refuses a new command without it; that test is what keeps the reference
+  current with no hand-maintained list anywhere. Reuse the wording of the
+  menu the command is listed in.
+- **The reference is a few thousand tokens**, which is why `OLLAMA_NUM_CTX`
+  (default 16384) is sent as `num_ctx` on every stream — Ollama's own 4096
+  default would truncate it. Raise it before raising `HISTORY_LIMIT`.
+
+Coverage: [tests/test_command_reference.py](tests/test_command_reference.py)
+and the reference tests in [tests/test_bot_startup.py](tests/test_bot_startup.py).
 
 ## Slash commands: the tree is synced every boot
 

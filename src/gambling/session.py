@@ -360,7 +360,8 @@ class GamblingSessionCog(commands.Cog):
             await persistence.delete_gambling_thread(tid)
         return None
 
-    @commands.command(name="session", aliases=["thread"])
+    @commands.command(name="session", aliases=["thread"],
+                      help="Open a gambling thread where only slots, flip, scratchoffs, blackjack and race work; !stop closes it")
     async def cmd_session(self, ctx: commands.Context):
         if await check_game_channel(ctx, "Gambling"):
             return

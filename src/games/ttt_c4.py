@@ -506,11 +506,13 @@ class TttC4Cog(commands.Cog):
                                spec["controls"], amount)
         await _add_initial_reactions(dest, game["board_msg_id"], kind)
 
-    @commands.command(name="ttt")
+    @commands.command(name="ttt",
+                      help="Challenge a user to Tic-Tac-Toe in a thread, with an optional coin wager; move with !m <1-9>")
     async def cmd_ttt(self, ctx: commands.Context, opponent: discord.User = None, amount: str = "0"):
         await self._start_pvp(ctx, opponent, amount, "ttt")
 
-    @commands.command(name="c4")
+    @commands.command(name="c4",
+                      help="Challenge a user to Connect 4 in a thread, with an optional coin wager; move with !m <1-7>")
     async def cmd_c4(self, ctx: commands.Context, opponent: discord.User = None, amount: str = "0"):
         await self._start_pvp(ctx, opponent, amount, "c4")
 
@@ -529,7 +531,9 @@ class TttC4Cog(commands.Cog):
                     await add_balance(player_uid, amount)
             logging.info(f"ttt/c4: cancelled game in deleted thread {thread.id}")
 
-    @commands.command(name="m",)
+    @commands.command(name="m",
+                      help="Make your move in the channel's Tic-Tac-Toe (1-9) or Connect 4 (1-7) game",
+                      usage="<1-9|1-7>")
     async def cmd_move(self, ctx: commands.Context, pos: int = None):
         cid = ctx.channel.id
 

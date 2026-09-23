@@ -120,7 +120,8 @@ class LevelingCog(commands.Cog):
             logging.warning("[leveling] level-up announce failed in channel %s: %s", channel_id, type(e).__name__)
 
     # ── !level / !xp command ──────────────────────────────────────────────────
-    @commands.command(name="lvl", aliases=["level", "xp"])
+    @commands.command(name="lvl", aliases=["level", "xp"],
+                      help="Show your level and XP progress in this server, or another member's")
     async def cmd_level(self, ctx: commands.Context, member: OptionalMember = None):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Leveling is per-server and not available in DMs.", 0xe74c3c))
@@ -202,7 +203,8 @@ class LevelingCog(commands.Cog):
 
 
     # ── !levels XP leaderboard ────────────────────────────────────────────────
-    @commands.command(name="levels", aliases=["lbxp", "xplb", "lbx", "xlb", "lblvl", "lblevel"])
+    @commands.command(name="levels", aliases=["lbxp", "xplb", "lbx", "xlb", "lblvl", "lblevel"],
+                      help="Top 10 XP leaderboard for this server")
     async def cmd_levels(self, ctx: commands.Context):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Leveling is per-server and not available in DMs.", 0xe74c3c))

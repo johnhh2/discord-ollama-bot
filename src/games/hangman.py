@@ -270,7 +270,9 @@ class HangmanCog(commands.Cog):
         # epoch of last bot-initiated hangman per uid, for the 6h cooldown.
         self._last_hangman_by_uid: dict[int, float] = {}
 
-    @commands.command(name="hangman", aliases=["hang", "hm"])
+    @commands.command(name="hangman", aliases=["hang", "hm"],
+                      help="Start a hangman game, alone or with the users you mention; guess letters or whole words in its thread",
+                      usage="[@user...]")
     async def cmd_hangman(self, ctx: commands.Context, *args):
         if await check_game_channel(ctx):
             return
@@ -342,7 +344,9 @@ class HangmanCog(commands.Cog):
         if state.active_hangman_games.pop(thread.id, None) is not None:
             logging.info(f"hangman: cancelled game in deleted thread {thread.id}")
 
-    @commands.command(name="guess", aliases=["g"])
+    @commands.command(name="guess", aliases=["g"],
+                      help="Guess a letter or the whole word in the channel's active hangman game",
+                      usage="<letter or word>")
     async def cmd_guess(self, ctx: commands.Context, *, guess: str = None):
         cid = ctx.channel.id
         asyncio.create_task(_delete_after(ctx.message))

@@ -293,7 +293,8 @@ class SlotsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="slots", aliases=["slot"])
+    @commands.command(name="slots", aliases=["slot"],
+                      help=f"Spin a 3-reel slot machine with a progressive jackpot; minimum bet {SLOT_MIN_BET:,} coins")
     async def cmd_slots(self, ctx: commands.Context, amount: str = None):
         if await check_game_channel(ctx, "Gambling"):
             return
@@ -335,7 +336,8 @@ class SlotsCog(commands.Cog):
         await play_slots(ctx.author, ctx.channel, ctx.guild, amount, roll_again=True)
 
 
-    @commands.command(name="slotsrewards", aliases=["slotrewards", "slotreward"])
+    @commands.command(name="slotsrewards", aliases=["slotrewards", "slotreward"],
+                      help="Show the slots payout table and the current progressive jackpot")
     async def cmd_slots_rewards(self, ctx: commands.Context):
         embed = discord.Embed(title="🎰 Slots Payouts", color=C_PURPLE)
         embed.description = "**Spin 3 reels and match symbols for payouts!**\n\n"

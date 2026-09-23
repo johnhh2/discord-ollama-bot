@@ -862,15 +862,13 @@ class EventsCog(commands.Cog):
             # exclusions); a bot user can still claim explicitly via !daily.
             return
         uid = message.author.id
-        is_dm = isinstance(message.channel, discord.DMChannel)
-        if (not is_dm
-                and message.guild
-                and message.channel.id in get_guild_cfg(message.guild.id).get("command_blacklist", [])):
+        if message.guild and message.channel.id in get_guild_cfg(message.guild.id).get("command_blacklist", []):
             return
+        # A plain DM is no longer an AI chat (see _handle_ai_routing), so it
+        # is no longer an interaction either — a "!command" DM still is.
         triggers = (
             message.content.startswith("!")
             or self.bot.user in message.mentions
-            or is_dm
             or message.channel.id in state.active_hangman_games
             or uid in state.active_blackjack_games
         )
@@ -942,9 +940,16 @@ class EventsCog(commands.Cog):
     # ── AI routing (final stage) ──────────────────────────────────────────────
 
     async def _handle_ai_routing(self, message: discord.Message):
-        """Route mentions / DMs / AI-thread messages to the LLM, otherwise
+        """Route mentions / AI-thread messages to the LLM, otherwise
         delegate to process_commands. Always ends with process_commands."""
         uid = message.author.id
+
+        # A DM gets a reply only when it is a command. Every DM used to be an
+        # AI prompt, so a pasted link or a typo got an essay; `/ask` (or
+        # `!ask`) is the way to talk to the AI there.
+        if isinstance(message.channel, discord.DMChannel):
+            await self.bot.process_commands(message)
+            return
 
         # Bot-wide AI off switch, then the server's own (src/features.py).
         if not state.bot_settings.get("ai_enabled", True):
@@ -959,7 +964,6 @@ class EventsCog(commands.Cog):
             await self.bot.process_commands(message)
             return
 
-        is_dm = isinstance(message.channel, discord.DMChannel)
         # Accept both mention forms: <@id> and the legacy nickname form <@!id>
         # (some clients/bots still send the latter).
         _mention_forms = (f"<@{self.bot.user.id}>", f"<@!{self.bot.user.id}>")
@@ -975,7 +979,7 @@ class EventsCog(commands.Cog):
                 return
 
         # Per-guild AI channel restrictions for @mention
-        if is_mentioned and not is_dm and message.guild:
+        if is_mentioned and message.guild:
             cfg = get_guild_cfg(message.guild.id)
             ai_channels = cfg.get("ai_channels", [])
             command_blacklist = cfg.get("command_blacklist", [])
@@ -994,12 +998,12 @@ class EventsCog(commands.Cog):
                 await self.bot.process_commands(message)
                 return
 
-        if not (is_dm or is_mentioned or in_ai_thread):
+        if not (is_mentioned or in_ai_thread):
             await self.bot.process_commands(message)
             return
 
         # Skip bare commands inside AI threads (let process_commands handle them)
-        if in_ai_thread and not is_mentioned and not is_dm and message.content.startswith("!"):
+        if in_ai_thread and not is_mentioned and message.content.startswith("!"):
             await self.bot.process_commands(message)
             return
 
@@ -1016,9 +1020,8 @@ class EventsCog(commands.Cog):
 
         # "@Bot !give @user 1" is a command, not an AI prompt, but the
         # dispatcher only sees a "!" at the very start of the raw content — the
-        # LLM would answer in prose instead (or, for a "!command" DM, on top
-        # of the command). Strip the mention and dispatch; an unresolvable
-        # "!word" still falls through to the AI.
+        # LLM would answer in prose instead. Strip the mention and dispatch;
+        # an unresolvable "!word" still falls through to the AI.
         if content.startswith("!"):
             message.content = content
             ctx = await self.bot.get_context(message)

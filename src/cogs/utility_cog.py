@@ -247,7 +247,8 @@ class UtilityCog(commands.Cog):
         # only — a delete after a restart just asks them to re-list.
         self._issues_listing_by_user: dict[int, list[int]] = {}
 
-    @commands.command(name="gambler-role", aliases=["gamblerole", "gamblers"])
+    @commands.command(name="gambler-role", aliases=["gamblerole", "gamblers"],
+                      help="Opt in or out of the Gamblers role, pinged when a progressive jackpot is won", usage="[on|off]")
     async def cmd_gambler_role(self, ctx: commands.Context, toggle: str = None):
         if not ctx.guild:
             return
@@ -281,7 +282,7 @@ class UtilityCog(commands.Cog):
             else:
                 await ctx.send(embed=emb("❌ Error", f"Failed to {'add' if adding else 'remove'} the role.", C_RED))
 
-    @commands.command(name="help", aliases=["h"])
+    @commands.command(name="help", aliases=["h"], help="List the bot's commands by category")
     async def cmd_help(self, ctx: commands.Context):
         # The idle channel and its feed threads get the game's card instead.
         idle = getattr(self.bot, "get_cog", lambda _name: None)("IdleCog")
@@ -364,7 +365,7 @@ class UtilityCog(commands.Cog):
         await send_ephemeral(ctx, embed=help_embed)
 
 
-    @commands.command(name="stats", aliases=["stat"])
+    @commands.command(name="stats", aliases=["stat"], help="Show bot statistics: uptime, memory, ping, servers and AI status")
     async def cmd_stats(self, ctx: commands.Context):
         elapsed = time.monotonic() - state.bot_start_time
         msg_rate = state.stats_messages_seen / (elapsed / 60) if elapsed > 0 else 0
@@ -408,18 +409,18 @@ class UtilityCog(commands.Cog):
         await send_ephemeral(ctx, embed=embed)
 
 
-    @commands.group(name="ai", invoke_without_command=True)
+    @commands.group(name="ai", invoke_without_command=True, help="View AI connection status and command info")
     async def cmd_ai(self, ctx: commands.Context):
         await send_ephemeral(ctx, embed=await build_ai_overview_embed(ctx))
 
-    @cmd_ai.command(name="on", aliases=["online"])
+    @cmd_ai.command(name="on", aliases=["online"], help="Turn the bot's passive AI responses on (bot admins)")
     @requires_perm
     async def ai_on(self, ctx: commands.Context):
         state.bot_settings["ai_enabled"] = True
         await save_bot_settings()
         await ctx.send(embed=emb("🤖 AI Enabled", "Passive AI responses are now **online**.", C_GREEN))
 
-    @cmd_ai.command(name="off", aliases=["offline"])
+    @cmd_ai.command(name="off", aliases=["offline"], help="Turn the bot's passive AI responses off (bot admins)")
     @requires_perm
     async def ai_off(self, ctx: commands.Context):
         state.bot_settings["ai_enabled"] = False
@@ -427,7 +428,7 @@ class UtilityCog(commands.Cog):
         await ctx.send(embed=emb("🤖 AI Disabled", "Passive AI responses are now **offline**.", C_RED))
 
 
-    @commands.command(name="game", aliases=["games"])
+    @commands.command(name="game", aliases=["games"], help="View all games and gambling commands")
     async def cmd_game(self, ctx: commands.Context):
         gid = ctx.guild.id if ctx.guild else 0
         gambling = feature_enabled(gid, "gambling")
@@ -489,7 +490,8 @@ class UtilityCog(commands.Cog):
 
 
 
-    @commands.command(name="puzzle")
+    @commands.command(name="puzzle", help="Start a coding puzzle or riddle for coins; bare opens a picker, mention users to invite them",
+                      usage="<coding|riddle|riddleai> [easy|medium|hard|extreme] [@user...]")
     async def cmd_puzzle(self, ctx: commands.Context, *args):
         if await check_puzzle_channel(ctx):
             return
@@ -912,7 +914,7 @@ class UtilityCog(commands.Cog):
         embed.set_footer(text="Days roll over at 5am CT. Only unbroken streaks (today or yesterday) are shown.")
         await ctx.send(embed=embed)
 
-    @commands.command(name="adminhelp", aliases=["helpadmin"])
+    @commands.command(name="adminhelp", aliases=["helpadmin"], help="List the admin commands: settings, moderation, effects, economy, AI and bot control")
     @requires_perm
     async def cmd_adminhelp(self, ctx: commands.Context):
         gid = ctx.guild.id if ctx.guild else 0
@@ -967,7 +969,7 @@ class UtilityCog(commands.Cog):
         await send_ephemeral(ctx, embed=admin_embed)
 
 
-    @commands.command(name="saved", aliases=["persistent", "saves"])
+    @commands.command(name="saved", aliases=["persistent", "saves"], help="Show a snapshot of the bot's saved data: effects, jackpot, chess games, quotes, economy totals")
     @requires_perm
     async def cmd_saved(self, ctx: commands.Context):
         """Show a snapshot of the bot's persisted in-memory state."""
@@ -1033,12 +1035,12 @@ class UtilityCog(commands.Cog):
 
         await send_ephemeral(ctx, embed=embed)
 
-    @commands.command(name="bugreport", aliases=["bug"])
+    @commands.command(name="bugreport", aliases=["bug"], help="Send a bug report to the bot admins; bare opens a form")
     @requires_perm
     async def cmd_bugreport(self, ctx: commands.Context, *, report: str = None):
         await self._submit_issue(ctx, kind="bug", report=report)
 
-    @commands.command(name="featurerequest", aliases=["feature", "frequest"])
+    @commands.command(name="featurerequest", aliases=["feature", "frequest"], help="Submit a feature request to this server's feature-request channel; bare opens a form")
     @requires_perm
     async def cmd_featurerequest(self, ctx: commands.Context, *, description: str = None):
         """User-facing feature-request submission.
@@ -1124,7 +1126,8 @@ class UtilityCog(commands.Cog):
             C_GREEN,
         ))
 
-    @commands.command(name="issue")
+    @commands.command(name="issue", help="Log a bug, feature, task or improvement for the maintainer, or delete one from your last listing",
+                      usage="<bug|feature|task|improvement> <description> | delete <N>")
     @requires_perm
     async def cmd_issue(self, ctx: commands.Context, kind: str = None, *, rest: str = None):
         """Bot-admin gateway for logging non-bug items + maintenance.
@@ -1155,7 +1158,8 @@ class UtilityCog(commands.Cog):
             kind_norm, rest = values["kind"][0], values["report"]
         await self._submit_issue(ctx, kind=kind_norm, report=rest)
 
-    @commands.command(name="issues")
+    @commands.command(name="issues", help="List logged issues for triage, newest first, optionally filtered by status",
+                      usage="[all|open|not_started|wip|completed|rejected]")
     @requires_perm
     async def cmd_issues(self, ctx: commands.Context, filt: str = None):
         """List issues for triage, newest first.

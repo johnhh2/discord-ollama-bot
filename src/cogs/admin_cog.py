@@ -38,7 +38,8 @@ class AdminCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="admin", aliases=["adminpanel"])
+    @commands.command(name="admin", aliases=["adminpanel"],
+                      help="Open the admin panel: moderation, effects, permissions, grants and counters as pickers and forms")
     @requires_perm
     async def cmd_admin(self, ctx: commands.Context):
         """The admin panel (src/admin_hub.py): moderation, effects,
@@ -63,7 +64,7 @@ class AdminCog(commands.Cog):
             return
         await open_panel(ctx, AdminHub(self, ctx), ephemeral=True)
 
-    @commands.command(name="godmode")
+    @commands.command(name="godmode", help="Toggle free costs on or off for yourself or a user")
     @requires_perm
     async def cmd_godmode(self, ctx: commands.Context, user: OptionalMember = None):
 
@@ -79,7 +80,7 @@ class AdminCog(commands.Cog):
         await ctx.send(embed=emb("👑 Godmode", f"Godmode **{status}** for {target_user.mention}.", C_GOLD))
 
 
-    @commands.command(name="adminragebait")
+    @commands.command(name="adminragebait", help="Force ragebait on a user for their next n messages (default 5)")
     @requires_perm
     async def cmd_adminragebait(self, ctx: commands.Context, target: OptionalMember = None, n: str = None):
 
@@ -108,7 +109,7 @@ class AdminCog(commands.Cog):
         ))
 
 
-    @commands.command(name="say")
+    @commands.command(name="say", help="Make the bot repeat your text in this channel, deleting your message")
     @requires_perm
     async def cmd_say(self, ctx: commands.Context, *, text: str = None):
         if text is None:
@@ -121,7 +122,8 @@ class AdminCog(commands.Cog):
         await ctx.send(text)
 
 
-    @commands.command(name="botinvitelink", aliases=["botinvite"])
+    @commands.command(name="botinvitelink", aliases=["botinvite"],
+                      help="Show a button that reveals the bot's invite link to admins")
     @requires_perm
     async def cmd_botinvite(self, ctx: commands.Context):
 
@@ -156,7 +158,7 @@ class AdminCog(commands.Cog):
         await ctx.send(embed=embed, view=InviteView())
 
 
-    @commands.command(name="invitelink")
+    @commands.command(name="invitelink", help="Show a button that reveals an invite link for this server")
     @requires_perm
     async def cmd_invite(self, ctx: commands.Context):
         if ctx.guild is None:
@@ -217,7 +219,7 @@ class AdminCog(commands.Cog):
             await ctx.send(embed=emb("❌ Error", f"Failed to generate invite: {str(e)}", C_RED))
 
 
-    @commands.command(name="restart")
+    @commands.command(name="restart", help="Restart the bot process")
     @requires_perm
     async def cmd_restart(self, ctx: commands.Context):
         msg = await ctx.send(embed=emb("🔄 Restarting", "Bot is restarting...", C_GOLD))
@@ -230,7 +232,7 @@ class AdminCog(commands.Cog):
             os._exit(0)
 
 
-    @commands.command(name="setperm")
+    @commands.command(name="setperm", usage="<@user> <server_admin|bot_admin|clear>")
     @requires_perm
     async def cmd_setperm(self, ctx: commands.Context, user: OptionalMember = None, tier: str = None):
         """Grant a per-guild permission override to one user.
@@ -286,7 +288,8 @@ class AdminCog(commands.Cog):
         await ctx.send(embed=emb("✅ Permission Updated", msg, C_GREEN))
 
 
-    @commands.command(name="adminunlock")
+    @commands.command(name="adminunlock", help="Force-unlock a channel or role locked through the shop",
+                      usage="<#channel|@role|id>")
     @requires_perm
     async def cmd_adminunlock(self, ctx: commands.Context, target: str = None):
         if ctx.guild is None:

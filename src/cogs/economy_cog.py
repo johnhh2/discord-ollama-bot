@@ -361,7 +361,8 @@ class EconomyCog(commands.Cog):
         import src.persistence as _pkg
         await _pkg.init_done.wait()
 
-    @commands.group(name="daily", invoke_without_command=True)
+    @commands.group(name="daily", invoke_without_command=True,
+                    help="Claim your daily coin reward and any property revenue; resets at 5am CT")
     async def cmd_daily(self, ctx: commands.Context):
         uid = ctx.author.id
         await _ensure_user(uid)
@@ -437,7 +438,8 @@ class EconomyCog(commands.Cog):
         await ctx.send(embed=emb("🏠 Dailies Stake", body, C_GREEN))
 
 
-    @commands.command(name="balance", aliases=["bal", "b", "!", "$", "wallet"])
+    @commands.command(name="balance", aliases=["bal", "b", "!", "$", "wallet"],
+                      help="Show your wallet balance, or another user's; @Bot shows the house pot")
     async def cmd_balance(self, ctx: commands.Context, target: OptionalMember = None):
         target = target or ctx.author
         if self.bot.user and target.id == self.bot.user.id and ctx.guild:
@@ -455,7 +457,8 @@ class EconomyCog(commands.Cog):
         view.message = await ctx.send(embed=await _card(), view=view)
 
 
-    @commands.command(name="leaderboard", aliases=["leaderboards", "lb"])
+    @commands.command(name="leaderboard", aliases=["leaderboards", "lb"],
+                      help="Top 10 richest users, by server or globally, or the Idle RPG ladder", usage="[server|global|idle]")
     async def cmd_leaderboard(self, ctx: commands.Context, scope: str = None):
         if ctx.guild is None:
             await ctx.send("Leaderboard is only available in servers.")
@@ -539,7 +542,8 @@ class EconomyCog(commands.Cog):
 
 
     # ── !crime ────────────────────────────────────────────────────────────────
-    @commands.group(name="crime", invoke_without_command=True)
+    @commands.group(name="crime", invoke_without_command=True,
+                    help="Crime menu: steal, mug, bankheist and jailbreak, plus your jail status")
     @requires_perm
     async def cmd_crime(self, ctx: commands.Context):
         uid = ctx.author.id
@@ -572,7 +576,8 @@ class EconomyCog(commands.Cog):
         ]
         await send_ephemeral(ctx, embed=emb("🦹 Crime", "\n".join(lines), C_GOLD))
 
-    @commands.command(name="steal")
+    @commands.command(name="steal",
+                      help="Pick a user's pocket for a % of their balance; pick a tier 1-3, jail if caught", usage="<@user> [1-3]")
     async def cmd_steal(self, ctx: commands.Context, target: OptionalMember = None):
         if target is None:
             await ctx.invoke(self.cmd_crime)
@@ -1105,7 +1110,8 @@ class EconomyCog(commands.Cog):
             C_GREEN,
         )
 
-    @commands.command(name="bankheist")
+    @commands.command(name="bankheist",
+                      help="Open a 4-slot lobby to raid a user's savings with a crew; auto-starts in 60s", usage="<@user>")
     @requires_perm
     async def cmd_bankheist(self, ctx: commands.Context, target: OptionalMember = None):
         if target is None:
@@ -1235,7 +1241,8 @@ class EconomyCog(commands.Cog):
             self._active_heists.pop(ch_id, None)
 
 
-    @commands.command(name="jail")
+    @commands.command(name="jail",
+                      help="Show whether you or another user are in jail, and how to get out")
     async def cmd_jail(self, ctx: commands.Context, target: OptionalMember = None):
         member = target or ctx.author
         await _ensure_user(member.id)
@@ -1262,7 +1269,8 @@ class EconomyCog(commands.Cog):
             ))
 
 
-    @commands.command(name="jailbreak")
+    @commands.command(name="jailbreak",
+                      help="Attempt to escape jail (20% success); one attempt per day")
     @requires_perm
     async def cmd_jailbreak(self, ctx: commands.Context):
         uid = ctx.author.id
@@ -1304,7 +1312,8 @@ class EconomyCog(commands.Cog):
                 C_RED,
             ))
 
-    @commands.command(name="adminjailbreak")
+    @commands.command(name="adminjailbreak",
+                      help="Admin: free a user from jail immediately", usage="<@user>")
     @requires_perm
     async def cmd_adminjailbreak(self, ctx: commands.Context, target: OptionalMember = None):
         if target is None:
@@ -1317,7 +1326,8 @@ class EconomyCog(commands.Cog):
         await save_economy(uid=target.id)
         await ctx.send(embed=emb("🔓 Released", f"**{target.display_name}** has been freed from jail.", C_GREEN))
 
-    @commands.command(name="bail", aliases=["bailout"])
+    @commands.command(name="bail", aliases=["bailout"],
+                      help="Pay bail (10k + half the haul) to free yourself or another user from jail")
     @requires_perm
     async def cmd_bail(self, ctx: commands.Context, target: OptionalMember = None):
         payer = ctx.author
@@ -1400,7 +1410,8 @@ class EconomyCog(commands.Cog):
             C_GREEN,
         ))
 
-    @commands.command(name="mug")
+    @commands.command(name="mug",
+                      help="Pay muggers an amount to take that much from a user; 50% chance of a day in jail", usage="<@user> <amount>")
     @requires_perm
     async def cmd_mug(self, ctx: commands.Context, target: OptionalMember = None, amount: str = None):
         uid = ctx.author.id
@@ -1566,7 +1577,8 @@ class EconomyCog(commands.Cog):
         ("games", "🎮 Games"), ("assets", "🏠 Assets"),
     )
 
-    @commands.command(name="records", aliases=["record", "rec"])
+    @commands.command(name="records", aliases=["record", "rec"],
+                      help="Show all-time records for this server or globally, optionally one section", usage="[server|global] [all|economy|gambling|games|assets]")
     async def cmd_records(self, ctx: commands.Context, *args: str):
         """Display all-time records. `!records global` spans all servers;
         a section word (`gambling`, `games`…) shows one board."""
@@ -1675,7 +1687,8 @@ class EconomyCog(commands.Cog):
         )
         return embed
 
-    @commands.command(name="savings", aliases=["piggybank"])
+    @commands.command(name="savings", aliases=["piggybank"],
+                      help="Piggy bank: view your savings, or deposit/withdraw coins that earn daily interest", usage="[add|remove|+|-|principals] [amount|all]")
     @requires_perm
     async def cmd_savings(self, ctx: commands.Context, action: str = None, amount: str = None):
         uid = ctx.author.id
@@ -1832,7 +1845,8 @@ class EconomyCog(commands.Cog):
                 C_GREEN,
             ))
 
-    @commands.command(name="save")
+    @commands.command(name="save",
+                      help="Put coins into your piggy bank (same as deposit)", usage="<amount|all>")
     async def cmd_save(self, ctx: commands.Context, amount: str = None):
         await self.cmd_savings(ctx, "add", amount)
 
@@ -1840,15 +1854,18 @@ class EconomyCog(commands.Cog):
     # amount; a minus still flips to withdraw via the sign-routing in
     # cmd_savings. Level-gated with `savings` via _GATE_ALIASES in
     # src/level_unlocks.py.
-    @commands.command(name="deposit", aliases=["dep"])
+    @commands.command(name="deposit", aliases=["dep"],
+                      help="Put coins into your piggy bank, where they earn daily compound interest", usage="<amount|all>")
     async def cmd_deposit(self, ctx: commands.Context, amount: str = None):
         await self.cmd_savings(ctx, "add", amount)
 
-    @commands.command(name="withdraw", aliases=["wd"])
+    @commands.command(name="withdraw", aliases=["wd"],
+                      help="Take coins out of your piggy bank", usage="<amount|all>")
     async def cmd_withdraw(self, ctx: commands.Context, amount: str = None):
         await self.cmd_savings(ctx, "remove", amount)
 
-    @commands.command(name="economy", aliases=["eco"])
+    @commands.command(name="economy", aliases=["eco"],
+                      help="Economy overview: coins in wallets, savings, property, lottery pool and house pot")
     @requires_perm
     async def cmd_economy(self, ctx: commands.Context):
 
@@ -1920,7 +1937,8 @@ class EconomyCog(commands.Cog):
         stats += "\n".join(command_lines)
         await send_ephemeral(ctx, embed=emb("📊 Economy", stats, C_GOLD))
 
-    @commands.command(name="pay", aliases=["give", "gift", "donate", "tip", "send"])
+    @commands.command(name="pay", aliases=["give", "gift", "donate", "tip", "send"],
+                      help="Send coins from your wallet to another user, or to @Bot for the house pot", usage="<@user> <amount>")
     async def cmd_pay(self, ctx: commands.Context, recipient: OptionalMember = None, amount: str = None):
         if recipient is None or amount is None:
             # Echo the alias the user typed (!give, !gift, ...) — a hardcoded
@@ -1956,7 +1974,8 @@ class EconomyCog(commands.Cog):
 
     # ── Bot-admin economy mutators ────────────────────────────────────────────
 
-    @commands.command(name="event")
+    @commands.command(name="event",
+                      help="Admin: post a coin drop that pays each user who reacts, optionally timed or in a channel", usage="<amount> [duration_hours] [#channel]")
     @requires_perm
     async def cmd_event(self, ctx: commands.Context, amount: str = None, duration: str = None):
         try:
@@ -2047,7 +2066,8 @@ class EconomyCog(commands.Cog):
             event["rewarded"].discard(user.id)
 
 
-    @commands.command(name="admingive", aliases=["adminpay"])
+    @commands.command(name="admingive", aliases=["adminpay"],
+                      help="Admin: give coins to a user or @Bot's house pot; a negative amount removes them", usage="<@user> <amount>")
     @requires_perm
     async def cmd_give(self, ctx: commands.Context, target: OptionalMember = None, amount: str = None):
         if target is None or amount is None:
@@ -2082,7 +2102,8 @@ class EconomyCog(commands.Cog):
             ))
 
 
-    @commands.command(name="admingivexp", aliases=["adminxp", "adminpayxp"])
+    @commands.command(name="admingivexp", aliases=["adminxp", "adminpayxp"],
+                      help="Admin: give XP to a user in this server; a negative amount removes it", usage="<@user> <amount>")
     @requires_perm
     async def cmd_givexp(self, ctx: commands.Context, target: OptionalMember = None, amount: str = None):
         if target is None or amount is None:

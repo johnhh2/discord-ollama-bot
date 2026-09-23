@@ -33,6 +33,7 @@ class ProfileCog(commands.Cog):
     @commands.command(
         name="profile",
         aliases=["user", "player", "investigate", "view", "rank", "elo"],
+        help="Player overview of you or another user: coins, level, tickets, streak, holdings and chess ranks",
     )
     async def cmd_profile(self, ctx: commands.Context, target: OptionalMember = None):
         target = target or ctx.author

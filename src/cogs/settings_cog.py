@@ -102,7 +102,8 @@ class SettingsCog(commands.Cog):
             )
         return embed
 
-    @commands.group(name="settings", aliases=["setting"], invoke_without_command=True)
+    @commands.group(name="settings", aliases=["setting"], invoke_without_command=True,
+                    help="Open the settings panel: every server setting, pick a category then a setting")
     @requires_perm
     async def cmd_settings(self, ctx: commands.Context):
         if ctx.guild is None:
@@ -143,7 +144,9 @@ class SettingsCog(commands.Cog):
         return captured.captured[-1] if captured.captured else None
 
     # ── !settings features ────────────────────────────────────────────────────
-    @cmd_settings.command(name="features", aliases=["feature"])
+    @cmd_settings.command(name="features", aliases=["feature"],
+                          help="Turn the economy, gambling, savings, assets, shop, artifacts or AI on or off for this server",
+                          usage="<economy|gambling|savings|assets|shop|artifacts|ai> <on|off>")
     @requires_perm
     async def settings_features(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -206,7 +209,8 @@ class SettingsCog(commands.Cog):
     # !settings channel — every channel setting
     # ══════════════════════════════════════════════════════════════════════════
 
-    @cmd_settings.group(name="channel", aliases=["channels"], invoke_without_command=True)
+    @cmd_settings.group(name="channel", aliases=["channels"], invoke_without_command=True,
+                        help="Open the settings panel on the channels page")
     @requires_perm
     async def cmd_settings_channel(self, ctx: commands.Context):
         if ctx.guild is None:
@@ -234,7 +238,8 @@ class SettingsCog(commands.Cog):
         await command.callback(command.cog or self, ctx, *args)
 
     # ── !settings shop ────────────────────────────────────────────────────────
-    @cmd_settings.command(name="shop")
+    @cmd_settings.command(name="shop", help="Turn one of the shop's items on or off for this server",
+                          usage="<nickname|role|unassignrole|roleup|roledown|ragebait|buyxp> <on|off>")
     @requires_perm
     async def settings_shop(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -269,7 +274,8 @@ class SettingsCog(commands.Cog):
         await ctx.send(embed=emb("⚙️ Shop", f"**{item}** is now {status}.", C_GREEN))
 
     # ── !settings leaderboard ─────────────────────────────────────────────────
-    @cmd_settings.command(name="leaderboard")
+    @cmd_settings.command(name="leaderboard", help="Set which scope a bare !lb shows by default: server or global",
+                          usage="[server|global]")
     @requires_perm
     async def settings_leaderboard(self, ctx: commands.Context, scope: str = None):
         if ctx.guild is None:
@@ -305,7 +311,8 @@ class SettingsCog(commands.Cog):
         ))
 
     # ── !settings idle-enroll ─────────────────────────────────────────────────
-    @cmd_settings.command(name="idle-enroll")
+    @cmd_settings.command(name="idle-enroll", help="Auto-enroll members who hold one of the bot's roles into the idle RPG, a few at a time",
+                          usage="[on|off]")
     @requires_perm
     async def settings_idle_enroll(self, ctx: commands.Context, choice: str = None):
         if ctx.guild is None:
@@ -335,7 +342,8 @@ class SettingsCog(commands.Cog):
         await ctx.send(embed=emb("⚔️ Idle RPG Auto-Enroll", f"Auto-enroll is now **{choice.lower()}**.{note}", C_GREEN))
 
     # ── !settings idle-pace ───────────────────────────────────────────────────
-    @cmd_settings.command(name="idle-pace")
+    @cmd_settings.command(name="idle-pace", help="Set the idle RPG's event pace: lively (default) or the classic IRC odds",
+                          usage="[lively|classic]")
     @requires_perm
     async def settings_idle_pace(self, ctx: commands.Context, pace: str = None):
         if ctx.guild is None:
@@ -367,7 +375,8 @@ class SettingsCog(commands.Cog):
         await ctx.send(embed=emb("⚔️ Idle RPG Pace", f"The idle RPG now runs at the **{pace.lower()}** pace.", C_GREEN))
 
     # ── !settings channel bounty ──────────────────────────────────────────────
-    @cmd_settings_channel.command(name="bounty")
+    @cmd_settings_channel.command(name="bounty", help="Set the channel where !bounty posts, or clear it to disable bounties",
+                                  usage="[#channel] | clear")
     @requires_perm
     async def settings_bounty_channel(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -392,7 +401,8 @@ class SettingsCog(commands.Cog):
             ))
 
     # ── !settings channel minecraft ───────────────────────────────────────────
-    @cmd_settings_channel.command(name="minecraft")
+    @cmd_settings_channel.command(name="minecraft", help="Set the channel for Minecraft server up/down alerts and player-count notices",
+                                  usage="[#channel] | clear")
     @requires_perm
     async def settings_minecraft_channel(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -417,7 +427,8 @@ class SettingsCog(commands.Cog):
             ))
 
     # ── !settings channel dailies ─────────────────────────────────────────────
-    @cmd_settings_channel.command(name="dailies")
+    @cmd_settings_channel.command(name="dailies", help="Set the self-cleaning channel that holds the react-to-claim dailies embed",
+                                  usage="[#channel] | clear")
     @requires_perm
     async def settings_dailies_channel(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -481,7 +492,8 @@ class SettingsCog(commands.Cog):
         await self._forward(ctx, self.settings_dailies_channel, *args)
 
     # ── !settings nsfw ────────────────────────────────────────────────────────
-    @cmd_settings.command(name="nsfw")
+    @cmd_settings.command(name="nsfw", help="Turn NSFW commands on or off, restrict them to channels, or ban tags",
+                          usage="[on|off] | channels <set|add|remove|clear|list> [#channel ...] | ban <tag> | unban <tag ...> | banned")
     @requires_perm
     async def settings_nsfw(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -696,7 +708,8 @@ class SettingsCog(commands.Cog):
         return True
 
     # ── !settings nsfw-alias ──────────────────────────────────────────────────
-    @cmd_settings.command(name="nsfw-alias")
+    @cmd_settings.command(name="nsfw-alias", help="Add or remove custom aliases for !nsfw, each optionally pre-filling tags",
+                          usage="[add <word> [tags ...] | remove [word ...] | list | clear]")
     @requires_perm
     async def settings_nsfw_alias(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -761,7 +774,8 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("⚙️ NSFW Aliases", "Usage: `!settings nsfw-alias add|remove <word>` / `list` / `clear`", C_GREY))
 
     # ── !settings story-alias ─────────────────────────────────────────────────
-    @cmd_settings.command(name="story-alias")
+    @cmd_settings.command(name="story-alias", help="Add or remove custom !story aliases, each with its own system prompt",
+                          usage="[add <word> <system prompt> | remove [word ...] | list | clear]")
     @requires_perm
     async def settings_story_alias(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -832,7 +846,8 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("⚙️ Story Aliases", usage_short, C_GREY))
 
     # ── !settings quote ───────────────────────────────────────────────────────
-    @cmd_settings.command(name="quote")
+    @cmd_settings.command(name="quote", help="Let !quote work in any channel, ignoring channel restrictions",
+                          usage="[bypass [on|off]]")
     @requires_perm
     async def settings_quote(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -861,7 +876,8 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("⚙️ quote", "Usage: `!settings quote bypass on|off`", C_GREY))
 
     # ── !settings soundboard-ratelimit ────────────────────────────────────────
-    @cmd_settings.command(name="soundboard-ratelimit")
+    @cmd_settings.command(name="soundboard-ratelimit", help="Pick users the AI roasts for spamming the soundboard in voice",
+                          usage="<add|remove> [@user|userid ...] | list")
     @requires_perm
     async def settings_soundboard_ratelimit(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -944,7 +960,8 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("⚙️ Soundboard Rate-Limit", "Usage: `!settings soundboard-ratelimit add|remove @user|<userid>` or `list`", C_GREY))
 
     # ── !settings gambler-role ────────────────────────────────────────────────
-    @cmd_settings.command(name="gambler-role")
+    @cmd_settings.command(name="gambler-role", help="Track scratchoff streaks and auto-assign the Gamblers role",
+                          usage="[on|off]")
     @requires_perm
     async def settings_gambler_role(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -977,7 +994,8 @@ class SettingsCog(commands.Cog):
         await ctx.send(embed=emb("⚙️ Gambler Role", f"Gambler role tracking is now {status}.{detail}", C_GREEN))
 
     # ── !settings tax-aliases ─────────────────────────────────────────────────
-    @cmd_settings.command(name="tax-aliases")
+    @cmd_settings.command(name="tax-aliases", help="Add or remove custom aliases for the shop's tax, usable as !word @user or !shop word @user",
+                          usage="[add <word> [emoji] | remove [word ...] | list | clear]")
     @requires_perm
     async def settings_tax_aliases(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -1035,7 +1053,8 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("⚙️ Tax Aliases", "Usage: `!settings tax-aliases add|remove <word> [emoji]` / `list` / `clear`", C_GREY))
 
     # ── !settings channel ai ──────────────────────────────────────────────────
-    @cmd_settings_channel.command(name="ai")
+    @cmd_settings_channel.command(name="ai", help="Restrict @mentions and AI commands to these channels, or clear to allow all",
+                                  usage="[#channel ...] | clear")
     @requires_perm
     async def settings_channel_ai(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -1056,7 +1075,8 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("⚙️ AI Channels", f"AI commands restricted to: {names}", C_GREEN))
 
     # ── !settings channel whitelist ───────────────────────────────────────────
-    @cmd_settings_channel.command(name="whitelist")
+    @cmd_settings_channel.command(name="whitelist", help="Only allow commands in these channels (!settings still works everywhere), or clear",
+                                  usage="[#channel ...] | clear")
     @requires_perm
     async def settings_channel_whitelist(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -1077,7 +1097,8 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("✅ Channel Whitelist", f"Commands restricted to: {names}\n(Note: `!settings` always works everywhere)", C_GREEN))
 
     # ── !settings channel blacklist ───────────────────────────────────────────
-    @cmd_settings_channel.command(name="blacklist")
+    @cmd_settings_channel.command(name="blacklist", help="Block commands in these channels, or clear the list",
+                                  usage="[#channel ...] | clear")
     @requires_perm
     async def settings_channel_blacklist(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -1098,7 +1119,8 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("❌ Channel Blacklist", f"Commands blocked in: {names}", C_GREEN))
 
     # ── !settings channel game ────────────────────────────────────────────────
-    @cmd_settings_channel.command(name="game")
+    @cmd_settings_channel.command(name="game", help="Restrict games and gambling to these channels, or clear to allow them everywhere",
+                                  usage="[#channel ...] | clear")
     @requires_perm
     async def settings_channel_game(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -1119,7 +1141,8 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("🎮 Game Channels", f"Games and gambling restricted to: {names}", C_GREEN))
 
     # ── !settings channel chess ───────────────────────────────────────────────
-    @cmd_settings_channel.command(name="chess")
+    @cmd_settings_channel.command(name="chess", help="Restrict chess to these channels (default: the game channels), or clear",
+                                  usage="[#channel ...] | clear")
     @requires_perm
     async def settings_channel_chess(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -1140,7 +1163,8 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("♟️ Chess Channels", f"Chess restricted to: {names}", C_GREEN))
 
     # ── !settings channel lottery ─────────────────────────────────────────────
-    @cmd_settings_channel.command(name="lottery")
+    @cmd_settings_channel.command(name="lottery", help="Set the channel where the monthly lottery runs, or clear it to disable the lottery",
+                                  usage="[#channel] | clear")
     @requires_perm
     async def settings_channel_lottery(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -1175,7 +1199,8 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("🎰 Lottery Channel", f"Lottery channel set to {channel.mention}\n🎟️ Lottery ready!", C_GREEN))
 
     # ── !settings channel levelup ─────────────────────────────────────────────
-    @cmd_settings_channel.command(name="levelup")
+    @cmd_settings_channel.command(name="levelup", help="Set the channel for level-up announcements, or clear to disable them",
+                                  usage="[#channel] | clear")
     @requires_perm
     async def settings_channel_levelup(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -1196,7 +1221,8 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("📊 Level-Up Channel", f"Level-up announcements will be sent to {channel.mention}.", C_GREEN))
 
     # ── !settings channel records ─────────────────────────────────────────────
-    @cmd_settings_channel.command(name="records")
+    @cmd_settings_channel.command(name="records", help="Set a channel that mirrors this server's new records and every global-top record",
+                                  usage="[#channel] | clear")
     @requires_perm
     async def settings_channel_records(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -1226,7 +1252,8 @@ class SettingsCog(commands.Cog):
             ))
 
     # ── !settings channel idle ────────────────────────────────────────────────
-    @cmd_settings_channel.command(name="idle")
+    @cmd_settings_channel.command(name="idle", help="Set the idle RPG channel for news and feed threads; the game is off without one",
+                                  usage="[#channel] | clear")
     @requires_perm
     async def settings_channel_idle(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -1256,7 +1283,8 @@ class SettingsCog(commands.Cog):
             ))
 
     # ── !settings channel feature-request (per-guild, server admin) ──────────
-    @cmd_settings_channel.command(name="feature-request")
+    @cmd_settings_channel.command(name="feature-request", help="Set the channel where !featurerequest posts, or clear to disable requests here",
+                                  usage="[#channel] | clear")
     @requires_perm
     async def settings_channel_feature_request(self, ctx: commands.Context, *args):
         if ctx.guild is None:
@@ -1288,7 +1316,8 @@ class SettingsCog(commands.Cog):
             await _post_feature_request_hint(channel)
 
     # ── !settings channel admin-log (global, bot-admin only) ─────────────────
-    @cmd_settings_channel.command(name="admin-log")
+    @cmd_settings_channel.command(name="admin-log", help="Set the bot-wide channel that logs admin command use and errors from every server",
+                                  usage="[#channel] | clear")
     @requires_perm
     async def settings_channel_admin_log(self, ctx: commands.Context, *args):
         chosen = await self._channel_choice(ctx, args, title="🛡️ Admin Log Channel", current=state.bot_settings.get("admin_log_channel"), multi=False)
@@ -1311,7 +1340,8 @@ class SettingsCog(commands.Cog):
             ))
 
     # ── !settings channel error-log (global, bot-admin only) ─────────────────
-    @cmd_settings_channel.command(name="error-log")
+    @cmd_settings_channel.command(name="error-log", help="Set the bot-wide channel that logs command errors from every server",
+                                  usage="[#channel] | clear")
     @requires_perm
     async def settings_channel_error_log(self, ctx: commands.Context, *args):
         chosen = await self._channel_choice(ctx, args, title="⚠️ Error Log Channel", current=state.bot_settings.get("error_log_channel"), multi=False)
@@ -1332,7 +1362,8 @@ class SettingsCog(commands.Cog):
             ))
 
     # ── !settings channel internal-issue (global, bot-admin only) ────────────
-    @cmd_settings_channel.command(name="internal-issue")
+    @cmd_settings_channel.command(name="internal-issue", help="Set the bot-wide channel for bug reports and internal issues from every server",
+                                  usage="[#channel] | clear")
     @requires_perm
     async def settings_channel_internal_issue(self, ctx: commands.Context, *args):
         chosen = await self._channel_choice(ctx, args, title="🐛 Internal Issue Channel", current=state.bot_settings.get("internal_issue_channel"), multi=False)
@@ -1378,22 +1409,22 @@ class SettingsCog(commands.Cog):
         await save_guild_settings()
         await ctx.send(embed=emb(title, f"Switched to `{model_name}`", C_GREY))
 
-    @commands.command(name="model")
+    @commands.command(name="model", help="Change this server's AI model for !ask and @mentions; bare lists the installed models")
     @requires_perm
     async def cmd_model(self, ctx: commands.Context, model_name: str = None):
         await self._model_setting(ctx, model_name, key="ask_model", title="⚙️ Model", what="model")
 
-    @commands.command(name="roleplaymodel")
+    @commands.command(name="roleplaymodel", help="Change this server's model for !roleplay and !rpg; bare lists the installed models")
     @requires_perm
     async def cmd_roleplaymodel(self, ctx: commands.Context, model_name: str = None):
         await self._model_setting(ctx, model_name, key="roleplay_model", title="⚙️ Roleplay Model", what="roleplay model")
 
-    @commands.command(name="codingmodel")
+    @commands.command(name="codingmodel", help="Change this server's model for AI coding puzzles; bare lists the installed models")
     @requires_perm
     async def cmd_codingmodel(self, ctx: commands.Context, model_name: str = None):
         await self._model_setting(ctx, model_name, key="coding_model", title="⚙️ Coding Model", what="coding puzzle model")
 
-    @commands.command(name="vramtext")
+    @commands.command(name="vramtext", help="View or set the vRAM text shown in !stats (bot-wide)")
     @requires_perm
     async def cmd_vramtext(self, ctx: commands.Context, *, text: str = None):
         current = state.bot_settings.get("vram_text", "16GB")
@@ -1412,7 +1443,7 @@ class SettingsCog(commands.Cog):
 
     # ── Per-channel system prompt overrides ───────────────────────────────────
 
-    @commands.command(name="setprompt")
+    @commands.command(name="setprompt", help="Set a custom AI system prompt for this channel; bare opens a form")
     @requires_perm
     async def cmd_setprompt(self, ctx: commands.Context, *, prompt: str = None):
         current = state.channel_prompts.get(ctx.channel.id)
@@ -1436,7 +1467,7 @@ class SettingsCog(commands.Cog):
         await ctx.send(embed=emb("⚙️ Prompt Updated", "System prompt updated for this channel.", C_GREY))
 
 
-    @commands.command(name="clearprompt")
+    @commands.command(name="clearprompt", help="Reset this channel's AI system prompt to the default")
     @requires_perm
     async def cmd_clearprompt(self, ctx: commands.Context):
         state.channel_prompts.pop(ctx.channel.id, None)

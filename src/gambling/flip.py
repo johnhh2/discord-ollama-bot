@@ -143,7 +143,8 @@ class FlipCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="flip", aliases=["coinflip"])
+    @commands.command(name="flip", aliases=["coinflip"],
+                      help="Flip a coin for coins at even money; batches up to 100,000 flips on heads or tails")
     async def cmd_flip(self, ctx: commands.Context, amount: str = None, n: int = 1, side: str = "heads"):
         if await check_game_channel(ctx, "Gambling"):
             return

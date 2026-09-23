@@ -398,7 +398,9 @@ class BlackjackCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="blackjack", aliases=["bj", "blackj"])
+    @commands.command(name="blackjack", aliases=["bj", "blackj"],
+                      help="Play blackjack against the house for coins; hit, stand or double by typing or with the buttons",
+                      usage="<amount>")
     async def cmd_blackjack(self, ctx: commands.Context, amount: str = None):
         if await check_game_channel(ctx, "Gambling"):
             return

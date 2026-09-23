@@ -490,7 +490,8 @@ class LotteryCog(commands.Cog):
         await _persist_grant_row(guild.id, uid, row)
         return grant
 
-    @commands.command(name="lottery")
+    @commands.command(name="lottery",
+                      help="Show the monthly lottery pool, your tickets and the draw time, and offer today's ticket")
     async def cmd_lottery(self, ctx: commands.Context):
         if ctx.author.bot:
             await ctx.send(embed=_bots_refused_embed())

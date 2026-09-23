@@ -370,7 +370,9 @@ class IdleCog(commands.Cog):
             for name, attr, aliases in _TOP_ALIASES:
                 # cog=self is load-bearing (see ShopCog): without it discord.py
                 # binds `self` to the Context.
-                alias = commands.Command(getattr(self, attr).callback, name=name, aliases=list(aliases))
+                source = getattr(self, attr)
+                alias = commands.Command(source.callback, name=name, aliases=list(aliases),
+                                         help=source.help, usage=source.usage)
                 alias.cog = self
                 bot.add_command(alias)
 
@@ -1111,7 +1113,8 @@ class IdleCog(commands.Cog):
 
     # ── !idle ────────────────────────────────────────────────────────────
 
-    @commands.group(name="idle", aliases=["irpg"], invoke_without_command=True)
+    @commands.group(name="idle", aliases=["irpg"], invoke_without_command=True,
+                    help="Show your character sheet and the map, with buttons for what you can do right now")
     async def cmd_idle(self, ctx: commands.Context):
         """!idle join|status|items|map|travel|shop|gamble|top|align|duel|world|bless|title|lore|quest|prestige|leave|rules — each also works bare (`!map`)"""
         if not await self._ready(ctx, need_channel=True):
@@ -1131,7 +1134,9 @@ class IdleCog(commands.Cog):
         await self._send_with_map(ctx, self._sheet(ctx.guild, ctx.author.id, char, now), highlight=(ctx.author.id,),
                                   view=_ActionView(self, ctx, self._available(ctx.guild, ctx.author.id)))
 
-    @cmd_idle.command(name="join")
+    @cmd_idle.command(name="join",
+                      help="Start a character with a class you invent, or claim the one already playing in your name",
+                      usage="<class>")
     async def cmd_join(self, ctx: commands.Context, *, class_name: str = None):
         if not await self._ready(ctx, need_channel=True):
             return
@@ -1221,7 +1226,8 @@ class IdleCog(commands.Cog):
             C_GREEN,
         ))
 
-    @cmd_idle.command(name="status", aliases=["info"])
+    @cmd_idle.command(name="status", aliases=["info"],
+                      help="Show a character sheet and the map — yours, or another player's by name")
     async def cmd_status(self, ctx: commands.Context, *, member: str = None):
         if not await self._ready(ctx):
             return
@@ -1238,14 +1244,14 @@ class IdleCog(commands.Cog):
         await self._send_with_map(ctx, self._sheet(ctx.guild, target.id, char, now), highlight=(target.id,),
                                   view=_ActionView(self, ctx, self._available(ctx.guild, ctx.author.id)))
 
-    @cmd_idle.command(name="map")
+    @cmd_idle.command(name="map", help="Show the map of the realm with every character on it and your own route")
     async def cmd_map(self, ctx: commands.Context):
         if not await self._ready(ctx):
             return
         # The picture alone: an embed would shrink it to the embed's width.
         await ctx.send(file=await self._map_file(ctx.guild, highlight=(ctx.author.id,), viewer=ctx.author.id))
 
-    @cmd_idle.command(name="lore")
+    @cmd_idle.command(name="lore", help="Read the lore of a place on the map; bare lists the places", usage="[place]")
     async def cmd_lore(self, ctx: commands.Context, *, where: str = None):
         if not await self._ready(ctx):
             return
@@ -1266,7 +1272,8 @@ class IdleCog(commands.Cog):
             C_BLUE,
         ))
 
-    @cmd_idle.command(name="world", aliases=["boost"])
+    @cmd_idle.command(name="world", aliases=["boost"],
+                      help="Say what's happening to the realm, the blessings running and how much faster you're levelling")
     async def cmd_world(self, ctx: commands.Context):
         if not await self._ready(ctx):
             return
@@ -1290,7 +1297,8 @@ class IdleCog(commands.Cog):
                          else f"\nYou are levelling and earning **{boost}% faster**.")
         await ctx.send(embed=emb("🌍 The Realm Today", "\n".join(lines), C_BLUE))
 
-    @cmd_idle.command(name="bless")
+    @cmd_idle.command(name="bless",
+                      help=f"Spend {rpg.BLESS_COST:,} gold on {rpg.BLESS_BOOST_PCT}% faster levelling and gold for everyone here, for {format_duration(rpg.BLESS_SECS)}")
     async def cmd_bless(self, ctx: commands.Context):
         if not await self._ready(ctx, need_channel=True):
             return
@@ -1335,7 +1343,9 @@ class IdleCog(commands.Cog):
         if channel is not None:
             await self._send(channel, [f"🕊️ {self._namer(ctx.guild)(uid)} has blessed the realm. {text}"])
 
-    @cmd_idle.command(name="title", aliases=["titles"])
+    @cmd_idle.command(name="title", aliases=["titles"],
+                      help="List your titles and how far off the rest are, or wear one (none takes it off)",
+                      usage="[name|none]")
     async def cmd_title(self, ctx: commands.Context, *, which: str = None):
         if not await self._ready(ctx):
             return
@@ -1372,7 +1382,8 @@ class IdleCog(commands.Cog):
         self._rename_due.add((gid, uid))
         await ctx.send(embed=emb("🎖️ Titles", f"You are **{rpg.TITLE_NAMES[picked]}** from now on.", C_GREEN))
 
-    @cmd_idle.command(name="items")
+    @cmd_idle.command(name="items",
+                      help="List a character's items by slot, item power, gold and bag — yours, or another player's")
     async def cmd_items(self, ctx: commands.Context, *, member: str = None):
         if not await self._ready(ctx):
             return
@@ -1401,7 +1412,7 @@ class IdleCog(commands.Cog):
                          f"Worth **{rpg.loot_value(char):,}** gold; sold on the next town errand, or with `!idle shop sell`.")
         await ctx.send(embed=emb(f"{self._title(ctx.guild, target.id, char)} — Items", "\n".join(lines), C_BLUE))
 
-    @cmd_idle.command(name="top")
+    @cmd_idle.command(name="top", help="Show this server's idle ladder")
     async def cmd_top(self, ctx: commands.Context):
         if not await self._ready(ctx):
             return
@@ -1419,7 +1430,9 @@ class IdleCog(commands.Cog):
             lines.append(f"**{i}.** {name(uid)} — {stars}Lv {char['level']} {char['class']} · {clock}{unclaimed}")
         await ctx.send(embed=emb("🏔️ Idle Ladder", "\n".join(lines), C_GOLD))
 
-    @cmd_idle.command(name="align", aliases=["alignment"])
+    @cmd_idle.command(name="align", aliases=["alignment"],
+                      help="Set your alignment (a law and a moral), once a day; bare opens a picker",
+                      usage="[lawful|neutral|chaotic] [good|neutral|evil]")
     async def cmd_align(self, ctx: commands.Context, *, alignment: str = None):
         if not await self._ready(ctx) or await self._own_char(ctx) is None:
             return
@@ -1460,7 +1473,9 @@ class IdleCog(commands.Cog):
         await persistence.save_idle_character(ctx.guild.id, ctx.author.id)
         await ctx.send(embed=emb("⚖️ Alignment", f"You are now **{rpg.alignment_label(char)}**.\n\n{ALIGN_EFFECTS}", C_GREEN))
 
-    @cmd_idle.command(name="duel")
+    @cmd_idle.command(name="duel",
+                      help=f"Challenge a player to a duel once a day — the loser gives {rpg.DUEL_PCT}% of their clock, and gold if wagered",
+                      usage="<name> [gold]")
     async def cmd_duel(self, ctx: commands.Context, member: str = None, wager: str = None):
         if not await self._ready(ctx, need_channel=True):
             return
@@ -1554,7 +1569,9 @@ class IdleCog(commands.Cog):
 
     # ── !idle gamble ─────────────────────────────────────────────────────
 
-    @cmd_idle.command(name="gamble", aliases=["bet"])
+    @cmd_idle.command(name="gamble", aliases=["bet"],
+                      help=f"Bet gold at even money at a town's tables — the house wins {rpg.GAMBLE_LOSE_BELOW} in 100; bare offers stakes",
+                      usage="[gold|half|all]")
     async def cmd_gamble(self, ctx: commands.Context, amount: str = None):
         if not await self._ready(ctx, need_channel=True):
             return
@@ -1609,7 +1626,9 @@ class IdleCog(commands.Cog):
 
     # ── !idle travel ─────────────────────────────────────────────────────
 
-    @cmd_idle.command(name="travel")
+    @cmd_idle.command(name="travel",
+                      help="Walk your character to a town or wild place on the map (stop to wander again); bare lists them",
+                      usage="[place|stop]")
     async def cmd_travel(self, ctx: commands.Context, *, where: str = None):
         if not await self._ready(ctx, need_channel=True):
             return
@@ -1698,7 +1717,9 @@ class IdleCog(commands.Cog):
             ("class", f"New class — `!idle shop class <name>` · {prices['class']:,} gold"),
         ]
 
-    @cmd_idle.command(name="shop")
+    @cmd_idle.command(name="shop",
+                      help="Spend gold at a town's market — sell your bag, find or sharpen an item, a rush, a duel, a new class",
+                      usage="[sell|find|sharpen [slot]|rush|duel|class <name>|auto <on|off>]")
     async def cmd_shop(self, ctx: commands.Context, item: str = None, *, arg: str = None):
         if not await self._ready(ctx, need_channel=True):
             return
@@ -1807,7 +1828,8 @@ class IdleCog(commands.Cog):
         channel = self._channel(ctx.guild)
         return channel is not None and ctx.channel.id == channel.id
 
-    @cmd_idle.command(name="quest")
+    @cmd_idle.command(name="quest",
+                      help="Show the running quest and its party, or what it takes for the next one to start")
     async def cmd_quest(self, ctx: commands.Context):
         if not await self._ready(ctx, need_channel=True):
             return
@@ -1841,7 +1863,8 @@ class IdleCog(commands.Cog):
                 body += f"\nThe gods offer the next one no sooner than <t:{quest['not_before']}:R>."
         await ctx.send(embed=emb("📜 Quest", body, C_BLUE))
 
-    @cmd_idle.command(name="prestige")
+    @cmd_idle.command(name="prestige",
+                      help=f"At level {rpg.PRESTIGE_LEVEL}, start over at level 0 without items for a ★ and {rpg.PRESTIGE_BONUS_PCT}% faster levelling for good")
     async def cmd_prestige(self, ctx: commands.Context):
         if not await self._ready(ctx, need_channel=True):
             return
@@ -1873,7 +1896,7 @@ class IdleCog(commands.Cog):
         await ctx.send(embed=emb("🌟 Prestige", note.text, C_GOLD))
         await self._deliver(ctx.guild, [note], skip_main=self._in_idle_channel(ctx))
 
-    @cmd_idle.command(name="leave")
+    @cmd_idle.command(name="leave", help="Retire your character for good, after a confirm")
     async def cmd_leave(self, ctx: commands.Context):
         if not await self._ready(ctx):
             return
@@ -1906,7 +1929,9 @@ class IdleCog(commands.Cog):
         await self._archive_thread(guild, char["thread_id"])
         return True
 
-    @cmd_idle.command(name="rules", aliases=["help"])
+    @cmd_idle.command(name="rules", aliases=["help"],
+                      help="Explain how the idle game works; add a topic for the details",
+                      usage=f"[{'|'.join(_RULES_TOPICS)}]")
     async def cmd_rules(self, ctx: commands.Context, topic: str = None):
         detail = _RULES_TOPICS.get((topic or "").lower())
         if detail is not None:
@@ -1936,7 +1961,7 @@ class IdleCog(commands.Cog):
 
     # ── !idle admin ──────────────────────────────────────────────────────
 
-    @cmd_idle.group(name="admin", invoke_without_command=True)
+    @cmd_idle.group(name="admin", invoke_without_command=True, help="List the idle admin commands")
     async def cmd_admin(self, ctx: commands.Context):
         await ctx.send(embed=emb(
             "🛠️ Idle RPG Admin",
@@ -1963,7 +1988,7 @@ class IdleCog(commands.Cog):
             return None
         return uid, char
 
-    @cmd_admin.command(name="hog")
+    @cmd_admin.command(name="hog", help="Strike a character with a Hand of God right now", usage="<name>")
     async def cmd_admin_hog(self, ctx: commands.Context, *, who: str = None):
         found = await self._admin_target(ctx, who, "`!idle admin hog <name>`")
         if found is None:
@@ -1974,7 +1999,8 @@ class IdleCog(commands.Cog):
         await ctx.send(embed=emb("🙌 Hand of God", note.text, C_GOLD))
         await self._deliver(ctx.guild, [note], skip_main=self._in_idle_channel(ctx))
 
-    @cmd_admin.command(name="gold")
+    @cmd_admin.command(name="gold", help="Give a character gold, or take it with a leading -",
+                       usage="<name> <±amount>")
     async def cmd_admin_gold(self, ctx: commands.Context, who: str = None, amount: str = None):
         usage = "`!idle admin gold <name> <±amount>`"
         found = await self._admin_target(ctx, who, usage)
@@ -1993,7 +2019,8 @@ class IdleCog(commands.Cog):
             "🛠️ Gold", f"{self._namer(ctx.guild)(uid)} now has **{char['gold']:,}** gold ({delta:+,}).", C_GREEN,
         ))
 
-    @cmd_admin.command(name="move", aliases=["teleport", "tp"])
+    @cmd_admin.command(name="move", aliases=["teleport", "tp"],
+                       help="Set a character down at a named place or at x y coordinates", usage="<name> <place|x y>")
     async def cmd_admin_move(self, ctx: commands.Context, who: str = None, *, where: str = None):
         usage = "`!idle admin move <name> <place|x y>` — `velvragh`, `trnalvph`, or `120 300`"
         found = await self._admin_target(ctx, who, usage)
@@ -2025,7 +2052,8 @@ class IdleCog(commands.Cog):
             C_GREEN,
         ))
 
-    @cmd_admin.command(name="push")
+    @cmd_admin.command(name="push", help="Move a character's clock: -2h brings the next level sooner, +1d later",
+                       usage="<name> <±time>")
     async def cmd_admin_push(self, ctx: commands.Context, who: str = None, amount: str = None):
         usage = "`!idle admin push <name> <±time>` — `-2h` sooner, `+1d` later"
         found = await self._admin_target(ctx, who, usage)
@@ -2048,7 +2076,7 @@ class IdleCog(commands.Cog):
             C_GREEN,
         ))
 
-    @cmd_admin.command(name="remove")
+    @cmd_admin.command(name="remove", help="Delete a player's character, after a confirm", usage="<name>")
     async def cmd_admin_remove(self, ctx: commands.Context, *, who: str = None):
         found = await self._admin_target(ctx, who, "`!idle admin remove <name>`")
         if found is None:
@@ -2065,7 +2093,8 @@ class IdleCog(commands.Cog):
         if await self._remove_character(ctx.guild, uid, char):
             await ctx.send(embed=emb("🗑️ Character Removed", f"<@{uid}>'s character is gone.", C_GREY))
 
-    @cmd_admin.command(name="reset")
+    @cmd_admin.command(name="reset",
+                       help="Delete every character, their items and the current quest in this server, after a confirm")
     async def cmd_admin_reset(self, ctx: commands.Context):
         if not await self._ready(ctx):
             return

@@ -41,7 +41,9 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL,
 )
+from src import ai as _ai
 from src import state
+from src.command_reference import guild_reference
 from src.invites import _wait_for_confirmations, _send_invite
 # Forfeit-board renderers used in cmd_stop. They were once referenced but
 # never imported — !stop in a ttt/c4/chess/hangman game would NameError.
@@ -94,11 +96,13 @@ class AICog(commands.Cog):
         # Stop row (src/ai_thread_view.py). Keyed, so a second construction
         # (tests) replaces rather than stacks.
         THREAD_POST_HOOKS["ai_cog"] = self._attach_thread_row
+        _ai.COMMAND_REFERENCE_PROVIDER = guild_reference(bot)
 
     async def _attach_thread_row(self, message, thread_id: int) -> None:
         await attach_row(self, message, thread_id)
 
-    @commands.hybrid_command(name="ask", description="Ask the AI a question")
+    @commands.hybrid_command(name="ask", description="Ask the AI a question",
+                             help="Ask the AI a question in a thread that remembers the conversation")
     @app_commands.describe(question="What you want to ask")
     async def cmd_ask(self, ctx: commands.Context, *, question: str = None):
         # Discord kills a slash invocation that hasn't answered in three
@@ -176,7 +180,8 @@ class AICog(commands.Cog):
             await respond(ctx.channel, ctx.author.id, question, ctx.message, system_prompt=system_prompt, guild_id=guild_id, author_name=ctx.author.display_name, refund_feature="ask", placeholder=placeholder)
 
 
-    @commands.command(name="story")
+    @commands.command(name="story", help="Generate an original short story on any topic in a thread, with optional co-authors",
+                      usage="[prompt] [@user ...]")
     async def cmd_story(self, ctx: commands.Context, *, prompt: str = None):
         await self._story_with_prompt(ctx, prompt=prompt, system_prompt=STORY_SYSTEM_PROMPT, alias_name=None)
 
@@ -299,7 +304,7 @@ class AICog(commands.Cog):
         await self._story_with_prompt(ctx, prompt=rest, system_prompt=custom_prompt, alias_name=word)
 
 
-    @commands.command(name="continue")
+    @commands.command(name="continue", help="Continue the story in this AI thread with the next chapter")
     async def cmd_continue(self, ctx: commands.Context):
         if not isinstance(ctx.channel, discord.Thread):
             await ctx.send(embed=emb("❌ Threads Only", "`!continue` only works inside an AI thread.", C_RED))
@@ -324,7 +329,7 @@ class AICog(commands.Cog):
         await respond(ctx.channel, uid, "Continue the story.", ctx.message, system_prompt=sp, guild_id=guild_id, refund_feature="continue")
 
 
-    @commands.command(name="tldr")
+    @commands.command(name="tldr", help="Summarize the AI's last response in this thread in two or three sentences")
     async def cmd_tldr(self, ctx: commands.Context):
         if not isinstance(ctx.channel, discord.Thread):
             await ctx.send(embed=emb("❌ Threads Only", "`!tldr` only works inside an AI thread.", C_RED))
@@ -369,7 +374,8 @@ class AICog(commands.Cog):
             typing_task.cancel()
 
 
-    @commands.command(name="roleplay")
+    @commands.command(name="roleplay", help="Start an AI roleplay session as a character you describe, in its own thread",
+                      usage="[character prompt] [@user ...]")
     async def cmd_roleplay(self, ctx: commands.Context, *, character_prompt: str = None):
         if await check_ai_channel(ctx):
             return
@@ -441,7 +447,8 @@ class AICog(commands.Cog):
         ))
 
 
-    @commands.command(name="rpg")
+    @commands.command(name="rpg", help="Start an interactive text adventure game, mentioning users to invite them",
+                      usage="[@user ...]")
     async def cmd_rpg(self, ctx: commands.Context):
         if await check_ai_channel(ctx):
             return
@@ -591,7 +598,8 @@ class AICog(commands.Cog):
         finally:
             typing_task.cancel()
 
-    @commands.command(name="invite")
+    @commands.command(name="invite", help="Invite users to the AI thread or puzzle you host here; they accept with a button",
+                      usage="<@user> [@user ...]")
     async def cmd_invite_activity(self, ctx: commands.Context):
         uid = ctx.author.id
         cid = ctx.channel.id
@@ -803,7 +811,8 @@ class AICog(commands.Cog):
 
         return line
 
-    @commands.command(name="stop", aliases=["quit", "forfeit", "q", "close"])
+    @commands.command(name="stop", aliases=["quit", "forfeit", "q", "close"],
+                      help="Stop or forfeit whatever runs here: an AI thread, game, puzzle, blackjack hand or gambling table")
     async def cmd_stop(self, ctx: commands.Context):
         uid = ctx.author.id
         cid = ctx.channel.id
@@ -1001,7 +1010,7 @@ class AICog(commands.Cog):
         await ctx.send(embed=emb("⏹️ Closed Your AI Threads", f"{summary}\n\n{breakdown}", C_GREEN))
 
 
-    @commands.command(name="reverse")
+    @commands.command(name="reverse", help="Undo the AI's last response in this thread and delete it along with the message that prompted it")
     async def cmd_reverse(self, ctx: commands.Context):
         """Pop the last assistant + user message pair from the AI thread's
         history and delete them from the channel. Available to anyone in

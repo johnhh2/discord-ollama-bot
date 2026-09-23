@@ -47,7 +47,8 @@ flowchart LR
 - `!ask` — conversational Q&A; each conversation gets its own thread with isolated context
 - `!continue`, `!tldr`, `!story`, `!roleplay` — follow-ups, summarization, and persona modes
 - Per-guild model selection, with separate models per mode (`!model`, `!codingmodel`, `!roleplaymodel` — run bare, each offers a dropdown of the models Ollama has installed; the AI page of `!settings` has the same)
-- Custom system prompts per channel (`!setprompt`, or the AI page of `!settings`), channel-scoped passive replies, per-user rate limiting via a token bucket
+- Custom system prompts per channel (`!setprompt`, or the AI page of `!settings`), channel-scoped passive replies to an @mention, per-user rate limiting via a token bucket. DMs answer commands only — `/ask` is the way to chat there
+- Every `!ask` and @mention answer carries a reference of the bot's commands, generated from the command tree on each request, so the model can explain any command and is told never to invent one
 - Streaming output with a global semaphore so a single GPU is never oversubscribed
 
 ### ♟️ A chess bot that plays like a human
@@ -137,6 +138,7 @@ All configuration is via environment variables — see [.env.example](.env.examp
 | `OLLAMA_MODEL` | `dolphin3:8b` | Default model for `!ask` |
 | `SYSTEM_PROMPT` | `You are a helpful assistant.` | Default character prompt |
 | `HISTORY_LIMIT` | `20` | Per-channel history depth fed to the model |
+| `OLLAMA_NUM_CTX` | `16384` | Ollama context window; must hold the command reference plus the history |
 | `ACTIVE_CHANNEL_IDS` | _(all)_ | Channels where the bot replies passively |
 | `DISCORD_CLIENT_ID` | — | Only needed for `!botinvitelink` |
 | `MC_SERVER_HOST` | _(disabled)_ | Minecraft Bedrock server address for `!mc` + monitoring. Any reachable endpoint works; prefer the **external** address (DDNS/WAN) so ping reflects the route players take. For a same-host server, `host.docker.internal` also works (local-only latency) |

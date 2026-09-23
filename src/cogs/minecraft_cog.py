@@ -238,7 +238,8 @@ class MinecraftCog(commands.Cog):
             self.mc_monitor.cancel()
 
     # ── !mc ───────────────────────────────────────────────────────────────────
-    @commands.command(name="mc", aliases=["minecraft", "mcstatus"])
+    @commands.command(name="mc", aliases=["minecraft", "mcstatus"],
+                      help="Show the Minecraft server's status: players, ping, version and uptime")
     @requires_perm
     async def cmd_mc(self, ctx: commands.Context):
         if not MC_SERVER_HOST:

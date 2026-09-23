@@ -148,7 +148,7 @@ class FunCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="nsfw")
+    @commands.command(name="nsfw", help="Random NSFW image matching the given tags, where the server allows it")
     async def cmd_nsfw(self, ctx: commands.Context, *, tags: str = ""):
         logging.info(f"[nsfw] cmd start user={ctx.author.id} channel={ctx.channel.id} tags={tags!r}")
         cfg = get_guild_cfg(ctx.guild.id) if ctx.guild else {}
@@ -285,7 +285,7 @@ class FunCog(commands.Cog):
         rest = parts[1] if len(parts) > 1 else ""
         await self.cmd_nsfw(ctx, tags=rest)
 
-    @commands.command(name="ew")
+    @commands.command(name="ew", help="Delete the last NSFW image you posted in this channel")
     async def cmd_ew(self, ctx: commands.Context):
         key = (ctx.channel.id, ctx.author.id)
         msg = _nsfw_last_msg.pop(key, None)
@@ -344,7 +344,7 @@ class FunCog(commands.Cog):
             await ctx.send(f"> {clean_content}\n— **{entry['author']}**")
 
 
-    @commands.command(name="searchquote", aliases=["quotesearch"])
+    @commands.command(name="searchquote", aliases=["quotesearch"], usage="[#channel] [@user]")
     async def cmd_searchquote(self, ctx: commands.Context):
         """Find a funny and controversial message from recent chat history.
 
@@ -472,7 +472,7 @@ class FunCog(commands.Cog):
             await ctx.send(embed=emb("❌ Error", f"Failed to find quote: {str(e)}", C_RED))
 
 
-    @commands.command(name="dog")
+    @commands.command(name="dog", help="Random dog picture")
     async def cmd_dog(self, ctx: commands.Context):
         await ctx.typing()
         try:
@@ -492,7 +492,7 @@ class FunCog(commands.Cog):
             await ctx.send(embed=emb("🐕 Dog", f"Failed to fetch: {e}", C_RED))
 
 
-    @commands.command(name="cat")
+    @commands.command(name="cat", help="Random cat picture")
     async def cmd_cat(self, ctx: commands.Context):
         await ctx.typing()
         try:
@@ -512,7 +512,7 @@ class FunCog(commands.Cog):
             await ctx.send(embed=emb("🐱 Cat", f"Failed to fetch: {e}", C_RED))
 
 
-    @commands.command(name="tips")
+    @commands.command(name="tips", help="Show a random tip about hidden commands")
     async def cmd_tip(self, ctx: commands.Context):
         gid = ctx.guild.id if ctx.guild else None
         bot = self.bot

@@ -34,7 +34,8 @@ class ModerationCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="audit")
+    @commands.command(name="audit",
+                      help="Show the last 5 failed command attempts")
     @requires_perm
     async def cmd_audit(self, ctx: commands.Context):
         if not state.audit_log:
@@ -49,7 +50,9 @@ class ModerationCog(commands.Cog):
         await send_ephemeral(ctx, embed=emb("🔍 Audit Log", "\n\n".join(lines), C_GOLD))
 
 
-    @commands.command(name="clear", aliases=["clearall", "clerall"])
+    @commands.command(name="clear", aliases=["clearall", "clerall"],
+                      help="Delete the last n messages in this channel from any author (max 100)",
+                      usage="<n>")
     @requires_perm
     async def cmd_clearall(self, ctx: commands.Context, n: str = None):
 

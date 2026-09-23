@@ -625,7 +625,9 @@ class ChessCog(commands.Cog):
             logging.info(f"chess: resumed {resumed} pending bot turn(s) after restart")
 
     # ── !chess: dispatch on subcommand ──────────────────────────────────────
-    @commands.command(name="chess")
+    @commands.command(name="chess",
+                      help="Open the chess menu; challenge a user for a wager, play the bot, replay past games or equip cosmetics",
+                      usage="[@opponent [wager] | @Bot <elo> | view [id] | pgn [id] | shop [buy <item>] | inventory | <set or color> | help]")
     async def cmd_chess(self, ctx: commands.Context, *args):
         if args and args[0].lower() == "view":
             await self._cmd_view(ctx, args[1:])
@@ -873,7 +875,9 @@ class ChessCog(commands.Cog):
         await save_chess_game(cid)
 
     # ── !chessbot [elo]: alias for !chess @TheBot [elo] ─────────────────────
-    @commands.command(name="chessbot")
+    @commands.command(name="chessbot",
+                      help="Play the chess bot at the given Elo in a thread; bare shows your bot ladder and free-ticket progress",
+                      usage="[elo]")
     async def cmd_chessbot(self, ctx: commands.Context, *args):
         if await check_chess_channel(ctx):
             return
@@ -987,7 +991,8 @@ class ChessCog(commands.Cog):
     # ── !chessthreats: view of all hanging pieces ────────────────────────────
     # Free for bot admins (debug tool); everyone else unlocks it permanently
     # by buying the chessthreats artifact (!artifacts).
-    @commands.command(name="chessthreats")
+    @commands.command(name="chessthreats",
+                      help="Show the active chess game's board with every hanging piece highlighted; unlocked by an artifact")
     @requires_perm
     async def cmd_chessthreats(self, ctx: commands.Context):
         """Render the active game's board with a red glow on every square
@@ -1470,7 +1475,9 @@ class ChessCog(commands.Cog):
         await send_ephemeral(ctx, embed=emb("♟️ Chess — Commands", desc, C_BLUE))
 
     # ── !move ───────────────────────────────────────────────────────────────
-    @commands.command(name="move")
+    @commands.command(name="move",
+                      help="Make a chess move in SAN or UCI (e4, Nf3, e2e4) in the active game; typing the move alone also works",
+                      usage="<move>")
     async def cmd_move_chess(self, ctx: commands.Context, *args):
         cid = ctx.channel.id
         uid = ctx.author.id

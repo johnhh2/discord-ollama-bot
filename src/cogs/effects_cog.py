@@ -110,7 +110,9 @@ class EffectsCog(commands.Cog):
             out.append((name, data))
         return out
 
-    @commands.command(name="effects", aliases=["state", "effect"])
+    @commands.command(name="effects", aliases=["state", "effect"],
+                      help="View active shop effects on you or a user; admins can list effect types and add or remove them",
+                      usage="[@user] [list | add <effect> [duration] | remove <effect>]")
     @requires_perm
     async def cmd_effects(self, ctx: commands.Context, *args):
         if ctx.guild is None:

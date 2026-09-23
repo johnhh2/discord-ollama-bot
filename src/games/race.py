@@ -261,7 +261,9 @@ class RaceCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name="race")
+    @commands.command(name="race",
+                      help="Race the users you mention for an optional bet, or race the bot alone (a coin flip that doubles the bet)",
+                      usage="<@user...> [amount] | @Bot [amount]")
     async def cmd_race(self, ctx: commands.Context, *args):
         if await check_game_channel(ctx):
             return

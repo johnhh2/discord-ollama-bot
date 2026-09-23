@@ -12,6 +12,9 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:1143
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL") or "dolphin3:8b"
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT") or "You are a helpful assistant."
 HISTORY_LIMIT = int(os.getenv("HISTORY_LIMIT") or "20")
+# Ollama's own default (4096) can't hold the command reference (~6k tokens) every
+# !ask / @mention answer carries plus the channel history.
+OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX") or "16384")
 NSFW_API_URL = os.getenv("NSFW_API_URL", "")
 NSFW_API_KEY = os.getenv("NSFW_API_KEY")
 NSFW_API_USER_ID = os.getenv("NSFW_API_USER_ID")

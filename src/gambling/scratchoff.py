@@ -373,17 +373,20 @@ class ScratchoffCog(commands.Cog):
         from src.persistence import init_done
         await init_done.wait()
 
-    @commands.command(name="scratchoff", aliases=["scratch"])
+    @commands.command(name="scratchoff", aliases=["scratch"],
+                      help=f"Play free scratchoffs, matching symbols to the daily goal ({SCRATCHOFF_MAX_DAILY} a day)")
     async def cmd_scratchoff(self, ctx: commands.Context, count: int = 1):
         if await check_game_channel(ctx, "Gambling"):
             return
         await play_scratchoffs(ctx.bot, ctx.author, ctx.channel, ctx.guild, count)
 
-    @commands.command(name="scratches", aliases=["scratchoffs"])
+    @commands.command(name="scratches", aliases=["scratchoffs"],
+                      help="Use all of your remaining daily scratchoffs at once")
     async def cmd_scratches(self, ctx: commands.Context):
         await ctx.invoke(self.cmd_scratchoff, count=scratchoff_daily_cap(ctx.author.id))
 
-    @commands.command(name="streak")
+    @commands.command(name="streak",
+                      help="Show your scratchoff streak and how close you are to the Gamblers role")
     async def cmd_streak(self, ctx: commands.Context):
         uid = ctx.author.id
         await _ensure_user(uid)
@@ -427,7 +430,8 @@ class ScratchoffCog(commands.Cog):
 
         await ctx.send(embed=emb("🎫 Scratchoff Streak", streak_text + role_line, color))
 
-    @commands.command(name="scratchoffrewards", aliases=["scratchrewards", "scratchoffreward", "scratchreward"])
+    @commands.command(name="scratchoffrewards", aliases=["scratchrewards", "scratchoffreward", "scratchreward"],
+                      help="Show the scratchoff payout table and daily limit")
     async def cmd_scratchoff_rewards(self, ctx: commands.Context):
         embed = discord.Embed(title="🎫 Scratchoff Payouts", color=C_PURPLE)
         embed.description = "**Scratchoff** — Match symbols to your daily goal"

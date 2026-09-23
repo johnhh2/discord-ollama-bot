@@ -149,7 +149,8 @@ class GraphCog(commands.Cog):
         import src.persistence as _pkg
         await _pkg.init_done.wait()
 
-    @commands.group(name="graph", invoke_without_command=True)
+    @commands.group(name="graph", invoke_without_command=True,
+                    help="Open a panel of every graph the bot can draw; the subcommands draw one by name")
     @requires_perm
     async def cmd_graph(self, ctx: commands.Context):
         """Bare: the panel (src/graph_hub.py) — every graph as a pick; the
@@ -159,7 +160,9 @@ class GraphCog(commands.Cog):
             return
         await open_panel(ctx, GraphHub(self, ctx))
 
-    @cmd_graph.command(name="balance", aliases=["bal"])
+    @cmd_graph.command(name="balance", aliases=["bal"],
+                       help="Draw a user's wallet balance over the last 2 weeks (you by default)",
+                       usage="[@user] [economy|assets|crime|gambling…] | all [N|@users…]")
     @requires_perm
     async def cmd_graph_balance(self, ctx: commands.Context, *tokens: str):
         if tokens and tokens[0].lower() == "all":
@@ -167,7 +170,9 @@ class GraphCog(commands.Cog):
             return
         await _build_and_render(ctx, tokens, find_spec("balance"))
 
-    @cmd_graph.command(name="economy", aliases=["eco", "totalbalance"])
+    @cmd_graph.command(name="economy", aliases=["eco", "totalbalance"],
+                       help="Draw the total economy — wallet + savings + property — over the last 2 weeks",
+                       usage="[balance|assets|crime|gambling…] | all [N|@users…]")
     @requires_perm
     async def cmd_graph_economy(self, ctx: commands.Context, *tokens: str):
         if tokens and tokens[0].lower() == "all":
@@ -175,69 +180,92 @@ class GraphCog(commands.Cog):
             return
         await _build_and_render(ctx, tokens, find_spec("economy"))
 
-    @cmd_graph.command(name="wallet")
+    @cmd_graph.command(name="wallet",
+                       help="Draw one wallet line per user — top N (default 10), or the users you pick",
+                       usage="[N|@users…]")
     @requires_perm
     async def cmd_graph_wallet(self, ctx: commands.Context, *tokens: str):
         await _admin_handler(ctx, _strip_all(tokens), field="wallet")
 
-    @cmd_graph.command(name="savings")
+    @cmd_graph.command(name="savings",
+                       help="Draw one savings line per user — top N (default 10), or the users you pick",
+                       usage="[N|@users…]")
     @requires_perm
     async def cmd_graph_savings(self, ctx: commands.Context, *tokens: str):
         await _admin_handler(ctx, _strip_all(tokens), field="savings")
 
-    @cmd_graph.command(name="total")
+    @cmd_graph.command(name="total",
+                       help="Draw wallet + savings + property, one line per user — top N (default 10) or the users you pick",
+                       usage="[N|@users…]")
     @requires_perm
     async def cmd_graph_total(self, ctx: commands.Context, *tokens: str):
         await _admin_handler(ctx, _strip_all(tokens), field="total")
 
-    @cmd_graph.command(name="assets", aliases=["asset", "property", "properties", "realestate"])
+    @cmd_graph.command(name="assets", aliases=["asset", "property", "properties", "realestate"],
+                       help="Draw a user's property portfolio value and lifetime revenue over the last 2 weeks",
+                       usage="[@user] [balance|crime|gambling|economy…] | all [N|@users…]")
     async def cmd_graph_assets(self, ctx: commands.Context, *tokens: str):
         if tokens and tokens[0].lower() == "all":
             await _admin_route(ctx, tokens[1:], field="assets")
             return
         await _build_and_render(ctx, tokens, find_spec("assets"))
 
-    @cmd_graph.command(name="crime")
+    @cmd_graph.command(name="crime",
+                       help="Draw coins gained and lost via !steal and !mug over the last 2 weeks (you by default)",
+                       usage="[@user] [balance|assets|gambling|economy…]")
     @requires_perm
     async def cmd_graph_crime(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("crime"))
 
-    @cmd_graph.command(name="gambling", aliases=["gamble", "games", "game"])
+    @cmd_graph.command(name="gambling", aliases=["gamble", "games", "game"],
+                       help="Draw net profit and loss from games and gambling over the last 2 weeks (you by default)",
+                       usage="[@user] [balance|assets|crime|economy…]")
     @requires_perm
     async def cmd_graph_gambling(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("gambling"))
 
-    @cmd_graph.command(name="levels", aliases=["level", "lvl"])
+    @cmd_graph.command(name="levels", aliases=["level", "lvl"],
+                       help="Draw level-ups per day in this server over the last 2 weeks (you by default)",
+                       usage="[@user]")
     @requires_perm
     async def cmd_graph_levels(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("levels"))
 
-    @cmd_graph.command(name="commands", aliases=["cmd", "cmds"])
+    @cmd_graph.command(name="commands", aliases=["cmd", "cmds"],
+                       help="Draw command usage by category over the last 2 weeks",
+                       usage="[server|ai…]")
     @requires_perm
     async def cmd_graph_commands(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("commands"))
 
-    @cmd_graph.command(name="server", aliases=["srv"])
+    @cmd_graph.command(name="server", aliases=["srv"],
+                       help="Draw daily message and command counts over the last 2 weeks",
+                       usage="[commands|ai…]")
     @requires_perm
     async def cmd_graph_server(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("server"))
 
-    @cmd_graph.command(name="memory", aliases=["mem", "ram"])
+    @cmd_graph.command(name="memory", aliases=["mem", "ram"],
+                       help="Draw the bot's memory usage in MB over the last 2 weeks", usage="")
     @requires_perm
     async def cmd_graph_memory(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("memory"))
 
-    @cmd_graph.command(name="ping", aliases=["latency"])
+    @cmd_graph.command(name="ping", aliases=["latency"],
+                       help="Draw the Discord gateway ping in ms over the last 2 weeks", usage="")
     @requires_perm
     async def cmd_graph_ping(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("ping"))
 
-    @cmd_graph.command(name="minecraft", aliases=["mc", "mcping"])
+    @cmd_graph.command(name="minecraft", aliases=["mc", "mcping"],
+                       help="Draw the Minecraft server's ping and daily players over the last 2 weeks", usage="")
     @requires_perm
     async def cmd_graph_minecraft(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("minecraft"))
 
-    @cmd_graph.command(name="ai")
+    @cmd_graph.command(name="ai",
+                       help="Draw the daily AI response count and uptime over the last 2 weeks",
+                       usage="[commands|server…]")
     @requires_perm
     async def cmd_graph_ai(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("ai"))
@@ -247,7 +275,8 @@ class GraphCog(commands.Cog):
     # to inspect economy distribution. Tokens are either an integer N (top
     # N by current value) or one or more @user mentions, never both.
 
-    @cmd_graph.group(name="admin", invoke_without_command=True)
+    @cmd_graph.group(name="admin", invoke_without_command=True,
+                     help="List the per-user breakout graphs")
     @requires_perm
     async def cmd_graph_admin(self, ctx: commands.Context):
         await ctx.send(embed=emb(
@@ -261,21 +290,29 @@ class GraphCog(commands.Cog):
             C_GOLD,
         ))
 
-    @cmd_graph_admin.command(name="wallet")
+    @cmd_graph_admin.command(name="wallet",
+                             help="Draw one wallet line per user — top N (default 10), or the users you pick",
+                             usage="[N|@users…]")
     @requires_perm
     async def cmd_graph_admin_wallet(self, ctx: commands.Context, *tokens: str):
         await _admin_handler(ctx, tokens, field="wallet")
 
-    @cmd_graph_admin.command(name="savings")
+    @cmd_graph_admin.command(name="savings",
+                             help="Draw one savings line per user — top N (default 10), or the users you pick",
+                             usage="[N|@users…]")
     @requires_perm
     async def cmd_graph_admin_savings(self, ctx: commands.Context, *tokens: str):
         await _admin_handler(ctx, tokens, field="savings")
 
-    @cmd_graph_admin.command(name="assets", aliases=["asset", "property", "properties"])
+    @cmd_graph_admin.command(name="assets", aliases=["asset", "property", "properties"],
+                             help="Draw one property-value line per user — top N (default 10), or the users you pick",
+                             usage="[N|@users…]")
     async def cmd_graph_admin_assets(self, ctx: commands.Context, *tokens: str):
         await _admin_handler(ctx, tokens, field="assets")
 
-    @cmd_graph_admin.command(name="total")
+    @cmd_graph_admin.command(name="total",
+                             help="Draw wallet + savings + property, one line per user — top N (default 10) or the users you pick",
+                             usage="[N|@users…]")
     @requires_perm
     async def cmd_graph_admin_total(self, ctx: commands.Context, *tokens: str):
         await _admin_handler(ctx, tokens, field="total")

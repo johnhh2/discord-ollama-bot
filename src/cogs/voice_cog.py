@@ -47,7 +47,8 @@ class VoiceCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.group(name="subscribe", aliases=["ping"], invoke_without_command=True)
+    @commands.group(name="subscribe", aliases=["ping"], invoke_without_command=True,
+                    help="Toggle a DM when a voice channel goes from empty to active, or list your subscriptions")
     @requires_perm
     async def cmd_subscribe(
         self,
@@ -115,7 +116,8 @@ class VoiceCog(commands.Cog):
             C_GREEN,
         ))
 
-    @cmd_subscribe.command(name="ignore", aliases=["unignore"])
+    @cmd_subscribe.command(name="ignore", aliases=["unignore"],
+                           help="Stop being voice-pinged when a given user fills a channel, or list who you ignore", usage="[@user]")
     @requires_perm
     async def cmd_subscribe_ignore(
         self,

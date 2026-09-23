@@ -152,7 +152,8 @@ class ShopCog(commands.Cog):
                 # [cog, ctx, ...]. Without a cog it builds [ctx, ...]: `self`
                 # binds to the Context, `ctx` to the first user arg, and the
                 # first `.guild` access dies with 'str' has no attribute 'guild'.
-                alias_cmd = commands.Command(sub_cmd.callback, name=top_name, aliases=legacy_aliases)
+                alias_cmd = commands.Command(sub_cmd.callback, name=top_name, aliases=legacy_aliases,
+                                             help=sub_cmd.help, usage=sub_cmd.usage)
                 alias_cmd.cog = self
                 bot.add_command(alias_cmd)
 
@@ -303,7 +304,8 @@ class ShopCog(commands.Cog):
         await self.shop_tax(ctx, *rest_args)
 
     # `store` is the idle RPG's market (`!idle shop` bare), not an alias here.
-    @commands.group(name="shop", invoke_without_command=True)
+    @commands.group(name="shop", invoke_without_command=True,
+                    help="Open the shop panel; pick a section, then an item")
     async def cmd_shop(self, ctx: commands.Context):
         if ctx.guild:
             cfg = get_guild_cfg(ctx.guild.id)
@@ -474,7 +476,8 @@ class ShopCog(commands.Cog):
         return emb("🛒 Shop", desc, C_PURPLE)
 
     # ── !shop roles ───────────────────────────────────────────────────────────
-    @cmd_shop.command(name="roles", aliases=["role"])
+    @cmd_shop.command(name="roles", aliases=["role"],
+                      help="Open the shop panel on the roles page (create, assign, rename, color, lock, rank)")
     @_shop_subcommand(None)
     async def shop_roles(self, ctx: commands.Context):
         _si = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
@@ -489,7 +492,8 @@ class ShopCog(commands.Cog):
         await open_shop_hub(ctx, self, page="roles", overview=self._overview_embed)
 
     # ── !shop channels ────────────────────────────────────────────────────────
-    @cmd_shop.command(name="channels", aliases=["channel"])
+    @cmd_shop.command(name="channels", aliases=["channel"],
+                      help="Open the shop panel on the channels page (create, delete, rename, restrict, lock)")
     @_shop_subcommand(None)
     async def shop_channels(self, ctx: commands.Context):
         _si = get_guild_cfg(ctx.guild.id).get("shop_items", {}) if ctx.guild else {}
@@ -504,7 +508,9 @@ class ShopCog(commands.Cog):
         await open_shop_hub(ctx, self, page="channels", overview=self._overview_embed)
 
     # ── !shop assets ──────────────────────────────────────────────────────────
-    @cmd_shop.command(name="assets", aliases=["asset", "properties", "property"])
+    @cmd_shop.command(name="assets", aliases=["asset", "properties", "property"],
+                      help="Browse the real-estate deeds that pay daily rent, or run an assets subcommand from the shop",
+                      usage="[browse|buy|sell|upgrade|unlist|rename] [args]")
     @_shop_subcommand(None)
     async def shop_assets(self, ctx: commands.Context, sub: str = None, *args):
         """The assets section of the shop. Bare, the panel on the deeds
@@ -530,7 +536,9 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🏘️ Real Estate", refusal, C_GREY))
 
     # ── !shop artifacts ───────────────────────────────────────────────────────
-    @cmd_shop.command(name="artifacts")
+    @cmd_shop.command(name="artifacts",
+                      help="List the permanent artifacts with passive effects, or buy one by its number",
+                      usage="[buy <number>]")
     @_shop_subcommand(None)
     async def shop_artifacts(self, ctx: commands.Context, *args):
         from src.level_unlocks import user_global_display_level
@@ -622,7 +630,9 @@ class ShopCog(commands.Cog):
                 )
 
     # ── !shop nickname ────────────────────────────────────────────────────────
-    @cmd_shop.command(name="nickname")
+    @cmd_shop.command(name="nickname",
+                      help="Change your own nickname, or another user's for a higher price; insurance blocks it",
+                      usage="[@user] <new name>")
     @_shop_subcommand("nickname")
     async def shop_nickname(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -672,7 +682,8 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop removenickname ──────────────────────────────────────────────────
-    @cmd_shop.command(name="removenickname")
+    @cmd_shop.command(name="removenickname",
+                      help="Reset your nickname to your username")
     @_shop_subcommand("nickname")
     async def shop_removenickname(self, ctx: commands.Context):
         uid = ctx.author.id
@@ -698,7 +709,9 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop rolecreate ──────────────────────────────────────────────────────
-    @cmd_shop.command(name="rolecreate", aliases=["createrole"])
+    @cmd_shop.command(name="rolecreate", aliases=["createrole"],
+                      help="Create a new role and assign it to a user; color it afterwards with rolecolor",
+                      usage="@user <name>")
     @_shop_subcommand("createrole")
     async def shop_createrole(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -785,7 +798,9 @@ class ShopCog(commands.Cog):
         await ctx.send(embed=emb("✅ Role Created", f"Role **{name}** created and assigned to **{target.display_name}** — rank **#{new_rank}**. Give it a color with `!shop rolecolor @{name} <hex>`.", C_GREEN))
 
     # ── !shop assignrole ──────────────────────────────────────────────────────
-    @cmd_shop.command(name="roleassign", aliases=["assignrole"])
+    @cmd_shop.command(name="roleassign", aliases=["assignrole"],
+                      help="Assign an existing bot-created role to a user; insurance blocks it",
+                      usage="@user <@role|role id>")
     @_shop_subcommand("assignrole")
     async def shop_assignrole(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -837,7 +852,9 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop unassignrole ──────────────────────────────────────────────────────
-    @cmd_shop.command(name="roleunassign", aliases=["unassignrole"])
+    @cmd_shop.command(name="roleunassign", aliases=["unassignrole"],
+                      help="Remove a bot-created role from yourself or another user; bare lists the removable ones",
+                      usage="[@user] [@role|role id]")
     @_shop_subcommand("unassignrole")
     async def shop_unassignrole(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -900,7 +917,9 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop deleterole ──────────────────────────────────────────────────────
-    @cmd_shop.command(name="roledelete", aliases=["deleterole"])
+    @cmd_shop.command(name="roledelete", aliases=["deleterole"],
+                      help="Permanently delete a bot-created role; bare lists the deletable ones",
+                      usage="[@role|role id]")
     @_shop_subcommand("deleterole")
     async def shop_deleterole(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -960,7 +979,9 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop createchannel ───────────────────────────────────────────────────
-    @cmd_shop.command(name="channelcreate", aliases=["createchannel"])
+    @cmd_shop.command(name="channelcreate", aliases=["createchannel"],
+                      help="Create a new text channel under the bot-channels category",
+                      usage="<name>")
     @_shop_subcommand("channel")
     async def shop_createchannel(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -1010,7 +1031,9 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop deletechannel ───────────────────────────────────────────────────
-    @cmd_shop.command(name="channeldelete", aliases=["deletechannel"])
+    @cmd_shop.command(name="channeldelete", aliases=["deletechannel"],
+                      help="Delete a bot-created channel; bare lists the removable ones",
+                      usage="[#channel|channel id]")
     @_shop_subcommand("channel")
     async def shop_deletechannel(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -1062,7 +1085,9 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop renamechannel ───────────────────────────────────────────────────
-    @cmd_shop.command(name="channelrename", aliases=["renamechannel"])
+    @cmd_shop.command(name="channelrename", aliases=["renamechannel"],
+                      help="Rename a bot-created channel",
+                      usage="<#channel|channel id> <new name>")
     @_shop_subcommand("renamechannel")
     async def shop_renamechannel(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -1107,7 +1132,9 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop renamerole ──────────────────────────────────────────────────────
-    @cmd_shop.command(name="rolerename", aliases=["renamerole"])
+    @cmd_shop.command(name="rolerename", aliases=["renamerole"],
+                      help="Rename a bot-created role",
+                      usage="<@role|role id> | <new name>")
     @_shop_subcommand("renamerole")
     async def shop_renamerole(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -1156,7 +1183,9 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Failed", str(e), C_RED))
 
     # ── !shop rolechannel ─────────────────────────────────────────────────────
-    @cmd_shop.command(name="rolechannel")
+    @cmd_shop.command(name="rolechannel",
+                      help="Restrict a bot-created channel so only one role can see it",
+                      usage="<@role|role id> <#channel|channel id>")
     @_shop_subcommand("rolechannel")
     async def shop_rolechannel(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -1213,7 +1242,9 @@ class ShopCog(commands.Cog):
         await ctx.send(embed=emb("✅ Channel Restricted", f"{target_channel.mention} is now only visible to **{role.name}**.", C_GREEN))
 
     # ── !shop lockchannel ─────────────────────────────────────────────────────
-    @cmd_shop.command(name="channellock", aliases=["lockchannel"])
+    @cmd_shop.command(name="channellock", aliases=["lockchannel"],
+                      help="Lock a bot-created channel so only you can rename, restrict or delete it",
+                      usage="<#channel|channel id>")
     @_shop_subcommand("lockchannel")
     async def shop_lockchannel(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -1252,7 +1283,9 @@ class ShopCog(commands.Cog):
         await ctx.send(embed=emb("🔒 Channel Locked", f"{target_channel.mention} is now locked. Only you can modify or delete it.", C_GREEN))
 
     # ── !shop unlockchannel ───────────────────────────────────────────────────
-    @cmd_shop.command(name="channelunlock", aliases=["unlockchannel"])
+    @cmd_shop.command(name="channelunlock", aliases=["unlockchannel"],
+                      help="Unlock a channel you locked (lock owner only)",
+                      usage="<#channel|channel id>")
     @_shop_subcommand(None)
     async def shop_unlockchannel(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -1281,7 +1314,9 @@ class ShopCog(commands.Cog):
         await ctx.send(embed=emb("🔓 Channel Unlocked", f"{target_channel.mention} is now unlocked.", C_GREEN))
 
     # ── !shop lockrole ────────────────────────────────────────────────────────
-    @cmd_shop.command(name="rolelock", aliases=["lockrole"])
+    @cmd_shop.command(name="rolelock", aliases=["lockrole"],
+                      help="Lock a role so only you can modify, delete or manage membership of it",
+                      usage="<@role|role id>")
     @_shop_subcommand("lockrole")
     async def shop_lockrole(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -1320,7 +1355,9 @@ class ShopCog(commands.Cog):
         await ctx.send(embed=emb("🔒 Role Locked", f"**{role.name}** is now locked. Only you can modify, delete, or manage membership of this role.", C_GREEN))
 
     # ── !shop unlockrole ──────────────────────────────────────────────────────
-    @cmd_shop.command(name="roleunlock", aliases=["unlockrole"])
+    @cmd_shop.command(name="roleunlock", aliases=["unlockrole"],
+                      help="Unlock a role you locked (lock owner only)",
+                      usage="<@role|role id>")
     @_shop_subcommand(None)
     async def shop_unlockrole(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -1349,7 +1386,9 @@ class ShopCog(commands.Cog):
         await ctx.send(embed=emb("🔓 Role Unlocked", f"**{role.name}** is now unlocked.", C_GREEN))
 
     # ── !shop ragebait ────────────────────────────────────────────────────────
-    @cmd_shop.command(name="ragebait")
+    @cmd_shop.command(name="ragebait",
+                      help=f"Have the AI ragebait a user for {SHOP_RAGEBAIT_MESSAGES + 1} messages, optionally on a topic; insurance blocks it",
+                      usage="@user [topic]")
     @_shop_subcommand("ragebait")
     async def shop_ragebait(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -1436,7 +1475,9 @@ class ShopCog(commands.Cog):
             pass
 
     # ── !shop mock ────────────────────────────────────────────────────────────
-    @cmd_shop.command(name="mock")
+    @cmd_shop.command(name="mock",
+                      help=f"Mock a user's next {SHOP_MOCK_MESSAGES} messages; insurance blocks it",
+                      usage="@user")
     @_shop_subcommand(None)
     async def shop_mock(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -1475,7 +1516,9 @@ class ShopCog(commands.Cog):
         ))
 
     # ── !shop bounty ──────────────────────────────────────────────────────────
-    @cmd_shop.command(name="bounty")
+    @cmd_shop.command(name="bounty",
+                      help="Post an escrowed coin reward another user can claim in the bounty channel",
+                      usage="<coins> [duration] <condition>")
     @_shop_subcommand(None)
     async def shop_bounty(self, ctx: commands.Context, *args):
         # The whole bounty feature lives in BountyCog (its own persistence,
@@ -1586,7 +1629,9 @@ class ShopCog(commands.Cog):
             ctx, title=title, description=description, choices=choices, payer=ctx.author,
         )
 
-    @cmd_shop.command(name="insurance")
+    @cmd_shop.command(name="insurance",
+                      help="Prepay or subscribe to insurance, which refunds crime losses and blocks mock/tax/nickname/role effects",
+                      usage="[basic|standard|premium] [days|sub|unsub]")
     @_shop_subcommand(None)
     async def shop_insurance(self, ctx: commands.Context, *args: str):
         uid = ctx.author.id
@@ -1853,7 +1898,9 @@ class ShopCog(commands.Cog):
         await ctx.send(embed=emb(title, body, C_GREEN))
 
     # ── !shop rolecolor ───────────────────────────────────────────────────────
-    @cmd_shop.command(name="rolecolor")
+    @cmd_shop.command(name="rolecolor",
+                      help="Change a bot-created role's color (hex code or color name)",
+                      usage="<@role|role id> <color>")
     @_shop_subcommand(None)
     async def shop_rolecolor(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -1900,7 +1947,9 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Error", f"Failed to change role color: {str(e)}", C_RED))
 
     # ── !shop mute ────────────────────────────────────────────────────────────
-    @cmd_shop.command(name="mute")
+    @cmd_shop.command(name="mute",
+                      help=f"Time out a user for {SHOP_MUTE_MINUTES} minutes; admins can't be muted and insurance blocks it",
+                      usage="@user")
     @_shop_subcommand(None)
     async def shop_mute(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -1964,7 +2013,9 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Error", f"Failed to mute: {str(e)}", C_RED))
 
     # ── !shop tax (+ guild-configured aliases) ───────────────────────────────
-    @cmd_shop.command(name="tax")
+    @cmd_shop.command(name="tax",
+                      help=f"Tax a user {SHOP_TAX_PER_MESSAGE} coins per message for 24h, paid to you; insurance blocks it",
+                      usage="@user")
     @_shop_subcommand(None)
     async def shop_tax(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -2028,7 +2079,9 @@ class ShopCog(commands.Cog):
         ))
 
     # ── !shop curse ───────────────────────────────────────────────────────────
-    @cmd_shop.command(name="curse")
+    @cmd_shop.command(name="curse",
+                      help=f"Curse a user's next {SHOP_CURSE_MESSAGES} messages; insurance blocks it",
+                      usage="@user")
     @_shop_subcommand(None)
     async def shop_curse(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -2073,7 +2126,9 @@ class ShopCog(commands.Cog):
         ))
 
     # ── !shop unoreverse ──────────────────────────────────────────────────────
-    @cmd_shop.command(name="unoreverse")
+    @cmd_shop.command(name="unoreverse",
+                      help="Redirect the mock, ragebait or curse active on you onto someone else; insurance blocks it",
+                      usage="@user")
     @_shop_subcommand(None)
     async def shop_unoreverse(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -2180,7 +2235,9 @@ class ShopCog(commands.Cog):
     # cost SHOP_XP_CATCHUP_COST_PER_XP instead. Only those bands — discounting
     # everything whenever you're behind somewhere would let two servers
     # leapfrog each other at half price forever.
-    @cmd_shop.command(name="buyxp", aliases=["xp"])
+    @cmd_shop.command(name="buyxp", aliases=["xp"],
+                      help="Buy your next level's worth of XP, or every level up to lvl x; the price scales with level",
+                      usage="[lvl <x>]")
     @_shop_subcommand("buyxp")
     async def shop_buyxp(self, ctx: commands.Context, *args: str):
         uid = ctx.author.id
@@ -2342,7 +2399,9 @@ class ShopCog(commands.Cog):
     # Discord's role.position can't drive the swap: it counts every server
     # role, not just bot roles, so a bot role with no other bot role above it
     # would jump straight to the top of the bot pile in one move ("#3 → #1").
-    @cmd_shop.command(name="roleup", aliases=["roledown"])
+    @cmd_shop.command(name="roleup", aliases=["roledown"],
+                      help="Move a bot-created role up (roleup) or down (roledown) one rank",
+                      usage="<@role|role id>")
     @_shop_subcommand("dynamic")
     async def shop_roleup(self, ctx: commands.Context, *args):
         uid = ctx.author.id
@@ -2445,7 +2504,8 @@ class ShopCog(commands.Cog):
         label = "up" if direction == "roleup" else "down"
         await ctx.send(embed=emb("✅ Role Moved", f"Role **{role.name}** moved {label} — now **#{display_rank}** of {total}.", C_GREEN))
 
-    @commands.command(name="roles", aliases=["rolelb", "lbroles", "lbr"])
+    @commands.command(name="roles", aliases=["rolelb", "lbroles", "lbr"],
+                      help="Rank this server's bot-created roles, highest first, with locked ones marked")
     async def cmd_roles(self, ctx: commands.Context):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))

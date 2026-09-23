@@ -123,7 +123,8 @@ class AssetsCog(commands.Cog):
         await send_ephemeral(ctx, embed=emb(f"🏘️ {member.display_name}'s Real Estate", "\n".join(lines), C_PURPLE))
 
     # ── !assets browse / market (combined catalog + listings view) ────────
-    @cmd_assets.command(name="browse", aliases=["market", "catalog", "shop", "listings", "forsale"])
+    @cmd_assets.command(name="browse", aliases=["market", "catalog", "shop", "listings", "forsale"],
+                        help="Full property catalog plus player listings across servers, optionally one tier (1-5)")
     async def assets_browse(self, ctx: commands.Context, tier: int = None):
         from src.level_unlocks import user_global_display_level
         uid = ctx.author.id
@@ -171,7 +172,8 @@ class AssetsCog(commands.Cog):
         await send_ephemeral(ctx, embed=emb("🏘️ Real Estate — Catalog & Market", "\n".join(lines), C_PURPLE))
 
     # ── !assets buy ───────────────────────────────────────────────────────
-    @cmd_assets.command(name="buy", aliases=["purchase"])
+    @cmd_assets.command(name="buy", aliases=["purchase"],
+                        help="Buy a property from the bank or a player listing", usage="<name>")
     async def assets_buy(self, ctx: commands.Context, *, name: str = None):
         from src.level_unlocks import user_global_display_level
         if not name:
@@ -334,7 +336,8 @@ class AssetsCog(commands.Cog):
             await announce_record(ctx.channel, "highest_property_value", ctx.author.display_name, value, holder_id=uid)
 
     # ── !assets sell / unlist ─────────────────────────────────────────────
-    @cmd_assets.command(name="sell", aliases=["list"])
+    @cmd_assets.command(name="sell", aliases=["list"],
+                        help="List a property on the cross-server market; at 75% of value or less the bank buys it instantly", usage="<name> <price>")
     async def assets_sell(self, ctx: commands.Context, *args):
         if len(args) < 2:
             await ctx.send(embed=emb(
@@ -421,7 +424,8 @@ class AssetsCog(commands.Cog):
             C_GREEN,
         ))
 
-    @cmd_assets.command(name="unlist", aliases=["delist"])
+    @cmd_assets.command(name="unlist", aliases=["delist"],
+                        help="Remove your property's market listing", usage="<name>")
     async def assets_unlist(self, ctx: commands.Context, *, name: str = None):
         if not name:
             await ctx.send(embed=emb("🏷️ Unlist", "Usage: `!assets unlist <property name>`", C_PURPLE))
@@ -449,7 +453,8 @@ class AssetsCog(commands.Cog):
         await ctx.send(embed=emb("🏷️ Unlisted", f"{_fmt_prop(prop, row)} is no longer for sale.", C_GREEN))
 
     # ── !assets upgrade ───────────────────────────────────────────────────
-    @cmd_assets.command(name="upgrade", aliases=["upgrades"])
+    @cmd_assets.command(name="upgrade", aliases=["upgrades"],
+                        help="See your properties' upgrades, or buy the upgrade for the named property")
     async def assets_upgrade(self, ctx: commands.Context, *, name: str = None):
         uid = ctx.author.id
         if not name:
@@ -544,7 +549,8 @@ class AssetsCog(commands.Cog):
         await self._offer_records(ctx)
 
     # ── !assets rename ────────────────────────────────────────────────────
-    @cmd_assets.command(name="rename")
+    @cmd_assets.command(name="rename",
+                        help="Rename a business you own", usage="<name> <new name>")
     async def assets_rename(self, ctx: commands.Context, *args):
         if len(args) < 2:
             await ctx.send(embed=emb(
