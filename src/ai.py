@@ -212,6 +212,25 @@ async def check_ollama_connected() -> bool:
         return False
 
 
+async def list_ollama_models() -> list[str]:
+    """Names of the models Ollama has installed, for the model pickers.
+    Empty when Ollama is unreachable or answers oddly — the pickers then
+    fall back to a typed name."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{OLLAMA_BASE_URL}/api/tags",
+                timeout=aiohttp.ClientTimeout(total=3),
+            ) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json()
+    except Exception:
+        return []
+    names = [m.get("name") for m in data.get("models", []) if isinstance(m, dict)]
+    return sorted(n for n in names if isinstance(n, str) and n)
+
+
 async def keep_typing(channel: discord.abc.Messageable):
     try:
         while True:

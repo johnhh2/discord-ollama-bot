@@ -227,18 +227,98 @@ async def test_soundboard_add_and_remove_pickers(monkeypatch):
     assert get_guild_cfg(42)["soundboard_ratelimit"] == [8]
 
 
-async def test_menu_opens_the_panel_but_not_past_the_permission_check(monkeypatch):
+async def test_a_forwarded_pick_runs_the_typed_form_but_not_past_the_permission_check():
     cog = SettingsCog(bot=None)
     _state.command_perms["settings"] = {"tier": "server_admin", "hidden": False}
-    game_index = str([m for _, m, _ in _settings_cog._CHANNEL_PANELS].index("settings_channel_game"))
-    _returns(monkeypatch, "pick_from_list", [game_index])
-    _returns(monkeypatch, "pick_channels", [_channel(10)])
 
-    ctx = _ctx("settings-channel")
-    await cog._open_panel(ctx, _settings_cog._CHANNEL_PANELS)
+    ctx = _ctx("settings")
+    ctx.guild.channels.append(_channel(10))
+    reply = await cog.run_captured(ctx, "settings_channel_game", "<#10>")
     assert get_guild_cfg(42)["game_channels"] == [10]
     assert ctx.command is cog.settings_channel_game
+    assert "Games and gambling restricted to" in reply.description and ctx.sent_embeds == []
 
     get_guild_cfg(42)["game_channels"] = []
-    await cog._open_panel(_ctx("settings-channel", admin=False), _settings_cog._CHANNEL_PANELS)
-    assert get_guild_cfg(42)["game_channels"] == []
+    denied = _ctx("settings", admin=False)
+    denied.guild.channels.append(_channel(10))
+    reply = await cog.run_captured(denied, "settings_channel_game", "<#10>")
+    assert get_guild_cfg(42)["game_channels"] == [] and reply.title == "❌ No Permission"
+
+
+async def test_channel_settings_take_ids_and_mention_tokens_as_arguments():
+    cog = SettingsCog(bot=None)
+    ctx = _ctx("settings channel game")
+    ctx.guild.channels.extend([_channel(10), _channel(11)])
+    await cog.settings_channel_game.callback(cog, ctx, "<#10>", "123456789012345678", "11")
+    # A bare short number isn't a channel id; an unknown id is skipped.
+    assert get_guild_cfg(42)["game_channels"] == [10]
+
+
+async def test_alias_editor_add_and_remove_and_nsfw_ban_form(monkeypatch):
+    cog = SettingsCog(bot=None)
+    get_guild_cfg(42)["tax_aliases"] = {"rent": "💰"}
+    _returns(monkeypatch, "list_editor", ("add", {"word": "toll", "emoji": "🛣️"}))
+    await cog.settings_tax_aliases.callback(cog, _ctx("settings tax-aliases"))
+    assert get_guild_cfg(42)["tax_aliases"] == {"rent": "💰", "toll": "🛣️"}
+
+    _returns(monkeypatch, "list_editor", ("remove", ["rent", "toll"]))
+    await cog.settings_tax_aliases.callback(cog, _ctx("settings tax-aliases"))
+    assert get_guild_cfg(42)["tax_aliases"] == {}
+
+    _returns(monkeypatch, "list_editor", ("add", {"word": "scifi", "prompt": "You write hard science fiction."}))
+    await cog.settings_story_alias.callback(cog, _ctx("settings story-alias"))
+    assert get_guild_cfg(42)["story_aliases"] == {"scifi": "You write hard science fiction."}
+
+    _returns(monkeypatch, "confirm_choice", "ban")
+    _returns(monkeypatch, "open_form", {"tag": "Gore"})
+    await cog.settings_nsfw.callback(cog, _ctx("settings nsfw"))
+    assert get_guild_cfg(42)["nsfw_banned_tags"] == ["gore"]
+    await cog.settings_nsfw.callback(cog, _ctx("settings nsfw"), "unban", "gore", "nothing")
+    assert get_guild_cfg(42)["nsfw_banned_tags"] == []
+
+
+async def test_nsfw_channels_set_and_clear_take_the_whole_list():
+    cog = SettingsCog(bot=None)
+    ctx = _ctx("settings nsfw")
+    ctx.guild.channels.extend([_channel(10), _channel(11)])
+    get_guild_cfg(42)["nsfw_channels"] = [5]
+    await cog.settings_nsfw.callback(cog, ctx, "channels", "set", "<#10>", "<#11>")
+    assert get_guild_cfg(42)["nsfw_channels"] == [10, 11]
+    await cog.settings_nsfw.callback(cog, ctx, "channels", "clear")
+    assert get_guild_cfg(42)["nsfw_channels"] == []
+
+
+async def test_bare_model_command_offers_the_installed_models(monkeypatch):
+    cog = SettingsCog(bot=None)
+    _state.bot_admins.add(1)
+
+    async def _models():
+        return ["llama3:8b", "dolphin3:8b"]
+    monkeypatch.setattr(_settings_cog, "list_ollama_models", _models)
+    calls = _returns(monkeypatch, "pick_from_list", ["llama3:8b"])
+    await cog.cmd_roleplaymodel.callback(cog, _ctx("roleplaymodel"))
+    assert get_guild_cfg(42)["roleplay_model"] == "llama3:8b"
+    assert [v for _, v in calls[0]["options"]] == ["llama3:8b", "dolphin3:8b"]
+
+    async def _none():
+        return []
+    monkeypatch.setattr(_settings_cog, "list_ollama_models", _none)
+    ctx = _ctx("model")
+    await cog.cmd_model.callback(cog, ctx)
+    assert "type one" in ctx.sent_embeds[-1].description
+
+
+async def test_setprompt_form_sets_and_an_emptied_form_clears(monkeypatch):
+    cog = SettingsCog(bot=None)
+    _state.bot_admins.add(1)
+
+    async def _noop(*args, **kwargs):
+        return None
+    monkeypatch.setattr(_settings_cog, "save_channel_prompts", _noop)
+    ctx = _ctx("setprompt")
+    _returns(monkeypatch, "open_form", {"prompt": "Be terse."})
+    await cog.cmd_setprompt.callback(cog, ctx)
+    assert _state.channel_prompts[ctx.channel.id] == "Be terse."
+    _returns(monkeypatch, "open_form", {"prompt": ""})
+    await cog.cmd_setprompt.callback(cog, ctx)
+    assert ctx.channel.id not in _state.channel_prompts and ctx.sent_embeds[-1].title == "⚙️ Prompt Cleared"

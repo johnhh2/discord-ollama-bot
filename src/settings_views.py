@@ -7,6 +7,8 @@ form uses. Only the invoker can operate a prompt.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import discord
 from discord import ui
 
@@ -200,20 +202,6 @@ async def pick_from_list(ctx, *, title: str, description: str, options: list[tup
     return await _run(ctx, view, title, description)
 
 
-async def pick_action(ctx, *, title: str, description: str, menus: list[tuple[str, list[tuple[str, str]]]],
-                      timeout: float = PANEL_TIMEOUT) -> "str | None":
-    """Several dropdowns on one message (`(placeholder, [(label, value)])`
-    each, at most 25 options apiece — the settings overview outgrew one).
-    Returns the first value picked from any of them, or None on Cancel /
-    timeout."""
-    view = _OwnedView(ctx.author.id, timeout)
-    for row, (placeholder, options) in enumerate(menus):
-        view.add_item(_StringSelect(options, placeholder, multi=False, row=row))
-    view.add_item(_CancelButton())
-    picked = await _run(ctx, view, title, description)
-    return picked[0] if picked else None
-
-
 class _UserSelect(ui.UserSelect):
     def __init__(self):
         super().__init__(placeholder="Pick users…", min_values=1, max_values=MAX_OPTIONS, row=0)
@@ -227,4 +215,186 @@ async def pick_users(ctx, *, title: str, description: str, timeout: float = PROM
     view = _OwnedView(ctx.author.id, timeout)
     view.add_item(_UserSelect())
     view.add_item(_CancelButton())
+    return await _run(ctx, view, title, description)
+
+
+# ── forms (modals) ───────────────────────────────────────────────────────────
+
+MODAL_FIELDS = 5  # Discord's cap on top-level modal components
+
+
+@dataclass(frozen=True)
+class Field:
+    """One modal field. `kind` is `text` / `paragraph` (a text box),
+    `choices` (a dropdown over `options`), or `channels` / `users` (Discord's
+    own pickers). Text kinds submit a stripped string; select kinds a list —
+    of option values, or of channel / user ids. An optional select submits
+    `[]`, which is how a channel setting is cleared from a form."""
+    key: str
+    label: str                                 # ≤45 chars
+    kind: str = "text"
+    required: bool = True
+    placeholder: str | None = None
+    default: str | None = None                 # text kinds
+    max_length: int | None = None
+    options: tuple[tuple[str, str], ...] = ()  # choices: (label, value)
+    defaults: tuple = ()                       # preselected values / ids
+    max_values: int = 1
+    description: str | None = None             # ≤100 chars, under the label
+
+
+def _component(f: Field):
+    if f.kind in ("text", "paragraph"):
+        return ui.TextInput(
+            style=discord.TextStyle.paragraph if f.kind == "paragraph" else discord.TextStyle.short,
+            placeholder=f.placeholder, default=f.default, required=f.required, max_length=f.max_length,
+        )
+    min_values = 1 if f.required else 0
+    if f.kind == "choices":
+        shown = f.options[:MAX_OPTIONS]
+        wanted = {str(v) for v in f.defaults}
+        return ui.Select(
+            placeholder=f.placeholder, min_values=min_values, max_values=max(1, min(f.max_values, len(shown))),
+            options=[discord.SelectOption(label=label[:100], value=value, default=value in wanted) for label, value in shown],
+            required=f.required,
+        )
+    defaults = [discord.Object(id=int(v)) for v in f.defaults][:MAX_OPTIONS]
+    if f.kind == "channels":
+        return ui.ChannelSelect(
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news],
+            placeholder=f.placeholder, min_values=min_values, max_values=f.max_values,
+            default_values=defaults, required=f.required,
+        )
+    if f.kind == "users":
+        return ui.UserSelect(
+            placeholder=f.placeholder, min_values=min_values, max_values=f.max_values,
+            default_values=defaults, required=f.required,
+        )
+    raise ValueError(f"unknown field kind {f.kind!r}")
+
+
+class FormModal(ui.Modal):
+    """A modal built from `Field`s. `result` holds `{key: value}` after a
+    submit (None until then). `on_submit` — `async (interaction, values)` —
+    answers the submit interaction itself when given; otherwise the modal
+    just acknowledges it, for a caller that only waits on `result`."""
+
+    def __init__(self, title: str, fields, *, on_submit=None, timeout: float = PROMPT_TIMEOUT):
+        super().__init__(title=title[:45], timeout=timeout)
+        self.fields = tuple(fields)[:MODAL_FIELDS]
+        self.result = None
+        self._after = on_submit
+        self._inputs = {}
+        for f in self.fields:
+            component = _component(f)
+            self._inputs[f.key] = component
+            self.add_item(ui.Label(text=f.label[:45], description=f.description, component=component))
+
+    def values(self) -> dict:
+        out = {}
+        for f in self.fields:
+            component = self._inputs[f.key]
+            if f.kind in ("text", "paragraph"):
+                out[f.key] = (component.value or "").strip()
+            elif f.kind == "choices":
+                out[f.key] = list(component.values)
+            else:
+                out[f.key] = [v.id for v in component.values]
+        return out
+
+    async def on_submit(self, interaction: discord.Interaction):
+        self.result = self.values()
+        if self._after is not None:
+            await self._after(interaction, self.result)
+        else:
+            await interaction.response.defer()
+        self.stop()
+
+
+class _FormButton(ui.Button):
+    """Opens the form. A modal can only answer a click, which is why a bare
+    text command shows this button first."""
+
+    def __init__(self, label: str, title: str, fields, closed_as: str = "✅ Saved", wrap=lambda values: values):
+        super().__init__(label=label, style=discord.ButtonStyle.primary, row=4)
+        self.title, self.fields, self.closed_as, self.wrap = title, fields, closed_as, wrap
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+
+        async def _submitted(submit: discord.Interaction, values: dict):
+            await view.finish(submit, self.wrap(values), self.closed_as)
+        await interaction.response.send_modal(FormModal(self.title, self.fields, on_submit=_submitted))
+
+
+async def open_form(ctx, *, title: str, description: str, fields, button: str = "Open form…",
+                    timeout: float = PROMPT_TIMEOUT) -> "dict | None":
+    """A button that opens a modal of `fields`. Returns the submitted values,
+    or None on Cancel / timeout."""
+    view = _OwnedView(ctx.author.id, timeout)
+    view.add_item(_FormButton(button, title, fields))
+    view.add_item(_CancelButton())
+    return await _run(ctx, view, title, description)
+
+
+# ── list editor: entries with Add / Remove / Clear ───────────────────────────
+
+class _EntrySelect(ui.Select):
+    def __init__(self, entries: list[tuple[str, str]]):
+        shown = entries[:MAX_OPTIONS]
+        super().__init__(
+            placeholder="Pick entries to remove…", min_values=1, max_values=len(shown),
+            options=[discord.SelectOption(label=label[:100], value=value) for label, value in shown], row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view.picked = list(self.values)
+        await interaction.response.defer()  # wait for Remove
+
+
+class _RemoveButton(ui.Button):
+    def __init__(self, label: str):
+        super().__init__(label=label, style=discord.ButtonStyle.danger, row=4)
+
+    async def callback(self, interaction: discord.Interaction):
+        view = self.view
+        if not view.picked:
+            await interaction.response.send_message("Pick the entries to remove first.", ephemeral=True)
+            return
+        await view.finish(interaction, ("remove", view.picked), "🗑️ Removed")
+
+
+class _ClearAllButton(ui.Button):
+    def __init__(self):
+        super().__init__(label="Clear all", style=discord.ButtonStyle.secondary, row=4)
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.view.finish(interaction, ("clear", None), "🧹 Clear all")
+
+
+class _ListEditorView(_OwnedView):
+    def __init__(self, owner_id: int, entries, add_title, add_fields, *, remove_label: str, clear: bool, timeout: float):
+        super().__init__(owner_id, timeout)
+        self.picked = None
+        if entries:
+            self.add_item(_EntrySelect(entries))
+        self.add_item(_FormButton("Add…", add_title, add_fields, closed_as="➕ Added", wrap=lambda values: ("add", values)))
+        if entries:
+            self.add_item(_RemoveButton(remove_label))
+            if clear:
+                self.add_item(_ClearAllButton())
+        self.add_item(_CancelButton(label="Done", closed_as="✅ Done"))
+
+
+async def list_editor(ctx, *, title: str, description: str, entries: list[tuple[str, str]],
+                      add_title: str, add_fields, remove_label: str = "Remove selected",
+                      clear: bool = True, timeout: float = PANEL_TIMEOUT) -> "tuple | None":
+    """The entries of a list setting (aliases, banned tags, rate-limited
+    users) with Add… (a form), Remove selected and Clear all. Returns one
+    action — `("add", values)`, `("remove", [values])` or `("clear", None)`
+    — for the command to apply through its typed branch, or None on Done /
+    timeout."""
+    if len(entries) > MAX_OPTIONS:
+        description += f"\n*Showing the first {MAX_OPTIONS} of {len(entries)} — the typed command reaches the rest.*"
+    view = _ListEditorView(ctx.author.id, entries, add_title, add_fields, remove_label=remove_label, clear=clear, timeout=timeout)
     return await _run(ctx, view, title, description)

@@ -648,47 +648,79 @@ value, so switching the economy back on restores what the admin had picked.
 
 Coverage: [tests/test_features.py](tests/test_features.py).
 
-## Settings prompts: a bare command opens buttons
+## Settings: one panel, and every bare command opens a prompt
 
-A settings command run without its value opens a prompt from
-`src/settings_views.py` instead of printing a usage line: a channel dropdown
-for every channel setting (`pick_channels`), on/off toggles for
-`!settings shop` and `!settings features` (`toggle_panel`), buttons for the
-on/off and either/or settings (`confirm_choice`), a dropdown for removing
-aliases, banned tags and rate-limited users (`pick_from_list`), a user picker
-(`pick_users`), and a Confirm on every alias `clear`. Bare `!settings` shows
-one overview (features, channels, shop items, the rest) and ends with two
-action dropdowns — settings and channels — that open any of them
-(`pick_action` / `_open_actions`; a single select caps at 25 options). Bare
-`!settings channel` shows the channel overview with its own dropdown
-(`_open_panel`).
+Bare `!settings` (and `/settings`, the same panel but ephemeral) opens the
+panel in `src/settings_hub.py`: one message with a category dropdown
+(overview, features, channels, shop items, games & extras, aliases & limits,
+AI) and a setting dropdown whose options carry the current values. A
+**toggle** pick applies at once (on ↔ off, server ↔ global, lively ↔
+classic); every other pick opens a **modal** (`FormModal`, built from
+`Field`s — a channel picker, a text box, a dropdown of installed models, a
+user picker) whose submit applies. Bare `!settings channel` opens the same
+panel on the channels page. The panel deletes itself when closed or after
+`HUB_TIMEOUT`.
 
-Every channel setting is a `!settings channel <name>` subcommand
-(`cmd_settings_channel`, a nested group). The old spellings still work:
-`!settings-channel …` is a hidden top-level command that forwards to the
-subcommand, and `!settings bounty-channel` / `minecraft-channel` /
-`dailies-channel` forward to `!settings channel bounty` / `minecraft` /
-`dailies`. Forwarding goes through `_forward`, which sets `ctx.command` to
-the target so its `@requires_perm` (the hidden bot-admin log channels) still
-decides. Don't advertise the old spellings; the menus only print the new.
-
-- **The typed forms are unchanged and win.** `clear`, a #mention or an
-  `on|off` argument never opens a prompt. A prompt only *chooses*: the
-  command then runs the same branch the typed form does (`_channel_choice`
-  returns `[]` for clear, channels to set, or None for "nothing chosen"), so
-  side effects like the lottery seed or the dailies refresh can't drift
-  between the two paths.
+- **The panel never writes a setting.** Every pick becomes the *typed form*
+  of a settings command — `settings features economy off`, `settings channel
+  lottery <#id>`, `tax-aliases add rent 💰`, `nsfw unban a b` — and runs
+  through `SettingsCog.run_captured` → `_forward`, so the subcommand's own
+  `@requires_perm` and side effects (the lottery seed, the dailies refresh,
+  the gambler role) can't drift from the typed path. `_CapturingContext`
+  swallows the command's `ctx.send` and the panel shows the reply in a
+  "Last change" field instead of posting it. The catalog is `items_for`;
+  a new setting gets an `Item` there (a toggle with `args`, or a form with
+  `fields` + `to_args`) and nothing else.
+- **Channel settings accept ids.** `channels_in` (`src/settings_hub.py`)
+  reads #mentions *and* `<#id>` / bare-id tokens from the arguments — that
+  is how a picker's choice is forwarded, and it makes
+  `!settings channel game 123456789012345678` work typed too. `!settings
+  nsfw channels set <#…>` / `clear` replace the whole list the same way.
+  Commands that take several values take them in one call (`unban a b`,
+  `tax-aliases remove a b`, `soundboard-ratelimit add <id> <id>`).
+- **`/settings` skips `process_commands`,** so `slash_settings` applies the
+  gates itself: `is_silenced`, then the `settings` tier through
+  `command_permitted` (the pure half of `check_command_permission`),
+  answered ephemerally. It is `default_permissions(administrator=True)`, so
+  Discord hides it from non-admins' pickers; bot admins who aren't server
+  admins use `!settings`.
+- **Bare commands still open their own prompt** (`src/settings_views.py`):
+  a channel dropdown (`pick_channels`), toggles for `shop` / `features`
+  (`toggle_panel`), buttons for on/off and either/or (`confirm_choice`),
+  a pick-list (`pick_from_list` — also the model commands, over
+  `list_ollama_models`), a user picker (`pick_users`), a button that opens
+  a form for the free-text settings (`open_form` — `nsfw ban`, `setprompt`,
+  `vramtext`), and the alias editor (`list_editor`: the list with Add… /
+  Remove selected / Clear all — `_alias_editor` applies the action through
+  the command's `add` / `remove` / `clear` branch). A prompt only
+  *chooses*; the typed form always wins (`clear`, a #mention, `on|off`
+  never open one).
 - **Invoker-only, and they time out** (`_OwnedView.interaction_check`).
   A prompt is a long await — read config again after it returns rather than
-  trusting a value captured before it.
-- **`_open_panel` sets `ctx.command` to the subcommand before calling it**,
-  so that subcommand's `@requires_perm` still decides. The bot-admin channel
-  settings are only listed for bot admins, but the listing is cosmetic — the
-  check is what protects them.
-- **Tests:** conftest dismisses every settings prompt by default (they'd wait
-  forever on a click); patch `src.cogs.settings_cog.<prompt>` to make a pick.
-- A new settings command should follow suit: typed form first, prompt when
-  bare, and an entry in `_SETTINGS_PANELS` / `_CHANNEL_PANELS`.
+  trusting a value captured before it. The panel re-reads the config on
+  every rebuild.
+- **The bot-admin items (global log channels, the AI page) are only listed
+  for bot admins**, but the listing is cosmetic — the forwarded command's
+  permission check is what protects them.
+- **Tests:** conftest dismisses every settings prompt *and the panel* by
+  default (they'd wait forever on a click); patch
+  `src.cogs.settings_cog.<prompt>` to make a pick. `run_captured` is the
+  panel's seam — test a pick as `cog.run_captured(ctx, method, *typed args)`.
+
+Every channel setting is a `!settings channel <name>` subcommand
+(`cmd_settings_channel`, a nested group), listed in `CHANNEL_SETTINGS` /
+`GLOBAL_CHANNEL_SETTINGS` (`src/settings_hub.py`), which both overviews and
+the panel read. The old spellings still work: `!settings-channel …` is a
+hidden top-level command that forwards to the subcommand, and `!settings
+bounty-channel` / `minecraft-channel` / `dailies-channel` forward to
+`!settings channel bounty` / `minecraft` / `dailies`. Forwarding goes through
+`_forward`, which sets `ctx.command` to the target so its `@requires_perm`
+(the hidden bot-admin log channels) still decides, and runs a command from
+another cog with that cog as `self` (`bot:ai off` from the panel). Don't
+advertise the old spellings; the menus only print the new.
+
+Coverage: [tests/test_settings_hub.py](tests/test_settings_hub.py) and
+[tests/test_settings_views.py](tests/test_settings_views.py).
 
 Coverage: [tests/test_settings_views.py](tests/test_settings_views.py).
 

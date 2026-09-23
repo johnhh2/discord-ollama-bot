@@ -46,8 +46,8 @@ flowchart LR
 ### 🤖 LLM chat, locally hosted
 - `!ask` — conversational Q&A; each conversation gets its own thread with isolated context
 - `!continue`, `!tldr`, `!story`, `!roleplay` — follow-ups, summarization, and persona modes
-- Per-guild model selection, with separate models per mode (`!model`, `!codingmodel`, `!roleplaymodel`)
-- Custom system prompts per guild (`!setprompt`), channel-scoped passive replies, per-user rate limiting via a token bucket
+- Per-guild model selection, with separate models per mode (`!model`, `!codingmodel`, `!roleplaymodel` — run bare, each offers a dropdown of the models Ollama has installed; the AI page of `!settings` has the same)
+- Custom system prompts per channel (`!setprompt`, or the AI page of `!settings`), channel-scoped passive replies, per-user rate limiting via a token bucket
 - Streaming output with a global semaphore so a single GPU is never oversubscribed
 
 ### ♟️ A chess bot that plays like a human
@@ -94,7 +94,7 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 - Three-tier permission system (`everyone` / `server_admin` / `bot_admin`) declared in one JSON file, with per-guild user overrides via `!setperm`
 - A `hidden` flag makes sensitive admin commands invisible to unauthorized users — denied silently, no error message
 - Per-server feature switches: the economy (and its extensions — gambling, savings, assets, the shop and artifacts) and the AI can each be turned off with `!settings features`. Off means off — the commands refuse, the menus stop listing them, the passive bits (shop effects, @mention replies, the dailies buttons, the lottery draw) stop too. On joining a server the bot asks these as a short set of button questions any admin can answer; `!settings setup` asks them again
-- Full audit log of admin actions; Docker-aware `!restart`; `!settings` for per-guild configuration — one overview of features, channels and everything else with two action dropdowns; every channel setting lives under `!settings channel …`, and any settings command run bare (`!settings channel game`, `!settings shop`, `!settings nsfw`) opens a channel dropdown, toggle buttons or a pick-list instead of needing the full syntax
+- Full audit log of admin actions; Docker-aware `!restart`; `!settings` (or `/settings`, which only the admin sees) for per-guild configuration — one panel with a category dropdown and a setting dropdown: toggles flip on the spot, everything else opens a form (channel pickers, text boxes, a dropdown of installed models), and nothing is typed after the command. Every channel setting also lives under `!settings channel …`, and any settings command run bare (`!settings channel game`, `!settings shop`, `!settings tax-aliases`) opens its own dropdown, toggle buttons, pick-list or Add/Remove editor instead of needing the full syntax
 - Built-in issue tracking: users file `!bugreport` / `!featurerequest` from inside Discord
 - Custom per-server counters: `!counter add afk Times gone afk` (pick user-required or optional, number or time), then `!afk @user 1` to count and `!afk @user` / `!afk` to read — `!count afk …` always works, the `!afk` shortcut whenever no real command has that name. Admins write by default; `!counter addperm @user` trusts anyone else
 

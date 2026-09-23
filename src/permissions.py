@@ -213,28 +213,29 @@ def get_command_perm(command_name: str) -> dict:
     return {"tier": "everyone", "hidden": False}
 
 
+def command_permitted(ctx: commands.Context) -> bool:
+    """Whether the author's tier covers `ctx.command` — the decision alone,
+    for a caller that answers its own way (the `/settings` entry replies
+    ephemerally). `check_command_permission` is this plus the reply."""
+    tier = get_command_perm(ctx.command.qualified_name).get("tier", "everyone")
+    if tier == "everyone":
+        return True
+    if tier == "server_admin":
+        return can_manage_settings(ctx)
+    if tier == "bot_admin":
+        return is_admin(ctx)
+    if tier == "global_admin":
+        return is_global_admin(ctx)
+    # Fail closed: an unrecognized tier is a typo in command_perms.json
+    # ("bot-admin", "admin", …) and must not make the command public.
+    # init_db_state validates tiers at boot, so this should be unreachable.
+    return False
+
+
 async def check_command_permission(ctx: commands.Context) -> bool:
     """Return True if the author may run the command; send error / silently ignore and return False if not."""
-    entry = get_command_perm(ctx.command.qualified_name)
-    tier = entry.get("tier", "everyone")
-    hidden = entry.get("hidden", False)
-
-    if tier == "everyone":
-        allowed = True
-    elif tier == "server_admin":
-        allowed = can_manage_settings(ctx)
-    elif tier == "bot_admin":
-        allowed = is_admin(ctx)
-    elif tier == "global_admin":
-        allowed = is_global_admin(ctx)
-    else:
-        # Fail closed: an unrecognized tier is a typo in command_perms.json
-        # ("bot-admin", "admin", …) and must not make the command public.
-        # init_db_state validates tiers at boot, so this should be unreachable.
-        allowed = False
-
-    if not allowed:
-        if not hidden:
-            await ctx.send(embed=emb("❌ No Permission", "", C_RED))
-        return False
-    return True
+    if command_permitted(ctx):
+        return True
+    if not get_command_perm(ctx.command.qualified_name).get("hidden", False):
+        await ctx.send(embed=emb("❌ No Permission", "", C_RED))
+    return False

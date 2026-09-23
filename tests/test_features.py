@@ -260,31 +260,25 @@ async def test_bare_settings_features_opens_toggles_showing_the_stored_switch(mo
     assert get_guild_cfg(GID)["features"] == {"economy": False, "ai": False}
 
 
-async def test_settings_overview_lists_features_and_channels_then_opens_the_actions(monkeypatch):
+async def test_settings_opens_the_panel_on_an_overview_of_features_and_channels(monkeypatch):
     cog = SettingsCog(bot=None)
     get_guild_cfg(GID)["lottery_channel"] = 55
     set_feature(GID, "savings", False)
-    menus_seen = []
+    opened = []
 
-    async def _actions(ctx, *, menus, **kwargs):
-        menus_seen.extend(menus)
-        return "c" + str([m for _, m, _ in _settings_cog._CHANNEL_PANELS].index("settings_channel_game"))
-    monkeypatch.setattr(_settings_cog, "pick_action", _actions)
-    picks = []
-
-    async def _pick(ctx, **kwargs):
-        picks.append(kwargs)
-        return [_channel(10)]
-    monkeypatch.setattr(_settings_cog, "pick_channels", _pick)
+    async def _hub(ctx, cog_, **kwargs):
+        opened.append(kwargs)
+    monkeypatch.setattr(_settings_cog, "open_settings_hub", _hub)
 
     ctx = _admin_ctx("settings")
     await cog.cmd_settings.callback(cog, ctx)
-    fields = {f.name: f.value for f in ctx.sent_embeds[0].fields}
+    assert opened and "category" not in opened[0]  # the panel starts on the overview
+    fields = {f.name: f.value for f in opened[0]["overview"](ctx).fields}
     assert "🐷 Savings ❌" in fields["🧩 Features"]
     assert "🎰 Lottery: <#55>" in fields["📁 Channels"] and "🪙 Dailies: ❌ off" in fields["📁 Channels"]
-    assert [placeholder for placeholder, _ in menus_seen] == ["⚙️ Settings…", "📁 Channels…"]
-    assert get_guild_cfg(GID)["game_channels"] == [10]
-    assert ctx.command is cog.settings_channel_game
+
+    await cog.cmd_settings_channel.callback(cog, _admin_ctx("settings channel"))
+    assert opened[1]["category"] == "channels"
 
 
 async def test_channel_settings_live_under_settings_channel_and_the_old_spellings_forward():

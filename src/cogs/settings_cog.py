@@ -1,16 +1,16 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_BLUE, C_GREY,
-    send_ephemeral,
 )
 from src.economy import (
     drain_bot_balance_into_lottery, announce_new_lottery,
     _ct_now, lottery_month_key,
 )
 from src.permissions import (
-    requires_perm, is_admin,
+    requires_perm, is_admin, is_silenced, command_permitted,
 )
 from src.persistence import (
     save_guild_settings, save_bot_settings, save_channel_prompts,
@@ -19,127 +19,45 @@ from src.persistence import (
 )
 from src.guild_config import get_guild_cfg
 from src.custom_names import name_conflict
-from src.settings_views import pick_action, pick_channels, pick_from_list, pick_users, toggle_panel
+from src.settings_views import (
+    Field, list_editor, open_form, pick_channels, pick_from_list, pick_users, toggle_panel,
+)
+from src.settings_hub import (
+    SHOP_ITEMS, channel_rows, channels_in, mentions, open_settings_hub,
+)
 from src.confirm_view import confirm_choice, confirm_prompt
 from src.config import OLLAMA_MODEL, LOTTERY_SEED_POOL
 from src.features import FEATURES, set_feature, features_overview
 from src.setup_wizard import run_setup_wizard
+from src.ai import list_ollama_models
 from src import state
-
-
-# (menu label, command method, args) — what the `!settings` action dropdowns
-# and the bare `!settings channel` menu can open. Each method runs with no
-# typed value, which is what makes it show its own prompt.
-_SETTINGS_PANELS = (
-    ("🧩 Features on/off", "settings_features", ()),
-    ("🧭 Setup questions", "settings_setup", ()),
-    ("🛒 Shop items", "settings_shop", ()),
-    ("🔞 NSFW", "settings_nsfw", ()),
-    ("🪙 Leaderboard scope", "settings_leaderboard", ()),
-    ("🎲 Gambler role", "settings_gambler_role", ()),
-    ("💬 Quote bypass", "settings_quote", ()),
-    ("⚔️ Idle RPG pace", "settings_idle_pace", ()),
-    ("⚔️ Idle RPG auto-enroll", "settings_idle_enroll", ()),
-    ("🔞 Remove NSFW aliases", "settings_nsfw_alias", ("remove",)),
-    ("📖 Remove story aliases", "settings_story_alias", ("remove",)),
-    ("🏷️ Remove tax aliases", "settings_tax_aliases", ("remove",)),
-    ("🔇 Soundboard rate-limit: add", "settings_soundboard_ratelimit", ("add",)),
-    ("🔇 Soundboard rate-limit: remove", "settings_soundboard_ratelimit", ("remove",)),
-)
-_CHANNEL_PANELS = (
-    ("✅ Command whitelist", "settings_channel_whitelist", ()),
-    ("❌ Command blacklist", "settings_channel_blacklist", ()),
-    ("🤖 AI channels", "settings_channel_ai", ()),
-    ("🎮 Game channels", "settings_channel_game", ()),
-    ("♟️ Chess channels", "settings_channel_chess", ()),
-    ("🎰 Lottery channel", "settings_channel_lottery", ()),
-    ("📊 Level-up channel", "settings_channel_levelup", ()),
-    ("🏆 Records channel", "settings_channel_records", ()),
-    ("📖 Feature request channel", "settings_channel_feature_request", ()),
-    ("🎯 Bounty channel", "settings_bounty_channel", ()),
-    ("⛏️ Minecraft channel", "settings_minecraft_channel", ()),
-    ("🪙 Dailies channel", "settings_dailies_channel", ()),
-    ("⚔️ Idle RPG channel", "settings_channel_idle", ()),
-)
-_GLOBAL_CHANNEL_PANELS = (
-    ("🛡️ Admin log channel (global)", "settings_channel_admin_log", ()),
-    ("⚠️ Error log channel (global)", "settings_channel_error_log", ()),
-    ("🐛 Internal issue channel (global)", "settings_channel_internal_issue", ()),
-)
-
-# (label, cfg key, text when unset, note) — the per-guild channel settings as
-# both overviews print them. The subcommand name is the label's word in
-# lower case (`!settings channel lottery`), except the first two.
-_CHANNEL_ROWS = (
-    ("✅ Whitelist", "command_whitelist", "none (all allowed)", "commands only work in these channels; `!settings` works everywhere"),
-    ("❌ Blacklist", "command_blacklist", "none", "commands never work in these channels"),
-    ("🤖 AI", "ai_channels", "all channels", "where @mentions and AI commands answer"),
-    ("🎮 Games", "game_channels", "all channels", "games and gambling"),
-    ("♟️ Chess", "chess_channels", "game channels (or all)", None),
-    ("🎰 Lottery", "lottery_channel", "❌ off", "the monthly lottery runs here"),
-    ("📊 Level-ups", "levelup_channel", "❌ off", "level-up announcements"),
-    ("🏆 Records", "records_channel", "❌ off", "this server's new records, plus every new global-top record from any server"),
-    ("📖 Feature requests", "feature_request_channel", "❌ off", "`!featurerequest` posts here"),
-    ("🎯 Bounties", "bounty_channel", "❌ off", "`!bounty` posts here"),
-    ("⛏️ Minecraft", "minecraft_channel", "❌ off", "server up/down alerts and player-count notices"),
-    ("🪙 Dailies", "dailies_channel", "❌ off", "self-cleaning channel with the react-to-claim dailies embed"),
-    ("⚔️ Idle RPG", "idle_channel", "❌ off", "idle RPG news and feed threads — the game is off without one"),
-)
-_GLOBAL_CHANNEL_ROWS = (
-    ("🛡️ Admin log (global)", "admin_log_channel", "❌ off", "admin command use and errors from every server"),
-    ("⚠️ Error log (global)", "error_log_channel", "❌ off", "command errors from every server"),
-    ("🐛 Internal issues (global)", "internal_issue_channel", "❌ off", "bug reports and internal issues from every server"),
-)
-
-
-def _mentions(value, empty: str) -> str:
-    ids = value if isinstance(value, list) else ([value] if value else [])
-    return " ".join(f"<#{c}>" for c in ids) if ids else empty
-
-
-def _channel_rows(cfg: dict, *, with_global: bool) -> list[tuple[str, str, "str | None"]]:
-    rows = [(label, _mentions(cfg.get(key), empty), note) for label, key, empty, note in _CHANNEL_ROWS]
-    if with_global:
-        rows += [(label, _mentions(state.bot_settings.get(key), empty), note) for label, key, empty, note in _GLOBAL_CHANNEL_ROWS]
-    return rows
 
 
 class SettingsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.group(name="settings", aliases=["setting"], invoke_without_command=True)
-    @requires_perm
-    async def cmd_settings(self, ctx: commands.Context):
-        if ctx.guild is None:
-            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-
+    def _overview_embed(self, ctx: commands.Context) -> discord.Embed:
+        """Every setting on one embed — the panel's first page."""
         cfg = get_guild_cfg(ctx.guild.id)
         embed = discord.Embed(title="⚙️ Server Settings", color=C_BLUE)
-        embed.add_field(
-            name="🧩 Features",
-            value=features_overview(ctx.guild.id) + "\n*`!settings features` · the first-run questions: `!settings setup`*",
-            inline=False,
-        )
-        rows = _channel_rows(cfg, with_global=is_admin(ctx))
+        embed.add_field(name="🧩 Features", value=features_overview(ctx.guild.id), inline=False)
+        rows = channel_rows(cfg, with_global=is_admin(ctx))
         embed.add_field(
             name="📁 Channels",
-            value="\n".join(f"{label}: {value}" for label, value, _ in rows)
-            + "\n*`!settings channel <name> #channel` / `clear`*",
+            value="\n".join(f"{label}: {value}" for label, value, _ in rows),
             inline=False,
         )
 
         shop_items = cfg.get("shop_items", {})
-        item_names = ["nickname", "role", "unassignrole", "roleup", "roledown", "ragebait", "buyxp"]
         embed.add_field(
             name="🛒 Shop items",
-            value="  ".join(f"{n} {'✅' if shop_items.get(n, True) else '❌'}" for n in item_names),
+            value="  ".join(f"{n} {'✅' if shop_items.get(n, True) else '❌'}" for n in SHOP_ITEMS),
             inline=False,
         )
 
         nsfw = "✅ on" if cfg.get("nsfw_enabled", False) else "❌ off"
-        nsfw += " · channels: " + _mentions(cfg.get("nsfw_channels"), "all")
+        nsfw += " · channels: " + mentions(cfg.get("nsfw_channels"), "all")
         if cfg.get("nsfw_banned_tags"):
             nsfw += " · banned tags: " + ", ".join(cfg["nsfw_banned_tags"])
         embed.add_field(
@@ -171,10 +89,58 @@ class SettingsCog(commands.Cog):
             ),
             inline=False,
         )
-        embed.set_footer(text="Pick an action below, or run any setting bare (e.g. !settings nsfw) for its prompt.")
+        if is_admin(ctx):
+            embed.add_field(
+                name="🤖 AI (bot admin)",
+                value=(
+                    f"Ask `{cfg.get('ask_model', OLLAMA_MODEL)}` · roleplay `{cfg.get('roleplay_model', OLLAMA_MODEL)}` · "
+                    f"coding `{cfg.get('coding_model', OLLAMA_MODEL)}`\n"
+                    f"Passive replies: {'✅ on' if state.bot_settings.get('ai_enabled', True) else '❌ off'} · "
+                    f"this channel's prompt: {'custom' if state.channel_prompts.get(ctx.channel.id) else 'default'}"
+                ),
+                inline=False,
+            )
+        return embed
 
-        await send_ephemeral(ctx, embed=embed)
-        await self._open_actions(ctx)
+    @commands.group(name="settings", aliases=["setting"], invoke_without_command=True)
+    @requires_perm
+    async def cmd_settings(self, ctx: commands.Context):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        await open_settings_hub(ctx, self, overview=self._overview_embed)
+
+    @app_commands.command(name="settings", description="Open the server settings panel — only you see it")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
+    async def slash_settings(self, interaction: discord.Interaction):
+        """The same panel, ephemeral. A slash command skips `process_commands`,
+        so the gates it would have met are applied here: the blocklist, and
+        the `settings` permission tier (answered privately, not with the
+        public ❌ embed the prefix gate sends)."""
+        if is_silenced(interaction.user.id, interaction.guild_id):
+            return
+        ctx = await self.bot.get_context(interaction)
+        ctx.command = self.cmd_settings
+        if not command_permitted(ctx):
+            await interaction.response.send_message(embed=emb("❌ No Permission", "", C_RED), ephemeral=True)
+            return
+        await open_settings_hub(ctx, self, overview=self._overview_embed, ephemeral=True)
+
+    async def run_captured(self, ctx, method: str, *args):
+        """Run a settings command in its typed form for the panel and return
+        its reply instead of sending it. `method` is a SettingsCog attribute,
+        or `bot:<qualified name>` for another cog's command."""
+        from src.settings_hub import _CapturingContext
+        if method.startswith("bot:"):
+            command = self.bot.get_command(method[4:]) if self.bot is not None else None
+        else:
+            command = getattr(self, method, None)
+        if command is None:
+            return emb("❌", f"No such setting command: `{method}`", C_RED)
+        captured = _CapturingContext(ctx)
+        await self._forward(captured, command, *args)
+        return captured.captured[-1] if captured.captured else None
 
     # ── !settings features ────────────────────────────────────────────────────
     @cmd_settings.command(name="features", aliases=["feature"])
@@ -246,13 +212,7 @@ class SettingsCog(commands.Cog):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
             return
-        cfg = get_guild_cfg(ctx.guild.id)
-        embed = discord.Embed(title="📁 Channel Settings", color=C_BLUE)
-        for label, value, note in _channel_rows(cfg, with_global=is_admin(ctx)):
-            embed.add_field(name=label, value=value + (f"\n*{note}*" if note else ""), inline=False)
-        embed.set_footer(text="!settings channel <name> #channel (or clear) — or pick one below.")
-        await send_ephemeral(ctx, embed=embed)
-        await self._open_panel(ctx, _CHANNEL_PANELS + (_GLOBAL_CHANNEL_PANELS if is_admin(ctx) else ()))
+        await open_settings_hub(ctx, self, category="channels", overview=self._overview_embed)
 
     @commands.command(name="settings-channel", hidden=True)
     @requires_perm
@@ -268,9 +228,10 @@ class SettingsCog(commands.Cog):
     async def _forward(self, ctx, command, *args) -> None:
         """Run another settings command as if it had been typed: its own
         @requires_perm reads ctx.command, so the hidden bot-admin ones stay
-        gated on the forwarded path too."""
+        gated on the forwarded path too. A command from another cog runs
+        with that cog as `self`."""
         ctx.command = command
-        await command.callback(self, ctx, *args)
+        await command.callback(command.cog or self, ctx, *args)
 
     # ── !settings shop ────────────────────────────────────────────────────────
     @cmd_settings.command(name="shop")
@@ -536,12 +497,12 @@ class SettingsCog(commands.Cog):
                 title="⚙️ NSFW",
                 description=(
                     f"**NSFW commands:** {'✅ on' if enabled else '❌ off'}\n"
-                    f"**Channels:** {channels}\n**Banned tags:** {banned}\n\n"
-                    "Ban a tag with `!settings nsfw ban <tag>`."
+                    f"**Channels:** {channels}\n**Banned tags:** {banned}"
                 ),
                 choices=[
                     {"label": "Turn off" if enabled else "Turn on", "value": "off" if enabled else "on", "default": True},
                     {"label": "Channels", "value": "channels"},
+                    {"label": "Ban a tag", "value": "ban"},
                     {"label": "Unban tags", "value": "unban"},
                 ],
                 payer=ctx.author,
@@ -551,6 +512,7 @@ class SettingsCog(commands.Cog):
                 return
             args = (picked,)
         action = args[0].lower()
+        usage = "`!settings nsfw on|off` / `channels <set|add|remove|clear|list> [#channel …]` / `ban <tag>` / `unban <tag …>` / `banned`"
         if action in ("on", "off"):
             cfg["nsfw_enabled"] = (action == "on")
             await save_guild_settings()
@@ -561,7 +523,7 @@ class SettingsCog(commands.Cog):
             if len(args) < 2:
                 chosen = await pick_channels(
                     ctx, title="⚙️ NSFW Channels", current_ids=nsfw_channels, multi=True,
-                    typed_usage="`!settings nsfw channels <add|remove|list> [#channel]`",
+                    typed_usage="`!settings nsfw channels <set|add|remove|clear|list> [#channel …]`",
                 )
                 if chosen is None:
                     return
@@ -571,110 +533,84 @@ class SettingsCog(commands.Cog):
                 await ctx.send(embed=emb("⚙️ NSFW Channels", f"Whitelist is now: {val}", C_GREEN))
                 return
             channel_action = args[1].lower()
+            named = channels_in(ctx, args[2:])
+            if channel_action in ("add", "remove", "set") and not named:
+                await ctx.send(embed=emb("⚙️ NSFW", f"Please mention a channel to {channel_action}.", C_GREY))
+                return
             if channel_action == "add":
-                if not ctx.message.channel_mentions:
-                    await ctx.send(embed=emb("⚙️ NSFW", "Please mention a channel to add.", C_GREY))
-                    return
-                for channel in ctx.message.channel_mentions:
+                for channel in named:
                     if channel.id not in nsfw_channels:
                         nsfw_channels.append(channel.id)
                 await save_guild_settings()
-                # channel_mentions holds channel objects, not IDs — f"<#{cid}>"
-                # rendered a literal "<#channel-name>" instead of a mention.
-                names = " ".join(ch.mention for ch in ctx.message.channel_mentions)
-                await ctx.send(embed=emb("⚙️ NSFW Channels", f"Added {names} to whitelist.", C_GREEN))
+                await ctx.send(embed=emb("⚙️ NSFW Channels", f"Added {' '.join(ch.mention for ch in named)} to whitelist.", C_GREEN))
             elif channel_action == "remove":
-                if not ctx.message.channel_mentions:
-                    await ctx.send(embed=emb("⚙️ NSFW", "Please mention a channel to remove.", C_GREY))
-                    return
-                for channel in ctx.message.channel_mentions:
+                for channel in named:
                     if channel.id in nsfw_channels:
                         nsfw_channels.remove(channel.id)
                 await save_guild_settings()
-                names = " ".join(ch.mention for ch in ctx.message.channel_mentions)
-                await ctx.send(embed=emb("⚙️ NSFW Channels", f"Removed {names} from whitelist.", C_GREEN))
+                await ctx.send(embed=emb("⚙️ NSFW Channels", f"Removed {' '.join(ch.mention for ch in named)} from whitelist.", C_GREEN))
+            elif channel_action in ("set", "clear"):
+                # The whole list at once — what the panel's picker forwards.
+                nsfw_channels[:] = [c.id for c in named] if channel_action == "set" else []
+                await save_guild_settings()
+                val = " ".join(f"<#{cid}>" for cid in nsfw_channels) or "all channels"
+                await ctx.send(embed=emb("⚙️ NSFW Channels", f"Whitelist is now: {val}", C_GREEN))
             elif channel_action == "list":
                 val = " ".join(f"<#{cid}>" for cid in nsfw_channels) if nsfw_channels else "none"
                 await ctx.send(embed=emb("⚙️ NSFW Channels", val, C_GREY))
             else:
-                await ctx.send(embed=emb("⚙️ NSFW", "Usage: `!settings nsfw channels <add|remove|list> [#channel]`", C_GREY))
-        elif action == "ban" and len(args) >= 2:
+                await ctx.send(embed=emb("⚙️ NSFW", "Usage: `!settings nsfw channels <set|add|remove|clear|list> [#channel …]`", C_GREY))
+        elif action == "ban":
+            if len(args) < 2:
+                values = await open_form(
+                    ctx, title="⚙️ NSFW — Ban a Tag", description="Usage: `!settings nsfw ban <tag>`",
+                    fields=[Field("tag", "Tag to ban", placeholder="one tag", max_length=100)], button="Ban a tag…",
+                )
+                if not values or not values.get("tag"):
+                    return
+                args = ("ban", values["tag"])
             tag = args[1].lower()
             banned = cfg.setdefault("nsfw_banned_tags", [])
             if tag not in banned:
                 banned.append(tag)
                 await save_guild_settings()
             await ctx.send(embed=emb("⚙️ NSFW", f"Tag `{tag}` banned.", C_GREEN))
-        elif action == "unban" and len(args) < 2:
+        elif action == "unban":
             banned = cfg.get("nsfw_banned_tags", [])
-            if not banned:
-                await ctx.send(embed=emb("⚙️ NSFW", "No tags are banned.", C_GREY))
-                return
-            picked = await pick_from_list(
-                ctx, title="⚙️ NSFW Banned Tags", description="Pick the tags to unban.",
-                options=[(t, t) for t in banned], placeholder="Tags to unban…",
-            )
-            if not picked:
-                return
-            for tag in picked:
-                if tag in banned:
-                    banned.remove(tag)
-            await save_guild_settings()
-            await ctx.send(embed=emb("⚙️ NSFW", "Unbanned " + ", ".join(f"`{t}`" for t in picked) + ".", C_GREEN))
-        elif action == "unban" and len(args) >= 2:
-            tag = args[1].lower()
-            banned = cfg.get("nsfw_banned_tags", [])
-            if tag in banned:
+            if len(args) < 2:
+                if not banned:
+                    await ctx.send(embed=emb("⚙️ NSFW", "No tags are banned.", C_GREY))
+                    return
+                picked = await pick_from_list(
+                    ctx, title="⚙️ NSFW Banned Tags", description="Pick the tags to unban.",
+                    options=[(t, t) for t in banned], placeholder="Tags to unban…",
+                )
+                if not picked:
+                    return
+                args = ("unban", *picked)
+            tags = [t.lower() for t in args[1:]]
+            unbanned = [t for t in tags if t in banned]
+            for tag in unbanned:
                 banned.remove(tag)
+            if unbanned:
                 await save_guild_settings()
-                await ctx.send(embed=emb("⚙️ NSFW", f"Tag `{tag}` unbanned.", C_GREEN))
+                await ctx.send(embed=emb("⚙️ NSFW", "Unbanned " + ", ".join(f"`{t}`" for t in unbanned) + ".", C_GREEN))
             else:
-                await ctx.send(embed=emb("⚙️ NSFW", f"Tag `{tag}` was not banned.", C_GREY))
+                await ctx.send(embed=emb("⚙️ NSFW", "None of those tags were banned.", C_GREY))
         elif action == "banned":
             banned = cfg.get("nsfw_banned_tags", [])
             val = ", ".join(f"`{t}`" for t in banned) if banned else "none"
             await ctx.send(embed=emb("⚙️ NSFW Banned Tags", val, C_GREY))
         else:
-            await ctx.send(embed=emb("⚙️ NSFW", "Usage: `!settings nsfw on|off` / `channels <add|remove|list> [#channel]` / `ban <tag>` / `unban <tag>` / `banned`", C_GREY))
-
-    async def _open_actions(self, ctx) -> None:
-        """The two dropdowns under `!settings`: one for settings, one for
-        channels (more than 25 together — a select's cap)."""
-        channel_panels = _CHANNEL_PANELS + (_GLOBAL_CHANNEL_PANELS if is_admin(ctx) else ())
-        picked = await pick_action(
-            ctx, title="⚙️ Actions", description="Pick a setting or a channel to change it here.",
-            menus=[
-                ("⚙️ Settings…", [(label, f"s{i}") for i, (label, _, _) in enumerate(_SETTINGS_PANELS)]),
-                ("📁 Channels…", [(label, f"c{i}") for i, (label, _, _) in enumerate(channel_panels)]),
-            ],
-        )
-        if not picked:
-            return
-        panels = _SETTINGS_PANELS if picked[0] == "s" else channel_panels
-        await self._run_panel(ctx, panels[int(picked[1:])])
-
-    async def _open_panel(self, ctx, panels) -> None:
-        """Dropdown under a settings overview that opens one setting's prompt."""
-        picked = await pick_from_list(
-            ctx, title="⚙️ Change a Setting", description="Pick a setting to change it here.",
-            options=[(label, str(i)) for i, (label, _, _) in enumerate(panels)],
-            placeholder="Settings…", multi=False,
-        )
-        if not picked:
-            return
-        await self._run_panel(ctx, panels[int(picked[0])])
-
-    async def _run_panel(self, ctx, panel) -> None:
-        _, method, args = panel
-        # The subcommand's @requires_perm and its usage text both read ctx.command.
-        await self._forward(ctx, getattr(self, method), *args)
+            await ctx.send(embed=emb("⚙️ NSFW", f"Usage: {usage}", C_GREY))
 
     async def _remove_aliases(self, ctx, args, aliases: dict, *, title: str) -> None:
-        """`remove <word>`, or a dropdown of the existing aliases when no word is typed."""
+        """`remove <word …>`, or a dropdown of the existing aliases when no word is typed."""
         if len(args) >= 2:
-            words = [args[1].lower()]
-            if words[0] not in aliases:
-                await ctx.send(embed=emb(title, f"`{words[0]}` is not in the alias list.", C_GREY))
+            words = [w.lower() for w in args[1:]]
+            unknown = [w for w in words if w not in aliases]
+            if unknown:
+                await ctx.send(embed=emb(title, ", ".join(f"`{w}`" for w in unknown) + " not in the alias list.", C_GREY))
                 return
         else:
             if not aliases:
@@ -690,6 +626,24 @@ class SettingsCog(commands.Cog):
             aliases.pop(word, None)
         await save_guild_settings()
         await ctx.send(embed=emb(title, "Removed " + ", ".join(f"`{w}`" for w in words) + ".", C_GREEN))
+
+    async def _alias_editor(self, ctx, command, aliases: dict, *, title: str, entries, add_fields, to_add) -> None:
+        """A bare alias command: the list with Add… / Remove / Clear all.
+        The pick is applied through the command's own typed branch."""
+        action = await list_editor(
+            ctx, title=title,
+            description="\n".join(entries) if entries else "No aliases yet — **Add…** makes one.",
+            entries=[(f"!{w}", w) for w in aliases], add_title=f"{title} — Add", add_fields=add_fields,
+        )
+        if not action:
+            return
+        kind, payload = action
+        if kind == "add":
+            await self._forward(ctx, command, "add", *to_add(payload))
+        elif kind == "remove":
+            await self._forward(ctx, command, "remove", *payload)
+        else:
+            await self._forward(ctx, command, "clear")
 
     async def _confirm_clear(self, ctx, aliases: dict, *, title: str) -> bool:
         if not aliases:
@@ -718,8 +672,9 @@ class SettingsCog(commands.Cog):
         #mentions win; a bare command opens the picker."""
         if args and args[0].lower() == "clear":
             return []
-        if ctx.message.channel_mentions:
-            return list(ctx.message.channel_mentions)
+        named = channels_in(ctx, args)
+        if named:
+            return named
         name = ctx.command.qualified_name
         usage = f"`!{name} #channel{' ...' if multi else ''}` or `!{name} clear`"
         if ctx.guild is None:  # a channel select can't render in a DM
@@ -751,13 +706,13 @@ class SettingsCog(commands.Cog):
         aliases: dict = cfg.setdefault("nsfw_aliases", {})
 
         if not args:
-            await ctx.send(embed=emb(
-                "⚙️ NSFW Aliases",
-                "Usage: `!settings nsfw-alias add|remove <word>` / `list` / `clear`\n"
-                "Aliases let users type `!<alias>` as a shortcut for `!nsfw`. "
-                "The alias name becomes a custom command.",
-                C_GREY,
-            ))
+            await self._alias_editor(
+                ctx, self.settings_nsfw_alias, aliases, title="🔞 NSFW Aliases",
+                entries=[f"`!{k}`" + (f" — tags: `{v.get('tags')}`" if isinstance(v, dict) and v.get("tags") else "") for k, v in aliases.items()],
+                add_fields=[Field("word", "Alias word", placeholder="pics", max_length=32),
+                            Field("tags", "Tags it pre-fills", required=False, placeholder="optional", max_length=200)],
+                to_add=lambda v: (v["word"],) + ((v["tags"],) if v.get("tags") else ()),
+            )
             return
 
         action = args[0].lower()
@@ -820,13 +775,13 @@ class SettingsCog(commands.Cog):
         )
 
         if not args:
-            await ctx.send(embed=emb(
-                "⚙️ Story Aliases",
-                f"{usage_short}\n"
-                "Aliases let users type `!<word>` as a shortcut for `!story` with a custom "
-                "system prompt — e.g. `!settings story-alias add scifi You write hard science fiction…`",
-                C_GREY,
-            ))
+            await self._alias_editor(
+                ctx, self.settings_story_alias, aliases, title="📖 Story Aliases",
+                entries=[f"`!{k}` — {(v[:80] + '…') if isinstance(v, str) and len(v) > 80 else v}" for k, v in aliases.items()],
+                add_fields=[Field("word", "Alias word", placeholder="scifi", max_length=32),
+                            Field("prompt", "System prompt", kind="paragraph", placeholder="You write hard science fiction…", max_length=2000)],
+                to_add=lambda v: (v["word"], v["prompt"]),
+            )
             return
 
         action = args[0].lower()
@@ -1032,13 +987,13 @@ class SettingsCog(commands.Cog):
         aliases: dict = cfg.setdefault("tax_aliases", {})
 
         if not args:
-            await ctx.send(embed=emb(
-                "⚙️ Tax Aliases",
-                "Usage: `!settings tax-aliases add <word> [emoji]` / `remove <word>` / `list` / `clear`\n"
-                "Aliases let users type `!shop <alias> @user` or `!<alias> @user` to apply a tax "
-                "announced as the **<alias> tax**. An optional emoji is shown in the tax message.",
-                C_GREY,
-            ))
+            await self._alias_editor(
+                ctx, self.settings_tax_aliases, aliases, title="🏷️ Tax Aliases",
+                entries=[f"{v} `!{k}`" for k, v in aliases.items()],
+                add_fields=[Field("word", "Alias word", placeholder="rent", max_length=32),
+                            Field("emoji", "Emoji shown in the tax message", required=False, placeholder="💰", max_length=8)],
+                to_add=lambda v: (v["word"],) + ((v["emoji"],) if v.get("emoji") else ()),
+            )
             return
 
         action = args[0].lower()
@@ -1399,60 +1354,57 @@ class SettingsCog(commands.Cog):
 
     # ── Per-guild AI model selectors ──────────────────────────────────────────
 
-    @commands.command(name="model")
-    @requires_perm
-    async def cmd_model(self, ctx: commands.Context, model_name: str = None):
+    async def _model_setting(self, ctx: commands.Context, model_name, *, key: str, title: str, what: str) -> None:
+        """One of the three per-guild model settings. Bare, it offers the
+        models Ollama has installed; a typed name is taken as is."""
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Error", "This command only works in servers.", C_RED))
             return
         cfg = get_guild_cfg(ctx.guild.id)
+        current = cfg.get(key, OLLAMA_MODEL)
         if model_name is None:
-            current = cfg.get("ask_model", OLLAMA_MODEL)
-            await ctx.send(embed=emb("⚙️ Model", f"Current model: `{current}`", C_GREY))
-            return
-        cfg["ask_model"] = model_name
+            models = await list_ollama_models()
+            if not models:
+                await ctx.send(embed=emb(title, f"Current {what}: `{current}`\nOllama didn't answer, so type one: `!{ctx.command.qualified_name} <name>`", C_GREY))
+                return
+            picked = await pick_from_list(
+                ctx, title=title, description=f"Current {what}: `{current}`\nPick one of Ollama's installed models.",
+                options=[(m + (" (current)" if m == current else ""), m) for m in models], placeholder="Models…", multi=False,
+            )
+            if not picked:
+                return
+            model_name = picked[0]
+        cfg[key] = model_name
         await save_guild_settings()
-        await ctx.send(embed=emb("⚙️ Model", f"Switched to `{model_name}`", C_GREY))
+        await ctx.send(embed=emb(title, f"Switched to `{model_name}`", C_GREY))
 
+    @commands.command(name="model")
+    @requires_perm
+    async def cmd_model(self, ctx: commands.Context, model_name: str = None):
+        await self._model_setting(ctx, model_name, key="ask_model", title="⚙️ Model", what="model")
 
     @commands.command(name="roleplaymodel")
     @requires_perm
     async def cmd_roleplaymodel(self, ctx: commands.Context, model_name: str = None):
-        if ctx.guild is None:
-            await ctx.send(embed=emb("❌ Error", "This command only works in servers.", C_RED))
-            return
-        cfg = get_guild_cfg(ctx.guild.id)
-        if model_name is None:
-            current = cfg.get("roleplay_model", OLLAMA_MODEL)
-            await ctx.send(embed=emb("⚙️ Roleplay Model", f"Current roleplay model: `{current}`", C_GREY))
-            return
-        cfg["roleplay_model"] = model_name
-        await save_guild_settings()
-        await ctx.send(embed=emb("⚙️ Roleplay Model", f"Switched to `{model_name}`", C_GREY))
-
+        await self._model_setting(ctx, model_name, key="roleplay_model", title="⚙️ Roleplay Model", what="roleplay model")
 
     @commands.command(name="codingmodel")
     @requires_perm
     async def cmd_codingmodel(self, ctx: commands.Context, model_name: str = None):
-        if ctx.guild is None:
-            await ctx.send(embed=emb("❌ Error", "This command only works in servers.", C_RED))
-            return
-        cfg = get_guild_cfg(ctx.guild.id)
-        if model_name is None:
-            current = cfg.get("coding_model", OLLAMA_MODEL)
-            await ctx.send(embed=emb("⚙️ Coding Model", f"Current coding puzzle model: `{current}`", C_GREY))
-            return
-        cfg["coding_model"] = model_name
-        await save_guild_settings()
-        await ctx.send(embed=emb("⚙️ Coding Model", f"Switched to `{model_name}`", C_GREY))
-
+        await self._model_setting(ctx, model_name, key="coding_model", title="⚙️ Coding Model", what="coding puzzle model")
 
     @commands.command(name="vramtext")
     @requires_perm
     async def cmd_vramtext(self, ctx: commands.Context, *, text: str = None):
+        current = state.bot_settings.get("vram_text", "16GB")
         if text is None:
-            await ctx.send(embed=emb("⚙️ vRAM Text", state.bot_settings.get("vram_text", "16GB"), C_GREY))
-            return
+            values = await open_form(
+                ctx, title="⚙️ vRAM Text", description=f"Shown in `!stats`. Currently: {current}\nUsage: `!vramtext <text>`",
+                fields=[Field("text", "vRAM text", default=current, max_length=100)], button="Change…",
+            )
+            if not values or not values.get("text"):
+                return
+            text = values["text"]
         state.bot_settings["vram_text"] = text
         await save_bot_settings()
         await ctx.send(embed=emb("⚙️ vRAM Text", f"Set to: {text}", C_GREY))
@@ -1462,7 +1414,23 @@ class SettingsCog(commands.Cog):
 
     @commands.command(name="setprompt")
     @requires_perm
-    async def cmd_setprompt(self, ctx: commands.Context, *, prompt: str):
+    async def cmd_setprompt(self, ctx: commands.Context, *, prompt: str = None):
+        current = state.channel_prompts.get(ctx.channel.id)
+        if prompt is None:
+            values = await open_form(
+                ctx, title="⚙️ Channel Prompt",
+                description=f"The AI's system prompt in this channel. Currently: {'custom' if current else 'default'}\n"
+                            "Usage: `!setprompt <prompt>` / `!clearprompt`",
+                fields=[Field("prompt", "System prompt", kind="paragraph", required=False, default=current,
+                              placeholder="Leave empty for the default prompt", max_length=2000)],
+                button="Edit prompt…",
+            )
+            if values is None:
+                return
+            prompt = values.get("prompt", "")
+        if not prompt.strip():  # an emptied form clears, like !clearprompt
+            await self._forward(ctx, self.cmd_clearprompt)
+            return
         state.channel_prompts[ctx.channel.id] = prompt
         await save_channel_prompts(state.channel_prompts)
         await ctx.send(embed=emb("⚙️ Prompt Updated", "System prompt updated for this channel.", C_GREY))

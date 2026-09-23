@@ -903,7 +903,7 @@ class UtilityCog(commands.Cog):
         gid = ctx.guild.id if ctx.guild else 0
         admin_embed = discord.Embed(title="⚙️ Admin Commands", color=C_GOLD)
         admin_embed.add_field(name="🔧 Server Settings", inline=False, value=(
-            "`!settings` — Every server setting, with dropdowns to change them\n"
+            "`!settings` — Every server setting in one panel: pick a category, pick a setting, done. `/settings` opens it just for you\n"
             "`!settings features` — Turn the economy, gambling, savings, assets, shop, artifacts or AI on/off\n"
             "`!settings channel` — Every channel setting\n"
             "`!settings setup` — Re-run the first-run questions"
@@ -931,12 +931,12 @@ class UtilityCog(commands.Cog):
                 admin_embed.add_field(name="🪙 Economy", inline=False, value="\n".join(eco_lines))
             if feature_enabled(gid, "ai"):
                 admin_embed.add_field(name="🤖 AI", inline=False, value=(
-                    "`!model [name]` — View or change the AI model\n"
-                    "`!roleplaymodel [name]` — View or change the roleplay model\n"
-                    "`!codingmodel [name]` — View or change the coding puzzle model"
+                    "`!model [name]` — Change the AI model (bare: a dropdown of installed models)\n"
+                    "`!roleplaymodel [name]` — Change the roleplay model\n"
+                    "`!codingmodel [name]` — Change the coding puzzle model"
                 ))
             admin_embed.add_field(name="⚙️ Config", inline=False, value=(
-                "`!setprompt <prompt>` — Set a custom system prompt for this channel\n"
+                "`!setprompt [prompt]` — Set a custom system prompt for this channel (bare: a form)\n"
                 "`!clearprompt` — Reset this channel's prompt to default\n"
                 "`!godmode [user]` — Toggle free costs on/off (for yourself or a user)\n"
                 "`!setperm @user <server_admin|bot_admin|clear>` — Grant or clear a per-guild permission override for a user\n"
