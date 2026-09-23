@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ollama Bot Feature Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --bg:#F2F4F7;--surface:#FFFFFF;--ink:#16202B;--muted:#5D6B79;--line:#D4DBE3;--line-soft:#E6EBF0;
+  --gold:#B98A1E;--gold-soft:#F6EED7;--out:#C9573A;--in:#1F8A7E;
+  --g-gateway:#6B7A8C;--g-money:#B98A1E;--g-gambling:#B34A5A;--g-games:#4E5FB5;--g-shop:#3C8A57;--g-prog:#2E7FB8;--g-ai:#7E5AB5;--g-idle:#6E8A2E;--g-tools:#7A8594;--g-services:#9C7A1F;--g-storage:#556270;
+  --tint:14%;--dim:.22;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0F151C;--surface:#171F29;--ink:#E7ECF1;--muted:#9AA8B6;--line:#2E3B49;--line-soft:#232E3A;
+  --gold:#E2B54D;--gold-soft:#2C2612;--out:#EE8262;--in:#45BDAE;
+  --g-gateway:#93A2B4;--g-money:#E2B54D;--g-gambling:#E07385;--g-games:#8B9BE8;--g-shop:#63BD82;--g-prog:#5FAEE6;--g-ai:#B08CE6;--g-idle:#A3C24E;--g-tools:#9DA8B6;--g-services:#D9B14B;--g-storage:#8E9BAA;
+  --tint:18%;--dim:.18;
+}}
+:root[data-theme="dark"]{
+  --bg:#0F151C;--surface:#171F29;--ink:#E7ECF1;--muted:#9AA8B6;--line:#2E3B49;--line-soft:#232E3A;
+  --gold:#E2B54D;--gold-soft:#2C2612;--out:#EE8262;--in:#45BDAE;
+  --g-gateway:#93A2B4;--g-money:#E2B54D;--g-gambling:#E07385;--g-games:#8B9BE8;--g-shop:#63BD82;--g-prog:#5FAEE6;--g-ai:#B08CE6;--g-idle:#A3C24E;--g-tools:#9DA8B6;--g-services:#D9B14B;--g-storage:#8E9BAA;
+  --tint:18%;--dim:.18;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:Manrope,"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.5;margin:0;padding-block:28px 48px;padding-inline:20px}
+.wrap{max-width:1500px;margin:0 auto;display:grid;gap:20px}
+header{display:grid;gap:6px;max-width:78ch}
+h1{font-size:28px;font-weight:800;letter-spacing:-.01em;margin:0;text-wrap:balance}
+.lede{color:var(--muted);margin:0}
+.lede b{color:var(--ink);font-weight:600}
+.eyebrow{font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start}
+@media (max-width:1000px){.layout{grid-template-columns:1fr}}
+.mapcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.toolbar{display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line-soft);font-size:13px;color:var(--muted)}
+.toolbar label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.toolbar input{accent-color:var(--gold)}
+.toolbar code,.lede code{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--ink)}
+.key{display:inline-flex;align-items:center;gap:6px}
+.key i{display:inline-block;width:22px;height:0;border-top:2.5px solid currentColor;border-radius:2px}
+.key.out{color:var(--out)}.key.in{color:var(--in)}
+.scroll{overflow-x:auto}
+svg{display:block;width:100%;min-width:1180px;height:auto;font-family:"JetBrains Mono",ui-monospace,Consolas,monospace}
+.lane-label{font-family:Manrope,sans-serif;font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;fill:var(--muted)}
+.cluster{fill:color-mix(in srgb,var(--gc) var(--tint),var(--surface));stroke:color-mix(in srgb,var(--gc) 45%,var(--surface));stroke-width:1}
+.cluster-label{font-family:Manrope,sans-serif;font-size:11.5px;font-weight:600;fill:var(--gc)}
+.node{cursor:pointer}
+.node rect{fill:var(--surface);stroke:var(--gc);stroke-width:1.4;rx:5}
+.node text{fill:var(--ink);font-size:12px;pointer-events:none}
+.node.hub rect{fill:var(--gold-soft);stroke:var(--gold);stroke-width:2.2}
+.node.hub text{font-weight:600;font-size:13.5px}
+.node .sub{fill:var(--muted);font-size:10px;font-weight:400}
+.node.sel rect{stroke-width:2.8;stroke:var(--ink)}
+.node:focus{outline:none}.node:focus rect{stroke-dasharray:3 2}
+.edge{fill:none;stroke:var(--gc,var(--muted));stroke-width:1.1;opacity:.28;marker-end:url(#arr)}
+.edge.out{stroke:var(--out);opacity:1;stroke-width:2;marker-end:url(#arr-out)}
+.edge.in{stroke:var(--in);opacity:1;stroke-width:2;marker-end:url(#arr-in)}
+.map.focused .node:not(.lit){opacity:var(--dim)}
+.map.focused .edge:not(.out):not(.in){opacity:.06}
+.map.focused .cluster,.map.focused .cluster-label,.map.focused .lane-label{opacity:.5}
+.edge.hidden{display:none}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:14px;position:sticky;top:env(safe-area-inset-top,0px)}
+@media (max-width:1000px){.panel{position:static}}
+.panel h2{margin:0;font-size:18px;font-weight:800;font-family:"JetBrains Mono",monospace;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.chip{font-family:Manrope,sans-serif;font-size:11px;font-weight:600;letter-spacing:.04em;padding:2px 8px;border-radius:999px;color:var(--gc);background:color-mix(in srgb,var(--gc) 16%,var(--surface))}
+.panel p{margin:0;color:var(--ink)}
+.panel .files{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--muted);word-break:break-all}
+.cmds{display:flex;flex-wrap:wrap;gap:5px}
+.cmds span{font-family:"JetBrains Mono",monospace;font-size:11.5px;padding:2px 7px;border:1px solid var(--line);border-radius:4px;background:var(--bg)}
+.deps{display:grid;gap:10px}
+.deps h3{margin:0 0 4px;font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.deps h3.out{color:var(--out)}.deps h3.in{color:var(--in)}
+.deps ul{margin:0;padding:0;list-style:none;display:flex;flex-wrap:wrap;gap:5px}
+.deps li button{font:inherit;font-family:"JetBrains Mono",monospace;font-size:11.5px;padding:2px 7px;border:1px solid var(--line);border-radius:4px;background:var(--surface);color:var(--ink);cursor:pointer}
+.deps li button:hover,.deps li button:focus-visible{border-color:var(--ink);outline:none}
+.hint{color:var(--muted);font-size:13px}
+.rank{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:10px}
+.rank h2{margin:0;font-size:16px;font-weight:800}
+.rank table{border-collapse:collapse;width:100%;font-size:13px}
+.rank td{padding:5px 0;border-top:1px solid var(--line-soft);vertical-align:middle}
+.rank td.n{font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums;text-align:right;width:3ch;padding-left:10px}
+.rank td.name{font-family:"JetBrains Mono",monospace;width:16ch}
+.rank td.name button{font:inherit;background:none;border:0;padding:0;color:var(--ink);cursor:pointer;text-decoration:underline dotted var(--muted)}
+.bar{height:8px;border-radius:2px}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.note{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 18px}
+.note h3{margin:0 0 6px;font-size:14px;font-weight:800}
+.note p{margin:0;color:var(--muted);font-size:13px}
+.note p b{color:var(--ink);font-weight:600}
+.note code{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--ink)}
+figcaption{padding:10px 16px;border-top:1px solid var(--line-soft);color:var(--muted);font-size:12.5px}
+figcaption code{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--ink)}
+figure{margin:0}
+@media (prefers-reduced-motion:no-preference){.node,.edge{transition:opacity .15s}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">discord-ollama-bot · src/ · 29 extensions · 460 module imports</div>
+  <h1>Ollama Bot Feature Map</h1>
+  <p class="lede">Every feature is a node; an arrow means <b>imports from</b>. Hover or click a node to see what it depends on (<span style="color:var(--out);font-weight:600">outgoing</span>) and what depends on it (<span style="color:var(--in);font-weight:600">incoming</span>). Edges from the modules everything uses (<code>helpers</code>, <code>config</code>, <code>guild_config</code>, <code>discord_retry</code>, <code>metrics</code>) are left out, and the permission and storage fan-ins sit behind toggles so the feature-level structure stays readable.</p>
+</header>
+
+<div class="layout">
+<figure class="mapcard">
+  <div class="toolbar">
+    <label><input type="checkbox" id="tg-eco" checked> edges to <code>economy</code></label>
+    <label><input type="checkbox" id="tg-perm"> edges to <code>permissions</code></label>
+    <label><input type="checkbox" id="tg-store"> edges to <code>storage</code></label>
+    <span class="key out"><i></i>depends on</span>
+    <span class="key in"><i></i>used by</span>
+  </div>
+  <div class="scroll"><svg id="map" class="map" viewBox="0 0 1360 720" role="img" aria-label="Layered dependency map of the bot: Discord gateway and gates on top, feature cogs in the middle, shared services below with economy as the hub, and storage at the bottom."></svg></div>
+  <figcaption>Layers read top to bottom: Discord events enter through core and the gates, fan out to the feature cogs, which lean on the shared services, which persist through one storage path. <code>economy</code> is the hub: 30 of the 48 nodes import it.</figcaption>
+</figure>
+
+<aside class="panel" id="panel" aria-live="polite">
+  <div class="hint">Hover or click a node on the map. Click empty space to clear.</div>
+</aside>
+</div>
+
+<div class="notes">
+  <div class="rank" id="rank"><h2>Most depended-on nodes</h2></div>
+  <div class="note"><h3>Why economy is the hub</h3><p>Balances live in <code>state.economy["users"]</code> keyed by user id alone, with no guild dimension. Every gambling game, crime, shop purchase, bounty, chess reward, deed and AI-thread charge moves coins through <code>add_balance</code> / <code>deduct_balance</code>, and every result is reported back through <code>record_gambling_event</code>, whose <b>GAMBLING_RESULT_HOOKS</b> is how the <code>!session</code> thread learns its leader. Insurance, savings, the lottery pot, the 5am CT gameplay day and the records system all live in the same module.</p></div>
+  <div class="note"><h3>Two-way ties inside the service layer</h3><p><code>economy</code> imports <code>artifacts</code> and <code>properties</code> for revenue and rate effects, and both import <code>economy</code> back (lazily, inside functions). <code>leveling</code> and <code>level_unlocks</code> do the same. These cycles are tolerated with function-local imports; a new service should follow that pattern rather than a top-level import.</p></div>
+  <div class="note"><h3>The one feature that stays off the money</h3><p><b>Idle RPG</b> has its own per-guild gold and never touches coins: the wallet is global, so paying gold out as coins would multiply across servers. Its only economy import is the gameplay-day clock. Counters, voice pings, Minecraft and status are likewise coin-free server tools.</p></div>
+  <div class="note"><h3>Gates every feature passes through</h3><p><code>core</code> runs a bot-wide permission gate and level gate on every command, and <code>permissions.is_silenced</code> is the single blocklist check that reaction and message handlers must call themselves. That is why 26 nodes import <code>permissions</code>: it is a cross-cutting concern, not a feature dependency.</p></div>
+  <div class="note"><h3>Background loops</h3><p>Eleven <code>tasks.loop</code> timers: the economy minute loop (insurance sweep), dailies refresh, lottery draw check, scratchoff cap reset, session renames, bounty expiry (2 min), leveling XP tick (5 min), graph snapshots (30 min), idle tick, Minecraft poll, status rotation.</p></div>
+  <div class="note"><h3>Message side-effect chain</h3><p><code>events.on_message</code> is the other entry point: XP grant, ragebait, mock, tax, curse, auto-daily, then blackjack / puzzle / hangman input, then AI routing. Bots are excluded from the side effects; reactions bypass it entirely, which is why reaction handlers carry their own blocklist checks.</p></div>
+</div>
+</div>
+
+<script>
+const EDGES = [["admin_cog", "permissions"], ["admin_cog", "storage"], ["ai", "economy"], ["ai", "storage"], ["ai_cog", "ai"], ["ai_cog", "blackjack"], ["ai_cog", "chess"], ["ai_cog", "economy"], ["ai_cog", "game_threads"], ["ai_cog", "hangman"], ["ai_cog", "invites"], ["ai_cog", "permissions"], ["ai_cog", "session"], ["ai_cog", "storage"], ["ai_cog", "ttt_c4"], ["ai_cog", "utility_cog"], ["artifacts", "economy"], ["artifacts", "streaks"], ["assets_cog", "artifacts"], ["assets_cog", "confirm_view"], ["assets_cog", "economy"], ["assets_cog", "level_unlocks"], ["assets_cog", "properties"], ["assets_cog", "storage"], ["blackjack", "economy"], ["blackjack", "permissions"], ["blackjack", "storage"], ["bounty_cog", "confirm_view"], ["bounty_cog", "economy"], ["bounty_cog", "permissions"], ["bounty_cog", "reactions"], ["bounty_cog", "storage"], ["chess", "artifacts"], ["chess", "confirm_view"], ["chess", "economy"], ["chess", "game_threads"], ["chess", "lottery_cog"], ["chess", "permissions"], ["chess", "storage"], ["chess", "ttt_c4"], ["core", "ai"], ["core", "level_unlocks"], ["core", "permissions"], ["counter_cog", "confirm_view"], ["counter_cog", "custom_names"], ["counter_cog", "permissions"], ["counter_cog", "storage"], ["dailies", "storage"], ["dailies_cog", "artifacts"], ["dailies_cog", "dailies"], ["dailies_cog", "economy"], ["dailies_cog", "events"], ["dailies_cog", "flip"], ["dailies_cog", "lottery_cog"], ["dailies_cog", "race"], ["dailies_cog", "reactions"], ["dailies_cog", "scratchoff"], ["dailies_cog", "slots"], ["dailies_cog", "storage"], ["dailies_cog", "streaks"], ["economy", "ai"], ["economy", "artifacts"], ["economy", "properties"], ["economy", "storage"], ["economy_cog", "artifacts"], ["economy_cog", "confirm_view"], ["economy_cog", "economy"], ["economy_cog", "idlerpg"], ["economy_cog", "level_unlocks"], ["economy_cog", "leveling"], ["economy_cog", "permissions"], ["economy_cog", "properties"], ["economy_cog", "reactions"], ["economy_cog", "storage"], ["events", "ai"], ["events", "blackjack"], ["events", "economy"], ["events", "hangman"], ["events", "level_unlocks"], ["events", "leveling"], ["events", "permissions"], ["events", "properties"], ["events", "reactions"], ["events", "session"], ["events", "storage"], ["events", "streaks"], ["flip", "dailies"], ["flip", "economy"], ["flip", "permissions"], ["flip", "play_again"], ["flip", "storage"], ["fun_cog", "ai"], ["fun_cog", "economy"], ["fun_cog", "permissions"], ["fun_cog", "storage"], ["graph_cog", "economy"], ["graph_cog", "permissions"], ["graph_cog", "properties"], ["graph_cog", "storage"], ["hangman", "economy"], ["hangman", "game_threads"], ["hangman", "invites"], ["hangman", "permissions"], ["hangman", "storage"], ["idle_cog", "confirm_view"], ["idle_cog", "economy"], ["idle_cog", "idlerpg"], ["idle_cog", "permissions"], ["idle_cog", "storage"], ["invites", "reactions"], ["level_unlocks", "economy"], ["leveling", "economy"], ["leveling", "storage"], ["leveling_cog", "artifacts"], ["leveling_cog", "economy"], ["leveling_cog", "level_unlocks"], ["leveling_cog", "leveling"], ["lottery_cog", "confirm_view"], ["lottery_cog", "economy"], ["lottery_cog", "status_manager"], ["lottery_cog", "storage"], ["minecraft_cog", "permissions"], ["minecraft_cog", "status_manager"], ["minecraft_cog", "storage"], ["play_again", "permissions"], ["profile_cog", "artifacts"], ["profile_cog", "chess"], ["profile_cog", "economy"], ["profile_cog", "leveling"], ["profile_cog", "properties"], ["profile_cog", "storage"], ["profile_cog", "streaks"], ["properties", "artifacts"], ["properties", "economy"], ["race", "dailies"], ["race", "economy"], ["race", "invites"], ["race", "permissions"], ["race", "play_again"], ["race", "storage"], ["scratchoff", "artifacts"], ["scratchoff", "dailies"], ["scratchoff", "economy"], ["scratchoff", "leveling"], ["scratchoff", "permissions"], ["scratchoff", "status_manager"], ["scratchoff", "storage"], ["session", "blackjack"], ["session", "economy"], ["session", "permissions"], ["session", "storage"], ["settings_cog", "confirm_view"], ["settings_cog", "custom_names"], ["settings_cog", "dailies_cog"], ["settings_cog", "economy"], ["settings_cog", "permissions"], ["settings_cog", "scratchoff"], ["settings_cog", "storage"], ["shop_cog", "ai"], ["shop_cog", "artifacts"], ["shop_cog", "confirm_view"], ["shop_cog", "economy"], ["shop_cog", "level_unlocks"], ["shop_cog", "leveling"], ["shop_cog", "permissions"], ["shop_cog", "storage"], ["slots", "artifacts"], ["slots", "dailies"], ["slots", "economy"], ["slots", "permissions"], ["slots", "play_again"], ["slots", "storage"], ["status_cog", "status_manager"], ["status_cog", "storage"], ["storage", "economy"], ["storage", "permissions"], ["streaks", "storage"], ["ttt_c4", "economy"], ["ttt_c4", "game_threads"], ["ttt_c4", "invites"], ["ttt_c4", "permissions"], ["ttt_c4", "reactions"], ["utility_cog", "ai"], ["utility_cog", "economy"], ["utility_cog", "level_unlocks"], ["utility_cog", "permissions"], ["utility_cog", "reactions"], ["utility_cog", "storage"], ["utility_cog", "streaks"], ["voice_cog", "permissions"], ["voice_cog", "storage"]];
+const G = {
+  gateway:{c:'--g-gateway',n:'Gateway & gates'}, money:{c:'--g-money',n:'Money & crime'}, gambling:{c:'--g-gambling',n:'Gambling'},
+  games:{c:'--g-games',n:'Games'}, shop:{c:'--g-shop',n:'Shop, bounties & real estate'}, prog:{c:'--g-prog',n:'Progression'},
+  ai:{c:'--g-ai',n:'AI & fun'}, idle:{c:'--g-idle',n:'Idle RPG'}, tools:{c:'--g-tools',n:'Server tools & admin'},
+  services:{c:'--g-services',n:'Shared services'}, storage:{c:'--g-storage',n:'Storage'}
+};
+const N = [
+ {id:'core',g:'gateway',x:420,y:44,w:150,files:'src/core.py, bot.py',d:'Builds the Bot, loads the 29 extensions, runs the bot-wide command permission gate and level gate on every command, syncs the slash tree, and retries login.'},
+ {id:'events',g:'gateway',x:600,y:44,w:150,files:'src/events.py',d:'The on_message chain (XP, ragebait, mock, tax, curse, auto-daily, blackjack / puzzle / hangman input, AI routing), on_command_error, on_guild_join and the audit log.'},
+ {id:'permissions',g:'gateway',x:780,y:44,w:150,files:'src/permissions.py, src/command_perms.json',d:'Command tiers from command_perms.json, per-guild !setperm overrides, is_silenced (the single blocklist gate) and channel gates that threads inherit from their parent.'},
+
+ {id:'economy_cog',g:'money',x:24,y:168,w:118,files:'src/cogs/economy_cog.py',cmds:'daily balance leaderboard crime steal mug bankheist jail jailbreak bail savings deposit withdraw pay event records economy admingive',d:'Wallet, savings, crime (with insurance refunds and jail), coin-drop events and the records board. Its minute loop runs the 5am insurance sweep.'},
+
+ {id:'flip',g:'gambling',x:170,y:168,w:104,files:'src/gambling/flip.py',cmds:'flip',d:'House coin flip. Offers to the biggest-loss record and passes channel_id so gambling threads see the result.'},
+ {id:'slots',g:'gambling',x:284,y:168,w:104,files:'src/gambling/slots.py',cmds:'slots',d:'Slot machine with a bot-wide progressive jackpot (state.slot_jackpot).'},
+ {id:'scratchoff',g:'gambling',x:398,y:168,w:104,files:'src/gambling/scratchoff.py',cmds:'scratchoff scratches',d:'Daily-capped scratch tickets (cap raised by an artifact). Grants XP, which is why it imports leveling.'},
+ {id:'blackjack',g:'gambling',x:512,y:168,w:104,files:'src/games/blackjack.py',cmds:'blackjack hit stand',d:'Hands keyed by channel; card input arrives through events.on_message.'},
+ {id:'race',g:'gambling',x:626,y:168,w:104,files:'src/games/race.py',cmds:'race',d:'Bot race against the house, or a multiplayer wagered race joined via invites.'},
+ {id:'session',g:'gambling',x:170,y:212,w:104,files:'src/gambling/session.py',cmds:'session thread',d:'Gambling thread with a command allowlist. Names itself after the table leader through economy.GAMBLING_RESULT_HOOKS; renames run on a sweep.'},
+ {id:'play_again',g:'gambling',x:284,y:212,w:104,files:'src/gambling/play_again.py',d:'Play-again button view shared by flip, slots and race.'},
+ {id:'lottery_cog',g:'gambling',x:398,y:212,w:104,files:'src/cogs/lottery_cog.py',cmds:'lottery',d:'Tickets and the periodic draw. The pot is fed by draining the bot balance; ticket grants come from dailies and chess rewards.'},
+ {id:'dailies_cog',g:'gambling',x:512,y:212,w:104,files:'src/cogs/dailies_cog.py',d:'The pinned dailies embed: reaction buttons stake the daily reward (and scratchoffs, optionally property rent) on flip, slots or the race.'},
+
+ {id:'chess',g:'games',x:760,y:168,w:104,files:'src/games/chess*.py, chess_shop.py, bot_chess_rewards.py',cmds:'chess',d:'PvP and Stockfish bot matches in threads, Elo rewards, post-game analysis, board rendering and a cosmetics shop.'},
+ {id:'ttt_c4',g:'games',x:874,y:168,w:104,files:'src/games/ttt_c4.py',cmds:'ttt c4',d:'Tic-tac-toe and Connect 4, wagered, played by reactions in a game thread.'},
+ {id:'hangman',g:'games',x:760,y:212,w:104,files:'src/games/hangman.py',cmds:'hangman',d:'Hangman in a thread; guesses arrive via events.on_message.'},
+ {id:'game_threads',g:'games',x:874,y:212,w:104,files:'src/games/game_threads.py',d:'One public thread per match: create after escrow, add players, rename and archive last.'},
+
+ {id:'shop_cog',g:'shop',x:1006,y:168,w:104,files:'src/cogs/shop_cog.py, effects_cog.py',cmds:'shop roles effects',d:'Roles, channels, nicknames, mock, ragebait, tax, curse, mute, insurance tiers, buyxp, unoreverse. Edits only bot-created roles and channels.'},
+ {id:'bounty_cog',g:'shop',x:1120,y:168,w:104,files:'src/cogs/bounty_cog.py',cmds:'bounty bounties',d:'Escrowed bounties with reaction claims and DM polls; a 2-minute expiry loop.'},
+ {id:'assets_cog',g:'shop',x:1006,y:212,w:104,files:'src/cogs/assets_cog.py',cmds:'assets',d:'Unique bot-wide deeds: buy, upgrade, rename, list, bank buyback. Rent pays out with the daily claim.'},
+
+ {id:'ai_cog',g:'ai',x:1252,y:168,w:96,files:'src/cogs/ai_cog.py',cmds:'ask story continue tldr roleplay rpg invite stop closeall reverse recap',d:'Ollama chat in threads, stories, roleplay, RPG, recaps and activity invites. !stop also closes every game and gambling thread, hence the many game imports.'},
+ {id:'fun_cog',g:'ai',x:1252,y:212,w:96,files:'src/cogs/fun_cog.py',cmds:'nsfw ew quote searchquote dog cat tips',d:'Quotes, pet pictures, tips and the optional NSFW API.'},
+
+ {id:'leveling_cog',g:'prog',x:24,y:298,w:104,files:'src/cogs/leveling_cog.py',cmds:'lvl levels',d:'Level display and level roles; a 5-minute XP tick.'},
+ {id:'profile_cog',g:'prog',x:138,y:298,w:104,files:'src/cogs/profile_cog.py',cmds:'profile',d:'One card: balance, level, streak, artifacts, deeds, chess stats, idle character.'},
+ {id:'graph_cog',g:'prog',x:252,y:298,w:104,files:'src/cogs/graph_cog.py, graph_series.py',cmds:'graph',d:'Charts of balance and stat history from 30-minute snapshots.'},
+
+ {id:'idle_cog',g:'idle',x:392,y:298,w:104,files:'src/cogs/idle_cog.py',cmds:'idle',d:'Per-guild idle RPG: tick loop, presence, voice and thread listeners, feed threads, standings board. Uses its own gold, never coins.'},
+
+ {id:'settings_cog',g:'tools',x:532,y:298,w:104,files:'src/cogs/settings_cog.py',cmds:'settings settings-channel model setprompt',d:'Per-guild config with button and dropdown prompts; model and prompt selection for the AI.'},
+ {id:'admin_cog',g:'tools',x:646,y:298,w:104,files:'src/cogs/admin_cog.py, moderation_cog.py',cmds:'godmode restart setperm ban globalban audit clear say',d:'Bot-admin and moderation commands; the global tier is for state with no guild dimension.'},
+ {id:'utility_cog',g:'tools',x:760,y:298,w:104,files:'src/cogs/utility_cog.py, puzzle.py',cmds:'help stats game puzzle streaks bugreport featurerequest issue gambler-role saved',d:'Help, stats, puzzles, streak display, bug and feature reports.'},
+ {id:'counter_cog',g:'tools',x:874,y:298,w:104,files:'src/cogs/counter_cog.py',cmds:'count counter',d:'Admin-defined per-guild tallies; !<counter> served as a CommandNotFound fallback.'},
+ {id:'voice_cog',g:'tools',x:988,y:298,w:104,files:'src/cogs/voice_cog.py',cmds:'subscribe',d:'DM pings when a subscribed user joins voice.'},
+ {id:'minecraft_cog',g:'tools',x:1102,y:298,w:104,files:'src/cogs/minecraft_cog.py',cmds:'mc',d:'Bedrock UDP ping, monitor loop and status line.'},
+ {id:'status_cog',g:'tools',x:1216,y:298,w:104,files:'src/cogs/status_cog.py',d:'Rotates the bot presence through status_manager lines.'},
+
+ {id:'dailies',g:'services',x:24,y:452,w:110,files:'src/dailies.py',d:'Daily-claim helpers shared by !daily, the dailies embed and the games it stakes on.'},
+ {id:'streaks',g:'services',x:146,y:452,w:110,files:'src/streaks.py',d:'Command streak tracking and its global record.'},
+ {id:'leveling',g:'services',x:268,y:452,w:110,files:'src/leveling.py',d:'XP grants with rate limits, level roles, global display level. Its leveling row is also the membership proxy for record mirroring.'},
+ {id:'level_unlocks',g:'services',x:390,y:452,w:110,files:'src/level_unlocks.py',d:'Which commands and shop items unlock at which level; backs the level gate in core.'},
+ {id:'economy',g:'services',hub:true,x:540,y:440,w:220,h:58,files:'src/economy.py',d:'The hub. Global balances, savings interest, insurance tiers / refunds / 5am sweep, the lottery pot, gameplay-day and reset timing, crime and gambling records, the biggest-loss record, GAMBLING_RESULT_HOOKS and history snapshots.'},
+ {id:'artifacts',g:'services',x:800,y:452,w:110,files:'src/artifacts.py',d:'Catalog of permanent per-user effects; every effect is read through a helper here.'},
+ {id:'properties',g:'services',x:922,y:452,w:110,files:'src/properties.py',d:'Deed catalog, derived rent, upgrades and bank buyback math.'},
+ {id:'ai',g:'services',x:1044,y:452,w:110,files:'src/ai.py',d:'Ollama client: chat completion, model listing, VRAM, health checks, guild model choice.'},
+ {id:'idlerpg',g:'services',x:1166,y:452,w:110,files:'src/idlerpg.py, idle_map.py',d:'Pure idle-RPG rules (every random draw takes an rng) and the map renderer.'},
+ {id:'reactions',g:'services',x:268,y:512,w:110,files:'src/reactions.py',d:'ReactionCollector and seed_reactions: listen first, seed last.'},
+ {id:'invites',g:'services',x:390,y:512,w:110,files:'src/invites.py',d:'Activity invite embeds for multiplayer games.'},
+ {id:'confirm_view',g:'services',x:800,y:512,w:110,files:'src/confirm_view.py, settings_views.py',d:'Confirm and choice buttons, channel and user pickers.'},
+ {id:'status_manager',g:'services',x:922,y:512,w:110,files:'src/status_manager.py',d:'Presence status lines: jackpot, lottery pot, Minecraft players.'},
+ {id:'custom_names',g:'services',x:1044,y:512,w:110,files:'src/custom_names.py',d:'Name-conflict check for !<word> aliases and counters.'},
+
+ {id:'storage',g:'storage',x:440,y:640,w:420,h:52,files:'src/state.py, src/persistence/*, src/db.py, src/migrations.py, migrations/',d:'In-memory mirror in state.py, written through persistence/* to MariaDB via db.py. Migrations run at boot before any state loads.'},
+];
+const LANES=[['Discord gateway & gates',26],['Features',150],['Shared services',424],['Storage',622]];
+const CLUSTERS=[
+ {g:'gateway',x:404,y:34,w:542,h:60},{g:'money',x:12,y:158,w:142,h:98},{g:'gambling',x:158,y:158,w:584,h:98},
+ {g:'games',x:748,y:158,w:242,h:98},{g:'shop',x:994,y:158,w:242,h:98},{g:'ai',x:1240,y:158,w:120,h:98},
+ {g:'prog',x:12,y:288,w:356,h:50},{g:'idle',x:380,y:288,w:128,h:50},{g:'tools',x:520,y:288,w:812,h:50},
+ {g:'services',x:12,y:432,w:1276,h:126},{g:'storage',x:428,y:630,w:444,h:72},
+];
+const byId=Object.fromEntries(N.map(n=>[n.id,n]));
+N.forEach(n=>{n.h=n.h||30;});
+const svg=document.getElementById('map');
+const ns='http://www.w3.org/2000/svg';
+const el=(t,a={},txt)=>{const e=document.createElementNS(ns,t);for(const k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;return e;};
+const gc=g=>`var(${G[g].c})`;
+const defs=el('defs');
+[['arr','var(--muted)'],['arr-out','var(--out)'],['arr-in','var(--in)']].forEach(([id,c])=>{
+  const m=el('marker',{id,viewBox:'0 0 10 10',refX:'9',refY:'5',markerWidth:'7',markerHeight:'7',orient:'auto-start-reverse'});
+  m.appendChild(el('path',{d:'M0,0 L10,5 L0,10 z',fill:c}));defs.appendChild(m);});
+svg.appendChild(defs);
+LANES.forEach(([t,y],i)=>{ if(i>0) svg.appendChild(el('line',{x1:12,x2:1348,y1:y-12,y2:y-12,stroke:'var(--line-soft)','stroke-width':1}));
+  svg.appendChild(el('text',{x:12,y:y-2,class:'lane-label'},t));});
+CLUSTERS.forEach(c=>{const r=el('rect',{x:c.x,y:c.y,width:c.w,height:c.h,rx:8,class:'cluster'});r.style.setProperty('--gc',gc(c.g));svg.appendChild(r);
+  const t=el('text',{x:c.x+8,y:c.y-4,class:'cluster-label'},G[c.g].n);t.style.setProperty('--gc',gc(c.g));svg.appendChild(t);});
+const eg=el('g');svg.appendChild(eg);
+const edgeEls=[];
+function pathFor(a,b){
+  const ac={x:a.x+a.w/2,y:a.y+a.h/2}, bc={x:b.x+b.w/2,y:b.y+b.h/2};
+  if(Math.abs(ac.y-bc.y)<40){
+    const dir=bc.x>ac.x?1:-1; const sx=dir>0?a.x+a.w:a.x, tx=dir>0?b.x-2:b.x+b.w+2;
+    const k=Math.max(24,Math.abs(tx-sx)/3);
+    return `M${sx},${ac.y} C${sx+dir*k},${ac.y-22} ${tx-dir*k},${bc.y-22} ${tx},${bc.y}`; }
+  const down=bc.y>ac.y;
+  const sy=down?a.y+a.h:a.y, ty=down?b.y-3:b.y+b.h+3;
+  const k=Math.max(30,Math.abs(ty-sy)/2.2)*(down?1:-1);
+  return `M${ac.x},${sy} C${ac.x},${sy+k} ${bc.x},${ty-k} ${bc.x},${ty}`;
+}
+EDGES.forEach(([a,b])=>{const A=byId[a],B=byId[b];if(!A||!B)return;
+  const p=el('path',{d:pathFor(A,B),class:'edge','data-a':a,'data-b':b});
+  p.style.setProperty('--gc',gc(A.g));eg.appendChild(p);edgeEls.push(p);});
+const ng=el('g');svg.appendChild(ng);const nodeEls={};
+N.forEach(n=>{const g=el('g',{class:'node'+(n.hub?' hub':''),tabindex:'0','data-id':n.id,role:'button','aria-label':n.id});
+  g.style.setProperty('--gc',gc(n.g));
+  g.appendChild(el('rect',{x:n.x,y:n.y,width:n.w,height:n.h}));
+  let label=n.id.replace('_cog','');
+  if(n.hub) label='economy.py'; if(n.id==='storage') label='state.py → persistence/* → MariaDB';
+  g.appendChild(el('text',{x:n.x+n.w/2,y:n.y+n.h/2+(n.hub?-2:4),'text-anchor':'middle'},label));
+  if(n.hub) g.appendChild(el('text',{x:n.x+n.w/2,y:n.y+n.h/2+15,'text-anchor':'middle',class:'sub'},'balances · insurance · records · hooks'));
+  ng.appendChild(g);nodeEls[n.id]=g;});
+const T={perm:document.getElementById('tg-perm'),store:document.getElementById('tg-store'),eco:document.getElementById('tg-eco')};
+function applyToggles(){edgeEls.forEach(p=>{const b=p.dataset.b;let hide=false;
+  if(b==='permissions'&&!T.perm.checked)hide=true;if(b==='storage'&&!T.store.checked)hide=true;if(b==='economy'&&!T.eco.checked)hide=true;
+  if(hide&&(p.classList.contains('out')||p.classList.contains('in')))hide=false; p.classList.toggle('hidden',hide);});}
+Object.values(T).forEach(c=>c.addEventListener('change',applyToggles));
+let pinned=null, hovered=null;
+const panel=document.getElementById('panel');
+function focus(id){
+  svg.classList.toggle('focused',!!id);
+  Object.values(nodeEls).forEach(g=>g.classList.remove('lit','sel'));
+  edgeEls.forEach(p=>p.classList.remove('out','in'));
+  if(!id){applyToggles();renderPanel(null);return;}
+  nodeEls[id].classList.add('lit','sel');
+  edgeEls.forEach(p=>{if(p.dataset.a===id){p.classList.add('out');nodeEls[p.dataset.b].classList.add('lit');}
+    else if(p.dataset.b===id){p.classList.add('in');nodeEls[p.dataset.a].classList.add('lit');}});
+  applyToggles();renderPanel(id);}
+function renderPanel(id){ if(!id){panel.innerHTML='<div class="hint">Hover or click a node on the map. Click empty space to clear.</div>';return;}
+  const n=byId[id];const outs=EDGES.filter(e=>e[0]===id).map(e=>e[1]).sort();const ins=EDGES.filter(e=>e[1]===id).map(e=>e[0]).sort();
+  const chip=`<span class="chip" style="--gc:${gc(n.g)}">${G[n.g].n}</span>`;
+  const li=a=>a.map(x=>`<li><button type="button" data-go="${x}">${x}</button></li>`).join('');
+  panel.innerHTML=`<h2>${n.id} ${chip}</h2><div class="files">${n.files||''}</div><p>${n.d}</p>
+   ${n.cmds?'<div class="cmds">'+n.cmds.split(' ').map(c=>'<span>!'+c+'</span>').join('')+'</div>':''}
+   <div class="deps"><div><h3 class="out">Depends on · ${outs.length}</h3>${outs.length?'<ul>'+li(outs)+'</ul>':'<div class="hint">nothing at feature level</div>'}</div>
+   <div><h3 class="in">Used by · ${ins.length}</h3>${ins.length?'<ul>'+li(ins)+'</ul>':'<div class="hint">nothing imports it</div>'}</div></div>`;
+  panel.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{pinned=b.dataset.go;focus(pinned);}));}
+Object.entries(nodeEls).forEach(([id,g])=>{
+  g.addEventListener('mouseenter',()=>{hovered=id;focus(id);});
+  g.addEventListener('mouseleave',()=>{hovered=null;focus(pinned);});
+  g.addEventListener('click',e=>{e.stopPropagation();pinned=(pinned===id)?null:id;focus(pinned||hovered);});
+  g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();pinned=(pinned===id)?null:id;focus(pinned);}});
+  g.addEventListener('focus',()=>focus(id));
+});
+svg.addEventListener('click',()=>{pinned=null;focus(null);});
+applyToggles();
+const cnt={};EDGES.forEach(([a,b])=>{cnt[b]=(cnt[b]||0)+1;});
+const rows=Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,10);const max=rows[0][1];
+const rank=document.getElementById('rank');
+const tbl=document.createElement('table');
+tbl.innerHTML=rows.map(([id,c])=>`<tr><td class="name"><button type="button" data-go="${id}">${id}</button></td><td><div class="bar" style="width:${(c/max*100).toFixed(0)}%;background:${gc(byId[id].g)}"></div></td><td class="n">${c}</td></tr>`).join('');
+rank.appendChild(tbl);const hp=document.createElement('p');hp.className='hint';hp.textContent='Number of feature nodes that import it. Infrastructure modules used by everything are excluded.';rank.appendChild(hp);
+rank.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{pinned=b.dataset.go;focus(pinned);svg.scrollIntoView({behavior:'smooth',block:'center'});}));
+</script>
+</body>
+</html>

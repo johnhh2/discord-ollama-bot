@@ -183,6 +183,8 @@ migrations/            # Numbered SQL migrations — the schema's source of trut
 tests/                 # 1,250+ tests, in-memory DB fake, fake discord module
 ```
 
+For a visual of how the features depend on each other (economy as the hub, the gates every command passes through, which games open threads), open [docs/feature-map.html](docs/feature-map.html) in a browser. It is an interactive dependency map built from the real import graph: hover a node to see what it uses and what uses it.
+
 ## Running the tests
 
 ```bash
