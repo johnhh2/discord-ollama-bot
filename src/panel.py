@@ -1,4 +1,5 @@
-"""A generic panel: one message, a page dropdown, an item dropdown, Close.
+"""A generic panel: one message, a page dropdown, the page's items as a
+dropdown or as buttons, Close.
 
 The settings and shop panels grew their own copies of this shape; a new
 panel subclasses `Panel` instead and fills in `pages`, `items`, `embed` and
@@ -18,6 +19,9 @@ from src.settings_views import FormModal, MAX_OPTIONS, _OwnedView
 
 PANEL_TIMEOUT = 300.0
 DESCRIPTION_MAX = 100  # a select option's description
+BUTTON_ROWS = (1, 2, 3)   # between the page dropdown (row 0) and Close (row 4)
+BUTTONS_PER_ROW = 5
+MAX_BUTTONS = len(BUTTON_ROWS) * BUTTONS_PER_ROW
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -27,6 +31,17 @@ class PanelItem:
     description: str = ""
     fields: tuple = ()    # a form when non-empty
     title: str = ""       # the modal's title
+    short: str = ""       # the button's text (the label otherwise); a leading emoji becomes the button's
+    style: discord.ButtonStyle = discord.ButtonStyle.secondary
+
+
+def _split_emoji(text: str) -> tuple[str | None, str]:
+    """"🛒 Store" → ("🛒", "Store"): a first word with no letter or digit is
+    an emoji, and a button shows it as one rather than as label text."""
+    head, _sep, rest = text.partition(" ")
+    if rest and not any(c.isalnum() for c in head):
+        return head, rest
+    return None, text
 
 
 class _PageSelect(ui.Select):
@@ -51,15 +66,17 @@ class _ItemSelect(ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        panel: Panel = self.view  # type: ignore[assignment]
-        item = self.items[self.values[0]]
-        if item.fields:
-            async def _submitted(submit: discord.Interaction, values: dict):
-                await panel.on_pick(submit, item, values)
-            # A modal is the only reply a pick can open, so no defer first.
-            await interaction.response.send_modal(FormModal(item.title or item.label, item.fields, on_submit=_submitted))
-            return
-        await panel.on_pick(interaction, item, None)
+        await self.view.pick(interaction, self.items[self.values[0]])
+
+
+class _ItemButton(ui.Button):
+    def __init__(self, item: PanelItem, row: int):
+        emoji, text = _split_emoji(item.short or item.label)
+        super().__init__(label=text[:80], emoji=emoji, style=item.style, row=row)
+        self.item = item
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.view.pick(interaction, self.item)
 
 
 class _CloseButton(ui.Button):
@@ -77,6 +94,7 @@ class Panel(_OwnedView):
 
     page_placeholder = "Section…"
     item_placeholder = "Pick…"
+    buttons = False   # the page's items as buttons (at most MAX_BUTTONS) instead of a dropdown
     closed_title = "closed"
     closed_hint = "Run the command again to open the panel."
 
@@ -114,9 +132,23 @@ class Panel(_OwnedView):
             self.page = pages[0][0] if pages else self.page
         self.add_item(_PageSelect(pages, self.page, self.page_placeholder))
         items = self.items()
-        if items:
+        if items and self.buttons:
+            for i, item in enumerate(items[:MAX_BUTTONS]):
+                self.add_item(_ItemButton(item, BUTTON_ROWS[i // BUTTONS_PER_ROW]))
+        elif items:
             self.add_item(_ItemSelect(items, self.item_placeholder))
         self.add_item(_CloseButton())
+
+    async def pick(self, interaction: discord.Interaction, item: PanelItem) -> None:
+        """A dropdown pick or a button press: a form opens its modal and
+        `on_pick` gets the submit; a plain item goes straight to `on_pick`."""
+        if item.fields:
+            async def _submitted(submit: discord.Interaction, values: dict):
+                await self.on_pick(submit, item, values)
+            # A modal is the only reply a pick can open, so no defer first.
+            await interaction.response.send_modal(FormModal(item.title or item.label, item.fields, on_submit=_submitted))
+            return
+        await self.on_pick(interaction, item, None)
 
     async def show(self, interaction: discord.Interaction, page: str) -> None:
         self.page = page

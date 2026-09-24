@@ -1332,25 +1332,33 @@ tables from migrations 0070–0077.
   Whether a channel is a feed thread is read off the characters'
   `thread_id`s, so nothing extra is registered.
 - **Bare `!idle` is a panel** (`src/idle_hub.py`, on `Panel` like
-  `!admin`): one message, redrawn by every pick, deleted on Close. The
-  sheet page is the invoker's sheet with the map attached (or a player's,
-  after "Look at a player"; the road page carries the map too —
-  `MAP_PAGES`, through `Panel.attachments`); the town, road, character,
-  realm, rules and admin pages list what the invoker could do *now* — a
-  market in reach, gold for the tables, a rested character for the hunt
-  board, no journey walking them, the prestige level, the `idle admin`
-  tier — and the reply of the last pick sits in a field under the embed.
-  Every pick is the typed subcommand forwarded with full arguments
+  `!admin`, with `buttons = True`): one message, redrawn by every press,
+  deleted on Close. A page dropdown on top, then the page's actions as
+  **buttons** (three rows of five at most, `MAX_BUTTONS`), then Close. The
+  default page, **Common**, is the invoker's sheet with the map attached
+  (or a player's, after "Look at a player"; the road page carries the map
+  too — `MAP_PAGES`, through `Panel.attachments`) and the everyday buttons
+  under it; town, road, character, realm, rules and admin list what the
+  invoker could do *now* — a market in reach, gold for the tables, a rested
+  character for the hunt board, no journey walking them, the prestige
+  level, the `idle admin` tier — and the reply of the last press sits in a
+  field under the embed. Every item is made by one factory (`_travel`,
+  `_gamble`, …) and may appear on several pages — Common repeats the
+  town's and the road's, Travel shows in a town with no market — so a
+  repeat can't drift. `short` is the button's text (a leading emoji
+  becomes the button's), `label` + `description` the line the page embed
+  prints. **Store** on Common is a `goto` to the town page.
+  Every press is the typed subcommand forwarded with full arguments
   (`shop potion 3`, `travel Denmark`, `align chaotic good`) through
   `forwarding.forward` after `refusal_for` (no level lock — the `shop`
   name would meet the coin shop's), with `ctx.send` captured; the
   subcommands that open a Confirm prompt or fight in the channel (`bless`,
   `prestige`, `leave`, `duel`, `admin remove`, `admin reset`) are `public`,
   because a captured prompt could never be clicked. A new subcommand gets
-  an `IdleItem` in its page's builder and nothing else; if it prompts,
-  mark it `public`. `!idle status` stays the plain card. The bare forms
-  keep their own prompts (`gamble` offers Quarter / Half / All / Other,
-  and re-reads the purse after — the character keeps playing meanwhile).
+  a factory and a place in its page's builder; if it prompts, mark it
+  `public`. `!idle status` stays the plain card. The bare forms keep their
+  own prompts (`gamble` offers Quarter / Half / All / Other, and re-reads
+  the purse after — the character keeps playing meanwhile).
   `!idle rules` / `!idle help` attach a `_HelpView` anyone can use
   — topics answer privately, and **Join** opens a class-name modal that
   runs the same `_join` as the typed command, so a button can never do

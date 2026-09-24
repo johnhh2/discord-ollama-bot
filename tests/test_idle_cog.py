@@ -19,7 +19,8 @@ from src.cogs.settings_cog import SettingsCog
 from src.guild_config import get_guild_cfg
 from src.idle_hub import IdleHub, items_for
 from src.idle_map import MAP_FILENAME
-from src.panel import open_panel
+from src.panel import _ItemButton, _ItemSelect, _PageSelect, open_panel
+from src.settings_views import FormModal
 from src.permissions import get_command_perm
 
 from tests.fakes.discord import FakeCtx, FakeGuild, FakeMember, FakeMessage, FakeTextChannel, FakeThread
@@ -2131,32 +2132,35 @@ def _real_tiers():
 async def test_the_panel_offers_what_its_invoker_could_do_now():
     _real_tiers()
     cog, guild, _idle = _world()
-    # No character: the sheet pitches and offers Join; no town, road or character page; no admin page for a player.
+    # No character: Common pitches and offers Join; no town, road or character page; no admin page for a player.
     hub, _ctx_ = _hub(cog, guild)
-    assert [key for key, _label in hub.pages()] == ["sheet", "realm", "rules"]
+    assert [key for key, _label in hub.pages()] == ["common", "realm", "rules"]
     assert "**Join** below" in hub.embed().description
-    assert _keys("sheet", hub) == ["refresh", "join", "look", "their-items"]
-    assert "bless" not in _keys("realm", hub)
+    assert _keys("common", hub) == ["refresh", "join", "quest", "top"]
+    assert _keys("realm", hub) == ["world", "quest", "top", "look", "their-items"]
 
-    # Out in the wilds with no gold: the town page has only the auto-trade switch.
+    # Out in the wilds with no gold: no store, no tables; the town page offers the road there.
     char = _spawn(ALICE, x=WILDS[0], y=WILDS[1], gold=0)
     hub, _ctx_ = _hub(cog, guild)
-    assert [key for key, _label in hub.pages()] == ["sheet", "town", "road", "character", "realm", "rules"]
+    assert [key for key, _label in hub.pages()] == ["common", "town", "road", "character", "realm", "rules"]
     assert "Lv 0 Bard" in hub.embed().title
-    assert _keys("sheet", hub) == ["refresh", "items", "look", "their-items"]
-    assert _keys("town", hub) == ["auto"]
+    assert _keys("common", hub) == ["refresh", "items", "travel", "quest", "top"]
+    assert _keys("town", hub) == ["travel", "auto"]
     assert _keys("road", hub) == ["travel", "lore"]
-    assert "prestige" not in _keys("character", hub) and "wear" not in _keys("character", hub)
+    assert _keys("character", hub) == ["items", "align", "titles", "duel", "leave"]
     assert "bless" in _keys("realm", hub)
 
     # In a market ring with gold, at the prestige level, on a journey: the store, the tables and the board; no travel.
     char.update(MARKET, gold=50, level=rpg.PRESTIGE_LEVEL, titles=["hoarder"])
     _state.idle_quests[GID] = {**rpg.new_quest(), "members": [ALICE], "description": "walk", "kind": "journey", "p1": [35, 40], "p2": [410, 80]}
     hub, _ctx_ = _hub(cog, guild)
+    assert _keys("common", hub) == ["refresh", "items", "store", "gamble", "hunt", "quest", "top", "prestige"]
     assert _keys("town", hub) == ["shop-find", "shop-potion", "shop-rush", "shop-duel", "shop-class", "gamble", "hunt", "auto"]
     assert _keys("road", hub) == ["lore"]
-    assert _keys("character", hub) == ["align", "titles", "wear", "duel", "prestige", "leave"]
-    assert all(len(item.label) <= 100 and len(item.description) <= 100 for page in ("town", "road", "character") for item in items_for(page, hub))
+    assert _keys("character", hub) == ["items", "align", "titles", "wear", "duel", "prestige", "leave"]
+    for page, _label in hub.pages():
+        for item in items_for(page, hub):
+            assert len(item.label) <= 100 and len(item.description) <= 100 and item.short and len(item.short) <= 40
     # Off the journey but travelling: the road offers Stop. A bag sells, an item sharpens, a full belt isn't restocked;
     # broke, the tables close; on a hunt, the board is gone.
     _state.idle_quests[GID]["members"] = [BOB]
@@ -2172,6 +2176,33 @@ async def test_the_panel_offers_what_its_invoker_could_do_now():
     assert _keys("admin", hub) == ["hog", "gold", "push", "move", "remove", "reset"]
 
 
+async def test_the_actions_are_buttons_under_the_page_dropdown():
+    cog, guild, _idle = _world()
+    _spawn(ALICE, **MARKET, gold=50)
+    hub, ctx = _hub(cog, guild)
+    assert isinstance(hub.children[0], _PageSelect) and not any(isinstance(c, _ItemSelect) for c in hub.children)
+    buttons = [c for c in hub.children if isinstance(c, _ItemButton)]
+    assert [b.item.key for b in buttons] == _keys("common", hub)
+    assert (str(buttons[0].emoji), buttons[0].label, buttons[0].row) == ("🔄", "Refresh", 1)
+    store = next(b for b in buttons if b.item.key == "store")
+    assert store.style is discord.ButtonStyle.primary
+    # Store jumps to the town page, whose buttons are the market's.
+    press = _interaction(guild, ALICE)
+    await store.callback(press)
+    assert hub.page == "town"
+    keys = [c.item.key for c in hub.children if isinstance(c, _ItemButton)]
+    assert keys[:2] == ["shop-find", "shop-potion"] and keys[-1] == "auto"
+    # A form's button opens its modal; the rules page fills three rows.
+    gamble = next(c for c in hub.children if isinstance(c, _ItemButton) and c.item.key == "gamble")
+    press = _interaction(guild, ALICE)
+    await gamble.callback(press)
+    assert isinstance(press.response.send_modal.await_args.args[0], FormModal)
+    hub.page = "rules"
+    hub._build()
+    rows = [c.row for c in hub.children if isinstance(c, _ItemButton)]
+    assert len(rows) == len(_idle_cog._RULES_TOPICS) and set(rows) <= {1, 2, 3} and hub.children[-1].row == 4
+
+
 async def test_the_sheet_page_carries_the_map_and_can_look_at_a_player():
     cog, guild, _idle = _world()
     _spawn(ALICE, **MARKET)
@@ -2182,16 +2213,17 @@ async def test_the_sheet_page_carries_the_map_and_can_look_at_a_player():
     hub.page = "realm"
     assert await hub.attachments() == [] and hub.embed().image.url is None
 
-    # Look at Bob: his sheet, on the sheet page, the map redrawn; Back returns to Alice's own.
-    look = next(item for item in items_for("sheet", hub) if item.key == "look")
+    # Look at Bob: his sheet, back on Common, the map redrawn; My sheet returns to Alice's own.
+    look = next(item for item in items_for("realm", hub) if item.key == "look")
     press = _interaction(guild, ALICE)
     await hub.on_pick(press, look, {"user": [BOB]})
-    assert hub.page == "sheet" and hub.target == BOB and "Lv 3 Bard" in hub.embed().title
+    assert hub.page == "common" and hub.target == BOB and "Lv 3 Bard" in hub.embed().title
     kwargs = press.edit_original_response.await_args.kwargs
     assert [f.filename for f in kwargs["attachments"]] == [MAP_FILENAME] and kwargs["view"] is hub
-    back = next(item for item in items_for("sheet", hub) if item.key == "own")
+    assert _keys("common", hub)[0] == "own"
+    back = next(item for item in items_for("common", hub) if item.key == "own")
     await hub.on_pick(_interaction(guild, ALICE), back, None)
-    assert hub.target == ALICE and "own" not in _keys("sheet", hub)
+    assert hub.target == ALICE and "own" not in _keys("common", hub)
     # Someone with no character is said so, not drawn.
     await hub.on_pick(_interaction(guild, ALICE), look, {"user": [ADMIN]})
     assert hub.embed().title == "❌ No Character"
