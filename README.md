@@ -8,7 +8,7 @@
 
 A Discord bot that runs entirely on your own hardware: chat with a local [Ollama](https://ollama.com) LLM — no API keys, no per-token costs, no data leaving your network — plus a full virtual economy, casino games, a chess engine that plays like a human, a shop that spends coins on real Discord effects, and a tiered permission system. Backed by MariaDB, deployed with Docker.
 
-**90+ commands · 1,250+ tests · more test code than source code · zero external AI services**
+**110+ commands · 2,500+ tests · more test code than source code · zero external AI services**
 
 <!-- TODO: demo GIF or screenshot here — a short clip of !ask streaming + a !slots spin sells this better than any text. -->
 
@@ -25,7 +25,7 @@ flowchart LR
     end
     subgraph "Your hardware"
         subgraph "Bot container (read-only, all caps dropped)"
-            B[discord.py bot<br/>90+ commands]
+            B[discord.py bot<br/>110+ commands]
             H["/healthz + /metrics<br/>(loopback only)"]
         end
         O[Ollama<br/>local LLM on GPU]
@@ -63,14 +63,14 @@ A bare `!chessbot` shows your ladder instead: this lottery's free tickets, your 
 
 Ratings are **Lichess-scale** (Maia is trained on Lichess games at each rating). If you think in chess.com terms, pick ~200–400 higher than your chess.com rating below 2000; the two scales converge above that. The 2000+ tier is approximate — Stockfish's built-in limiter is engine-pool-calibrated — so read those labels as "roughly this strong". Post-game analysis estimates use the same scale.
 
-PvP works too, with SAN/UCI move input, board rendering, threat analysis (`!chessthreats`), and archived games (`!chess view <id>`).
+PvP works too, with SAN/UCI move input, board rendering, threat analysis (`!chessthreats`), and archived games (`!chess view <id>`). `!chess shop` sells piece sets and board themes for the Elo you've beaten rather than coins (the priciest need a win over an 1100+ bot); `!chess <name>` equips one.
 
 ### 🎰 Economy & casino
 - `!daily` rewards with streaks (5am CT reset, DST-aware), `!savings` with compounding interest, `!pay`, `!graph` for balance history
 - `!assets` real estate — 36 unique bot-wide properties (10k–2m 🪙) paying 1.1% of their price per day, banked automatically with your daily claim, with a cross-server player marketplace (`!assets sell <name> <price>`; lowball listings get an instant 75%-of-value bank buyback offer), one named upgrade per property (+35–75% revenue), and renameable businesses (`!assets rename`)
 - `!slots` with a progressive jackpot, `!blackjack`, `!flip`, `!scratchoff`, and a monthly `!lottery` drawn on the 1st of each month at 6pm CT (one 1,000-coin ticket per user per server per day — bought from the dailies-channel 🎟️ button or a `!lottery` confirm prompt; sales close from 5pm CT on draw day until the next 5am reset, so a fresh lottery's first tickets sell the following morning — plus up to 2 free tickets per lottery for beating a 600+ Elo chess bot — a global monthly cap shared across servers that resets with each draw)
 - `!session` opens a gambling thread off the game channel — anyone can play, only `!slots`, `!flip`, `!scratchoff`, `!blackjack` and `!race` work inside (listed at the top of the thread), and the thread renames itself after the biggest winner ("Alice gained 1,200 coins") or, if nobody is up, the biggest loser (updated at most once every 5 minutes — Discord rate-limits thread renames); the owner or an admin closes it with `!stop`
-- Crime layer: `!steal`, `!mug`, `!bankheist` co-op heists, `!jail` / `!bail` / `!jailbreak`, and three-tier insurance (`!shop insurance`) that refunds 50/75/100% of what crime takes from you (up to 100k/200k/400k per robbery, for 1k/3k/6k a day) — the thief still gets paid; the insurer covers you
+- Crime layer: `!steal`, `!mug`, `!bankheist` co-op heists, `!jail` / `!bail` / `!jailbreak`, and three-tier insurance (`!shop insurance`) that refunds 50/75/100% of what crime takes from you (up to 100k/200k/400k per robbery, for 1k/3k/6k a day; `!shop insurance sub` renews it daily at the 5am reset) — the thief still gets paid; the insurer covers you
 - `!bounty <coins> [duration] <condition>` — escrowed rewards anyone can claim, with author accept/reject via DM and a community-vote contest path
 - `!leaderboard`, `!records`, `!economy` server overview
 - Optional dailies channel (`!settings channel dailies`) — a self-cleaning channel with a single "Claim your dailies" embed; reacting 🗓️ instantly claims the daily reward and all scratchoffs (🪙 also coin-flips the whole claim — daily reward + scratchoff winnings — 🎰 bets it on slots and 🏇 races the bot for it; 🎟️ only buys the day's remaining half-price lottery tickets, without claiming), results auto-delete after 5 minutes (results with 10k+ won or lost stay until the reset), and the claim reactions reset at 5am CT
@@ -78,18 +78,20 @@ PvP works too, with SAN/UCI move input, board rendering, threat analysis (`!ches
 ### 🛒 Shop with real consequences
 Coins buy actual Discord effects: nicknames, role creation/colors, channel renames and locks, mutes, mock/curse/ragebait text effects, taxing another user, UNO-reverse cards, and insurance against all of the above (crime is refunded rather than blocked — every purchase prompt offers all three tiers). Prices are centrally tuned in [src/config.py](src/config.py).
 
+`!artifacts` sells twelve permanent upgrades unlocked by level (5 through 50) and owned across every server: a bail discount, a steal boost, an extra daily scratchoff, a higher savings rate, a sixth property deed, an NPC heist partner, and more.
+
 ### 🎮 Games & progression
 - `!hangman` (~7.5k-word list, rarity-weighted payouts), `!ttt`, `!c4`, `!race` (multiplayer with a shared pot, or `!race @Bot [amount]` — a coin flip with a track, playable with no coins at all), `!puzzle`
 - Chess, hangman, tic-tac-toe and Connect 4 each play out in their own thread under the channel they were started from; the thread is renamed with the result (`👑 X won against Y`) and closed when the game ends
-- Per-guild XP and levels (`!lvl`, `!levels`) with commands gated behind level thresholds
-- An idle RPG (`!idle join <class>`) in the spirit of the IRC classic: characters level up on a timer while their player is online, and there is nothing else to do. Characters wander a shared 500×500 map (`!idle map`) — or walk to a town on purpose with `!idle travel` — fight whoever they bump into and the monsters of whatever region they're crossing (after sizzlorox's Idle-RPG-Bot), and walk it on journey quests. The game has its own gold — earned by playing, spent at town markets (`!idle shop` near a town, health potions included — drunk on their own when a fight goes badly; characters also trade on their own when they walk into one), bet on duels and at the towns' gambling tables (after sizzlorox's bot: characters gamble on their own in town, capped per visit), and never exchangeable with the bot's coins. Items, battles, godsends, quests, nine alignments, a daily duel and prestige all happen on their own; each character's story unfolds in its own thread. Every subcommand also works bare (`!map`, `!travel`, `!status`, `!store` for the market), the status card carries buttons for whatever you can do right now, the help card a topic menu and a Join button, and a character's feed thread accepts only the game's commands. Enabled per server with `!settings channel idle #channel`; `!settings idle-enroll on` quietly gives every member with a bot role a character to claim later, without a single ping
+- Per-guild XP and levels (`!lvl`, `!levels`, `!profile`) with commands unlocked as you climb: savings at 3, roles at 5, `!steal` at 10, `!mug` at 13, `!bankheist` at 15, channels at 20, the pricier property tiers at 15–25
+- An idle RPG (`!idle join <class>`) in the spirit of the IRC classic: characters level up on a timer while their player is online, and there is nothing else to do. Characters wander a shared 500×500 map (`!idle map`) — or walk to a town on purpose with `!idle travel` — fight whoever they bump into and the monsters of whatever region they're crossing (after sizzlorox's Idle-RPG-Bot), and walk it on journey quests. The game has its own gold — earned by playing, spent at town markets (`!idle shop` near a town, health potions included — drunk on their own when a fight goes badly; characters also trade on their own when they walk into one), bet on duels and at the towns' gambling tables (after sizzlorox's bot: characters gamble on their own in town, capped per visit), and never exchangeable with the bot's coins. Items, battles, godsends, quests, nine alignments, a daily duel and prestige all happen on their own; each character's story unfolds in its own thread. Every subcommand also works bare (`!map`, `!travel`, `!status`, `!store` for the market), the status card carries buttons for whatever you can do right now, the help card a topic menu and a Join button, and a character's feed thread accepts only the game's commands. Enabled per server with `!settings channel idle #channel`; `!settings idle-enroll on` quietly gives every member with a bot role a character to claim later, without a single ping. Every few days a world event rolls in — a blood moon, an invasion, a storm over one region, a power hour — and `!idle bless` spends one player's gold on an hour's speed for everyone, the game's one cooperative act. Towns hand out hunts; kills fill a loot bag that a market empties and a death loses; titles, once earned, are kept. Sharing a voice channel with someone runs you 10% faster. A pinned standings board and `!lb idle` rank the server, `!settings idle-pace` picks the lively default or the IRC classic's odds, and `!idle rules` / `!idle lore` explain the world
 
 ### ⛏️ Minecraft server status
 - `!mc` (aliases `!minecraft`, `!mcstatus`) — live Bedrock server status over a RakNet UDP ping: player count, latency, version, server name, gamemode
 - Background monitor posts up/down alerts, player-count notices ("a player joined — 3/10 online") and server update alerts ("1.21.51 → 1.21.60"; a downgrade is announced as a rollback) to a channel set with `!settings channel minecraft`. An update is a restart, so the update alert stands in for the back-online notice rather than following it. The last version seen is persisted, so an update that lands while the bot is down is still announced on the first poll after boot
 - The bot's presence rotates through active status lines: the Minecraft player count (shown while at least one player is online), today's scratchoff total (shown once more than 3 cards have been scratched since the 5am CT reset), and today's lottery ticket sales (shown once at least one ticket has been bought)
 - `!graph minecraft` — server ping over the last 2 weeks as an averaged line with a min/max band: hourly resolution from the ~60s polls of the last 7 days, daily avg/min/max rollups beyond that (kept ~10 years); downtime shows as dips to 0. Daily bars overlay the chart with each day's peak concurrent players, join count, and total player-hours (count-based — the Bedrock pong never carries names; also kept ~10 years)
-- Works against any reachable Bedrock endpoint (e.g. an [itzg/minecraft-bedrock-server](https://github.com/itzg/docker-minecraft-bedrock-server) container on the same host) — no docker socket required
+- Works against any reachable Bedrock endpoint (e.g. an [itzg/minecraft-bedrock-server](https://github.com/itzg/docker-minecraft-bedrock-server) container on the same host) — status needs only the UDP ping, no docker socket; only the block shop below needs the server console
 - **Block shop** (`!mc shop`, off by default — `!settings minecraft-shop on` per server, plus `MC_CONSOLE_HOST` / `MC_CONSOLE_PASSWORD` pointing at the itzg image's SSH remote console): sell ores and building blocks straight out of your in-game inventory for 🟫 **blocks**, the shop's own currency, and spend them on decorative blocks delivered into your inventory. Blocks can't be bought with coins, paid or won — selling is the only way in. The sell side takes nothing a farm makes (no iron, gold, wool or generator stone), the buy side sells nothing that turns back into a resource (no wood, ingot blocks or hay), and everything that's both bought and sold pays back half its price, so crafting can't mint blocks. Coal, copper, lapis, quartz, diamond and netherite (and their ores) sell at fixed prices; the rest follows verzion's economy price guide's method. `!mc link <gamertag>` sends a code in-game (you must be online) and `!mc verify <code>` claims it; `!mc blocks` shows the purse
 
 ### 🛡️ Moderation & administration
@@ -102,6 +104,7 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 - More clicks in place of syntax: `!graph` is a panel of every graph; `!records` and `!leaderboard` switch scope with buttons; your `!wallet` and `!savings` cards carry Deposit / Withdraw (and Pay / Shop); and a bare `!chess view`, `!chess shop`, `!puzzle`, `!issue`, `!featurerequest`, `!ask`, `!story` or `!roleplay` opens a picker or a form instead of printing its usage
 - Full audit log of admin actions; Docker-aware `!restart`; `!settings` (or `/settings`, which only the admin sees) for per-guild configuration — one panel with a category dropdown and a setting dropdown: toggles flip on the spot, everything else opens a form (channel pickers, text boxes, a dropdown of installed models), and nothing is typed after the command. Every channel setting also lives under `!settings channel …`, and any settings command run bare (`!settings channel game`, `!settings shop`, `!settings tax-aliases`) opens its own dropdown, toggle buttons, pick-list or Add/Remove editor instead of needing the full syntax
 - Built-in issue tracking: users file `!bugreport` / `!featurerequest` from inside Discord
+- `!subscribe #voice-channel` DMs you when that channel goes from empty to active
 - Custom per-server counters: `!counter add afk Times gone afk` (pick user-required or optional, number or time), then `!afk @user 1` to count and `!afk @user` / `!afk` to read — `!count afk …` always works, the `!afk` shortcut whenever no real command has that name. Admins write by default; `!counter addperm @user` trusts anyone else
 
 ## Quick start (Docker)
@@ -146,12 +149,14 @@ All configuration is via environment variables — see [.env.example](.env.examp
 | `MC_SERVER_PORT` | `19132` | Bedrock UDP port |
 | `MC_POLL_SECONDS` | `60` | Monitor poll interval (up/down alerts, player-count notices, presence) |
 | `MC_SERVER_SHOW_IP` | `false` | Show the server address in `!mc` embeds and monitor alerts (hidden by default) |
+| `MC_CONSOLE_HOST` / `MC_CONSOLE_PORT` / `MC_CONSOLE_PASSWORD` | _(disabled)_ / `2222` / — | The Bedrock container's SSH remote console (`ENABLE_SSH=true` on the itzg image; the password is its `RCON_PASSWORD`). Enables the block shop, which each server still has to switch on |
+| `NSFW_API_URL` / `NSFW_API_KEY` / `NSFW_API_USER_ID` | _(disabled)_ | Credentials for an NSFW image API, enabling `!nsfw`; servers allow it, restrict it to channels or ban tags with `!settings nsfw` |
 
 ## Engineering highlights
 
 The part of the README for people reading this as a portfolio piece.
 
-**More test code than source code.** ~23k lines of source, ~24k lines of tests, 1,250+ test functions. The suite runs against an in-memory SQLite double that speaks the production MariaDB dialect through a translation layer ([tests/fakes/db.py](tests/fakes/db.py)) and a fake `discord` module — so `pytest` needs no token, no database server, and no Ollama, and finishes fast enough to run on every commit.
+**More test code than source code.** ~44k lines of source, ~48k lines of tests, 2,500+ test functions. The suite runs against an in-memory SQLite double that speaks the production MariaDB dialect through a translation layer ([tests/fakes/db.py](tests/fakes/db.py)) and a fake `discord` module — so `pytest` needs no token, no database server, and no Ollama, and finishes fast enough to run on every commit.
 
 **Boot-time schema migrations.** Numbered SQL files with per-file sha256 checksums; the runner refuses to boot on gaps, duplicates, or edited history ([src/migrations.py](src/migrations.py)). The test fake builds its schema from the same migration files, so a migration that only works on MariaDB fails in CI before it ever reaches production. Optional paired `.down.sql` files give operators explicit reverts.
 
@@ -160,6 +165,8 @@ The part of the README for people reading this as a portfolio piece.
 **Defense in depth in CI.** Every push runs seven gates: `ruff` lint, `gitleaks` full-history secret scan, `bandit` security lint, `pip-audit --strict` against a hash-pinned lockfile, the full test suite, a container build, and a Trivy image scan ([ci.yml](.github/workflows/ci.yml)).
 
 **Hardened runtime.** The container runs with a read-only filesystem, all capabilities dropped, `no-new-privileges`, and a 512 MB memory cap. A loopback-only `/healthz` distinguishes hard dependencies (Discord, DB → 503) from soft ones (Ollama → 200 "degraded"), and `/metrics` exports Prometheus text format.
+
+**Discord's own outages are a hiccup, not a bug.** Every reply and DM retries a 503 from Discord's edge on a short schedule ([src/discord_retry.py](src/discord_retry.py)); one that survives the retries logs a warning and asks the user to try again instead of filing a bug report against whatever command was replying.
 
 **Real production deploys.** Push to `main` → GitHub Actions builds and pushes to GHCR → a Portainer webhook on a Synology NAS pulls and restarts the stack.
 
@@ -183,11 +190,13 @@ src/
 ├── health.py          # /healthz + /metrics (loopback-only aiohttp server)
 ├── events.py          # Message dispatch, XP, text-effect handlers
 ├── state.py           # In-memory caches loaded at startup
-├── cogs/              # 15 command groups (admin, ai, economy, shop, minecraft, …)
+├── idlerpg.py         # Idle RPG rules as pure functions (every roll takes an rng)
+├── panel.py, *_hub.py # Button panels; every click forwards to the typed command
+├── cogs/              # 21 command groups (admin, ai, economy, shop, idle, minecraft, …)
 ├── games/             # Chess (+ engines), blackjack, hangman, ttt/c4, race
 └── gambling/          # Slots, flip, scratchoff
 migrations/            # Numbered SQL migrations — the schema's source of truth
-tests/                 # 1,250+ tests, in-memory DB fake, fake discord module
+tests/                 # 2,500+ tests, in-memory DB fake, fake discord module
 ```
 
 For a visual of how the features depend on each other (economy as the hub, the gates every command passes through, which games open threads), open [docs/feature-map.html](docs/feature-map.html) in a browser. It is an interactive dependency map built from the real import graph: hover a node to see what it uses and what uses it.
