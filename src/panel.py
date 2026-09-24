@@ -99,6 +99,13 @@ class Panel(_OwnedView):
     async def on_pick(self, interaction: discord.Interaction, item: PanelItem, values: dict | None) -> None:
         raise NotImplementedError
 
+    async def attachments(self) -> "list[discord.File] | None":
+        """The message's files, rebuilt on every render (a `File` is spent
+        by one send). None leaves the message's attachments alone; a list
+        replaces them, `[]` strips them — the idle panel carries the map on
+        some pages only."""
+        return None
+
     # ── mechanics ──
     def _build(self) -> None:
         self.clear_items()
@@ -117,8 +124,10 @@ class Panel(_OwnedView):
 
     async def refresh(self, interaction: discord.Interaction) -> None:
         self._build()
+        files = await self.attachments()
+        extra = {"attachments": files} if files is not None else {}
         try:
-            await interaction.edit_original_response(embed=self.embed(), view=self)
+            await interaction.edit_original_response(embed=self.embed(), view=self, **extra)
         except discord.HTTPException:
             pass  # the panel may be gone (closed, timed out); the action stands
 
@@ -126,6 +135,9 @@ class Panel(_OwnedView):
 async def open_panel(ctx, panel: Panel, *, ephemeral: bool = False) -> None:
     """Post the panel and wait it out. The message is deleted when it closes."""
     kwargs = {"ephemeral": True} if ephemeral else {}
+    files = await panel.attachments()
+    if files:
+        kwargs["files"] = files
     msg = await ctx.send(embed=panel.embed(), view=panel, **kwargs)
     await panel.wait()
     try:

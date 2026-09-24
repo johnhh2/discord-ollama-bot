@@ -851,6 +851,11 @@ command, so gates, side effects and replies can't drift. The pieces live in
   per-user breakouts for bot admins. Picks forward to the `!graph <name>`
   subcommands, which keep working typed (and are the only way to combine
   graphs).
+- **`!idle` is a panel** (`src/idle_hub.py`, on `Panel`): the sheet and
+  the map on top, a page per part of the game, every pick the typed
+  subcommand with its reply captured into the panel — see "Idle RPG" for
+  the rules. It is the one panel with a file attached: `Panel.attachments`
+  returns the files a render carries (`None` leaves the message's alone).
 - **`!records` and `!leaderboard` carry scope buttons** (`src/scope_view.py`,
   `ScopeView`): Server / Global (and Idle RPG on the leaderboard), anyone
   may press, the current scope's button is disabled. The records board
@@ -1326,23 +1331,32 @@ tables from migrations 0070–0077.
   gate and raising `IdleThreadOnly` (swallowed by `on_command_error`).
   Whether a channel is a feed thread is read off the characters'
   `thread_id`s, so nothing extra is registered.
-- **The cards carry their buttons.** `!idle` / `!idle status` attach an
-  `_ActionView` (invoker-only: store, gamble, travel and prestige spend
-  that player's gold or clock) with a button per action in `_ACTIONS`.
-  A press runs the subcommand *bare*, so every subcommand's bare form must
-  be a prompt, never a usage line — `gamble` offers Quarter / Half / All /
-  Other amount (`confirm_choice` + `open_form`) and re-reads the purse
-  after the prompt, since the character keeps playing meanwhile
-  that `_available` says the invoker could take right now — a market in
-  reach, gold for the tables, no journey walking them, a running quest,
-  the prestige level; the ladder always. A press runs the subcommand
-  callback bare with the card's ctx, so a button and its typed form can't
-  drift. `!idle rules` / `!idle help` attach a `_HelpView` anyone can use
+- **Bare `!idle` is a panel** (`src/idle_hub.py`, on `Panel` like
+  `!admin`): one message, redrawn by every pick, deleted on Close. The
+  sheet page is the invoker's sheet with the map attached (or a player's,
+  after "Look at a player"; the road page carries the map too —
+  `MAP_PAGES`, through `Panel.attachments`); the town, road, character,
+  realm, rules and admin pages list what the invoker could do *now* — a
+  market in reach, gold for the tables, a rested character for the hunt
+  board, no journey walking them, the prestige level, the `idle admin`
+  tier — and the reply of the last pick sits in a field under the embed.
+  Every pick is the typed subcommand forwarded with full arguments
+  (`shop potion 3`, `travel Denmark`, `align chaotic good`) through
+  `forwarding.forward` after `refusal_for` (no level lock — the `shop`
+  name would meet the coin shop's), with `ctx.send` captured; the
+  subcommands that open a Confirm prompt or fight in the channel (`bless`,
+  `prestige`, `leave`, `duel`, `admin remove`, `admin reset`) are `public`,
+  because a captured prompt could never be clicked. A new subcommand gets
+  an `IdleItem` in its page's builder and nothing else; if it prompts,
+  mark it `public`. `!idle status` stays the plain card. The bare forms
+  keep their own prompts (`gamble` offers Quarter / Half / All / Other,
+  and re-reads the purse after — the character keeps playing meanwhile).
+  `!idle rules` / `!idle help` attach a `_HelpView` anyone can use
   — topics answer privately, and **Join** opens a class-name modal that
   runs the same `_join` as the typed command, so a button can never do
   what `!idle join` can't. `_join` takes a `send(embed, error=)` callable:
   the typed form ignores the flag, the modal answers refusals ephemerally.
-  Menus time out (`MENU_TIMEOUT`, `HELP_TIMEOUT`) and strip themselves.
+  The help menu times out (`HELP_TIMEOUT`) and strips itself.
 - **`!idle map` is the picture alone**, no embed — an embed would shrink
   it to the embed's width. The sheet, `!idle quest` and travel keep the
   map as their embed image.

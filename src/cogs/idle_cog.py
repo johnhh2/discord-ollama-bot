@@ -38,11 +38,13 @@ from src import state
 from src.confirm_view import confirm_choice, confirm_prompt
 from src.economy import _ct_now, _ct_today, next_daily_reset_ts
 from src.guild_config import get_guild_cfg
+from src.idle_hub import IdleHub
 from src.idle_map import MAP_FILENAME, render_map
 from src.helpers import (
     emb, C_BLUE, C_GOLD, C_GREEN, C_GREY, C_RED,
     format_duration, parse_duration, parse_int_amount,
 )
+from src.panel import open_panel
 from src.permissions import _wrong_channel_reply, is_silenced
 from src.settings_views import Field, open_form, pick_from_list
 
@@ -73,7 +75,6 @@ NOT_YOURS = "Not your prompt."
 WAGER_ACCEPT_SECS = 120.0
 DUEL_ROUND_SECS = 3.0   # a beat between rounds, so a duel reads as a fight
 NO_MENTIONS = discord.AllowedMentions.none()
-MENU_TIMEOUT = 300.0     # the status card's action menu
 HELP_TIMEOUT = 900.0     # the help card's topic menu and Join button
 
 # `!idle <sub>` also answers to a bare `!<sub>`. Every subcommand but three:
@@ -110,18 +111,6 @@ FEED_THREAD_COMMANDS = frozenset({"idle", "help", *(name for name, _attr, _alias
 FEED_THREAD_ONLY = (
     "Only the idle game plays in a feed thread — `!idle …`, or `!status`, `!map`, `!travel` and the rest bare. "
     "Everything else goes in the channel."
-)
-# The sheet's buttons: (label, emoji, subcommand attribute). Each is shown
-# only while the invoker could use it (`_available`), so the card reads as
-# what you can do now, not a command list.
-_ACTIONS = (
-    ("Store", "🛒", "cmd_shop"),
-    ("Gamble", "🎲", "cmd_gamble"),
-    ("Travel", "🧭", "cmd_travel"),
-    ("Hunt", "🏹", "cmd_hunt"),
-    ("Quest", "📜", "cmd_quest"),
-    ("Top", "🏆", "cmd_top"),
-    ("Prestige", "★", "cmd_prestige"),
 )
 
 
@@ -250,11 +239,10 @@ def _off_embed() -> discord.Embed:
     )
 
 
-# ── the cards' components ────────────────────────────────────────────────
-# A menu on a card the command already sent, so a player can move on from
-# the sheet or the help without typing the next command. Picks run the
-# subcommand's callback with the card's ctx, so a pick and its typed form
-# can't drift. The card keeps its components until the view times out.
+# ── the help card's components ───────────────────────────────────────────
+# A menu on the card the command already sent. The card keeps its
+# components until the view times out. (Playing goes through the `!idle`
+# panel, src/idle_hub.py; this card is the one players pass on.)
 
 class _CardView(ui.View):
     def __init__(self, cog, timeout: float):
@@ -269,35 +257,6 @@ class _CardView(ui.View):
             await self.message.edit(view=None)
         except discord.HTTPException:
             pass  # cosmetic — the card stays, the menu is dead either way
-
-
-class _ActionButton(ui.Button):
-    def __init__(self, label: str, emoji: str, action: str):
-        super().__init__(label=label, emoji=emoji, style=discord.ButtonStyle.secondary)
-        self.action = action
-
-    async def callback(self, interaction: discord.Interaction):
-        view: _ActionView = self.view  # type: ignore[assignment]
-        await interaction.response.defer()
-        await view.cog._act(view.ctx, self.action)
-
-
-class _ActionView(_CardView):
-    """The sheet's buttons. Store, gamble, travel and prestige act on the
-    invoker's character, so only the invoker may press them."""
-
-    def __init__(self, cog, ctx, actions):
-        super().__init__(cog, MENU_TIMEOUT)
-        self.ctx = ctx
-        for label, emoji, action in _ACTIONS:
-            if action in actions:
-                self.add_item(_ActionButton(label, emoji, action))
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.ctx.author.id:
-            return True
-        await interaction.response.send_message(NOT_YOURS, ephemeral=True)
-        return False
 
 
 class _TopicSelect(ui.Select):
@@ -436,35 +395,6 @@ class IdleCog(commands.Cog):
             return False
         channel = self._channel(ctx.guild)
         return (channel is not None and ctx.channel.id == channel.id) or self._is_feed_thread(ctx.guild.id, ctx.channel.id)
-
-    def _available(self, guild, uid: int) -> set:
-        """The sheet's buttons the invoker could press right now. The ladder
-        is always there; the rest need a character, and each what its
-        command would otherwise refuse: a market in reach (the tables also
-        want gold; the hunt board a rested character with no hunt on), not
-        being walked by a journey, a running quest, the prestige level."""
-        actions = {"cmd_top"}
-        char = self._chars(guild.id).get(uid)
-        if char is None:
-            return actions
-        quest = self._quest(guild.id)
-        if rpg.quest_active(quest):
-            actions.add("cmd_quest")
-        if not (quest.get("kind") == "journey" and uid in quest["members"]):
-            actions.add("cmd_travel")
-        if rpg.market_in_reach(char) is not None:
-            actions.add("cmd_shop")
-            if char["gold"] > 0:
-                actions.add("cmd_gamble")
-            if not rpg.hunting(char) and not rpg.hunt_wait(char, int(time.time())):
-                actions.add("cmd_hunt")
-        if char["level"] >= rpg.PRESTIGE_LEVEL:
-            actions.add("cmd_prestige")
-        return actions
-
-    async def _act(self, ctx, action: str) -> None:
-        """A press on the sheet: the subcommand, run bare."""
-        await getattr(self, action).callback(self, ctx)
 
     @staticmethod
     def _namer(guild):
@@ -760,12 +690,9 @@ class IdleCog(commands.Cog):
         except discord.HTTPException as e:
             log.warning("idle: map post to %s failed (%s)", channel.id, type(e).__name__)
 
-    async def _send_with_map(self, ctx, embed: discord.Embed, highlight=(), view: "_CardView | None" = None) -> None:
+    async def _send_with_map(self, ctx, embed: discord.Embed, highlight=()) -> None:
         embed.set_image(url=f"attachment://{MAP_FILENAME}")
-        extra = {"view": view} if view is not None else {}
-        message = await ctx.send(embed=embed, file=await self._map_file(ctx.guild, highlight, viewer=ctx.author.id), **extra)
-        if view is not None:
-            view.message = message
+        await ctx.send(embed=embed, file=await self._map_file(ctx.guild, highlight, viewer=ctx.author.id))
 
     @staticmethod
     async def _send(dest, lines: list, ping=()) -> None:
@@ -1133,25 +1060,16 @@ class IdleCog(commands.Cog):
     # ── !idle ────────────────────────────────────────────────────────────
 
     @commands.group(name="idle", aliases=["irpg"], invoke_without_command=True,
-                    help="Show your character sheet and the map, with buttons for what you can do right now")
+                    help="Open the idle panel: your sheet and the map, with pages for the town, the road, your character, the realm and the rules")
     async def cmd_idle(self, ctx: commands.Context):
         """!idle join|status|items|map|travel|shop|gamble|top|align|duel|world|bless|title|lore|quest|prestige|leave|rules — each also works bare (`!map`)"""
         if not await self._ready(ctx, need_channel=True):
             return
         char = self._chars(ctx.guild.id).get(ctx.author.id)
-        if char is None:
-            await ctx.send(embed=emb(
-                "⚔️ Idle RPG",
-                "A game you win by doing nothing. Your character levels up while you're online and idle; "
-                "items, battles and quests happen on their own.\n\n"
-                "`!idle join <class>` to start · `!idle rules` for how it works · `!idle top` for the ladder",
-                C_BLUE,
-            ))
-            return
-        now = int(time.time())
-        self._seen(ctx.guild, ctx.author.id, char, now)
-        await self._send_with_map(ctx, self._sheet(ctx.guild, ctx.author.id, char, now), highlight=(ctx.author.id,),
-                                  view=_ActionView(self, ctx, self._available(ctx.guild, ctx.author.id)))
+        if char is not None:
+            self._seen(ctx.guild, ctx.author.id, char, int(time.time()))
+        # The panel (src/idle_hub.py): one message that every pick redraws.
+        await open_panel(ctx, IdleHub(self, ctx))
 
     @cmd_idle.command(name="join",
                       help="Start a character with a class you invent, or claim the one already playing in your name",
@@ -1260,8 +1178,7 @@ class IdleCog(commands.Cog):
         now = int(time.time())
         if target.id == ctx.author.id:
             self._seen(ctx.guild, target.id, char, now)
-        await self._send_with_map(ctx, self._sheet(ctx.guild, target.id, char, now), highlight=(target.id,),
-                                  view=_ActionView(self, ctx, self._available(ctx.guild, ctx.author.id)))
+        await self._send_with_map(ctx, self._sheet(ctx.guild, target.id, char, now), highlight=(target.id,))
 
     @cmd_idle.command(name="map", help="Show the map of the realm with every character on it and your own route")
     async def cmd_map(self, ctx: commands.Context):

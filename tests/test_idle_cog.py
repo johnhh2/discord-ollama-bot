@@ -17,6 +17,9 @@ from src import idlerpg as rpg
 from src.cogs.idle_cog import IdleCog
 from src.cogs.settings_cog import SettingsCog
 from src.guild_config import get_guild_cfg
+from src.idle_hub import IdleHub, items_for
+from src.idle_map import MAP_FILENAME
+from src.panel import open_panel
 from src.permissions import get_command_perm
 
 from tests.fakes.discord import FakeCtx, FakeGuild, FakeMember, FakeMessage, FakeTextChannel, FakeThread
@@ -444,17 +447,23 @@ async def test_leaving_your_own_thread_is_a_penalty_but_leaving_the_server_is_no
 
 # ── commands ─────────────────────────────────────────────────────────────────
 
-async def test_bare_idle_pitches_to_strangers_and_shows_the_sheet_to_players():
+async def test_bare_idle_opens_the_panel_pitching_to_strangers_and_showing_players_their_sheet(monkeypatch):
     cog, guild, _idle = _world()
     ctx = _ctx(guild)
-    await cog.cmd_idle.callback(cog, ctx)
-    assert "!idle join <class>" in ctx.sent_embeds[-1].description
+    opened = []
 
-    _spawn(level=7)
+    async def _open(ctx, panel, **kwargs):
+        opened.append(panel)
+    monkeypatch.setattr(_idle_cog, "open_panel", _open)
     await cog.cmd_idle.callback(cog, ctx)
-    assert "Lv 7 Bard" in ctx.sent_embeds[-1].title
+    assert isinstance(opened[-1], IdleHub) and "**Join** below" in opened[-1].embed().description
 
-    # Where no idle channel is set the game is off: no pitch, just that.
+    char = _spawn(level=7, last_seen=0)
+    await cog.cmd_idle.callback(cog, ctx)
+    assert "Lv 7 Bard" in opened[-1].embed().title
+    assert char["last_seen"] > 0                     # opening the panel counts as being seen
+
+    # Where no idle channel is set the game is off: no panel, just that.
     off_cog, off_guild, _ = _world(channel=False)
     get_guild_cfg(GID).pop("idle_channel", None)  # the first _world() above set it
     off_ctx = _ctx(off_guild)
@@ -685,7 +694,8 @@ async def test_status_map_and_quest_carry_the_map_image():
     _spawn(ALICE, x=10, y=20), _spawn(BOB, x=35, y=40)
     _state.idle_quests[GID] = {**rpg.new_quest(), "members": [BOB], "description": "walk", "kind": "journey", "p1": [35, 40], "p2": [410, 80]}
 
-    for command in (cog.cmd_status, cog.cmd_quest, cog.cmd_idle):
+    # (The bare `!idle` panel carries it too — see the panel tests below.)
+    for command in (cog.cmd_status, cog.cmd_quest):
         ctx = _ctx(guild)
         await command.callback(cog, ctx)
         sent = ctx.send_mock.call_args.kwargs
@@ -2023,7 +2033,8 @@ def _interaction(guild, uid: int, channel=None):
     response = SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock(), send_modal=AsyncMock(),
                                defer=AsyncMock(), is_done=lambda: False)
     return SimpleNamespace(user=guild.get_member(uid), guild=guild, channel=channel or guild.channels[0],
-                           response=response, followup=SimpleNamespace(send=AsyncMock()))
+                           response=response, followup=SimpleNamespace(send=AsyncMock()),
+                           edit_original_response=AsyncMock())
 
 
 def _ctx_in(guild, uid: int, channel, command_name: str) -> FakeCtx:
@@ -2092,44 +2103,179 @@ async def test_help_is_the_games_in_idle_context():
     assert isinstance(ctx.sent_views[-1], _idle_cog._HelpView)
 
 
-def _buttons(ctx) -> list:
-    return [button.action for button in ctx.sent_views[-1].children]
-
-
-async def test_the_sheet_shows_the_actions_open_to_its_invoker():
+async def test_the_status_card_is_the_sheet_and_the_map_with_no_menu():
     cog, guild, _idle = _world()
+    _spawn(BOB, **MARKET, level=4)
     ctx = _ctx(guild)
-    # No character: only the ladder.
-    _spawn(BOB, **MARKET)
     await cog.cmd_status.callback(cog, ctx, member=guild.get_member(BOB))
-    assert _buttons(ctx) == ["cmd_top"]
+    assert "Lv 4 Bard" in ctx.sent_embeds[-1].title and ctx.sent_views == []
+    assert ctx.send_mock.await_args.kwargs["file"].filename == MAP_FILENAME
 
-    # Out in the wilds with no gold: no market, no tables, no prestige yet.
+
+# ── the panel ────────────────────────────────────────────────────────────────
+
+def _hub(cog, guild, uid: int = ALICE, page: str = "sheet") -> "tuple[IdleHub, FakeCtx]":
+    ctx = _ctx(guild, uid)
+    return IdleHub(cog, ctx, page), ctx
+
+
+def _keys(page: str, hub: IdleHub) -> list:
+    return [item.key for item in items_for(page, hub)]
+
+
+def _real_tiers():
+    """The admin page follows the shipped `idle admin` tier; conftest empties the table."""
+    _state.command_perms.update(json.loads(Path("src/command_perms.json").read_text(encoding="utf-8")))
+
+
+async def test_the_panel_offers_what_its_invoker_could_do_now():
+    _real_tiers()
+    cog, guild, _idle = _world()
+    # No character: the sheet pitches and offers Join; no town, road or character page; no admin page for a player.
+    hub, _ctx_ = _hub(cog, guild)
+    assert [key for key, _label in hub.pages()] == ["sheet", "realm", "rules"]
+    assert "**Join** below" in hub.embed().description
+    assert _keys("sheet", hub) == ["refresh", "join", "look", "their-items"]
+    assert "bless" not in _keys("realm", hub)
+
+    # Out in the wilds with no gold: the town page has only the auto-trade switch.
     char = _spawn(ALICE, x=WILDS[0], y=WILDS[1], gold=0)
-    await cog.cmd_idle.callback(cog, ctx)
-    assert _buttons(ctx) == ["cmd_travel", "cmd_top"]
-    view = ctx.sent_views[-1]
-    assert isinstance(view, _idle_cog._ActionView) and view.message is not None
-    assert await view.interaction_check(_interaction(guild, BOB)) is False          # Bob can't walk Alice's character
+    hub, _ctx_ = _hub(cog, guild)
+    assert [key for key, _label in hub.pages()] == ["sheet", "town", "road", "character", "realm", "rules"]
+    assert "Lv 0 Bard" in hub.embed().title
+    assert _keys("sheet", hub) == ["refresh", "items", "look", "their-items"]
+    assert _keys("town", hub) == ["auto"]
+    assert _keys("road", hub) == ["travel", "lore"]
+    assert "prestige" not in _keys("character", hub) and "wear" not in _keys("character", hub)
+    assert "bless" in _keys("realm", hub)
 
-    # In a market ring with gold, at the prestige level, with a quest on, on a journey: everything but travel.
-    char.update(MARKET, gold=50, level=rpg.PRESTIGE_LEVEL)
+    # In a market ring with gold, at the prestige level, on a journey: the store, the tables and the board; no travel.
+    char.update(MARKET, gold=50, level=rpg.PRESTIGE_LEVEL, titles=["hoarder"])
     _state.idle_quests[GID] = {**rpg.new_quest(), "members": [ALICE], "description": "walk", "kind": "journey", "p1": [35, 40], "p2": [410, 80]}
-    await cog.cmd_idle.callback(cog, ctx)
-    assert _buttons(ctx) == ["cmd_shop", "cmd_gamble", "cmd_hunt", "cmd_quest", "cmd_top", "cmd_prestige"]
-    assert all(button.label for button in ctx.sent_views[-1].children)
-    # Off the journey, the road opens again; broke, the tables close; on a hunt, the board does.
+    hub, _ctx_ = _hub(cog, guild)
+    assert _keys("town", hub) == ["shop-find", "shop-potion", "shop-rush", "shop-duel", "shop-class", "gamble", "hunt", "auto"]
+    assert _keys("road", hub) == ["lore"]
+    assert _keys("character", hub) == ["align", "titles", "wear", "duel", "prestige", "leave"]
+    assert all(len(item.label) <= 100 and len(item.description) <= 100 for page in ("town", "road", "character") for item in items_for(page, hub))
+    # Off the journey but travelling: the road offers Stop. A bag sells, an item sharpens, a full belt isn't restocked;
+    # broke, the tables close; on a hunt, the board is gone.
     _state.idle_quests[GID]["members"] = [BOB]
-    char.update(gold=0, hunt_mob="Rat", hunt_count=3)
-    await cog.cmd_idle.callback(cog, ctx)
-    assert _buttons(ctx) == ["cmd_shop", "cmd_travel", "cmd_quest", "cmd_top", "cmd_prestige"]
+    char.update(gold=0, hunt_mob="Rat", hunt_count=3, travel_to="Denmark", potions=rpg.POTION_MAX,
+                loot=[{"slot": "helm", "level": 3, "name": None}], items={"amulet": {"level": 2, "name": None}})
+    hub, _ctx_ = _hub(cog, guild)
+    assert _keys("road", hub) == ["travel", "stop", "lore"]
+    assert _keys("town", hub) == ["shop-sell", "shop-find", "shop-sharpen", "shop-rush", "shop-duel", "shop-class", "auto"]
 
-    # A press runs the subcommand bare, for the invoker.
-    top = next(button for button in ctx.sent_views[-1].children if button.action == "cmd_top")
+    # The admin page is the `idle admin` tier's.
+    hub, _ctx_ = _hub(cog, guild, ADMIN)
+    assert [key for key, _label in hub.pages()][-1] == "admin"
+    assert _keys("admin", hub) == ["hog", "gold", "push", "move", "remove", "reset"]
+
+
+async def test_the_sheet_page_carries_the_map_and_can_look_at_a_player():
+    cog, guild, _idle = _world()
+    _spawn(ALICE, **MARKET)
+    _spawn(BOB, x=WILDS[0], y=WILDS[1], level=3)
+    hub, ctx = _hub(cog, guild)
+    assert [f.filename for f in await hub.attachments()] == [MAP_FILENAME]
+    assert hub.embed().image.url == f"attachment://{MAP_FILENAME}"
+    hub.page = "realm"
+    assert await hub.attachments() == [] and hub.embed().image.url is None
+
+    # Look at Bob: his sheet, on the sheet page, the map redrawn; Back returns to Alice's own.
+    look = next(item for item in items_for("sheet", hub) if item.key == "look")
     press = _interaction(guild, ALICE)
-    await top.callback(press)
+    await hub.on_pick(press, look, {"user": [BOB]})
+    assert hub.page == "sheet" and hub.target == BOB and "Lv 3 Bard" in hub.embed().title
+    kwargs = press.edit_original_response.await_args.kwargs
+    assert [f.filename for f in kwargs["attachments"]] == [MAP_FILENAME] and kwargs["view"] is hub
+    back = next(item for item in items_for("sheet", hub) if item.key == "own")
+    await hub.on_pick(_interaction(guild, ALICE), back, None)
+    assert hub.target == ALICE and "own" not in _keys("sheet", hub)
+    # Someone with no character is said so, not drawn.
+    await hub.on_pick(_interaction(guild, ALICE), look, {"user": [ADMIN]})
+    assert hub.embed().title == "❌ No Character"
+    assert ctx.sent_embeds == []                                     # nothing posted for any of it
+
+
+async def test_a_pick_runs_the_typed_subcommand_and_keeps_the_reply_in_the_panel():
+    cog, guild, _idle = _world()
+    char = _spawn(ALICE, **MARKET, gold=1000)
+    hub, ctx = _hub(cog, guild, page="town")
+    items = {item.key: item for item in hub.items()}
+    press = _interaction(guild, ALICE)
+    await hub.on_pick(press, items["shop-find"], None)
     press.response.defer.assert_awaited_once()
-    assert ctx.sent_embeds[-1].title.endswith("Idle Ladder")
+    assert ctx.sent_embeds == []                                     # captured, not posted
+    assert hub.last.title == "🛒 Idle Shop" and char["gold"] == 1000 - rpg.shop_prices(char)["find"]
+    assert hub.embed().fields[-1].name == "🛒 Idle Shop" and hub.embed().fields[-1].value == hub.last.description
+    press.edit_original_response.assert_awaited_once()
+
+    # Plain items carry their arguments; a form's values become the typed ones.
+    await hub.on_pick(_interaction(guild, ALICE), items["auto"], None)
+    assert char["auto_trade"] is False and "**off**" in hub.last.description
+    await hub.on_pick(_interaction(guild, ALICE), items["shop-potion"], {"n": ["2"]})
+    assert char["potions"] == 2
+    hub.page = "road"
+    travel = next(item for item in hub.items() if item.key == "travel")
+    await hub.on_pick(_interaction(guild, ALICE), travel, {"place": ["Denmark"]})
+    assert char["travel_to"] == "Denmark" and hub.last.title == "🧭 Travel"
+    hub.page = "character"
+    align = next(item for item in hub.items() if item.key == "align")
+    await hub.on_pick(_interaction(guild, ALICE), align, {"alignment": ["chaotic good"]})
+    assert (char["law"], char["moral"]) == ("chaotic", "good")
+    hub.page = "rules"
+    await hub.on_pick(_interaction(guild, ALICE), hub.items()[0], None)
+    assert hub.last.title == "📖 Idle RPG — Levels"
+    # A refusal from the command lands in the same field.
+    hub.page = "town"
+    gamble = next(item for item in hub.items() if item.key == "gamble")
+    await hub.on_pick(_interaction(guild, ALICE), gamble, {"stake": "lots"})
+    assert hub.last.title == "❌ The Tables"
+    assert ctx.sent_embeds == []
+
+
+async def test_confirm_gated_picks_post_in_the_channel():
+    cog, guild, _idle = _world()
+    char = _spawn(ALICE, **MARKET, level=rpg.PRESTIGE_LEVEL)
+    hub, ctx = _hub(cog, guild, page="character")
+    prestige = next(item for item in hub.items() if item.key == "prestige")
+    await hub.on_pick(_interaction(guild, ALICE), prestige, None)
+    assert char["prestige"] == 1 and char["level"] == 0            # conftest auto-confirms
+    assert ctx.sent_embeds[-1].title == "🌟 Prestige"                # posted, not captured
+    assert hub.last.description == "Posted in the channel."
+
+
+async def test_the_panel_applies_the_gates_a_direct_call_skips():
+    _real_tiers()
+    cog, guild, _idle = _world()
+    bob = _spawn(BOB)
+    before = bob["next_level_at"]
+    # Alice is no admin: the page isn't listed, and a pick on its item is refused all the same.
+    hub, _ctx_ = _hub(cog, guild)
+    hog = next(item for item in items_for("admin", hub) if item.key == "hog")
+    press = _interaction(guild, ALICE)
+    await hub.on_pick(press, hog, {"user": [BOB]})
+    assert press.followup.send.await_args.kwargs["ephemeral"] and "can't use" in press.followup.send.await_args.args[0]
+    assert bob["next_level_at"] == before and hub.last is None
+    # The admin runs it; a form handed no player is refused before anything runs.
+    hub, _ctx_ = _hub(cog, guild, ADMIN, page="admin")
+    await hub.on_pick(_interaction(guild, ADMIN), hog, {"user": [BOB]})
+    assert bob["next_level_at"] != before and not hub.last.title.startswith("❌")
+    press = _interaction(guild, ADMIN)
+    await hub.on_pick(press, hog, {"user": []})
+    assert press.followup.send.await_args.args[0] == "Pick a player first."
+
+
+async def test_open_panel_posts_the_sheet_with_the_map_and_deletes_it_on_close():
+    cog, guild, _idle = _world()
+    _spawn(ALICE, **MARKET)
+    hub, ctx = _hub(cog, guild)
+    hub.wait = AsyncMock(return_value=False)
+    await open_panel(ctx, hub)
+    kwargs = ctx.send_mock.await_args.kwargs
+    assert [f.filename for f in kwargs["files"]] == [MAP_FILENAME] and kwargs["view"] is hub
+    assert "Lv 0 Bard" in kwargs["embed"].title
 
 
 async def test_the_help_card_reads_topics_and_joins():
