@@ -195,6 +195,9 @@ SHOP_CURSE_MESSAGES          = 5
 SHOP_MUTE_MINUTES            = 5
 SHOP_TAX_PER_MESSAGE         = 10
 SHOP_TAX_DURATION_SECS       = 86_400  # 24 hours
+# What a server admin's `!event` drops may pay out per guild per week
+# (Monday 5am CT to Monday); bot admins' events are unlimited.
+EVENT_WEEKLY_BUDGET          = 10_000
 
 # Bounty (!shop bounty / !bounty) parameters
 BOUNTY_MIN_AMOUNT        = 1_000      # smallest bounty an author may post

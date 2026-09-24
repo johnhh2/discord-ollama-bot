@@ -22,17 +22,21 @@ from src.economy import (
 )
 from src.permissions import (
     requires_perm,
-    is_silenced,
+    is_silenced, is_admin,
 )
 from src.guild_config import get_guild_cfg
 from src.features import feature_enabled
 from src.persistence import (
-    save_economy, save_rigged_steal,
+    save_economy, save_rigged_steal, save_guild_settings,
     load_lottery, load_records, load_global_records, try_set_record,
 )
 from src.config import (
     DAILY_REWARD, DAILY_RESET_HOUR,
 )
+from src.coin_events import (
+    event_budget_remaining, claim_event_budget, refund_event_budget, event_budget_status,
+)
+from src.dailies import keep_message_in_dailies_channel
 from src.jail_reasons import format_steal_reason, format_mug_reason, format_bankheist_reason
 from src.artifacts import bail_cost, steal_success_chance, crime_catch_chance, has_heist_partner
 from src.properties import bank_property_revenue
@@ -1975,7 +1979,7 @@ class EconomyCog(commands.Cog):
     # ── Bot-admin economy mutators ────────────────────────────────────────────
 
     @commands.command(name="event",
-                      help="Admin: post a coin drop that pays each user who reacts, optionally timed or in a channel", usage="<amount> [duration_hours] [#channel]")
+                      help="Admin: post a coin drop that pays each user who reacts, optionally timed or in a channel; a server admin's events share a weekly budget", usage="<amount> [duration_hours] [#channel]")
     @requires_perm
     async def cmd_event(self, ctx: commands.Context, amount: str = None, duration: str = None):
         try:
@@ -1984,12 +1988,27 @@ class EconomyCog(commands.Cog):
             logging.warning(f"[event] No permission to delete command message in {ctx.channel}")
         except Exception as e:
             logging.warning(f"[event] Failed to delete command message: {e}")
+        # Bot admins' events are unlimited; a server admin's pay out of the
+        # guild's weekly budget (src/coin_events.py). No guild means a DM,
+        # which only bot admins reach.
+        capped = ctx.guild is not None and not is_admin(ctx)
         if amount is None:
-            await ctx.send(embed=emb("⚙️ Event", "Usage: `!event <amount> [duration_hours] [#channel]`", C_GREY))
+            usage = "Usage: `!event <amount> [duration_hours] [#channel]`"
+            if capped:
+                usage += "\n" + event_budget_status(ctx.guild.id)
+            await ctx.send(embed=emb("⚙️ Event", usage, C_GREY))
             return
         amount = parse_int_amount(amount)
         if amount is None or amount <= 0:
             await ctx.send(embed=emb("❌ Invalid Amount", "Please provide a positive whole number.", C_RED))
+            return
+        if capped and amount > event_budget_remaining(ctx.guild.id):
+            await ctx.send(embed=emb(
+                "❌ Over Budget",
+                f"Each reaction would pay **{amount:,} 🪙**, more than the budget has left. "
+                + event_budget_status(ctx.guild.id),
+                C_RED,
+            ))
             return
 
         duration_hours = None
@@ -2014,15 +2033,23 @@ class EconomyCog(commands.Cog):
         if duration_hours:
             expires_at = int(time.time() + duration_hours * 3600)
             duration_str = f" (expires <t:{expires_at}:R>)"
-        event_msg = await target_channel.send(embed=emb(
-            "🎉 Coin Event!",
-            f"React with 🪙 to receive **{amount:,} 🪙**!{duration_str}",
-            C_GOLD,
-        ))
+        body = f"React with 🪙 to receive **{amount:,} 🪙**!{duration_str}"
+        if capped:
+            body += (
+                f"\nPays from this server's weekly event budget — "
+                f"**{event_budget_remaining(ctx.guild.id):,} 🪙** left, so the event ends when that runs out."
+            )
+        event_msg = await target_channel.send(embed=emb("🎉 Coin Event!", body, C_GOLD))
         # Register before seeding: on_reaction_add keys on this dict, and a
         # click on 🪙 the instant it appears must find the event.
-        state.active_events[event_msg.id] = {"amount": amount, "rewarded": set()}
+        state.active_events[event_msg.id] = {
+            "amount": amount, "rewarded": set(),
+            "guild_id": ctx.guild.id if ctx.guild else None, "budget": capped,
+        }
         await seed_reactions(event_msg, ["🪙"], what="coin event")
+        # In the dailies channel the 5-minute sweep would delete the drop;
+        # the keep list holds it until the reset repost purges the channel.
+        await keep_message_in_dailies_channel(ctx.guild, target_channel, event_msg)
 
         if target_channel != ctx.channel:
             await ctx.send(embed=emb("✅ Event Started", f"Event posted in {target_channel.mention}.", C_GREEN))
@@ -2030,14 +2057,25 @@ class EconomyCog(commands.Cog):
         if duration_hours:
             async def _close_event():
                 await asyncio.sleep(duration_hours * 3600)
-                if event_msg.id in state.active_events:
-                    del state.active_events[event_msg.id]
-                    await event_msg.edit(embed=emb(
-                        "🎉 Event Ended",
-                        f"This event has ended. **{amount:,} 🪙** per reaction was given out.",
-                        C_GREY,
-                    ))
+                await self._end_event(event_msg, "its time is up")
             asyncio.create_task(_close_event())
+
+    async def _end_event(self, message, why: str) -> None:
+        """Close a coin event: drop it so no further reaction pays, then say
+        so on the embed. No-op if it already ended; the edit is best-effort
+        (the message may have been deleted)."""
+        event = state.active_events.pop(message.id, None)
+        if event is None:
+            return
+        try:
+            await message.edit(embed=emb(
+                "🎉 Event Ended",
+                f"This event has ended — {why}. **{event['amount']:,} 🪙** per reaction "
+                f"was given out to {len(event['rewarded'])} user{'s' if len(event['rewarded']) != 1 else ''}.",
+                C_GREY,
+            ))
+        except Exception as e:
+            logging.warning(f"[event] Failed to edit ended event {message.id}: {e}")
 
 
     @commands.Cog.listener()
@@ -2056,14 +2094,26 @@ class EconomyCog(commands.Cog):
         event = state.active_events[reaction.message.id]
         if user.id in event["rewarded"]:
             return
+        # Claim before the await (rolled back below): racing reactions grant
+        # once, and a budgeted event reserves the coins before paying them.
+        event["rewarded"].add(user.id)
+        budgeted = event.get("budget") and event.get("guild_id") is not None
+        if budgeted and not claim_event_budget(event["guild_id"], event["amount"]):
+            event["rewarded"].discard(user.id)
+            await self._end_event(reaction.message, "the server's weekly event budget ran out")
+            return
         try:
-            # Claim before the await (rolled back below): racing reactions
-            # grant once.
-            event["rewarded"].add(user.id)
             await add_balance(user.id, event["amount"])
         except Exception as e:
             logging.error(f"[event] Error rewarding {user.id}: {e}")
             event["rewarded"].discard(user.id)
+            if budgeted:
+                refund_event_budget(event["guild_id"], event["amount"])
+            return
+        if budgeted:
+            await save_guild_settings()
+            if event_budget_remaining(event["guild_id"]) < event["amount"]:
+                await self._end_event(reaction.message, "the server's weekly event budget ran out")
 
 
     @commands.command(name="admingive", aliases=["adminpay"],

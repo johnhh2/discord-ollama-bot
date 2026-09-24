@@ -250,6 +250,29 @@ Coverage: [tests/test_reactions.py](tests/test_reactions.py), plus the
 early-click tests in `test_dailies.py`, `test_bounty.py` and
 `test_schedulers.py` (`!event`).
 
+## Coin events (!event): server admins pay from a weekly budget
+
+`!event` sits at the `server_admin` tier. A bot admin's drop pays every
+reactor without limit; a server admin's pays out of the guild's weekly budget
+(`EVENT_WEEKLY_BUDGET`, 10k, Monday 5am CT to Monday), kept in the guild
+settings blob as `cfg["event_budget"]` by [src/coin_events.py](src/coin_events.py)
+— no table. The distinction is `is_admin(ctx)` at post time, stored on the
+event as `budget`.
+
+- **The budget is spent per reaction, not per event.** A drop pays `amount`
+  to each reactor, so the post only checks that one reaction fits;
+  `on_reaction_add` claims `amount` synchronously before `add_balance`
+  (rolled back with `refund_event_budget` if the payment fails) and calls
+  `_end_event` — which pops the event and edits the embed — the moment the
+  remainder can't cover another reaction. Racing reactions can't overdraw it.
+- **A drop posted in the dailies channel is kept until the reset**:
+  `keep_message_in_dailies_channel` puts it on `dailies_keep_ids`, so the
+  5-minute sweep skips it and the 5am repost purges it with the rest. Events
+  themselves are in-memory (`state.active_events`), so a restart ends every
+  drop, kept message or not.
+
+Coverage: [tests/test_coin_events.py](tests/test_coin_events.py).
+
 ## Schema migrations
 
 Schema changes ship as numbered SQL files in [migrations/](migrations/). The bot applies pending migrations at boot, before loading state — there is no manual `mysql < schema.sql` step in production.

@@ -47,7 +47,7 @@ from src.ai import (
 )
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, PUZZLE_REWARDS, MC_SERVER_HOST,
-    MC_CONSOLE_HOST, MC_CONSOLE_PASSWORD,
+    MC_CONSOLE_HOST, MC_CONSOLE_PASSWORD, EVENT_WEEKLY_BUDGET,
 )
 from src.puzzle import (
     PUZZLE_RIDDLE_PROMPT, build_coding_prompt,
@@ -943,15 +943,18 @@ class UtilityCog(commands.Cog):
             "(tax, insurance); no duration = permanent\n"
             "`!effects @user remove <effect>` — Clear an effect from a user"
         ))
+        if feature_enabled(gid, "economy"):
+            # `!event` is the one economy line a server admin gets.
+            eco_lines = []
+            if is_admin(ctx):
+                eco_lines.append("`!admingive @user <amount>` — Add or remove coins from a user")
+                eco_lines.append("`!event <amount> [hours]` — Start a reaction event")
+            else:
+                eco_lines.append(f"`!event <amount> [hours]` — Start a reaction event ({EVENT_WEEKLY_BUDGET:,} 🪙 a week for server admins)")
+            if is_admin(ctx) and feature_enabled(gid, "shop") and feature_enabled(gid, "ai"):
+                eco_lines.append("`!adminragebait @user [n]` — Force ragebait on user (default 5 messages)")
+            admin_embed.add_field(name="🪙 Economy", inline=False, value="\n".join(eco_lines))
         if is_admin(ctx):
-            if feature_enabled(gid, "economy"):
-                eco_lines = [
-                    "`!admingive @user <amount>` — Add or remove coins from a user",
-                    "`!event <amount> [hours]` — Start a reaction event",
-                ]
-                if feature_enabled(gid, "shop") and feature_enabled(gid, "ai"):
-                    eco_lines.append("`!adminragebait @user [n]` — Force ragebait on user (default 5 messages)")
-                admin_embed.add_field(name="🪙 Economy", inline=False, value="\n".join(eco_lines))
             if feature_enabled(gid, "ai"):
                 admin_embed.add_field(name="🤖 AI", inline=False, value=(
                     "`!model [name]` — Change the AI model (bare: a dropdown of installed models)\n"

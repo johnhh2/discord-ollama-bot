@@ -64,7 +64,8 @@ async def test_pages_and_items_follow_the_invokers_tier():
     keys = {i.key for i in items_for("moderation", server_admin)}
     assert {"ban", "unban", "clear", "say"} <= keys and "globalban" not in keys
     assert items_for("permissions", server_admin) and not any(i.key == "setperm" for i in items_for("permissions", server_admin))
-    assert "economy" not in dict(pages_for(server_admin))  # every economy action is bot-admin
+    # `!event` is the one economy action a server admin gets (on a weekly budget).
+    assert [i.key for i in items_for("economy", server_admin)] == ["event"]
 
     bot_admin = _ctx(bot_admin=True)
     assert [k for k, _ in pages_for(bot_admin)] == [k for k, _ in PAGES]

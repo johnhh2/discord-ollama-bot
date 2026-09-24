@@ -24,7 +24,7 @@
   "vramtext":      {"tier": "bot_admin", "hidden": false},
   "setprompt":     {"tier": "bot_admin", "hidden": false},
   "clearprompt":   {"tier": "bot_admin", "hidden": false},
-  "event":         {"tier": "bot_admin", "hidden": false},
+  "event":         {"tier": "server_admin", "hidden": false},
   "botinvitelink": {"tier": "bot_admin", "hidden": false},
   "audit":         {"tier": "bot_admin", "hidden": false},
   "saved":         {"tier": "bot_admin", "hidden": false},
