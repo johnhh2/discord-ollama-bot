@@ -77,10 +77,13 @@ class LevelingCog(commands.Cog):
             logging.exception("[leveling] startup voice XP tick failed")
 
     # ── Level-up announcement ─────────────────────────────────────────────────
-    async def _announce_levelup(self, member: discord.Member, guild_id: int):
+    async def _announce_levelup(self, member: discord.abc.User, guild_id: int):
         """Pay the level-up coin reward, then announce it if the guild has a
-        level-up channel — callers must not gate the call on the channel."""
-        rec =state.leveling.get(str(guild_id), {}).get(str(member.id), {})
+        level-up channel — callers must not gate the call on the channel.
+        Leveling runs silently without one: XP, levels, unlocks and the coin
+        reward all land; only this post is skipped. Takes any User (a guild
+        message's author is a plain User when the member isn't cached)."""
+        rec = state.leveling.get(str(guild_id), {}).get(str(member.id), {})
         lvl = display_level(rec.get("level", 0))
         # No coin reward where the economy is off — it would land in a
         # wallet nobody in this server can see.
@@ -93,6 +96,8 @@ class LevelingCog(commands.Cog):
             return
         channel = self.bot.get_channel(channel_id)
         if channel is None:
+            # Configured channel deleted or not cached: stay silent, the
+            # level-up itself already counted.
             return
         desc = f"{member.mention} reached **Level {lvl}**!" + (f" +**{reward:,} 🪙**" if reward else "")
 

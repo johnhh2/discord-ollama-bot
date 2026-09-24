@@ -47,7 +47,7 @@ CHANNEL_SETTINGS = (
     ("🎮 Games", "game_channels", "settings_channel_game", True, "all channels", "games and gambling"),
     ("♟️ Chess", "chess_channels", "settings_channel_chess", True, "game channels (or all)", None),
     ("🎰 Lottery", "lottery_channel", "settings_channel_lottery", False, "❌ off", "the monthly lottery runs here"),
-    ("📊 Level-ups", "levelup_channel", "settings_channel_levelup", False, "❌ off", "level-up announcements"),
+    ("📊 Level-up posts", "levelup_channel", "settings_channel_levelup", False, "❌ off (levels still count)", "level-up announcements — XP, levels and rewards accrue silently without one"),
     ("🏆 Records", "records_channel", "settings_channel_records", False, "❌ off", "this server's new records, plus every new global-top record from any server"),
     ("📖 Feature requests", "feature_request_channel", "settings_channel_feature_request", False, "❌ off", "`!featurerequest` posts here"),
     ("🎯 Bounties", "bounty_channel", "settings_bounty_channel", False, "❌ off", "`!bounty` posts here"),

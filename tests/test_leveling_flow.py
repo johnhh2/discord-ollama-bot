@@ -258,3 +258,66 @@ async def test_announce_levelup_silent_when_no_channel_configured(db):
 
     expected = levelup_coin_reward(display_level(0))
     assert await _economy.get_balance(8) == expected
+
+
+# ── Leveling runs silently without a level-up channel ────────────────────────
+# The two entry points that level users up in the background (a message, a
+# completed command) with no levelup_channel configured: XP lands, the level
+# moves, the coin reward is paid, and nothing is posted.
+
+class _StubBot:
+    def __init__(self, lvl_cog):
+        self.user = type("U", (), {"id": 999_999_999})()
+        self.cogs = {"LevelingCog": lvl_cog}
+
+
+def _silent_setup(gid: int, uid: int):
+    from src.leveling import xp_for_level
+    lvl_cog = LevelingCog.__new__(LevelingCog)
+    lvl_cog.bot = _BotWithChannel({})
+    rec = _ensure_lvl_user(gid, uid)
+    rec["xp"] = xp_for_level(1) - 1  # one grant away from the first level-up
+    return lvl_cog, rec
+
+
+async def _drain_tasks():
+    # The announce runs as a fire-and-forget task off the listener.
+    import asyncio
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    if pending:
+        await asyncio.gather(*pending)
+
+
+async def test_message_xp_levels_up_silently_without_channel(db):
+    from src.events import EventsCog
+    from tests.fakes.discord import FakeMessage
+
+    lvl_cog, rec = _silent_setup(42, 11)
+    events = EventsCog(bot=_StubBot(lvl_cog))
+    message = FakeMessage(content="hello", author=FakeMember(uid=11))
+    message.guild = FakeGuild(gid=42)
+
+    await events._handle_msg_xp(message)
+    await _drain_tasks()
+
+    assert rec["level"] == 1
+    assert await _economy.get_balance(11) == levelup_coin_reward(display_level(1))
+    assert _state.levelups_today.get((42, "11")) == 1
+    message.channel.send.assert_not_awaited()
+
+
+async def test_command_xp_levels_up_silently_without_channel(db):
+    from src.events import EventsCog
+    from tests.fakes.discord import FakeCtx
+
+    lvl_cog, rec = _silent_setup(42, 12)
+    events = EventsCog(bot=_StubBot(lvl_cog))
+    ctx = FakeCtx(author=FakeMember(uid=12), guild=FakeGuild(gid=42), channel=FakeChannel(ch_id=100))
+    ctx.command.cog = None  # stats bucketing reads ctx.command.cog
+
+    await events.on_command_completion(ctx)
+    await _drain_tasks()
+
+    assert rec["level"] == 1
+    assert await _economy.get_balance(12) == levelup_coin_reward(display_level(1))
+    assert ctx.sent_embeds == []

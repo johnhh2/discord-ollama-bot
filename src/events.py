@@ -626,10 +626,11 @@ class EventsCog(commands.Cog):
             xp, leveled_up = await _grant_xp(ctx.author.id, "cmd", guild_id=ctx.guild.id)
             # _announce_levelup grants the coin reward and itself skips the
             # announcement when no level-up channel is configured — gating the
-            # call on the channel here silently withheld the reward.
+            # call on the channel (or on the author being a cached Member)
+            # here silently withheld the reward.
             if leveled_up:
                 cog = self.bot.cogs.get("LevelingCog")
-                if cog and isinstance(ctx.author, discord.Member):
+                if cog:
                     asyncio.create_task(cog._announce_levelup(ctx.author, ctx.guild.id))
 
     @commands.Cog.listener()
@@ -748,7 +749,7 @@ class EventsCog(commands.Cog):
         uid = message.author.id
         _, leveled_up = await _grant_xp(uid, "msg", guild_id=message.guild.id)
         # See on_command_completion: the call must not be gated on the channel.
-        if leveled_up and isinstance(message.author, discord.Member):
+        if leveled_up:
             cog = self.bot.cogs.get("LevelingCog")
             if cog:
                 asyncio.create_task(cog._announce_levelup(message.author, message.guild.id))

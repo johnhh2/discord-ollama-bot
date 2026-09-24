@@ -1199,7 +1199,7 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("🎰 Lottery Channel", f"Lottery channel set to {channel.mention}\n🎟️ Lottery ready!", C_GREEN))
 
     # ── !settings channel levelup ─────────────────────────────────────────────
-    @cmd_settings_channel.command(name="levelup", help="Set the channel for level-up announcements, or clear to disable them",
+    @cmd_settings_channel.command(name="levelup", help="Set the channel for level-up announcements, or clear to keep leveling silent (XP and rewards still count)",
                                   usage="[#channel] | clear")
     @requires_perm
     async def settings_channel_levelup(self, ctx: commands.Context, *args):
@@ -1213,7 +1213,7 @@ class SettingsCog(commands.Cog):
         if not chosen:
             cfg["levelup_channel"] = None
             await save_guild_settings()
-            await ctx.send(embed=emb("📊 Level-Up Channel", "Level-up announcements disabled.", C_GREEN))
+            await ctx.send(embed=emb("📊 Level-Up Channel", "Level-up announcements disabled. Leveling keeps running silently — XP, levels and coin rewards still count.", C_GREEN))
         else:
             channel = chosen[0]
             cfg["levelup_channel"] = channel.id
