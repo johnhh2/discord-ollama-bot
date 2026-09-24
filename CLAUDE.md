@@ -1206,7 +1206,9 @@ tables from migrations 0070–0077.
   this game was tuned to. Re-run the sim before touching this, the tiers,
   or the fight rate.
 - **The rare kills each leave something only they leave**
-  (`SIGNATURE_DROPS`, after sizzlorox's `droppedBy` item table). A generic
+  (`SIGNATURE_DROPS`; the idea is sizzlorox's holiday relics, the kinds and
+  ranges are ours). `RARE_KILLS` is for kinds under rarity 50 — the Golem
+  (60) was once in it and made the channel a loot ticker. A generic
   find on every kill made a Basilisk worth exactly as much as a rat with
   better odds. A trophy beneath what's worn goes in the bag like any find.
 - **The standings board** is one message in the idle channel, edited in

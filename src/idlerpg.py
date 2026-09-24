@@ -1665,17 +1665,20 @@ MOB_TYPES = (
     ("Basilisk", 10, 1.8, 5, ("Caves", "Darklands")),
 )
 # Killing one of these is channel news; every other fight stays in the feed.
-RARE_KILLS = frozenset({"Dragon", "Basilisk", "Mountain Troll", "Cave Troll", "Golem"})
+# Only kinds under rarity 50 belong here: the Golem (60) was in the set once,
+# and at level 30 it was met every other day — nine in ten "rare" lines and
+# most trophies, several a day across a server. The test suite pins the bar.
+RARE_KILLS = frozenset({"Dragon", "Basilisk", "Mountain Troll", "Cave Troll"})
 
-# …and each leaves something only it leaves, after sizzlorox/Idle-RPG-Bot's
-# `droppedBy` item table. A generic find on every kill made a Basilisk worth
-# exactly as much as a rat with better odds. (kind → slot, name, level range)
+# …and each leaves something only it leaves. A generic find on every kill
+# made a Basilisk worth exactly as much as a rat with better odds. The idea is
+# sizzlorox's holiday relics (`droppedBy`); the kinds and ranges are ours.
+# (kind → slot, name, level range)
 SIGNATURE_DROPS = {
     "Dragon": ("shield", "Wingcase Shield", 120, 200),
     "Basilisk": ("amulet", "Unblinking Eye", 130, 210),
     "Mountain Troll": ("gloves", "Ridgebreaker Gauntlets", 90, 160),
     "Cave Troll": ("helm", "Lantern-Jaw Helm", 90, 160),
-    "Golem": ("tunic", "Coat of Fitted Stone", 100, 175),
 }
 SIGNATURE_DROP_CHANCE = 0.35   # of a kill, on top of the ordinary drop roll
 SIGNATURE_NAMES = frozenset(name for _slot, name, _lo, _hi in SIGNATURE_DROPS.values())

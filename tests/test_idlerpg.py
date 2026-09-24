@@ -1338,6 +1338,14 @@ def test_every_trophy_belongs_to_a_rare_kill_and_a_real_slot():
         assert title in rpg.SIGNATURE_NAMES
 
 
+def test_rare_kills_are_rare_monsters():
+    # The Golem (rarity 60) was once "rare" and filled the channel with
+    # trophies; anything a level-30 character meets every other day is not news.
+    rarity = {kind: r for kind, r, *_rest in rpg.MOB_TYPES}
+    assert rpg.RARE_KILLS <= set(rarity)
+    assert all(rarity[kind] < 50 for kind in rpg.RARE_KILLS), sorted(rpg.RARE_KILLS, key=rarity.get)
+
+
 # ── lore and flavour ─────────────────────────────────────────────────────────
 
 def test_every_place_on_the_map_has_lore_and_it_is_not_boilerplate():
