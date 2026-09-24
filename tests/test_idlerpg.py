@@ -136,6 +136,28 @@ def test_unique_needs_the_level_and_lands_in_its_slot():
     assert high["items"]["helm"]["name"] == rpg.UNIQUES[0][2] and note.public
 
 
+def test_a_rerolled_unique_is_only_news_when_much_better():
+    _lv, slot, crown, low, high = rpg.UNIQUES[0]
+    char = _char(25, items={slot: {"level": 50, "name": crown}})
+    # A few levels better: worn, told in the feed, kept out of the channel.
+    note = rpg.find_item(1, char, _Scripted(randrange=0, randint=lambda lo, hi: 55), _name)
+    assert char["items"][slot]["level"] == 55 and not note.public
+    # 1.5× better is a real upgrade — and a different unique in the slot always is.
+    note = rpg.find_item(1, char, _Scripted(randrange=0, randint=lambda lo, hi: 83), _name)
+    assert char["items"][slot]["level"] == 83 and note.public
+    assert rpg._named_find_is_news({"level": 90, "name": "Something Else"}, crown, 91)
+
+
+def test_a_rerolled_trophy_is_only_news_when_much_better():
+    rng = _Scripted()   # random() is 0 so the drop lands; randint hands back the top of the range
+    slot, title, _lo, high = rpg.SIGNATURE_DROPS["Dragon"]
+    char = _char(40, items={slot: {"level": high - 1, "name": title}})
+    note = rpg.signature_drop(1, char, "Dragon", rng, _name)
+    assert char["items"][slot]["level"] == high and not note.public
+    char["items"][slot] = {"level": high // 2, "name": title}
+    assert rpg.signature_drop(1, char, "Dragon", rng, _name).public
+
+
 # ── battles ──────────────────────────────────────────────────────────────────
 
 def _rolls(*values):

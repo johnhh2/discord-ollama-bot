@@ -678,14 +678,29 @@ def roll_item_level(level: int, rng) -> int:
     return best
 
 
+# A named find is channel news the first time; a re-roll of the piece already
+# worn is only news when it's this much better. Uniques roll on every find
+# (about nine a day), so the Crown was announced seven times in three months,
+# a few levels better each time.
+REROLL_NEWS_FACTOR = 1.5
+
+
+def _named_find_is_news(worn: "dict | None", title: str, found: int) -> bool:
+    if worn is None or worn.get("name") != title:
+        return True
+    return found >= worn["level"] * REROLL_NEWS_FACTOR
+
+
 def find_item(uid: int, char: dict, rng, name: NameFn) -> Note:
     for min_level, slot, unique, low, high in UNIQUES:
         if char["level"] < min_level or rng.randrange(UNIQUE_ODDS):
             continue
         found = rng.randint(low, high)
-        if found > char["items"].get(slot, {}).get("level", 0):
+        worn = char["items"].get(slot)
+        if found > (worn or {}).get("level", 0):
             char["items"][slot] = {"level": found, "name": unique}
-            return Note((uid,), f"✨ {name(uid)} unearthed the **{unique}** — a level {found} {slot}!", True)
+            return Note((uid,), f"✨ {name(uid)} unearthed the **{unique}** — a level {found} {slot}!",
+                        _named_find_is_news(worn, unique, found))
     slot = rng.choice(ITEM_SLOTS)
     found = {"level": roll_item_level(char["level"], rng), "name": None}
     found["name"] = item_name(slot, found["level"], char["level"], rng)
@@ -1757,7 +1772,8 @@ def signature_drop(uid: int, char: dict, kind: str, rng, name: NameFn) -> "Note 
     if found["level"] > (worn or {}).get("level", 0):
         char["items"][slot] = found
         return Note((uid,), f"🏆 The {kind} left the **{title}** for {name(uid)}, a level "
-                            f"{found['level']} {slot}{_displaced(char, slot, worn)}", True)
+                            f"{found['level']} {slot}{_displaced(char, slot, worn)}",
+                    _named_find_is_news(worn, title, found["level"]))
     spilled = bag_item(char, slot, found)
     return Note((uid,), f"🏆 The {kind} left the **{title}** (level {found['level']}), but "
                         f"{name(uid)}'s {_item_label(slot, worn)} is better — into the bag.{spilled}")

@@ -1211,6 +1211,10 @@ tables from migrations 0070–0077.
   (60) was once in it and made the channel a loot ticker. A generic
   find on every kill made a Basilisk worth exactly as much as a rat with
   better odds. A trophy beneath what's worn goes in the bag like any find.
+  A named find (a unique or a trophy) is channel news the first time it is
+  worn; a re-roll of the same piece is feed-only unless it is
+  `REROLL_NEWS_FACTOR` (1.5×) better — uniques roll on every find, and a
+  Crown a few levels better every week or two is not news.
 - **The standings board** is one message in the idle channel, edited in
   place on `BOARD_INTERVAL` and pinned once, its id in the guild cfg
   (`idle_board_message`). Never repost it — a channel filling with stale
