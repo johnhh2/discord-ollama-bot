@@ -29,6 +29,7 @@ _PERSISTENCE_SAVE_NAMES = [
     "save_gambler_streak", "save_command_streak", "save_ai_threads",
     "save_gambling_thread", "delete_gambling_thread",
     "save_counter", "delete_counter", "save_counter_value",
+    "save_mc_player", "log_mc_trade",
     "save_counter_perm", "delete_counter_perm",
     "save_idle_character", "delete_idle_character", "delete_idle_guild", "save_idle_quest",
     "save_idle_optout", "delete_idle_optout",

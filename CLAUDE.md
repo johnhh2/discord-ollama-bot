@@ -29,6 +29,9 @@ Key environment variables (all optional except `DISCORD_TOKEN`):
 | `MC_SERVER_PORT` | `19132` | Bedrock UDP port |
 | `MC_POLL_SECONDS` | `60` | Minecraft monitor poll interval |
 | `MC_SERVER_SHOW_IP` | `false` | Show the server address in `!mc` embeds and monitor alerts |
+| `MC_CONSOLE_HOST` | _(disabled)_ | Optional; the Bedrock container's SSH remote console (`ENABLE_SSH=true` on the itzg image), as seen from the bot's container. With `MC_CONSOLE_PASSWORD`, enables the block shop (`!mc shop`) |
+| `MC_CONSOLE_PORT` | `2222` | Remote console port |
+| `MC_CONSOLE_PASSWORD` | — | The Bedrock container's `RCON_PASSWORD` (its remote-console password) |
 
 ### Adding a new env var
 
@@ -1292,6 +1295,64 @@ tables from migrations 0070–0077.
 
 Coverage: [tests/test_idlerpg.py](tests/test_idlerpg.py) (rules) and
 [tests/test_idle_cog.py](tests/test_idle_cog.py).
+
+## Minecraft block shop (!mc shop): its own currency, over the server console
+
+`!mc shop` buys and sells items on the Bedrock server for 🟫 **blocks**, a
+currency of its own that is earned only by selling to the shop — never
+bought with coins, paid, won or dropped. That wall between the two economies
+is the point; don't add a coins↔blocks exchange or a `!mc pay`. Purses and
+gamertag links are bot-wide (`state.mc_players`, table `mc_players`) like
+coins: one server, one purse. The catalog and its rules live in
+[src/mc_shop.py](src/mc_shop.py), the console in
+[src/mc_console.py](src/mc_console.py), the commands in
+`MinecraftCog` (`!mc link/verify/unlink/blocks/shop/buy/sell`).
+
+- **Off by default, twice.** Nothing works until the operator sets
+  `MC_CONSOLE_HOST` + `MC_CONSOLE_PASSWORD` (the cog's `console` is None
+  otherwise), and then each server switches it on with `!settings
+  minecraft-shop on` (`cfg["mc_shop"]`, listed on the settings panel's
+  games page and the overview). DMs are refused: the switch is per server,
+  and a DM has none to flip. `_shop_refusal` is the one gate; every shop
+  command opens with it.
+- **The console is the itzg image's SSH remote console** (`ENABLE_SSH=true`,
+  port 2222, password = `RCON_PASSWORD`, PTY sessions only, every server
+  log line broadcast). `McConsole` keeps one session, serialises commands
+  under a lock (replies carry no id) and matches each reply by regex among
+  the interleaved log lines (`GIVE_OK`, `CLEAR_OK`, `NO_TARGET`, …). The
+  reply formats are BDS's own strings; a version that rewords one shows up
+  as "the console didn't answer" and the pattern is what to fix. Console
+  commands bypass `allow-cheats=false`; the shop uses only `give`, `clear`,
+  `list` and `tellraw`. **Never** run `changesetting`, `gamemode`, a
+  gamerule or anything else world-level from the bot — Bedrock disables
+  achievements for good once a world saves with cheats on.
+- **What's listed is decided by abuse, not taste** (module docstring of
+  `src/mc_shop.py`): the sell side takes nothing a farm makes (iron, gold,
+  wool, cobble/stone/basalt generators, guardian drops are buy-only or
+  absent), the buy side sells nothing that turns back into a resource (no
+  wood, no ingot blocks, no hay/bone/kelp/slime, cut copper but not copper
+  blocks). The operator's mineral list sells at the listed prices and isn't
+  for sale at all. Everything else pays half of what it costs, and a
+  module-load assert keeps `sell * 2 <= buy` — so buy → craft → sell can't
+  mint blocks. Prices are tenths of a block (`_price`, `fmt_blocks`);
+  ids are Bedrock's flattened names (`silver_glazed_terracotta` is the
+  light-gray one).
+- **Buying charges first and refunds on failure** (`cmd_mc_buy`: claim
+  the purse, save, `give`, refund if the server refused or the console was
+  unreachable — see Concurrency). **Selling credits what the server
+  actually removed** (`clear … -1 <count>` reports the count it took), so
+  a short stack pays for the short stack and two sells racing can't
+  double-pay. Both need the player online; `No targets matched selector`
+  is reported as "you're not on the server". Every trade is logged to
+  `mc_trades` for the operator; nothing reads it back.
+- **Linking is verified in-game**: `!mc link <gamertag>` checks `list` for
+  the player, stores a code in `_link_codes` *before* `tellraw`ing it, and
+  `!mc verify <code>` claims it synchronously. A gamertag belongs to one
+  Discord user (`_holder_of`, case-insensitive); `!mc unlink` keeps the
+  purse.
+
+Coverage: [tests/test_mc_shop.py](tests/test_mc_shop.py) — catalog rules,
+the console client against a scripted fake process, and every command flow.
 
 ## Concurrency: per-user command races
 

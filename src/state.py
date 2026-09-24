@@ -217,6 +217,10 @@ lottery_tickets_today: dict = {"date": None, "count": 0}
 # tri-state: None = no sample yet (feature disabled or monitor hasn't run).
 mc_last_online: bool | None = None
 mc_last_ping_ms: float | None = None
+# !mc shop — {uid: {"gamertag": str | None, "blocks": int (tenths of a
+# block), "linked_at": int | None}}. Bot-wide like the coin economy: one
+# Minecraft server, one purse. Mirrors mc_players (migration 0081).
+mc_players: dict = {}
 
 # Per-user totals for the CURRENT 6h CT bucket. The graph cog reads these
 # for the live-now point; the values get rolled to a fresh row in the disk

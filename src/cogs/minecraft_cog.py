@@ -11,13 +11,20 @@ and accumulated player-seconds, all count-based approximations. The pong
 also carries the server version: a change between two pongs posts a "server
 updated" alert, with the last version seen persisted (mc_server_versions,
 migration 0068) so the comparison survives the bot restarting alongside the
-server. Named join/leave and console commands would need docker-socket
-access (deliberately not mounted).
+server. Named join/leave notices would need the console log; see below.
+
+The block shop (`!mc shop` and friends) is the one path into the server
+itself: it runs `give` / `clear` / `list` / `tellraw` over the itzg image's
+SSH remote console (src/mc_console.py — no docker socket) and keeps its own
+currency, 🟫 blocks, earned only by selling to it (catalog and rules in
+src/mc_shop.py). Off per server until `!settings minecraft-shop on`, and
+closed everywhere until MC_CONSOLE_HOST / MC_CONSOLE_PASSWORD are set.
 """
 import asyncio
 import collections
 import dataclasses
 import logging
+import secrets
 import time
 
 import discord
@@ -30,10 +37,17 @@ from src import state, status_manager
 import src.persistence as persistence
 from src.config import (
     MC_SERVER_HOST, MC_SERVER_PORT, MC_POLL_SECONDS, MC_SERVER_SHOW_IP,
+    MC_CONSOLE_HOST, MC_CONSOLE_PORT, MC_CONSOLE_PASSWORD,
 )
-from src.helpers import emb, C_GREEN, C_RED, C_GREY, C_BLUE, C_ORANGE
+from src.helpers import emb, parse_int_amount, C_GREEN, C_RED, C_GREY, C_BLUE, C_ORANGE, C_PURPLE
 from src.guild_config import get_guild_cfg
+from src.mc_console import McConsole, ConsoleError, ConsoleRefused
+from src.mc_shop import (
+    BLOCK, CATEGORIES, CATEGORY_LABELS, MAX_TRADE_COUNT, ShopItem,
+    find_item, fmt_blocks, items_in, match_category,
+)
 from src.permissions import requires_perm
+from src.settings_views import Field, open_form
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +71,11 @@ MC_STATS_RETENTION_DAYS = 3650
 # Cap the per-poll playtime accrual so a long bot outage doesn't credit the
 # whole gap to whoever happens to be online at the next poll.
 MC_PLAYTIME_MAX_GAP_SECS = 3 * MC_POLL_SECONDS
+# A `!mc link` code is read off the in-game screen; ten minutes is plenty.
+LINK_CODE_TTL_SECS = 600
+# Bedrock gamertags: 1–16 characters on Xbox, up to 32 with a suffix on
+# other platforms; the column is VARCHAR(32).
+GAMERTAG_MAX_LEN = 32
 
 
 @dataclasses.dataclass
@@ -231,15 +250,27 @@ class MinecraftCog(commands.Cog):
         status_manager.register("minecraft", self.status_text)
         if MC_SERVER_HOST:
             self.mc_monitor.start()
+        # The block shop's console session; None keeps every shop command
+        # answering "not configured". Tests swap in a fake.
+        self.console: "McConsole | None" = (
+            McConsole(MC_CONSOLE_HOST, MC_CONSOLE_PORT, MC_CONSOLE_PASSWORD)
+            if MC_CONSOLE_HOST and MC_CONSOLE_PASSWORD else None
+        )
+        # uid → (gamertag as the server spells it, code, expires_at) for a
+        # `!mc link` awaiting its `!mc verify`. In-memory: a reboot just
+        # means asking for a new code.
+        self._link_codes: dict[int, tuple[str, str, float]] = {}
 
     def cog_unload(self):
         status_manager.unregister("minecraft")
         if MC_SERVER_HOST:
             self.mc_monitor.cancel()
+        if self.console is not None:
+            asyncio.ensure_future(self.console.close())
 
     # ── !mc ───────────────────────────────────────────────────────────────────
-    @commands.command(name="mc", aliases=["minecraft", "mcstatus"],
-                      help="Show the Minecraft server's status: players, ping, version and uptime")
+    @commands.group(name="mc", aliases=["minecraft", "mcstatus"], invoke_without_command=True,
+                    help="Show the Minecraft server's status: players, ping, version and uptime")
     @requires_perm
     async def cmd_mc(self, ctx: commands.Context):
         if not MC_SERVER_HOST:
@@ -290,6 +321,378 @@ class MinecraftCog(commands.Cog):
                 value = f"{pct:.1f}% (last 7 days)"
             embed.add_field(name="Uptime", value=value)
         await ctx.send(embed=embed)
+
+    # ── Block shop: gates and helpers ─────────────────────────────────────────
+    def _shop_refusal(self, ctx: commands.Context) -> "discord.Embed | None":
+        """Why the shop can't serve this command here, or None. The switch
+        is per server and off by default; DMs have no switch to flip, so
+        the shop stays shut there too."""
+        if self.console is None:
+            return emb("⛏️ Block Shop",
+                       "The block shop isn't configured (set `MC_CONSOLE_HOST` and `MC_CONSOLE_PASSWORD`).",
+                       C_GREY)
+        if ctx.guild is None:
+            return emb("⛏️ Block Shop", "The block shop works in a server that has it switched on, not in DMs.", C_GREY)
+        if not get_guild_cfg(ctx.guild.id).get("mc_shop"):
+            return emb("🚫 Turned Off",
+                       "The Minecraft block shop is off in this server. "
+                       "An admin can switch it on with `!settings minecraft-shop on`.",
+                       C_GREY)
+        return None
+
+    @staticmethod
+    def _player(uid: int) -> dict:
+        return state.mc_players.setdefault(int(uid), {"gamertag": None, "blocks": 0, "linked_at": None})
+
+    @staticmethod
+    def _holder_of(gamertag: str) -> "int | None":
+        """The Discord user a gamertag is linked to, case-insensitively."""
+        wanted = gamertag.lower()
+        for uid, row in state.mc_players.items():
+            if (row.get("gamertag") or "").lower() == wanted:
+                return uid
+        return None
+
+    async def _linked_gamertag(self, ctx: commands.Context) -> "str | None":
+        gamertag = self._player(ctx.author.id).get("gamertag")
+        if not gamertag:
+            await ctx.send(embed=emb(
+                "⛏️ Block Shop",
+                "Link your gamertag first: join the server, then `!mc link <gamertag>`.",
+                C_GREY,
+            ))
+        return gamertag
+
+    @staticmethod
+    def _parse_trade(args: tuple, *, allow_all: bool) -> "tuple[ShopItem | None, int, str | None]":
+        """`<item> [count]` or `[count] <item>` → (item, count, error).
+        A count is a number (`64`, `1k`) or, for selling, `all`."""
+        tokens = [t for t in args if t.strip()]
+        count = 1
+
+        def _count(tok: str) -> "int | None":
+            if allow_all and tok.lower() == "all":
+                return MAX_TRADE_COUNT
+            return parse_int_amount(tok)
+
+        if len(tokens) >= 2 and _count(tokens[-1]) is not None:
+            count = _count(tokens.pop())
+        elif len(tokens) >= 2 and _count(tokens[0]) is not None:
+            count = _count(tokens.pop(0))
+        if not tokens:
+            return None, 0, "Name an item — see `!mc shop`."
+        item = find_item(" ".join(tokens))
+        if item is None:
+            return None, 0, f"I don't know **{' '.join(tokens)}** — see `!mc shop` for what's listed."
+        if count < 1:
+            return None, 0, "The count must be at least 1."
+        return item, min(count, MAX_TRADE_COUNT), None
+
+    async def _trade_form(self, ctx: commands.Context, *, verb: str) -> "tuple | None":
+        """The bare `!mc buy` / `!mc sell` prompt: an item and a count."""
+        values = await open_form(
+            ctx,
+            title=f"⛏️ {verb.title()} blocks",
+            description=f"Usage: `!mc {verb} <item> [count]`\n`!mc shop` lists the items and prices.",
+            fields=(
+                Field("item", "Item", placeholder="stone bricks", max_length=64),
+                Field("count", "How many", default="64", max_length=8,
+                      description="a number, or `all` to sell everything you carry" if verb == "sell" else None),
+            ),
+        )
+        if not values:
+            return None
+        return (values["item"], values["count"] or "1")
+
+    @staticmethod
+    def _refused_text(exc: Exception) -> str:
+        line = str(exc)
+        if line.startswith("No targets matched"):
+            return "You're not on the server right now — join it, then try again."
+        return f"The server refused: `{line}`"
+
+    async def _report_console_failure(self, ctx: commands.Context, title: str, exc: Exception):
+        if isinstance(exc, ConsoleRefused):
+            await ctx.send(embed=emb(title, self._refused_text(exc), C_RED))
+        else:
+            logger.warning("[mc shop] console unavailable: %s", exc)
+            await ctx.send(embed=emb(title, "I couldn't reach the server console — try again in a minute.", C_RED))
+
+    # ── !mc link / verify / unlink ────────────────────────────────────────────
+    @cmd_mc.command(name="link", help="Link your Minecraft gamertag to your Discord account for the block shop — join the server first, a code is sent to you in-game",
+                    usage="<gamertag>")
+    async def cmd_mc_link(self, ctx: commands.Context, *gamertag_words: str):
+        refusal = self._shop_refusal(ctx)
+        if refusal is not None:
+            await ctx.send(embed=refusal)
+            return
+        gamertag = " ".join(gamertag_words).strip()
+        if not gamertag:
+            await ctx.send(embed=emb("⛏️ Link Gamertag", "Usage: `!mc link <gamertag>` — join the server first, then run it.", C_GREY))
+            return
+        if len(gamertag) > GAMERTAG_MAX_LEN:
+            await ctx.send(embed=emb("⛏️ Link Gamertag", "That doesn't look like a gamertag.", C_RED))
+            return
+        if self._player(ctx.author.id).get("gamertag"):
+            await ctx.send(embed=emb(
+                "⛏️ Link Gamertag",
+                f"You're already linked as **{self._player(ctx.author.id)['gamertag']}**. `!mc unlink` first to change it.",
+                C_GREY,
+            ))
+            return
+        holder = self._holder_of(gamertag)
+        if holder is not None and holder != ctx.author.id:
+            await ctx.send(embed=emb("⛏️ Link Gamertag", f"**{gamertag}** is already linked to <@{holder}>.", C_RED))
+            return
+        try:
+            online = await self.console.online_players()
+            actual = next((n for n in online if n.lower() == gamertag.lower()), None)
+            if actual is None:
+                await ctx.send(embed=emb(
+                    "⛏️ Link Gamertag",
+                    f"**{gamertag}** isn't on the server right now. Join it, then run `!mc link {gamertag}` again.",
+                    C_RED,
+                ))
+                return
+            code = secrets.token_hex(3).upper()
+            # Registered before the message is sent so the code is valid the
+            # moment the player can read it.
+            self._link_codes[ctx.author.id] = (actual, code, time.time() + LINK_CODE_TTL_SECS)
+            await self.console.tell(actual, f"Discord link code: {code} - run !mc verify {code} in Discord (expires in 10 minutes)")
+        except (ConsoleRefused, ConsoleError) as exc:
+            self._link_codes.pop(ctx.author.id, None)
+            await self._report_console_failure(ctx, "⛏️ Link Gamertag", exc)
+            return
+        await ctx.send(embed=emb(
+            "⛏️ Link Gamertag",
+            f"I've sent **{actual}** a code in-game. Run `!mc verify <code>` here within 10 minutes.",
+            C_BLUE,
+        ))
+
+    @cmd_mc.command(name="verify", help="Finish linking your gamertag with the code that was sent to you in-game",
+                    usage="<code>")
+    async def cmd_mc_verify(self, ctx: commands.Context, code: str = ""):
+        refusal = self._shop_refusal(ctx)
+        if refusal is not None:
+            await ctx.send(embed=refusal)
+            return
+        pending = self._link_codes.get(ctx.author.id)
+        if pending is None or pending[2] < time.time():
+            self._link_codes.pop(ctx.author.id, None)
+            await ctx.send(embed=emb("⛏️ Link Gamertag", "No code is waiting for you — start with `!mc link <gamertag>`.", C_GREY))
+            return
+        gamertag, expected, _ = pending
+        if code.strip().upper() != expected:
+            await ctx.send(embed=emb("⛏️ Link Gamertag", "That's not the code — check the message in-game.", C_RED))
+            return
+        # Claimed synchronously (no await since the checks) — a second
+        # `!mc verify` can't link the same gamertag twice.
+        self._link_codes.pop(ctx.author.id, None)
+        holder = self._holder_of(gamertag)
+        if holder is not None and holder != ctx.author.id:
+            await ctx.send(embed=emb("⛏️ Link Gamertag", f"**{gamertag}** was linked to <@{holder}> in the meantime.", C_RED))
+            return
+        player = self._player(ctx.author.id)
+        player["gamertag"] = gamertag
+        player["linked_at"] = int(time.time())
+        await persistence.save_mc_player(ctx.author.id)
+        await ctx.send(embed=emb(
+            "⛏️ Gamertag Linked",
+            f"**{gamertag}** is now yours. Sell with `!mc sell`, buy with `!mc buy`; `!mc shop` has the prices.",
+            C_GREEN,
+        ))
+
+    @cmd_mc.command(name="unlink", help="Unlink your Minecraft gamertag (your 🟫 blocks are kept)")
+    async def cmd_mc_unlink(self, ctx: commands.Context):
+        player = self._player(ctx.author.id)
+        if not player.get("gamertag"):
+            await ctx.send(embed=emb("⛏️ Unlink Gamertag", "You don't have a gamertag linked.", C_GREY))
+            return
+        was = player["gamertag"]
+        player["gamertag"] = None
+        player["linked_at"] = None
+        await persistence.save_mc_player(ctx.author.id)
+        await ctx.send(embed=emb("⛏️ Unlink Gamertag", f"**{was}** is no longer linked. Your {fmt_blocks(player['blocks'])} stay with you.", C_GREEN))
+
+    # ── !mc blocks ────────────────────────────────────────────────────────────
+    @cmd_mc.command(name="blocks", aliases=["bal", "purse"], help="Show your 🟫 blocks — the block shop's currency, earned only by selling to it",
+                    usage="[@user]")
+    async def cmd_mc_blocks(self, ctx: commands.Context, target: discord.Member = None):
+        who = target or ctx.author
+        player = state.mc_players.get(who.id) or {"gamertag": None, "blocks": 0}
+        lines = [f"**{fmt_blocks(player['blocks'])}**"]
+        if player.get("gamertag"):
+            lines.append(f"Gamertag: **{player['gamertag']}**")
+        elif who.id == ctx.author.id:
+            lines.append("No gamertag linked — `!mc link <gamertag>`.")
+        title = "⛏️ Your Blocks" if who.id == ctx.author.id else f"⛏️ {who.display_name}'s Blocks"
+        await ctx.send(embed=emb(title, "\n".join(lines), C_PURPLE))
+
+    # ── !mc shop ──────────────────────────────────────────────────────────────
+    @cmd_mc.command(name="shop", aliases=["store", "prices"], help="The block shop's catalog: what it sells and what it pays, in 🟫 blocks",
+                    usage="[category]")
+    async def cmd_mc_shop(self, ctx: commands.Context, *category_words: str):
+        refusal = self._shop_refusal(ctx)
+        if refusal is not None:
+            await ctx.send(embed=refusal)
+            return
+        query = " ".join(category_words).strip()
+        if not query:
+            await ctx.send(embed=self._shop_overview_embed())
+            return
+        key = match_category(query)
+        if key is None:
+            item = find_item(query)
+            if item is None:
+                await ctx.send(embed=emb("⛏️ Block Shop", f"No category or item called **{query}**. Bare `!mc shop` lists the categories.", C_GREY))
+                return
+            await ctx.send(embed=emb("⛏️ Block Shop", self._item_line(item), C_PURPLE))
+            return
+        await ctx.send(embed=self._category_embed(key))
+
+    @staticmethod
+    def _item_line(item: ShopItem) -> str:
+        buy = f"buy {fmt_blocks(item.buy)}" if item.buy is not None else "not for sale"
+        sell = f"sells for {fmt_blocks(item.sell)}" if item.sell is not None else "not bought"
+        return f"**{item.name}** · {buy} · {sell}"
+
+    def _shop_overview_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title="⛏️ Block Shop",
+            description=(
+                f"Prices are in {BLOCK} **blocks**, earned only by selling here. "
+                "`!mc shop <category>` for the prices, `!mc sell <item> [count|all]`, `!mc buy <item> [count]`.\n"
+                "Bought items land in your inventory on the server; sold ones are taken from it — be online."
+            ),
+            color=C_PURPLE,
+        )
+        for key, label in CATEGORIES:
+            items = items_in(key)
+            buyable = sum(1 for i in items if i.buy is not None)
+            sellable = sum(1 for i in items if i.sell is not None)
+            if key == "minerals":
+                what = f"{sellable} items · sell only"
+            elif buyable and not sellable:
+                what = f"{buyable} blocks · buy only"
+            else:
+                what = f"{buyable} blocks · {sellable} bought back"
+            embed.add_field(name=label, value=f"`!mc shop {key}` — {what}", inline=True)
+        return embed
+
+    def _category_embed(self, key: str) -> discord.Embed:
+        embed = discord.Embed(title=f"⛏️ Block Shop — {CATEGORY_LABELS[key]}", color=C_PURPLE)
+        lines = [self._item_line(item) for item in items_in(key)]
+        # Embed fields hold 1024 characters; the coloured sets run past it.
+        chunk, size, first = [], 0, True
+        for line in lines + [None]:
+            if line is None or size + len(line) + 1 > 1000:
+                embed.add_field(name="Items" if first else "…", value="\n".join(chunk), inline=False)
+                chunk, size, first = [], 0, False
+                if line is None:
+                    break
+            chunk.append(line)
+            size += len(line) + 1
+        return embed
+
+    # ── !mc buy / sell ────────────────────────────────────────────────────────
+    @cmd_mc.command(name="buy", help="Buy building blocks from the block shop with 🟫 blocks — they're given to you in-game, so be on the server",
+                    usage="<item> [count]")
+    async def cmd_mc_buy(self, ctx: commands.Context, *args: str):
+        refusal = self._shop_refusal(ctx)
+        if refusal is not None:
+            await ctx.send(embed=refusal)
+            return
+        if not args:
+            args = await self._trade_form(ctx, verb="buy")
+            if args is None:
+                return
+        item, count, error = self._parse_trade(args, allow_all=False)
+        if error:
+            await ctx.send(embed=emb("⛏️ Buy", error, C_RED))
+            return
+        if item.buy is None:
+            await ctx.send(embed=emb("⛏️ Buy", f"**{item.name}** isn't for sale — the shop only buys it ({self._item_line(item)}).", C_GREY))
+            return
+        gamertag = await self._linked_gamertag(ctx)
+        if not gamertag:
+            return
+        player = self._player(ctx.author.id)
+        cost = item.buy * count
+        if player["blocks"] < cost:
+            await ctx.send(embed=emb(
+                "⛏️ Buy",
+                f"{count:,} × **{item.name}** costs {fmt_blocks(cost)}; you have {fmt_blocks(player['blocks'])}.",
+                C_RED,
+            ))
+            return
+        # Charge before the console call (see CLAUDE.md: Concurrency) and
+        # refund if the server doesn't hand the items over.
+        player["blocks"] -= cost
+        await persistence.save_mc_player(ctx.author.id)
+        try:
+            given = await self.console.give(gamertag, item.id, count)
+        except (ConsoleRefused, ConsoleError) as exc:
+            player["blocks"] += cost
+            await persistence.save_mc_player(ctx.author.id)
+            await self._report_console_failure(ctx, "⛏️ Buy", exc)
+            return
+        await persistence.log_mc_trade(
+            ts=int(time.time()), user_id=ctx.author.id, guild_id=ctx.guild.id, gamertag=gamertag,
+            kind="buy", item_id=item.id, count=given, blocks=cost,
+        )
+        await ctx.send(embed=emb(
+            "⛏️ Bought",
+            f"**{given:,} × {item.name}** given to **{gamertag}** for {fmt_blocks(cost)}.\n"
+            f"You have {fmt_blocks(player['blocks'])} left.",
+            C_GREEN,
+        ))
+
+    @cmd_mc.command(name="sell", help="Sell ores or building blocks from your in-game inventory to the block shop for 🟫 blocks — be on the server",
+                    usage="<item> [count|all]")
+    async def cmd_mc_sell(self, ctx: commands.Context, *args: str):
+        refusal = self._shop_refusal(ctx)
+        if refusal is not None:
+            await ctx.send(embed=refusal)
+            return
+        if not args:
+            args = await self._trade_form(ctx, verb="sell")
+            if args is None:
+                return
+        item, count, error = self._parse_trade(args, allow_all=True)
+        if error:
+            await ctx.send(embed=emb("⛏️ Sell", error, C_RED))
+            return
+        if item.sell is None:
+            await ctx.send(embed=emb("⛏️ Sell", f"The shop doesn't buy **{item.name}** ({self._item_line(item)}).", C_GREY))
+            return
+        gamertag = await self._linked_gamertag(ctx)
+        if not gamertag:
+            return
+        # The console takes the items first; the purse is credited for
+        # exactly what came out, so two sells racing can't double-pay.
+        try:
+            removed = await self.console.clear(gamertag, item.id, count)
+        except (ConsoleRefused, ConsoleError) as exc:
+            await self._report_console_failure(ctx, "⛏️ Sell", exc)
+            return
+        if removed <= 0:
+            await ctx.send(embed=emb("⛏️ Sell", f"You don't have any **{item.name}** on you.", C_GREY))
+            return
+        earned = item.sell * removed
+        player = self._player(ctx.author.id)
+        player["blocks"] += earned
+        await persistence.save_mc_player(ctx.author.id)
+        await persistence.log_mc_trade(
+            ts=int(time.time()), user_id=ctx.author.id, guild_id=ctx.guild.id, gamertag=gamertag,
+            kind="sell", item_id=item.id, count=removed, blocks=earned,
+        )
+        short = f" (you had {removed:,}, not {count:,})" if removed < count and count != MAX_TRADE_COUNT else ""
+        await ctx.send(embed=emb(
+            "⛏️ Sold",
+            f"**{removed:,} × {item.name}** taken from **{gamertag}** for {fmt_blocks(earned)}{short}.\n"
+            f"You now have {fmt_blocks(player['blocks'])}.",
+            C_GREEN,
+        ))
 
     # ── Monitor loop ──────────────────────────────────────────────────────────
     @tasks.loop(seconds=MC_POLL_SECONDS)

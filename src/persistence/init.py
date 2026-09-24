@@ -616,6 +616,19 @@ async def _init_db_state_inner(state, run_migrations):
             logging.error(f"[init_db_state] counters failed: {e}", exc_info=True)
             raise
 
+        # ── mc_players (!mc shop) ────────────────────────────────────────
+        try:
+            await cur.execute("SELECT user_id, gamertag, blocks, linked_at FROM mc_players")
+            for uid, gamertag, blocks, linked_at in await cur.fetchall():
+                state.mc_players[int(uid)] = {
+                    "gamertag": gamertag,
+                    "blocks": int(blocks or 0),
+                    "linked_at": int(linked_at) if linked_at is not None else None,
+                }
+        except Exception as e:
+            logging.error(f"[init_db_state] mc_players failed: {e}", exc_info=True)
+            raise
+
         # ── idle rpg (!idle) ─────────────────────────────────────────────
         try:
             await cur.execute(

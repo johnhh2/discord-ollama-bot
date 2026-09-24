@@ -47,6 +47,7 @@ from src.ai import (
 )
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, PUZZLE_REWARDS, MC_SERVER_HOST,
+    MC_CONSOLE_HOST, MC_CONSOLE_PASSWORD,
 )
 from src.puzzle import (
     PUZZLE_RIDDLE_PROMPT, build_coding_prompt,
@@ -348,6 +349,10 @@ class UtilityCog(commands.Cog):
             fun_lines.append("`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote")
         if MC_SERVER_HOST:
             fun_lines.append("`!minecraft` — Minecraft server status (players, ping)")
+        # The block shop is off until a server admin switches it on, and
+        # needs the console configured (see CLAUDE.md: Minecraft block shop).
+        if MC_CONSOLE_HOST and MC_CONSOLE_PASSWORD and ctx.guild and get_guild_cfg(ctx.guild.id).get("mc_shop"):
+            fun_lines.append("`!mc shop` — Sell ores and buy building blocks on the Minecraft server for 🟫 blocks")
         fun_lines.append("`!tips` — Show a random tip about hidden commands")
         help_embed.add_field(name="🎉 Fun", inline=False, value="\n".join(fun_lines))
         utility_lines = [

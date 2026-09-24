@@ -155,6 +155,7 @@ from src.persistence.mc_ping import (  # noqa: F401
     record_mc_server_version,
     load_mc_server_version,
 )
+from src.persistence.mc_shop import save_mc_player, log_mc_trade  # noqa: F401
 from src.persistence.daily_counters import (  # noqa: F401
     bump_daily_counter,
     load_daily_counter,

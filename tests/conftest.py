@@ -121,6 +121,7 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "bot_role_ranks", {})
     monkeypatch.setattr(_state, "mc_last_online", None)
     monkeypatch.setattr(_state, "mc_last_ping_ms", None)
+    monkeypatch.setattr(_state, "mc_players", {})
 
     # init_db_state is one-shot in production (guarded against on_ready
     # reconnects), but tests call it repeatedly to re-seed state from the
@@ -170,6 +171,7 @@ def reset_bot_state(monkeypatch):
         "upsert_mc_daily_player_stats", "prune_mc_daily_player_stats",
         "save_mc_daily_ping_stats", "prune_mc_daily_ping_stats",
         "record_mc_server_version",
+        "save_mc_player", "log_mc_trade",
         "bump_daily_counter", "prune_daily_counters",
     ]
     for fn_name in save_fn_names:
@@ -287,6 +289,8 @@ def reset_bot_state(monkeypatch):
         monkeypatch.setattr(_utility_cog_mod, _prompt, _dismissed)
     import src.cogs.ai_cog as _ai_cog_mod
     monkeypatch.setattr(_ai_cog_mod, "open_form", _dismissed)  # `!ask`, `!story`, `!roleplay` forms
+    import src.cogs.minecraft_cog as _mc_cog_mod
+    monkeypatch.setattr(_mc_cog_mod, "open_form", _dismissed)  # bare `!mc buy` / `!mc sell`
 
 
 @pytest_asyncio.fixture

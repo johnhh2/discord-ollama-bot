@@ -82,6 +82,8 @@ _TABLE_PKS = {
     "mc_daily_player_stats": ("stat_date",),
     "mc_daily_ping_stats": ("stat_date",),
     "mc_server_versions": ("ts",),
+    "mc_players": ("user_id",),
+    "mc_trades": ("id",),
     "daily_counters": ("day", "counter"),
     "lottery_ticket_grants": ("guild_id", "user_id"),
     "property_owners": ("property_id",),

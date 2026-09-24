@@ -32,6 +32,13 @@ MC_POLL_SECONDS = int(os.getenv("MC_POLL_SECONDS") or "60")
 # Show the server address (host:port) in !mc embeds and monitor alerts.
 # Off by default so the public address isn't leaked into Discord channels.
 MC_SERVER_SHOW_IP = (os.getenv("MC_SERVER_SHOW_IP") or "").strip().lower() in ("1", "true", "yes", "on")
+# Bedrock console for the block shop (!mc shop): the itzg image's SSH remote
+# console (ENABLE_SSH=true on the bedrock container, port 2222 inside it,
+# password = its RCON_PASSWORD). Host is the bedrock container as the bot's
+# container sees it, not the public address. Both must be set to enable it.
+MC_CONSOLE_HOST = os.getenv("MC_CONSOLE_HOST", "")
+MC_CONSOLE_PORT = int(os.getenv("MC_CONSOLE_PORT") or "2222")
+MC_CONSOLE_PASSWORD = os.getenv("MC_CONSOLE_PASSWORD", "")
 
 _raw_channels = os.getenv("ACTIVE_CHANNEL_IDS", "")
 ACTIVE_CHANNEL_IDS = (

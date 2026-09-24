@@ -26,7 +26,7 @@ from src.settings_hub import (
     SHOP_ITEMS, channel_rows, channels_in, mentions, open_settings_hub,
 )
 from src.confirm_view import confirm_choice, confirm_prompt
-from src.config import OLLAMA_MODEL, LOTTERY_SEED_POOL
+from src.config import OLLAMA_MODEL, LOTTERY_SEED_POOL, MC_CONSOLE_HOST, MC_CONSOLE_PASSWORD
 from src.features import FEATURES, set_feature, features_overview
 from src.setup_wizard import run_setup_wizard
 from src.ai import list_ollama_models
@@ -67,6 +67,7 @@ class SettingsCog(commands.Cog):
                 f"💬 Quote bypass: {'✅ on' if cfg.get('quote_bypass_restrictions', False) else '❌ off'}\n"
                 f"🪙 Leaderboard default: **{cfg.get('leaderboard_default_scope', 'global')}**\n"
                 f"⚔️ Idle RPG: pace **{cfg.get('idle_pace') or 'lively'}** · auto-enroll **{'on' if cfg.get('idle_enroll') else 'off'}**\n"
+                f"⛏️ Minecraft block shop: {'✅ on' if cfg.get('mc_shop') else '❌ off'}\n"
                 f"🔞 NSFW: {nsfw}"
             ),
             inline=False,
@@ -373,6 +374,36 @@ class SettingsCog(commands.Cog):
         cfg["idle_pace"] = pace.lower()
         await save_guild_settings()
         await ctx.send(embed=emb("⚔️ Idle RPG Pace", f"The idle RPG now runs at the **{pace.lower()}** pace.", C_GREEN))
+
+    # ── !settings minecraft-shop ──────────────────────────────────────────────
+    @cmd_settings.command(name="minecraft-shop", help="Switch the Minecraft block shop on or off for this server (off by default)",
+                          usage="[on|off]")
+    @requires_perm
+    async def settings_minecraft_shop(self, ctx: commands.Context, choice: str = None):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        usage = "`!settings minecraft-shop on|off`"
+        what = (
+            "`!mc shop`: members link their gamertag, sell ores and building blocks to the shop for 🟫 blocks "
+            "(the shop's own currency — the only way to earn it) and buy decorative blocks with them, "
+            "delivered straight into their inventory on the Bedrock server. "
+            "Off by default; it also needs the operator to have configured the server console."
+        )
+        if choice is None:
+            choice = await self._on_off_choice(ctx, title="⛏️ Minecraft Block Shop", what=what, current=bool(cfg.get("mc_shop")), usage=usage)
+            if choice is None:
+                return
+        if choice.lower() not in ("on", "off"):
+            await ctx.send(embed=emb("⛏️ Minecraft Block Shop", f"Usage: {usage}\n\n{what}", C_GREY))
+            return
+        cfg["mc_shop"] = choice.lower() == "on"
+        await save_guild_settings()
+        note = ""
+        if cfg["mc_shop"] and not (MC_CONSOLE_HOST and MC_CONSOLE_PASSWORD):
+            note = " The server console isn't configured yet (`MC_CONSOLE_HOST` / `MC_CONSOLE_PASSWORD`), so the shop stays closed until it is."
+        await ctx.send(embed=emb("⛏️ Minecraft Block Shop", f"The block shop is now **{choice.lower()}**.{note}", C_GREEN))
 
     # ── !settings channel bounty ──────────────────────────────────────────────
     @cmd_settings_channel.command(name="bounty", help="Set the channel where !bounty posts, or clear it to disable bounties",
