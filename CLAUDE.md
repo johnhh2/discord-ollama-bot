@@ -1540,9 +1540,18 @@ and the reference tests in [tests/test_bot_startup.py](tests/test_bot_startup.py
 
 ## Slash commands: the tree is synced every boot
 
-`!ask` is the one command that is also a slash command (`/ask`), declared with
-`@commands.hybrid_command` and published by `self.tree.sync()` in
-`Bot.setup_hook`.
+A handful of commands are also slash commands, declared with
+`@commands.hybrid_command` (or `hybrid_group`) so `!name` and `/name` run the
+same callback, and published by `self.tree.sync()` in `Bot.setup_hook`:
+`ask`, `help`, `balance`, `savings`, `profile`, `streak`, `bugreport`,
+`featurerequest` and `subscribe` (`/subscribe channel`, `/subscribe ignore`).
+The panels — `/settings`, `/shop`, `/admin` — are plain `app_commands` with
+their own ephemeral wiring. Slash is an *alternative*, not a replacement: the
+prefix form, its aliases and its `*args` parsing stay as they are, and most
+commands stay prefix-only — Discord caps an app at 100 global slash commands,
+a `*args` callback can't be hybrid, the counters and alias families are
+`CommandNotFound` fallbacks, and the hidden admin commands rely on a silent
+denial the picker can't give.
 
 Discord keeps an app's **global** application commands until the app replaces
 them. An old `bot.py` registered `/ask` and a later rewrite dropped the
@@ -1554,11 +1563,29 @@ boot.
 
 Writing one:
 
-- **`ctx.interaction is not None` is the slash path.** Acknowledge it with
-  `await ctx.defer()` before anything slow: Discord kills an interaction that
-  hasn't answered in three seconds, and an Ollama ping or a channel-history
-  read routinely outlasts that. `ctx.send` then posts the followup and still
-  returns an editable `Message`.
+- **`ctx.interaction is not None` is the slash path.** Open the body with
+  `await ack_slash(ctx)` (`src/helpers.py`): Discord kills an interaction
+  that hasn't answered in three seconds, and an Ollama ping or a
+  channel-history read routinely outlasts that. `ctx.send` then posts the
+  followup and still returns an editable `Message`. The helper is a no-op on
+  the prefix path and when a converter already answered (OptionalMember's
+  ambiguity embed), so every hybrid command calls it blind.
+- **The blocklist is enforced in the global gate, not only in `on_message`.**
+  A slash invocation never passes through `on_message`, so
+  `_command_perm_gate` calls `is_silenced` first and raises
+  `PermissionDenied` silently. The panel slash commands, which skip
+  `process_commands` altogether, still check it by hand.
+- **A custom converter becomes a text option.** `target: OptionalMember`
+  shows as a string the user types a name, @mention or id into, and the
+  converter resolves it — the fuzzy prefix lookup keeps working. A real
+  user picker needs a `discord.Member` annotation, which would lose that
+  lookup for the typed form; keep the converter unless the picker matters
+  more.
+- **Anything that links to `ctx.message` must branch.** The synthetic
+  message's jump link 404s, so `_source_command_jumplink` prints
+  "slash command" instead.
+- **A hybrid group needs `fallback="…"`** to publish its own body as a slash
+  subcommand (`/subscribe channel`); without it only the subcommands appear.
 - **The `Context` carries a synthetic `Message`.** It has the interaction's id
   and doesn't exist on Discord, so `ctx.message.reply(...)` and
   `ctx.message.create_thread(...)` 404. `_try_create_thread` returns None on
@@ -1573,8 +1600,8 @@ Writing one:
   keyword-only for the trailing text argument) and needs a `description=`;
   `@app_commands.describe(...)` names the parameters in Discord's UI.
 
-Coverage: `test_slash_ask_is_registered_in_the_command_tree`
-([tests/test_bot_startup.py](tests/test_bot_startup.py)) and the `/ask` tests
+Coverage: the slash-tree and silenced-gate tests in
+[tests/test_bot_startup.py](tests/test_bot_startup.py) and the `/ask` tests
 in [tests/test_ai_thread_flow.py](tests/test_ai_thread_flow.py).
 
 ## Docker

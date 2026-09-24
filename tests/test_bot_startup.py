@@ -122,8 +122,48 @@ async def test_slash_ask_is_registered_in_the_command_tree(loaded_bot):
     a `/name` in the picker with nothing behind it answers "The application did
     not respond" forever. setup_hook syncs the tree on every boot; this pins
     the one command it has to publish."""
-    tree_names = {cmd.name for cmd in loaded_bot.tree.get_commands()}
-    assert {"ask", "settings", "shop", "admin"} <= tree_names, f"app commands: {sorted(tree_names)}"
+    tree = {cmd.name: cmd for cmd in loaded_bot.tree.get_commands()}
+    expected = {
+        "ask", "settings", "shop", "admin",
+        "help", "balance", "savings", "profile", "streak", "bugreport", "featurerequest", "subscribe",
+    }
+    assert expected <= set(tree), f"app commands: {sorted(tree)}"
+    # The group's own body is published under `fallback`; without it only
+    # `ignore` would reach the picker.
+    assert {sub.name for sub in tree["subscribe"].commands} == {"channel", "ignore"}
+    # Discord rejects a description outside 1–100 characters at sync time,
+    # and a failed sync leaves the picker stale.
+    for cmd in tree.values():
+        assert 1 <= len(cmd.description) <= 100, f"/{cmd.name}: {cmd.description!r}"
+        for sub in getattr(cmd, "commands", ()):
+            assert 1 <= len(sub.description) <= 100, f"/{cmd.name} {sub.name}: {sub.description!r}"
+
+
+async def test_slash_alternatives_keep_their_prefix_form(loaded_bot):
+    """Hybrid conversion must not cost the typed form its aliases."""
+    assert loaded_bot.get_command("bal") is loaded_bot.get_command("balance")
+    assert loaded_bot.get_command("h") is loaded_bot.get_command("help")
+    assert loaded_bot.get_command("ping ignore") is loaded_bot.get_command("subscribe ignore")
+
+
+async def test_global_gate_silences_banned_users(loaded_bot):
+    """A slash invocation never passes through on_message, where the
+    blocklist is otherwise enforced, so the global gate must refuse a banned
+    user itself — silently, like on_message does."""
+    from src import state
+    from src.permissions import PermissionDenied
+    from tests.fakes.discord import FakeCtx, FakeMember
+    banned = 990001
+    ctx = FakeCtx(author=FakeMember(uid=banned), command_name="balance")
+    ctx.command = loaded_bot.get_command("balance")
+    ctx.bot = loaded_bot
+    state.global_blocklist[banned] = {"reason": "t", "banned_by": 1, "banned_at": None}
+    try:
+        with pytest.raises(PermissionDenied):
+            await loaded_bot.can_run(ctx)
+        assert ctx.sent_embeds == [] and ctx.sent_messages == []
+    finally:
+        state.global_blocklist.pop(banned, None)
 
 
 async def test_known_top_level_commands_are_registered(loaded_bot):

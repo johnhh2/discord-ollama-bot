@@ -284,6 +284,17 @@ def _log_audit(user: str, command: str, error: str):
     })
 
 
+async def ack_slash(ctx: commands.Context) -> None:
+    """Acknowledge a slash invocation before anything slow. Discord kills an
+    interaction that hasn't answered in three seconds ("The application did
+    not respond"); after `defer`, `ctx.send` posts the followup and still
+    returns an editable Message. A no-op on the prefix path, and when a
+    converter already answered (OptionalMember's ambiguity embed)."""
+    interaction = getattr(ctx, "interaction", None)
+    if interaction is not None and not interaction.response.is_done():
+        await ctx.defer()
+
+
 async def send_ephemeral(ctx: commands.Context, *args, **kwargs) -> discord.Message:
     """Send a message with delete_after=EPHEMERAL_DELETE_AFTER and register it for cleanup on restart."""
     kwargs["delete_after"] = EPHEMERAL_DELETE_AFTER

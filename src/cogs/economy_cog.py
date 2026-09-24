@@ -6,9 +6,11 @@ import datetime
 from zoneinfo import ZoneInfo
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 
 from src.helpers import (
+    ack_slash,
     emb, C_GREEN, C_RED, C_GOLD, C_ORANGE, C_GREY, C_BLUE, parse_amount, parse_int_amount, send_ephemeral, fetch_member, shop_charge, OptionalMember,
     announce_record,
 )
@@ -442,9 +444,12 @@ class EconomyCog(commands.Cog):
         await ctx.send(embed=emb("🏠 Dailies Stake", body, C_GREEN))
 
 
-    @commands.command(name="balance", aliases=["bal", "b", "!", "$", "wallet"],
-                      help="Show your wallet balance, or another user's; @Bot shows the house pot")
+    @commands.hybrid_command(name="balance", aliases=["bal", "b", "!", "$", "wallet"],
+                             description="Show your wallet balance, or another user's",
+                             help="Show your wallet balance, or another user's; @Bot shows the house pot")
+    @app_commands.describe(target="Whose wallet — a name, @mention or id (default: yours)")
     async def cmd_balance(self, ctx: commands.Context, target: OptionalMember = None):
+        await ack_slash(ctx)
         target = target or ctx.author
         if self.bot.user and target.id == self.bot.user.id and ctx.guild:
             bal = get_guild_house_balance(ctx.guild.id)
@@ -1691,10 +1696,14 @@ class EconomyCog(commands.Cog):
         )
         return embed
 
-    @commands.command(name="savings", aliases=["piggybank"],
-                      help="Piggy bank: view your savings, or deposit/withdraw coins that earn daily interest", usage="[add|remove|+|-|principals] [amount|all]")
+    @commands.hybrid_command(name="savings", aliases=["piggybank"],
+                             description="Piggy bank: view your savings, or deposit/withdraw coins that earn daily interest",
+                             help="Piggy bank: view your savings, or deposit/withdraw coins that earn daily interest", usage="[add|remove|+|-|principals] [amount|all]")
+    @app_commands.describe(action="add, remove or principals (default: show the piggy bank)",
+                           amount="Coins to move, e.g. 2.5k or all")
     @requires_perm
     async def cmd_savings(self, ctx: commands.Context, action: str = None, amount: str = None):
+        await ack_slash(ctx)
         uid = ctx.author.id
         await _ensure_user(uid)
 

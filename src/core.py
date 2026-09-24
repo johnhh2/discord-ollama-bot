@@ -206,7 +206,12 @@ def create_bot() -> commands.Bot:
         commands do not need a per-command decorator to be covered."""
         if ctx.command is None:
             return True
-        from src.permissions import check_command_permission, PermissionDenied
+        from src.permissions import check_command_permission, is_silenced, PermissionDenied
+        # A slash invocation never passes through on_message, where the
+        # blocklist is otherwise enforced (see CLAUDE.md: Blocklist). Silent,
+        # like on_message and the panel slash commands.
+        if is_silenced(ctx.author.id, ctx.guild.id if ctx.guild else None):
+            raise PermissionDenied()
         if not await check_command_permission(ctx):
             raise PermissionDenied()
         return True

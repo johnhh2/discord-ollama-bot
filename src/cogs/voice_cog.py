@@ -2,10 +2,11 @@ import logging
 import time
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from src.discord_retry import send_dm
-from src.helpers import emb, MemberConverter, C_GREEN, C_RED, C_GREY, C_GOLD
+from src.helpers import emb, MemberConverter, C_GREEN, C_RED, C_GREY, C_GOLD, ack_slash
 from src.permissions import requires_perm
 from src.persistence import (
     save_voice_ping,
@@ -47,8 +48,13 @@ class VoiceCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.group(name="subscribe", aliases=["ping"], invoke_without_command=True,
-                    help="Toggle a DM when a voice channel goes from empty to active, or list your subscriptions")
+    # `fallback` is what publishes the group's own body as a slash subcommand:
+    # `/subscribe channel [channel]` beside `/subscribe ignore`. Typed,
+    # `!subscribe #vc` is unchanged.
+    @commands.hybrid_group(name="subscribe", aliases=["ping"], invoke_without_command=True, fallback="channel",
+                           description="DM me when a voice channel goes from empty to active, or list your subscriptions",
+                           help="Toggle a DM when a voice channel goes from empty to active, or list your subscriptions")
+    @app_commands.describe(channel="The voice channel to toggle (leave empty to list your subscriptions)")
     @requires_perm
     async def cmd_subscribe(
         self,
@@ -56,6 +62,7 @@ class VoiceCog(commands.Cog):
         *,
         channel: discord.VoiceChannel = None,
     ):
+        await ack_slash(ctx)
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "Use this command in a server.", C_RED))
             return
@@ -117,7 +124,9 @@ class VoiceCog(commands.Cog):
         ))
 
     @cmd_subscribe.command(name="ignore", aliases=["unignore"],
+                           description="Stop being voice-pinged when a given user fills a channel, or list who you ignore",
                            help="Stop being voice-pinged when a given user fills a channel, or list who you ignore", usage="[@user]")
+    @app_commands.describe(query="Who to toggle — a name, @mention or id (leave empty to list)")
     @requires_perm
     async def cmd_subscribe_ignore(
         self,
@@ -125,6 +134,7 @@ class VoiceCog(commands.Cog):
         *,
         query: str = None,
     ):
+        await ack_slash(ctx)
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "Use this command in a server.", C_RED))
             return

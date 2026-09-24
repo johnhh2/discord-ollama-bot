@@ -232,7 +232,7 @@ async def test_slash_ask_defers_and_answers_in_the_channel(_stub_respond_and_cos
     asker = FakeMember(uid=1005, display_name="asker")
     ctx = _make_ctx_with_text_channel(asker, message_content="")
     ctx.channel.history = lambda limit=11: _empty_async_iter()
-    ctx.interaction = object()
+    ctx.interaction = _unanswered_interaction()
 
     await cog.cmd_ask.callback(cog, ctx, question="What is AI?")
 
@@ -243,6 +243,26 @@ async def test_slash_ask_defers_and_answers_in_the_channel(_stub_respond_and_cos
     call = _stub_respond_and_costs[0]
     assert call["channel"] is ctx.channel
     assert call["placeholder"] is not None
+
+
+def _unanswered_interaction(done: bool = False):
+    """The two attributes ack_slash reads off a real Interaction."""
+    from types import SimpleNamespace
+    return SimpleNamespace(response=SimpleNamespace(is_done=lambda: done))
+
+
+async def test_ack_slash_skips_defer_when_a_converter_already_answered():
+    """OptionalMember's ambiguity embed answers the interaction before the
+    body runs; a second `defer` would raise InteractionResponded."""
+    from src.helpers import ack_slash
+    ctx = _make_ctx_with_text_channel(FakeMember(uid=1006), message_content="")
+    ctx.interaction = _unanswered_interaction(done=True)
+    await ack_slash(ctx)
+    ctx.defer.assert_not_awaited()
+
+    ctx.interaction = None
+    await ack_slash(ctx)
+    ctx.defer.assert_not_awaited()
 
 
 def _empty_async_iter():

@@ -9,6 +9,7 @@ get_balance already does.
 import time
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from src import state
@@ -19,7 +20,7 @@ from src.games.bot_chess_rewards import (
     RANK_TOTAL_EMOJI,
     chess_ranks,
 )
-from src.helpers import emb, C_BLUE, C_GREY, OptionalMember
+from src.helpers import emb, C_BLUE, C_GREY, OptionalMember, ack_slash
 from src.leveling import best_level_elsewhere, display_level
 from src.persistence import load_lottery, load_records
 from src.properties import owned_properties, portfolio_value
@@ -30,12 +31,15 @@ class ProfileCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(
+    @commands.hybrid_command(
         name="profile",
         aliases=["user", "player", "investigate", "view", "rank", "elo"],
+        description="Player overview: coins, level, tickets, streak, holdings and chess ranks",
         help="Player overview of you or another user: coins, level, tickets, streak, holdings and chess ranks",
     )
+    @app_commands.describe(target="Whose profile — a name, @mention or id (default: yours)")
     async def cmd_profile(self, ctx: commands.Context, target: OptionalMember = None):
+        await ack_slash(ctx)
         target = target or ctx.author
         if target.bot:
             await ctx.send(embed=emb(

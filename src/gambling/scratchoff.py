@@ -8,6 +8,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src.helpers import (
+    ack_slash,
     emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, C_GREY,
     toggle_member_role, announce_record,
 )
@@ -385,9 +386,11 @@ class ScratchoffCog(commands.Cog):
     async def cmd_scratches(self, ctx: commands.Context):
         await ctx.invoke(self.cmd_scratchoff, count=scratchoff_daily_cap(ctx.author.id))
 
-    @commands.command(name="streak",
-                      help="Show your scratchoff streak and how close you are to the Gamblers role")
+    @commands.hybrid_command(name="streak",
+                             description="Your scratchoff streak and how close you are to the Gamblers role",
+                             help="Show your scratchoff streak and how close you are to the Gamblers role")
     async def cmd_streak(self, ctx: commands.Context):
+        await ack_slash(ctx)
         uid = ctx.author.id
         await _ensure_user(uid)
 

@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.helpers import (
+    ack_slash,
     emb, C_GREEN, C_RED, C_GOLD, C_BLUE, C_GREY,
     send_ephemeral, _edit_board, _delete_after, _log_audit, log_bot_permission_error,
 )
@@ -105,12 +106,9 @@ class AICog(commands.Cog):
                              help="Ask the AI a question in a thread that remembers the conversation")
     @app_commands.describe(question="What you want to ask")
     async def cmd_ask(self, ctx: commands.Context, *, question: str = None):
-        # Discord kills a slash invocation that hasn't answered in three
-        # seconds ("The application did not respond"). Everything below can
-        # outlast that — the AI overview pings Ollama, the ask reads channel
-        # history — so acknowledge first and reply through the followup.
-        if ctx.interaction is not None:
-            await ctx.defer()
+        # The AI overview pings Ollama and the ask reads channel history,
+        # both past Discord's three-second interaction deadline.
+        await ack_slash(ctx)
 
         if await check_ai_channel(ctx):
             return

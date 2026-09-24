@@ -43,6 +43,8 @@ flowchart LR
 
 ## Features
 
+Every command is a `!` command. A few are also slash commands, same behaviour either way: `/ask`, `/help`, `/balance`, `/savings`, `/profile`, `/streak`, `/bugreport`, `/featurerequest`, `/subscribe`, plus the private panels `/settings`, `/shop` and `/admin`.
+
 ### 🤖 LLM chat, locally hosted
 - `!ask` — conversational Q&A; each conversation gets its own thread with isolated context
 - `!continue`, `!tldr`, `!story`, `!roleplay` — follow-ups, summarization, and persona modes

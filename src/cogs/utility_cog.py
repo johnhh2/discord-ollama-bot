@@ -8,12 +8,14 @@ import time
 
 import aiohttp
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from src.discord_retry import send_dm
 from src.reactions import seed_reactions
 from src.settings_views import Field, open_form, pick_from_list
 from src.helpers import (
+    ack_slash,
     emb, C_GREEN, C_RED, C_GOLD, C_BLUE, C_GREY,
     send_ephemeral, toggle_member_role, get_memory_mb, format_uptime, _log_audit,
 )
@@ -283,8 +285,10 @@ class UtilityCog(commands.Cog):
             else:
                 await ctx.send(embed=emb("❌ Error", f"Failed to {'add' if adding else 'remove'} the role.", C_RED))
 
-    @commands.command(name="help", aliases=["h"], help="List the bot's commands by category")
+    @commands.hybrid_command(name="help", aliases=["h"], description="List the bot's commands by category",
+                             help="List the bot's commands by category")
     async def cmd_help(self, ctx: commands.Context):
+        await ack_slash(ctx)
         # The idle channel and its feed threads get the game's card instead.
         idle = getattr(self.bot, "get_cog", lambda _name: None)("IdleCog")
         if idle is not None and idle.in_idle_context(ctx):
@@ -1043,14 +1047,21 @@ class UtilityCog(commands.Cog):
 
         await send_ephemeral(ctx, embed=embed)
 
-    @commands.command(name="bugreport", aliases=["bug"], help="Send a bug report to the bot admins; bare opens a form")
+    @commands.hybrid_command(name="bugreport", aliases=["bug"], description="Send a bug report to the bot admins",
+                             help="Send a bug report to the bot admins; bare opens a form")
+    @app_commands.describe(report="What went wrong (leave empty for a form)")
     @requires_perm
     async def cmd_bugreport(self, ctx: commands.Context, *, report: str = None):
+        await ack_slash(ctx)
         await self._submit_issue(ctx, kind="bug", report=report)
 
-    @commands.command(name="featurerequest", aliases=["feature", "frequest"], help="Submit a feature request to this server's feature-request channel; bare opens a form")
+    @commands.hybrid_command(name="featurerequest", aliases=["feature", "frequest"],
+                             description="Submit a feature request to this server's feature-request channel",
+                             help="Submit a feature request to this server's feature-request channel; bare opens a form")
+    @app_commands.describe(description="What you'd like (leave empty for a form)")
     @requires_perm
     async def cmd_featurerequest(self, ctx: commands.Context, *, description: str = None):
+        await ack_slash(ctx)
         """User-facing feature-request submission.
 
         Posts an embed to the per-guild `feature_request_channel` and seeds
@@ -1968,6 +1979,10 @@ def _source_command_jumplink(ctx) -> str:
     invocation has no guild id). The link goes to Discord's web routing,
     which works in-app on every client.
     """
+    # A slash Context carries a synthetic message (its id is the
+    # interaction's) that doesn't exist on Discord, so a link would 404.
+    if getattr(ctx, "interaction", None) is not None:
+        return "— (slash command)"
     msg = getattr(ctx, "message", None)
     if msg is None or not getattr(msg, "id", None):
         return "—"
