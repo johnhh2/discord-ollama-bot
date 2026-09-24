@@ -333,6 +333,13 @@ assert set(LORE) == set(LANDMARKS), sorted(set(LANDMARKS) ^ set(LORE))
 TOWNS = ("Denmark", "the land of Qwok", "Velvragh", "the Towers of Ankh-Allor", "Jow Botzi territory")
 MARKET_RADIUS = 60
 TOWN_CORE_RADIUS = 15
+# A traveller who reaches a town keeps to it this long (seconds of play,
+# counted down by the map only while the character runs) before wandering
+# on — the player's window for the store, the tables and the hunt board.
+# Without it a hunter arrived and was pointed straight back out to its
+# quarry's country the next second. In memory only: a reboot mid-stay costs
+# nothing worth a column.
+TOWN_STAY_SECS = 15 * 60
 # Two players only run into each other in a level-up battle within a market
 # ring's radius of one another. Without it the pool was "everyone online", so
 # in a small server every level-up was a fight with the same rival; now the
@@ -1915,23 +1922,52 @@ def clear_hunt(char: dict, now: int) -> None:
     char.update(hunt_mob=None, hunt_count=0, hunt_killed=0, hunt_x=None, hunt_y=None, hunt_at=now)
 
 
-def offer_hunt(uid: int, char: dict, rng, name: NameFn, now: int, ticks_per_hour: int) -> "Note | None":
-    """The errand a town hands over, anywhere inside its market ring."""
+def hunt_wait(char: dict, now: int) -> int:
+    """Seconds before a town has another errand for this character; 0 once rested."""
+    return max(0, char.get("hunt_at", 0) + HUNT_REST_SECS - now)
+
+
+def _hunt_town(char: dict, now: int) -> "str | None":
+    """The town whose errand the character could take right now, if any: in
+    a market ring, not already hunting, rested. The one gate for both the
+    chance offer and the board, so neither can hand out hunts faster."""
     town = market_in_reach(char)
-    if (
-        town is None or hunting(char) or char.get("x") is None
-        or now - char.get("hunt_at", 0) < HUNT_REST_SECS
-        or rng.random() >= HUNT_PER_HOUR / ticks_per_hour
-    ):
+    if town is None or hunting(char) or hunt_wait(char, now):
         return None
+    return town
+
+
+def _assign_hunt(uid: int, char: dict, rng, name: NameFn, town: str, *, taken: bool) -> Note:
     beast = rng.choice(hunt_quarries(char["level"]))
     char["hunt_mob"] = beast[0]
     char["hunt_count"], char["hunt_killed"] = rng.randint(HUNT_MIN, HUNT_MAX), 0
     # Always a walk, even when the town itself stands in the right country:
     # nothing spawns inside a market ring, so the errand is to get out of it.
     char["hunt_x"], char["hunt_y"] = nearest_biome_point(char, beast[4])
-    return Note((uid,), f"📜 [{town}] {name(uid)} was asked to deal with {char['hunt_count']} {beast[0]}s. "
-                        f"The nearest are out at [{char['hunt_x']}, {char['hunt_y']}], and {name(uid)} set off.")
+    what = f"{char['hunt_count']} {beast[0]}s"
+    how = f"took a hunt off the board: {what}" if taken else f"was asked to deal with {what}"
+    # A character still keeping to the town sets off when its stay is up.
+    off = "" if taken or char.get("stay_left", 0) > 0 else f", and {name(uid)} set off"
+    return Note((uid,), f"📜 [{town}] {name(uid)} {how}. "
+                        f"The nearest are out at [{char['hunt_x']}, {char['hunt_y']}]{off}.")
+
+
+def offer_hunt(uid: int, char: dict, rng, name: NameFn, now: int, ticks_per_hour: int) -> "Note | None":
+    """The errand a town hands over by chance, anywhere inside its market ring."""
+    town = _hunt_town(char, now)
+    if town is None or rng.random() >= HUNT_PER_HOUR / ticks_per_hour:
+        return None
+    return _assign_hunt(uid, char, rng, name, town, taken=False)
+
+
+def take_hunt(uid: int, char: dict, rng, name: NameFn, now: int) -> "Note | None":
+    """The same errand, taken off the town's board by the player (`!idle
+    hunt`) — no dice, the same gate. None when the town has nothing: the
+    caller says why with market_in_reach / hunting / hunt_wait."""
+    town = _hunt_town(char, now)
+    if town is None:
+        return None
+    return _assign_hunt(uid, char, rng, name, town, taken=True)
 
 
 def finish_hunt(uid: int, char: dict, name: NameFn, now: int) -> Note:
@@ -2267,9 +2303,18 @@ def move_players(chars: dict, quest: dict, rng, name: NameFn, now: int, seconds:
         # Who stands where this second, to spot two characters on one square.
         squares: dict = {}
         for uid in online:
-            if uid in questers or uid not in chars:
+            if uid not in chars:
                 continue
             char = chars[uid]
+            if char.get("stay_left", 0) > 0:
+                # Keeping to a town after the road (TOWN_STAY_SECS). The stay
+                # burns down whatever the character is doing; it only holds
+                # still one that nothing else is steering.
+                char["stay_left"] -= 1
+                if uid not in questers and char.get("travel_to") not in LANDMARKS:
+                    continue
+            if uid in questers:
+                continue
             town = char.get("travel_to")
             if town in LANDMARKS:
                 # A traveller walks like a quester — and, like one, meets nobody on the way.
@@ -2278,7 +2323,13 @@ def move_players(chars: dict, quest: dict, rng, name: NameFn, now: int, seconds:
                     char["x"], char["y"] = _toward(char["x"], goal[0]), _toward(char["y"], goal[1])
                     if (char["x"], char["y"]) == goal:
                         char["travel_to"] = None
-                        notes.append(Note((uid,), f"🧭 {name(uid)} arrived {'in' if town in TOWNS else 'at'} {town}."))
+                        if town in TOWNS:
+                            char["stay_left"] = TOWN_STAY_SECS
+                            notes.append(Note((uid,), f"🧭 {name(uid)} arrived in {town}, and keeps to it for "
+                                                      f"{TOWN_STAY_SECS // 60} minutes."))
+                        else:
+                            char["stay_left"] = 0
+                            notes.append(Note((uid,), f"🧭 {name(uid)} arrived at {town}."))
                 continue
             if hunting(char):
                 if char.get("hunt_x") is None and not hunting_ground(char, char["x"], char["y"]):

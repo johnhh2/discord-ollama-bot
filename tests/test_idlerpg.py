@@ -719,12 +719,32 @@ def test_a_traveller_walks_straight_to_town_without_wandering_or_meeting_anyone(
 
     notes = rpg.move_players(chars, rpg.new_quest(), rng, _name, NOW, 3)
     assert (chars[1]["x"], chars[1]["y"]) == (gx, gy) and chars[1]["travel_to"] is None
-    assert [n.text for n in notes] == ["🧭 P1 arrived in Velvragh."] and not notes[0].public
+    assert [n.text for n in notes] == ["🧭 P1 arrived in Velvragh, and keeps to it for 15 minutes."] and not notes[0].public
 
     wx, wy = rpg.LANDMARKS["T'rnalvph"]
     chars = {1: _char(10, x=wx - 1, y=wy, travel_to="T'rnalvph")}
     notes = rpg.move_players(chars, rpg.new_quest(), rng, _name, NOW, 1)
     assert [n.text for n in notes] == ["🧭 P1 arrived at T'rnalvph."] and chars[1]["travel_to"] is None
+
+
+def test_a_traveller_keeps_to_the_town_a_while_and_a_hunter_is_not_pointed_out_meanwhile():
+    gx, gy = rpg.LANDMARKS["Velvragh"]
+    chars = {1: _char(10, x=gx - 1, y=gy, travel_to="Velvragh", hunt_mob="Crab", hunt_count=3)}
+    rng = _Walk([(1, 1)] * 10, random_=0.0)
+    notes = rpg.move_players(chars, rpg.new_quest(), rng, _name, NOW, 1)
+    assert chars[1]["stay_left"] == rpg.TOWN_STAY_SECS and "keeps to it" in notes[0].text
+    # The whole stay on the square: no wander, and the hunt doesn't point it back out.
+    notes = rpg.move_players(chars, rpg.new_quest(), rng, _name, NOW, rpg.TOWN_STAY_SECS)
+    assert (chars[1]["x"], chars[1]["y"]) == (gx, gy) and chars[1]["hunt_x"] is None and notes == []
+    assert chars[1]["stay_left"] == 0
+    notes = rpg.move_players(chars, rpg.new_quest(), rng, _name, NOW, 1)
+    assert chars[1]["hunt_x"] is not None and any("strayed" in n.text for n in notes)
+
+    # A wild place gives no stay, and a fresh travel walks straight through one.
+    wx, wy = rpg.LANDMARKS["T'rnalvph"]
+    chars = {1: _char(10, x=wx - 1, y=wy, travel_to="T'rnalvph", stay_left=100)}
+    rpg.move_players(chars, rpg.new_quest(), _Walk(random_=0.0), _name, NOW, 1)
+    assert (chars[1]["x"], chars[1]["y"]) == (wx, wy) and chars[1]["stay_left"] == 0
 
 
 def test_a_traveller_mostly_stands_still_and_a_paused_one_always_does():
@@ -1218,6 +1238,24 @@ def test_a_town_offers_nothing_to_a_character_hunting_resting_or_out_of_reach():
     rested = _in_town(hunt_at=NOW - rpg.HUNT_REST_SECS + 60)
     assert rpg.offer_hunt(1, rested, _world_rng("x"), _name, NOW, 60) is None
     assert rpg.offer_hunt(1, _wanderer(), _world_rng("x"), _name, NOW, 60) is None   # no town, no errand
+
+
+def test_the_board_hands_out_the_same_errand_without_the_dice_and_behind_the_same_rest():
+    char = _in_town()
+    note = rpg.take_hunt(1, char, _world_rng("x"), _name, NOW)
+    assert note is not None and "took a hunt off the board" in note.text and rpg.hunting(char)
+    assert rpg.market_in_reach({"x": char["hunt_x"], "y": char["hunt_y"]}) is None
+    assert rpg.take_hunt(1, char, _world_rng("x"), _name, NOW) is None                      # one at a time
+    rpg.finish_hunt(1, char, _name, NOW)
+    assert rpg.hunt_wait(char, NOW) == rpg.HUNT_REST_SECS
+    assert rpg.take_hunt(1, char, _world_rng("x"), _name, NOW + rpg.HUNT_REST_SECS - 1) is None
+    assert rpg.take_hunt(1, char, _world_rng("x"), _name, NOW + rpg.HUNT_REST_SECS) is not None
+    assert rpg.take_hunt(1, _wanderer(), _world_rng("x"), _name, NOW) is None               # no town, no board
+
+    # Keeping to the town, the chance offer doesn't claim to set off.
+    staying = _in_town(stay_left=60)
+    assert "set off" not in rpg.offer_hunt(1, staying, _world_rng("x"), _name, NOW, 60).text
+    assert "set off" in rpg.offer_hunt(1, _in_town(), _world_rng("x"), _name, NOW, 60).text
 
 
 def test_the_quarry_pool_widens_with_level_and_is_never_empty():

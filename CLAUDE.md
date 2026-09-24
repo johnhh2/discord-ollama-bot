@@ -985,7 +985,15 @@ tables from migrations 0070–0077.
   walks that character like a journey quester (the same 1%-a-second step,
   no wandering, so no collision fights — that lost income is the price,
   which is why travel is free) until it stands on the place's square, where
-  the flag clears (and, in a town, the errand fires). Only *running* travellers move. A
+  the flag clears (and, in a town, the errand fires). **Arriving in a town
+  starts a stay**: `stay_left` (`TOWN_STAY_SECS`, 15 minutes, in-memory
+  only) holds the character on its square while nothing else steers it —
+  no wander, and no hunt re-pointing — so the player has a window for the
+  store, the tables and the hunt board. Before it, a hunter who travelled
+  to town was pointed straight back out the next second. The stay counts
+  down every running second whatever the character does; a journey or a
+  fresh `!idle travel` just walks through it, and a wild place gives none.
+  Only *running* travellers move. A
   journey quest overrides it: being picked clears `travel_to`, and the
   command refuses while on one. It is the only steering in the game —
   don't add a faster or paid variant without rethinking the market ring.
@@ -1182,11 +1190,18 @@ tables from migrations 0070–0077.
   source of gold without touching any of them. A new thing that makes a
   character faster or richer belongs in that sum, not in a second one.
 - **Hunts are the errand a lone player can be on.** A town inside its
-  market ring hands over "kill N of a kind" (`offer_hunt`) and the
+  market ring hands over "kill N of a kind" (`offer_hunt`, by chance) or
+  the player takes one off the board (`take_hunt`, behind `!idle hunt` /
+  bare `!hunt` / the sheet's Hunt button — no dice, no confirm) and the
   character walks to the nearest country that kind lives in, then hunts
   there — `HUNT_QUARRY_CHANCE` of its encounters are the quarry, though a
-  kill *anywhere* counts. It is accepted on the spot because there is
-  nobody here to accept it. The goal from `nearest_biome_point` is always
+  kill *anywhere* counts. Both go through `_hunt_town`, the one gate (in a
+  ring, not hunting, `hunt_wait` at zero), so the board can't hand out
+  hunts faster than the town's `HUNT_REST_SECS` allows — the rest is what
+  keeps the 10% clock reward from being chained. The quarry is the town's
+  pick either way: letting the player choose would mean everyone hunts
+  Rats next to town. The chance offer is accepted on the spot because
+  there is nobody here to accept it. The goal from `nearest_biome_point` is always
   outside every market ring, and the steering only clears once the
   character is both in the right country and out of a ring — stopping
   inside one would park it where nothing spawns. From there the hunter

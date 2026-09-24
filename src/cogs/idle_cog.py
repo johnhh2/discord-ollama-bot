@@ -97,6 +97,7 @@ _TOP_ALIASES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("duel", "cmd_duel", ()),
     ("gamble", "cmd_gamble", ("bet",)),
     ("travel", "cmd_travel", ()),
+    ("hunt", "cmd_hunt", ("board",)),
     ("store", "cmd_shop", ()),
     ("quest", "cmd_quest", ()),
     ("prestige", "cmd_prestige", ()),
@@ -117,6 +118,7 @@ _ACTIONS = (
     ("Store", "🛒", "cmd_shop"),
     ("Gamble", "🎲", "cmd_gamble"),
     ("Travel", "🧭", "cmd_travel"),
+    ("Hunt", "🏹", "cmd_hunt"),
     ("Quest", "📜", "cmd_quest"),
     ("Top", "🏆", "cmd_top"),
     ("Prestige", "★", "cmd_prestige"),
@@ -170,7 +172,8 @@ f"A fight runs up to {rpg.MOB_MAX_ROUNDS} rounds of blows both ways and costs **
         f"The realm is a {rpg.MAP_SIZE}×{rpg.MAP_SIZE} grid. Everyone online wanders one step a second, and the edges wrap.\n"
         "Land on the same square as someone and you may fight them, there and then.\n"
         "Some quests are journeys: the party stops wandering and walks to one landmark, then another. `!idle map` shows it all.\n"
-        "`!idle travel <place>` walks you to a town, or out to a wild region, on purpose — slowly, and meeting monsters but no players on the way."
+        "`!idle travel <place>` walks you to a town, or out to a wild region, on purpose — slowly, and meeting monsters but no players on the way. "
+        f"Reach a town and you keep to it for {rpg.TOWN_STAY_SECS // 60} minutes before wandering on: time for the store, the tables and the hunt board."
     ),
     "gold": (
         "The realm's own money — nothing to do with the server's coins, and it can't be sent to anyone.\n"
@@ -204,7 +207,8 @@ f"A fight runs up to {rpg.MOB_MAX_ROUNDS} rounds of blows both ways and costs **
     ),
     "hunts": (
         f"Walk into a town's ring and sooner or later someone asks you to deal with {rpg.HUNT_MIN}–{rpg.HUNT_MAX} of "
-        "a particular kind of monster. You take it on the spot — there's nobody here to accept it — and your "
+        "a particular kind of monster — or take one off the town's board yourself with `!idle hunt` (or the Hunt "
+        "button on your sheet) instead of waiting to be asked. Either way it's the town's pick, not yours, and your "
         "character sets off for the nearest country that kind lives in.\n"
         "Once there it hunts: that kind turns up far more often than it otherwise would, and a kill anywhere counts. "
         "It keeps to that country until the hunt is done, and walks back if something carries it out.\n"
@@ -437,8 +441,8 @@ class IdleCog(commands.Cog):
         """The sheet's buttons the invoker could press right now. The ladder
         is always there; the rest need a character, and each what its
         command would otherwise refuse: a market in reach (the tables also
-        want gold), not being walked by a journey, a running quest, the
-        prestige level."""
+        want gold; the hunt board a rested character with no hunt on), not
+        being walked by a journey, a running quest, the prestige level."""
         actions = {"cmd_top"}
         char = self._chars(guild.id).get(uid)
         if char is None:
@@ -452,6 +456,8 @@ class IdleCog(commands.Cog):
             actions.add("cmd_shop")
             if char["gold"] > 0:
                 actions.add("cmd_gamble")
+            if not rpg.hunting(char) and not rpg.hunt_wait(char, int(time.time())):
+                actions.add("cmd_hunt")
         if char["level"] >= rpg.PRESTIGE_LEVEL:
             actions.add("cmd_prestige")
         return actions
@@ -1106,6 +1112,9 @@ class IdleCog(commands.Cog):
             if char.get("travel_to") in rpg.LANDMARKS:
                 eta = format_duration(rpg.travel_eta_secs(char, char["travel_to"]))
                 lines.insert(3, f"**Travelling to:** {char['travel_to']} — about {eta} of walking left")
+            elif char.get("stay_left", 0) > 0 and away <= rpg.MARKET_RADIUS:
+                lines.insert(3, f"**In town:** keeping to {town} for another {format_duration(char['stay_left'])} — "
+                                "store, tables and hunt board are open")
         if char["gambles"]:
             lines.append(f"**At the tables:** {char['gambles']:,} bets · won {char['gamble_won']:,} · lost {char['gamble_lost']:,}")
         bar = "█" * (rpg.hp_pct(char) // 10) + "░" * (10 - rpg.hp_pct(char) // 10)
@@ -1707,12 +1716,51 @@ class IdleCog(commands.Cog):
             "🧭 Travel",
             f"You set out for **{town}**: {rpg.travel_steps(char, town)} squares, about "
             f"{format_duration(rpg.travel_eta_secs(char, town))} of walking while you're online. "
-            + ("You can shop as soon as you're inside its ring. " if town in rpg.TOWNS
+            + (f"You can shop as soon as you're inside its ring, and once there you keep to the town for "
+               f"{rpg.TOWN_STAY_SECS // 60} minutes. " if town in rpg.TOWNS
                else f"It's {rpg.biome_at(*rpg.LANDMARKS[town])} country — once there you wander again, among its monsters. ")
             + "`!idle travel stop` to wander again.",
             C_GREEN,
         )
         await self._send_with_map(ctx, embed, highlight=(uid,))
+
+    # ── !idle hunt ───────────────────────────────────────────────────────
+
+    @cmd_idle.command(name="hunt", aliases=["board"],
+                      help="Take a hunt off the board of the town you're in — the same errand a town hands out by chance, without the wait")
+    async def cmd_hunt(self, ctx: commands.Context):
+        if not await self._ready(ctx, need_channel=True):
+            return
+        char = await self._own_char(ctx)
+        if char is None:
+            return
+        gid, uid = ctx.guild.id, ctx.author.id
+        rpg.ensure_position(char, self.rng)
+        now = int(time.time())
+        if rpg.hunting(char):
+            await ctx.send(embed=emb(
+                "📜 Hunt", f"You're already on one: {char['hunt_killed']}/{char['hunt_count']} {char['hunt_mob']}s. "
+                           "`!idle status` says how it's going.", C_GREY))
+            return
+        town = rpg.market_in_reach(char)
+        if town is None:
+            await ctx.send(embed=emb(
+                "❌ Hunt", f"The boards are in the towns — walk to one first (`!idle travel`). "
+                           f"You can take a hunt within {rpg.MARKET_RADIUS} squares of a market.", C_RED))
+            return
+        wait = rpg.hunt_wait(char, now)
+        if wait:
+            await ctx.send(embed=emb(
+                "📜 Hunt", f"The board in {town} has nothing for you for another {format_duration(wait)}.", C_GREY))
+            return
+        # Claimed here, before the save: the tick can't run between (see
+        # CLAUDE.md: Idle RPG — _advance is synchronous), but a second press
+        # of the button could.
+        note = rpg.take_hunt(uid, char, self.rng, self._namer(ctx.guild), now)
+        await persistence.save_idle_character(gid, uid)
+        left = char.get("stay_left", 0)
+        stay = f" You keep to {town} for another {format_duration(left)} first." if left else ""
+        await self._send_with_map(ctx, emb("📜 Hunt", f"{note.text}{stay}", C_GREEN), highlight=(uid,))
 
     # ── !idle shop ───────────────────────────────────────────────────────
 

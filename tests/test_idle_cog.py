@@ -1293,6 +1293,25 @@ async def test_arriving_in_town_is_announced_in_the_feed_and_the_errand_follows(
     assert "arrived in Velvragh" in feed and "did some trading" in feed
 
 
+async def test_the_board_takes_a_hunt_in_town_and_says_why_not_elsewhere():
+    cog, guild, _idle = _world()
+    ctx = _ctx(guild)
+    char = _spawn(ALICE, x=WILDS[0], y=WILDS[1])
+    await cog.cmd_hunt.callback(cog, ctx)
+    assert ctx.sent_embeds[-1].title == "❌ Hunt" and not rpg.hunting(char)
+
+    char.update(MARKET, stay_left=300)
+    await cog.cmd_hunt.callback(cog, ctx)
+    text = ctx.sent_embeds[-1].description
+    assert rpg.hunting(char) and "took a hunt off the board" in text and "keep to Velvragh for another 5m" in text
+    await cog.cmd_hunt.callback(cog, ctx)
+    assert "already on one" in ctx.sent_embeds[-1].description
+
+    rpg.finish_hunt(ALICE, char, str, int(time.time()))
+    await cog.cmd_hunt.callback(cog, ctx)
+    assert "nothing for you for another" in ctx.sent_embeds[-1].description and not rpg.hunting(char)
+
+
 # ── gold ─────────────────────────────────────────────────────────────────────
 
 async def test_a_level_up_pays_gold_and_says_so_in_the_feed():
@@ -2097,11 +2116,11 @@ async def test_the_sheet_shows_the_actions_open_to_its_invoker():
     char.update(MARKET, gold=50, level=rpg.PRESTIGE_LEVEL)
     _state.idle_quests[GID] = {**rpg.new_quest(), "members": [ALICE], "description": "walk", "kind": "journey", "p1": [35, 40], "p2": [410, 80]}
     await cog.cmd_idle.callback(cog, ctx)
-    assert _buttons(ctx) == ["cmd_shop", "cmd_gamble", "cmd_quest", "cmd_top", "cmd_prestige"]
+    assert _buttons(ctx) == ["cmd_shop", "cmd_gamble", "cmd_hunt", "cmd_quest", "cmd_top", "cmd_prestige"]
     assert all(button.label for button in ctx.sent_views[-1].children)
-    # Off the journey, the road opens again; broke, the tables close.
+    # Off the journey, the road opens again; broke, the tables close; on a hunt, the board does.
     _state.idle_quests[GID]["members"] = [BOB]
-    char["gold"] = 0
+    char.update(gold=0, hunt_mob="Rat", hunt_count=3)
     await cog.cmd_idle.callback(cog, ctx)
     assert _buttons(ctx) == ["cmd_shop", "cmd_travel", "cmd_quest", "cmd_top", "cmd_prestige"]
 
