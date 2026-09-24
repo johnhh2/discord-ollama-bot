@@ -23,7 +23,10 @@ RUN apt-get update \
 FROM python:3.10-slim@sha256:cdbf8193cee2e31639ea8ea85ffdd8fa5cce98ee9abfde96ea5f329490048831
 WORKDIR /app
 # libcairo2: cairosvg (chess board rendering). libopenblas0: lc0's runtime BLAS.
+# The base image is pinned by digest, so `upgrade` is what brings in Debian's
+# security fixes between bumps — CI's Trivy scan fails on the stale ones.
 RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
  && apt-get install -y --no-install-recommends libcairo2 stockfish libopenblas0 \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=lc0-builder /usr/local/bin/lc0 /usr/local/bin/lc0
