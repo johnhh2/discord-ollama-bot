@@ -89,6 +89,7 @@ PRICE_SHARPEN_PER_ITEM_LEVEL = 20
 PRICE_RUSH_PER_LEVEL = 15
 PRICE_SECOND_DUEL_PER_LEVEL = 10
 PRICE_CLASS = 100
+PRICE_POTION_PER_LEVEL = 5     # each; five of them cost one find
 SHARPEN_PCT = 10
 RUSH_PCT = 10
 
@@ -438,6 +439,7 @@ def new_character(class_name: str, now: int, claimed: bool = True) -> dict:
         "gamble_won": 0,
         "gamble_lost": 0,
         "loot": [],               # finds too poor to wear, carried to the next market
+        "potions": 0,             # health potions, drunk by the fight loop (see POTION_MAX)
         "titles": [],             # keys of TITLES earned, in the order they were
         "title": None,            # …and the one being worn
         "boost_pct": 0,           # a godsend's personal multiplier…
@@ -1373,6 +1375,7 @@ def shop_prices(char: dict) -> dict:
         "rush": PRICE_RUSH_PER_LEVEL * level,
         "duel": PRICE_SECOND_DUEL_PER_LEVEL * level,
         "class": PRICE_CLASS,
+        "potion": PRICE_POTION_PER_LEVEL * level,
     }
 
 
@@ -1439,6 +1442,24 @@ def buy_class(char: dict, class_name: str) -> "tuple[bool, str]":
     return True, f"You are now a {class_name}."
 
 
+def potion_room(char: dict) -> int:
+    return max(0, POTION_MAX - char.get("potions", 0))
+
+
+def buy_potions(char: dict, count: int) -> "tuple[bool, str]":
+    if count < 1:
+        return False, "How many? `!idle shop potion <n>`."
+    if potion_room(char) == 0:
+        return False, f"You can't carry more than {POTION_MAX} potions."
+    if count > potion_room(char):
+        return False, f"You can only carry {potion_room(char)} more (you have {char.get('potions', 0)} of {POTION_MAX})."
+    broke = _pay(char, shop_prices(char)["potion"] * count)
+    if broke:
+        return False, broke
+    char["potions"] = char.get("potions", 0) + count
+    return True, f"Bought {count} potion{'' if count == 1 else 's'}. You carry {char['potions']}/{POTION_MAX}."
+
+
 def nearest_town(char: dict) -> "tuple[str, int] | None":
     """(town, distance in squares straight across the map), or None before
     the character has a position. Deliberately not the wrapped distance: a
@@ -1485,8 +1506,19 @@ def auto_trade(uid: int, char: dict, rng, name: NameFn, now: int) -> "Note | Non
             slot = min(char["items"], key=lambda s: (char["items"][s]["level"], s))
             sharpen = sharpen_price(char["items"][slot])
             if sharpen <= budget:
+                budget -= sharpen
                 spent += sharpen
                 done.append(buy_sharpen(char, slot)[1].replace("Your ", "Their ", 1))
+        # Potions last: a top-up towards the cap, but between half and all
+        # of what fits in the purse — an errand that always came home with a
+        # full belt would make the cap the only number that mattered.
+        each = shop_prices(char)["potion"]
+        can = min(potion_room(char), budget // each)
+        if can:
+            count = rng.randint((can + 1) // 2, can)
+            spent += each * count
+            buy_potions(char, count)
+            done.append(f"Bought {count} potion{'' if count == 1 else 's'} ({char['potions']}/{POTION_MAX}).")
     if not done:
         return None   # nothing to sell and too poor to buy — no stamp, so a fuller purse still trades this visit
     char["traded_at"] = now
@@ -1514,6 +1546,13 @@ HP_PER_ITEM_POWER = 1       # …plus armour, so gear doesn't outgrow the body w
 HP_REGEN_DIVISOR = 40       # of a full body, per minute: whole again inside an hour
 CAMP_HP_PCT = 25            # at or under this a character rests instead of fighting
 CAMP_HEAL_PCT = 20
+# sizzlorox's health potions, minus the randomness of getting one: bought
+# at a market, drunk by the fight loop and never by hand. A potion goes down
+# exactly where a camp would otherwise be made — at or under CAMP_HP_PCT,
+# before a fight or after a blow — so it buys fights, not safety at full
+# health. One per monster; the belt is the only limit on a bad day.
+POTION_MAX = 5              # carried; lost with the bag on a death
+POTION_HEAL_PCT = 40        # of a full body
 
 MOB_MAX_ROUNDS = 5          # sizzlorox's, per monster
 EVEN_BLOW_PCT = 18          # an evenly matched blow costs this much of a full body
@@ -1548,6 +1587,15 @@ def regen_hp(char: dict) -> None:
 
 def needs_rest(char: dict) -> bool:
     return hp_pct(char) <= CAMP_HP_PCT
+
+
+def drink_potion(char: dict) -> int:
+    """One potion off the belt, if there is one and it is wanted. Returns
+    what it healed, 0 when nothing was drunk."""
+    if not char.get("potions", 0) or not needs_rest(char) or hp_of(char) <= 0:
+        return 0
+    char["potions"] -= 1
+    return heal(char, max(1, max_hp(char) * POTION_HEAL_PCT // 100))
 
 
 def _blow(attack: int, defence: int, body: int, rng) -> "tuple[int, str]":
@@ -1594,7 +1642,7 @@ def fight_monster(char: dict, their_power: int, their_hp: int, rng) -> "tuple[in
     fell, a compact record of the exchange). The character's own hit points
     are spent in place."""
     my_power, my_max = max(battle_sum(char), 1), max_hp(char)
-    marks = []
+    marks, drunk = [], False
     for rounds in range(1, MOB_MAX_ROUNDS + 1):
         mine_first = strikes_first(my_power, their_power, rng)
         for mine in (mine_first, not mine_first):
@@ -1610,6 +1658,9 @@ def fight_monster(char: dict, their_power: int, their_hp: int, rng) -> "tuple[in
                 marks.append(mark.lower())
                 if char["hp"] <= 0:
                     return rounds, False, "".join(marks)
+                if not drunk and drink_potion(char):
+                    drunk = True   # one a monster: a belt emptied in a single bad fight is no belt
+                    marks.append("+")
     return MOB_MAX_ROUNDS, False, "".join(marks)
 
 # ── monsters ─────────────────────────────────────────────────────────────────
@@ -1900,7 +1951,8 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None
     breaks off, or has seen them all off."""
     if char.get("x") is None or market_in_reach(char):
         return []   # towns are safe ground
-    if needs_rest(char):
+    potions_before = char.get("potions", 0)
+    if needs_rest(char) and not drink_potion(char):
         got = heal(char, max(1, max_hp(char) * CAMP_HEAL_PCT // 100))
         return [Note((uid,), f"⛺ {name(uid)} {rng.choice(_CAMPS)}. +{got} HP ({hp_of(char)}/{max_hp(char)}).")]
 
@@ -1943,7 +1995,10 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None
 
     char["gold"] += gold
     char["mob_kills"] = char.get("mob_kills", 0) + len(slain)
+    drank = potions_before - char.get("potions", 0)
     body = f"{hp_of(char)}/{max_hp(char)} HP"
+    if drank:
+        body = f"🧪 drank {drank} potion{'' if drank == 1 else 's'} ({char['potions']} left). {body}"
     where = f"[{biome}]"
     notes = []
     if slain:
@@ -1975,6 +2030,8 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None
         # free money that merely takes a while to arrive.
         bagged, bag_worth = len(char.get("loot") or []), loot_value(char)
         char["loot"] = []
+        potions_lost = char.get("potions", 0)
+        char["potions"] = 0
         town = _to_town_outskirts(char)
         char["hp"] = max_hp(char)   # patched up on the way, as sizzlorox does
         cost = []
@@ -1982,6 +2039,8 @@ def mob_encounter(uid: int, char: dict, rng, name: NameFn, now: int, effect=None
             cost.append(f"{lost_gold:,} gold lost")
         if bagged:
             cost.append(f"{bagged} piece{'' if bagged == 1 else 's'} lost from their bag (worth {bag_worth:,} gold)")
+        if potions_lost:
+            cost.append(f"{potions_lost} potion{'' if potions_lost == 1 else 's'} lost")
         toll = f"{and_list(cost)}; they were" if cost else "They were"
         notes.append(Note(
             (uid,),

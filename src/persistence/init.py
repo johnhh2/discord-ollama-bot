@@ -638,7 +638,7 @@ async def _init_db_state_inner(state, run_migrations):
                 "auto_trade, traded_at, travel_to, mob_kills, mob_deaths, gamble_town, gamble_visit_at, "
                 "gamble_budget, gambles, gamble_won, gamble_lost, claimed, hp, loot_json, titles_json, "
                 "title, boost_pct, boost_until, hunt_mob, hunt_count, hunt_killed, hunt_x, hunt_y, "
-                "hunt_at, hunts_done FROM idle_characters"
+                "hunt_at, hunts_done, potions FROM idle_characters"
             )
             for (gid, uid, class_name, level, next_level_at, remaining, law, moral, prestige,
                  penalty_total, last_seen, last_penalty_at, thread_id, created_at,
@@ -647,7 +647,7 @@ async def _init_db_state_inner(state, run_migrations):
                  mob_deaths, gamble_town, gamble_visit_at, gamble_budget, gambles, gamble_won,
                  gamble_lost, claimed, hp, loot_json, titles_json, title, boost_pct, boost_until,
                  hunt_mob, hunt_count, hunt_killed, hunt_x, hunt_y, hunt_at,
-                 hunts_done) in await cur.fetchall():
+                 hunts_done, potions) in await cur.fetchall():
                 state.idle_characters.setdefault(int(gid), {})[int(uid)] = {
                     "claimed": bool(claimed),
                     "hp": int(hp),
@@ -694,6 +694,7 @@ async def _init_db_state_inner(state, run_migrations):
                     "hunt_y": None if hunt_y is None else int(hunt_y),
                     "hunt_at": int(hunt_at),
                     "hunts_done": int(hunts_done),
+                    "potions": int(potions),
                 }
             await cur.execute("SELECT guild_id, user_id FROM idle_optouts")
             for gid, uid in await cur.fetchall():

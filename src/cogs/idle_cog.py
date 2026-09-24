@@ -177,6 +177,7 @@ f"A fight runs up to {rpg.MOB_MAX_ROUNDS} rounds of blows both ways and costs **
         "You earn it by levelling, winning fights and finishing quests; a collision fight's winner also lifts "
         f"{rpg.GOLD_SPOILS_PCT}% of the loser's purse.\n"
         f"`!idle shop` spends it, but only within {rpg.MARKET_RADIUS} squares of a town (the rings on `!idle map`): an extra item find, "
+        f"health potions (up to {rpg.POTION_MAX}, drunk on their own when a fight goes badly, lost with the bag if you fall), "
         "sharpening an item, a once-a-day rush, a second duel, a new class. Walk right into a town and your character "
         f"trades on its own with up to {rpg.AUTO_TRADE_BUDGET_PCT}% of its gold — `!idle shop auto off` stops that. "
         "`!idle duel <name> 200` bets gold, anywhere.\n"
@@ -1094,6 +1095,8 @@ class IdleCog(commands.Cog):
         if char.get("loot"):
             pieces = len(char["loot"])
             lines.append(f"🎒 **Bag:** {pieces} piece{'' if pieces == 1 else 's'} worth {rpg.loot_value(char):,} gold at a market")
+        if char.get("potions"):
+            lines.append(f"🧪 **Potions:** {char['potions']}/{rpg.POTION_MAX}")
         if char.get("x") is not None:
             here = rpg.landmark_at((char["x"], char["y"]))
             town, away = rpg.nearest_town(char)
@@ -1417,6 +1420,7 @@ class IdleCog(commands.Cog):
             carried = ", ".join(f"{item['name'] or item['slot']} ({item['level']})" for item in bag)
             lines.append(f"\n🎒 **Bag** ({len(bag)}/{rpg.LOOT_MAX}) — {carried}\n"
                          f"Worth **{rpg.loot_value(char):,}** gold; sold on the next town errand, or with `!idle shop sell`.")
+        lines.append(f"\n🧪 **Potions:** {char.get('potions', 0)}/{rpg.POTION_MAX} — drunk on their own when a fight goes badly.")
         await ctx.send(embed=emb(f"{self._title(ctx.guild, target.id, char)} — Items", "\n".join(lines), C_BLUE))
 
     @cmd_idle.command(name="top", help="Show this server's idle ladder")
@@ -1718,6 +1722,7 @@ class IdleCog(commands.Cog):
         bag = char.get("loot") or []
         return ([("sell", f"Sell — empty your bag of {len(bag)} piece{'' if len(bag) == 1 else 's'} · +{rpg.loot_value(char):,} gold")] if bag else []) + [
             ("find", f"Find — one more item roll · {prices['find']:,} gold"),
+            ("potion", f"Potion — drunk on its own when a fight goes badly, {char.get('potions', 0)}/{rpg.POTION_MAX} carried · {prices['potion']:,} gold each"),
             ("sharpen", f"Sharpen — +{rpg.SHARPEN_PCT}% to one of your items · {rpg.PRICE_SHARPEN_PER_ITEM_LEVEL} gold per item level"),
             ("rush", f"Rush — {rpg.RUSH_PCT}% off your clock, once a day · {prices['rush']:,} gold"),
             ("duel", f"Second duel — once a day · {prices['duel']:,} gold"),
@@ -1725,8 +1730,8 @@ class IdleCog(commands.Cog):
         ]
 
     @cmd_idle.command(name="shop",
-                      help="Spend gold at a town's market — sell your bag, find or sharpen an item, a rush, a duel, a new class",
-                      usage="[sell|find|sharpen [slot]|rush|duel|class <name>|auto <on|off>]")
+                      help="Spend gold at a town's market — sell your bag, find or sharpen an item, potions, a rush, a duel, a new class",
+                      usage="[sell|find|potion [n]|sharpen [slot]|rush|duel|class <name>|auto <on|off>]")
     async def cmd_shop(self, ctx: commands.Context, item: str = None, *, arg: str = None):
         if not await self._ready(ctx, need_channel=True):
             return
@@ -1734,7 +1739,7 @@ class IdleCog(commands.Cog):
         if char is None:
             return
         gid, uid = ctx.guild.id, ctx.author.id
-        usage = "`!idle shop sell` · `find` · `sharpen <slot>` · `rush` · `duel` · `class <name>` · `auto on|off`"
+        usage = "`!idle shop sell` · `find` · `potion <n>` · `sharpen <slot>` · `rush` · `duel` · `class <name>` · `auto on|off`"
         if item is not None and item.lower() == "auto":
             choice = (arg or "").lower()
             if choice not in ("on", "off"):
@@ -1742,7 +1747,7 @@ class IdleCog(commands.Cog):
                 await ctx.send(embed=emb(
                     "🛒 Idle Shop",
                     f"Auto-trading is **{state_now}**. In a town's centre your character spends up to "
-                    f"{rpg.AUTO_TRADE_BUDGET_PCT}% of its gold on a find and a sharpening, at most once every "
+                    f"{rpg.AUTO_TRADE_BUDGET_PCT}% of its gold on a find, a sharpening and potions, at most once every "
                     f"{format_duration(rpg.AUTO_TRADE_COOLDOWN_SECS)}. `!idle shop auto on|off`\n"
                     "Your bag is emptied on that same errand either way — selling is income, not spending.",
                     C_BLUE,
@@ -1787,6 +1792,20 @@ class IdleCog(commands.Cog):
             if not picked:
                 return
             arg = picked[0]
+        if item == "potion" and not arg:
+            room, each = rpg.potion_room(char), rpg.shop_prices(char)["potion"]
+            if not room:
+                await ctx.send(embed=emb("❌ Idle Shop", f"You can't carry more than {rpg.POTION_MAX} potions.", C_RED))
+                return
+            picked = await pick_from_list(
+                ctx, title="🛒 Potions",
+                description=f"You have **{char['gold']:,}** gold and carry {char.get('potions', 0)}/{rpg.POTION_MAX}. How many?",
+                options=[(f"{n} potion{'' if n == 1 else 's'} · {each * n:,} gold", str(n)) for n in range(1, room + 1)],
+                placeholder="How many…", multi=False,
+            )
+            if not picked:
+                return
+            arg = picked[0]
 
         # The menus were long awaits: the character, and its purse, again.
         char = self._chars(gid).get(uid)
@@ -1799,6 +1818,13 @@ class IdleCog(commands.Cog):
                     if pieces else "Your bag is empty.")
         elif item == "find":
             bought, text = rpg.buy_find(uid, char, self.rng, self._namer(ctx.guild))
+        elif item == "potion":
+            try:
+                count = int(arg)
+            except (TypeError, ValueError):
+                await ctx.send(embed=emb("❌ Idle Shop", "`!idle shop potion <n>` — how many to buy.", C_RED))
+                return
+            bought, text = rpg.buy_potions(char, count)
         elif item == "sharpen":
             slot = arg.lower()
             if slot not in rpg.ITEM_SLOTS:

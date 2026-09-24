@@ -42,9 +42,9 @@ async def save_idle_character(guild_id: int, user_id: int) -> None:
             "auto_trade, traded_at, travel_to, mob_kills, mob_deaths, gamble_town, gamble_visit_at, "
             "gamble_budget, gambles, gamble_won, gamble_lost, claimed, hp, loot_json, titles_json, "
             "title, boost_pct, boost_until, hunt_mob, hunt_count, hunt_killed, hunt_x, hunt_y, "
-            "hunt_at, hunts_done) "
+            "hunt_at, hunts_done, potions) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
             "ON DUPLICATE KEY UPDATE class_name=VALUES(class_name), level=VALUES(level), "
             "next_level_at=VALUES(next_level_at), remaining=VALUES(remaining), law=VALUES(law), "
             "moral=VALUES(moral), prestige=VALUES(prestige), penalty_total=VALUES(penalty_total), "
@@ -62,7 +62,7 @@ async def save_idle_character(guild_id: int, user_id: int) -> None:
             "title=VALUES(title), boost_pct=VALUES(boost_pct), boost_until=VALUES(boost_until), "
             "hunt_mob=VALUES(hunt_mob), hunt_count=VALUES(hunt_count), hunt_killed=VALUES(hunt_killed), "
             "hunt_x=VALUES(hunt_x), hunt_y=VALUES(hunt_y), hunt_at=VALUES(hunt_at), "
-            "hunts_done=VALUES(hunts_done)",
+            "hunts_done=VALUES(hunts_done), potions=VALUES(potions)",
             (
                 int(guild_id), int(user_id), c["class"], int(c["level"]), c["next_level_at"], c["remaining"],
                 c["law"], c["moral"], int(c["prestige"]), int(c["penalty_total"]), int(c["last_seen"]),
@@ -77,6 +77,7 @@ async def save_idle_character(guild_id: int, user_id: int) -> None:
                 int(c.get("boost_pct", 0)), int(c.get("boost_until", 0)),
                 c.get("hunt_mob"), int(c.get("hunt_count", 0)), int(c.get("hunt_killed", 0)),
                 c.get("hunt_x"), c.get("hunt_y"), int(c.get("hunt_at", 0)), int(c.get("hunts_done", 0)),
+                int(c.get("potions", 0)),
             ),
         )
 

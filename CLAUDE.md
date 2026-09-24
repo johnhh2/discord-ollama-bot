@@ -1188,6 +1188,21 @@ tables from migrations 0070–0077.
   (sizzlorox empties the entire inventory on a death): it is the only thing
   at stake on the walk to a market, and without it the bag is free money
   that merely takes a while to arrive.
+- **Potions are drunk by the fight loop, never by hand.** sizzlorox's
+  health potions, minus the randomness of getting one: `!idle shop potion
+  <n>` buys them at `PRICE_POTION_PER_LEVEL` each, up to `POTION_MAX` (5)
+  on the belt, and the town errand tops the belt up last — between half
+  and all of what fits in the budget (`rng.randint`), so a rich character
+  doesn't come home with a full belt every time. `drink_potion` is the one
+  door: a potion goes down exactly where a camp would otherwise be made —
+  at or under `CAMP_HP_PCT`, before an encounter (instead of the ⛺) or
+  after a blow inside `fight_monster`, at most one per monster (`+` in
+  the round marks) — healing `POTION_HEAL_PCT` of a full body. Never at
+  full health, never as a top-up, no `!idle drink`. The belt is lost with
+  the bag on a death, which is what keeps it worth refilling. The sim
+  (`--potions`) restocks it every errand cooldown as the upper bound:
+  deaths roughly halve and the clock gains ~2–3%/day at every rung.
+  Re-run both sim rows before touching the cap, the heal or the price.
 - **Who swings first is rolled.** `strikes_first` leans to the stronger
   side by the share of the two powers — scale-free, because item power runs
   0 to several hundred while a flat jitter would mean nothing at one end

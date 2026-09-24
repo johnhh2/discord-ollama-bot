@@ -1331,7 +1331,7 @@ async def test_shop_refuses_what_you_cannot_afford_or_do_not_own():
     cog, guild, _idle = _world()
     char = _spawn(level=10, gold=10, **MARKET)
     ctx = _ctx(guild)
-    for item, arg in (("find", None), ("rush", None), ("sharpen", "ring"), ("duel", None), ("potion", None)):
+    for item, arg in (("find", None), ("rush", None), ("sharpen", "ring"), ("duel", None), ("potion", "1"), ("amulet", None)):
         await cog.cmd_shop.callback(cog, ctx, item, arg=arg)
         assert ctx.sent_embeds[-1].title == "❌ Idle Shop"
     assert char["gold"] == 10 and char["items"] == {}
@@ -1362,8 +1362,40 @@ async def test_bare_shop_opens_a_menu_and_buys_the_pick(monkeypatch):
         return ["rush"]
     monkeypatch.setattr(_idle_cog, "pick_from_list", _pick)
     await cog.cmd_shop.callback(cog, _ctx(guild))
-    assert [key for _label, key in menus[0][1]] == ["find", "sharpen", "rush", "duel", "class"]
+    assert [key for _label, key in menus[0][1]] == ["find", "potion", "sharpen", "rush", "duel", "class"]
     assert char["gold"] == 850 and char["rush_day"] is not None
+
+
+async def test_shop_potions_typed_and_from_the_menu(monkeypatch):
+    cog, guild, _idle = _world()
+    char = _spawn(level=10, left=10_000, gold=1000, **MARKET)
+    ctx = _ctx(guild)
+
+    await cog.cmd_shop.callback(cog, ctx, "potion", arg="2")
+    assert char["potions"] == 2 and char["gold"] == 1000 - 2 * 50
+    assert "Bought 2 potions. You carry 2/5" in ctx.sent_embeds[-1].description
+    await cog.cmd_shop.callback(cog, ctx, "potion", arg="4")
+    assert "only carry 3 more" in ctx.sent_embeds[-1].description and char["gold"] == 900
+    await cog.cmd_shop.callback(cog, ctx, "potion", arg="lots")
+    assert ctx.sent_embeds[-1].title == "❌ Idle Shop" and char["gold"] == 900
+
+    menus = []
+
+    async def _pick(ctx, *, title, options, **kwargs):
+        menus.append((title, options))
+        return ["potion"] if title == "🛒 Idle Shop" else ["3"]
+    monkeypatch.setattr(_idle_cog, "pick_from_list", _pick)
+    await cog.cmd_shop.callback(cog, _ctx(guild))
+    assert [m[0] for m in menus] == ["🛒 Idle Shop", "🛒 Potions"]
+    assert [key for _label, key in menus[1][1]] == ["1", "2", "3"]         # only what the belt has room for
+    assert char["potions"] == 5 and char["gold"] == 900 - 150
+
+    ctx = _ctx(guild)
+    await cog.cmd_status.callback(cog, ctx)
+    assert "🧪 **Potions:** 5/5" in ctx.sent_embeds[-1].description
+    ctx = _ctx(guild)
+    await cog.cmd_items.callback(cog, ctx)
+    assert "🧪 **Potions:** 5/5" in ctx.sent_embeds[-1].description
 
 
 async def test_concurrent_rushes_charge_once(monkeypatch):
@@ -1416,14 +1448,17 @@ async def test_walking_into_a_town_runs_the_errand_once_and_reports_it_in_the_fe
 
     await cog.tick()
 
-    # Half the purse at most: a find (250), then the weakest item sharpened (5 × 20 = 100).
-    assert char["gold"] == 650 and char["items"]["ring"]["level"] == 6 and char["items"]["helm"]["level"] == 40
+    # Half the purse at most: a find (250), then the weakest item sharpened (5 × 20 = 100),
+    # then potions with the 150 left — three fit, and the still rng takes the low end, two.
+    assert char["gold"] == 550 and char["items"]["ring"]["level"] == 6 and char["items"]["helm"]["level"] == 40
+    assert char["potions"] == 2
     feed = _sent(guild.threads[0])
-    assert "wandered into Velvragh and did some trading" in feed and "350 gold spent, 650 gold left" in feed
+    assert "wandered into Velvragh and did some trading" in feed and "450 gold spent, 550 gold left" in feed
+    assert "Bought 2 potions (2/5)" in feed
     idle.send.assert_not_called()                             # the player's own business
 
     await cog.tick()                                          # still in town: not again for twelve hours
-    assert char["gold"] == 650
+    assert char["gold"] == 550
 
 
 async def test_auto_trade_can_be_switched_off_from_anywhere():

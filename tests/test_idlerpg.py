@@ -484,10 +484,46 @@ def test_the_errand_stays_inside_half_the_purse_and_never_buys_the_players_choic
     x, y = rpg.LANDMARKS["Denmark"]
     rng = _Scripted(random_=0.999, randrange=1)
     char = _char(10, left=10_000, gold=300, x=x, y=y, items={"ring": {"level": 5, "name": None}})
-    note = rpg.auto_trade(1, char, rng, _name, NOW)           # budget 150: no find (250), but the ring (100)
-    assert char["gold"] == 200 and char["items"]["ring"]["level"] == 6 and "Their level 5 ring" in note.text
+    note = rpg.auto_trade(1, char, rng, _name, NOW)           # budget 150: no find (250), the ring (100), then one potion (50)
+    assert char["gold"] == 150 and char["items"]["ring"]["level"] == 6 and "Their level 5 ring" in note.text
+    assert char["potions"] == 1 and "Bought 1 potion (1/5)" in note.text
     assert rpg.time_left(char, NOW) == 10_000 and char["rush_day"] is None and char["class"] == "Tester"
     assert rpg.auto_trade(1, char, rng, _name, NOW + 3600) is None                       # cooldown
+
+
+def test_the_errand_stocks_between_half_and_all_the_potions_that_fit():
+    x, y = rpg.LANDMARKS["Denmark"]
+    # Budget 1000 (half of 2000): a find (250), the ring (100), leaves 650 — 13 potions' worth, but the belt holds 5.
+    char = _char(10, left=10_000, gold=2000, x=x, y=y, items={"ring": {"level": 5, "name": None}})
+    rng = _Scripted(random_=0.999, randrange=1, randint=lambda low, high: low)
+    note = rpg.auto_trade(1, char, rng, _name, NOW)
+    assert char["potions"] == 3 and "Bought 3 potions (3/5)" in note.text        # the low end is half of five, rounded up
+    assert char["gold"] == 2000 - 250 - 100 - 3 * 50
+
+    # A tighter purse: 120 left after the ring buys two at most, and it takes both.
+    char = _char(10, left=10_000, gold=440, x=x, y=y, items={"ring": {"level": 5, "name": None}})
+    rng = _Scripted(random_=0.999, randrange=1, randint=lambda low, high: high)
+    rpg.auto_trade(1, char, rng, _name, NOW)
+    assert char["potions"] == 2 and char["gold"] == 440 - 100 - 100
+
+    # A full belt buys none, and the line doesn't mention potions.
+    char = _char(10, left=10_000, gold=2000, x=x, y=y, potions=rpg.POTION_MAX)
+    note = rpg.auto_trade(1, char, _Scripted(random_=0.999, randrange=1), _name, NOW)
+    assert char["potions"] == rpg.POTION_MAX and "potion" not in note.text
+
+
+def test_potions_are_bought_by_the_belt_and_refused_past_it():
+    char = _char(10, gold=1000)
+    assert rpg.shop_prices(char)["potion"] == 10 * rpg.PRICE_POTION_PER_LEVEL
+    bought, text = rpg.buy_potions(char, 2)
+    assert bought and char["potions"] == 2 and char["gold"] == 900 and "You carry 2/5" in text
+    bought, text = rpg.buy_potions(char, 4)
+    assert not bought and "only carry 3 more" in text and char["gold"] == 900
+    assert rpg.buy_potions(char, 3)[0] and char["potions"] == rpg.POTION_MAX
+    bought, text = rpg.buy_potions(char, 1)
+    assert not bought and f"more than {rpg.POTION_MAX}" in text
+    assert not rpg.buy_potions(_char(10, gold=10), 1)[0]                  # too poor
+    assert not rpg.buy_potions(_char(10, gold=1000), 0)[0]
 
 
 def test_a_poor_visit_is_not_stamped_and_the_ring_and_the_wilds_do_not_trade():
@@ -562,6 +598,34 @@ def test_a_hurt_character_makes_camp_instead_of_fighting():
     notes = rpg.mob_encounter(1, char, random.Random(1), _name, NOW)
     assert len(notes) == 1 and notes[0].text.startswith("⛺") and not notes[0].public
     assert char["mob_kills"] == 0 and not rpg.needs_rest(char)
+
+
+def test_a_potion_is_drunk_where_a_camp_would_be_made_and_the_fight_goes_on(monkeypatch):
+    monkeypatch.setattr(rpg, "roll_monster", lambda level, biome, rng, effect=None: ("Normal", "Rat", 1.0, 1, 1))
+    char = _wanderer(level=20, gear=60, potions=2)
+    char["hp"] = rpg.max_hp(char) * rpg.CAMP_HP_PCT // 100
+    notes = rpg.mob_encounter(1, char, random.Random(1), _name, NOW)
+    text = notes[0].text
+    assert text.startswith("🗡️") and "🧪 drank 1 potion (1 left)" in text
+    assert char["potions"] == 1 and char["mob_kills"] == 1
+    # At full health the belt is left alone: a potion is not a top-up.
+    char["hp"] = rpg.max_hp(char)
+    rpg.mob_encounter(1, char, random.Random(1), _name, NOW)
+    assert char["potions"] == 1
+    assert rpg.drink_potion(char) == 0
+
+
+def test_a_fight_drinks_at_most_one_potion_per_monster_and_marks_it():
+    char = _wanderer(level=20, gear=60, potions=rpg.POTION_MAX)
+    rng = random.Random(2)
+    rounds, killed, marks = rpg.fight_monster(char, 400, 10 ** 9, rng)   # far stronger, unkillable: blood flows
+    assert not killed and rpg.hp_of(char) > 0
+    assert marks.count("+") == 1 and char["potions"] == rpg.POTION_MAX - 1
+    assert rpg.hp_of(char) >= rpg.max_hp(char) * rpg.POTION_HEAL_PCT // 100 - rpg.max_hp(char) * rpg.EVEN_BLOW_PCT * 2 // 100
+
+    dry = _wanderer(level=20, gear=60)                                  # no potions: same fight, no mark
+    _r, _k, marks = rpg.fight_monster(dry, 400, 10 ** 9, random.Random(2))
+    assert "+" not in marks
 
 
 def test_falling_costs_clock_and_gold_and_carries_you_to_a_town_patched_up():
@@ -1254,7 +1318,7 @@ def test_being_struck_down_costs_the_bag_and_says_so_in_plain_words(monkeypatch)
         char["hp"] = 0
         return 2, False, "··"
     monkeypatch.setattr(rpg, "fight_monster", _fatal)
-    char = _wanderer(level=20, gear=60, gold=1200)
+    char = _wanderer(level=20, gear=60, gold=1200, potions=3)
     char["loot"] = [{"slot": "ring", "level": 10, "name": "Crude Iron Ring"},
                     {"slot": "boots", "level": 5, "name": "Plain Bone Boots"}]
     worth = rpg.loot_value(char)
@@ -1264,6 +1328,7 @@ def test_being_struck_down_costs_the_bag_and_says_so_in_plain_words(monkeypatch)
 
     assert char["loot"] == [] and char["mob_deaths"] == 1
     assert "2 pieces lost from their bag" in text and f"(worth {worth:,} gold)" in text
+    assert char["potions"] == 0 and "3 potions lost" in text
     # Every number says which way it went, and the clock move is a signed
     # amount at the very end rather than prose in the middle of the line.
     assert "gold lost" in text and "added to their clock" not in text
