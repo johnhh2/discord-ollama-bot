@@ -149,8 +149,8 @@ PROPERTY_UPGRADES: dict[str, tuple[str, int, int]] = {
     "server_farm": ("GPU Cluster", 968_000, 56),
     "private_island": ("Beach Resort", 1_100_000, 60),
     "casino_resort": ("High-Roller Suite", 1_534_000, 68),
-    "skyscraper": ("Observation Deck", 1_360_000, 42),
-    "space_port": ("Orbital Hotel", 1_840_000, 40),
+    "skyscraper": ("Observation Deck", 1_360_000, 60),
+    "space_port": ("Orbital Hotel", 1_840_000, 55),
 }
 
 assert set(PROPERTY_UPGRADES) == set(PROPERTIES_BY_ID), \
