@@ -50,6 +50,7 @@ from src.persistence.recap_usage import save_recap_usage  # noqa: F401
 from src.persistence.voice_pings import (  # noqa: F401
     save_voice_ping,
     delete_voice_ping,
+    delete_voice_pings_in_guild,
     update_voice_ping_last_pinged,
     load_voice_pings,
     save_voice_ping_ignore,

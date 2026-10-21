@@ -43,7 +43,7 @@ flowchart LR
 
 ## Features
 
-Every command is a `!` command. A few are also slash commands, same behaviour either way: `/ask`, `/help`, `/balance`, `/savings`, `/profile`, `/streak`, `/bugreport`, `/featurerequest`, `/subscribe`, plus the private panels `/settings`, `/shop` and `/admin`.
+Every command is a `!` command. A few are also slash commands, same behaviour either way: `/ask`, `/help`, `/balance`, `/savings`, `/profile`, `/streak`, `/bugreport`, `/featurerequest`, `/subscribe`, `/unsubscribe`, plus the private panels `/settings`, `/shop` and `/admin`.
 
 ### 🤖 LLM chat, locally hosted
 - `!ask` — conversational Q&A; each conversation gets its own thread with isolated context
@@ -106,7 +106,7 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 - More clicks in place of syntax: `!graph` is a panel of every graph; `!records` and `!leaderboard` switch scope with buttons; your `!wallet` and `!savings` cards carry Deposit / Withdraw (and Pay / Shop); and a bare `!chess view`, `!chess shop`, `!puzzle`, `!issue`, `!featurerequest`, `!ask`, `!story` or `!roleplay` opens a picker or a form instead of printing its usage
 - Full audit log of admin actions; Docker-aware `!restart`; `!settings` (or `/settings`, which only the admin sees) for per-guild configuration — one panel with a category dropdown and a setting dropdown: toggles flip on the spot, everything else opens a form (channel pickers, text boxes, a dropdown of installed models), and nothing is typed after the command. Every channel setting also lives under `!settings channel …`, and any settings command run bare (`!settings channel game`, `!settings shop`, `!settings tax-aliases`) opens its own dropdown, toggle buttons, pick-list or Add/Remove editor instead of needing the full syntax
 - Built-in issue tracking: users file `!bugreport` / `!featurerequest` from inside Discord
-- `!subscribe #voice-channel` DMs you when that channel goes from empty to active
+- `!subscribe #voice-channel` DMs you when that channel goes from empty to active; `!unsubscribe #voice-channel` (or `!unsubscribe all`) stops it
 - Custom per-server counters: `!counter add afk Times gone afk` (pick user-required or optional, number or time), then `!afk @user 1` to count and `!afk @user` / `!afk` to read — `!count afk …` always works, the `!afk` shortcut whenever no real command has that name. Admins write by default; `!counter addperm @user` trusts anyone else
 
 ## Quick start (Docker)

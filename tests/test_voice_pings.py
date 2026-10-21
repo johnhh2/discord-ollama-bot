@@ -301,6 +301,111 @@ async def test_ignore_command_rejects_self_and_bots(db, _no_builtin_member_conve
     assert (GUILD_ID, SUBSCRIBER_ID) not in _state.voice_ping_ignores
 
 
+# ── !unsubscribe <channel|all> (round-trips through the real DB) ─────────────
+
+from src.persistence import load_voice_pings, save_voice_ping  # noqa: E402
+
+OTHER_CHANNEL_ID = 101
+OTHER_GUILD_ID = 43
+
+
+def _voice_stub(cid, name):
+    return SimpleNamespace(id=cid, name=name, mention=f"<#{cid}>")
+
+
+@pytest.fixture
+def _voice_channel_converter(monkeypatch):
+    """VoiceChannelConverter needs a real guild cache; resolve by name against
+    ctx.guild.channels instead, raising BadArgument like the real one."""
+    import discord.ext.commands as _c
+
+    async def _convert(self, ctx, argument):
+        for ch in ctx.guild.channels:
+            if ch.name.lower() == argument.lower() or str(ch.id) == argument:
+                return ch
+        raise _c.ChannelNotFound(argument)
+
+    monkeypatch.setattr(_c.VoiceChannelConverter, "convert", _convert)
+
+
+async def _seed_three_subscriptions():
+    """Two in GUILD_ID, one in OTHER_GUILD_ID — `all` must leave the third."""
+    for gid, cid in ((GUILD_ID, CHANNEL_ID), (GUILD_ID, OTHER_CHANNEL_ID), (OTHER_GUILD_ID, 300)):
+        _state.voice_pings[(cid, SUBSCRIBER_ID)] = {"guild_id": gid, "last_pinged_at": None}
+        await save_voice_ping(gid, cid, SUBSCRIBER_ID)
+
+
+def _unsub_ctx(channels=()):
+    ctx = _ctx()
+    ctx.guild.channels = list(channels)
+    ctx.command.qualified_name = ctx.command.name = "unsubscribe"
+    return ctx
+
+
+@_aio
+async def test_unsubscribe_all_drops_every_subscription_in_this_guild_only(db):
+    cog, _ = _make_cog(set())
+    await _seed_three_subscriptions()
+    ctx = _unsub_ctx(channels=[_voice_stub(CHANNEL_ID, "General")])
+
+    await cog.cmd_unsubscribe.callback(cog, ctx, channel="ALL")
+
+    assert set(_state.voice_pings) == {(300, SUBSCRIBER_ID)}
+    assert set(await load_voice_pings()) == {(300, SUBSCRIBER_ID)}
+    done = next(e for e in ctx.sent_embeds if "Unsubscribed From All" in (e.title or ""))
+    assert "2 voice-channel subscriptions" in done.description
+    assert f"<#{CHANNEL_ID}>" in done.description
+    assert f"`#{OTHER_CHANNEL_ID}` (deleted)" in done.description
+
+
+@_aio
+async def test_unsubscribe_all_with_nothing_subscribed(db):
+    cog, _ = _make_cog(set())
+    _state.voice_pings.clear()
+    ctx = _unsub_ctx()
+
+    await cog.cmd_unsubscribe.callback(cog, ctx, channel="all")
+    assert any("Nothing To Unsubscribe" in (e.title or "") for e in ctx.sent_embeds)
+
+
+@_aio
+async def test_unsubscribe_one_channel_by_name(db, _voice_channel_converter):
+    cog, _ = _make_cog(set())
+    await _seed_three_subscriptions()
+    general = _voice_stub(CHANNEL_ID, "General")
+    ctx = _unsub_ctx(channels=[general, _voice_stub(OTHER_CHANNEL_ID, "Games")])
+
+    await cog.cmd_unsubscribe.callback(cog, ctx, channel="general")
+
+    assert (CHANNEL_ID, SUBSCRIBER_ID) not in _state.voice_pings
+    assert (OTHER_CHANNEL_ID, SUBSCRIBER_ID) in _state.voice_pings
+    assert (CHANNEL_ID, SUBSCRIBER_ID) not in await load_voice_pings()
+    assert (OTHER_CHANNEL_ID, SUBSCRIBER_ID) in await load_voice_pings()
+    assert any("Unsubscribed" in (e.title or "") for e in ctx.sent_embeds)
+
+    # Not subscribed to it → say so, nothing else dropped.
+    ctx2 = _unsub_ctx(channels=[general])
+    await cog.cmd_unsubscribe.callback(cog, ctx2, channel="General")
+    assert any("Not Subscribed" in (e.title or "") for e in ctx2.sent_embeds)
+    assert (OTHER_CHANNEL_ID, SUBSCRIBER_ID) in _state.voice_pings
+
+
+@_aio
+async def test_unsubscribe_unknown_channel_and_no_argument(db, _voice_channel_converter):
+    cog, _ = _make_cog(set())
+    await _seed_three_subscriptions()
+
+    ctx = _unsub_ctx(channels=[_voice_stub(CHANNEL_ID, "General")])
+    await cog.cmd_unsubscribe.callback(cog, ctx, channel="Nowhere")
+    assert any("Not Found" in (e.title or "") for e in ctx.sent_embeds)
+
+    ctx2 = _unsub_ctx()
+    await cog.cmd_unsubscribe.callback(cog, ctx2, channel=None)
+    assert any("Say which" in (e.description or "") for e in ctx2.sent_embeds)
+
+    assert len(_state.voice_pings) == 3
+
+
 # ── global error handler honors error.handled (no "⚠️ Command Error" report) ──
 
 @_aio

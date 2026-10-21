@@ -11,6 +11,7 @@ from src.permissions import requires_perm
 from src.persistence import (
     save_voice_ping,
     delete_voice_ping,
+    delete_voice_pings_in_guild,
     update_voice_ping_last_pinged,
     save_voice_ping_ignore,
     delete_voice_ping_ignore,
@@ -89,7 +90,7 @@ class VoiceCog(commands.Cog):
                 "🔔 Voice Pings",
                 "You'll be DMed when these channels go from empty to active:\n"
                 + "\n".join(lines)
-                + "\n\nRun `!subscribe <voice-channel>` again to unsubscribe.",
+                + "\n\nRun `!unsubscribe <voice-channel>` to drop one, or `!unsubscribe all` to drop them all.",
                 C_GOLD,
             ))
             return
@@ -119,8 +120,93 @@ class VoiceCog(commands.Cog):
             "🔔 Subscribed",
             f"I'll DM you when **{channel.name}** goes from empty to active "
             f"(at most one voice ping every {PING_COOLDOWN_SECS // 60} minutes across all your subscriptions).\n"
-            "Run `!subscribe` to see your subscriptions, or `!subscribe #channel` again to unsubscribe.",
+            "Run `!subscribe` to see your subscriptions, or `!unsubscribe #channel` (or `all`) to stop.",
             C_GREEN,
+        ))
+
+    # The channel is taken as text, not a `discord.VoiceChannel` annotation:
+    # `all` has to get past the converter, and a typed channel is resolved
+    # inline so a bad one answers here instead of in the error handler.
+    @commands.hybrid_command(name="unsubscribe", aliases=["unping"],
+                             description="Stop a voice-channel DM, or every one in this server with `all`",
+                             help="Stop being DMed for a voice channel, or for every voice channel in this server with `all`",
+                             usage="<voice-channel|all>")
+    @app_commands.describe(channel="The voice channel to drop, or `all` for every one in this server")
+    @requires_perm
+    async def cmd_unsubscribe(
+        self,
+        ctx: commands.Context,
+        *,
+        channel: str = None,
+    ):
+        await ack_slash(ctx)
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌ Server Only", "Use this command in a server.", C_RED))
+            return
+
+        query = (channel or "").strip()
+        if not query:
+            await ctx.send(embed=emb(
+                "🔕 Unsubscribe",
+                "Say which: `!unsubscribe <voice-channel>` drops one subscription, "
+                "`!unsubscribe all` drops every one you have in this server.\n"
+                "Run `!subscribe` to see them.",
+                C_GREY,
+            ))
+            return
+
+        if query.lower() == "all":
+            mine = [
+                (cid, uid) for (cid, uid), data in state.voice_pings.items()
+                if uid == ctx.author.id and data.get("guild_id") == ctx.guild.id
+            ]
+            if not mine:
+                await ctx.send(embed=emb(
+                    "🔕 Nothing To Unsubscribe",
+                    "You aren't subscribed to any voice channels in this server.",
+                    C_GREY,
+                ))
+                return
+            for key in mine:
+                del state.voice_pings[key]
+            await delete_voice_pings_in_guild(ctx.guild.id, ctx.author.id)
+            lines = []
+            for cid, _ in mine:
+                ch = ctx.guild.get_channel(cid)
+                lines.append(f"• {ch.mention if ch else f'`#{cid}` (deleted)'}")
+            await ctx.send(embed=emb(
+                "🔕 Unsubscribed From All",
+                f"Dropped {len(mine)} voice-channel subscription{'s' if len(mine) != 1 else ''} "
+                "in this server:\n" + "\n".join(lines),
+                C_GREY,
+            ))
+            return
+
+        try:
+            vc = await commands.VoiceChannelConverter().convert(ctx, query)
+        except commands.BadArgument:
+            await ctx.send(embed=emb(
+                "❌ Channel Not Found",
+                f"I couldn't find a voice channel matching **{query}**. "
+                "Try the channel ID, name, or `#mention` — or `all` to drop every subscription.",
+                C_RED,
+            ))
+            return
+
+        key = (vc.id, ctx.author.id)
+        if key not in state.voice_pings:
+            await ctx.send(embed=emb(
+                "🔕 Not Subscribed",
+                f"You aren't subscribed to **{vc.name}**. Run `!subscribe` to see your subscriptions.",
+                C_GREY,
+            ))
+            return
+        del state.voice_pings[key]
+        await delete_voice_ping(vc.id, ctx.author.id)
+        await ctx.send(embed=emb(
+            "🔕 Unsubscribed",
+            f"You'll no longer be DMed when **{vc.name}** fills up.",
+            C_GREY,
         ))
 
     @cmd_subscribe.command(name="ignore", aliases=["unignore"],

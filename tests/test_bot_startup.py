@@ -125,7 +125,7 @@ async def test_slash_ask_is_registered_in_the_command_tree(loaded_bot):
     tree = {cmd.name: cmd for cmd in loaded_bot.tree.get_commands()}
     expected = {
         "ask", "settings", "shop", "admin",
-        "help", "balance", "savings", "profile", "streak", "bugreport", "featurerequest", "subscribe",
+        "help", "balance", "savings", "profile", "streak", "bugreport", "featurerequest", "subscribe", "unsubscribe",
     }
     assert expected <= set(tree), f"app commands: {sorted(tree)}"
     # The group's own body is published under `fallback`; without it only

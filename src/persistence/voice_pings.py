@@ -20,6 +20,15 @@ async def delete_voice_ping(channel_id: int, user_id: int) -> None:
         )
 
 
+async def delete_voice_pings_in_guild(guild_id: int, user_id: int) -> None:
+    """Drop every subscription `user_id` holds in `guild_id` (`!unsubscribe all`)."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "DELETE FROM voice_pings WHERE guild_id=%s AND user_id=%s",
+            (guild_id, user_id),
+        )
+
+
 async def update_voice_ping_last_pinged(channel_id: int, user_id: int, ts: int) -> None:
     async with with_cursor() as cur:
         await cur.execute(

@@ -362,7 +362,7 @@ class UtilityCog(commands.Cog):
         utility_lines = [
             "`!stats` — Show bot statistics",
             "`!stop` — Stop roleplay / forfeit active game",
-            "`!subscribe [voice-channel]` — DM you when a voice channel fills up",
+            "`!subscribe [voice-channel]` — DM you when a voice channel fills up (`!unsubscribe all` to stop)",
             "`!count [counter] [@user]` — This server's custom counters",
         ]
         # The idle RPG is off until `!settings channel idle` names a channel.
