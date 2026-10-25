@@ -60,15 +60,17 @@ STEAL_TIERS = [
 
 
 # ── Shared crime-score record ─────────────────────────────────────────────────
-# !steal, !mug and !bankheist all compete for ONE record rather than three:
-# the biggest single haul taken off another player, whichever crime produced
-# it. The crime that set it rides along in extra_json as `crime_type` so
-# !records and the record-broken announcement can name it.
+# !steal and !bankheist compete for ONE record rather than two: the biggest
+# single payout a crime put in the thief's (or crew's) pocket. The crime that
+# set it rides along in extra_json as `crime_type` so !records and the
+# record-broken announcement can name it. !mug stays out: the mugger pays the
+# muggers and keeps nothing, so a mug "record" would just be the most anyone
+# spent on hurting a player — buyable by whoever is richest (migration 0083
+# cleared the rows mugs had set).
 CRIME_RECORD_CATEGORY = "crime"
 
 CRIME_TYPE_LABELS = {
     "steal": "Steal",
-    "mug": "Mug",
     "bankheist": "Bank Heist",
 }
 
@@ -113,7 +115,7 @@ async def try_set_crime_record(
     """Offer `amount` to the shared crime-score record, announcing on a break.
 
     `holder_name` is the display string the record is attributed to — a single
-    thief for !steal / !mug, the whole crew for a !bankheist (the user-visible
+    thief for !steal, the whole crew for a !bankheist (the user-visible
     holder of a group score is the group). `holder_id` stays a real user id
     either way so the tie-break and any future per-user lookup still work.
 
@@ -1096,8 +1098,7 @@ class EconomyCog(commands.Cog):
 
         # The crew shares one score, so the record is attributed to all of
         # them; holder_id stays the host's. The value is `seized` — the whole
-        # pot — which is the same "taken off the victim" measure !steal and
-        # !mug compete on, rather than any one player's cut.
+        # pot the crew split — rather than any one player's cut.
         # Silas is listed in the crew (he split the cut) with no user id.
         await try_set_crime_record(
             ctx.channel, ctx.guild, seized, host.id,
@@ -1568,13 +1569,8 @@ class EconomyCog(commands.Cog):
             if actual_steal > 0:
                 await ctx.send(_robbed_ping(target.id, "mugged", refunded))
             await msg.edit(embed=result_embed)
-
-            # Getting caught doesn't undo the take — the victim is out the
-            # coins either way — so a jailed mug still competes for the record.
-            await try_set_crime_record(
-                ctx.channel, ctx.guild, actual_steal, uid, ctx.author.display_name,
-                "mug", target.display_name,
-            )
+            # No crime-record offer: the mugger pockets nothing (see
+            # CRIME_RECORD_CATEGORY).
         finally:
             self._crime_active.discard(uid)
 

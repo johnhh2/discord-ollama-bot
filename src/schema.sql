@@ -1794,3 +1794,12 @@ CREATE TABLE IF NOT EXISTS mc_trades (
 -- market and drunk by the fight loop where a camp would otherwise be made.
 -- Existing characters start with none; the next town errand stocks up.
 ALTER TABLE idle_characters ADD COLUMN IF NOT EXISTS potions INT NOT NULL DEFAULT 0;
+
+-- ── 0083_drop_mug_crime_records.sql ──
+-- 0083: !mug no longer competes for the shared `crime` record (the mugger
+-- pays and pockets nothing, so its "payout" was just the amount spent), and
+-- the rows mugs already hold would otherwise stand until something beat them.
+-- JSON_VALUE, not JSON_EXTRACT: the latter keeps the member's quotes.
+DELETE FROM records
+ WHERE category = 'crime'
+   AND JSON_VALUE(extra_json, '$.crime_type') = 'mug';

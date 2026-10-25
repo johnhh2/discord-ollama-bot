@@ -124,6 +124,10 @@ def _translate(sql: str) -> str:
     # ── MariaDB-isms that show up in migration files ─────────────────────
     # JSON_ARRAY() default -> '[]' (SQLite has no JSON_ARRAY function).
     out = re.sub(r"JSON_ARRAY\s*\(\s*\)", "'[]'", out, flags=re.IGNORECASE)
+    # JSON_VALUE(col, path) -> json_extract(col, path): both return a JSON
+    # string member unquoted, unlike MariaDB's JSON_EXTRACT (which keeps the
+    # quotes, so a migration comparing against 'mug' must use JSON_VALUE).
+    out = re.sub(r"\bJSON_VALUE\s*\(", "json_extract(", out, flags=re.IGNORECASE)
     # ENUM('a','b','c') -> TEXT (SQLite has no ENUM type).
     out = re.sub(r"\bENUM\s*\([^)]*\)", "TEXT", out, flags=re.IGNORECASE)
     # `<inttype> [UNSIGNED] NOT NULL AUTO_INCREMENT PRIMARY KEY`

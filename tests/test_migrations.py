@@ -324,3 +324,55 @@ async def test_0063_chess_ticket_period_rename_keeps_september_grants(tmp_path, 
     applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
     assert applied == [2]
     assert await _rows() == expected
+
+
+@pytest.mark.asyncio
+async def test_0083_drops_only_mug_held_crime_records(tmp_path, fake_cur):
+    """The real 0083 data migration: a `crime` record a mug set is deleted;
+    steal and bankheist crime records, other categories, and a crime row with
+    no extra_json all survive; re-run is a no-op."""
+    _write(tmp_path, "0001_records.sql", """
+        CREATE TABLE records (
+            guild_id INTEGER NOT NULL,
+            category TEXT NOT NULL,
+            value INTEGER NOT NULL,
+            holder_id INTEGER NOT NULL,
+            holder_name TEXT NOT NULL,
+            extra_json TEXT NULL,
+            PRIMARY KEY (guild_id, category)
+        );
+    """)
+    applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+    assert applied == [1]
+
+    seed = [
+        (1, "crime", 50_000, 10, "Xeph", '{"crime_type": "mug", "victim": "bean"}'),
+        (2, "crime", 1_000, 11, "thief", '{"crime_type": "steal", "victim": "mark"}'),
+        (3, "crime", 9_000, 12, "crew", '{"crime_type": "bankheist", "victim": "mark", "crew": []}'),
+        (4, "crime", 7, 13, "old", None),
+        (1, "slots", 80_000, 10, "Xeph", '{"crime_type": "mug"}'),
+    ]
+    for row in seed:
+        await fake_cur.execute(
+            "INSERT INTO records (guild_id, category, value, holder_id, holder_name, extra_json)"
+            " VALUES (%s,%s,%s,%s,%s,%s)", row,
+        )
+
+    real_sql = (Path(__file__).parent.parent / "migrations" / "0083_drop_mug_crime_records.sql").read_text(encoding="utf-8")
+    _write(tmp_path, "0002_drop_mug_crime_records.sql", real_sql)
+    _migrations._done = False
+    applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+    assert applied == [2]
+
+    async def _rows():
+        await fake_cur.execute("SELECT guild_id, category FROM records ORDER BY guild_id, category")
+        return await fake_cur.fetchall()
+
+    expected = [(1, "slots"), (2, "crime"), (3, "crime"), (4, "crime")]
+    assert await _rows() == expected
+
+    await fake_cur.execute("DELETE FROM schema_migrations WHERE version=2")
+    _migrations._done = False
+    applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+    assert applied == [2]
+    assert await _rows() == expected

@@ -1,7 +1,8 @@
-"""The shared `crime` record: !steal, !mug and !bankheist all compete for one
-"biggest crime payout" row rather than three separate ones.
+"""The shared `crime` record: !steal and !bankheist compete for one "biggest
+crime payout" row rather than two separate ones; !mug, which pays the thief
+nothing, never offers to it.
 
-The interesting parts are (a) that the three crimes share a single row and the
+The interesting parts are (a) that the two crimes share a single row and the
 winner is whoever took the most, regardless of which crime did it, and (b) that
 a bankheist is attributed to the whole crew — every participant who split the
 cut — not just the host who opened the lobby.
@@ -159,81 +160,27 @@ async def test_steal_from_a_broke_victim_sets_no_crime_record(db, monkeypatch):
 
 # ── !mug ──────────────────────────────────────────────────────────────────────
 
-async def test_successful_mug_sets_the_crime_record(db, monkeypatch):
+async def test_a_mug_never_sets_the_crime_record(db, monkeypatch):
+    """The mugger pays the muggers and pockets nothing, so a mug has no
+    payout to offer — caught or not (it once did, and a 50k mug that paid
+    out 0 took the record)."""
     cog = EconomyCog(bot=_StubBot())
-    thief = FakeMember(uid=9300, display_name="mugger")
     victim = FakeMember(uid=9400, display_name="mark")
-    await _economy.add_balance(thief.id, 5_000)
     await _economy.add_balance(victim.id, 10_000)
     _grant_level(victim.id, 12)
-
-    monkeypatch.setattr(random, "random", lambda: 0.99)  # clean getaway
     monkeypatch.setattr(random, "randint", lambda a, b: a)
 
-    ctx = _make_ctx(thief, content="!mug @mark 1000")
-    await cog.cmd_mug.callback(cog, ctx, target=victim, amount="1000")
+    for uid, roll in ((9300, 0.99), (9301, 0.10)):  # clean getaway, then caught
+        thief = FakeMember(uid=uid, display_name="mugger")
+        await _economy.add_balance(thief.id, 5_000)
+        monkeypatch.setattr(random, "random", lambda roll=roll: roll)
+        ctx = _make_ctx(thief, content="!mug @mark 1000")
+        await cog.cmd_mug.callback(cog, ctx, target=victim, amount="1000")
+        assert not any(e.title == "🏆 New Record!" for e in _announced(ctx.channel))
 
-    rec = await _crime_record()
-    assert rec["value"] == 1_000
-    assert rec["holder_id"] == thief.id
-    assert rec["crime_type"] == "mug"
-    assert rec["victim"] == "mark"
-    assert "Mug • robbed mark" in next(
-        e.description for e in _announced(ctx.channel) if e.title == "🏆 New Record!"
-    )
-
-
-async def test_a_caught_mug_still_sets_the_crime_record(db, monkeypatch):
-    """Getting jailed doesn't give the victim their coins back, so the take
-    still counts — same as it does for the crime graph."""
-    cog = EconomyCog(bot=_StubBot())
-    thief = FakeMember(uid=9301, display_name="mugger")
-    victim = FakeMember(uid=9401, display_name="mark")
-    await _economy.add_balance(thief.id, 5_000)
-    await _economy.add_balance(victim.id, 10_000)
-    _grant_level(victim.id, 12)
-
-    monkeypatch.setattr(random, "random", lambda: 0.10)  # witness calls the cops
-    monkeypatch.setattr(random, "randint", lambda a, b: a)
-
-    ctx = _make_ctx(thief, content="!mug @mark 1000")
-    await cog.cmd_mug.callback(cog, ctx, target=victim, amount="1000")
-
-    assert _state.economy["users"][str(thief.id)]["jail_until"] > time.time()
-    rec = await _crime_record()
-    assert rec["value"] == 1_000
-    assert rec["crime_type"] == "mug"
-
-
-async def test_mug_records_only_what_the_victim_actually_lost(db, monkeypatch):
-    """The victim's balance can drop during the ~5s animation; the record
-    tracks the coins that actually moved, not the amount paid for."""
-    cog = EconomyCog(bot=_StubBot())
-    thief = FakeMember(uid=9302, display_name="mugger")
-    victim = FakeMember(uid=9402, display_name="mark")
-    await _economy.add_balance(thief.id, 20_000)
-    await _economy.add_balance(victim.id, 5_000)
-    _grant_level(victim.id, 12)
-
-    monkeypatch.setattr(random, "random", lambda: 0.99)
-    monkeypatch.setattr(random, "randint", lambda a, b: a)
-
-    real_sleep = asyncio.sleep
-
-    async def _drain_victim(*a, **kw):
-        # Empty most of the victim's wallet mid-chase.
-        bal = await _economy.get_balance(victim.id)
-        if bal > 2_000:
-            await _economy.deduct_balance(victim.id, bal - 2_000)
-        return await real_sleep(0)
-
-    monkeypatch.setattr(asyncio, "sleep", _drain_victim)
-
-    ctx = _make_ctx(thief, content="!mug @mark 5000")
-    await cog.cmd_mug.callback(cog, ctx, target=victim, amount="5000")
-
-    rec = await _crime_record()
-    assert rec["value"] == 2_000
+    assert await _economy.get_balance(victim.id) == 8_000  # both mugs landed
+    assert _state.economy["users"]["9301"]["jail_until"] > time.time()
+    assert await _crime_record() is None
 
 
 # ── !bankheist ────────────────────────────────────────────────────────────────
@@ -350,9 +297,8 @@ async def test_empty_vault_bankheist_sets_no_crime_record(db, monkeypatch):
 
 # ── one row, three crimes ─────────────────────────────────────────────────────
 
-async def test_a_bigger_mug_takes_the_record_from_a_steal(db, monkeypatch):
-    """All three crimes write the same row, so the biggest haul wins outright
-    no matter which crime produced it."""
+async def test_a_bigger_mug_leaves_a_steal_record_alone(db, monkeypatch):
+    """A mug taking more than the standing steal still isn't a payout."""
     cog = EconomyCog(bot=_StubBot())
     thief = FakeMember(uid=9600, display_name="thief")
     victim = FakeMember(uid=9601, display_name="victim")
@@ -363,9 +309,10 @@ async def test_a_bigger_mug_takes_the_record_from_a_steal(db, monkeypatch):
     monkeypatch.setattr(random, "random", lambda: 0.05)  # steal succeeds
     monkeypatch.setattr(random, "randint", lambda a, b: a)
     await cog.cmd_steal.callback(cog, _make_ctx(thief), target=victim)
-    assert (await _crime_record())["crime_type"] == "steal"
+    before = await _crime_record()
+    assert before["crime_type"] == "steal"
 
-    # Victim is down to 9,000; mug 3,000 of it — beats the 1,000 steal.
+    # Victim is down to 9,000; mug 3,000 of it — more than the steal took.
     mugger = FakeMember(uid=9602, display_name="mugger")
     await _economy.add_balance(mugger.id, 5_000)
     monkeypatch.setattr(random, "random", lambda: 0.99)  # clean getaway
@@ -374,10 +321,7 @@ async def test_a_bigger_mug_takes_the_record_from_a_steal(db, monkeypatch):
         target=victim, amount="3000",
     )
 
-    rec = await _crime_record()
-    assert rec["value"] == 3_000
-    assert rec["crime_type"] == "mug"
-    assert rec["holder_name"] == "mugger"
+    assert await _crime_record() == before
 
 
 async def test_a_smaller_crime_leaves_the_record_alone(db, monkeypatch):
@@ -429,8 +373,8 @@ async def test_detail_renders_solo_crimes_without_a_crew_clause():
         {"crime_type": "steal", "victim": "victim"},
     ) == "Steal • robbed victim"
     assert format_crime_record_detail(
-        {"crime_type": "mug", "victim": "mark"},
-    ) == "Mug • robbed mark"
+        {"crime_type": "steal", "victim": "mark"},
+    ) == "Steal • robbed mark"
 
 
 async def test_detail_degrades_gracefully_on_a_row_missing_its_meta():
