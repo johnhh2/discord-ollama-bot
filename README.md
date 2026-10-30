@@ -78,7 +78,7 @@ PvP works too, with SAN/UCI move input, board rendering, threat analysis (`!ches
 - Optional dailies channel (`!settings channel dailies`) — a self-cleaning channel with a single "Claim your dailies" embed; reacting 🗓️ instantly claims the daily reward and all scratchoffs (🪙 also coin-flips the whole claim — daily reward + scratchoff winnings — 🎰 bets it on slots and 🏇 races the bot for it; 🎟️ only buys the day's remaining half-price lottery tickets, without claiming), results auto-delete after 5 minutes (results with 10k+ won or lost stay until the reset), and the claim reactions reset at 5am CT
 
 ### 🛒 Shop with real consequences
-Coins buy actual Discord effects: nicknames, role creation/colors, channel renames and locks, mutes, mock/curse/ragebait text effects, taxing another user, UNO-reverse cards, and insurance against all of the above (crime is refunded rather than blocked — every purchase prompt offers all three tiers). Prices are centrally tuned in [src/config.py](src/config.py).
+Coins buy actual Discord effects: nicknames, role creation/colors, channel renames and locks, mock/curse/ragebait text effects, taxing another user, UNO-reverse cards, and insurance against all of the above (crime is refunded rather than blocked — every purchase prompt offers all three tiers). Prices are centrally tuned in [src/config.py](src/config.py).
 
 `!artifacts` sells twelve permanent upgrades unlocked by level (5 through 50) and owned across every server: a bail discount, a steal boost, an extra daily scratchoff, a higher savings rate, a sixth property deed, an NPC heist partner, and more.
 

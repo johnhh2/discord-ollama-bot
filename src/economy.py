@@ -190,8 +190,8 @@ async def announce_new_lottery(
 # robbery, it refunds part of the loss — see insurance_refund.
 # A policy row stores a snapshot of this list at purchase; init_db_state
 # unions the stored list with this one on load, so a name added here covers
-# existing policies from the next boot (mute and curse were added that way).
-INSURANCE_PROTECTS = ["ragebait", "mock", "nickname", "role", "tax", "mute", "curse"]
+# existing policies from the next boot (curse was added that way).
+INSURANCE_PROTECTS = ["ragebait", "mock", "nickname", "role", "tax", "curse"]
 
 
 def insurance_tier_info(tier: str | None) -> dict:

@@ -185,7 +185,7 @@ async def _init_db_state_inner(state, run_migrations):
                 if expires_at and expires_at > now:
                     # history_json is the protected list as of purchase. Union
                     # it with the current constant so a policy bought before a
-                    # category existed (mute, curse) covers it too — every
+                    # category existed (curse) covers it too — every
                     # tier blocks every non-crime effect.
                     stored = json.loads(protected_json) if protected_json else []
                     state.insurance[int(uid)] = {

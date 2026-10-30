@@ -142,7 +142,6 @@ SHOP_CHANNEL_DELETE_COST  = 75_000
 SHOP_TAX_COST             = 1_000
 SHOP_MOCK_COST            = 1_500
 SHOP_RAGEBAIT_COST        = 2_500
-SHOP_MUTE_COST            = 5_000
 SHOP_CURSE_COST           = 10_000
 SHOP_UNOREVERSE_COST      = 10_000
 SHOP_XP_COST_PER_XP       = 100     # coins per XP for !shop buyxp
@@ -192,7 +191,6 @@ SHOP_INSURANCE_MAX_DAYS      = 30      # cap on total remaining prepaid coverage
 SHOP_MOCK_MESSAGES           = 5
 SHOP_RAGEBAIT_MESSAGES       = 4       # remaining after initial AI send
 SHOP_CURSE_MESSAGES          = 5
-SHOP_MUTE_MINUTES            = 5
 SHOP_TAX_PER_MESSAGE         = 10
 SHOP_TAX_DURATION_SECS       = 86_400  # 24 hours
 # What a server admin's `!event` drops may pay out per guild per week

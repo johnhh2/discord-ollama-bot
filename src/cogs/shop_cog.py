@@ -1,7 +1,6 @@
 import asyncio
 import functools
 import time
-import datetime
 import re
 
 import aiohttp
@@ -12,7 +11,7 @@ from discord.ext import commands
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, C_GREY,
     send_ephemeral,
-    fetch_member, shop_charge, log_bot_permission_error, MemberConverter,
+    shop_charge, log_bot_permission_error, MemberConverter,
     announce_record,
 )
 
@@ -49,9 +48,9 @@ from src.config import (
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_ASSIGN_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
     SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_LOCK_COST, SHOP_RENAME_COST, SHOP_CHANNEL_COST, SHOP_CHANNEL_DELETE_COST, SHOP_TAX_COST,
     SHOP_INSURANCE_TIERS, SHOP_INSURANCE_DEFAULT_TIER,
-    SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST, SHOP_UNOREVERSE_COST,
+    SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_CURSE_COST, SHOP_UNOREVERSE_COST,
     SHOP_INSURANCE_DURATION_SECS, SHOP_INSURANCE_MAX_DAYS, SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
-    SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_TAX_PER_MESSAGE,
+    SHOP_CURSE_MESSAGES, SHOP_TAX_PER_MESSAGE,
     SHOP_TAX_DURATION_SECS,
     SHOP_XP_COST_PER_XP, SHOP_XP_CATCHUP_DISCOUNT_PCT, SHOP_XP_CATCHUP_COST_PER_XP,
     BOUNTY_MIN_AMOUNT,
@@ -122,7 +121,6 @@ _SHOP_TOP_ALIASES: list[tuple[str, str, list[str]]] = [
     ("mock",           "shop_mock",          []),
     ("insurance",      "shop_insurance",     []),
     ("rolecolor",      "shop_rolecolor",     []),
-    ("mute",           "shop_mute",          []),
     ("tax",            "shop_tax",           []),
     ("curse",          "shop_curse",         []),
     ("unoreverse",     "shop_unoreverse",    []),
@@ -433,7 +431,6 @@ class ShopCog(commands.Cog):
         ]
         if _si.get("ragebait", True):
             fun_items.append((SHOP_RAGEBAIT_COST, f"`!shop ragebait @user [topic]` — Ragebait for {SHOP_RAGEBAIT_MESSAGES + 1} messages — **{SHOP_RAGEBAIT_COST:,} 🪙**"))
-        fun_items.append((SHOP_MUTE_COST,  f"`!shop mute @user` — Server mute for {SHOP_MUTE_MINUTES} minutes — **{SHOP_MUTE_COST:,} 🪙**"))
         fun_items.append((SHOP_CURSE_COST, f"`!shop curse @user` — Curse someone's messages for {SHOP_CURSE_MESSAGES} messages — **{SHOP_CURSE_COST:,} 🪙**"))
         fun_items.append((SHOP_UNOREVERSE_COST, L("unoreverse", f"`!shop unoreverse @user` — Redirect active mock/ragebait/curse onto someone else — **{SHOP_UNOREVERSE_COST:,} 🪙**")))
         fun_items.sort(key=lambda x: x[0])
@@ -1538,7 +1535,7 @@ class ShopCog(commands.Cog):
     # (policy and subscription agree — set_insurance_tier); switching moves
     # the remaining coverage with them, charging the daily difference on it
     # for an upgrade (insurance_switch_cost) and nothing for a downgrade.
-    INSURANCE_PROTECTS_STR = "mock, ragebait, curses, mutes, nickname changes, role assignments, and tax"
+    INSURANCE_PROTECTS_STR = "mock, ragebait, curses, nickname changes, role assignments, and tax"
 
     def _rollback_insurance_days(self, key: int, days: int):
         """Undo a stamped-but-unpaid insurance extension. A concurrent purchase
@@ -1945,72 +1942,6 @@ class ShopCog(commands.Cog):
             if cost > 0:
                 await add_balance(uid, cost)
             await ctx.send(embed=emb("❌ Error", f"Failed to change role color: {str(e)}", C_RED))
-
-    # ── !shop mute ────────────────────────────────────────────────────────────
-    @cmd_shop.command(name="mute",
-                      help=f"Time out a user for {SHOP_MUTE_MINUTES} minutes; admins can't be muted and insurance blocks it",
-                      usage="@user")
-    @_shop_subcommand(None)
-    async def shop_mute(self, ctx: commands.Context, *args):
-        uid = ctx.author.id
-
-        if not args:
-            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mute @user`", C_PURPLE))
-            return
-        try:
-            target = await MemberConverter().convert(ctx, args[0])
-        except commands.BadArgument:
-            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop mute @user`", C_PURPLE))
-            return
-        if ctx.guild is None:
-            await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
-            return
-        if target.id == uid:
-            await ctx.send(embed=emb("❌ Self Mute", "You can't mute yourself!", C_RED))
-            return
-        if self.bot and self.bot.user and target.id == self.bot.user.id:
-            await ctx.send(embed=emb("❌ Invalid Target", "You can't mute the bot.", C_RED))
-            return
-        if target.guild_permissions.administrator:
-            # Discord refuses to time out administrators (the owner included);
-            # say so up front instead of charging and refunding on the 403.
-            await ctx.send(embed=emb("❌ Can't Mute", f"**{target.display_name}** is a server administrator — Discord doesn't allow timing them out.", C_RED))
-            return
-        if await is_insured(target.id, "mute"):
-            _exp = get_insurance_expiry(target.id)
-            await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has insurance against mutes (expires <t:{_exp}:R>).", C_GOLD))
-            return
-        cost = 0 if uid in state.godmode_users else SHOP_MUTE_COST
-        if not await confirm_purchase(
-            ctx, title="🔕 Mute",
-            description=f"Server-mute **{target.display_name}** for {SHOP_MUTE_MINUTES} minutes.",
-            cost=cost, payer=ctx.author,
-        ):
-            return
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MUTE_COST:,}"):
-            return
-        try:
-            member = await fetch_member(ctx.guild, target.id)
-            if not member:
-                if cost > 0:
-                    await add_balance(uid, cost)
-                await ctx.send(embed=emb("❌ User Not Found", f"Could not find **{target.display_name}** in this server.", C_RED))
-                return
-            await member.edit(timed_out_until=discord.utils.utcnow() + datetime.timedelta(minutes=SHOP_MUTE_MINUTES))
-            await ctx.send(embed=emb(
-                "🔕 Muted",
-                f"**{target.display_name}** has been muted for {SHOP_MUTE_MINUTES} minutes!",
-                C_PURPLE,
-            ))
-        except discord.Forbidden:
-            if cost > 0:
-                await add_balance(uid, cost)
-            log_bot_permission_error(ctx, "timeout members")
-            await ctx.send(embed=emb("❌ No Permission", "I don't have permission to timeout members.", C_RED))
-        except Exception as e:
-            if cost > 0:
-                await add_balance(uid, cost)
-            await ctx.send(embed=emb("❌ Error", f"Failed to mute: {str(e)}", C_RED))
 
     # ── !shop tax (+ guild-configured aliases) ───────────────────────────────
     @cmd_shop.command(name="tax",

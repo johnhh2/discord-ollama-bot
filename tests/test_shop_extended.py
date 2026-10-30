@@ -11,7 +11,6 @@ each shape: a role op (createrole), a channel op (lockchannel/unlockchannel),
 and the three timed effects (mock, curse, tax) that persist to shop_effects.
 """
 import time
-from types import SimpleNamespace
 
 import pytest
 from unittest.mock import AsyncMock
@@ -27,7 +26,7 @@ from src.config import (
     SHOP_ROLE_CREATE_COST, SHOP_LOCK_COST, SHOP_MOCK_COST,
     SHOP_MOCK_MESSAGES, SHOP_CURSE_COST, SHOP_CURSE_MESSAGES,
     SHOP_TAX_COST, SHOP_NICKNAME_SELF_COST, SHOP_RENAME_COST,
-    SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_MUTE_COST,
+    SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST,
 )
 from src.economy import INSURANCE_PROTECTS
 
@@ -667,10 +666,10 @@ async def test_shop_createrole_assign_failure_keeps_role_tracked_if_delete_fails
     assert await get_balance(buyer.id) == start
 
 
-# ── Mute and curse honour insurance; mute checks its target ───────────────
+# ── Curse honours insurance ───────────────────────────────────────────────
 
-async def test_insurance_protects_covers_mute_and_curse():
-    assert {"mute", "curse"} <= set(INSURANCE_PROTECTS)
+async def test_insurance_protects_covers_curse():
+    assert "curse" in INSURANCE_PROTECTS
 
 
 def _insure_all(uid: int) -> None:
@@ -678,62 +677,6 @@ def _insure_all(uid: int) -> None:
         "expires_at": time.time() + 3600,
         "protected_from": list(INSURANCE_PROTECTS),
     }
-
-
-async def test_shop_mute_times_out_target_and_charges(db, force_member_converter_fallback):
-    cog = ShopCog(bot=None)
-    buyer = FakeMember(uid=5001, display_name="buyer")
-    target = FakeMember(uid=5002, display_name="target")
-    await add_balance(buyer.id, SHOP_MUTE_COST + 1000)
-    guild = FakeGuild(gid=42)
-    guild.members = [buyer, target]
-    ctx = FakeCtx(author=buyer, guild=guild)
-
-    await cog.shop_mute.callback(cog, ctx, "target")
-
-    assert await get_balance(buyer.id) == 1000
-    target.edit.assert_awaited_once()
-    assert "timed_out_until" in target.edit.await_args.kwargs
-
-
-async def test_shop_mute_refuses_against_insured_target(db, force_member_converter_fallback):
-    """Pre-fix shop_mute never consulted insurance: 5k coins bought a real
-    Discord timeout on an insured user, who then couldn't react or click a
-    button for five minutes."""
-    cog = ShopCog(bot=None)
-    buyer = FakeMember(uid=5003, display_name="buyer")
-    target = FakeMember(uid=5004, display_name="target")
-    await add_balance(buyer.id, SHOP_MUTE_COST + 1000)
-    _insure_all(target.id)
-    guild = FakeGuild(gid=42)
-    guild.members = [buyer, target]
-    ctx = FakeCtx(author=buyer, guild=guild)
-
-    await cog.shop_mute.callback(cog, ctx, "target")
-
-    assert await get_balance(buyer.id) == SHOP_MUTE_COST + 1000
-    target.edit.assert_not_awaited()
-    assert any("Protected" in (e.title or "") for e in ctx.sent_embeds)
-
-
-async def test_shop_mute_rejects_self_bot_and_admin(db, force_member_converter_fallback):
-    cog = ShopCog(bot=None)
-    cog.bot = SimpleNamespace(user=SimpleNamespace(id=999_000_001))  # after init: a real bot would register aliases
-    buyer = FakeMember(uid=5005, display_name="buyer")
-    botty = FakeMember(uid=999_000_001, display_name="botty")
-    admin = FakeMember(uid=5006, display_name="admin", administrator=True)
-    await add_balance(buyer.id, SHOP_MUTE_COST + 1000)
-    guild = FakeGuild(gid=42)
-    guild.members = [buyer, botty, admin]
-    ctx = FakeCtx(author=buyer, guild=guild)
-
-    for arg in ("buyer", "botty", "admin"):
-        await cog.shop_mute.callback(cog, ctx, arg)
-
-    assert await get_balance(buyer.id) == SHOP_MUTE_COST + 1000
-    for m in (buyer, botty, admin):
-        m.edit.assert_not_awaited()
-    assert len(ctx.sent_embeds) == 3
 
 
 async def test_shop_curse_refuses_against_insured_target(db, force_member_converter_fallback):

@@ -314,7 +314,7 @@ async def test_insurance_expired_entries_dropped_on_init_db_state(db):
 
 async def test_insurance_load_unions_stored_list_with_current_protects(db):
     """A policy row stores the protected list as of purchase. Categories
-    added later (mute, curse) must cover existing policies too, so
+    added later (curse) must cover existing policies too, so
     init_db_state unions the stored list with INSURANCE_PROTECTS."""
     _state.insurance[3] = {
         "expires_at": time.time() + 3600,
@@ -327,7 +327,6 @@ async def test_insurance_load_unions_stored_list_with_current_protects(db):
     protected = _state.insurance[3]["protected_from"]
     assert "nickname" in protected
     assert set(_economy.INSURANCE_PROTECTS) <= set(protected)
-    assert await _economy.is_insured(3, "mute") is True
     assert await _economy.is_insured(3, "curse") is True
 
 

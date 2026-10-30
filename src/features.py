@@ -63,7 +63,7 @@ FEATURES: dict[str, Feature] = {
     "shop": Feature(
         "shop", "🛒 Shop", "economy",
         "nicknames, roles, channels, insurance, taxes, mocks, curses, XP",
-        "`!shop` — spend coins on nicknames, roles, channels, insurance, taxes, mocks, curses, mutes, ragebait and XP.",
+        "`!shop` — spend coins on nicknames, roles, channels, insurance, taxes, mocks, curses, ragebait and XP.",
     ),
     "artifacts": Feature(
         "artifacts", "🏺 Artifacts", "shop",

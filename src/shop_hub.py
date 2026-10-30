@@ -39,8 +39,8 @@ from src.config import (
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_ASSIGN_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
     SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_LOCK_COST, SHOP_RENAME_COST, SHOP_CHANNEL_COST,
     SHOP_CHANNEL_DELETE_COST, SHOP_TAX_COST, SHOP_INSURANCE_TIERS, SHOP_INSURANCE_MAX_DAYS,
-    SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_MUTE_COST, SHOP_CURSE_COST, SHOP_UNOREVERSE_COST,
-    SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES, SHOP_CURSE_MESSAGES, SHOP_MUTE_MINUTES, SHOP_TAX_PER_MESSAGE,
+    SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_CURSE_COST, SHOP_UNOREVERSE_COST,
+    SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES, SHOP_CURSE_MESSAGES, SHOP_TAX_PER_MESSAGE,
     SHOP_XP_COST_PER_XP, BOUNTY_MIN_AMOUNT,
 )
 from src.economy import get_insurance_tier, get_insurance_expiry
@@ -257,8 +257,6 @@ def _fun(ctx, shop_items: dict) -> list[ShopItem]:
                  "shop_tax", title="Tax someone", fields=(user,), call=target),
         ShopItem("curse", f"🔮 Curse someone — {_coins(SHOP_CURSE_COST)}", f"their next {SHOP_CURSE_MESSAGES} messages, cursed",
                  "shop_curse", title="Curse someone", fields=(user,), call=target),
-        ShopItem("mute", f"🔇 Mute someone — {_coins(SHOP_MUTE_COST)}", f"a server mute for {SHOP_MUTE_MINUTES} minutes",
-                 "shop_mute", title="Mute someone", fields=(user,), call=target),
         ShopItem("unoreverse", f"🔄 Uno reverse — {_coins(SHOP_UNOREVERSE_COST)}", "redirect an active mock, ragebait or curse onto someone else",
                  "shop_unoreverse", title="Uno reverse", fields=(user,), call=target, lock=_locked(ctx, "unoreverse")),
     ]
@@ -443,7 +441,7 @@ _PAGE_NOTES = {
     "assets_high": f"Every property is unique — one owner across all servers. Own up to {PROPERTY_MAX_OWNED}; "
                    f"revenue is {PROPERTY_DAILY_REVENUE_PCT} of price per day, banked with your daily claim.",
     "artifacts": "Permanent per-user upgrades, owned bot-wide. Level gates are your global level.",
-    "insurance": "Crime still goes through; the insurer refunds your wallet. Every tier also blocks mock, ragebait, curses, mutes, nickname changes, role assignments and tax.",
+    "insurance": "Crime still goes through; the insurer refunds your wallet. Every tier also blocks mock, ragebait, curses, nickname changes, role assignments and tax.",
 }
 
 

@@ -474,11 +474,11 @@ Insurance comes in three tiers (`SHOP_INSURANCE_TIERS` in `src/config.py`):
 basic 50% for 1k/day (100k cap), standard 75% for 3k/day (200k cap),
 premium 100% for 6k/day (400k cap). Every tier still blocks the non-crime
 effects outright (`INSURANCE_PROTECTS` — mock, ragebait, nickname, role,
-tax, mute, curse; `is_insured` gates those as before). A policy
+tax, curse; `is_insured` gates those as before). A policy
 row stores that list as of purchase and `init_db_state` unions it with the
 current constant on load, so a new shop effect aimed at another user goes in
-`INSURANCE_PROTECTS` **and** gets an `is_insured` check in its command (mute
-and curse once had neither). Crime is different:
+`INSURANCE_PROTECTS` **and** gets an `is_insured` check in its command (curse
+once had neither). Crime is different:
 `!steal`, `!mug` and `!bankheist` **go through** against an insured target.
 The thief/crew keeps the full take; after the loss lands, the crime calls
 `insurance_refund(victim, loss)` (`src/economy.py`), which pays the tier's
