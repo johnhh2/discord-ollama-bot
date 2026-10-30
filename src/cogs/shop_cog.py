@@ -17,7 +17,7 @@ from src.helpers import (
 
 from src.economy import (
     add_balance, get_balance, is_insured, get_insurance_expiry,
-    extend_insurance, next_daily_reset_ts,
+    extend_insurance, next_daily_reset_ts, rebase_savings_deposits,
     get_insurance_tier, set_insurance_tier, insurance_switch_cost,
     insurance_tier_cost, insurance_tier_info,
 )
@@ -32,10 +32,11 @@ from src.persistence import (
     save_insurance, save_insurance_subs, save_guild_settings,
     save_bot_roles,
     save_ragebait, save_mock, save_tax, save_curse,
-    save_user_artifact, try_set_record, save_leveling,
+    save_user_artifact, delete_user_artifact, save_economy, try_set_record, save_leveling,
 )
 from src.artifacts import ARTIFACTS, owned_qty, owned_artifact_count
-from src.confirm_view import confirm_purchase, confirm_choice
+from src.confirm_view import confirm_purchase, confirm_choice, confirm_prompt
+from src.settings_views import pick_from_list, pick_from_menus
 from src.guild_config import get_guild_cfg
 from src.features import feature_enabled, disabled_feature_for
 from src.shop_hub import open_shop_hub
@@ -131,6 +132,29 @@ _SHOP_TOP_ALIASES: list[tuple[str, str, list[str]]] = [
     ("roleup",         "shop_roleup",        []),
     ("roledown",       "shop_roleup",        []),
 ]
+
+
+def _artifact_sell_price(art: dict) -> int:
+    """Half the catalog price, rounded down."""
+    return art["cost"] // 2
+
+
+def _artifact_by_id(artifact_id: str) -> dict:
+    return next(a for a in ARTIFACTS if a["id"] == artifact_id)
+
+
+def _artifact_options(uid: int, lvl: int, action: str) -> list[tuple[str, str]]:
+    """Dropdown `(label, id)` pairs: the unowned artifacts `lvl` unlocks for
+    `buy`, the owned ones with their half-price payout for `sell`."""
+    options = []
+    for i, art in enumerate(ARTIFACTS, start=1):
+        owned = owned_qty(uid, art["id"])
+        if action == "sell":
+            if owned > 0:
+                options.append((f"{i}. {art['effect'][:70]} — +{_artifact_sell_price(art):,} 🪙", art["id"]))
+        elif owned < art["max"] and lvl >= art.get("level", 1):
+            options.append((f"{i}. {art['effect'][:70]} — {art['cost']:,} 🪙", art["id"]))
+    return options
 
 
 class ShopCog(commands.Cog):
@@ -534,8 +558,8 @@ class ShopCog(commands.Cog):
 
     # ── !shop artifacts ───────────────────────────────────────────────────────
     @cmd_shop.command(name="artifacts",
-                      help="List the permanent artifacts with passive effects, or buy one by its number",
-                      usage="[buy <number>]")
+                      help="List the permanent artifacts with passive effects; buy one, or sell one back for half its price",
+                      usage="[buy [number]|sell [number]]")
     @_shop_subcommand(None)
     async def shop_artifacts(self, ctx: commands.Context, *args):
         from src.level_unlocks import user_global_display_level
@@ -549,18 +573,45 @@ class ShopCog(commands.Cog):
             for i, art in enumerate(ARTIFACTS, start=1):
                 req = art.get("level", 1)
                 if owned_qty(uid, art["id"]) >= art["max"]:
-                    lines.append(f"**{i}.** {art['effect']} — ✅ **Owned**")
+                    lines.append(f"**{i}.** {art['effect']} — ✅ **Owned** · sells for {_artifact_sell_price(art):,} 🪙")
                 elif lvl < req:
                     lines.append(f"~~**{i}.** {art['effect']} — **{art['cost']:,} 🪙**~~ 🔒 **Lvl {req}**")
                 else:
                     lines.append(f"**{i}.** {art['effect']} — **{art['cost']:,} 🪙**")
             lines.append("")
-            lines.append("Artifacts are permanent and yours forever. Buy one with `!artifacts buy <number>`.")
+            lines.append("Buy one with `!artifacts buy`, or sell one back for half its price with `!artifacts sell`.")
             await send_ephemeral(ctx, embed=emb("🏺 Artifacts", "\n".join(lines), C_PURPLE))
+            # The menus under the listing — a pick runs the typed branch.
+            picked = await pick_from_menus(
+                ctx, title="🏺 Buy or sell",
+                description="Pick an artifact to buy, or one of yours to sell back for half its price.",
+                menus=[("buy", "Buy…", _artifact_options(uid, lvl, "buy")),
+                       ("sell", "Sell…", _artifact_options(uid, lvl, "sell"))],
+            )
+            if picked:
+                action, (art_id,) = picked
+                await self._artifact_trade(ctx, action, _artifact_by_id(art_id))
             return
 
-        if args[0].lower() != "buy" or len(args) < 2:
-            await ctx.send(embed=emb("🏺 Artifacts", "Usage: `!artifacts` to browse, `!artifacts buy <number>` to buy.", C_PURPLE))
+        action = args[0].lower()
+        if action not in ("buy", "sell"):
+            await ctx.send(embed=emb("🏺 Artifacts", "Usage: `!artifacts` to browse, `!artifacts buy [number]` to buy, `!artifacts sell [number]` to sell.", C_PURPLE))
+            return
+        if len(args) < 2:
+            options = _artifact_options(uid, lvl, action)
+            if not options:
+                text = ("Nothing to buy right now — you own every artifact your level unlocks."
+                        if action == "buy" else "You don't own any artifacts to sell.")
+                await ctx.send(embed=emb("🏺 Artifacts", text, C_PURPLE))
+                return
+            picked = await pick_from_list(
+                ctx, title="🏺 Buy Artifact" if action == "buy" else "🏺 Sell Artifact",
+                description=("Pick an artifact to buy." if action == "buy"
+                             else "Pick an artifact to sell back for half its price."),
+                options=options, placeholder="Buy…" if action == "buy" else "Sell…", multi=False,
+            )
+            if picked:
+                await self._artifact_trade(ctx, action, _artifact_by_id(picked[0]))
             return
         try:
             idx = int(args[1])
@@ -569,8 +620,61 @@ class ShopCog(commands.Cog):
         if not 1 <= idx <= len(ARTIFACTS):
             await ctx.send(embed=emb("❌ Invalid Artifact", f"Pick a number between 1 and {len(ARTIFACTS)} (see `!artifacts`).", C_RED))
             return
-        art = ARTIFACTS[idx - 1]
+        await self._artifact_trade(ctx, action, ARTIFACTS[idx - 1])
 
+    async def _artifact_trade(self, ctx: commands.Context, action: str, art: dict):
+        if action == "sell":
+            await self._artifact_sell(ctx, art)
+        else:
+            await self._artifact_buy(ctx, art)
+
+    async def _artifact_sell(self, ctx: commands.Context, art: dict):
+        uid = ctx.author.id
+        if owned_qty(uid, art["id"]) <= 0:
+            await ctx.send(embed=emb("🏺 Not Owned", "You don't own that artifact.", C_PURPLE))
+            return
+        # Godmode buys cost nothing, so a godmode sale pays nothing — otherwise
+        # buy/sell would mint half the catalog price per cycle.
+        refund = 0 if uid in state.godmode_users else _artifact_sell_price(art)
+        if not await confirm_prompt(
+            ctx, title="🏺 Sell Artifact",
+            description=f"{art['effect']} — you lose its effect for good and get **{refund:,} 🪙** back.",
+            payer=ctx.author,
+        ):
+            return
+
+        # Claim synchronously after the confirm wait (see CLAUDE.md on per-user
+        # command races): a second concurrent sell sees the copy gone and bails,
+        # so one artifact can't be paid out twice.
+        owned = state.user_artifacts.setdefault(uid, {})
+        prior = owned.get(art["id"], 0)
+        if prior <= 0:
+            await ctx.send(embed=emb("🏺 Not Owned", "You don't own that artifact.", C_PURPLE))
+            return
+        # The savings boost is read from current ownership, so bank the
+        # boosted interest earned so far while the artifact still counts.
+        rebase_savings = bool(art.get("savings_rate_boost"))
+        if rebase_savings:
+            rebase_savings_deposits(uid)
+        if prior > 1:
+            owned[art["id"]] = prior - 1
+        else:
+            owned.pop(art["id"], None)
+            state.user_artifact_acquired_at.get(uid, {}).pop(art["id"], None)
+        if rebase_savings:
+            await save_economy(uid=uid)
+        if prior > 1:
+            await save_user_artifact(uid, art["id"], prior - 1)
+        else:
+            await delete_user_artifact(uid, art["id"])
+        await add_balance(uid, refund)
+        await ctx.send(embed=emb("🏺 Artifact Sold", f"Its power is gone: {art['effect'].lower()}. **+{refund:,} 🪙**", C_GREEN))
+
+    async def _artifact_buy(self, ctx: commands.Context, art: dict):
+        from src.level_unlocks import user_global_display_level
+
+        uid = ctx.author.id
+        lvl = user_global_display_level(uid)
         req = art.get("level", 1)
         if lvl < req:
             await ctx.send(embed=emb("🔒 Level Locked", f"That artifact unlocks at **global Level {req}** (your highest level in any server) — you're Level {lvl}.", C_RED))

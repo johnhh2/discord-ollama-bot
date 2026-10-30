@@ -34,7 +34,7 @@ from src.persistence.shop_effects import (  # noqa: F401
     save_curse,
     save_tax,
 )
-from src.persistence.artifacts import save_user_artifact  # noqa: F401
+from src.persistence.artifacts import save_user_artifact, delete_user_artifact  # noqa: F401
 from src.persistence.properties import (  # noqa: F401
     save_property_owner,
     delete_property_owner,

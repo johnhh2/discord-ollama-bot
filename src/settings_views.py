@@ -218,6 +218,34 @@ async def pick_users(ctx, *, title: str, description: str, timeout: float = PROM
     return await _run(ctx, view, title, description)
 
 
+class _KeyedSelect(_StringSelect):
+    """A select that reports which menu was used alongside the values."""
+
+    def __init__(self, key: str, options, placeholder: str, row: int):
+        super().__init__(options, placeholder, multi=False, row=row)
+        self.key = key
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.view.finish(interaction, (self.key, list(self.values)), "✅ Done")
+
+
+async def pick_from_menus(ctx, *, title: str, description: str,
+                          menus: list[tuple[str, str, list[tuple[str, str]]]],
+                          timeout: float = PROMPT_TIMEOUT) -> "tuple[str, list[str]] | None":
+    """Several single-pick dropdowns in one prompt — `(key, placeholder,
+    options)` each, one per row. Returns `(key, [value])` for the menu the
+    invoker used, or None on Cancel / timeout. Menus with no options are
+    skipped; with none left the prompt isn't shown at all."""
+    shown = [(key, placeholder, options) for key, placeholder, options in menus if options]
+    if not shown:
+        return None
+    view = _OwnedView(ctx.author.id, timeout)
+    for row, (key, placeholder, options) in enumerate(shown[:4]):
+        view.add_item(_KeyedSelect(key, options, placeholder, row))
+    view.add_item(_CancelButton())
+    return await _run(ctx, view, title, description)
+
+
 # ── forms (modals) ───────────────────────────────────────────────────────────
 
 MODAL_FIELDS = 5  # Discord's cap on top-level modal components

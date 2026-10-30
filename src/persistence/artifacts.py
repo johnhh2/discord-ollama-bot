@@ -14,3 +14,13 @@ async def save_user_artifact(uid: int, artifact_id: str, quantity: int,
             (int(uid), artifact_id, int(quantity),
              float(acquired_at) if acquired_at is not None else None),
         )
+
+
+async def delete_user_artifact(uid: int, artifact_id: str):
+    """Drop the (user, artifact) row on a sale. The acquisition time goes with
+    it, so a later re-purchase starts a fresh rate boundary."""
+    async with with_transaction() as cur:
+        await cur.execute(
+            "DELETE FROM user_artifacts WHERE user_id=%s AND artifact_id=%s",
+            (int(uid), artifact_id),
+        )

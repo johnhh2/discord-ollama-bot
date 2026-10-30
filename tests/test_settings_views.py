@@ -11,7 +11,7 @@ import src.cogs.settings_cog as _settings_cog
 from src.cogs.settings_cog import SettingsCog
 from src.guild_config import get_guild_cfg
 from src.settings_views import (
-    _ChannelView, _OwnedView, _ToggleView, pick_channels, pick_from_list,
+    _ChannelView, _OwnedView, _ToggleView, pick_channels, pick_from_list, pick_from_menus,
 )
 
 from tests.fakes.discord import FakeCtx, FakeGuild, FakeMember
@@ -117,6 +117,32 @@ async def test_pick_from_list_notes_when_options_are_truncated():
     await pick_from_list(ctx, title="t", description="d", options=[(str(i), str(i)) for i in range(30)])
     await task
     assert "first 25 of 30" in ctx.sent_embeds[0].description
+
+
+async def test_pick_from_menus_reports_which_menu_was_used():
+    ctx = FakeCtx(author=FakeMember(1))
+
+    async def _pick():
+        await asyncio.sleep(0.01)
+        view = ctx.sent_views[-1]
+        selects = [i for i in view.children if type(i).__name__ == "_KeyedSelect"]
+        assert [sel.key for sel in selects] == ["buy", "sell"]
+        selects[1]._values = ["b"]
+        await selects[1].callback(_interaction())
+    task = asyncio.create_task(_pick())
+    picked = await pick_from_menus(ctx, title="t", description="d", menus=[
+        ("buy", "Buy…", [("A", "a")]),
+        ("skip", "Nothing…", []),          # an empty menu isn't rendered
+        ("sell", "Sell…", [("B", "b")]),
+    ])
+    await task
+    assert picked == ("sell", ["b"])
+
+
+async def test_pick_from_menus_with_no_options_sends_nothing():
+    ctx = FakeCtx(author=FakeMember(1))
+    assert await pick_from_menus(ctx, title="t", description="d", menus=[("buy", "Buy…", [])]) is None
+    assert ctx.sent_embeds == []
 
 
 # ── bare commands open a prompt ──────────────────────────────────────────────

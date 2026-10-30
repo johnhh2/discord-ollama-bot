@@ -239,6 +239,7 @@ def reset_bot_state(monkeypatch):
     import src.cogs.lottery_cog as _lottery_cog_mod
     import src.games.chess as _chess_game_mod
     monkeypatch.setattr(_shop_cog_mod, "confirm_purchase", _auto_confirm)
+    monkeypatch.setattr(_shop_cog_mod, "confirm_prompt", _auto_confirm)   # `!artifacts sell`
 
     # The insurance tier picker (confirm_choice) auto-picks the highlighted
     # default choice — the tier the command was given, else the buyer's
@@ -279,6 +280,8 @@ def reset_bot_state(monkeypatch):
                     "pick_users", "toggle_panel", "confirm_choice", "confirm_prompt"):
         monkeypatch.setattr(_settings_cog_mod, _prompt, _dismissed)
     monkeypatch.setattr(_shop_cog_mod, "open_shop_hub", _dismissed)  # the `!shop` panel, likewise
+    for _prompt in ("pick_from_list", "pick_from_menus"):  # the `!artifacts` buy / sell dropdowns
+        monkeypatch.setattr(_shop_cog_mod, _prompt, _dismissed)
     import src.cogs.admin_cog as _admin_cog_mod
     monkeypatch.setattr(_admin_cog_mod, "open_panel", _dismissed)  # the `!admin` panel, likewise
     import src.cogs.graph_cog as _graph_cog_mod

@@ -613,6 +613,24 @@ def user_savings_daily_pct(uid: int) -> str:
     return ARTIFACT_SAVINGS_DAILY_PCT if savings_boost_since(uid) is not None else SAVINGS_DAILY_PCT
 
 
+def rebase_savings_deposits(uid: int, now: float | None = None) -> None:
+    """Bank every deposit's growth so far: each becomes a fresh deposit of
+    its current value, dated `now`. Synchronous and in-memory only — the
+    caller saves. Run before an action that would otherwise re-price the
+    past, such as selling the savings artifact: savings_growth reads the
+    boost from current ownership, so without this the boosted days already
+    earned would silently recompute at the base rate."""
+    user = state.economy.get("users", {}).get(str(uid))
+    if not user or not user.get("savings"):
+        return
+    if now is None:
+        now = time.time()
+    user["savings"] = [
+        {"amount": e["amount"] * savings_growth(e["deposited_at"], now, uid), "deposited_at": now}
+        for e in user["savings"]
+    ]
+
+
 async def get_savings_value(uid: int) -> float:
     """Return the current compound value of a user's savings (savings_growth per deposit)."""
     await _ensure_user(uid)

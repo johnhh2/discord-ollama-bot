@@ -1,5 +1,6 @@
 """Artifact shop tests: listing, purchase persistence, double-buy guard,
-rollback on failed charge, the concurrent-buy race, and the slots-reel effect.
+rollback on failed charge, the concurrent-buy race, selling back at half
+price, the buy / sell dropdowns, and the slots-reel effect.
 """
 import asyncio
 import time
@@ -237,6 +238,236 @@ async def test_list_marks_level_locked(db):
     assert "🔒 **Lvl 30**" in desc
     assert "🔒 **Lvl 5**" not in desc
     assert "🔒 **Lvl 10**" not in desc
+
+
+# ── selling ───────────────────────────────────────────────────────────────────
+
+async def test_sell_artifact_pays_half_and_drops_the_row(db):
+    cog = ShopCog(bot=None)
+    uid = 7020
+    _set_level(uid, 5)
+    await add_balance(uid, ARTIFACT_SLOTS_BLANK_COST)
+    await _invoke(cog, _ctx(uid), "buy", "1")
+    assert await get_balance(uid) == 0
+
+    ctx = _ctx(uid)
+    await _invoke(cog, ctx, "sell", "1")
+
+    assert "Artifact Sold" in ctx.sent_embeds[-1].title
+    assert await get_balance(uid) == ARTIFACT_SLOTS_BLANK_COST // 2
+    assert BLANK_ART_ID not in _state.user_artifacts.get(uid, {})
+    assert BLANK_ART_ID not in _state.user_artifact_acquired_at.get(uid, {})
+    assert await _read_db_artifact(uid, BLANK_ART_ID) is None
+    ctx2 = _ctx(uid)
+    await _invoke(cog, ctx2)
+    assert "Owned" not in ctx2.sent_embeds[0].description
+
+
+async def test_listing_quotes_the_sell_price_of_owned(db):
+    cog = ShopCog(bot=None)
+    uid = 7026
+    _state.user_artifacts[uid] = {BLANK_ART_ID: 1}
+    ctx = _ctx(uid)
+    await _invoke(cog, ctx)
+    assert f"sells for {ARTIFACT_SLOTS_BLANK_COST // 2:,}" in ctx.sent_embeds[0].description
+
+
+async def test_sell_unowned_artifact_refused(db):
+    cog = ShopCog(bot=None)
+    uid = 7021
+    ctx = _ctx(uid)
+    await _invoke(cog, ctx, "sell", "1")
+    assert "Not Owned" in ctx.sent_embeds[-1].title
+    assert await get_balance(uid) == 0
+
+
+async def test_sell_cancelled_keeps_the_artifact(db, monkeypatch):
+    cog = ShopCog(bot=None)
+    uid = 7022
+    _state.user_artifacts[uid] = {BLANK_ART_ID: 1}
+
+    async def _decline(*args, **kwargs):
+        return False
+    monkeypatch.setattr(_shop_cog, "confirm_prompt", _decline)
+    await _invoke(cog, _ctx(uid), "sell", "1")
+
+    assert _state.user_artifacts[uid][BLANK_ART_ID] == 1
+    assert await get_balance(uid) == 0
+
+
+async def test_concurrent_sells_pay_once(db, monkeypatch):
+    """Two interleaved sells of one copy pay out once: the claim is
+    synchronous after the confirm, so the second sees the copy gone."""
+    cog = ShopCog(bot=None)
+    uid = 7023
+    _state.user_artifacts[uid] = {BLANK_ART_ID: 1}
+
+    async def _yielding_confirm(*args, **kwargs):
+        await asyncio.sleep(0)
+        return True
+    monkeypatch.setattr(_shop_cog, "confirm_prompt", _yielding_confirm)
+
+    await asyncio.gather(
+        _invoke(cog, _ctx(uid), "sell", "1"),
+        _invoke(cog, _ctx(uid), "sell", "1"),
+    )
+    assert await get_balance(uid) == ARTIFACT_SLOTS_BLANK_COST // 2
+    assert BLANK_ART_ID not in _state.user_artifacts.get(uid, {})
+
+
+async def test_godmode_sell_pays_nothing(db):
+    cog = ShopCog(bot=None)
+    uid = 7024
+    _state.godmode_users.add(uid)
+    _state.user_artifacts[uid] = {BLANK_ART_ID: 1}
+    ctx = _ctx(uid)
+    await _invoke(cog, ctx, "sell", "1")
+    assert "Artifact Sold" in ctx.sent_embeds[-1].title
+    assert await get_balance(uid) == 0
+
+
+async def test_selling_the_savings_artifact_keeps_interest_already_earned(db):
+    """The boost is read from ownership, so the sale first banks each
+    deposit's grown value — a month of boosted interest can't vanish."""
+    from src.economy import get_savings_value, add_savings
+    from src.config import ARTIFACT_SAVINGS_BOOST_COST
+
+    cog = ShopCog(bot=None)
+    uid = 7025
+    art_idx = next(i for i, a in enumerate(ARTIFACTS, start=1) if a["id"] == "savings_rate_boost")
+    month_ago = time.time() - 30 * 86400
+    _state.user_artifacts[uid] = {"savings_rate_boost": 1}
+    _state.user_artifact_acquired_at[uid] = {"savings_rate_boost": month_ago}
+    await add_balance(uid, 100_000)
+    assert await add_savings(uid, 100_000)
+    _state.economy["users"][str(uid)]["savings"][0]["deposited_at"] = month_ago
+    before = await get_savings_value(uid)
+    assert before > 100_000
+
+    await _invoke(cog, _ctx(uid), "sell", str(art_idx))
+
+    assert "savings_rate_boost" not in _state.user_artifacts.get(uid, {})
+    assert await get_savings_value(uid) == pytest.approx(before, rel=1e-6)
+    assert await get_balance(uid) == ARTIFACT_SAVINGS_BOOST_COST // 2
+
+
+# ── the dropdowns ─────────────────────────────────────────────────────────────
+
+def _menu_pick(monkeypatch, name: str, result):
+    calls = []
+
+    async def _stub(ctx, **kwargs):
+        calls.append(kwargs)
+        return result
+    monkeypatch.setattr(_shop_cog, name, _stub)
+    return calls
+
+
+async def test_listing_offers_buy_and_sell_menus(db, monkeypatch):
+    """Bare `!artifacts` follows the listing with a buy menu of what the
+    user's level unlocks and doesn't own, and a sell menu of what they own."""
+    cog = ShopCog(bot=None)
+    uid = 7030
+    _set_level(uid, 10)
+    _state.user_artifacts[uid] = {BLANK_ART_ID: 1}
+    calls = _menu_pick(monkeypatch, "pick_from_menus", None)
+
+    await _invoke(cog, _ctx(uid))
+
+    menus = {key: [v for _, v in options] for key, _, options in calls[0]["menus"]}
+    # Level 10 unlocks slots (5, owned) and chessthreats (10); the rest are locked.
+    assert menus["buy"] == ["chessthreats_unlock"]
+    assert menus["sell"] == [BLANK_ART_ID]
+
+
+async def test_listing_menu_pick_buys(db, monkeypatch):
+    cog = ShopCog(bot=None)
+    uid = 7031
+    _set_level(uid, 5)
+    await add_balance(uid, ARTIFACT_SLOTS_BLANK_COST)
+    _menu_pick(monkeypatch, "pick_from_menus", ("buy", [BLANK_ART_ID]))
+
+    ctx = _ctx(uid)
+    await _invoke(cog, ctx)
+
+    assert "Artifact Acquired" in ctx.sent_embeds[-1].title
+    assert _state.user_artifacts[uid][BLANK_ART_ID] == 1
+    assert await get_balance(uid) == 0
+
+
+async def test_listing_menu_pick_sells(db, monkeypatch):
+    cog = ShopCog(bot=None)
+    uid = 7032
+    _state.user_artifacts[uid] = {BLANK_ART_ID: 1}
+    _menu_pick(monkeypatch, "pick_from_menus", ("sell", [BLANK_ART_ID]))
+
+    ctx = _ctx(uid)
+    await _invoke(cog, ctx)
+
+    assert "Artifact Sold" in ctx.sent_embeds[-1].title
+    assert await get_balance(uid) == ARTIFACT_SLOTS_BLANK_COST // 2
+
+
+async def test_bare_buy_opens_a_dropdown_of_what_is_buyable(db, monkeypatch):
+    cog = ShopCog(bot=None)
+    uid = 7033
+    _set_level(uid, 5)
+    await add_balance(uid, ARTIFACT_SLOTS_BLANK_COST)
+    calls = _menu_pick(monkeypatch, "pick_from_list", [BLANK_ART_ID])
+
+    ctx = _ctx(uid)
+    await _invoke(cog, ctx, "buy")
+
+    assert [v for _, v in calls[0]["options"]] == [BLANK_ART_ID]
+    assert "Artifact Acquired" in ctx.sent_embeds[-1].title
+    assert await get_balance(uid) == 0
+
+
+async def test_bare_buy_with_nothing_buyable_says_so(db, monkeypatch):
+    cog = ShopCog(bot=None)
+    uid = 7034          # level 1: everything locked
+    calls = _menu_pick(monkeypatch, "pick_from_list", None)
+    ctx = _ctx(uid)
+    await _invoke(cog, ctx, "buy")
+    assert calls == []
+    assert "Nothing to buy" in ctx.sent_embeds[-1].description
+
+
+async def test_bare_sell_opens_a_dropdown_of_owned(db, monkeypatch):
+    cog = ShopCog(bot=None)
+    uid = 7035
+    _state.user_artifacts[uid] = {BLANK_ART_ID: 1, "bail_discount": 1}
+    calls = _menu_pick(monkeypatch, "pick_from_list", ["bail_discount"])
+
+    ctx = _ctx(uid)
+    await _invoke(cog, ctx, "sell")
+
+    assert sorted(v for _, v in calls[0]["options"]) == sorted([BLANK_ART_ID, "bail_discount"])
+    assert "Artifact Sold" in ctx.sent_embeds[-1].title
+    assert _state.user_artifacts[uid] == {BLANK_ART_ID: 1}
+
+
+async def test_bare_sell_with_nothing_owned_says_so(db, monkeypatch):
+    cog = ShopCog(bot=None)
+    calls = _menu_pick(monkeypatch, "pick_from_list", None)
+    ctx = _ctx(7036)
+    await _invoke(cog, ctx, "sell")
+    assert calls == []
+    assert "don't own any" in ctx.sent_embeds[-1].description
+
+
+async def test_dismissed_dropdown_changes_nothing(db):
+    """conftest dismisses the prompts: a bare buy / sell with no pick neither
+    charges nor pays."""
+    cog = ShopCog(bot=None)
+    uid = 7037
+    _set_level(uid, 5)
+    await add_balance(uid, 100)
+    _state.user_artifacts[uid] = {"bail_discount": 1}
+    await _invoke(cog, _ctx(uid), "buy")
+    await _invoke(cog, _ctx(uid), "sell")
+    assert await get_balance(uid) == 100
+    assert _state.user_artifacts[uid] == {"bail_discount": 1}
 
 
 # ── effect helpers for the other artifacts ────────────────────────────────────
