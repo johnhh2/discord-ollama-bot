@@ -385,24 +385,52 @@ class TestOptionalMember:
         ctx = _ctx_with_members([alice])
         assert await OptionalMember().convert(ctx, "alic") is alice
 
-    async def test_no_match_returns_none(self):
-        """`!pay 1` style input: not found → None, not BadArgument."""
+    async def test_numeric_no_match_returns_none_without_a_prompt(self, monkeypatch):
+        """`!pay 1` style input: not found → None, not BadArgument — and no
+        user picker, since a short number is an amount for the next parameter."""
         from src.helpers import OptionalMember
+
+        async def _never(ctx, argument):
+            raise AssertionError("a numeric token must not open the picker")
+        monkeypatch.setattr("src.pickers.find_member", _never)
         ctx = _ctx_with_members([FakeMember(uid=1, display_name="alice")])
         assert await OptionalMember().convert(ctx, "1") is None
 
-    async def test_ambiguous_match_sends_message_and_returns_none(self):
-        """Ambiguous input: converter sends its own embed and returns None, so
-        commands don't each need a BadArgument handler for this case."""
+    async def test_ambiguous_match_opens_the_candidate_picker(self, monkeypatch):
+        """Several matches go to a dropdown (src/pickers.py): the pick is the
+        member; "None of the above" / timeout is None, so the command falls
+        through to its usage line and nothing else is said."""
         from src.helpers import OptionalMember
-        ctx = _ctx_with_members([
-            FakeMember(uid=1, display_name="alice_smith"),
-            FakeMember(uid=2, display_name="alice_jones"),
-        ])
+        smith = FakeMember(uid=1, display_name="alice_smith")
+        jones = FakeMember(uid=2, display_name="alice_jones")
+        ctx = _ctx_with_members([smith, jones])
+        offered = []
+
+        async def _choose(ctx, argument, matches):
+            offered.append((argument, list(matches)))
+            return jones
+        monkeypatch.setattr("src.pickers.choose_member", _choose)
+        assert await OptionalMember().convert(ctx, "alice") is jones
+        assert offered == [("alice", [smith, jones])]
+
+        async def _declined(ctx, argument, matches):
+            return None
+        monkeypatch.setattr("src.pickers.choose_member", _declined)
         assert await OptionalMember().convert(ctx, "alice") is None
-        assert any(
-            "alice_smith" in (e.description or "") for e in ctx.sent_embeds
-        )
+        assert ctx.sent_embeds == []
+
+    async def test_no_match_opens_the_user_picker(self, monkeypatch):
+        from src.helpers import OptionalMember
+        bob = FakeMember(uid=3, display_name="bob")
+        ctx = _ctx_with_members([FakeMember(uid=1, display_name="alice")])
+        asked = []
+
+        async def _find(ctx, argument):
+            asked.append(argument)
+            return bob
+        monkeypatch.setattr("src.pickers.find_member", _find)
+        assert await OptionalMember().convert(ctx, "bobby") is bob
+        assert asked == ["bobby"]
 
     async def test_no_guild_context_returns_none(self):
         from src.helpers import OptionalMember
@@ -520,16 +548,46 @@ class TestGlobalUser:
         ctx = _rig_ctx(members=[alice, alicia])
         assert await GlobalUser().convert(ctx, "alice") is alice
 
-    async def test_ambiguous_name_sends_embed_and_raises(self):
+    async def test_ambiguous_name_opens_the_candidate_picker(self, monkeypatch):
+        """Several matches go to the same dropdown `resolve_member` uses; the
+        pick is returned, a decline raises a `handled` BadArgument."""
         from discord.ext import commands as dpy_commands
         from src.helpers import GlobalUser
-        ctx = _rig_ctx(cached_users=[
-            FakeMember(uid=2, display_name="alice_smith"),
-            FakeMember(uid=3, display_name="alice_jones"),
-        ])
-        with pytest.raises(dpy_commands.BadArgument):
+        smith = FakeMember(uid=2, display_name="alice_smith")
+        jones = FakeMember(uid=3, display_name="alice_jones")
+        ctx = _rig_ctx(cached_users=[smith, jones])
+
+        async def _choose(ctx, argument, matches):
+            assert (argument, list(matches)) == ("alice", [smith, jones])
+            return jones
+        monkeypatch.setattr("src.pickers.choose_member", _choose)
+        assert await GlobalUser().convert(ctx, "alice") is jones
+
+        async def _declined(ctx, argument, matches):
+            return None
+        monkeypatch.setattr("src.pickers.choose_member", _declined)
+        with pytest.raises(dpy_commands.BadArgument) as info:
             await GlobalUser().convert(ctx, "alice")
-        assert any("alice_smith" in (e.description or "") for e in ctx.sent_embeds)
+        assert info.value.handled is True
+        assert ctx.sent_embeds == []
+
+    async def test_unknown_name_opens_the_user_picker_in_a_guild(self, monkeypatch):
+        from discord.ext import commands as dpy_commands
+        from src.helpers import GlobalUser
+        bob = FakeMember(uid=4, display_name="bob")
+        ctx = _rig_ctx(cached_users=[FakeMember(uid=2, display_name="alice")])
+
+        async def _find(ctx, argument):
+            assert argument == "bobby"
+            return bob
+        monkeypatch.setattr("src.pickers.find_member", _find)
+        assert await GlobalUser().convert(ctx, "bobby") is bob
+
+        # In a DM there is no member list to offer: a plain miss.
+        ctx.guild = None
+        with pytest.raises(dpy_commands.BadArgument) as info:
+            await GlobalUser().convert(ctx, "bobby")
+        assert not getattr(info.value, "handled", False)
 
     async def test_dm_context_searches_global_cache(self):
         from src.helpers import GlobalUser

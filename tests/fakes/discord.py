@@ -58,6 +58,7 @@ class FakeGuild:
         self.members = []
         self.roles = []
         self.channels = []
+        self.voice_channels = []
         self.threads = []
         # Tests that drive role/channel creation can set side_effects on these.
         self.create_role = AsyncMock()

@@ -6,7 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.discord_retry import send_dm
-from src.helpers import emb, MemberConverter, C_GREEN, C_RED, C_GREY, C_GOLD, ack_slash
+from src.helpers import emb, resolve_member, VoiceChannelConverter, C_GREEN, C_RED, C_GREY, C_GOLD, ack_slash
 from src.permissions import requires_perm
 from src.persistence import (
     save_voice_ping,
@@ -50,18 +50,21 @@ class VoiceCog(commands.Cog):
         self.bot = bot
 
     # `fallback` is what publishes the group's own body as a slash subcommand:
-    # `/subscribe channel [channel]` beside `/subscribe ignore`. Typed,
-    # `!subscribe #vc` is unchanged.
+    # `/subscribe channel [channel]` beside `/subscribe ignore`. The project
+    # converter (name substring, like member lookup) makes the slash option a
+    # text box rather than Discord's channel picker — the same trade as
+    # OptionalMember, see CLAUDE.md: Slash commands.
     @commands.hybrid_group(name="subscribe", aliases=["ping"], invoke_without_command=True, fallback="channel",
                            description="DM me when a voice channel goes from empty to active, or list your subscriptions",
-                           help="Toggle a DM when a voice channel goes from empty to active, or list your subscriptions")
-    @app_commands.describe(channel="The voice channel to toggle (leave empty to list your subscriptions)")
+                           help="Toggle a DM when a voice channel goes from empty to active, or list your subscriptions",
+                           usage="[voice-channel]")
+    @app_commands.describe(channel="The voice channel to toggle — its name or part of it (leave empty to list your subscriptions)")
     @requires_perm
     async def cmd_subscribe(
         self,
         ctx: commands.Context,
         *,
-        channel: discord.VoiceChannel = None,
+        channel: VoiceChannelConverter = None,
     ):
         await ack_slash(ctx)
         if ctx.guild is None:
@@ -120,7 +123,7 @@ class VoiceCog(commands.Cog):
             "🔔 Subscribed",
             f"I'll DM you when **{channel.name}** goes from empty to active "
             f"(at most one voice ping every {PING_COOLDOWN_SECS // 60} minutes across all your subscriptions).\n"
-            "Run `!subscribe` to see your subscriptions, or `!unsubscribe #channel` (or `all`) to stop.",
+            "Run `!subscribe` to see your subscriptions, or `!unsubscribe <voice-channel>` (or `all`) to stop.",
             C_GREEN,
         ))
 
@@ -183,14 +186,15 @@ class VoiceCog(commands.Cog):
             return
 
         try:
-            vc = await commands.VoiceChannelConverter().convert(ctx, query)
-        except commands.BadArgument:
-            await ctx.send(embed=emb(
-                "❌ Channel Not Found",
-                f"I couldn't find a voice channel matching **{query}**. "
-                "Try the channel ID, name, or `#mention` — or `all` to drop every subscription.",
-                C_RED,
-            ))
+            vc = await VoiceChannelConverter().convert(ctx, query)
+        except commands.BadArgument as exc:  # ChannelNotFound included
+            if not getattr(exc, "handled", False):  # a declined picker already answered
+                await ctx.send(embed=emb(
+                    "❌ Channel Not Found",
+                    f"I couldn't find a voice channel matching **{query}**. "
+                    "Try the channel's name (or part of it) or its ID — or `all` to drop every subscription.",
+                    C_RED,
+                ))
             return
 
         key = (vc.id, ctx.author.id)
@@ -227,19 +231,17 @@ class VoiceCog(commands.Cog):
 
         key = (ctx.guild.id, ctx.author.id)
 
-        # Resolve the target inline: the project MemberConverter matches
-        # case-insensitive name substrings (a `discord.Member` annotation
-        # doesn't), "no argument → list" stays distinct from "not found →
-        # error", and a MemberNotFound can't escape to the global error logger.
+        # Resolve the target inline: resolve_member matches case-insensitive
+        # name substrings and opens a picker on a miss (a `discord.Member`
+        # annotation does neither), "no argument → list" stays distinct from
+        # "not found → error", and a MemberNotFound can't escape to the global
+        # error logger.
         member = None
         if query is not None:
             try:
-                member = await MemberConverter().convert(ctx, query.strip())
+                member = await resolve_member(ctx, query.strip())
             except commands.BadArgument as exc:
-                msg = str(exc)
-                if "matched multiple members" in msg:
-                    await ctx.send(embed=emb("❌ Ambiguous User", msg, C_RED))
-                else:
+                if not getattr(exc, "handled", False):  # a declined picker already answered
                     await ctx.send(embed=emb(
                         "❌ User Not Found",
                         f"I couldn't find a member matching **{query.strip()}** in this server. "
@@ -318,10 +320,12 @@ class VoiceCog(commands.Cog):
         # `ignore`/`unignore` resolve their target inside the command body, so a
         # bad user argument never surfaces here — only a bad voice-channel
         # argument to the base `!subscribe <channel>` does.
+        if getattr(error, "handled", False):
+            return  # the converter's picker was declined; the closed prompt is the reply
         if isinstance(error, commands.ChannelNotFound):
             await ctx.send(embed=emb(
                 "❌ Channel Not Found",
-                "I couldn't find that voice channel. Try the channel ID, name, or `#mention`.",
+                "I couldn't find that voice channel. Try its name (or part of it) or its ID.",
                 C_RED,
             ))
             error.handled = True

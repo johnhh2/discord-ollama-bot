@@ -261,28 +261,57 @@ async def test_ignore_command_lists_when_no_query(db):
 
 
 @_aio
-async def test_ignore_command_unknown_name_sends_not_found(db, _no_builtin_member_converter):
+async def test_ignore_command_unknown_name_offers_the_user_picker(db, _no_builtin_member_converter, monkeypatch):
     """A name that matches nobody must NOT be treated as the list request, and
-    must NOT raise (which would leak to the global error logger)."""
+    must NOT raise (which would leak to the global error logger). It opens the
+    user picker: a decline stays silent (the closed prompt is the reply), a
+    pick is used as the target."""
     cog, _ = _make_cog(set())
-    ctx = _ctx(members=[_guild_member(name="Racist")])
+    target = _guild_member(name="Racist")
+    asked = []
 
+    async def _declined(ctx, argument):
+        asked.append(argument)
+        return None
+    monkeypatch.setattr("src.pickers.find_member", _declined)
+    ctx = _ctx(members=[target])
     await cog.cmd_subscribe_ignore.callback(cog, ctx, query="Nobody")
-    assert any("Not Found" in (e.title or "") for e in ctx.sent_embeds)
+    assert asked == ["Nobody"]
+    assert ctx.sent_embeds == []
     assert (GUILD_ID, SUBSCRIBER_ID) not in _state.voice_ping_ignores
+
+    async def _picked(ctx, argument):
+        return target
+    monkeypatch.setattr("src.pickers.find_member", _picked)
+    ctx2 = _ctx(members=[target])
+    await cog.cmd_subscribe_ignore.callback(cog, ctx2, query="Nobody")
+    assert _state.voice_ping_ignores[(GUILD_ID, SUBSCRIBER_ID)] == {TRIGGER_ID}
+    assert any("Ignoring Triggers" in (e.title or "") for e in ctx2.sent_embeds)
 
 
 @_aio
-async def test_ignore_command_ambiguous_name(db, _no_builtin_member_converter):
+async def test_ignore_command_ambiguous_name_offers_the_candidates(db, _no_builtin_member_converter, monkeypatch):
     cog, _ = _make_cog(set())
-    ctx = _ctx(members=[
-        _guild_member(uid=TRIGGER_ID, name="Racer One"),
-        _guild_member(uid=TRIGGER_ID + 1, name="Racer Two"),
-    ])
+    one = _guild_member(uid=TRIGGER_ID, name="Racer One")
+    two = _guild_member(uid=TRIGGER_ID + 1, name="Racer Two")
+    offered = []
 
+    async def _declined(ctx, argument, matches):
+        offered.append(list(matches))
+        return None
+    monkeypatch.setattr("src.pickers.choose_member", _declined)
+    ctx = _ctx(members=[one, two])
     await cog.cmd_subscribe_ignore.callback(cog, ctx, query="Racer")
-    assert any("Ambiguous" in (e.title or "") for e in ctx.sent_embeds)
+    assert offered == [[one, two]]
+    assert ctx.sent_embeds == []  # "None of the above": the closed prompt says it all
     assert (GUILD_ID, SUBSCRIBER_ID) not in _state.voice_ping_ignores
+
+    async def _picked(ctx, argument, matches):
+        return two
+    monkeypatch.setattr("src.pickers.choose_member", _picked)
+    ctx2 = _ctx(members=[one, two])
+    await cog.cmd_subscribe_ignore.callback(cog, ctx2, query="Racer")
+    assert _state.voice_ping_ignores[(GUILD_ID, SUBSCRIBER_ID)] == {TRIGGER_ID + 1}
 
 
 @_aio
@@ -315,17 +344,19 @@ def _voice_stub(cid, name):
 
 @pytest.fixture
 def _voice_channel_converter(monkeypatch):
-    """VoiceChannelConverter needs a real guild cache; resolve by name against
-    ctx.guild.channels instead, raising BadArgument like the real one."""
+    """Force src.helpers.VoiceChannelConverter onto its name fallback.
+
+    discord.py's own converter needs a real guild cache (an isinstance check
+    on the channel) that FakeGuild doesn't provide. In production it handles
+    IDs, mentions and exact names; here it raises so the project converter's
+    case-insensitive match over ctx.guild.voice_channels is what runs —
+    the same trick as `_no_builtin_member_converter`."""
     import discord.ext.commands as _c
 
-    async def _convert(self, ctx, argument):
-        for ch in ctx.guild.channels:
-            if ch.name.lower() == argument.lower() or str(ch.id) == argument:
-                return ch
+    async def _always_missing(self, ctx, argument):
         raise _c.ChannelNotFound(argument)
 
-    monkeypatch.setattr(_c.VoiceChannelConverter, "convert", _convert)
+    monkeypatch.setattr(_c.VoiceChannelConverter, "convert", _always_missing)
 
 
 async def _seed_three_subscriptions():
@@ -337,7 +368,7 @@ async def _seed_three_subscriptions():
 
 def _unsub_ctx(channels=()):
     ctx = _ctx()
-    ctx.guild.channels = list(channels)
+    ctx.guild.channels = ctx.guild.voice_channels = list(channels)
     ctx.command.qualified_name = ctx.command.name = "unsubscribe"
     return ctx
 
@@ -395,15 +426,148 @@ async def test_unsubscribe_unknown_channel_and_no_argument(db, _voice_channel_co
     cog, _ = _make_cog(set())
     await _seed_three_subscriptions()
 
+    # An unknown name opens the channel picker (declined by conftest's default)
+    # and the command adds nothing; an unknown id never prompts and is answered.
     ctx = _unsub_ctx(channels=[_voice_stub(CHANNEL_ID, "General")])
     await cog.cmd_unsubscribe.callback(cog, ctx, channel="Nowhere")
-    assert any("Not Found" in (e.title or "") for e in ctx.sent_embeds)
+    assert ctx.sent_embeds == []
+
+    ctx1 = _unsub_ctx(channels=[_voice_stub(CHANNEL_ID, "General")])
+    await cog.cmd_unsubscribe.callback(cog, ctx1, channel="999")
+    assert any("Not Found" in (e.title or "") for e in ctx1.sent_embeds)
 
     ctx2 = _unsub_ctx()
     await cog.cmd_unsubscribe.callback(cog, ctx2, channel=None)
     assert any("Say which" in (e.description or "") for e in ctx2.sent_embeds)
 
     assert len(_state.voice_pings) == 3
+
+
+# ── voice-channel name matching (mirrors MemberConverter) ────────────────────
+
+from src.helpers import VoiceChannelConverter  # noqa: E402
+
+
+@_aio
+async def test_voice_channel_converter_matches_name_like_a_username(_voice_channel_converter, monkeypatch):
+    import discord.ext.commands as _c
+    general = _voice_stub(CHANNEL_ID, "🔊 General")
+    general2 = _voice_stub(OTHER_CHANNEL_ID, "General 2")
+    games = _voice_stub(102, "Games")
+    room42 = _voice_stub(103, "Room 42")
+    ctx = _unsub_ctx(channels=[general, general2, games, room42])
+    conv = VoiceChannelConverter()
+    prompts = []
+
+    async def _choose(ctx, argument, matches):
+        prompts.append(("choose", argument, list(matches)))
+        return None
+    async def _find(ctx, argument):
+        prompts.append(("find", argument))
+        return None
+    monkeypatch.setattr("src.pickers.choose_voice_channel", _choose)
+    monkeypatch.setattr("src.pickers.find_voice_channel", _find)
+
+    # Case-insensitive substring: nobody types the emoji.
+    assert await conv.convert(ctx, "gam") is games
+    assert await conv.convert(ctx, "GENERAL 2") is general2
+    # A whole-name match beats channels that merely contain the query.
+    assert await conv.convert(ctx, "general 2") is general2
+    assert prompts == []
+
+    # Ambiguous: the candidates go to a dropdown; declined → a handled BadArgument.
+    with pytest.raises(_c.BadArgument, match="matched multiple voice channels: 🔊 General, General 2") as info:
+        await conv.convert(ctx, "gener")
+    assert info.value.handled is True
+    assert prompts == [("choose", "gener", [general, general2])]
+    # Unknown: the channel picker; declined → a handled ChannelNotFound.
+    with pytest.raises(_c.ChannelNotFound) as info:
+        await conv.convert(ctx, "Nowhere")
+    assert info.value.handled is True
+    assert prompts[-1] == ("find", "Nowhere")
+    # A bare number is an ID, never a name fragment ("Room 42" stays out) — and no prompt.
+    with pytest.raises(_c.ChannelNotFound) as info:
+        await conv.convert(ctx, "42")
+    assert not getattr(info.value, "handled", False)
+    assert len(prompts) == 2
+
+
+@_aio
+async def test_voice_channel_converter_returns_the_pick(_voice_channel_converter, monkeypatch):
+    general = _voice_stub(CHANNEL_ID, "🔊 General")
+    general2 = _voice_stub(OTHER_CHANNEL_ID, "General 2")
+    ctx = _unsub_ctx(channels=[general, general2])
+    conv = VoiceChannelConverter()
+
+    async def _choose(ctx, argument, matches):
+        return general2
+    async def _find(ctx, argument):
+        return general
+    monkeypatch.setattr("src.pickers.choose_voice_channel", _choose)
+    monkeypatch.setattr("src.pickers.find_voice_channel", _find)
+    assert await conv.convert(ctx, "gener") is general2
+    assert await conv.convert(ctx, "Nowhere") is general
+
+
+@_aio
+async def test_voice_channel_converter_dm_has_no_guild(_voice_channel_converter):
+    import discord.ext.commands as _c
+    ctx = _unsub_ctx()
+    ctx.guild = None
+    with pytest.raises(_c.ChannelNotFound):
+        await VoiceChannelConverter().convert(ctx, "general")
+
+
+@_aio
+async def test_unsubscribe_by_name_substring_and_ambiguous_name(db, _voice_channel_converter, monkeypatch):
+    cog, _ = _make_cog(set())
+    await _seed_three_subscriptions()
+    general = _voice_stub(CHANNEL_ID, "🔊 General")
+    games = _voice_stub(OTHER_CHANNEL_ID, "Games")
+
+    # "g" matches both: the dropdown is declined (conftest's default) → the
+    # command says nothing more and drops nothing.
+    ctx = _unsub_ctx(channels=[general, games])
+    await cog.cmd_unsubscribe.callback(cog, ctx, channel="g")
+    assert ctx.sent_embeds == []
+    assert len(_state.voice_pings) == 3
+
+    # … and a pick from it is the channel to drop.
+    async def _choose(ctx, argument, matches):
+        return games
+    monkeypatch.setattr("src.pickers.choose_voice_channel", _choose)
+    ctx2 = _unsub_ctx(channels=[general, games])
+    await cog.cmd_unsubscribe.callback(cog, ctx2, channel="g")
+    assert (OTHER_CHANNEL_ID, SUBSCRIBER_ID) not in _state.voice_pings
+    assert (CHANNEL_ID, SUBSCRIBER_ID) in _state.voice_pings
+
+    ctx3 = _unsub_ctx(channels=[general, games])
+    await cog.cmd_unsubscribe.callback(cog, ctx3, channel="gen")
+    assert (CHANNEL_ID, SUBSCRIBER_ID) not in _state.voice_pings
+    assert any("Unsubscribed" in (e.title or "") for e in ctx3.sent_embeds)
+
+
+@_aio
+async def test_subscribe_error_handler_stays_quiet_after_a_declined_picker():
+    """`!subscribe <name>` converts in discord.py's parser, so its failures
+    land in the local error handler. One the converter already prompted for
+    (`handled`) gets no second reply; a plain miss (a numeric id) does, and
+    without suggesting a #mention — voice channels can't be #mentioned."""
+    import discord.ext.commands as _c
+    cog, _ = _make_cog(set())
+
+    ctx = _ctx()
+    err = _c.ChannelNotFound("Nowhere")
+    err.handled = True
+    await cog.cmd_subscribe_error(ctx, err)
+    assert ctx.sent_embeds == []
+
+    ctx2 = _ctx()
+    err2 = _c.ChannelNotFound("123")
+    await cog.cmd_subscribe_error(ctx2, err2)
+    assert err2.handled is True
+    missing = next(e for e in ctx2.sent_embeds if "Channel Not Found" in (e.title or ""))
+    assert "#mention" not in missing.description
 
 
 # ── global error handler honors error.handled (no "⚠️ Command Error" report) ──

@@ -295,6 +295,11 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_ai_cog_mod, "open_form", _dismissed)  # `!ask`, `!story`, `!roleplay` forms
     import src.cogs.minecraft_cog as _mc_cog_mod
     monkeypatch.setattr(_mc_cog_mod, "open_form", _dismissed)  # bare `!mc buy` / `!mc sell`
+    # The user / voice-channel dropdowns a name lookup opens when it misses
+    # (src/pickers.py, via resolve_member and VoiceChannelConverter).
+    import src.pickers as _pickers_mod
+    for _prompt in ("choose_member", "find_member", "choose_voice_channel", "find_voice_channel"):
+        monkeypatch.setattr(_pickers_mod, _prompt, _dismissed)
 
 
 @pytest_asyncio.fixture

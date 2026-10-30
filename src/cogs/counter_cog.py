@@ -16,7 +16,7 @@ from src.confirm_view import confirm_choice, confirm_prompt
 from src.custom_names import COUNTERS, custom_name_holder
 from src.helpers import (
     emb, C_BLUE, C_GREEN, C_GREY, C_RED,
-    MemberConverter, format_duration, parse_duration, parse_int_amount,
+    resolve_member, OptionalMember, format_duration, parse_duration, parse_int_amount,
 )
 from src.permissions import can_manage_settings
 
@@ -96,9 +96,10 @@ class CounterCog(commands.Cog):
         member = None
         if tokens:
             try:
-                member = await MemberConverter().convert(ctx, " ".join(tokens))
+                member = await resolve_member(ctx, " ".join(tokens))
             except commands.BadArgument as exc:
-                await ctx.send(embed=emb("❌ Count", str(exc), C_RED))
+                if not getattr(exc, "handled", False):  # a declined picker already answered
+                    await ctx.send(embed=emb("❌ Count", str(exc), C_RED))
                 return
 
         if delta is None:
@@ -315,7 +316,7 @@ class CounterCog(commands.Cog):
         await ctx.send(embed=emb("🗑️ Counter Removed", f"`{name}` is gone.", C_GREY))
 
     @cmd_counter.command(name="addperm", help="Let a user change this server's counters", usage="<@user>")
-    async def cmd_counter_addperm(self, ctx: commands.Context, *, member: MemberConverter = None):
+    async def cmd_counter_addperm(self, ctx: commands.Context, *, member: OptionalMember = None):
         if ctx.guild is None:
             return
         if member is None:
@@ -330,7 +331,7 @@ class CounterCog(commands.Cog):
 
     @cmd_counter.command(name="removeperm", help="Take away a user's access to change this server's counters",
                          usage="<@user>")
-    async def cmd_counter_removeperm(self, ctx: commands.Context, *, member: MemberConverter = None):
+    async def cmd_counter_removeperm(self, ctx: commands.Context, *, member: OptionalMember = None):
         if ctx.guild is None:
             return
         if member is None:

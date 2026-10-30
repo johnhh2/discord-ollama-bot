@@ -470,6 +470,7 @@ async def test_concurrent_shop_unoreverse_charges_once(monkeypatch):
             return target
 
     monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+    monkeypatch.setattr(_shop_cog, "resolve_member", _StubConverter().convert)  # the target sites
 
     await asyncio.gather(_invoke(), _invoke())
 
@@ -516,6 +517,7 @@ async def test_shop_tax_refuses_against_insured_target(db, monkeypatch):
             return target
 
     monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+    monkeypatch.setattr(_shop_cog, "resolve_member", _StubConverter().convert)  # the target sites
 
     ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=FakeGuild(gid=42))
     ctx.invoked_with = "tax"
@@ -550,6 +552,7 @@ async def test_shop_mock_refuses_against_insured_target(db, monkeypatch):
             return target
 
     monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+    monkeypatch.setattr(_shop_cog, "resolve_member", _StubConverter().convert)  # the target sites
 
     ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=FakeGuild(gid=42))
     await cog.shop_mock.callback(cog, ctx, f"<@{target_uid}>")
@@ -577,6 +580,7 @@ async def test_shop_mock_still_works_on_self(db, monkeypatch):
             return self_member
 
     monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+    monkeypatch.setattr(_shop_cog, "resolve_member", _StubConverter().convert)  # the target sites
 
     ctx = FakeCtx(author=self_member, guild=FakeGuild(gid=42))
     await cog.shop_mock.callback(cog, ctx, f"<@{uid}>")
@@ -615,6 +619,7 @@ async def test_shop_unassignrole_refuses_against_insured_target(db, monkeypatch)
             return target
 
     monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+    monkeypatch.setattr(_shop_cog, "resolve_member", _StubConverter().convert)  # the target sites
 
     ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=guild)
     await cog.shop_unassignrole.callback(cog, ctx, f"<@{target_uid}>", f"<@&{role.id}>")
@@ -1156,6 +1161,7 @@ async def test_shop_mock_declined_confirm_no_charge(db, monkeypatch):
             return target
 
     monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+    monkeypatch.setattr(_shop_cog, "resolve_member", _StubConverter().convert)  # the target sites
     monkeypatch.setattr(_shop_cog, "confirm_purchase", _no_confirm)
 
     ctx = FakeCtx(author=FakeMember(uid=buyer_uid), guild=FakeGuild(gid=42))
@@ -1268,6 +1274,7 @@ async def test_shop_unoreverse_effect_expired_during_confirm_no_charge(db, monke
             return target
 
     monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+    monkeypatch.setattr(_shop_cog, "resolve_member", _StubConverter().convert)  # the target sites
 
     async def _effect_expires_then_yes(*a, **k):
         _state.active_mocks.pop((42, uid), None)
@@ -1311,6 +1318,7 @@ async def _run_ragebait(monkeypatch, *, save):
         posted.append(text)
 
     monkeypatch.setattr(_shop_cog, "MemberConverter", lambda: _StubConverter())
+    monkeypatch.setattr(_shop_cog, "resolve_member", _StubConverter().convert)  # the target sites
     monkeypatch.setattr(_shop_cog, "stream_ollama", _stream)
     monkeypatch.setattr(_shop_cog, "keep_typing", _typing)
     monkeypatch.setattr(_shop_cog, "finalize", _finalize)

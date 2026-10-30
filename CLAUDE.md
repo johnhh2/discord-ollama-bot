@@ -799,6 +799,34 @@ name, colour, topic, price or bounty condition — whose submit forwards.
 
 Coverage: [tests/test_shop_hub.py](tests/test_shop_hub.py).
 
+## Name lookups: a miss opens a dropdown
+
+A typed user or voice-channel name is matched case-insensitively as a
+substring (`resolve_member` and `VoiceChannelConverter` in `src/helpers.py`).
+When that leaves several candidates the invoker gets a dropdown of them plus
+"None of the above"; when it leaves none, Discord's own searchable user /
+channel picker (`src/pickers.py`). Voice channels can't be #mentioned from
+the chat box, so the name is all most people have.
+
+- **Target vs. probe.** A command whose argument *must* be a user resolves
+  it with `resolve_member` (or the `OptionalMember` / `GlobalUser`
+  annotation). A command that only *probes* whether the first token is a
+  member before treating it as text (`!shop nickname`, `!shop rolecolor`,
+  `!effects`) keeps the strict `MemberConverter` — a typo in a role name
+  must not open a user picker.
+- **A declined prompt raises `handled`.** The closed prompt is the reply:
+  catch `BadArgument` and send your own usage / not-found line only when
+  `getattr(exc, "handled", False)` is false. A numeric token never prompts
+  (it's a missing ID, or an amount for the next parameter), so that branch
+  still has work to do. `on_command_error` already skips `handled` errors.
+- **Tests:** conftest dismisses all four prompts; patch
+  `src.pickers.choose_member` / `find_member` / `choose_voice_channel` /
+  `find_voice_channel` to make a pick.
+
+Coverage: [tests/test_pickers.py](tests/test_pickers.py), the converter
+tests in [tests/test_pure_helpers.py](tests/test_pure_helpers.py) and
+[tests/test_voice_pings.py](tests/test_voice_pings.py).
+
 ## Buttons that run commands: forward, never reimplement
 
 Every button, dropdown and modal in the bot that *does* something ends in

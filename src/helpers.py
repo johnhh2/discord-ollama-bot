@@ -475,8 +475,27 @@ async def fetch_member(guild: discord.Guild, user_id: int) -> "discord.Member | 
     return member
 
 
+def _members_matching(guild, query: str) -> list:
+    """Case-insensitive display-name / username substring match."""
+    q = query.lower()
+    return [m for m in guild.members if q in m.display_name.lower() or q in m.name.lower()]
+
+
+def _declined(exc: commands.BadArgument) -> commands.BadArgument:
+    """Mark an error whose prompt was shown and declined (or timed out): the
+    closed prompt is the reply, so callers and `on_command_error` — which
+    honours `handled` — must add nothing."""
+    exc.handled = True
+    return exc
+
+
 class MemberConverter(commands.Converter):
     """Accepts a mention, user ID, or case-insensitive display name / username substring.
+
+    Strict: a miss or an ambiguous name raises, with no prompt — this is the
+    probe for "is this token a member, or the start of free text?" (`!shop
+    nickname`, `!effects`). A command whose argument *must* be a user uses
+    `resolve_member` / `OptionalMember`, which open a dropdown instead.
 
     Purely numeric tokens only ever resolve as exact IDs (via the built-in
     converter) — they are never substring-matched against names, so a stray
@@ -493,11 +512,7 @@ class MemberConverter(commands.Converter):
         if ctx.guild is None or argument.isdigit():
             raise commands.BadArgument(f"Member '{argument}' not found.")
 
-        query = argument.lower()
-        matches = [
-            m for m in ctx.guild.members
-            if query in m.display_name.lower() or query in m.name.lower()
-        ]
+        matches = _members_matching(ctx.guild, argument)
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
@@ -506,15 +521,95 @@ class MemberConverter(commands.Converter):
         raise commands.BadArgument(f"Member '{argument}' not found.")
 
 
-class OptionalMember(commands.Converter):
-    """Like `MemberConverter`, but never raises `BadArgument` back to the command.
+async def resolve_member(ctx: commands.Context, argument: str) -> discord.Member:
+    """`MemberConverter`, plus a dropdown when the name doesn't land on exactly
+    one member: the candidates (with "None of the above") when several match,
+    Discord's user picker when none does (src/pickers.py). Raises
+    `BadArgument` like the converter; after a declined prompt the error is
+    `handled` (see `_declined`) and the caller should just return. A numeric
+    token never prompts — it's an ID that doesn't exist, or an amount that
+    belongs to the next parameter."""
+    try:
+        return await commands.MemberConverter().convert(ctx, argument)
+    except commands.BadArgument:
+        pass
 
-    - **Not found** → returns `None`, so the command sees the same value as a
-      missing argument and can fall through to its own usage message. This
-      avoids `BadArgument: Member '1' not found.` for inputs like `!pay 1`.
-    - **Ambiguous** (substring matched several members) → sends its own
-      disambiguation embed to the channel and returns `None`, so individual
-      commands don't each have to catch and handle that case.
+    if ctx.guild is None or argument.isdigit():
+        raise commands.BadArgument(f"Member '{argument}' not found.")
+
+    from src import pickers  # lazy: pickers imports this module
+    matches = _members_matching(ctx.guild, argument)
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        picked = await pickers.choose_member(ctx, argument, matches)
+        if picked is not None:
+            return picked
+        names = ", ".join(m.display_name for m in matches[:5])
+        raise _declined(commands.BadArgument(f"'{argument}' matched multiple members: {names}"))
+    picked = await pickers.find_member(ctx, argument)
+    if picked is not None:
+        return picked
+    raise _declined(commands.BadArgument(f"Member '{argument}' not found."))
+
+
+class VoiceChannelConverter(commands.Converter):
+    """Accepts a voice-channel ID, exact name, or case-insensitive name substring.
+
+    Same strategy as `resolve_member`: discord.py's own converter first (ID,
+    `<#id>`, exact name), then a case-insensitive match over the guild's voice
+    channels — exact before substring, so `general` finds "🔊 General" and
+    "General" still wins over "General 2" — and a dropdown when that leaves
+    several (the candidates plus "None of the above") or none (Discord's
+    channel picker). The fallback matters more here than for members:
+    Discord's chat box can't #mention a voice channel, so a typed name is all
+    most users have. Purely numeric tokens only ever resolve as IDs and never
+    prompt. A miss raises `ChannelNotFound`, an ambiguous name a plain
+    `BadArgument`; after a declined prompt either is `handled` (see
+    `_declined`) and the caller should stay quiet."""
+
+    async def convert(self, ctx: commands.Context, argument: str) -> discord.VoiceChannel:
+        try:
+            return await commands.VoiceChannelConverter().convert(ctx, argument)
+        except commands.BadArgument:
+            pass
+
+        if ctx.guild is None or argument.isdigit():
+            raise commands.ChannelNotFound(argument)
+
+        from src import pickers  # lazy: pickers imports this module
+        query = argument.strip().lower()
+        exact, subs = [], []
+        for ch in ctx.guild.voice_channels:
+            name = ch.name.lower()
+            if query == name:
+                exact.append(ch)
+            elif query in name:
+                subs.append(ch)
+        matches = exact or subs
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            picked = await pickers.choose_voice_channel(ctx, argument, matches)
+            if picked is not None:
+                return picked
+            names = ", ".join(ch.name for ch in matches[:5])
+            raise _declined(commands.BadArgument(f"'{argument}' matched multiple voice channels: {names}"))
+        picked = await pickers.find_voice_channel(ctx, argument)
+        if picked is not None:
+            return picked
+        raise _declined(commands.ChannelNotFound(argument))
+
+
+class OptionalMember(commands.Converter):
+    """`resolve_member` for a command signature: never raises `BadArgument`
+    back to the command.
+
+    - **Ambiguous or not found** → the dropdowns in src/pickers.py; the pick
+      is returned, a declined prompt returns `None`.
+    - **A numeric token** (`!pay 1`) → `None` with no prompt, so the command
+      sees the same value as a missing argument and falls through to its own
+      usage message.
 
     Use this for command-signature annotations that already default to `None`.
     Code paths that need to distinguish not-found from a real member (e.g.
@@ -524,14 +619,8 @@ class OptionalMember(commands.Converter):
 
     async def convert(self, ctx: commands.Context, argument: str) -> "discord.Member | None":
         try:
-            return await MemberConverter().convert(ctx, argument)
-        except commands.BadArgument as exc:
-            msg = str(exc)
-            if "matched multiple members" in msg:
-                try:
-                    await ctx.send(embed=emb("❌ Ambiguous Member", msg, C_RED))
-                except Exception:
-                    pass
+            return await resolve_member(ctx, argument)
+        except commands.BadArgument:
             return None
 
 
@@ -569,7 +658,8 @@ class GlobalUser(commands.Converter):
     failure raises `BadArgument`, so annotate as ``Optional[GlobalUser]``:
     discord.py then rewinds the failed token onto the next parameter
     (``!rig flip 5`` rigs 5 flips for yourself instead of eating the 5).
-    Ambiguous names send their own embed before raising, like `OptionalMember`.
+    Ambiguous and unknown names open the dropdowns in src/pickers.py, like
+    `resolve_member`; a declined prompt raises `handled`.
     """
 
     async def convert(self, ctx: commands.Context, argument: str) -> "discord.Member | discord.User":
@@ -593,6 +683,7 @@ class GlobalUser(commands.Converter):
         if arg.isdigit():
             raise commands.BadArgument(f"User '{arg}' not found.")
 
+        from src import pickers  # lazy: pickers imports this module
         pools = [ctx.guild.members] if ctx.guild else []
         pools.append(list(ctx.bot.users))
         for pool in pools:
@@ -600,13 +691,16 @@ class GlobalUser(commands.Converter):
             if len(matches) == 1:
                 return matches[0]
             if len(matches) > 1:
+                picked = await pickers.choose_member(ctx, arg, matches)
+                if picked is not None:
+                    return picked
                 names = ", ".join(u.display_name for u in matches[:5])
-                msg = f"'{arg}' matched multiple users: {names}"
-                try:
-                    await ctx.send(embed=emb("❌ Ambiguous User", msg, C_RED))
-                except Exception:
-                    pass
-                raise commands.BadArgument(msg)
+                raise _declined(commands.BadArgument(f"'{arg}' matched multiple users: {names}"))
+        if ctx.guild:
+            picked = await pickers.find_member(ctx, arg)
+            if picked is not None:
+                return picked
+            raise _declined(commands.BadArgument(f"User '{arg}' not found."))
         raise commands.BadArgument(f"User '{arg}' not found.")
 
 

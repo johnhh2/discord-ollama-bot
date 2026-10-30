@@ -11,7 +11,7 @@ from discord.ext import commands
 from src.helpers import (
     emb, C_GREEN, C_RED, C_GOLD, C_PURPLE, C_GREY,
     send_ephemeral,
-    shop_charge, log_bot_permission_error, MemberConverter,
+    shop_charge, log_bot_permission_error, MemberConverter, resolve_member,
     announce_record,
 )
 
@@ -823,9 +823,10 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
             return
         try:
-            target = await MemberConverter().convert(ctx, args[0])
-        except commands.BadArgument:
-            await ctx.send(embed=emb("❌ Invalid User", "First argument must be a @mention, user ID, or name.", C_RED))
+            target = await resolve_member(ctx, args[0])
+        except commands.BadArgument as exc:
+            if not getattr(exc, "handled", False):  # a declined picker already answered
+                await ctx.send(embed=emb("❌ Invalid User", "First argument must be a @mention, user ID, or name.", C_RED))
             return
         name = " ".join(args[1:])
         if not name:
@@ -912,9 +913,10 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop roleassign @user @role`", C_PURPLE))
             return
         try:
-            target = await MemberConverter().convert(ctx, args[0])
-        except commands.BadArgument:
-            await ctx.send(embed=emb("❌ Invalid User", "First argument must be a @mention, user ID, or name.", C_RED))
+            target = await resolve_member(ctx, args[0])
+        except commands.BadArgument as exc:
+            if not getattr(exc, "handled", False):  # a declined picker already answered
+                await ctx.send(embed=emb("❌ Invalid User", "First argument must be a @mention, user ID, or name.", C_RED))
             return
         role = self._resolve_role_strict(ctx.guild, args[1])
         if role is None or role.id not in state.bot_roles:
@@ -1497,9 +1499,10 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop ragebait @user [topic]`", C_PURPLE))
             return
         try:
-            target = await MemberConverter().convert(ctx, args[0])
-        except commands.BadArgument:
-            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop ragebait @user [topic]`", C_PURPLE))
+            target = await resolve_member(ctx, args[0])
+        except commands.BadArgument as exc:
+            if not getattr(exc, "handled", False):  # a declined picker already answered
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop ragebait @user [topic]`", C_PURPLE))
             return
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
@@ -2074,9 +2077,10 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🛒 Shop", f"Usage: `!shop tax @user`{aliases_line}", C_PURPLE))
             return
         try:
-            target = await MemberConverter().convert(ctx, args[0])
-        except commands.BadArgument:
-            await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop tax @user`", C_PURPLE))
+            target = await resolve_member(ctx, args[0])
+        except commands.BadArgument as exc:
+            if not getattr(exc, "handled", False):  # a declined picker already answered
+                await ctx.send(embed=emb("🛒 Shop", "Usage: `!shop tax @user`", C_PURPLE))
             return
         if target.id == uid:
             await ctx.send(embed=emb("❌ Error", "You can't tax yourself!", C_RED))
