@@ -216,6 +216,13 @@ def _robbed_ping(victim_id: int, verb: str, refunded: int) -> str:
     return f"🚨 <@{victim_id}> — you've been {verb}!{tail}"
 
 
+async def _ping_robbed(ctx: commands.Context, victim_id: int, verb: str, refunded: int) -> None:
+    """Send the victim ping. silent=False on purpose: ctx.send defaults to
+    silent, and a silent mention never notifies — the victim is the one
+    person in the channel who didn't type the command and should hear it."""
+    await ctx.send(_robbed_ping(victim_id, verb, refunded), silent=False)
+
+
 class _StealTierView(discord.ui.View):
     """3-button tier picker shown when `!steal @user` runs without a tier arg.
     Only the original invoker can click; on click we drop the buttons entirely
@@ -838,7 +845,7 @@ class EconomyCog(commands.Cog):
                     )
 
             if stolen > 0:
-                await ctx.send(_robbed_ping(victim_id, "robbed", refunded))
+                await _ping_robbed(ctx, victim_id, "robbed", refunded)
             await msg.edit(embed=result_embed)
 
             await try_set_crime_record(
@@ -1088,6 +1095,7 @@ class EconomyCog(commands.Cog):
             target.id, seized, guild_id=gid or None, holder_name=target.display_name,
         )
         await record_crime_event(gid, target.id, lost=seized - refunded)
+        await _ping_robbed(ctx, target.id, "robbed in a bank heist", refunded)
 
         jailed = await self._roll_participant_jail(
             participants, target.display_name, intended_per_person=share,
@@ -1567,7 +1575,7 @@ class EconomyCog(commands.Cog):
                     C_ORANGE,
                 )
             if actual_steal > 0:
-                await ctx.send(_robbed_ping(target.id, "mugged", refunded))
+                await _ping_robbed(ctx, target.id, "mugged", refunded)
             await msg.edit(embed=result_embed)
             # No crime-record offer: the mugger pockets nothing (see
             # CRIME_RECORD_CATEGORY).

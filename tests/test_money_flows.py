@@ -86,6 +86,17 @@ def _make_ctx(thief: FakeMember, victim: FakeMember, content: str = "!steal @vic
     return ctx
 
 
+def _victim_ping(ctx, victim_id: int):
+    """The one send that mentions the victim, with its kwargs. Pings go out
+    silent=False — ctx.send defaults to silent, and a silent mention never
+    notifies anyone."""
+    for call in ctx.send_mock.call_args_list:
+        content = call.args[0] if call.args else call.kwargs.get("content")
+        if content and f"<@{victim_id}>" in content:
+            return content, call.kwargs
+    return None, None
+
+
 def _grant_level(uid: int, internal_level: int, gid: int = 42) -> None:
     """Force a user to a given internal level so they pass the level-10
     crime-target gate (shared by !steal/!mug/!bankheist). Internal level N →
@@ -193,6 +204,9 @@ async def test_steal_success_transfers_coins_and_persists(db, monkeypatch):
     assert await _read_db_balance(thief.id) == 5000 + expected_steal
     assert await _read_db_balance(victim.id) == 10_000 - expected_steal
     assert thief.id not in cog._crime_active  # lock released
+    content, kwargs = _victim_ping(ctx, victim.id)
+    assert content is not None and "robbed" in content
+    assert kwargs.get("silent") is False
 
 
 async def test_steal_caught_and_jailed_deducts_fee_and_sets_jail(db, monkeypatch):
@@ -427,6 +441,9 @@ async def test_mug_clean_getaway_target_loses_amount(db, monkeypatch):
     assert await _economy.get_balance(thief.id) == 5000 - 1000
     assert await _economy.get_balance(victim.id) == 10_000 - 1000
     assert await _read_db_balance(thief.id) == 4000
+    content, kwargs = _victim_ping(ctx, victim.id)
+    assert content is not None and "mugged" in content
+    assert kwargs.get("silent") is False
 
 
 async def test_mug_caught_jails_thief_for_one_day(db, monkeypatch):
@@ -1131,6 +1148,9 @@ async def test_bankheist_resolve_success_splits_loot_evenly(db, monkeypatch):
     assert 8000 <= remaining <= 8002
     assert await _read_db_balance(host.id) == 500
     assert await _read_db_balance(j1.id) == 500
+    content, kwargs = _victim_ping(ctx, target.id)
+    assert content is not None and "bank heist" in content
+    assert kwargs.get("silent") is False
 
 
 async def test_bankheist_resolve_success_remainder_goes_to_host(db, monkeypatch):
