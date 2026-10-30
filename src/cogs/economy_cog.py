@@ -1120,7 +1120,7 @@ class EconomyCog(commands.Cog):
             C_GREEN,
         )
 
-    @commands.command(name="bankheist",
+    @commands.command(name="bankheist", aliases=["heist"],
                       help="Open a 4-slot lobby to raid a user's savings with a crew; auto-starts in 60s", usage="<@user>")
     @requires_perm
     async def cmd_bankheist(self, ctx: commands.Context, target: OptionalMember = None):
