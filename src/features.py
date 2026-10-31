@@ -107,6 +107,7 @@ COMMAND_FEATURES: dict[str, tuple[str, ...]] = {
     "graph assets": ("assets",), "graph admin assets": ("assets",),
     # shop
     "shop": ("shop",), "effects": ("shop",), "roles": ("shop",), "tax": ("shop",),
+    "announce": ("shop",),  # the paid one; !adminannounce is free and stays on
     "adminragebait": ("shop", "ai"),
     # artifacts
     "artifacts": ("artifacts",), "shop artifacts": ("artifacts",),

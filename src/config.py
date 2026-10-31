@@ -46,7 +46,7 @@ MC_CONSOLE_PASSWORD = os.getenv("MC_CONSOLE_PASSWORD", "")
 WYOMING_TTS_HOST = os.getenv("WYOMING_TTS_HOST", "")
 WYOMING_TTS_PORT = int(os.getenv("WYOMING_TTS_PORT") or "10200")
 WYOMING_TTS_VOICE = os.getenv("WYOMING_TTS_VOICE", "")
-# The yt-dlp binary !announce runs for YouTube links; the image sets it to
+# The yt-dlp binary !adminannounce runs for YouTube links; the image sets it to
 # the self-updating copy in /opt/ytdlp. Empty means PATH lookup.
 YTDLP_PATH = os.getenv("YTDLP_PATH", "") or "yt-dlp"
 ANNOUNCE_MAX_CHARS = 500  # synthesis time and the modal's text box grow with it
@@ -54,9 +54,10 @@ ANNOUNCE_MAX_CHARS = 500  # synthesis time and the modal's text box grow with it
 # clip is cut at ANNOUNCE_MAX_SECS (decoded PCM is ~190 KB a second).
 ANNOUNCE_MAX_FILE_BYTES = 10 * 1024 * 1024
 ANNOUNCE_MAX_SECS = 120
-# `x<N>` repeats: at most this many, and a message's length times N must
-# stay under ANNOUNCE_MAX_TOTAL_CHARS so a repeat can't hold the channel
-# longer than a long message would.
+# `x<N>` repeats: at most this many, and a message's length times N can't
+# exceed ANNOUNCE_MAX_TOTAL_CHARS so a repeat can't hold the channel longer
+# than a long message would. The paid !announce charges per character of
+# that product, so this cap is also its price ceiling.
 ANNOUNCE_MAX_REPEATS = 50
 ANNOUNCE_MAX_TOTAL_CHARS = 1000
 
@@ -164,6 +165,8 @@ SHOP_MOCK_COST            = 1_500
 SHOP_RAGEBAIT_COST        = 2_500
 SHOP_CURSE_COST           = 10_000
 SHOP_UNOREVERSE_COST      = 10_000
+SHOP_ANNOUNCE_COST_PER_CHAR = 100   # !shop announce: per character, times the x<N> repeats…
+SHOP_ANNOUNCE_MAX_COST    = 10_000  # …but never more than this for one announcement
 SHOP_XP_COST_PER_XP       = 100     # coins per XP for !shop buyxp
 # Catch-up discount: XP that only brings you up to your best level in another
 # server is this much cheaper. Levels above that best are full price.

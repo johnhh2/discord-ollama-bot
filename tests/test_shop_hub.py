@@ -113,6 +113,22 @@ async def test_pages_hide_what_the_server_or_the_invoker_lacks():
     assert "channels" in keys and "fun" in keys
 
 
+async def test_the_announce_item_needs_a_tts_server_and_its_form_forwards_the_typed_args(monkeypatch):
+    import src.shop_hub as _hub
+    ctx = _ctx()
+    assert not any(i.key == "announce" for i in items_for("fun", ctx))
+
+    monkeypatch.setattr(_hub, "WYOMING_TTS_HOST", "piper")
+    item = next(i for i in items_for("fun", ctx) if i.key == "announce")
+    assert item.method == "shop_announce" and [f.kind for f in item.fields][:2] == ["voice_channels", "paragraph"]
+    assert item.call({"channel": ["100"], "text": 'say "hi"', "repeats": "3"}) == ((), {"args": "\"say 'hi'\" 100 x3"})
+    # A missing channel or a non-numeric repeat is left to the command's own form.
+    assert item.call({"text": "hi", "repeats": "lots"}) == ((), {"args": '"hi" '})
+
+    get_guild_cfg(GID)["shop_items"] = {"announce": False}
+    assert not any(i.key == "announce" for i in items_for("fun", ctx))
+
+
 async def test_assets_pages_show_price_status_and_the_owners_deeds():
     ctx = _ctx()
     _stock(ctx)

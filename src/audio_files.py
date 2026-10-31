@@ -1,4 +1,4 @@
-"""Audio for !announce that isn't text-to-speech: an attached file, or a
+"""Audio for !adminannounce that isn't text-to-speech: an attached file, or a
 YouTube link. ffmpeg turns either into the 48 kHz 16-bit stereo PCM Discord
 plays, the same bytes the text-to-speech path hands to the player.
 

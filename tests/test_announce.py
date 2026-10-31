@@ -12,6 +12,10 @@ import pytest
 
 import src.audio_files as _audio_mod
 import src.cogs.announce_cog as _announce_mod
+import src.cogs.shop_cog as _shop_cog_mod
+from src import state as _state
+from src.economy import add_balance, get_balance
+from src.guild_config import get_guild_cfg
 from src.audio_files import (
     DecodeError, decode_audio, ffmpeg_available, is_audio_attachment, parse_ytdlp_output, youtube_url_in,
 )
@@ -201,7 +205,7 @@ def _ctx(channels=()):
     guild.me = FakeMember(uid=1, display_name="bot")
     guild.voice_client = None
     return FakeCtx(author=FakeMember(uid=7, display_name="Xeph", administrator=True), guild=guild,
-                   command_name="announce")
+                   command_name="adminannounce")
 
 
 @pytest.fixture
@@ -227,13 +231,13 @@ def _titles(ctx):
 async def test_refuses_when_unconfigured_or_in_a_dm():
     cog = AnnounceCog(bot=SimpleNamespace(), tts=None)
     ctx = _ctx()
-    await cog.cmd_announce.callback(cog, ctx, args='"hi" General')
+    await cog.cmd_adminannounce.callback(cog, ctx, args='"hi" General')
     assert any("aren't configured" in (e.description or "") for e in ctx.sent_embeds)
 
     cog = _cog()
     ctx = _ctx()
     ctx.guild = None
-    await cog.cmd_announce.callback(cog, ctx, args='"hi" General')
+    await cog.cmd_adminannounce.callback(cog, ctx, args='"hi" General')
     assert any("not in DMs" in (e.description or "") for e in ctx.sent_embeds)
     assert cog.tts.calls == []
 
@@ -246,7 +250,7 @@ async def test_typed_message_and_channel_in_either_order(_no_builtin_channel_con
         games = _voice(GAMES_ID, "Games", [_listener()])
         ctx = _ctx([general, games])
 
-        await cog.cmd_announce.callback(cog, ctx, args=args)
+        await cog.cmd_adminannounce.callback(cog, ctx, args=args)
 
         assert cog.tts.calls == ["Dinner is ready"]
         assert general.connect_kwargs == {"timeout": _announce_mod.CONNECT_TIMEOUT, "self_deaf": True}
@@ -273,7 +277,7 @@ async def test_missing_pieces_come_from_the_form(_no_builtin_channel_converter, 
     # with that channel preselected.
     cog = _cog()
     ctx = _ctx([general, games])
-    await cog.cmd_announce.callback(cog, ctx, args="gen")
+    await cog.cmd_adminannounce.callback(cog, ctx, args="gen")
     assert [f.kind for f in forms[-1]] == ["voice_channels", "paragraph"]
     assert forms[-1][0].defaults == (str(GENERAL_ID),)
     assert cog.tts.calls == ["From the form"]
@@ -282,7 +286,7 @@ async def test_missing_pieces_come_from_the_form(_no_builtin_channel_converter, 
     # A lone unquoted argument that names nobody is the message; the channel is asked for.
     cog = _cog()
     ctx = _ctx([general, games])
-    await cog.cmd_announce.callback(cog, ctx, args="Dinner is ready")
+    await cog.cmd_adminannounce.callback(cog, ctx, args="Dinner is ready")
     assert forms[-1][0].defaults == ()
     assert forms[-1][1].default == "Dinner is ready"
 
@@ -290,7 +294,7 @@ async def test_missing_pieces_come_from_the_form(_no_builtin_channel_converter, 
     cog = _cog()
     ctx = _ctx([general, games])
     ctx.author.voice = SimpleNamespace(channel=general)
-    await cog.cmd_announce.callback(cog, ctx, args=None)
+    await cog.cmd_adminannounce.callback(cog, ctx, args=None)
     assert forms[-1][0].defaults == (str(GENERAL_ID),)
     assert forms[-1][1].default is None
 
@@ -300,7 +304,7 @@ async def test_missing_pieces_come_from_the_form(_no_builtin_channel_converter, 
     monkeypatch.setattr(_announce_mod, "open_form", _declined)
     cog = _cog()
     ctx = _ctx([general, games])
-    await cog.cmd_announce.callback(cog, ctx, args=None)
+    await cog.cmd_adminannounce.callback(cog, ctx, args=None)
     assert cog.tts.calls == [] and ctx.sent_embeds == []
 
 
@@ -310,7 +314,7 @@ async def test_declined_channel_picker_stays_quiet(_no_builtin_channel_converter
     picker (declined by conftest's default) — the closed prompt is the reply."""
     cog = _cog()
     ctx = _ctx([_voice(GENERAL_ID, "🔊 General", [_listener()])])
-    await cog.cmd_announce.callback(cog, ctx, args='"hi" Nowhere')
+    await cog.cmd_adminannounce.callback(cog, ctx, args='"hi" Nowhere')
     assert ctx.sent_embeds == [] and cog.tts.calls == []
 
 
@@ -325,7 +329,7 @@ async def test_refusals_before_any_synthesis(_no_builtin_channel_converter):
     for label, (channel, expected) in cases.items():
         cog = _cog()
         ctx = _ctx([channel])
-        await cog.cmd_announce.callback(cog, ctx, args='"hi" General')
+        await cog.cmd_adminannounce.callback(cog, ctx, args='"hi" General')
         assert any(expected in (e.description or "") for e in ctx.sent_embeds), label
         assert cog.tts.calls == [], label
         assert not hasattr(channel, "connect_kwargs"), label
@@ -333,7 +337,7 @@ async def test_refusals_before_any_synthesis(_no_builtin_channel_converter):
     cog = _cog()
     channel = _voice(GENERAL_ID, "General", [_listener()])
     ctx = _ctx([channel])
-    await cog.cmd_announce.callback(cog, ctx, args='"' + "x" * (_announce_mod.ANNOUNCE_MAX_CHARS + 1) + '" General')
+    await cog.cmd_adminannounce.callback(cog, ctx, args='"' + "x" * (_announce_mod.ANNOUNCE_MAX_CHARS + 1) + '" General')
     assert any("Too Long" in t for t in _titles(ctx))
     assert cog.tts.calls == []
 
@@ -355,9 +359,9 @@ async def test_one_announcement_per_guild_at_a_time(_no_builtin_channel_converte
     games = _voice(GAMES_ID, "Games", [_listener()])
     ctx1, ctx2 = _ctx([general, games]), _ctx([general, games])
 
-    first = asyncio.create_task(cog.cmd_announce.callback(cog, ctx1, args='"one" General'))
+    first = asyncio.create_task(cog.cmd_adminannounce.callback(cog, ctx1, args='"one" General'))
     await asyncio.sleep(0)
-    await cog.cmd_announce.callback(cog, ctx2, args='"two" Games')
+    await cog.cmd_adminannounce.callback(cog, ctx2, args='"two" Games')
     assert any("already playing" in (e.description or "") for e in ctx2.sent_embeds)
     assert cog.tts.calls == ["one"]
 
@@ -376,7 +380,7 @@ async def test_tts_and_connect_failures_release_the_slot(_no_builtin_channel_con
     cog = _cog(tts=_BrokenTTS())
     general = _voice(GENERAL_ID, "General", [_listener()])
     ctx = _ctx([general])
-    await cog.cmd_announce.callback(cog, ctx, args='"hi" General')
+    await cog.cmd_adminannounce.callback(cog, ctx, args='"hi" General')
     assert any("can't reach the TTS server" in (e.description or "") for e in ctx.sent_embeds)
     assert not hasattr(general, "connect_kwargs")
     assert cog._busy == set()
@@ -388,7 +392,7 @@ async def test_tts_and_connect_failures_release_the_slot(_no_builtin_channel_con
         raise asyncio.TimeoutError
     general.connect = _timeout
     ctx = _ctx([general])
-    await cog.cmd_announce.callback(cog, ctx, args='"hi" General')
+    await cog.cmd_adminannounce.callback(cog, ctx, args='"hi" General')
     assert any("Couldn't join" in (e.description or "") for e in ctx.sent_embeds)
     assert cog._busy == set()
 
@@ -401,7 +405,7 @@ async def test_leftover_voice_connection_is_dropped_first(_no_builtin_channel_co
     leftover = SimpleNamespace(disconnect=AsyncMock())
     ctx.guild.voice_client = leftover
 
-    await cog.cmd_announce.callback(cog, ctx, args='"hi" General')
+    await cog.cmd_adminannounce.callback(cog, ctx, args='"hi" General')
     leftover.disconnect.assert_awaited_once_with(force=True)
     assert general.vc.played is not None
 
@@ -491,7 +495,7 @@ async def test_attached_file_plays_instead_of_text(_no_builtin_channel_converter
     clip = _attachment(data=b"mp3 bytes")
     ctx.message.attachments = [SimpleNamespace(filename="photo.png", content_type="image/png", size=1), clip]
 
-    await cog.cmd_announce.callback(cog, ctx, args="gen")
+    await cog.cmd_adminannounce.callback(cog, ctx, args="gen")
 
     assert _fake_decoder == [(b"mp3 bytes", _announce_mod.ANNOUNCE_MAX_SECS, "clip.mp3")]
     assert cog.tts.calls == []
@@ -515,7 +519,7 @@ async def test_attached_file_asks_only_for_the_channel(_no_builtin_channel_conve
     general = _voice(GENERAL_ID, "🔊 General", [_listener()])
     ctx = _ctx([general])
     ctx.message.attachments = [_attachment()]
-    await cog.cmd_announce.callback(cog, ctx, args=None)
+    await cog.cmd_adminannounce.callback(cog, ctx, args=None)
 
     fields, kwargs = forms[-1]
     assert [f.kind for f in fields] == ["voice_channels"]
@@ -530,13 +534,13 @@ async def test_attached_file_refusals(_no_builtin_channel_converter, _fake_decod
     cog = _cog()
     ctx = _ctx([general])
     ctx.message.attachments = [_attachment()]
-    await cog.cmd_announce.callback(cog, ctx, args='"and some words" gen')
+    await cog.cmd_adminannounce.callback(cog, ctx, args='"and some words" gen')
     assert any("One thing to play" in (e.description or "") for e in ctx.sent_embeds)
 
     cog = _cog()
     ctx = _ctx([general])
     ctx.message.attachments = [_attachment(size=_announce_mod.ANNOUNCE_MAX_FILE_BYTES + 1)]
-    await cog.cmd_announce.callback(cog, ctx, args="gen")
+    await cog.cmd_adminannounce.callback(cog, ctx, args="gen")
     assert any("Too Big" in t for t in _titles(ctx))
 
     assert _fake_decoder == [] and not hasattr(general, "connect_kwargs")
@@ -552,7 +556,7 @@ async def test_undecodable_file_releases_the_slot(_no_builtin_channel_converter,
     general = _voice(GENERAL_ID, "🔊 General", [_listener()])
     ctx = _ctx([general])
     ctx.message.attachments = [_attachment()]
-    await cog.cmd_announce.callback(cog, ctx, args="gen")
+    await cog.cmd_adminannounce.callback(cog, ctx, args="gen")
     assert any("Invalid data" in (e.description or "") for e in ctx.sent_embeds)
     assert not hasattr(general, "connect_kwargs")
     assert cog._busy == set()
@@ -571,7 +575,7 @@ async def test_long_file_is_reported_as_cut(_no_builtin_channel_converter, monke
     general = _voice(GENERAL_ID, "🔊 General", [_listener()])
     ctx = _ctx([general])
     ctx.message.attachments = [_attachment()]
-    await cog.cmd_announce.callback(cog, ctx, args="gen")
+    await cog.cmd_adminannounce.callback(cog, ctx, args="gen")
     done = next(e for e in ctx.sent_embeds if "Announced" in (e.title or ""))
     assert "first 1 seconds" in done.description
 
@@ -614,7 +618,7 @@ async def test_youtube_link_plays_its_audio(_no_builtin_channel_converter, _fake
     cog = _cog()
     general = _voice(GENERAL_ID, "🔊 General", [_listener()])
     ctx = _ctx([general])
-    await cog.cmd_announce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ x2")
+    await cog.cmd_adminannounce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ x2")
 
     assert _fake_youtube == [("https://youtu.be/dQw4w9WgXcQ", _announce_mod.ANNOUNCE_MAX_SECS)]
     assert cog.tts.calls == [] and _fake_decoder == []
@@ -636,7 +640,7 @@ async def test_youtube_link_asks_for_the_channel_and_refuses_mixes(_no_builtin_c
     cog = _cog()
     general = _voice(GENERAL_ID, "🔊 General", [_listener()])
     ctx = _ctx([general])
-    await cog.cmd_announce.callback(cog, ctx, args="https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    await cog.cmd_adminannounce.callback(cog, ctx, args="https://www.youtube.com/watch?v=dQw4w9WgXcQ")
     fields, kwargs = forms[-1]
     assert [f.kind for f in fields] == ["voice_channels"] and "video" in kwargs["description"]
     assert general.vc.plays == 1
@@ -648,7 +652,7 @@ async def test_youtube_link_asks_for_the_channel_and_refuses_mixes(_no_builtin_c
         cog = _cog()
         ctx = _ctx([general])
         ctx.message.attachments = attachments
-        await cog.cmd_announce.callback(cog, ctx, args=args)
+        await cog.cmd_adminannounce.callback(cog, ctx, args=args)
         assert any("One thing to play" in (e.description or "") for e in ctx.sent_embeds), args
     assert len(_fake_youtube) == 1
 
@@ -669,7 +673,7 @@ async def test_youtube_failure_releases_the_slot(_no_builtin_channel_converter, 
     cog = _cog()
     general = _voice(GENERAL_ID, "🔊 General", [_listener()])
     ctx = _ctx([general])
-    await cog.cmd_announce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ")
+    await cog.cmd_adminannounce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ")
     assert any("live stream" in (e.description or "") for e in ctx.sent_embeds)
     assert not hasattr(general, "connect_kwargs") and cog._busy == set()
     assert updates == []  # a live stream isn't a stale-yt-dlp failure
@@ -696,7 +700,7 @@ async def test_failed_resolve_updates_ytdlp_once_and_retries(_no_builtin_channel
     cog = _cog()
     general = _voice(GENERAL_ID, "🔊 General", [_listener()])
     ctx = _ctx([general])
-    await cog.cmd_announce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ")
+    await cog.cmd_adminannounce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ")
     assert updates == [1] and len(fetches) == 2
     assert any("Fixed after update" in (e.description or "") for e in ctx.sent_embeds)
 
@@ -706,7 +710,7 @@ async def test_failed_resolve_updates_ytdlp_once_and_retries(_no_builtin_channel
         raise DecodeError("yt-dlp gave no media URL")
     monkeypatch.setattr(_announce_mod, "fetch_youtube", _broken)
     ctx = _ctx([general])
-    await cog.cmd_announce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ")
+    await cog.cmd_adminannounce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ")
     assert updates == [1] and len(fetches) == 3
     assert any("no media URL" in (e.description or "") for e in ctx.sent_embeds)
 
@@ -718,7 +722,7 @@ async def test_failed_resolve_updates_ytdlp_once_and_retries(_no_builtin_channel
         raise DecodeError("yt-dlp -U failed")
     monkeypatch.setattr(_announce_mod, "update_ytdlp", _cant_update)
     ctx = _ctx([general])
-    await cog.cmd_announce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ")
+    await cog.cmd_adminannounce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ")
     assert len(fetches) == 4 and cog._busy == set()
     assert any("no media URL" in (e.description or "") for e in ctx.sent_embeds)
 
@@ -734,7 +738,7 @@ async def test_repeat_flag_plays_the_clip_n_times(_no_builtin_channel_converter,
     cog = _cog()
     general = _voice(GENERAL_ID, "🔊 General", [_listener()])
     ctx = _ctx([general])
-    await cog.cmd_announce.callback(cog, ctx, args='"Dinner is ready" gen x3')
+    await cog.cmd_adminannounce.callback(cog, ctx, args='"Dinner is ready" gen x3')
     assert cog.tts.calls == ["Dinner is ready"]  # synthesized once
     assert general.vc.plays == 3
     general.vc.disconnect.assert_awaited_once_with(force=True)
@@ -746,7 +750,7 @@ async def test_repeat_flag_plays_the_clip_n_times(_no_builtin_channel_converter,
     general = _voice(GENERAL_ID, "🔊 General", [_listener()])
     ctx = _ctx([general])
     ctx.message.attachments = [_attachment()]
-    await cog.cmd_announce.callback(cog, ctx, args="x4 gen")
+    await cog.cmd_adminannounce.callback(cog, ctx, args="x4 gen")
     assert len(_fake_decoder) == 1 and general.vc.plays == 4
 
 
@@ -759,20 +763,20 @@ async def test_repeat_limits(_no_builtin_channel_converter):
     for args, expected in {
         f'"hi" gen x{cap + 1}': f"x{cap}",
         '"hi" gen x0': f"x{cap}",
-        '"' + "x" * 100 + '" gen x10': "repeat 9 times at most",  # 100 × 10 = 1000 isn't under 1000
+        '"' + "x" * 100 + '" gen x11': "repeat 10 times at most",  # 100 × 11 is over 1000
         '"' + "x" * 400 + '" gen x3': "repeat 2 times at most",
     }.items():
         cog = _cog()
         ctx = _ctx([general])
-        await cog.cmd_announce.callback(cog, ctx, args=args)
+        await cog.cmd_adminannounce.callback(cog, ctx, args=args)
         assert any(expected in (e.description or "") for e in ctx.sent_embeds), args
         assert cog.tts.calls == [], args
     assert not hasattr(general, "connect_kwargs")
 
-    # Right under the line is fine: 99 × 10.
+    # Exactly the cap is fine: 100 × 10.
     cog = _cog()
     ctx = _ctx([general])
-    await cog.cmd_announce.callback(cog, ctx, args='"' + "x" * 99 + '" gen x10')
+    await cog.cmd_adminannounce.callback(cog, ctx, args='"' + "x" * 100 + '" gen x10')
     assert general.vc.plays == 10
     assert total == 1000  # the arithmetic above assumes it
 
@@ -796,17 +800,242 @@ async def test_stop_cuts_a_repeat_short(_no_builtin_channel_converter):
     ctx1, ctx2 = _ctx([general]), _ctx([general])
 
     # Nothing to stop yet.
-    await cog.cmd_announce.callback(cog, ctx2, args="stop")
+    await cog.cmd_adminannounce.callback(cog, ctx2, args="stop")
     assert any("Nothing is playing" in (e.description or "") for e in ctx2.sent_embeds)
 
-    task = asyncio.create_task(cog.cmd_announce.callback(cog, ctx1, args='"hi" gen x50'))
+    task = asyncio.create_task(cog.cmd_adminannounce.callback(cog, ctx1, args='"hi" gen x50'))
     for _ in range(5):
         await asyncio.sleep(0)
     assert general.vc.plays == 1 and GUILD_ID in cog._busy
 
-    await cog.cmd_announce.callback(cog, ctx2, args="STOP")
+    await cog.cmd_adminannounce.callback(cog, ctx2, args="STOP")
     await task
     assert general.vc.stopped and general.vc.plays == 1
     done = next(e for e in ctx1.sent_embeds if "Announced" in (e.title or ""))
     assert "stopped after 1 of 50" in done.description
     assert cog._busy == set() and cog._stop == set() and cog._playing == {}
+
+
+# ── !shop announce / !announce: the paid one ─────────────────────────────────
+
+PAYER = 7  # _ctx's author
+
+
+def test_announce_cost_is_per_character_times_repeats_up_to_the_cap():
+    per, cap = _announce_mod.SHOP_ANNOUNCE_COST_PER_CHAR, _announce_mod.SHOP_ANNOUNCE_MAX_COST
+    assert _announce_mod.announce_cost("hello") == 5 * per
+    assert _announce_mod.announce_cost("hello", 3) == 15 * per
+    assert _announce_mod.announce_cost("x" * _announce_mod.ANNOUNCE_MAX_TOTAL_CHARS) == cap
+    assert _announce_mod.announce_cost("x" * 50, 10) == min(500 * per, cap)
+
+
+def test_announce_form_args_quote_the_message_for_the_typed_parser():
+    assert _announce_mod.announce_form_args('say "hi"', 100) == "\"say 'hi'\" 100"
+    assert _announce_mod.announce_form_args(" dinner ", "100", 3) == '"dinner" 100 x3'
+    assert parse_announce_args(_announce_mod.announce_form_args("dinner", 100, 3)) == ("dinner", "100", 3)
+
+
+def test_paid_announce_is_a_shop_item_and_a_top_level_alias():
+    import json
+    from pathlib import Path
+    from src.features import command_features
+
+    perms = json.loads(Path("src/command_perms.json").read_text(encoding="utf-8"))
+    assert perms["adminannounce"]["tier"] == "server_admin" and perms["announce"]["tier"] == "everyone"
+    assert ("announce", "shop_announce", []) in _shop_cog_mod._SHOP_TOP_ALIASES
+    assert command_features("announce") == ("shop",) and command_features("shop announce") == ("shop",)
+    assert command_features("adminannounce") == ()  # the admin one stays on with the shop off
+
+
+@_aio
+async def test_shop_announce_forwards_to_the_paid_path():
+    calls = []
+
+    class _Announce:
+        async def paid_announce(self, ctx, args):
+            calls.append(args)
+    bot = SimpleNamespace(get_cog=lambda name: _Announce() if name == "AnnounceCog" else None,
+                          add_command=lambda c: None, remove_command=lambda n: None)
+    cog = _shop_cog_mod.ShopCog(bot=bot)
+    ctx = _ctx()
+    await cog.shop_announce.callback(cog, ctx, args='"hi" gen')
+    assert calls == ['"hi" gen']
+
+    # `!settings shop announce off` takes it off this server's shelf.
+    get_guild_cfg(GUILD_ID)["shop_items"] = {"announce": False}
+    ctx = _ctx()
+    await cog.shop_announce.callback(cog, ctx, args='"hi" gen')
+    assert calls == ['"hi" gen'] and any("Disabled" in t for t in _titles(ctx))
+
+
+@_aio
+async def test_paid_announce_confirms_charges_and_plays(_no_builtin_channel_converter, monkeypatch):
+    confirms = []
+
+    async def _confirm(ctx, **kwargs):
+        confirms.append(kwargs)
+        return True
+    monkeypatch.setattr(_announce_mod, "confirm_purchase", _confirm)
+
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    ctx = _ctx([general])
+    await add_balance(PAYER, 20_000)
+    await cog.paid_announce(ctx, '"Dinner is ready" gen x2')
+
+    cost = _announce_mod.announce_cost("Dinner is ready", 2)
+    assert confirms[-1]["cost"] == cost and confirms[-1]["payer"] is ctx.author
+    assert await get_balance(PAYER) == 20_000 - cost
+    assert cog.tts.calls == ["Dinner is ready"] and general.vc.plays == 2
+    done = next(e for e in ctx.sent_embeds if "Announced" in (e.title or ""))
+    assert f"{cost:,} 🪙" in done.description and "2 times" in done.description
+    assert cog._busy == set() and cog._owner == {}
+
+
+@_aio
+async def test_paid_announce_declined_or_unaffordable_plays_nothing(_no_builtin_channel_converter, monkeypatch):
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    await add_balance(PAYER, 20_000)
+
+    async def _declined(ctx, **kwargs):
+        return False
+    monkeypatch.setattr(_announce_mod, "confirm_purchase", _declined)
+    cog = _cog()
+    ctx = _ctx([general])
+    await cog.paid_announce(ctx, '"hi" gen')
+    assert cog.tts.calls == [] and await get_balance(PAYER) == 20_000
+
+    async def _accepted(ctx, **kwargs):
+        return True
+    monkeypatch.setattr(_announce_mod, "confirm_purchase", _accepted)
+    _state.economy["users"][str(PAYER)]["balance"] = 100
+    cog = _cog()
+    ctx = _ctx([general])
+    await cog.paid_announce(ctx, '"hi" gen')
+    assert any("Insufficient Funds" in t for t in _titles(ctx))
+    assert cog.tts.calls == [] and not hasattr(general, "connect_kwargs")
+    assert await get_balance(PAYER) == 100
+
+
+@_aio
+async def test_paid_announce_refuses_before_the_prompt(_no_builtin_channel_converter, monkeypatch):
+    """Media, an empty channel and an over-cap message are refused before
+    anyone is asked to pay."""
+    confirms = []
+
+    async def _confirm(ctx, **kwargs):
+        confirms.append(1)
+        return True
+    monkeypatch.setattr(_announce_mod, "confirm_purchase", _confirm)
+    await add_balance(PAYER, 200_000)
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    cog = _cog()
+
+    ctx = _ctx([general])
+    ctx.message.attachments = [_attachment()]
+    await cog.paid_announce(ctx, "gen")
+    assert any("for admins" in (e.description or "") for e in ctx.sent_embeds)
+
+    ctx = _ctx([general])
+    await cog.paid_announce(ctx, "gen https://youtu.be/dQw4w9WgXcQ")
+    assert any("for admins" in (e.description or "") for e in ctx.sent_embeds)
+
+    ctx = _ctx([_voice(GENERAL_ID, "🔊 General", [])])
+    await cog.paid_announce(ctx, '"hi" gen')
+    assert any("Nobody is in" in (e.description or "") for e in ctx.sent_embeds)
+
+    ctx = _ctx([general])
+    await cog.paid_announce(ctx, '"' + "x" * 400 + '" gen x3')
+    assert any("repeat 2 times at most" in (e.description or "") for e in ctx.sent_embeds)
+
+    assert confirms == [] and cog.tts.calls == []
+    assert await get_balance(PAYER) == 200_000
+
+
+@_aio
+async def test_paid_announce_refunds_when_nothing_played(_no_builtin_channel_converter, monkeypatch):
+    class _BrokenTTS(_FakeTTS):
+        async def synthesize(self, text):
+            raise TTSError("can't reach the TTS server")
+
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    await add_balance(PAYER, 20_000)
+    cog = _cog(tts=_BrokenTTS())
+    ctx = _ctx([general])
+    await cog.paid_announce(ctx, '"hi" gen')
+    assert any("can't reach" in (e.description or "") for e in ctx.sent_embeds)
+    assert any("Refunded" in t for t in _titles(ctx))
+    assert await get_balance(PAYER) == 20_000 and cog._busy == set()
+
+    # The listener left while the prompt was open: the re-check refuses and refunds.
+    async def _leaves(ctx, **kwargs):
+        general.members.clear()
+        return True
+    monkeypatch.setattr(_announce_mod, "confirm_purchase", _leaves)
+    cog = _cog()
+    ctx = _ctx([general])
+    await cog.paid_announce(ctx, '"hi" gen')
+    assert any("Nobody is in" in (e.description or "") for e in ctx.sent_embeds)
+    assert any("Refunded" in t for t in _titles(ctx))
+    assert await get_balance(PAYER) == 20_000 and cog.tts.calls == []
+
+
+@_aio
+async def test_godmode_announces_free(_no_builtin_channel_converter, monkeypatch):
+    confirms = []
+
+    async def _confirm(ctx, **kwargs):
+        confirms.append(kwargs["cost"])
+        return True
+    monkeypatch.setattr(_announce_mod, "confirm_purchase", _confirm)
+    _state.godmode_users.add(PAYER)
+    try:
+        cog = _cog()
+        general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+        ctx = _ctx([general])
+        await cog.paid_announce(ctx, '"hi" gen')
+    finally:
+        _state.godmode_users.discard(PAYER)
+    assert confirms == [0] and general.vc.plays == 1
+    done = next(e for e in ctx.sent_embeds if "Announced" in (e.title or ""))
+    assert "Paid" not in done.description
+
+
+@_aio
+async def test_paid_stop_is_the_payers_or_an_admins(_no_builtin_channel_converter):
+    class _Held(_FakeVoiceClient):
+        def play(self, source, after=None):
+            self.played = source
+            self.plays += 1
+            self._after = after
+
+        def stop(self):
+            self.stopped = True
+            self._after(None)
+
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    general.vc = _Held()
+    await add_balance(PAYER, 20_000)
+    payer = _ctx([general])
+    task = asyncio.create_task(cog.paid_announce(payer, '"hi" gen x5'))
+    for _ in range(50):
+        await asyncio.sleep(0)
+        if general.vc.plays:
+            break
+    assert general.vc.plays == 1 and GUILD_ID in cog._busy
+
+    stranger = _ctx([general])
+    stranger.author = FakeMember(uid=8, display_name="Ann", administrator=False)
+    await cog.paid_announce(stranger, "stop")
+    assert any("someone else's" in (e.description or "") for e in stranger.sent_embeds)
+    assert not general.vc.stopped
+
+    await cog.paid_announce(_ctx([general]), "STOP")  # the payer again
+    await task
+    assert general.vc.stopped and general.vc.plays == 1
+    done = next(e for e in payer.sent_embeds if "Announced" in (e.title or ""))
+    assert "stopped after 1 of 5" in done.description
+    # A stop is the payer's choice: no refund.
+    assert await get_balance(PAYER) == 20_000 - _announce_mod.announce_cost("hi", 5)
+    assert cog._busy == set() and cog._owner == {}

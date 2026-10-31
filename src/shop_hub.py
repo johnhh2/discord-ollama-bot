@@ -42,7 +42,10 @@ from src.config import (
     SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_CURSE_COST, SHOP_UNOREVERSE_COST,
     SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES, SHOP_CURSE_MESSAGES, SHOP_TAX_PER_MESSAGE,
     SHOP_XP_COST_PER_XP, BOUNTY_MIN_AMOUNT,
+    SHOP_ANNOUNCE_COST_PER_CHAR, SHOP_ANNOUNCE_MAX_COST, ANNOUNCE_MAX_CHARS, ANNOUNCE_MAX_REPEATS,
+    ANNOUNCE_MAX_TOTAL_CHARS, WYOMING_TTS_HOST,
 )
+from src.cogs.announce_cog import announce_form_args
 from src.economy import get_insurance_tier, get_insurance_expiry
 from src.features import feature_enabled
 from src.guild_config import get_guild_cfg
@@ -122,6 +125,16 @@ def _role_mention(values: dict, key: str) -> str:
 def _channel_mention(values: dict, key: str) -> str:
     picked = values.get(key) or []
     return f"<#{picked[0]}>" if picked else ""
+
+
+def _announce_call(values: dict) -> tuple[tuple, dict]:
+    """The announce form → the typed `"<message>" <channel id> [x<N>]`. A
+    submit can't refuse, so a missing piece is left for the command's own
+    form and a repeat that isn't a number is dropped."""
+    picked = values.get("channel") or []
+    repeats = (values.get("repeats") or "").strip()
+    return (), {"args": announce_form_args(values.get("text") or "", picked[0] if picked else "",
+                                           int(repeats) if repeats.isdigit() else None)}
 
 
 def _bot_roles(guild) -> list:
@@ -265,6 +278,15 @@ def _fun(ctx, shop_items: dict) -> list[ShopItem]:
                               "shop_ragebait", title="Ragebait someone",
                               fields=(user, Field("topic", "Topic (optional)", required=False, max_length=200)),
                               call=lambda v: (tuple(x for x in (_mention(v, "user"), v.get("topic")) if x), {})))
+    if WYOMING_TTS_HOST and shop_items.get("announce", True):  # off without a TTS server, like the command
+        items.append(ShopItem("announce", f"📢 Announce in a voice channel — {SHOP_ANNOUNCE_COST_PER_CHAR} 🪙/character",
+                              f"read aloud by text-to-speech; {SHOP_ANNOUNCE_MAX_COST:,} 🪙 at most, "
+                              f"up to {ANNOUNCE_MAX_TOTAL_CHARS:,} characters incl. repeats",
+                              "shop_announce", title="Announce",
+                              fields=(Field("channel", "Voice channel", kind="voice_channels"),
+                                      Field("text", "Message", kind="paragraph", max_length=ANNOUNCE_MAX_CHARS),
+                                      Field("repeats", f"Repeat (1–{ANNOUNCE_MAX_REPEATS}, optional)", required=False, max_length=2)),
+                              call=_announce_call))
     for word, emoji in get_guild_cfg(ctx.guild.id).get("tax_aliases", {}).items():
         items.append(ShopItem(f"tax:{word}", f"{emoji} {word.capitalize()} tax — {_coins(SHOP_TAX_COST)}",
                               f"a tax announced as the {word} tax", "shop_tax", title=f"{word.capitalize()} tax",

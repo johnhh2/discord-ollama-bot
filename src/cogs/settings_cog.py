@@ -247,7 +247,7 @@ class SettingsCog(commands.Cog):
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
             return
         cfg = get_guild_cfg(ctx.guild.id)
-        valid_items = {"nickname", "role", "unassignrole", "roleup", "roledown", "ragebait", "buyxp"}
+        valid_items = {"nickname", "role", "unassignrole", "roleup", "roledown", "ragebait", "buyxp", "announce"}
         if not args:
             shop_items = cfg.setdefault("shop_items", {})
 

@@ -62,7 +62,7 @@ GLOBAL_CHANNEL_SETTINGS = (
     ("🐛 Internal issues (global)", "internal_issue_channel", "settings_channel_internal_issue", False, "❌ off", "bug reports and internal issues from every server"),
 )
 
-SHOP_ITEMS = ("nickname", "role", "unassignrole", "roleup", "roledown", "ragebait", "buyxp")
+SHOP_ITEMS = ("nickname", "role", "unassignrole", "roleup", "roledown", "ragebait", "buyxp", "announce")
 
 CATEGORIES = (
     ("overview", "📋 Overview"),

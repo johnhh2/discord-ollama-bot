@@ -32,10 +32,10 @@ Key environment variables (all optional except `DISCORD_TOKEN`):
 | `MC_CONSOLE_HOST` | _(disabled)_ | Optional; the Bedrock container's SSH remote console (`ENABLE_SSH=true` on the itzg image), as seen from the bot's container. With `MC_CONSOLE_PASSWORD`, enables the block shop (`!mc shop`) |
 | `MC_CONSOLE_PORT` | `2222` | Remote console port |
 | `MC_CONSOLE_PASSWORD` | — | The Bedrock container's `RCON_PASSWORD` (its remote-console password) |
-| `WYOMING_TTS_HOST` | _(disabled)_ | Optional; a Wyoming text-to-speech server (Piper) as seen from the bot's container. Enables `!announce` |
+| `WYOMING_TTS_HOST` | _(disabled)_ | Optional; a Wyoming text-to-speech server (Piper) as seen from the bot's container. Enables `!adminannounce` and the paid `!shop announce` |
 | `WYOMING_TTS_PORT` | `10200` | Wyoming TTS port |
 | `WYOMING_TTS_VOICE` | _(server default)_ | Optional; one of the TTS server's voice names |
-| `YTDLP_PATH` | `yt-dlp` (PATH) | The yt-dlp binary for `!announce <youtube link>`; the image sets `/opt/ytdlp/yt-dlp`, the self-updating copy |
+| `YTDLP_PATH` | `yt-dlp` (PATH) | The yt-dlp binary for `!adminannounce <youtube link>`; the image sets `/opt/ytdlp/yt-dlp`, the self-updating copy |
 | `COMPOSE_PROFILES` | _(unset)_ | `mcp` starts the read-only MCP sidecar (see that section); unset leaves it off |
 | `MCP_BEARER_TOKEN` | — | Sidecar: the pre-shared token every MCP request must carry; 32+ characters or the sidecar refuses to start |
 | `MCP_ALLOWED_HOSTS` | — | Sidecar: comma-separated `host:port` values clients will use; any other `Host` header gets 421 |
@@ -1417,16 +1417,34 @@ tables from migrations 0070–0077.
 Coverage: [tests/test_idlerpg.py](tests/test_idlerpg.py) (rules) and
 [tests/test_idle_cog.py](tests/test_idle_cog.py).
 
-## Voice announcements (!announce): Wyoming TTS into a voice channel
+## Voice announcements (!adminannounce, !shop announce): Wyoming TTS into a voice channel
 
-`!announce "<message>" <voice-channel>` (either order; `server_admin`) sends
-the text to a Wyoming text-to-speech server (`WyomingTTS` in
+`!adminannounce "<message>" <voice-channel>` (either order; `server_admin`,
+free) sends the text to a Wyoming text-to-speech server (`WyomingTTS` in
 [src/tts.py](src/tts.py) — Piper speaks that protocol), converts the PCM
 to what Discord wants (48 kHz, 16-bit, stereo: `to_discord_pcm`, stdlib
 `audioop`, no ffmpeg and nothing on disk), joins the channel, plays it and
 leaves. Off until `WYOMING_TTS_HOST` is set — the cog's `tts` is None
-otherwise, and the `!admin` panel lists the row only then.
+otherwise, and the `!admin` panel, the `!shop` overview and the shop panel
+list their rows only then.
 
+- **The paid one is `!shop announce` / `!announce`** (`everyone`; the
+  `shop` feature, `_SHOP_TOP_ALIASES`, and `shop_items["announce"]` for a
+  per-server off switch). ShopCog's subcommand only forwards to
+  `AnnounceCog.paid_announce`, which runs the admin command's **text** path
+  — attachments and YouTube links are refused (no character count to price
+  them by, and a clip from anyone with coins is a moderation problem). Price
+  is `announce_cost`: `SHOP_ANNOUNCE_COST_PER_CHAR` (100) per character
+  **times the repeats**, capped at `SHOP_ANNOUNCE_MAX_COST` (10k) — the
+  owner's two figures, since 100 × the 1000-character cap would be 100k.
+  Order: `_gather` (args + form), every `_refuse`
+  check, `confirm_purchase`, `shop_charge`, then `_announce` — which runs
+  `_refuse` again after the long confirm and returns False when nothing
+  played (a late refusal, a TTS or voice failure), and the paid path refunds
+  with `add_balance`. A `stop` by the payer or an admin is not refunded.
+  Godmode pays nothing. `!announce stop` (`own=True`) stops only the
+  invoker's own announcement unless they're an admin; `!adminannounce stop`
+  stops anything.
 - **Synthesize first, connect second.** Synthesis is the slow, failure-prone
   step; done before `connect` the bot never sits silent in a channel waiting
   on the TTS server, and a TTS error needs no disconnect.
@@ -1482,13 +1500,13 @@ otherwise, and the `!admin` panel lists the row only then.
 - **`x<N>` repeats the clip** (any `x<N>` / `X<N>` token outside the
   quotes, `_REPEAT_RE`), synthesized or decoded once and played N times
   in one connection. At most `ANNOUNCE_MAX_REPEATS` (50), and a message's
-  length times N must stay under `ANNOUNCE_MAX_TOTAL_CHARS` (1000) —
-  checked in `_announce`, after the form, so a form-typed message counts
-  too; a file is bounded by its own length cap times 50. `!announce stop`
+  length times N can't exceed `ANNOUNCE_MAX_TOTAL_CHARS` (1000) —
+  checked in `_refuse`, after the form, so a form-typed message counts
+  too; a file is bounded by its own length cap times 50. `stop`
   sets the guild's `_stop` flag and calls `stop()` on the client in
   `_playing`, whose `after` callback releases `_play`'s wait; the loop
   checks the flag before each repeat and the reply says how many of N
-  played. Both are cleared in the busy `finally`.
+  played. Both are cleared in the busy `finally`, with `_owner`.
 - **Playback runs on discord.py's player thread**: the `after` callback
   resolves a future via `call_soon_threadsafe`; the wait is bounded by the
   clip length plus `PLAY_GRACE_SECS`, and `disconnect(force=True)` sits in

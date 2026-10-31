@@ -240,6 +240,8 @@ def reset_bot_state(monkeypatch):
     import src.games.chess as _chess_game_mod
     monkeypatch.setattr(_shop_cog_mod, "confirm_purchase", _auto_confirm)
     monkeypatch.setattr(_shop_cog_mod, "confirm_prompt", _auto_confirm)   # `!artifacts sell`
+    import src.cogs.announce_cog as _announce_cog_mod
+    monkeypatch.setattr(_announce_cog_mod, "confirm_purchase", _auto_confirm)  # the paid `!announce`
 
     # The insurance tier picker (confirm_choice) auto-picks the highlighted
     # default choice — the tier the command was given, else the buyer's

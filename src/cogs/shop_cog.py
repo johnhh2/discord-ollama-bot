@@ -54,7 +54,7 @@ from src.config import (
     SHOP_CURSE_MESSAGES, SHOP_TAX_PER_MESSAGE,
     SHOP_TAX_DURATION_SECS,
     SHOP_XP_COST_PER_XP, SHOP_XP_CATCHUP_DISCOUNT_PCT, SHOP_XP_CATCHUP_COST_PER_XP,
-    BOUNTY_MIN_AMOUNT,
+    BOUNTY_MIN_AMOUNT, SHOP_ANNOUNCE_COST_PER_CHAR, SHOP_ANNOUNCE_MAX_COST, ANNOUNCE_MAX_TOTAL_CHARS, WYOMING_TTS_HOST,
 )
 from src import state
 
@@ -127,6 +127,7 @@ _SHOP_TOP_ALIASES: list[tuple[str, str, list[str]]] = [
     ("unoreverse",     "shop_unoreverse",    []),
     ("buyxp",          "shop_buyxp",         []),
     ("artifacts",      "shop_artifacts",     ["artifact"]),
+    ("announce",       "shop_announce",      []),
     # roleup and roledown both dispatch via shop_roleup (it reads
     # ctx.invoked_with to pick direction).
     ("roleup",         "shop_roleup",        []),
@@ -457,6 +458,11 @@ class ShopCog(commands.Cog):
             fun_items.append((SHOP_RAGEBAIT_COST, f"`!shop ragebait @user [topic]` — Ragebait for {SHOP_RAGEBAIT_MESSAGES + 1} messages — **{SHOP_RAGEBAIT_COST:,} 🪙**"))
         fun_items.append((SHOP_CURSE_COST, f"`!shop curse @user` — Curse someone's messages for {SHOP_CURSE_MESSAGES} messages — **{SHOP_CURSE_COST:,} 🪙**"))
         fun_items.append((SHOP_UNOREVERSE_COST, L("unoreverse", f"`!shop unoreverse @user` — Redirect active mock/ragebait/curse onto someone else — **{SHOP_UNOREVERSE_COST:,} 🪙**")))
+        if WYOMING_TTS_HOST and _si.get("announce", True):  # off without a TTS server, like the command
+            fun_items.append((SHOP_ANNOUNCE_COST_PER_CHAR,
+                              f"`!shop announce \"<message>\" <voice-channel> [x<N>]` — Read your message aloud in a voice channel "
+                              f"— **{SHOP_ANNOUNCE_COST_PER_CHAR} 🪙/character**, {SHOP_ANNOUNCE_MAX_COST:,} 🪙 at most "
+                              f"(up to {ANNOUNCE_MAX_TOTAL_CHARS:,} characters, repeats included)"))
         fun_items.sort(key=lambda x: x[0])
         sections["🎉 Fun & Social"] = [item[1] for item in fun_items]
 
@@ -1634,6 +1640,23 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🎯 Bounty", "Bounties are unavailable right now.", C_GREY))
             return
         await cog.create_bounty(ctx, args)
+
+    # ── !shop announce ────────────────────────────────────────────────────────
+    @cmd_shop.command(name="announce",
+                      help=f"Read your message aloud in a voice channel (text-to-speech) for "
+                           f"{SHOP_ANNOUNCE_COST_PER_CHAR} 🪙 a character, times the x<N> repeats; `stop` cuts yours short",
+                      usage='"<message>" <voice-channel> [x<N>]')
+    @_shop_subcommand("announce")
+    async def shop_announce(self, ctx: commands.Context, *, args: str = None):
+        # Keyword-only so the quotes reach the parser — discord.py's *args
+        # would strip them. The voice work lives in AnnounceCog with the free
+        # admin command; this subcommand and the !announce alias funnel into
+        # its paid path so the charge, confirm and refund are defined once.
+        cog = self.bot.get_cog("AnnounceCog") if self.bot else None
+        if cog is None:
+            await ctx.send(embed=emb("📢 Announce", "Announcements are unavailable right now.", C_GREY))
+            return
+        await cog.paid_announce(ctx, args)
 
     # ── !shop insurance ───────────────────────────────────────────────────────
     # Three tiers (SHOP_INSURANCE_TIERS). Every purchase or subscribe opens

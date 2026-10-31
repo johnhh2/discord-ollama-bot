@@ -140,3 +140,14 @@ async def test_page_dropdown_and_bare_admin_command_open_the_panel(monkeypatch):
     cog = AdminCog(bot=None)
     await cog.cmd_admin.callback(cog, _ctx())
     assert isinstance(opened[0], AdminHub)
+
+
+async def test_the_announce_row_runs_the_free_admin_command(monkeypatch):
+    import src.admin_hub as _hub
+    assert not any(i.key == "announce" for i in items_for("moderation", _ctx()))
+    monkeypatch.setattr(_hub, "WYOMING_TTS_HOST", "piper")
+    item = next(i for i in items_for("moderation", _ctx()) if i.key == "announce")
+    assert item.command == "adminannounce" and item.public
+    assert item.call(_ctx(), {"channel": ["100"], "text": 'say "hi"'}) == ((), {"args": "\"say 'hi'\" 100"})
+    with pytest.raises(ValueError):
+        item.call(_ctx(), {"text": "hi"})
