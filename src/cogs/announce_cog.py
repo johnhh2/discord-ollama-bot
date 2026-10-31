@@ -428,7 +428,8 @@ class AnnounceCog(commands.Cog):
             if media:
                 seconds = len(pcm) / (DISCORD_RATE * DISCORD_CHANNELS * SAMPLE_WIDTH)
                 # The decoder cuts at the cap, so a clip that long was (almost surely) longer.
-                cut = f" — the first {ANNOUNCE_MAX_SECS} seconds of it" if seconds >= ANNOUNCE_MAX_SECS - 0.5 else ""
+                cap = f"{ANNOUNCE_MAX_SECS // 60} minutes" if ANNOUNCE_MAX_SECS % 60 == 0 else f"{ANNOUNCE_MAX_SECS:g} seconds"
+                cut = f" — the first {cap} of it" if seconds >= ANNOUNCE_MAX_SECS - 0.5 else ""
                 done = f"Played **{label}** in **{channel.name}**{cut}{times}."
             else:
                 done = f"Read out in **{channel.name}**{times}:\n> {text}"

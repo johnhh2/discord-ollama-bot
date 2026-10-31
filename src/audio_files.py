@@ -22,7 +22,7 @@ FFMPEG = "ffmpeg"
 YTDLP = YTDLP_PATH
 DECODE_TIMEOUT = 60.0
 RESOLVE_TIMEOUT = 60.0  # yt-dlp fetching the page and solving the challenge
-STREAM_TIMEOUT = 180.0  # ffmpeg pulling the clip from Google's CDN
+STREAM_TIMEOUT = 300.0  # ffmpeg pulling up to ANNOUNCE_MAX_SECS of clip from Google's CDN
 UPDATE_TIMEOUT = 180.0  # yt-dlp -U downloading its ~40 MB replacement
 # yt-dlp -U replaces the binary in place; a resolve that starts mid-rename
 # would exec a half-written file, so updates and resolves share a lock.
