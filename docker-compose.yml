@@ -5,6 +5,9 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      # The standalone yt-dlp unpacks itself at every start and can't on
+      # the noexec default above; YTDLP_TMPDIR sends only it here.
+      - /run/ytdlp:exec,size=256m
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -39,6 +42,7 @@ services:
       WYOMING_TTS_PORT: ${WYOMING_TTS_PORT:-}
       WYOMING_TTS_VOICE: ${WYOMING_TTS_VOICE:-}
       YTDLP_PATH: ${YTDLP_PATH:-/opt/ytdlp/yt-dlp}
+      YTDLP_TMPDIR: ${YTDLP_TMPDIR:-/run/ytdlp}
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
       DB_USER: ${DB_USER}

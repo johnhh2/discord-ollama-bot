@@ -49,6 +49,10 @@ WYOMING_TTS_VOICE = os.getenv("WYOMING_TTS_VOICE", "")
 # The yt-dlp binary !adminannounce runs for YouTube links; the image sets it to
 # the self-updating copy in /opt/ytdlp. Empty means PATH lookup.
 YTDLP_PATH = os.getenv("YTDLP_PATH", "") or "yt-dlp"
+# Where the standalone yt-dlp unpacks itself on each start (its TMPDIR). The
+# container's /tmp is a noexec tmpfs, so the image points this at a second,
+# exec-allowed one. Empty leaves the process's own temp dir.
+YTDLP_TMPDIR = os.getenv("YTDLP_TMPDIR", "")
 ANNOUNCE_MAX_CHARS = 500  # synthesis time and the modal's text box grow with it
 # An attached audio file instead of text: Discord's own upload cap, and the
 # clip is cut at ANNOUNCE_MAX_SECS (decoded PCM is ~190 KB a second).

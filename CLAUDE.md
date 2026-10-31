@@ -36,6 +36,7 @@ Key environment variables (all optional except `DISCORD_TOKEN`):
 | `WYOMING_TTS_PORT` | `10200` | Wyoming TTS port |
 | `WYOMING_TTS_VOICE` | _(server default)_ | Optional; one of the TTS server's voice names |
 | `YTDLP_PATH` | `yt-dlp` (PATH) | The yt-dlp binary for `!adminannounce <youtube link>`; the image sets `/opt/ytdlp/yt-dlp`, the self-updating copy |
+| `YTDLP_TMPDIR` | _(process temp dir)_ | Where the standalone yt-dlp unpacks itself; the image sets `/run/ytdlp`, an exec-allowed tmpfs in the compose file, because `/tmp` is mounted noexec |
 | `COMPOSE_PROFILES` | _(unset)_ | `mcp` starts the read-only MCP sidecar (see that section); unset leaves it off |
 | `MCP_BEARER_TOKEN` | — | Sidecar: the pre-shared token every MCP request must carry; 32+ characters or the sidecar refuses to start |
 | `MCP_ALLOWED_HOSTS` | — | Sidecar: comma-separated `host:port` values clients will use; any other `Host` header gets 421 |
@@ -1486,7 +1487,13 @@ list their rows only then.
   Deno (yt-dlp's JS runtime for YouTube's player challenge) are fetched
   by [scripts/fetch_tools.py](scripts/fetch_tools.py) in the Dockerfile's
   tools stage, pinned by version and sha256 per architecture; `DENO_DIR`
-  points at /tmp. Boot warns if the binary is missing.
+  points at /tmp. Boot warns if the binary is missing. **The standalone
+  build unpacks itself into `TMPDIR` on every start** and needs to exec
+  from there; the compose file's `/tmp` tmpfs is Docker's default
+  `noexec` ("libz.so.1: failed to map segment"), so a second tmpfs
+  `/run/ytdlp:exec,size=256m` is mounted and `YTDLP_TMPDIR` sends only
+  the yt-dlp subprocesses there (`_ytdlp_env`). Don't make `/tmp` exec
+  for it.
 - **yt-dlp updates itself; the pin is only the seed.** YouTube changes
   break old yt-dlp within weeks, so the image puts it in `/opt/ytdlp`
   (owned by the bot, `YTDLP_PATH`), the compose file mounts the named

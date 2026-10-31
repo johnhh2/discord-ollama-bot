@@ -15,7 +15,7 @@ import re
 import shutil
 import tempfile
 
-from src.config import YTDLP_PATH
+from src.config import YTDLP_PATH, YTDLP_TMPDIR
 from src.tts import DISCORD_RATE, DISCORD_CHANNELS
 
 FFMPEG = "ffmpeg"
@@ -80,12 +80,21 @@ def _suffix(filename: str) -> str:
     return ext if ext in AUDIO_EXTENSIONS else ""
 
 
-async def _run(args: list, *, timeout: float, what: str) -> "tuple[bytes, str]":
+def _ytdlp_env() -> "dict | None":
+    """The standalone yt-dlp unpacks itself into TMPDIR and execs from
+    there, which the container's noexec /tmp refuses; YTDLP_TMPDIR is the
+    exec-allowed tmpfs the compose file mounts for it. None: inherit."""
+    if not YTDLP_TMPDIR:
+        return None
+    return {**os.environ, "TMPDIR": YTDLP_TMPDIR}
+
+
+async def _run(args: list, *, timeout: float, what: str, env: "dict | None" = None) -> "tuple[bytes, str]":
     """Run a tool; `(stdout, stderr text)`. DecodeError if it's missing,
     times out or exits non-zero (with its last stderr line)."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
         )
     except FileNotFoundError:
         raise DecodeError(f"{what} isn't installed") from None
@@ -150,7 +159,7 @@ async def resolve_youtube(url: str) -> "tuple[str, str]":
         "--", url,
     ]
     async with _ytdlp_lock:
-        out, _ = await _run(args, timeout=RESOLVE_TIMEOUT, what="yt-dlp")
+        out, _ = await _run(args, timeout=RESOLVE_TIMEOUT, what="yt-dlp", env=_ytdlp_env())
     title, live, media = parse_ytdlp_output(out.decode(errors="replace"))
     if live:
         raise DecodeError("that's a live stream")
@@ -163,7 +172,7 @@ async def update_ytdlp() -> str:
     "yt-dlp is up to date (2026.10.26)". DecodeError when it can't — a
     read-only install, no network — with the seed left as it was."""
     async with _ytdlp_lock:
-        out, err = await _run([YTDLP, "--no-config", "-U"], timeout=UPDATE_TIMEOUT, what="yt-dlp -U")
+        out, err = await _run([YTDLP, "--no-config", "-U"], timeout=UPDATE_TIMEOUT, what="yt-dlp -U", env=_ytdlp_env())
     lines = (out.decode(errors="replace") + "\n" + err).strip().splitlines()
     return lines[-1].strip() if lines else "yt-dlp -U said nothing"
 

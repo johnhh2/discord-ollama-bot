@@ -63,6 +63,7 @@ ENV HOME=/tmp \
     MPLCONFIGDIR=/tmp/matplotlib \
     DENO_DIR=/tmp/deno \
     YTDLP_PATH=/opt/ytdlp/yt-dlp \
+    YTDLP_TMPDIR=/run/ytdlp \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 USER bot

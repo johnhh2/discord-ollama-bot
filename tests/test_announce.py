@@ -592,6 +592,16 @@ def test_youtube_url_is_lifted_out_of_the_arguments():
     assert youtube_url_in('"hi" gen') == (None, '"hi" gen')
 
 
+def test_ytdlp_subprocesses_get_their_own_tmpdir(monkeypatch):
+    """The standalone binary unpacks into TMPDIR and execs from there; the
+    container's /tmp is noexec, so YTDLP_TMPDIR redirects only yt-dlp."""
+    monkeypatch.setattr(_audio_mod, "YTDLP_TMPDIR", "")
+    assert _audio_mod._ytdlp_env() is None
+    monkeypatch.setattr(_audio_mod, "YTDLP_TMPDIR", "/run/ytdlp")
+    env = _audio_mod._ytdlp_env()
+    assert env["TMPDIR"] == "/run/ytdlp" and "PATH" in env
+
+
 def test_parse_ytdlp_output():
     assert parse_ytdlp_output("Never Gonna Give You Up\n212\nFalse\nhttps://rr1.googlevideo.com/x\n") == \
         ("Never Gonna Give You Up", False, "https://rr1.googlevideo.com/x")
