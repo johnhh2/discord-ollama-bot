@@ -35,6 +35,14 @@ Key environment variables (all optional except `DISCORD_TOKEN`):
 | `WYOMING_TTS_HOST` | _(disabled)_ | Optional; a Wyoming text-to-speech server (Piper) as seen from the bot's container. Enables `!announce` |
 | `WYOMING_TTS_PORT` | `10200` | Wyoming TTS port |
 | `WYOMING_TTS_VOICE` | _(server default)_ | Optional; one of the TTS server's voice names |
+| `COMPOSE_PROFILES` | _(unset)_ | `mcp` starts the read-only MCP sidecar (see that section); unset leaves it off |
+| `MCP_BEARER_TOKEN` | — | Sidecar: the pre-shared token every MCP request must carry; 32+ characters or the sidecar refuses to start |
+| `MCP_ALLOWED_HOSTS` | — | Sidecar: comma-separated `host:port` values clients will use; any other `Host` header gets 421 |
+| `MCP_ALLOWED_ORIGINS` | _(none)_ | Sidecar: browser origins allowed, if any; non-browser clients send none |
+| `MCP_BIND_IP` | `127.0.0.1` | The host interface the sidecar's port is published on — set it to the LAN address |
+| `MCP_PORT` | `8765` | Sidecar port |
+| `MCP_DB_USER` / `MCP_DB_PASSWORD` | — | Sidecar: the SELECT-only MariaDB account; `python -m botmcp.grants` creates it from these. Shares `DB_HOST`/`DB_PORT`/`DB_NAME` |
+| `MCP_DB_ACCOUNT_HOST` | `%` | Only read by `botmcp.grants`: the host part of the account it creates |
 
 ### Adding a new env var
 
@@ -1737,6 +1745,80 @@ Writing one:
 Coverage: the slash-tree and silenced-gate tests in
 [tests/test_bot_startup.py](tests/test_bot_startup.py) and the `/ask` tests
 in [tests/test_ai_thread_flow.py](tests/test_ai_thread_flow.py).
+
+## Read-only MCP sidecar (botmcp/)
+
+`botmcp/` is a separate container that gives AI agents on the LAN a read-only
+view of the database and of the bot's live state over the Model Context
+Protocol. It has its own image (Python 3.12, `botmcp/Dockerfile`), its own
+hash-pinned `botmcp/requirements.lock`, its own CI job, and exactly two
+credentials: a SELECT-only MariaDB account and a bearer token. The Discord
+token, the bot's DB password, the NSFW key and the console password never
+reach it. Off unless the `mcp` compose profile is on. Operator setup is in
+[botmcp/README.md](botmcp/README.md).
+
+- **Transport**: Streamable HTTP via the official `mcp` SDK v2 (`MCPServer`),
+  stateless, JSON responses. `MCP_BEARER_TOKEN` is checked on every request
+  by `BearerAuth` (`botmcp/server.py`, constant-time) — never a session —
+  and a 401 carries no OAuth discovery hint. The SDK's DNS-rebinding guard
+  runs behind it with `MCP_ALLOWED_HOSTS` (421 on any other `Host`) and
+  `MCP_ALLOWED_ORIGINS` (403). The port is published on `MCP_BIND_IP` only.
+  A pre-shared token instead of OAuth 2.1 is a documented deviation from the
+  spec's SHOULD, acceptable for one operator on one LAN; the upgrade path is
+  an SSH port-forward or a TLS proxy, not a code change.
+- **The catalog is the allowlist** (`botmcp/catalog.py`). Every live table
+  has an entry: readable with every column listed and the sensitive ones
+  under `hidden=` (why), or `never=` (why). `python -m botmcp.grants
+  --template` renders `scripts/mcp_db_user.sql` from it — column-level
+  `GRANT SELECT`, nothing on a never-table — and `botmcp/tests/test_catalog.py`
+  fails when a migration adds a table or column nobody classified, or when
+  the committed SQL is stale. Without `--template` it reads `MCP_DB_USER`,
+  `MCP_DB_PASSWORD` and `DB_NAME` from the env and prints the real
+  statements, which is how the operator applies it (`docker compose
+  --profile mcp run --rm mcp python -m botmcp.grants | mysql …`). **A new migration therefore needs a catalog
+  decision**: hidden for anything a user typed, a display name, or a
+  moderation/cheat flag; never for credentials, prompts, transcripts,
+  message text, permissions and blocklists. Regenerate the template and ask
+  the operator to re-apply the grants (idempotent).
+- **No SQL reaches the DB that a tool didn't write.** `query.select`
+  (`botmcp/query.py`) builds one-table SELECTs from the catalog, refuses
+  hidden columns, never-tables, quotes, comments and semicolons, caps rows
+  at `MAX_ROWS`, and takes values only as parameters. No joins (compose in
+  Python). The session is `tx_read_only` with a 5s `max_statement_time`
+  (`botmcp/db.py`), the account carries the same limits, and the grants are
+  the backstop. There is no free-form SQL tool; adding one is a decision,
+  not a feature.
+- **Tools** live in `botmcp/tools.py` as plain async functions registered
+  with `read_only_hint=True`; `register` wraps each in an audit log line
+  (tool, args, outcome, ms) and `redact.scrub`, which drops any key named
+  like user text or a credential (`DENIED_KEYS`) and replaces token-shaped
+  values. A tool takes ids and enums, never free text that reaches a query
+  (`_word`/`_date` validate the few string filters), returns a dict, and
+  caps its rows. `test_tool_output_withholds_everything_sensitive` runs every
+  tool against seeded rows containing marker strings and fails if one
+  comes back, or if any output key is a hidden column anywhere in the
+  catalog — so name output keys plainly (`text`, not `description`).
+- **Live state comes over a bridge, not an import.** The sidecar shares the
+  bot container's network namespace (`network_mode: service:bot`) and
+  reads `/state/overview` and `/state/activity` from the loopback health
+  server (`src/health.py`, 127.0.0.1:9090 — reachable from nowhere else).
+  Those views are `src/state_views.py`: pure projections of `state` and
+  `bot` to counts, ids, timings and switches, never a `discord` object, a
+  puzzle answer, an AI history or a bounty condition. A new view needs
+  the same discipline and a test like `tests/test_state_views.py`'s
+  forbidden-key check. The bot being down is an answer (`unavailable`),
+  not an error, and the DB-backed tools keep working.
+- **Discord ids are returned as-is**; names are not (the guild list from
+  the live bot is the one exception, by the owner's decision). Issue and
+  feature-request bodies, quotes, chat history and AI transcripts stay in
+  Discord by design.
+- **Tests**: `pytest -q botmcp/tests` from the repo root, in a venv with
+  `botmcp/requirements.txt` plus pytest; they build the schema from the real
+  migrations through `tests/fakes/db.py`, so a MariaDB-only construct in a
+  new query shows up here first. The HTTP tests drive the ASGI app directly
+  (401 / 421 / 403 / 200) and the protocol test uses the SDK's in-memory
+  client. CI's `mcp-sidecar` job runs ruff, bandit, pip-audit, the tests and
+  a `docker build` on Python 3.12.
 
 ## Docker
 

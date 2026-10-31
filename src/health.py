@@ -14,6 +14,10 @@ that work fine without it, and restarting the bot doesn't fix Ollama anyway.
 (rather than exposing 9090 to the host) means a Prometheus scrape needs to
 either run inside the same container/network namespace or hit it via an
 exec-based exporter — a deliberate choice over leaking process internals.
+
+/state/<view> serves the projections in src/state_views.py to the read-only
+MCP sidecar (botmcp/), which shares this container's network namespace
+(`network_mode: service:bot`) and is the only thing that can reach them.
 """
 import asyncio
 import logging
@@ -21,7 +25,7 @@ import math
 
 from aiohttp import web
 
-from src import ai, metrics
+from src import ai, metrics, state_views
 from src.db import get_pool
 
 HEALTH_HOST = "127.0.0.1"
@@ -101,11 +105,24 @@ async def _metrics(request: web.Request) -> web.Response:
     return web.Response(body=body, headers={"Content-Type": content_type})
 
 
+async def _state_index(request: web.Request) -> web.Response:
+    return web.json_response({"views": sorted(state_views.VIEWS)})
+
+
+async def _state_view(request: web.Request) -> web.Response:
+    view = state_views.VIEWS.get(request.match_info["view"])
+    if view is None:
+        return web.json_response({"error": "unknown view"}, status=404)
+    return web.json_response(view(request.app[_BOT_KEY]))
+
+
 def build_app(bot) -> web.Application:
     app = web.Application()
     app[_BOT_KEY] = bot
     app.router.add_get("/healthz", _healthz)
     app.router.add_get("/metrics", _metrics)
+    app.router.add_get("/state", _state_index)
+    app.router.add_get("/state/{view}", _state_view)
     return app
 
 
@@ -116,5 +133,5 @@ async def start_health_server(bot, host: str = HEALTH_HOST, port: int = HEALTH_P
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     await site.start()
-    logging.info("health server listening on http://%s:%d (/healthz, /metrics)", host, port)
+    logging.info("health server listening on http://%s:%d (/healthz, /metrics, /state)", host, port)
     return runner

@@ -69,3 +69,42 @@ jobs:
             --exit-code 1 \
             --ignore-unfixed \
             --vuln-type os,library
+
+  mcp-sidecar:
+    # The read-only MCP sidecar (botmcp/) has its own image, lock and Python.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install --require-hashes -r botmcp/requirements.lock
+          pip install pytest pytest-asyncio ruff bandit pip-audit
+
+      - name: Lint
+        run: ruff check botmcp/
+
+      - name: Bandit (security lint)
+        run: bandit -r botmcp/ --severity-level medium -x botmcp/tests
+
+      - name: pip-audit (CVE scan)
+        run: pip-audit -r botmcp/requirements.lock --strict
+
+      - name: Run tests
+        run: pytest -q botmcp/tests
+
+      - name: Build container image
+        run: docker build -t botmcp:ci botmcp
+
+      - name: Trivy scan (image)
+        run: |
+          TRIVY_VERSION=0.70.0
+          if ! command -v trivy >/dev/null; then
+            curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"               | sudo tar -xz -C /usr/local/bin trivy
+          fi
+          trivy image botmcp:ci             --severity CRITICAL             --exit-code 1             --ignore-unfixed             --vuln-type os,library

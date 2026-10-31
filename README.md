@@ -96,6 +96,10 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 - Works against any reachable Bedrock endpoint (e.g. an [itzg/minecraft-bedrock-server](https://github.com/itzg/docker-minecraft-bedrock-server) container on the same host) — status needs only the UDP ping, no docker socket; only the block shop below needs the server console
 - **Block shop** (`!mc shop`, off by default — `!settings minecraft-shop on` per server, plus `MC_CONSOLE_HOST` / `MC_CONSOLE_PASSWORD` pointing at the itzg image's SSH remote console): sell ores and building blocks straight out of your in-game inventory for 🟫 **blocks**, the shop's own currency, and spend them on decorative blocks delivered into your inventory. Blocks can't be bought with coins, paid or won — selling is the only way in. The sell side takes nothing a farm makes (no iron, gold, wool or generator stone), the buy side sells nothing that turns back into a resource (no wood, ingot blocks or hay), and everything that's both bought and sold pays back half its price, so crafting can't mint blocks. Coal, copper, lapis, quartz, diamond and netherite (and their ores) sell at fixed prices; the rest follows verzion's economy price guide's method. `!mc link <gamertag>` sends a code in-game (you must be online) and `!mc verify <code>` claims it; `!mc blocks` shows the purse
 
+### 🔌 Read-only MCP server for your agents
+
+An optional sidecar ([botmcp/](botmcp/)) exposes the database and the bot's live state to AI agents (Claude Code, for one) over the Model Context Protocol — nineteen fixed, read-only tools and a schema resource, nothing that can write. It runs as its own container with a SELECT-only database account and a bearer token, binds to one LAN address, and withholds everything users typed, display names and every credential by design; the allowlist is checked against the live schema in CI, so a new table can't leak until someone classifies it.
+
 ### 🛡️ Moderation & administration
 - Three-tier permission system (`everyone` / `server_admin` / `bot_admin`) declared in one JSON file, with per-guild user overrides via `!setperm`
 - A `hidden` flag makes sensitive admin commands invisible to unauthorized users — denied silently, no error message
@@ -154,6 +158,7 @@ All configuration is via environment variables — see [.env.example](.env.examp
 | `MC_SERVER_SHOW_IP` | `false` | Show the server address in `!mc` embeds and monitor alerts (hidden by default) |
 | `MC_CONSOLE_HOST` / `MC_CONSOLE_PORT` / `MC_CONSOLE_PASSWORD` | _(disabled)_ / `2222` / — | The Bedrock container's SSH remote console (`ENABLE_SSH=true` on the itzg image; the password is its `RCON_PASSWORD`). Enables the block shop, which each server still has to switch on |
 | `WYOMING_TTS_HOST` / `WYOMING_TTS_PORT` / `WYOMING_TTS_VOICE` | _(disabled)_ / `10200` / _(server default)_ | A Wyoming text-to-speech server (Piper, for one) as the bot's container sees it. Enables `!announce` |
+| `COMPOSE_PROFILES=mcp` + `MCP_BEARER_TOKEN` / `MCP_ALLOWED_HOSTS` / `MCP_BIND_IP` / `MCP_DB_USER` / `MCP_DB_PASSWORD` | _(off)_ | The read-only MCP sidecar for AI agents on your LAN — see [botmcp/README.md](botmcp/README.md) |
 | `NSFW_API_URL` / `NSFW_API_KEY` / `NSFW_API_USER_ID` | _(disabled)_ | Credentials for an NSFW image API, enabling `!nsfw`; servers allow it, restrict it to channels or ban tags with `!settings nsfw` |
 
 ## Engineering highlights
@@ -200,6 +205,7 @@ src/
 ├── games/             # Chess (+ engines), blackjack, hangman, ttt/c4, race
 └── gambling/          # Slots, flip, scratchoff
 migrations/            # Numbered SQL migrations — the schema's source of truth
+botmcp/                # Read-only MCP sidecar: its own image, SELECT-only DB account, bearer token
 tests/                 # 2,500+ tests, in-memory DB fake, fake discord module
 ```
 

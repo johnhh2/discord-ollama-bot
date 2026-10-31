@@ -39,6 +39,11 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
+    # The MCP sidecar below shares this namespace (network_mode: service:bot),
+    # so its port is published here. MCP_BIND_IP must be the host's LAN
+    # address — the default keeps it on the host's loopback until it is set.
+    ports:
+      - "${MCP_BIND_IP:-127.0.0.1}:${MCP_PORT:-8765}:${MCP_PORT:-8765}"
     # `ollama` (OLLAMA_BASE_URL above) is OLLAMA_HOST_IP, or the Docker host if unset.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -53,6 +58,44 @@ services:
       resources:
         limits:
           memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Read-only MCP sidecar (botmcp/). Off unless the `mcp` profile is on
+  # (COMPOSE_PROFILES=mcp in the stack env). Shares the bot's network
+  # namespace to read its loopback-only /state views; its own image and
+  # lock; a SELECT-only DB account; never the Discord token.
+  mcp:
+    build: botmcp
+    profiles: ["mcp"]
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    network_mode: "service:bot"
+    depends_on:
+      - bot
+    environment:
+      MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN:-}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
+      MCP_PORT: ${MCP_PORT:-8765}
+      MCP_DB_USER: ${MCP_DB_USER:-}
+      MCP_DB_PASSWORD: ${MCP_DB_PASSWORD:-}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_NAME: ${DB_NAME}
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     logging:
       driver: json-file
       options:

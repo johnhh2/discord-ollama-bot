@@ -27,6 +27,8 @@ dist
 # Tests and dev-only scripts (not needed at runtime)
 tests
 scripts
+# The MCP sidecar builds from its own context (botmcp/Dockerfile)
+botmcp
 
 # Runtime/local data — never bake into the image
 data
