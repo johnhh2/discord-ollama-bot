@@ -19,6 +19,15 @@ RUN apt-get update \
  && INSTALL_PREFIX=/usr/local ./build.sh \
  && rm -rf /tmp/lc0
 
+# ── Tools stage ──────────────────────────────────────────────────────────────
+# yt-dlp (standalone build — current releases need Python 3.11+) and Deno,
+# the JS runtime it uses for YouTube, for !announce <youtube link>. Pinned
+# by version and sha256 in the script.
+FROM python:3.10-slim@sha256:cdbf8193cee2e31639ea8ea85ffdd8fa5cce98ee9abfde96ea5f329490048831 AS tools
+ARG TARGETARCH
+COPY scripts/fetch_tools.py /fetch_tools.py
+RUN python /fetch_tools.py /tools "${TARGETARCH:-$(uname -m)}"
+
 # ── Runtime stage ────────────────────────────────────────────────────────────
 FROM python:3.10-slim@sha256:cdbf8193cee2e31639ea8ea85ffdd8fa5cce98ee9abfde96ea5f329490048831
 WORKDIR /app
@@ -32,6 +41,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends libcairo2 stockfish libopenblas0 libopus0 ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=lc0-builder /usr/local/bin/lc0 /usr/local/bin/lc0
+COPY --from=tools /tools/deno /usr/local/bin/
 COPY --from=builder /install /usr/local
 COPY src/ ./src/
 COPY assets/ ./assets/
@@ -40,10 +50,19 @@ COPY migrations/ ./migrations/
 COPY maia_weights/ ./maia_weights/
 COPY main.py ./
 RUN useradd --system --uid 1001 --no-create-home bot
+# yt-dlp lives in its own dir, owned by the bot, because it updates itself
+# (`yt-dlp -U`, run by the bot daily and after a failed resolve). The
+# compose file mounts a named volume here: Docker seeds a new volume with
+# this pinned copy, and the updated binary then outlives restarts and
+# rebuilds. Without the volume the dir is read-only and the seed is used.
+RUN mkdir -p /opt/ytdlp && chown bot:bot /opt/ytdlp
+COPY --from=tools --chown=bot:bot /tools/yt-dlp /opt/ytdlp/yt-dlp
 # No home dir and a read-only rootfs (docker-compose.yml): /tmp is the only
 # writable path, so HOME and matplotlib's config dir point there.
 ENV HOME=/tmp \
     MPLCONFIGDIR=/tmp/matplotlib \
+    DENO_DIR=/tmp/deno \
+    YTDLP_PATH=/opt/ytdlp/yt-dlp \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 USER bot

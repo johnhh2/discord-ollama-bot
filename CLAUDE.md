@@ -35,6 +35,7 @@ Key environment variables (all optional except `DISCORD_TOKEN`):
 | `WYOMING_TTS_HOST` | _(disabled)_ | Optional; a Wyoming text-to-speech server (Piper) as seen from the bot's container. Enables `!announce` |
 | `WYOMING_TTS_PORT` | `10200` | Wyoming TTS port |
 | `WYOMING_TTS_VOICE` | _(server default)_ | Optional; one of the TTS server's voice names |
+| `YTDLP_PATH` | `yt-dlp` (PATH) | The yt-dlp binary for `!announce <youtube link>`; the image sets `/opt/ytdlp/yt-dlp`, the self-updating copy |
 | `COMPOSE_PROFILES` | _(unset)_ | `mcp` starts the read-only MCP sidecar (see that section); unset leaves it off |
 | `MCP_BEARER_TOKEN` | — | Sidecar: the pre-shared token every MCP request must carry; 32+ characters or the sidecar refuses to start |
 | `MCP_ALLOWED_HOSTS` | — | Sidecar: comma-separated `host:port` values clients will use; any other `Host` header gets 421 |
@@ -1455,6 +1456,29 @@ otherwise, and the `!admin` panel lists the row only then.
   `ANNOUNCE_MAX_FILE_BYTES` are refused before the form, and a file with a
   quoted message is refused as ambiguous. The form then asks for the
   channel only. Boot warns if ffmpeg is missing.
+- **A YouTube link plays the video's audio.** `youtube_url_in` lifts the
+  first YouTube URL (watch / shorts / live / youtu.be / music, `<url>`
+  too) out of the arguments before parsing; YouTube only — yt-dlp speaks
+  to a thousand sites, but a bot that fetches any URL an admin pastes is a
+  proxy into its LAN. `fetch_youtube` runs the **standalone** `yt-dlp`
+  binary (`--print` title / duration / is_live / url, best audio-only
+  format) and hands the direct media URL to ffmpeg with the same `-t`
+  cap, so only the clip is downloaded; live streams are refused. The
+  binary, not the pip package: current yt-dlp needs Python 3.11+. It and
+  Deno (yt-dlp's JS runtime for YouTube's player challenge) are fetched
+  by [scripts/fetch_tools.py](scripts/fetch_tools.py) in the Dockerfile's
+  tools stage, pinned by version and sha256 per architecture; `DENO_DIR`
+  points at /tmp. Boot warns if the binary is missing.
+- **yt-dlp updates itself; the pin is only the seed.** YouTube changes
+  break old yt-dlp within weeks, so the image puts it in `/opt/ytdlp`
+  (owned by the bot, `YTDLP_PATH`), the compose file mounts the named
+  volume `ytdlp` there (Docker seeds a new volume from the image), and
+  the cog runs `update_ytdlp` (`yt-dlp -U`, under a lock) once a day and
+  again when a resolve fails — at most once per `YTDLP_UPDATE_RETRY_SECS`
+  — then retries the resolve once. A live stream is refused without
+  an update. Without the volume the dir is read-only, the update logs a
+  warning and the seed keeps serving. Bump the pins in the script only
+  when a fresh volume should start newer; the running copy doesn't need it.
 - **`x<N>` repeats the clip** (any `x<N>` / `X<N>` token outside the
   quotes, `_REPEAT_RE`), synthesized or decoded once and played N times
   in one connection. At most `ANNOUNCE_MAX_REPEATS` (50), and a message's

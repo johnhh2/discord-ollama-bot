@@ -12,7 +12,9 @@ import pytest
 
 import src.audio_files as _audio_mod
 import src.cogs.announce_cog as _announce_mod
-from src.audio_files import DecodeError, decode_audio, ffmpeg_available, is_audio_attachment
+from src.audio_files import (
+    DecodeError, decode_audio, ffmpeg_available, is_audio_attachment, parse_ytdlp_output, youtube_url_in,
+)
 from src.cogs.announce_cog import AnnounceCog, parse_announce_args
 from src.settings_views import Field, _component
 from src.tts import Audio, TTSError, WyomingTTS, encode_event, read_event, to_discord_pcm
@@ -529,7 +531,7 @@ async def test_attached_file_refusals(_no_builtin_channel_converter, _fake_decod
     ctx = _ctx([general])
     ctx.message.attachments = [_attachment()]
     await cog.cmd_announce.callback(cog, ctx, args='"and some words" gen')
-    assert any("not both" in (e.description or "") for e in ctx.sent_embeds)
+    assert any("One thing to play" in (e.description or "") for e in ctx.sent_embeds)
 
     cog = _cog()
     ctx = _ctx([general])
@@ -572,6 +574,157 @@ async def test_long_file_is_reported_as_cut(_no_builtin_channel_converter, monke
     await cog.cmd_announce.callback(cog, ctx, args="gen")
     done = next(e for e in ctx.sent_embeds if "Announced" in (e.title or ""))
     assert "first 1 seconds" in done.description
+
+
+# ── YouTube links ────────────────────────────────────────────────────────────
+
+def test_youtube_url_is_lifted_out_of_the_arguments():
+    assert youtube_url_in("gen https://www.youtube.com/watch?v=dQw4w9WgXcQ x2") == \
+        ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "gen x2")
+    assert youtube_url_in("https://youtu.be/dQw4w9WgXcQ?t=5 General") == ("https://youtu.be/dQw4w9WgXcQ?t=5", "General")
+    assert youtube_url_in("<https://youtube.com/shorts/dQw4w9WgXcQ> gen") == ("https://youtube.com/shorts/dQw4w9WgXcQ", "gen")
+    assert youtube_url_in("https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=x") == ("https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=x", "")
+    assert youtube_url_in("https://example.com/watch?v=dQw4w9WgXcQ gen") == (None, "https://example.com/watch?v=dQw4w9WgXcQ gen")
+    assert youtube_url_in('"hi" gen') == (None, '"hi" gen')
+
+
+def test_parse_ytdlp_output():
+    assert parse_ytdlp_output("Never Gonna Give You Up\n212\nFalse\nhttps://rr1.googlevideo.com/x\n") == \
+        ("Never Gonna Give You Up", False, "https://rr1.googlevideo.com/x")
+    assert parse_ytdlp_output("[warn] something\nLive now\nNA\nTrue\nhttps://m/x")[1] is True
+    with pytest.raises(DecodeError):
+        parse_ytdlp_output("ERROR: no video\n")
+    with pytest.raises(DecodeError):
+        parse_ytdlp_output("t\n1\nFalse\nnot a url\n")
+
+
+@pytest.fixture
+def _fake_youtube(monkeypatch):
+    calls = []
+
+    async def _fetch(url, *, max_secs):
+        calls.append((url, max_secs))
+        return b"\x00\x00" * 4800, "Never Gonna Give You Up"
+    monkeypatch.setattr(_announce_mod, "fetch_youtube", _fetch)
+    return calls
+
+
+@_aio
+async def test_youtube_link_plays_its_audio(_no_builtin_channel_converter, _fake_youtube, _fake_decoder):
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    ctx = _ctx([general])
+    await cog.cmd_announce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ x2")
+
+    assert _fake_youtube == [("https://youtu.be/dQw4w9WgXcQ", _announce_mod.ANNOUNCE_MAX_SECS)]
+    assert cog.tts.calls == [] and _fake_decoder == []
+    assert general.vc.plays == 2
+    done = next(e for e in ctx.sent_embeds if "Announced" in (e.title or ""))
+    assert "Never Gonna Give You Up" in done.description and "2 times" in done.description
+    assert cog._busy == set()
+
+
+@_aio
+async def test_youtube_link_asks_for_the_channel_and_refuses_mixes(_no_builtin_channel_converter, _fake_youtube, monkeypatch):
+    forms = []
+
+    async def _form(ctx, *, fields, **kwargs):
+        forms.append((fields, kwargs))
+        return {"channel": [GENERAL_ID]}
+    monkeypatch.setattr(_announce_mod, "open_form", _form)
+
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    ctx = _ctx([general])
+    await cog.cmd_announce.callback(cog, ctx, args="https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    fields, kwargs = forms[-1]
+    assert [f.kind for f in fields] == ["voice_channels"] and "video" in kwargs["description"]
+    assert general.vc.plays == 1
+
+    for args, attachments in [
+        ('"and words" gen https://youtu.be/dQw4w9WgXcQ', []),
+        ("gen https://youtu.be/dQw4w9WgXcQ", [_attachment()]),
+    ]:
+        cog = _cog()
+        ctx = _ctx([general])
+        ctx.message.attachments = attachments
+        await cog.cmd_announce.callback(cog, ctx, args=args)
+        assert any("One thing to play" in (e.description or "") for e in ctx.sent_embeds), args
+    assert len(_fake_youtube) == 1
+
+
+@_aio
+async def test_youtube_failure_releases_the_slot(_no_builtin_channel_converter, monkeypatch):
+    updates = []
+
+    async def _update():
+        updates.append(1)
+        return "yt-dlp is up to date"
+    monkeypatch.setattr(_announce_mod, "update_ytdlp", _update)
+
+    async def _live(url, *, max_secs):
+        raise DecodeError("that's a live stream")
+    monkeypatch.setattr(_announce_mod, "fetch_youtube", _live)
+
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    ctx = _ctx([general])
+    await cog.cmd_announce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ")
+    assert any("live stream" in (e.description or "") for e in ctx.sent_embeds)
+    assert not hasattr(general, "connect_kwargs") and cog._busy == set()
+    assert updates == []  # a live stream isn't a stale-yt-dlp failure
+
+
+@_aio
+async def test_failed_resolve_updates_ytdlp_once_and_retries(_no_builtin_channel_converter, monkeypatch):
+    """An extraction failure is usually yt-dlp predating a YouTube change:
+    `yt-dlp -U` once, retry once, and not again within the hour."""
+    updates, fetches = [], []
+
+    async def _update():
+        updates.append(1)
+        return "Updated yt-dlp to 2026.11.01"
+    monkeypatch.setattr(_announce_mod, "update_ytdlp", _update)
+
+    async def _fetch(url, *, max_secs):
+        fetches.append(url)
+        if len(fetches) == 1:
+            raise DecodeError("yt-dlp gave no media URL")
+        return b"\x00\x00" * 4800, "Fixed after update"
+    monkeypatch.setattr(_announce_mod, "fetch_youtube", _fetch)
+
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    ctx = _ctx([general])
+    await cog.cmd_announce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ")
+    assert updates == [1] and len(fetches) == 2
+    assert any("Fixed after update" in (e.description or "") for e in ctx.sent_embeds)
+
+    # Within the retry window a second failure is reported as is: no update, no retry.
+    async def _broken(url, *, max_secs):
+        fetches.append(url)
+        raise DecodeError("yt-dlp gave no media URL")
+    monkeypatch.setattr(_announce_mod, "fetch_youtube", _broken)
+    ctx = _ctx([general])
+    await cog.cmd_announce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ")
+    assert updates == [1] and len(fetches) == 3
+    assert any("no media URL" in (e.description or "") for e in ctx.sent_embeds)
+
+    # Past the window it tries again; an update that can't run (read-only
+    # install) just surfaces the original error.
+    cog._ytdlp_update_at -= _announce_mod.YTDLP_UPDATE_RETRY_SECS + 1
+
+    async def _cant_update():
+        raise DecodeError("yt-dlp -U failed")
+    monkeypatch.setattr(_announce_mod, "update_ytdlp", _cant_update)
+    ctx = _ctx([general])
+    await cog.cmd_announce.callback(cog, ctx, args="gen https://youtu.be/dQw4w9WgXcQ")
+    assert len(fetches) == 4 and cog._busy == set()
+    assert any("no media URL" in (e.description or "") for e in ctx.sent_embeds)
+
+
+def test_ytdlp_updates_daily():
+    assert AnnounceCog.update_ytdlp_daily.hours == 24
 
 
 # ── x<N> repeats and !announce stop ──────────────────────────────────────────

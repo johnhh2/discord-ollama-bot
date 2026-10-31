@@ -46,6 +46,9 @@ MC_CONSOLE_PASSWORD = os.getenv("MC_CONSOLE_PASSWORD", "")
 WYOMING_TTS_HOST = os.getenv("WYOMING_TTS_HOST", "")
 WYOMING_TTS_PORT = int(os.getenv("WYOMING_TTS_PORT") or "10200")
 WYOMING_TTS_VOICE = os.getenv("WYOMING_TTS_VOICE", "")
+# The yt-dlp binary !announce runs for YouTube links; the image sets it to
+# the self-updating copy in /opt/ytdlp. Empty means PATH lookup.
+YTDLP_PATH = os.getenv("YTDLP_PATH", "") or "yt-dlp"
 ANNOUNCE_MAX_CHARS = 500  # synthesis time and the modal's text box grow with it
 # An attached audio file instead of text: Discord's own upload cap, and the
 # clip is cut at ANNOUNCE_MAX_SECS (decoded PCM is ~190 KB a second).

@@ -9,6 +9,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # yt-dlp (!announce <youtube link>) updates itself here; the image seeds
+    # a new volume with its pinned copy (see the Dockerfile).
+    volumes:
+      - ytdlp:/opt/ytdlp
     # ${VAR:-} gives an empty default so Portainer doesn't warn "variable not
     # set". A var missing from this block never reaches the container.
     environment:
@@ -34,6 +38,7 @@ services:
       WYOMING_TTS_HOST: ${WYOMING_TTS_HOST:-}
       WYOMING_TTS_PORT: ${WYOMING_TTS_PORT:-}
       WYOMING_TTS_VOICE: ${WYOMING_TTS_VOICE:-}
+      YTDLP_PATH: ${YTDLP_PATH:-/opt/ytdlp/yt-dlp}
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
       DB_USER: ${DB_USER}
@@ -101,3 +106,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  ytdlp:

@@ -27,6 +27,8 @@ dist
 # Tests and dev-only scripts (not needed at runtime)
 tests
 scripts
+# ...except the one the Dockerfile's tools stage runs
+!scripts/fetch_tools.py
 # The MCP sidecar builds from its own context (botmcp/Dockerfile)
 botmcp
 

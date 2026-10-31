@@ -10,11 +10,15 @@ import asyncio
 import io
 import logging
 import re
+import time
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
-from src.audio_files import DecodeError, decode_audio, ffmpeg_available, is_audio_attachment
+from src.audio_files import (
+    DecodeError, decode_audio, fetch_youtube, ffmpeg_available, is_audio_attachment, update_ytdlp,
+    ytdlp_available, youtube_url_in,
+)
 from src.config import (
     WYOMING_TTS_HOST, WYOMING_TTS_PORT, WYOMING_TTS_VOICE,
     ANNOUNCE_MAX_CHARS, ANNOUNCE_MAX_FILE_BYTES, ANNOUNCE_MAX_SECS,
@@ -26,6 +30,7 @@ from src.tts import WyomingTTS, TTSError, DISCORD_RATE, DISCORD_CHANNELS, SAMPLE
 
 CONNECT_TIMEOUT = 10.0
 PLAY_GRACE_SECS = 10.0  # allowed on top of the clip's own length before the player is given up on
+YTDLP_UPDATE_RETRY_SECS = 3600.0  # a failed resolve triggers `yt-dlp -U` at most this often
 
 # Straight or curly quotes — phones autocorrect to the latter.
 _QUOTED_RE = re.compile(r'"([^"]*)"|“([^”]*)”')
@@ -79,6 +84,7 @@ class AnnounceCog(commands.Cog):
         self._busy: set[int] = set()  # guilds with an announcement in progress (see CLAUDE.md: Concurrency)
         self._playing: dict[int, discord.VoiceClient] = {}  # guild → the client mid-clip, for !announce stop
         self._stop: set[int] = set()  # guilds whose running announcement was told to stop
+        self._ytdlp_update_at = 0.0  # monotonic time of the last `yt-dlp -U` attempt
 
     async def cog_load(self):
         if self.tts is None:
@@ -93,6 +99,49 @@ class AnnounceCog(commands.Cog):
             logging.warning("announce_opus_missing: libopus isn't installed, !announce will fail at playback")
         if not ffmpeg_available():
             logging.warning("announce_ffmpeg_missing: ffmpeg isn't installed, !announce can't play attached audio files")
+        if not ytdlp_available():
+            logging.warning("announce_ytdlp_missing: yt-dlp isn't installed, !announce can't play YouTube links")
+        else:
+            self.update_ytdlp_daily.start()
+
+    async def cog_unload(self):
+        self.update_ytdlp_daily.cancel()
+
+    # YouTube changes break old yt-dlp within weeks; the binary updates
+    # itself (see CLAUDE.md: Voice announcements). Daily here, and once more
+    # after a failed resolve in _fetch_youtube.
+    @tasks.loop(hours=24)
+    async def update_ytdlp_daily(self):
+        await self._update_ytdlp("daily")
+
+    @update_ytdlp_daily.before_loop
+    async def _before_update(self):
+        await self.bot.wait_until_ready()
+
+    async def _update_ytdlp(self, reason: str) -> bool:
+        """Run `yt-dlp -U`; True if it ran (whatever it found)."""
+        self._ytdlp_update_at = time.monotonic()
+        try:
+            result = await update_ytdlp()
+        except DecodeError as e:
+            logging.warning("ytdlp_update_failed reason=%s: %s", reason, e)
+            return False
+        logging.info("ytdlp_update reason=%s: %s", reason, result)
+        return True
+
+    async def _fetch_youtube(self, url: str):
+        """`fetch_youtube`, with one `yt-dlp -U` and retry when the resolve
+        fails — the usual cause is a YouTube change the running yt-dlp
+        predates. Rate-limited so a bad link can't hammer GitHub."""
+        try:
+            return await fetch_youtube(url, max_secs=ANNOUNCE_MAX_SECS)
+        except DecodeError as e:
+            if "live stream" in str(e) or time.monotonic() - self._ytdlp_update_at < YTDLP_UPDATE_RETRY_SECS:
+                raise
+            logging.info("ytdlp_resolve_failed url=%s: %s", url, e)
+            if not await self._update_ytdlp("resolve failed"):
+                raise
+            return await fetch_youtube(url, max_secs=ANNOUNCE_MAX_SECS)
 
     def _refusal(self, ctx: commands.Context) -> "discord.Embed | None":
         if self.tts is None:
@@ -102,8 +151,8 @@ class AnnounceCog(commands.Cog):
         return None
 
     @commands.command(name="announce",
-                      help="Read a message aloud in a voice channel (text-to-speech), or play an attached audio file there; "
-                           "x<N> repeats it, `stop` cuts it short",
+                      help="Read a message aloud in a voice channel (text-to-speech), or play an attached audio file "
+                           "or a YouTube link there; x<N> repeats it, `stop` cuts it short",
                       usage='"<message>" <voice-channel> [x<N>]')
     async def cmd_announce(self, ctx: commands.Context, *, args: str = None):
         refusal = self._refusal(ctx)
@@ -116,20 +165,22 @@ class AnnounceCog(commands.Cog):
             return
         attachments = getattr(ctx.message, "attachments", None) or []
         attachment = next((a for a in attachments if is_audio_attachment(a)), None)
-        text, query, repeats = parse_announce_args(args or "")
+        url, args = youtube_url_in(args or "")
+        text, query, repeats = parse_announce_args(args)
         if repeats is not None and not 1 <= repeats <= ANNOUNCE_MAX_REPEATS:
             await ctx.send(embed=emb("❌ Announce", f"Repeat between 1 and {ANNOUNCE_MAX_REPEATS} times (`x{ANNOUNCE_MAX_REPEATS}` at most).", C_RED))
             return
         repeats = repeats or 1
-        if attachment is not None:
-            if text:
-                await ctx.send(embed=emb("❌ Announce", "Attach a file or write a message, not both.", C_RED))
+        media = attachment is not None or url is not None
+        if media:
+            if text or (attachment is not None and url is not None):
+                await ctx.send(embed=emb("❌ Announce", "One thing to play: a message, an attached file or a YouTube link.", C_RED))
                 return
-            if attachment.size > ANNOUNCE_MAX_FILE_BYTES:
+            if attachment is not None and attachment.size > ANNOUNCE_MAX_FILE_BYTES:
                 await ctx.send(embed=emb("❌ Too Big", f"Keep the file under {ANNOUNCE_MAX_FILE_BYTES // (1024 * 1024)} MB.", C_RED))
                 return
         channel = None
-        if query and (text or attachment is not None):
+        if query and (text or media):
             # What to play and a channel both given: a channel miss opens the pickers.
             try:
                 channel = await VoiceChannelConverter().convert(ctx, query)
@@ -146,16 +197,19 @@ class AnnounceCog(commands.Cog):
             except commands.BadArgument:
                 text = query
 
-        if (not text and attachment is None) or channel is None:
+        if (not text and not media) or channel is None:
             if attachment is not None:
                 description = f"Pick the voice channel to play **{attachment.filename}** in."
+            elif url is not None:
+                description = "Pick the voice channel to play the video's audio in."
             else:
                 description = ("Pick the voice channel and write what the bot should say.\n"
-                               "Usage: `!announce \"<message>\" <voice-channel>`, or attach an audio file instead of the message")
+                               "Usage: `!announce \"<message>\" <voice-channel>`, or attach an audio file "
+                               "or paste a YouTube link instead of the message")
             values = await open_form(
                 ctx, title="📢 Announce", description=description,
-                fields=self._form_fields(ctx, channel, text, with_text=attachment is None),
-                button="Play it…" if attachment is not None else "Write it…",
+                fields=self._form_fields(ctx, channel, text, with_text=not media),
+                button="Play it…" if media else "Write it…",
             )
             if values is None:
                 return
@@ -166,10 +220,10 @@ class AnnounceCog(commands.Cog):
             if channel is None:
                 await ctx.send(embed=emb("❌ Announce", "Pick a voice channel to speak in.", C_RED))
                 return
-            if not text and attachment is None:
+            if not text and not media:
                 await ctx.send(embed=emb("❌ Announce", "Write the message to read out.", C_RED))
                 return
-        await self._announce(ctx, channel, text, attachment, repeats=repeats)
+        await self._announce(ctx, channel, text, attachment, url=url, repeats=repeats)
 
     @staticmethod
     def _form_fields(ctx, channel, text: str, *, with_text: bool = True) -> list:
@@ -183,11 +237,13 @@ class AnnounceCog(commands.Cog):
             fields.append(Field("text", "Message", kind="paragraph", max_length=ANNOUNCE_MAX_CHARS, default=text or None))
         return fields
 
-    async def _announce(self, ctx: commands.Context, channel, text: str, attachment=None, *, repeats: int = 1) -> None:
-        if attachment is None and len(text) > ANNOUNCE_MAX_CHARS:
+    async def _announce(self, ctx: commands.Context, channel, text: str, attachment=None, *,
+                        url: "str | None" = None, repeats: int = 1) -> None:
+        media = attachment is not None or url is not None
+        if not media and len(text) > ANNOUNCE_MAX_CHARS:
             await ctx.send(embed=emb("❌ Too Long", f"Keep it under {ANNOUNCE_MAX_CHARS} characters.", C_RED))
             return
-        if attachment is None and len(text) * repeats >= ANNOUNCE_MAX_TOTAL_CHARS:
+        if not media and len(text) * repeats >= ANNOUNCE_MAX_TOTAL_CHARS:
             most = max(1, (ANNOUNCE_MAX_TOTAL_CHARS - 1) // max(len(text), 1))
             await ctx.send(embed=emb("❌ Too Long",
                                      f"The message times the repeats must stay under {ANNOUNCE_MAX_TOTAL_CHARS} characters — "
@@ -221,6 +277,13 @@ class AnnounceCog(commands.Cog):
                     pcm = await decode_audio(data, max_secs=ANNOUNCE_MAX_SECS, filename=attachment.filename)
                 except DecodeError as e:
                     await ctx.send(embed=emb("❌ Audio File", f"Couldn't play **{attachment.filename}**: {e}", C_RED))
+                    return
+                label = attachment.filename
+            elif url is not None:
+                try:
+                    pcm, label = await self._fetch_youtube(url)
+                except DecodeError as e:
+                    await ctx.send(embed=emb("❌ YouTube", f"Couldn't play that video: {e}", C_RED))
                     return
             else:
                 try:
@@ -257,11 +320,11 @@ class AnnounceCog(commands.Cog):
                 times = f", stopped after {played} of {repeats}"
             elif repeats > 1:
                 times = f", {repeats} times"
-            if attachment is not None:
+            if media:
                 seconds = len(pcm) / (DISCORD_RATE * DISCORD_CHANNELS * SAMPLE_WIDTH)
                 # The decoder cuts at the cap, so a clip that long was (almost surely) longer.
                 cut = f" — the first {ANNOUNCE_MAX_SECS} seconds of it" if seconds >= ANNOUNCE_MAX_SECS - 0.5 else ""
-                done = f"Played **{attachment.filename}** in **{channel.name}**{cut}{times}."
+                done = f"Played **{label}** in **{channel.name}**{cut}{times}."
             else:
                 done = f"Read out in **{channel.name}**{times}:\n> {text}"
             await ctx.send(embed=emb("📢 Announced", done, C_GREEN))
