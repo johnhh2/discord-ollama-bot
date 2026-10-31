@@ -1445,7 +1445,8 @@ list their rows only then.
   with `add_balance`. A `stop` by the payer or an admin is not refunded.
   Godmode pays nothing. `!announce stop` (`own=True`) stops only the
   invoker's own announcement unless they're an admin; `!adminannounce stop`
-  stops anything.
+  and `!announcestop` (its own `server_admin` command, for the panel and
+  the command reference) stop anything.
 - **Synthesize first, connect second.** Synthesis is the slow, failure-prone
   step; done before `connect` the bot never sits silent in a channel waiting
   on the TTS server, and a TTS error needs no disconnect.

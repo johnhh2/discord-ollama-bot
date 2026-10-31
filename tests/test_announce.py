@@ -826,6 +826,45 @@ async def test_stop_cuts_a_repeat_short(_no_builtin_channel_converter):
     assert cog._busy == set() and cog._stop == set() and cog._playing == {}
 
 
+@_aio
+async def test_announcestop_command_stops_anything(_no_builtin_channel_converter):
+    """The admin-tier command, with no ownership check: a paid announcement
+    started by someone else stops too."""
+    class _Held(_FakeVoiceClient):
+        def play(self, source, after=None):
+            self.plays += 1
+            self._after = after
+
+        def stop(self):
+            self.stopped = True
+            self._after(None)
+
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    general.vc = _Held()
+    ctx1, ctx2 = _ctx([general]), _ctx([general])
+    ctx2.author = FakeMember(uid=8, display_name="Mod")
+
+    await cog.cmd_announcestop.callback(cog, ctx2)
+    assert any("Nothing is playing" in (e.description or "") for e in ctx2.sent_embeds)
+
+    task = asyncio.create_task(cog.cmd_adminannounce.callback(cog, ctx1, args='"hi" gen x50'))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert general.vc.plays == 1 and cog._owner.get(GUILD_ID) == ctx1.author.id
+
+    await cog.cmd_announcestop.callback(cog, ctx2)
+    await task
+    assert general.vc.stopped and general.vc.plays == 1
+    done = next(e for e in ctx1.sent_embeds if "Announced" in (e.title or ""))
+    assert "stopped after 1 of 50" in done.description
+
+    cog.tts = None
+    ctx3 = _ctx([general])
+    await cog.cmd_announcestop.callback(cog, ctx3)
+    assert any("aren't configured" in (e.description or "") for e in ctx3.sent_embeds)
+
+
 # ── !shop announce / !announce: the paid one ─────────────────────────────────
 
 PAYER = 7  # _ctx's author

@@ -192,6 +192,17 @@ class AnnounceCog(commands.Cog):
             channel, text, attachment, url, repeats = request
             await self._announce(ctx, channel, text, attachment, url=url, repeats=repeats)
 
+    @commands.command(name="announcestop",
+                      help="Stop the announcement playing in this server, whoever started it")
+    async def cmd_announcestop(self, ctx: commands.Context):
+        # Admin-tier in command_perms.json, so no ownership check: the same
+        # stop `!adminannounce stop` gives, as its own word.
+        refusal = self._refusal(ctx)
+        if refusal is not None:
+            await ctx.send(embed=refusal)
+            return
+        await self._stop_playing(ctx)
+
     async def paid_announce(self, ctx: commands.Context, args: "str | None") -> None:
         """`!shop announce` / `!announce` (ShopCog forwards here): the text
         path of the admin command, confirmed and charged per character times
