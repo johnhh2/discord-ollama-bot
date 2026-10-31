@@ -1436,6 +1436,27 @@ otherwise, and the `!admin` panel lists the row only then.
   an `open_form` modal: a voice-channel picker (`Field` kind
   `voice_channels`, preselected to the invoker's own channel) and a text
   box.
+- **An attached audio file plays instead of the text** (mp3, ogg, m4a,
+  wav, flac, or a video's soundtrack: ffmpeg runs with `-vn`... — `is_audio_attachment` takes an `audio/*` or `video/*` content type
+  or a known extension). `decode_audio` in [src/audio_files.py](src/audio_files.py)
+  runs ffmpeg (Dockerfile) on a temp file under /tmp — not a pipe, since
+  an m4a's index can sit at the end — and yields the same Discord PCM the
+  TTS path does, so playback is one path. ffmpeg's `-t` cuts the clip at
+  `ANNOUNCE_MAX_SECS` rather than decoding an hour-long upload (190 KB a
+  second of PCM); the reply says when it was cut. Uploads over
+  `ANNOUNCE_MAX_FILE_BYTES` are refused before the form, and a file with a
+  quoted message is refused as ambiguous. The form then asks for the
+  channel only. Boot warns if ffmpeg is missing.
+- **`x<N>` repeats the clip** (any `x<N>` / `X<N>` token outside the
+  quotes, `_REPEAT_RE`), synthesized or decoded once and played N times
+  in one connection. At most `ANNOUNCE_MAX_REPEATS` (50), and a message's
+  length times N must stay under `ANNOUNCE_MAX_TOTAL_CHARS` (1000) —
+  checked in `_announce`, after the form, so a form-typed message counts
+  too; a file is bounded by its own length cap times 50. `!announce stop`
+  sets the guild's `_stop` flag and calls `stop()` on the client in
+  `_playing`, whose `after` callback releases `_play`'s wait; the loop
+  checks the flag before each repeat and the reply says how many of N
+  played. Both are cleared in the busy `finally`.
 - **Playback runs on discord.py's player thread**: the `after` callback
   resolves a future via `call_soon_threadsafe`; the wait is bounded by the
   clip length plus `PLAY_GRACE_SECS`, and `disconnect(force=True)` sits in

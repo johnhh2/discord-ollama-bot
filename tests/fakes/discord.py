@@ -198,6 +198,7 @@ class FakeMessage:
         self.channel = channel or FakeChannel()
         self.mentions: list = []
         self.channel_mentions: list = []
+        self.attachments: list = []
         self.reference = None
         self.delete = AsyncMock()
         self.edit = AsyncMock()

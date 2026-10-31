@@ -2,6 +2,7 @@
 server, the PCM conversion, and the command flow with the voice connection
 stubbed (connect / play / disconnect can't run without Discord)."""
 import asyncio
+import io
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -9,7 +10,9 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 
+import src.audio_files as _audio_mod
 import src.cogs.announce_cog as _announce_mod
+from src.audio_files import DecodeError, decode_audio, ffmpeg_available, is_audio_attachment
 from src.cogs.announce_cog import AnnounceCog, parse_announce_args
 from src.settings_views import Field, _component
 from src.tts import Audio, TTSError, WyomingTTS, encode_event, read_event, to_discord_pcm
@@ -25,13 +28,23 @@ GAMES_ID = 101
 # ── argument parsing ─────────────────────────────────────────────────────────
 
 def test_parse_quoted_message_in_either_order():
-    assert parse_announce_args('"Dinner is ready" General') == ("Dinner is ready", "General")
-    assert parse_announce_args('General "Dinner is ready"') == ("Dinner is ready", "General")
-    assert parse_announce_args('🔊 General 2 "hi"') == ("hi", "🔊 General 2")
-    assert parse_announce_args('“smart quotes” Lounge') == ("smart quotes", "Lounge")
-    assert parse_announce_args('"only a message"') == ("only a message", "")
-    assert parse_announce_args("General") == ("", "General")
-    assert parse_announce_args("") == ("", "")
+    assert parse_announce_args('"Dinner is ready" General') == ("Dinner is ready", "General", None)
+    assert parse_announce_args('General "Dinner is ready"') == ("Dinner is ready", "General", None)
+    assert parse_announce_args('🔊 General 2 "hi"') == ("hi", "🔊 General 2", None)
+    assert parse_announce_args('“smart quotes” Lounge') == ("smart quotes", "Lounge", None)
+    assert parse_announce_args('"only a message"') == ("only a message", "", None)
+    assert parse_announce_args("General") == ("", "General", None)
+    assert parse_announce_args("") == ("", "", None)
+
+
+def test_parse_repeat_flag_anywhere_outside_the_quotes():
+    assert parse_announce_args('"hi" General x5') == ("hi", "General", 5)
+    assert parse_announce_args('x50 General "hi"') == ("hi", "General", 50)
+    assert parse_announce_args('"hi" X3 Lounge 2') == ("hi", "Lounge 2", 3)
+    assert parse_announce_args('"say x5 in here" General') == ("say x5 in here", "General", None)
+    assert parse_announce_args("General x0") == ("", "General", 0)
+    assert parse_announce_args("x2") == ("", "", 2)
+    assert parse_announce_args("xray") == ("", "xray", None)
 
 
 # ── PCM conversion ───────────────────────────────────────────────────────────
@@ -151,11 +164,13 @@ class _FakeTTS:
 class _FakeVoiceClient:
     def __init__(self):
         self.played = None
+        self.plays = 0
         self.disconnect = AsyncMock()
         self.stopped = False
 
     def play(self, source, after=None):
         self.played = source
+        self.plays += 1
         after(None)  # discord.py calls it from the player thread once the clip ends
 
     def stop(self):
@@ -405,3 +420,240 @@ async def test_play_waits_for_the_player_and_bounds_the_wait(monkeypatch):
     stuck = _Stuck()
     await AnnounceCog._play(stuck, b"\x00" * 192)  # 1 ms
     assert stuck.stopped
+
+
+# ── attached audio files ─────────────────────────────────────────────────────
+
+def _attachment(filename="clip.mp3", content_type="audio/mpeg", size=1000, data=b"\x00" * 16):
+    return SimpleNamespace(filename=filename, content_type=content_type, size=size,
+                           read=AsyncMock(return_value=data))
+
+
+def test_audio_attachments_by_content_type_or_extension():
+    assert is_audio_attachment(_attachment("x", "audio/ogg; codecs=opus"))
+    assert is_audio_attachment(_attachment("voice-message.ogg", None))
+    assert is_audio_attachment(_attachment("Song.M4A", "application/octet-stream"))
+    assert is_audio_attachment(_attachment("clip.mp4", "video/mp4"))  # its soundtrack plays
+    assert is_audio_attachment(_attachment("clip.mkv", None))
+    assert not is_audio_attachment(_attachment("photo.png", "image/png"))
+    assert not is_audio_attachment(_attachment("notes.txt", None))
+
+
+def _wav(seconds: float, rate=8000) -> bytes:
+    """A mono 16-bit WAV of silence, built with the stdlib."""
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"\x00\x00" * int(rate * seconds))
+    return buf.getvalue()
+
+
+@_aio
+@pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg not on PATH")
+async def test_decode_audio_with_real_ffmpeg():
+    frame = 48000 * 2 * 2
+    pcm = await decode_audio(_wav(1.0), max_secs=10, filename="a.wav")
+    assert abs(len(pcm) - frame) <= 4 * 48  # a second at Discord's rate, ± a few frames
+    cut = await decode_audio(_wav(1.0), max_secs=0.5, filename="a.wav")
+    assert abs(len(cut) - frame // 2) <= 4 * 48
+    with pytest.raises(DecodeError):
+        await decode_audio(b"not audio at all", max_secs=10, filename="a.mp3")
+
+
+@_aio
+async def test_decode_audio_without_ffmpeg(monkeypatch):
+    monkeypatch.setattr(_audio_mod, "FFMPEG", "ffmpeg-that-does-not-exist")
+    with pytest.raises(DecodeError, match="isn't installed"):
+        await decode_audio(b"\x00", max_secs=10)
+
+
+@pytest.fixture
+def _fake_decoder(monkeypatch):
+    calls = []
+
+    async def _decode(data, *, max_secs, filename=""):
+        calls.append((data, max_secs, filename))
+        return b"\x00\x00" * 4800  # 50 ms of Discord PCM
+    monkeypatch.setattr(_announce_mod, "decode_audio", _decode)
+    return calls
+
+
+@_aio
+async def test_attached_file_plays_instead_of_text(_no_builtin_channel_converter, _fake_decoder):
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    ctx = _ctx([general])
+    clip = _attachment(data=b"mp3 bytes")
+    ctx.message.attachments = [SimpleNamespace(filename="photo.png", content_type="image/png", size=1), clip]
+
+    await cog.cmd_announce.callback(cog, ctx, args="gen")
+
+    assert _fake_decoder == [(b"mp3 bytes", _announce_mod.ANNOUNCE_MAX_SECS, "clip.mp3")]
+    assert cog.tts.calls == []
+    assert isinstance(general.vc.played, discord.PCMAudio)
+    general.vc.disconnect.assert_awaited_once_with(force=True)
+    done = next(e for e in ctx.sent_embeds if "Announced" in (e.title or ""))
+    assert "clip.mp3" in done.description and "🔊 General" in done.description
+    assert cog._busy == set()
+
+
+@_aio
+async def test_attached_file_asks_only_for_the_channel(_no_builtin_channel_converter, _fake_decoder, monkeypatch):
+    forms = []
+
+    async def _form(ctx, *, fields, **kwargs):
+        forms.append((fields, kwargs))
+        return {"channel": [GENERAL_ID]}
+    monkeypatch.setattr(_announce_mod, "open_form", _form)
+
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    ctx = _ctx([general])
+    ctx.message.attachments = [_attachment()]
+    await cog.cmd_announce.callback(cog, ctx, args=None)
+
+    fields, kwargs = forms[-1]
+    assert [f.kind for f in fields] == ["voice_channels"]
+    assert "clip.mp3" in kwargs["description"]
+    assert general.vc.played is not None
+
+
+@_aio
+async def test_attached_file_refusals(_no_builtin_channel_converter, _fake_decoder):
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+
+    cog = _cog()
+    ctx = _ctx([general])
+    ctx.message.attachments = [_attachment()]
+    await cog.cmd_announce.callback(cog, ctx, args='"and some words" gen')
+    assert any("not both" in (e.description or "") for e in ctx.sent_embeds)
+
+    cog = _cog()
+    ctx = _ctx([general])
+    ctx.message.attachments = [_attachment(size=_announce_mod.ANNOUNCE_MAX_FILE_BYTES + 1)]
+    await cog.cmd_announce.callback(cog, ctx, args="gen")
+    assert any("Too Big" in t for t in _titles(ctx))
+
+    assert _fake_decoder == [] and not hasattr(general, "connect_kwargs")
+
+
+@_aio
+async def test_undecodable_file_releases_the_slot(_no_builtin_channel_converter, monkeypatch):
+    async def _broken(data, *, max_secs, filename=""):
+        raise DecodeError("Invalid data found when processing input")
+    monkeypatch.setattr(_announce_mod, "decode_audio", _broken)
+
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    ctx = _ctx([general])
+    ctx.message.attachments = [_attachment()]
+    await cog.cmd_announce.callback(cog, ctx, args="gen")
+    assert any("Invalid data" in (e.description or "") for e in ctx.sent_embeds)
+    assert not hasattr(general, "connect_kwargs")
+    assert cog._busy == set()
+
+
+@_aio
+async def test_long_file_is_reported_as_cut(_no_builtin_channel_converter, monkeypatch):
+    monkeypatch.setattr(_announce_mod, "ANNOUNCE_MAX_SECS", 1)
+    monkeypatch.setattr(_announce_mod, "PLAY_GRACE_SECS", 0.0)
+
+    async def _full_length(data, *, max_secs, filename=""):
+        return b"\x00" * (48000 * 2 * 2 * max_secs)
+    monkeypatch.setattr(_announce_mod, "decode_audio", _full_length)
+
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    ctx = _ctx([general])
+    ctx.message.attachments = [_attachment()]
+    await cog.cmd_announce.callback(cog, ctx, args="gen")
+    done = next(e for e in ctx.sent_embeds if "Announced" in (e.title or ""))
+    assert "first 1 seconds" in done.description
+
+
+# ── x<N> repeats and !announce stop ──────────────────────────────────────────
+
+@_aio
+async def test_repeat_flag_plays_the_clip_n_times(_no_builtin_channel_converter, _fake_decoder):
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    ctx = _ctx([general])
+    await cog.cmd_announce.callback(cog, ctx, args='"Dinner is ready" gen x3')
+    assert cog.tts.calls == ["Dinner is ready"]  # synthesized once
+    assert general.vc.plays == 3
+    general.vc.disconnect.assert_awaited_once_with(force=True)
+    done = next(e for e in ctx.sent_embeds if "Announced" in (e.title or ""))
+    assert "3 times" in done.description
+
+    # A file repeats the same way; the decoder runs once.
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    ctx = _ctx([general])
+    ctx.message.attachments = [_attachment()]
+    await cog.cmd_announce.callback(cog, ctx, args="x4 gen")
+    assert len(_fake_decoder) == 1 and general.vc.plays == 4
+
+
+@_aio
+async def test_repeat_limits(_no_builtin_channel_converter):
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    cap = _announce_mod.ANNOUNCE_MAX_REPEATS
+    total = _announce_mod.ANNOUNCE_MAX_TOTAL_CHARS
+
+    for args, expected in {
+        f'"hi" gen x{cap + 1}': f"x{cap}",
+        '"hi" gen x0': f"x{cap}",
+        '"' + "x" * 100 + '" gen x10': "repeat 9 times at most",  # 100 × 10 = 1000 isn't under 1000
+        '"' + "x" * 400 + '" gen x3': "repeat 2 times at most",
+    }.items():
+        cog = _cog()
+        ctx = _ctx([general])
+        await cog.cmd_announce.callback(cog, ctx, args=args)
+        assert any(expected in (e.description or "") for e in ctx.sent_embeds), args
+        assert cog.tts.calls == [], args
+    assert not hasattr(general, "connect_kwargs")
+
+    # Right under the line is fine: 99 × 10.
+    cog = _cog()
+    ctx = _ctx([general])
+    await cog.cmd_announce.callback(cog, ctx, args='"' + "x" * 99 + '" gen x10')
+    assert general.vc.plays == 10
+    assert total == 1000  # the arithmetic above assumes it
+
+
+@_aio
+async def test_stop_cuts_a_repeat_short(_no_builtin_channel_converter):
+    class _Held(_FakeVoiceClient):
+        """Each clip plays until stop() is called, like a real player mid-clip."""
+        def play(self, source, after=None):
+            self.played = source
+            self.plays += 1
+            self._after = after
+
+        def stop(self):
+            self.stopped = True
+            self._after(None)
+
+    cog = _cog()
+    general = _voice(GENERAL_ID, "🔊 General", [_listener()])
+    general.vc = _Held()
+    ctx1, ctx2 = _ctx([general]), _ctx([general])
+
+    # Nothing to stop yet.
+    await cog.cmd_announce.callback(cog, ctx2, args="stop")
+    assert any("Nothing is playing" in (e.description or "") for e in ctx2.sent_embeds)
+
+    task = asyncio.create_task(cog.cmd_announce.callback(cog, ctx1, args='"hi" gen x50'))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert general.vc.plays == 1 and GUILD_ID in cog._busy
+
+    await cog.cmd_announce.callback(cog, ctx2, args="STOP")
+    await task
+    assert general.vc.stopped and general.vc.plays == 1
+    done = next(e for e in ctx1.sent_embeds if "Announced" in (e.title or ""))
+    assert "stopped after 1 of 50" in done.description
+    assert cog._busy == set() and cog._stop == set() and cog._playing == {}

@@ -47,6 +47,15 @@ WYOMING_TTS_HOST = os.getenv("WYOMING_TTS_HOST", "")
 WYOMING_TTS_PORT = int(os.getenv("WYOMING_TTS_PORT") or "10200")
 WYOMING_TTS_VOICE = os.getenv("WYOMING_TTS_VOICE", "")
 ANNOUNCE_MAX_CHARS = 500  # synthesis time and the modal's text box grow with it
+# An attached audio file instead of text: Discord's own upload cap, and the
+# clip is cut at ANNOUNCE_MAX_SECS (decoded PCM is ~190 KB a second).
+ANNOUNCE_MAX_FILE_BYTES = 10 * 1024 * 1024
+ANNOUNCE_MAX_SECS = 120
+# `x<N>` repeats: at most this many, and a message's length times N must
+# stay under ANNOUNCE_MAX_TOTAL_CHARS so a repeat can't hold the channel
+# longer than a long message would.
+ANNOUNCE_MAX_REPEATS = 50
+ANNOUNCE_MAX_TOTAL_CHARS = 1000
 
 _raw_channels = os.getenv("ACTIVE_CHANNEL_IDS", "")
 ACTIVE_CHANNEL_IDS = (

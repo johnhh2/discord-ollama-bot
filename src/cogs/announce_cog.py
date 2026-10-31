@@ -1,8 +1,10 @@
 """!announce: read a message aloud in a voice channel.
 
 The text goes to a Wyoming text-to-speech server (src/tts.py), the PCM comes
-back, and the bot joins the channel, plays it and leaves. Off until
-WYOMING_TTS_HOST is set. Rules in CLAUDE.md: Voice announcements.
+back, and the bot joins the channel, plays it and leaves. An attached audio
+file is played instead of text (src/audio_files.py, ffmpeg) through the same
+player. Off until WYOMING_TTS_HOST is set. Rules in CLAUDE.md: Voice
+announcements.
 """
 import asyncio
 import io
@@ -12,7 +14,12 @@ import re
 import discord
 from discord.ext import commands
 
-from src.config import WYOMING_TTS_HOST, WYOMING_TTS_PORT, WYOMING_TTS_VOICE, ANNOUNCE_MAX_CHARS
+from src.audio_files import DecodeError, decode_audio, ffmpeg_available, is_audio_attachment
+from src.config import (
+    WYOMING_TTS_HOST, WYOMING_TTS_PORT, WYOMING_TTS_VOICE,
+    ANNOUNCE_MAX_CHARS, ANNOUNCE_MAX_FILE_BYTES, ANNOUNCE_MAX_SECS,
+    ANNOUNCE_MAX_REPEATS, ANNOUNCE_MAX_TOTAL_CHARS,
+)
 from src.helpers import emb, VoiceChannelConverter, C_GREEN, C_RED, C_GREY
 from src.settings_views import Field, open_form
 from src.tts import WyomingTTS, TTSError, DISCORD_RATE, DISCORD_CHANNELS, SAMPLE_WIDTH
@@ -24,17 +31,30 @@ PLAY_GRACE_SECS = 10.0  # allowed on top of the clip's own length before the pla
 _QUOTED_RE = re.compile(r'"([^"]*)"|“([^”]*)”')
 
 
-def parse_announce_args(raw: str) -> tuple[str, str]:
-    """`(message, channel_query)` from the typed arguments. The quoted part is
-    the message, in either order; everything outside the quotes is the
-    channel. Without quotes the message is empty and the whole argument comes
-    back as the channel query, for the caller to try as one."""
+_REPEAT_RE = re.compile(r"[xX×](\d+)")
+
+
+def parse_announce_args(raw: str) -> tuple[str, str, "int | None"]:
+    """`(message, channel_query, repeats)` from the typed arguments. The
+    quoted part is the message, in either order; an `x<N>` token outside the
+    quotes is the repeat count (None when absent); everything else is the
+    channel. Without quotes the message is empty and the rest comes back as
+    the channel query, for the caller to try as one."""
     m = _QUOTED_RE.search(raw)
     if m is None:
-        return "", raw.strip()
-    text = (m.group(1) if m.group(1) is not None else m.group(2) or "").strip()
-    rest = (raw[:m.start()] + " " + raw[m.end():]).strip()
-    return text, rest
+        text, rest = "", raw
+    else:
+        text = (m.group(1) if m.group(1) is not None else m.group(2) or "").strip()
+        rest = raw[:m.start()] + " " + raw[m.end():]
+    repeats = None
+    tokens = []
+    for token in rest.split():
+        r = _REPEAT_RE.fullmatch(token)
+        if r is not None and repeats is None:
+            repeats = int(r.group(1))
+        else:
+            tokens.append(token)
+    return text, " ".join(tokens), repeats
 
 
 def _opus_loaded() -> bool:
@@ -57,6 +77,8 @@ class AnnounceCog(commands.Cog):
             tts = WyomingTTS(WYOMING_TTS_HOST, WYOMING_TTS_PORT, WYOMING_TTS_VOICE)
         self.tts = tts
         self._busy: set[int] = set()  # guilds with an announcement in progress (see CLAUDE.md: Concurrency)
+        self._playing: dict[int, discord.VoiceClient] = {}  # guild → the client mid-clip, for !announce stop
+        self._stop: set[int] = set()  # guilds whose running announcement was told to stop
 
     async def cog_load(self):
         if self.tts is None:
@@ -69,6 +91,8 @@ class AnnounceCog(commands.Cog):
             logging.warning("announce_davey_missing: davey isn't installed, !announce will fail to connect")
         if not _opus_loaded():
             logging.warning("announce_opus_missing: libopus isn't installed, !announce will fail at playback")
+        if not ffmpeg_available():
+            logging.warning("announce_ffmpeg_missing: ffmpeg isn't installed, !announce can't play attached audio files")
 
     def _refusal(self, ctx: commands.Context) -> "discord.Embed | None":
         if self.tts is None:
@@ -78,18 +102,35 @@ class AnnounceCog(commands.Cog):
         return None
 
     @commands.command(name="announce",
-                      help="Read a message aloud in a voice channel (text-to-speech)",
-                      usage='"<message>" <voice-channel>')
+                      help="Read a message aloud in a voice channel (text-to-speech), or play an attached audio file there; "
+                           "x<N> repeats it, `stop` cuts it short",
+                      usage='"<message>" <voice-channel> [x<N>]')
     async def cmd_announce(self, ctx: commands.Context, *, args: str = None):
         refusal = self._refusal(ctx)
         if refusal is not None:
             await ctx.send(embed=refusal)
             return
 
-        text, query = parse_announce_args(args or "")
+        if (args or "").strip().lower() == "stop":
+            await self._stop_playing(ctx)
+            return
+        attachments = getattr(ctx.message, "attachments", None) or []
+        attachment = next((a for a in attachments if is_audio_attachment(a)), None)
+        text, query, repeats = parse_announce_args(args or "")
+        if repeats is not None and not 1 <= repeats <= ANNOUNCE_MAX_REPEATS:
+            await ctx.send(embed=emb("❌ Announce", f"Repeat between 1 and {ANNOUNCE_MAX_REPEATS} times (`x{ANNOUNCE_MAX_REPEATS}` at most).", C_RED))
+            return
+        repeats = repeats or 1
+        if attachment is not None:
+            if text:
+                await ctx.send(embed=emb("❌ Announce", "Attach a file or write a message, not both.", C_RED))
+                return
+            if attachment.size > ANNOUNCE_MAX_FILE_BYTES:
+                await ctx.send(embed=emb("❌ Too Big", f"Keep the file under {ANNOUNCE_MAX_FILE_BYTES // (1024 * 1024)} MB.", C_RED))
+                return
         channel = None
-        if query and text:
-            # Message and channel both given: a channel miss opens the pickers.
+        if query and (text or attachment is not None):
+            # What to play and a channel both given: a channel miss opens the pickers.
             try:
                 channel = await VoiceChannelConverter().convert(ctx, query)
             except commands.BadArgument as exc:
@@ -105,12 +146,16 @@ class AnnounceCog(commands.Cog):
             except commands.BadArgument:
                 text = query
 
-        if not text or channel is None:
+        if (not text and attachment is None) or channel is None:
+            if attachment is not None:
+                description = f"Pick the voice channel to play **{attachment.filename}** in."
+            else:
+                description = ("Pick the voice channel and write what the bot should say.\n"
+                               "Usage: `!announce \"<message>\" <voice-channel>`, or attach an audio file instead of the message")
             values = await open_form(
-                ctx, title="📢 Announce",
-                description="Pick the voice channel and write what the bot should say.\n"
-                            "Usage: `!announce \"<message>\" <voice-channel>`",
-                fields=self._form_fields(ctx, channel, text), button="Write it…",
+                ctx, title="📢 Announce", description=description,
+                fields=self._form_fields(ctx, channel, text, with_text=attachment is None),
+                button="Play it…" if attachment is not None else "Write it…",
             )
             if values is None:
                 return
@@ -121,24 +166,32 @@ class AnnounceCog(commands.Cog):
             if channel is None:
                 await ctx.send(embed=emb("❌ Announce", "Pick a voice channel to speak in.", C_RED))
                 return
-            if not text:
+            if not text and attachment is None:
                 await ctx.send(embed=emb("❌ Announce", "Write the message to read out.", C_RED))
                 return
-        await self._announce(ctx, channel, text)
+        await self._announce(ctx, channel, text, attachment, repeats=repeats)
 
     @staticmethod
-    def _form_fields(ctx, channel, text: str) -> list:
+    def _form_fields(ctx, channel, text: str, *, with_text: bool = True) -> list:
         here = getattr(getattr(ctx.author, "voice", None), "channel", None)
         preset = channel or here  # the invoker's own channel is the likely target
-        return [
+        fields = [
             Field("channel", "Voice channel", kind="voice_channels",
                   defaults=(str(preset.id),) if preset is not None else ()),
-            Field("text", "Message", kind="paragraph", max_length=ANNOUNCE_MAX_CHARS, default=text or None),
         ]
+        if with_text:
+            fields.append(Field("text", "Message", kind="paragraph", max_length=ANNOUNCE_MAX_CHARS, default=text or None))
+        return fields
 
-    async def _announce(self, ctx: commands.Context, channel, text: str) -> None:
-        if len(text) > ANNOUNCE_MAX_CHARS:
+    async def _announce(self, ctx: commands.Context, channel, text: str, attachment=None, *, repeats: int = 1) -> None:
+        if attachment is None and len(text) > ANNOUNCE_MAX_CHARS:
             await ctx.send(embed=emb("❌ Too Long", f"Keep it under {ANNOUNCE_MAX_CHARS} characters.", C_RED))
+            return
+        if attachment is None and len(text) * repeats >= ANNOUNCE_MAX_TOTAL_CHARS:
+            most = max(1, (ANNOUNCE_MAX_TOTAL_CHARS - 1) // max(len(text), 1))
+            await ctx.send(embed=emb("❌ Too Long",
+                                     f"The message times the repeats must stay under {ANNOUNCE_MAX_TOTAL_CHARS} characters — "
+                                     f"this one can repeat {most} time{'s' if most != 1 else ''} at most.", C_RED))
             return
         if getattr(channel, "type", None) != discord.ChannelType.voice:
             await ctx.send(embed=emb("❌ Announce", f"**{channel.name}** isn't a voice channel (stages can't be announced in).", C_RED))
@@ -152,37 +205,82 @@ class AnnounceCog(commands.Cog):
             return
         gid = ctx.guild.id
         if gid in self._busy:
-            await ctx.send(embed=emb("📢 Announce", "An announcement is already playing in this server — try again in a moment.", C_GREY))
+            await ctx.send(embed=emb("📢 Announce", "An announcement is already playing in this server — wait for it, or `!announce stop`.", C_GREY))
             return
         self._busy.add(gid)
         try:
-            # Synthesize before connecting: the slow, failure-prone step
-            # shouldn't happen with the bot sitting silent in the channel.
-            try:
-                audio = await self.tts.synthesize(text)
-            except TTSError as e:
-                await ctx.send(embed=emb("❌ Text-to-Speech", f"Couldn't synthesize the message: {e}", C_RED))
-                return
-            pcm = audio.to_discord()
+            # Synthesize (or decode) before connecting: the slow, failure-prone
+            # step shouldn't happen with the bot sitting silent in the channel.
+            if attachment is not None:
+                try:
+                    data = await attachment.read()
+                except discord.HTTPException as e:
+                    await ctx.send(embed=emb("❌ Audio File", f"Couldn't download **{attachment.filename}**: {e}", C_RED))
+                    return
+                try:
+                    pcm = await decode_audio(data, max_secs=ANNOUNCE_MAX_SECS, filename=attachment.filename)
+                except DecodeError as e:
+                    await ctx.send(embed=emb("❌ Audio File", f"Couldn't play **{attachment.filename}**: {e}", C_RED))
+                    return
+            else:
+                try:
+                    audio = await self.tts.synthesize(text)
+                except TTSError as e:
+                    await ctx.send(embed=emb("❌ Text-to-Speech", f"Couldn't synthesize the message: {e}", C_RED))
+                    return
+                pcm = audio.to_discord()
             try:
                 vc = await self._connect(ctx.guild, channel)
             except (asyncio.TimeoutError, discord.DiscordException, RuntimeError) as e:
                 # RuntimeError is discord.py's "PyNaCl / davey library needed" complaint.
                 await ctx.send(embed=emb("❌ Voice", f"Couldn't join **{channel.name}**: {e or 'timed out'}", C_RED))
                 return
+            played = 0
             try:
-                await self._play(vc, pcm)
+                self._playing[gid] = vc
+                for _ in range(repeats):
+                    if gid in self._stop:
+                        break
+                    await self._play(vc, pcm)
+                    played += 1
             except discord.opus.OpusNotLoaded:
                 await ctx.send(embed=emb("❌ Voice", "libopus isn't installed, so I can't encode audio.", C_RED))
                 return
             finally:
+                self._playing.pop(gid, None)
                 try:
                     await vc.disconnect(force=True)
                 except Exception as e:
                     logging.warning("announce_disconnect_failed guild=%s: %s", gid, e)
-            await ctx.send(embed=emb("📢 Announced", f"Read out in **{channel.name}**:\n> {text}", C_GREEN))
+            times = ""
+            if gid in self._stop:
+                times = f", stopped after {played} of {repeats}"
+            elif repeats > 1:
+                times = f", {repeats} times"
+            if attachment is not None:
+                seconds = len(pcm) / (DISCORD_RATE * DISCORD_CHANNELS * SAMPLE_WIDTH)
+                # The decoder cuts at the cap, so a clip that long was (almost surely) longer.
+                cut = f" — the first {ANNOUNCE_MAX_SECS} seconds of it" if seconds >= ANNOUNCE_MAX_SECS - 0.5 else ""
+                done = f"Played **{attachment.filename}** in **{channel.name}**{cut}{times}."
+            else:
+                done = f"Read out in **{channel.name}**{times}:\n> {text}"
+            await ctx.send(embed=emb("📢 Announced", done, C_GREEN))
         finally:
             self._busy.discard(gid)
+            self._stop.discard(gid)
+
+    async def _stop_playing(self, ctx: commands.Context) -> None:
+        gid = ctx.guild.id
+        if gid not in self._busy:
+            await ctx.send(embed=emb("📢 Announce", "Nothing is playing in this server.", C_GREY))
+            return
+        # The flag ends the repeat loop; stopping the player ends the clip
+        # under way (its `after` callback releases _play's wait).
+        self._stop.add(gid)
+        vc = self._playing.get(gid)
+        if vc is not None:
+            vc.stop()
+        await ctx.send(embed=emb("⏹️ Announce", "Stopping.", C_GREY))
 
     @staticmethod
     async def _connect(guild, channel):
