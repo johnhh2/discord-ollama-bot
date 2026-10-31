@@ -1,0 +1,54 @@
+# Advisories pip-audit --strict (CI and the local run) skips. One id per
+# line; # starts a comment. pip-audit matches the id only, not its aliases,
+# so each CVE / GHSA / PYSEC id is listed.
+#
+# pillow 12.3.0: every advisory below is fixed in 13.0.0, which needs
+# Python 3.11+ while the bot runs on 3.10. The bot never decodes an image
+# it didn't ship (idle_map.py opens the bundled map; matplotlib and cairosvg
+# only write), so none is reachable. Drop this block with the Python bump.
+CVE-2026-112390
+CVE-2026-112391
+CVE-2026-112393
+CVE-2026-112395
+CVE-2026-112399
+CVE-2026-112400
+CVE-2026-112401
+CVE-2026-112404
+CVE-2026-112406
+CVE-2026-112891
+CVE-2026-112892
+CVE-2026-112893
+CVE-2026-112894
+CVE-2026-112895
+CVE-2026-112897
+CVE-2026-112899
+CVE-2026-112900
+CVE-2026-96638
+CVE-2026-96640
+CVE-2026-96778
+GHSA-78g4-xqwv-q3g8
+PYSEC-2026-4326
+PYSEC-2026-4327
+PYSEC-2026-4328
+PYSEC-2026-4329
+PYSEC-2026-4330
+PYSEC-2026-4331
+PYSEC-2026-4332
+PYSEC-2026-4333
+PYSEC-2026-4334
+PYSEC-2026-4335
+PYSEC-2026-4336
+PYSEC-2026-4337
+PYSEC-2026-4338
+PYSEC-2026-4339
+PYSEC-2026-4340
+PYSEC-2026-4341
+PYSEC-2026-4342
+PYSEC-2026-4343
+#
+# dnspython 2.8.0: pointer-chain CPU exhaustion in dns.name.from_wire_parser
+# (fixed in 2.9.0, Python 3.11+ again). Reached only by mcstatus resolving
+# MC_SERVER_HOST through the operator's own resolver, never by a message a
+# user sends. Drop with the Python bump.
+CVE-2026-114605
+GHSA-45c3-73f7-pv4m

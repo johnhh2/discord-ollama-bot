@@ -107,6 +107,7 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 - Full audit log of admin actions; Docker-aware `!restart`; `!settings` (or `/settings`, which only the admin sees) for per-guild configuration — one panel with a category dropdown and a setting dropdown: toggles flip on the spot, everything else opens a form (channel pickers, text boxes, a dropdown of installed models), and nothing is typed after the command. Every channel setting also lives under `!settings channel …`, and any settings command run bare (`!settings channel game`, `!settings shop`, `!settings tax-aliases`) opens its own dropdown, toggle buttons, pick-list or Add/Remove editor instead of needing the full syntax
 - Built-in issue tracking: users file `!bugreport` / `!featurerequest` from inside Discord
 - `!subscribe <voice-channel>` DMs you when that channel goes from empty to active; `!unsubscribe <voice-channel>` (or `!unsubscribe all`) stops it. The name is matched like a username: case-insensitive, part of it is enough, and when it fits several channels (or none) a dropdown asks which you meant
+- `!announce "<message>" <voice-channel>` (admins) has the bot join the voice channel, read the message aloud through a Wyoming text-to-speech server such as Piper, and leave. Leave out the message or the channel and a form asks for it
 - Custom per-server counters: `!counter add afk Times gone afk` (pick user-required or optional, number or time), then `!afk @user 1` to count and `!afk @user` / `!afk` to read — `!count afk …` always works, the `!afk` shortcut whenever no real command has that name. Admins write by default; `!counter addperm @user` trusts anyone else
 
 ## Quick start (Docker)
@@ -152,6 +153,7 @@ All configuration is via environment variables — see [.env.example](.env.examp
 | `MC_POLL_SECONDS` | `60` | Monitor poll interval (up/down alerts, player-count notices, presence) |
 | `MC_SERVER_SHOW_IP` | `false` | Show the server address in `!mc` embeds and monitor alerts (hidden by default) |
 | `MC_CONSOLE_HOST` / `MC_CONSOLE_PORT` / `MC_CONSOLE_PASSWORD` | _(disabled)_ / `2222` / — | The Bedrock container's SSH remote console (`ENABLE_SSH=true` on the itzg image; the password is its `RCON_PASSWORD`). Enables the block shop, which each server still has to switch on |
+| `WYOMING_TTS_HOST` / `WYOMING_TTS_PORT` / `WYOMING_TTS_VOICE` | _(disabled)_ / `10200` / _(server default)_ | A Wyoming text-to-speech server (Piper, for one) as the bot's container sees it. Enables `!announce` |
 | `NSFW_API_URL` / `NSFW_API_KEY` / `NSFW_API_USER_ID` | _(disabled)_ | Credentials for an NSFW image API, enabling `!nsfw`; servers allow it, restrict it to channels or ban tags with `!settings nsfw` |
 
 ## Engineering highlights

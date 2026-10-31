@@ -40,6 +40,14 @@ MC_CONSOLE_HOST = os.getenv("MC_CONSOLE_HOST", "")
 MC_CONSOLE_PORT = int(os.getenv("MC_CONSOLE_PORT") or "2222")
 MC_CONSOLE_PASSWORD = os.getenv("MC_CONSOLE_PASSWORD", "")
 
+# Voice announcements (!announce): a Wyoming text-to-speech server (Piper, for
+# one) as the bot's container sees it. Unset leaves the command off. The voice
+# is one of the server's voice names; empty takes its default.
+WYOMING_TTS_HOST = os.getenv("WYOMING_TTS_HOST", "")
+WYOMING_TTS_PORT = int(os.getenv("WYOMING_TTS_PORT") or "10200")
+WYOMING_TTS_VOICE = os.getenv("WYOMING_TTS_VOICE", "")
+ANNOUNCE_MAX_CHARS = 500  # synthesis time and the modal's text box grow with it
+
 _raw_channels = os.getenv("ACTIVE_CHANNEL_IDS", "")
 ACTIVE_CHANNEL_IDS = (
     {int(cid.strip()) for cid in _raw_channels.split(",") if cid.strip()}

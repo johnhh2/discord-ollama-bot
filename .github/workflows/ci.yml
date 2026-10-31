@@ -37,7 +37,10 @@ jobs:
         run: bandit -r src/ --severity-level medium
 
       - name: pip-audit (CVE scan)
-        run: pip-audit -r requirements.lock --strict
+        # .pip-audit-ignore lists the advisories whose only fix needs a newer
+        # Python than the bot runs on, each with its reason.
+        run: |
+          pip-audit -r requirements.lock --strict $(grep -v '^#' .pip-audit-ignore | sed 's/^/--ignore-vuln /')
 
       - name: Run tests
         run: pytest -q

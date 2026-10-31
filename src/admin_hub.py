@@ -21,6 +21,7 @@ from typing import Callable
 import discord
 
 from src import state
+from src.config import WYOMING_TTS_HOST, ANNOUNCE_MAX_CHARS
 from src.forwarding import CapturingContext, forward, refusal_for
 from src.helpers import emb, C_GOLD, C_RED
 from src.panel import Panel, PanelItem
@@ -71,6 +72,18 @@ def _mention(values: dict, key: str = "user") -> str:
 _USER = Field("user", "Who?", kind="users")
 
 
+def _announce_args(ctx, values: dict):
+    """The typed form reads the message out of double quotes, so the text
+    can't carry any; the channel goes by id."""
+    ids = values.get("channel") or []
+    if not ids:
+        raise ValueError("Pick a voice channel first.")
+    text = (values.get("text") or "").strip().replace('"', "'")
+    if not text:
+        raise ValueError("Write the message first.")
+    return (), {"args": f'"{text}" {ids[0]}'}
+
+
 def _moderation(ctx) -> list[AdminItem]:
     reason = Field("reason", "Reason (optional)", kind="paragraph", required=False, max_length=200)
     return [
@@ -89,6 +102,12 @@ def _moderation(ctx) -> list[AdminItem]:
         AdminItem(key="say", label="🔊 Say something as the bot", description="posted in this channel", command="say",
                   title="Say", fields=(Field("text", "Text", kind="paragraph", max_length=2000),),
                   call=lambda ctx, v: ((), {"text": v["text"]}), public=True),
+        *([AdminItem(key="announce", label="📢 Announce in a voice channel (text-to-speech)",
+                     description="the bot joins, speaks and leaves", command="announce", title="Announce",
+                     fields=(Field("channel", "Voice channel", kind="voice_channels"),
+                             Field("text", "Message", kind="paragraph", max_length=ANNOUNCE_MAX_CHARS)),
+                     call=_announce_args, public=True)]
+          if WYOMING_TTS_HOST else []),  # off without a TTS server, like the command
         AdminItem(key="audit", label="🔍 Audit — the last failed command attempts", command="audit"),
     ]
 

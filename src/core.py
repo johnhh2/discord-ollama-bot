@@ -44,6 +44,7 @@ EXTENSIONS = [
     "src.cogs.leveling_cog",
     "src.cogs.graph_cog",
     "src.cogs.voice_cog",
+    "src.cogs.announce_cog",
     "src.cogs.minecraft_cog",
     "src.cogs.status_cog",
     "src.cogs.counter_cog",

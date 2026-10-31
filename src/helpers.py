@@ -566,7 +566,12 @@ class VoiceChannelConverter(commands.Converter):
     most users have. Purely numeric tokens only ever resolve as IDs and never
     prompt. A miss raises `ChannelNotFound`, an ambiguous name a plain
     `BadArgument`; after a declined prompt either is `handled` (see
-    `_declined`) and the caller should stay quiet."""
+    `_declined`) and the caller should stay quiet. `prompt=False` matches
+    without the dropdowns — for a caller that only wants to know whether a
+    token *is* a channel (`!announce` with an unquoted argument)."""
+
+    def __init__(self, *, prompt: bool = True):
+        self.prompt = prompt
 
     async def convert(self, ctx: commands.Context, argument: str) -> discord.VoiceChannel:
         try:
@@ -590,11 +595,16 @@ class VoiceChannelConverter(commands.Converter):
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
+            names = ", ".join(ch.name for ch in matches[:5])
+            exc = commands.BadArgument(f"'{argument}' matched multiple voice channels: {names}")
+            if not self.prompt:
+                raise exc
             picked = await pickers.choose_voice_channel(ctx, argument, matches)
             if picked is not None:
                 return picked
-            names = ", ".join(ch.name for ch in matches[:5])
-            raise _declined(commands.BadArgument(f"'{argument}' matched multiple voice channels: {names}"))
+            raise _declined(exc)
+        if not self.prompt:
+            raise commands.ChannelNotFound(argument)
         picked = await pickers.find_voice_channel(ctx, argument)
         if picked is not None:
             return picked

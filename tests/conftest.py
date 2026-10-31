@@ -295,6 +295,8 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_ai_cog_mod, "open_form", _dismissed)  # `!ask`, `!story`, `!roleplay` forms
     import src.cogs.minecraft_cog as _mc_cog_mod
     monkeypatch.setattr(_mc_cog_mod, "open_form", _dismissed)  # bare `!mc buy` / `!mc sell`
+    import src.cogs.announce_cog as _announce_cog_mod
+    monkeypatch.setattr(_announce_cog_mod, "open_form", _dismissed)  # `!announce` with a piece missing
     # The user / voice-channel dropdowns a name lookup opens when it misses
     # (src/pickers.py, via resolve_member and VoiceChannelConverter).
     import src.pickers as _pickers_mod

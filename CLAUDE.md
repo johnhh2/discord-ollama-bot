@@ -32,6 +32,9 @@ Key environment variables (all optional except `DISCORD_TOKEN`):
 | `MC_CONSOLE_HOST` | _(disabled)_ | Optional; the Bedrock container's SSH remote console (`ENABLE_SSH=true` on the itzg image), as seen from the bot's container. With `MC_CONSOLE_PASSWORD`, enables the block shop (`!mc shop`) |
 | `MC_CONSOLE_PORT` | `2222` | Remote console port |
 | `MC_CONSOLE_PASSWORD` | — | The Bedrock container's `RCON_PASSWORD` (its remote-console password) |
+| `WYOMING_TTS_HOST` | _(disabled)_ | Optional; a Wyoming text-to-speech server (Piper) as seen from the bot's container. Enables `!announce` |
+| `WYOMING_TTS_PORT` | `10200` | Wyoming TTS port |
+| `WYOMING_TTS_VOICE` | _(server default)_ | Optional; one of the TTS server's voice names |
 
 ### Adding a new env var
 
@@ -73,7 +76,7 @@ CI runs five checks on every push/PR (works on both GitHub Actions and Gitea Act
 - `ruff check src/ tests/` — active ruleset (`E`, `F`, `W` minus `E501`) is configured in `pyproject.toml`.
 - `gitleaks detect --source . --redact --verbose --exit-code 1` — full-history scan for committed secrets. Currently clean; new commits with API keys, tokens, or similar are blocked at CI time.
 - `bandit -r src/ --severity-level medium` — security lint. Low-severity findings (mostly `random` in gambling code, best-effort try/except) are intentionally allowed; medium and high block CI.
-- `pip-audit -r requirements.lock --strict` — fails on any unresolved CVE in the locked dep tree. If a CVE has no fix, add `--ignore-vuln GHSA-xxxx` with a comment rather than dropping `--strict`.
+- `pip-audit -r requirements.lock --strict` — fails on any unresolved CVE in the locked dep tree. CI passes `--ignore-vuln` for every id in `.pip-audit-ignore` (one per line, `#` comments); run it locally the same way: `pip-audit -r requirements.lock --strict $(grep -v '^#' .pip-audit-ignore | sed 's/^/--ignore-vuln /')`. An advisory whose only fix needs a newer Python than the bot runs on (pillow 13, dnspython 2.9 need 3.11+) goes in that file with its reason, and every alias too (pip-audit matches the id alone) rather than dropping `--strict`. Drop the block when the runtime catches up.
 - `pytest -q` — full test suite.
 
 Run them locally before committing.
@@ -1404,6 +1407,49 @@ tables from migrations 0070–0077.
 
 Coverage: [tests/test_idlerpg.py](tests/test_idlerpg.py) (rules) and
 [tests/test_idle_cog.py](tests/test_idle_cog.py).
+
+## Voice announcements (!announce): Wyoming TTS into a voice channel
+
+`!announce "<message>" <voice-channel>` (either order; `server_admin`) sends
+the text to a Wyoming text-to-speech server (`WyomingTTS` in
+[src/tts.py](src/tts.py) — Piper speaks that protocol), converts the PCM
+to what Discord wants (48 kHz, 16-bit, stereo: `to_discord_pcm`, stdlib
+`audioop`, no ffmpeg and nothing on disk), joins the channel, plays it and
+leaves. Off until `WYOMING_TTS_HOST` is set — the cog's `tts` is None
+otherwise, and the `!admin` panel lists the row only then.
+
+- **Synthesize first, connect second.** Synthesis is the slow, failure-prone
+  step; done before `connect` the bot never sits silent in a channel waiting
+  on the TTS server, and a TTS error needs no disconnect.
+- **One announcement per guild at a time**: `_busy` is claimed synchronously
+  after the checks and released in `finally` (see Concurrency). A leftover
+  `guild.voice_client` is disconnected before connecting — `connect()`
+  raises on a guild that's already connected.
+- **It refuses an empty channel** (no non-bot member): the point is to be
+  heard. It also refuses stages, a channel without Connect + Speak for the
+  bot, and a message over `ANNOUNCE_MAX_CHARS`.
+- **Arguments.** The quoted part (straight or curly quotes) is the message,
+  whatever is outside it the channel, resolved through
+  `VoiceChannelConverter` — pickers on a miss. A lone unquoted argument is
+  tried as a channel with `VoiceChannelConverter(prompt=False)` (no
+  dropdowns) and is otherwise the message. Whatever is missing comes from
+  an `open_form` modal: a voice-channel picker (`Field` kind
+  `voice_channels`, preselected to the invoker's own channel) and a text
+  box.
+- **Playback runs on discord.py's player thread**: the `after` callback
+  resolves a future via `call_soon_threadsafe`; the wait is bounded by the
+  clip length plus `PLAY_GRACE_SECS`, and `disconnect(force=True)` sits in
+  a `finally`.
+- **Native pieces**: `PyNaCl` (requirements) for the voice connection,
+  `libopus0` (Dockerfile) for encoding. discord.py loads opus lazily; the
+  cog loads it in `cog_load` so a missing library is a boot warning.
+  `audioop` is gone in Python 3.13 — move `to_discord_pcm` to numpy with
+  the image bump.
+- **No `tts=True` message fallback.** That plays in the text channel on
+  each listener's client, not in the call, and only for those with TTS
+  notifications on — ruled out by the owner.
+
+Coverage: [tests/test_announce.py](tests/test_announce.py).
 
 ## Minecraft block shop (!mc shop): its own currency, over the server console
 

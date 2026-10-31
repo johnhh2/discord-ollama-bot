@@ -254,8 +254,9 @@ MODAL_FIELDS = 5  # Discord's cap on top-level modal components
 @dataclass(frozen=True)
 class Field:
     """One modal field. `kind` is `text` / `paragraph` (a text box),
-    `choices` (a dropdown over `options`), or `channels` / `users` / `roles`
-    (Discord's own pickers). Text kinds submit a stripped string; select
+    `choices` (a dropdown over `options`), or `channels` (text channels) /
+    `voice_channels` / `users` / `roles` (Discord's own pickers). Text kinds
+    submit a stripped string; select
     kinds a list — of option values, or of channel / user / role ids. An
     optional select submits `[]`, which is how a channel setting is cleared
     from a form."""
@@ -288,9 +289,11 @@ def _component(f: Field):
             required=f.required,
         )
     defaults = [discord.Object(id=int(v)) for v in f.defaults][:MAX_OPTIONS]
-    if f.kind == "channels":
+    if f.kind in ("channels", "voice_channels"):
+        types = ([discord.ChannelType.voice] if f.kind == "voice_channels"
+                 else [discord.ChannelType.text, discord.ChannelType.news])
         return ui.ChannelSelect(
-            channel_types=[discord.ChannelType.text, discord.ChannelType.news],
+            channel_types=types,
             placeholder=f.placeholder, min_values=min_values, max_values=f.max_values,
             default_values=defaults, required=f.required,
         )
