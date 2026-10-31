@@ -59,7 +59,15 @@ class AnnounceCog(commands.Cog):
         self._busy: set[int] = set()  # guilds with an announcement in progress (see CLAUDE.md: Concurrency)
 
     async def cog_load(self):
-        if self.tts is not None and not _opus_loaded():
+        if self.tts is None:
+            return
+        # Voice needs three native pieces; each missing one is a boot
+        # warning here rather than the first !announce's error.
+        if not discord.voice_client.has_nacl:
+            logging.warning("announce_nacl_missing: PyNaCl isn't installed, !announce will fail to connect")
+        if not discord.voice_state.has_dave:
+            logging.warning("announce_davey_missing: davey isn't installed, !announce will fail to connect")
+        if not _opus_loaded():
             logging.warning("announce_opus_missing: libopus isn't installed, !announce will fail at playback")
 
     def _refusal(self, ctx: commands.Context) -> "discord.Embed | None":
@@ -159,7 +167,7 @@ class AnnounceCog(commands.Cog):
             try:
                 vc = await self._connect(ctx.guild, channel)
             except (asyncio.TimeoutError, discord.DiscordException, RuntimeError) as e:
-                # RuntimeError is discord.py's "PyNaCl library needed" complaint.
+                # RuntimeError is discord.py's "PyNaCl / davey library needed" complaint.
                 await ctx.send(embed=emb("❌ Voice", f"Couldn't join **{channel.name}**: {e or 'timed out'}", C_RED))
                 return
             try:

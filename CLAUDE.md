@@ -1440,7 +1440,9 @@ otherwise, and the `!admin` panel lists the row only then.
   resolves a future via `call_soon_threadsafe`; the wait is bounded by the
   clip length plus `PLAY_GRACE_SECS`, and `disconnect(force=True)` sits in
   a `finally`.
-- **Native pieces**: `PyNaCl` (requirements) for the voice connection,
+- **Native pieces**: `PyNaCl` and `davey` (requirements) for the voice
+  connection — discord.py 2.6+ refuses to join without `davey`, its
+  binding for Discord's DAVE end-to-end voice encryption — and
   `libopus0` (Dockerfile) for encoding. discord.py loads opus lazily; the
   cog loads it in `cog_load` so a missing library is a boot warning.
   `audioop` is gone in Python 3.13 — move `to_discord_pcm` to numpy with
