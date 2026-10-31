@@ -203,6 +203,35 @@ async def test_time_counter_parses_and_formats_durations(cog):
     assert _state.counters[1]["nap"]["values"] == {TARGET: 5400}
 
 
+async def test_time_counter_takes_long_units_and_multi_token_durations(cog):
+    """`1hr` was refused for only knowing `h`; a time may also run over
+    several tokens, and whatever precedes it is still the user."""
+    guild = _guild()
+    _make(1, "nap", kind="time")
+    values = _state.counters[1]["nap"]["values"]
+    await cog._count(_ctx(guild), "nap", "sleepy 1hr")
+    assert values[TARGET] == 3600
+    await cog._count(_ctx(guild), "nap", "sleepy 30 min")
+    assert values[TARGET] == 5400
+    await cog._count(_ctx(guild), "nap", "sleepy 1h 30m")
+    assert values[TARGET] == 10800
+    await cog._count(_ctx(guild), "nap", "-1 hour")
+    assert values[_counter_cog.UNATTRIBUTED] == 0
+
+    ctx = _ctx(guild)
+    await cog._count(ctx, "nap", "sleepy")
+    assert ctx.sent_embeds[-1].title == "sleepy Nap Time"
+
+    # Number counters still read one trailing token: "sleepy 2" is the user,
+    # 3 the amount. Nobody is called that, so the user picker is offered
+    # (dismissed in tests, which is a silent decline) and nothing is written.
+    _make(1, "afk")
+    ctx = _ctx(guild)
+    await cog._count(ctx, "afk", "sleepy 2 3")
+    assert ctx.sent_embeds == []
+    assert _state.counters[1]["afk"]["values"] == {}
+
+
 async def test_lone_snowflake_is_a_user_not_an_amount(cog):
     guild = _guild()
     big = FakeMember(123456789012345678, "biggie")

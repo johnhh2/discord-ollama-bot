@@ -44,6 +44,26 @@ def test_parse_duration_decimal_and_case():
     assert parse_duration("2H") == 7200
 
 
+def test_parse_duration_long_unit_spellings():
+    assert parse_duration("45sec") == 45
+    assert parse_duration("90min") == 5400
+    assert parse_duration("1hr") == 3600
+    assert parse_duration("2hrs") == 7200
+    assert parse_duration("1 hour") == 3600
+    assert parse_duration("2 Hours") == 7200
+    assert parse_duration("3days") == 3 * 86_400
+    assert parse_duration("2wk") == 2 * 604_800
+    assert parse_duration("1month") == 2_592_000
+    assert parse_duration("1yr") == 31_536_000
+
+
+def test_parse_duration_compound():
+    assert parse_duration("1h30m") == 5400
+    assert parse_duration("1h 30m") == 5400
+    assert parse_duration("1 hr 30 min") == 5400
+    assert parse_duration("1d 2h 3m 4s") == 86_400 + 7200 + 180 + 4
+
+
 def test_parse_duration_rejects_garbage():
     assert parse_duration("") is None
     assert parse_duration("abc") is None
@@ -51,6 +71,10 @@ def test_parse_duration_rejects_garbage():
     assert parse_duration("0s") is None      # non-positive
     assert parse_duration("-5m") is None
     assert parse_duration("h") is None       # no number
+    assert parse_duration("5 parsecs") is None
+    assert parse_duration("1h and 30m") is None
+    assert parse_duration("1" * 400 + "h") is None   # overflows a float
+    assert parse_duration("infh") is None
 
 
 def test_format_duration():

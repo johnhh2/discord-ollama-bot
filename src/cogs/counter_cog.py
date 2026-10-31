@@ -89,9 +89,14 @@ class CounterCog(commands.Cog):
         delta = None
         # A lone snowflake is a user to look up, not a number to add.
         if tokens and not (len(tokens) == 1 and _SNOWFLAKE_RE.fullmatch(tokens[0])):
-            delta = _parse_delta(counter, tokens[-1])
-            if delta is not None:
-                tokens = tokens[:-1]
+            # A time may span several tokens ("1 hr", "1h 30m"): the longest
+            # trailing run that parses is the amount, whatever precedes it the user.
+            widths = range(len(tokens), 0, -1) if counter["kind"] == "time" else (1,)
+            for width in widths:
+                delta = _parse_delta(counter, " ".join(tokens[-width:]))
+                if delta is not None:
+                    tokens = tokens[:-width]
+                    break
 
         member = None
         if tokens:
@@ -256,7 +261,7 @@ class CounterCog(commands.Cog):
         kind = await confirm_choice(
             ctx,
             title=f"New Counter: {name}",
-            description=f"{preview}\n**User:** {user_required}\n\nRecord it as a number, or as a time (`1s`, `1m`, `1h`, `1d`)?",
+            description=f"{preview}\n**User:** {user_required}\n\nRecord it as a number, or as a time (`30s`, `5m`, `1hr`, `1h 30m`, `2d`)?",
             choices=[
                 {"label": "Number", "value": "number", "default": True},
                 {"label": "Time", "value": "time"},

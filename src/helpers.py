@@ -355,35 +355,48 @@ _DURATION_UNITS = {
     "mo": 2_592_000,    # 30 days
     "y": 31_536_000,    # 365 days
 }
+# Every spelling a unit is accepted under. A bare "m" is always minutes;
+# months need "mo" or longer.
+_DURATION_ALIASES = {
+    "s": ("s", "sec", "secs", "second", "seconds"),
+    "m": ("m", "min", "mins", "minute", "minutes"),
+    "h": ("h", "hr", "hrs", "hour", "hours"),
+    "d": ("d", "day", "days"),
+    "w": ("w", "wk", "wks", "week", "weeks"),
+    "mo": ("mo", "mon", "month", "months"),
+    "y": ("y", "yr", "yrs", "year", "years"),
+}
+_DURATION_SECS = {
+    alias: _DURATION_UNITS[unit] for unit, aliases in _DURATION_ALIASES.items() for alias in aliases
+}
+_DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([a-z]+)")
+_DURATION_RE = re.compile(r"(?:\d+(?:\.\d+)?\s*[a-z]+\s*)+")
 
 
 def parse_duration(value: str) -> "int | None":
-    """Parse a duration string like ``1s``/``5m``/``2h``/``3d``/``1w``/``6mo``/``1y``
-    into seconds. Returns None if the string isn't a valid duration.
+    """Parse a duration like ``30s``, ``5m``, ``1hr``, ``2 hours``, ``1h30m``
+    or ``1h 30m`` into seconds. Returns None if the string isn't one.
 
-    Units (case-insensitive): ``s`` seconds, ``m`` minutes, ``h`` hours,
-    ``d`` days, ``w`` weeks, ``mo`` months (30d), ``y`` years (365d). Month is
-    spelled ``mo`` — a bare ``m`` is always minutes. A decimal multiplier is
-    allowed (``1.5h``).
+    Units (case-insensitive, see ``_DURATION_ALIASES``): seconds, minutes,
+    hours, days, weeks, months (30d), years (365d). A bare ``m`` is always
+    minutes — months need ``mo`` or longer. A decimal multiplier is allowed
+    (``1.5h``); the parts of a compound add up and must total above zero.
     """
     s = value.strip().lower()
-    if not s:
+    if not s or not _DURATION_RE.fullmatch(s):
         return None
-    # Longest-suffix-first so "mo" wins over "m".
-    for unit in ("mo", "s", "m", "h", "d", "w", "y"):
-        if s.endswith(unit):
-            num = s[: -len(unit)]
-            if not num:
-                return None
-            try:
-                qty = float(num)
-                if qty <= 0:
-                    return None
-                return int(qty * _DURATION_UNITS[unit])
-            except (ValueError, OverflowError):
-                # OverflowError: "infh" and friends — invalid, not a crash.
-                return None
-    return None
+    total = 0.0
+    for num, unit in _DURATION_PART_RE.findall(s):
+        secs = _DURATION_SECS.get(unit)
+        if secs is None:
+            return None
+        total += float(num) * secs
+    if total <= 0:
+        return None
+    try:
+        return int(total)
+    except OverflowError:
+        return None  # a number too long for a float — invalid, not a crash
 
 
 def format_duration(seconds: "int | float") -> str:
