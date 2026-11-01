@@ -12,7 +12,9 @@ backstop if this layer is ever bypassed.
 """
 from __future__ import annotations
 
+import datetime
 import re
+from decimal import Decimal
 from typing import Iterable, Sequence
 
 from botmcp import catalog, db
@@ -116,7 +118,17 @@ async def select(
 ) -> list[dict]:
     sql, keys = build(table, columns, where=where, group_by=group_by, order_by=order_by, limit=limit)
     rows = await db.fetch_all(sql, tuple(params))
-    return [dict(zip(keys, row)) for row in rows]
+    return [dict(zip(keys, (_plain(v) for v in row))) for row in rows]
+
+
+def _plain(value):
+    # MariaDB returns SUM()/AVG() as Decimal, which the SDK serialises as a
+    # string ("9") — an agent would then do string maths on it.
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+    return value
 
 
 async def select_one(table: str, columns: Sequence, *, where: str, params: Sequence = ()) -> "dict | None":

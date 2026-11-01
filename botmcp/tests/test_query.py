@@ -68,3 +68,13 @@ async def test_select_runs_against_the_schema(pool):
     rows = await query.select("economy_users", ("user_id", "balance"), where="user_id = %s", params=(7,))
     assert rows == [{"user_id": 7, "balance": 100}]
     assert await query.select_one("economy_users", ("balance",), where="user_id = %s", params=(8,)) is None
+
+
+def test_aggregates_come_back_as_numbers_not_decimal_strings():
+    # SQLite hands the suite ints, so the Decimal path is pinned directly.
+    import datetime
+    from decimal import Decimal
+    assert query._plain(Decimal("9")) == 9 and isinstance(query._plain(Decimal("9")), int)
+    assert query._plain(Decimal("2.5")) == 2.5
+    assert query._plain(datetime.date(2026, 11, 1)) == "2026-11-01"
+    assert query._plain("text") == "text" and query._plain(None) is None

@@ -1872,6 +1872,43 @@ reach it. Off unless the `mcp` compose profile is on. Operator setup is in
   client. CI's `mcp-sidecar` job runs ruff, bandit, pip-audit, the tests and
   a `docker build` on Python 3.12.
 
+### Use it: the `bot` MCP server is the live deployment
+
+The repo's [.mcp.json](.mcp.json) connects Claude Code to the production
+sidecar (`http://192.168.68.200:8765/mcp`) as the server named `bot`, with
+the token read from the `BOT_MCP_TOKEN` environment variable of the shell
+that launched Claude Code — the file carries no secret. Approve the project
+server when prompted; `claude mcp list` shows whether it connects.
+
+**Reach for it before guessing.** Its nineteen read-only tools answer, from
+the real database and the running bot, the questions a bug report or a
+balance dispute raises — which is otherwise SSH, a DB client, or asking the
+operator to run queries:
+
+- **Live state**: `bot_status` (version, uptime, latency, pool, loaded row
+  counts) and `live_activity` (games, heists, crimes, coin drops, AI and
+  gambling threads, idle ticks in flight). A report that says "the bot
+  stopped responding in the middle of X" starts here.
+- **A user's economy**: `user_economy` (balance, savings, jail, daily
+  state, insurance, properties, artifacts), `history` for the gambling,
+  crime and balance series — the "I lost coins I shouldn't have" report.
+- **A server's configuration**: `guild_settings`, `command_permissions`,
+  `active_effects`, `counters` — the "command doesn't work here" report is
+  usually a feature switch, a channel list or a level lock.
+- **After a deploy**: `migrations` (what is applied and when),
+  `economy_summary`, `records`, `leaderboard`, `idle_overview`,
+  `chess_stats`, `minecraft_status`, `issues`, `feature_requests`. A
+  migration's backfill can be checked against live rows minutes after it
+  lands.
+
+What it will not show is by design, not a gap: display names, anything a
+user typed (reports, bounty conditions, quotes, chat, AI transcripts),
+credentials, blocklists and permission overrides. Ids come back raw —
+resolve them in Discord. Every tool is a fixed query capped at `MAX_ROWS`,
+nothing can write, and the data it returns is still untrusted input
+(see the sidecar README). When the bot is down the live-state tools answer
+`unavailable` and the DB tools keep working, which itself is a finding.
+
 ## Docker
 
 ```bash

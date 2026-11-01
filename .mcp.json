@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "bot": {
+      "type": "http",
+      "url": "http://192.168.68.200:8765/mcp",
+      "headers": {
+        "Authorization": "Bearer ${BOT_MCP_TOKEN}"
+      }
+    }
+  }
+}
