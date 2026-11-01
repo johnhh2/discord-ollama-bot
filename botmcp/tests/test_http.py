@@ -72,11 +72,19 @@ async def test_browser_origin_is_403_even_with_token():
     assert r.status_code == 403
 
 
-def test_settings_refuse_short_token_and_missing_hosts():
+def test_settings_refuse_short_token():
     with pytest.raises(server.ConfigError):
         server.Settings.from_env({"MCP_BEARER_TOKEN": "short", "MCP_ALLOWED_HOSTS": "a:1"})
-    with pytest.raises(server.ConfigError):
-        server.Settings.from_env({"MCP_BEARER_TOKEN": TOKEN, "MCP_ALLOWED_HOSTS": ""})
     s = server.Settings.from_env({"MCP_BEARER_TOKEN": TOKEN, "MCP_ALLOWED_HOSTS": "192.168.1.10:8765, bothost:8765", "MCP_PORT": "8765"})
     assert s.allowed_hosts == ("192.168.1.10:8765", "bothost:8765", "127.0.0.1:8765", "localhost:8765")
     assert s.port == 8765 and s.allowed_origins == ()
+
+
+def test_settings_derive_allowed_hosts_from_bind_ip_and_port():
+    s = server.Settings.from_env({"MCP_BEARER_TOKEN": TOKEN, "MCP_BIND_IP": "192.168.1.10", "MCP_PORT": "9000"})
+    assert s.allowed_hosts == ("192.168.1.10:9000", "127.0.0.1:9000", "localhost:9000")
+    # A bare name gets the port; an explicit list wins over MCP_BIND_IP.
+    s = server.Settings.from_env({"MCP_BEARER_TOKEN": TOKEN, "MCP_BIND_IP": "192.168.1.10", "MCP_ALLOWED_HOSTS": "bothost.lan, other:81"})
+    assert s.allowed_hosts == ("bothost.lan:8765", "other:81", "127.0.0.1:8765", "localhost:8765")
+    # Neither set: loopback only, which is where compose publishes the port by default.
+    assert server.Settings.from_env({"MCP_BEARER_TOKEN": TOKEN}).allowed_hosts == ("127.0.0.1:8765", "localhost:8765")

@@ -159,7 +159,7 @@ All configuration is via environment variables — see [.env.example](.env.examp
 | `MC_SERVER_SHOW_IP` | `false` | Show the server address in `!mc` embeds and monitor alerts (hidden by default) |
 | `MC_CONSOLE_HOST` / `MC_CONSOLE_PORT` / `MC_CONSOLE_PASSWORD` | _(disabled)_ / `2222` / — | The Bedrock container's SSH remote console (`ENABLE_SSH=true` on the itzg image; the password is its `RCON_PASSWORD`). Enables the block shop, which each server still has to switch on |
 | `WYOMING_TTS_HOST` / `WYOMING_TTS_PORT` / `WYOMING_TTS_VOICE` | _(disabled)_ / `10200` / _(server default)_ | A Wyoming text-to-speech server (Piper, for one) as the bot's container sees it. Enables `!adminannounce` and the paid `!shop announce` |
-| `COMPOSE_PROFILES=mcp` + `MCP_BEARER_TOKEN` / `MCP_ALLOWED_HOSTS` / `MCP_BIND_IP` / `MCP_DB_USER` / `MCP_DB_PASSWORD` | _(off)_ | The read-only MCP sidecar for AI agents on your LAN — see [botmcp/README.md](botmcp/README.md) |
+| `COMPOSE_PROFILES=mcp` + `MCP_BEARER_TOKEN` / `MCP_BIND_IP` / `MCP_DB_USER` / `MCP_DB_PASSWORD` | _(off)_ | The read-only MCP sidecar for AI agents on your LAN — see [botmcp/README.md](botmcp/README.md) |
 | `NSFW_API_URL` / `NSFW_API_KEY` / `NSFW_API_USER_ID` | _(disabled)_ | Credentials for an NSFW image API, enabling `!nsfw`; servers allow it, restrict it to channels or ban tags with `!settings nsfw` |
 
 ## Engineering highlights

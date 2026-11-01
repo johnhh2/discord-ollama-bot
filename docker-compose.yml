@@ -93,6 +93,7 @@ services:
       - bot
     environment:
       MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN:-}
+      MCP_BIND_IP: ${MCP_BIND_IP:-}
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-}
       MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
       MCP_PORT: ${MCP_PORT:-8765}

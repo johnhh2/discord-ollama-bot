@@ -37,11 +37,11 @@ table it cannot, with the reason. `botmcp/catalog.py` is that list.
    |---|---|
    | `COMPOSE_PROFILES` | `mcp` — the sidecar is off without it |
    | `MCP_BEARER_TOKEN` | the token from step 2 |
-   | `MCP_ALLOWED_HOSTS` | every `host:port` a client will put in the URL, e.g. `192.168.1.10:8765,bothost.lan:8765` |
-   | `MCP_BIND_IP` | the host's LAN address; the port is published on that interface only |
+   | `MCP_BIND_IP` | the host's LAN address; the port is published on that interface only, and it is the `Host` clients must use |
    | `MCP_DB_USER` / `MCP_DB_PASSWORD` | the account from step 1 (`DB_HOST`, `DB_PORT`, `DB_NAME` are shared with the bot) |
    | `MCP_DB_ACCOUNT_HOST` | optional, default `%`: the host part of the account, e.g. `172.18.0.%` |
    | `MCP_PORT` | optional, default `8765` |
+   | `MCP_ALLOWED_HOSTS` | optional: replaces the default `Host` allowlist with a comma-separated list, e.g. `192.168.1.10,bothost.lan` (a name without a port gets `MCP_PORT`) |
 
 4. **Create the account and deploy.** With the env in place, generate the
    grants from it and run them as the MariaDB admin, then start the stack.

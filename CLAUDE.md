@@ -39,7 +39,7 @@ Key environment variables (all optional except `DISCORD_TOKEN`):
 | `YTDLP_TMPDIR` | _(process temp dir)_ | Where the standalone yt-dlp unpacks itself; the image sets `/run/ytdlp`, an exec-allowed tmpfs in the compose file, because `/tmp` is mounted noexec |
 | `COMPOSE_PROFILES` | _(unset)_ | `mcp` starts the read-only MCP sidecar (see that section); unset leaves it off |
 | `MCP_BEARER_TOKEN` | — | Sidecar: the pre-shared token every MCP request must carry; 32+ characters or the sidecar refuses to start |
-| `MCP_ALLOWED_HOSTS` | — | Sidecar: comma-separated `host:port` values clients will use; any other `Host` header gets 421 |
+| `MCP_ALLOWED_HOSTS` | `MCP_BIND_IP:MCP_PORT` | Sidecar: comma-separated `Host` values clients may use (a bare name gets `MCP_PORT`); any other `Host` header gets 421 |
 | `MCP_ALLOWED_ORIGINS` | _(none)_ | Sidecar: browser origins allowed, if any; non-browser clients send none |
 | `MCP_BIND_IP` | `127.0.0.1` | The host interface the sidecar's port is published on — set it to the LAN address |
 | `MCP_PORT` | `8765` | Sidecar port |
@@ -1812,7 +1812,9 @@ reach it. Off unless the `mcp` compose profile is on. Operator setup is in
   by `BearerAuth` (`botmcp/server.py`, constant-time) — never a session —
   and a 401 carries no OAuth discovery hint. The SDK's DNS-rebinding guard
   runs behind it with `MCP_ALLOWED_HOSTS` (421 on any other `Host`) and
-  `MCP_ALLOWED_ORIGINS` (403). The port is published on `MCP_BIND_IP` only.
+  `MCP_ALLOWED_ORIGINS` (403). The port is published on `MCP_BIND_IP` only,
+  and that address plus `MCP_PORT` is the default allowlist, so the usual
+  setup names the address once.
   A pre-shared token instead of OAuth 2.1 is a documented deviation from the
   spec's SHOULD, acceptable for one operator on one LAN; the upgrade path is
   an SSH port-forward or a TLS proxy, not a code change.

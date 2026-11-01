@@ -65,12 +65,16 @@ class Settings:
             raise ConfigError(f"MCP_BEARER_TOKEN must be at least {MIN_TOKEN_LEN} characters "
                               "(python -c \"import secrets; print(secrets.token_urlsafe(48))\")")
         port = int(env.get("MCP_PORT") or 8765)
-        hosts = tuple(h.strip() for h in (env.get("MCP_ALLOWED_HOSTS") or "").split(",") if h.strip())
-        if not hosts:
-            raise ConfigError("MCP_ALLOWED_HOSTS must list the Host values clients will use, e.g. 192.168.1.10:8765")
-        # The container's own healthcheck and a curl from the host namespace
-        # arrive as loopback; everything else must be named explicitly.
-        hosts = tuple(dict.fromkeys(hosts + (f"127.0.0.1:{port}", f"localhost:{port}")))
+        # The SDK matches the whole `host:port` string, so a bare entry gets the
+        # port appended. With MCP_ALLOWED_HOSTS unset, the address the port is
+        # published on (MCP_BIND_IP) is the one clients will use; the loopback
+        # names cover the container's healthcheck and a curl from the host.
+        named = [h.strip() for h in (env.get("MCP_ALLOWED_HOSTS") or "").split(",") if h.strip()]
+        bind_ip = (env.get("MCP_BIND_IP") or "").strip()
+        if not named and bind_ip:
+            named = [bind_ip]
+        hosts = tuple(dict.fromkeys(
+            [h if ":" in h else f"{h}:{port}" for h in named] + [f"127.0.0.1:{port}", f"localhost:{port}"]))
         origins = tuple(o.strip() for o in (env.get("MCP_ALLOWED_ORIGINS") or "").split(",") if o.strip())
         return cls(token=token, allowed_hosts=hosts, allowed_origins=origins,
                    bind=env.get("MCP_BIND_ADDR") or "0.0.0.0", port=port)  # nosec B104 — see `bind`
