@@ -67,15 +67,16 @@ def _admin_ctx(command: str = "settings interest") -> FakeCtx:
 # ── the catalog ──────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("mode, days, savings, prop", [
-    ("small", 730, (1.0, 0.3), (2.5, 0.5)),
-    ("medium", 365, (0.8, 0.2), (2.0, 0.4)),
-    ("large", 182, (0.6, 0.1), (1.5, 0.3)),
+    ("small", 1460, (0.9, 0.3), (1.65, 0.5)),
+    ("medium", 730, (0.8, 0.2), (1.65, 0.4)),
+    ("large", 364, (0.6, 0.1), (1.5, 0.3)),
 ])
 async def test_each_mode_falls_from_start_to_end_and_holds(mode, days, savings, prop):
     curve = RATE_CURVES[mode]
     assert curve.days == days
     assert curve.pct("savings", 0) == savings[0] and curve.pct("property", 0) == prop[0]
-    assert curve.pct("savings", days / 2) == pytest.approx(sum(savings) / 2)
+    # Half the time in, only a quarter of the drop has happened.
+    assert curve.pct("savings", days / 2) == pytest.approx(savings[0] - (savings[0] - savings[1]) / 4)
     assert curve.pct("savings", days) == pytest.approx(savings[1])
     assert curve.pct("property", days * 10) == pytest.approx(prop[1])
 
@@ -111,8 +112,7 @@ async def test_the_curve_counts_only_from_its_start():
 async def test_savings_compound_at_the_falling_rate():
     _start_curve("small", days_ago=2)
     await _deposit(UID, 100_000, days_ago=1)
-    # Day two of 730 falls about 0.0014 percentage points from 1%.
-    assert _value() == pytest.approx(100_000 * 1.00998, rel=1e-4)
+    assert _value() == pytest.approx(100_000 * 1.009, rel=1e-5)
 
 
 async def test_the_end_rate_holds_past_the_curve():
@@ -146,7 +146,7 @@ async def test_rent_is_paid_at_the_curve_rate():
     prop = await _own(UID)
     flat = daily_revenue(prop["cost"])
     _state.economy["users"][str(UID)]["property_paid_at"] = time.time() - DAY_SECS
-    expected = int(flat * 2.5 / 1.1)
+    expected = int(flat * 1.65 / 1.1)
     assert claimable_property_revenue(UID) == pytest.approx(expected, abs=2)
     assert portfolio_daily_revenue(UID) == pytest.approx(expected, abs=2)
     assert property_daily_revenue(prop["id"], current=True) == pytest.approx(expected, abs=2)
@@ -158,7 +158,7 @@ async def test_each_skipped_day_pays_that_days_rate():
     prop = await _own(UID)
     _state.economy["users"][str(UID)]["property_paid_at"] = time.time() - 3 * DAY_SECS
     flat = daily_revenue(prop["cost"])
-    pct = [1.5 - 1.2 * (100 - back) / 182 for back in (0, 1, 2)]
+    pct = [1.5 - 1.2 * ((100 - back) / 364) ** 2 for back in (0, 1, 2)]
     assert claimable_property_revenue(UID) == pytest.approx(sum(flat * p / 1.1 for p in pct), abs=4)
 
 
@@ -211,21 +211,33 @@ async def test_the_setting_is_a_text_value():
 
 # ── starting partway along ───────────────────────────────────────────────────
 
-@pytest.mark.parametrize("text, days", [("274", 274.0), ("75%", 273.75), ("0", 0.0), ("100%", 365.0)])
+@pytest.mark.parametrize("text, days", [("602", 602.0), ("75%", 547.5), ("0", 0.0), ("100%", 730.0)])
 async def test_parse_position_reads_days_and_percents(text, days):
     assert parse_position(text, RATE_CURVES["medium"]) == days
 
 
-@pytest.mark.parametrize("text", ["366", "101%", "-1", "soon", "%"])
+@pytest.mark.parametrize("text", ["731", "101%", "-1", "soon", "%"])
 async def test_parse_position_refuses_what_is_off_the_curve(text):
     assert parse_position(text, RATE_CURVES["medium"]) is None
 
 
-async def test_medium_three_quarters_in_pays_the_quoted_rates():
-    await set_rate_curve("medium", parse_position("75%", RATE_CURVES["medium"]))
+async def test_medium_day_602_pays_the_quoted_rates():
+    await set_rate_curve("medium", parse_position("602", RATE_CURVES["medium"]))
     assert property_pct_text() == "0.8%"
-    assert savings_pct_text() == "0.35%"
-    assert "day 274 of 365" in curve_status()
+    assert savings_pct_text() == "0.39%"
+    assert "day 602 of 730" in curve_status()
+
+
+async def test_no_mode_starts_above_one_and_a_half_times_flat():
+    for curve in RATE_CURVES.values():
+        assert curve.savings[0] <= 1.5 * FLAT_PCT["savings"] + 1e-9
+        assert curve.property[0] <= 1.5 * FLAT_PCT["property"] + 1e-9
+
+
+async def test_the_rate_never_rises():
+    for curve in RATE_CURVES.values():
+        rates = [curve.pct("property", d) for d in range(curve.days + 2)]
+        assert rates == sorted(rates, reverse=True)
 
 
 async def test_a_backdated_start_does_not_pay_the_curve_on_the_past():
@@ -245,10 +257,10 @@ async def test_the_command_takes_a_position_and_refuses_a_bad_one():
     cog = SettingsCog(None)
     ctx = _admin_ctx()
     await cog.settings_interest.callback(cog, ctx, "medium", "50%")
-    assert (time.time() - active_curve()[0]) / DAY_SECS == pytest.approx(182.5, abs=1e-3)
-    await cog.settings_interest.callback(cog, ctx, "medium", "999")
+    assert (time.time() - active_curve()[0]) / DAY_SECS == pytest.approx(365, abs=1e-3)
+    await cog.settings_interest.callback(cog, ctx, "medium", "9999")
     assert "Usage" in ctx.sent_embeds[-1].description
-    assert (time.time() - active_curve()[0]) / DAY_SECS == pytest.approx(182.5, abs=1e-3)
+    assert (time.time() - active_curve()[0]) / DAY_SECS == pytest.approx(365, abs=1e-3)
 
 
 # ── the command ──────────────────────────────────────────────────────────────

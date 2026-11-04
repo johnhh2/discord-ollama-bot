@@ -489,15 +489,16 @@ savings and property rates with a falling curve in every server, optionally
 starting partway along it, stored in `state.bot_settings`
 (`rate_curve_mode`, `rate_curve_started_at`). `RATE_CURVES` in
 [src/rate_curves.py](src/rate_curves.py) holds the levers; the labels there are
-what every menu prints. Each rate falls linearly from start to end over `days`,
-then holds the end rate. Both percentages are % a day. With no mode set the
+what every menu prints. Each rate falls from start to end over `days` along
+`t ** CURVE_SHAPE` (2: slow at first, fastest near the end), then holds the
+end rate. No mode starts above 1.5x the flat rates. Both percentages are % a day. With no mode set the
 original flat code path runs, untouched.
 
 | Mode | Savings | Property | Days |
 |------|---------|----------|------|
-| Small (2-9 players) | 1 → 0.3 | 2.5 → 0.5 | 730 |
-| Medium (10-99 players) | 0.8 → 0.2 | 2 → 0.4 | 365 |
-| Large (100+ players) | 0.6 → 0.1 | 1.5 → 0.3 | 182 |
+| Small (2-9 players) | 0.9 → 0.3 | 1.65 → 0.5 | 1460 |
+| Medium (10-99 players) | 0.8 → 0.2 | 1.65 → 0.4 | 730 |
+| Large (100+ players) | 0.6 → 0.1 | 1.5 → 0.3 | 364 |
 
 - **Bot-wide on purpose.** Balances and deeds have no guild dimension, so a
   per-server curve can't say whose rate a shared balance earns. It was built

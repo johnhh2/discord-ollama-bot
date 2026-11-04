@@ -2,8 +2,9 @@
 
 One curve for the whole bot, because balances and deeds have no guild
 dimension. `!settings interest` picks a mode and optionally how far into it
-to start (`state.bot_settings`). The rate falls linearly from its start to
-its end, then holds the end rate. With no mode set, the flat rates apply.
+to start (`state.bot_settings`). The rate falls from its start to its end,
+slowly at first and fastest near the end (`CURVE_SHAPE`), then holds the
+end rate. With no mode set, the flat rates apply.
 See CLAUDE.md: Interest curves.
 """
 from __future__ import annotations
@@ -27,6 +28,10 @@ FLAT_PCT = {
 ARTIFACT_SAVINGS_FACTOR = (ARTIFACT_SAVINGS_DAILY_MULT - 1.0) / (SAVINGS_DAILY_MULT - 1.0)
 
 OFF = "off"
+# How far along the drop the rate is at a fraction t of the way: t ** shape.
+# 2 means half the time in, only a quarter of the drop has happened; 1 is a
+# straight line. Higher keeps rates up longer and steepens the end.
+CURVE_SHAPE = 2.0
 # bot_settings is a TEXT column, so both are stored as strings.
 MODE_KEY = "rate_curve_mode"
 STARTED_KEY = "rate_curve_started_at"
@@ -42,20 +47,22 @@ class RateCurve:
 
     def pct(self, kind: str, elapsed_days: float) -> float:
         start, end = getattr(self, kind)
-        return start + (end - start) * min(max(elapsed_days, 0.0) / self.days, 1.0)
+        t = min(max(elapsed_days, 0.0) / self.days, 1.0)
+        return start + (end - start) * t ** CURVE_SHAPE
 
 
 RATE_CURVES: dict[str, RateCurve] = {
-    "small": RateCurve("small", "Small (2-9 players)", 730, (1.0, 0.3), (2.5, 0.5)),
-    "medium": RateCurve("medium", "Medium (10-99 players)", 365, (0.8, 0.2), (2.0, 0.4)),
-    "large": RateCurve("large", "Large (100+ players)", 182, (0.6, 0.1), (1.5, 0.3)),
+    # No start above 1.5x the flat rates (0.9% and 1.65%).
+    "small": RateCurve("small", "Small (2-9 players)", 1460, (0.9, 0.3), (1.65, 0.5)),
+    "medium": RateCurve("medium", "Medium (10-99 players)", 730, (0.8, 0.2), (1.65, 0.4)),
+    "large": RateCurve("large", "Large (100+ players)", 364, (0.6, 0.1), (1.5, 0.3)),
 }
 
 CURVE_MENU = "\n".join(
     f"**{c.label}** — savings {c.savings[0]:g}% → {c.savings[1]:g}%, "
     f"property {c.property[0]:g}% → {c.property[1]:g}% a day, over {c.days} days"
     for c in RATE_CURVES.values()
-)
+) + "\nRates fall slowly at first and fastest near the end."
 CURVE_QUESTION = (
     "Should savings interest and property revenue start high and fall over time? "
     "This applies to every server. The clock starts at day 0 and keeps running through any change, "
