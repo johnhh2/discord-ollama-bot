@@ -21,7 +21,7 @@ from src.helpers import (
 )
 from src.economy import (
     get_guild_ask_model, get_guild_roleplay_model,
-    get_guild_coding_model, _ct_today, SAVINGS_DAILY_PCT,
+    get_guild_coding_model, _ct_today,
 )
 from src.streaks import effective_streak
 from src.permissions import (
@@ -42,6 +42,7 @@ from src.persistence import (
 )
 from src.guild_config import get_guild_cfg
 from src.features import feature_enabled
+from src.rate_curves import savings_pct_text
 from src.ai import (
     check_ollama_connected, keep_typing,
     ollama_semaphore, OLLAMA_NUM_PREDICT, OLLAMA_REQUEST_TIMEOUT,
@@ -306,7 +307,7 @@ class UtilityCog(commands.Cog):
         if on["economy"]:
             eco_lines = ["`!economy` — Economy overview and command list"]
             if on["savings"]:
-                eco_lines.append(fmt_line("savings", "`!savings` — 🐷 Piggy bank with " + SAVINGS_DAILY_PCT + " daily interest", uid, gid))
+                eco_lines.append(fmt_line("savings", "`!savings` — 🐷 Piggy bank with " + savings_pct_text() + " daily interest", uid, gid))
             eco_lines.append("`!crime` — Steal, mug, and jailbreak commands")
             help_embed.add_field(name="💰 Economy", inline=False, value="\n".join(eco_lines))
         help_embed.add_field(name="🎮 Games" + (" / Gambling" if on["gambling"] else ""), inline=False, value=(

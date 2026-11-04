@@ -352,7 +352,8 @@ Rules when touching this system:
 
 1. **Revenue is derived, never hand-typed.** `daily_revenue(cost) = cost * 11
    // 1000` (1.1% of purchase price per day) is the single invariant; catalog
-   entries carry only `cost`. Don't add a per-property revenue field.
+   entries carry only `cost`. Don't add a per-property revenue field. An
+   interest curve scales what an owner is paid (see Interest curves), not this.
 2. **Revenue pays out with the daily claim only.** `bank_property_revenue`
    is called from `cmd_daily` and `events._auto_daily` — both inside the
    synchronously-claimed `daily_date` window, which is what makes it
@@ -480,6 +481,49 @@ way. The two multi-step buys roll back what applied before refunding:
 `rolecreate` registers the role the moment it exists and deletes it if the
 assign fails; `rolechannel` restores each prior overwrite if a later
 `set_permissions` call fails.
+
+## Interest curves: one bot-wide falling rate
+
+`!settings interest <mode> [day|percent%]` (`global_admin`) replaces the flat
+savings and property rates with a falling curve in every server, optionally
+starting partway along it, stored in `state.bot_settings`
+(`rate_curve_mode`, `rate_curve_started_at`). `RATE_CURVES` in
+[src/rate_curves.py](src/rate_curves.py) holds the levers; the labels there are
+what every menu prints. Each rate falls linearly from start to end over `days`,
+then holds the end rate. Both percentages are % a day. With no mode set the
+original flat code path runs, untouched.
+
+| Mode | Savings | Property | Days |
+|------|---------|----------|------|
+| Small (2-9 players) | 1 → 0.3 | 2.5 → 0.5 | 730 |
+| Medium (10-99 players) | 0.8 → 0.2 | 2 → 0.4 | 365 |
+| Large (100+ players) | 0.6 → 0.1 | 1.5 → 0.3 | 182 |
+
+- **Bot-wide on purpose.** Balances and deeds have no guild dimension, so a
+  per-server curve can't say whose rate a shared balance earns. It was built
+  that way first and dropped. It isn't in the setup wizard, whose answers are
+  per server and open to any server admin; the tier follows the "override can
+  never reach global state" rule under Command Permission System.
+- **Only a named position moves the clock.** `rate_curve_started_at` is set by
+  the first pick and kept through off, on and a change of mode. A position sets
+  it to that many days ago (`parse_position`, `set_rate_curve`).
+- **Changes reach forward only.** `savings_growth` reads the current mode and
+  start, so `set_rate_curve` banks every deposit first. Only a first pick at day
+  0 skips that, because `rate_at` is flat before the start. A backdated start
+  would otherwise pay the curve on time already passed. `_rent_due` isn't banked:
+  a skipped day pays the rate the current curve gives that day.
+- **Savings integrate, rent is per gameplay day.** `curve_growth` reads a cached
+  per-day table (`_savings_table`) because the leaderboard reads every deposit.
+  `_rent_due` pays each skipped day that day's rate. Rent scales by
+  `property_mult` (the rate over the flat 1.1%), so upgrades and the mogul
+  boost multiply as before, and `property_value` is untouched.
+- **The savings artifact keeps its proportion** (`ARTIFACT_SAVINGS_FACTOR`,
+  0.8 over 0.6) at every point on the curve, from its acquisition instant.
+- **Shown rates.** `property_daily_revenue(pid, row)` is the flat figure; pass
+  `current=True` for what the deed pays today. Text quoting a rate goes through
+  `savings_pct_text` / `property_pct_text`.
+
+Coverage: [tests/test_rate_curves.py](tests/test_rate_curves.py).
 
 ## Insurance: tiers, and crime is refunded rather than blocked
 

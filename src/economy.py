@@ -12,6 +12,7 @@ from src.config import (
     SAVINGS_DAILY_MULT, ARTIFACT_SAVINGS_DAILY_MULT,
 )
 from src.artifacts import savings_boost_since
+from src.rate_curves import MODE_KEY, STARTED_KEY, active_curve, curve_growth, savings_pct_text
 from src.persistence import (
     save_economy, save_insurance, try_set_record,
     load_balance_history, save_balance_history,
@@ -590,6 +591,8 @@ def savings_growth(deposited_at: float, now: float | None = None,
     moment the artifact was bought (savings_boost_since). Each boundary
     switches the rate going forward; interest already earned is never
     recomputed — so buying the artifact can't re-price a deposit's past.
+    The interest curve (src/rate_curves.py), when one is set, follows in
+    place of the flat base and boosted rates.
     """
     if now is None:
         now = time.time()
@@ -601,6 +604,13 @@ def savings_growth(deposited_at: float, now: float | None = None,
     boost_start = now if boost_since is None else max(base_start, boost_since)
     base_days = max(0.0, (min(now, boost_start) - base_start) / 86400.0)
     boost_days = max(0.0, (now - boost_start) / 86400.0)
+    curve = active_curve()
+    if curve is not None:
+        return (
+            (_LEGACY_SAVINGS_DAILY_MULT ** legacy_days)
+            * curve_growth(curve, base_start, min(now, boost_start))
+            * curve_growth(curve, boost_start, now, boosted=True)
+        )
     return (
         (_LEGACY_SAVINGS_DAILY_MULT ** legacy_days)
         * (SAVINGS_DAILY_MULT ** base_days)
@@ -610,7 +620,7 @@ def savings_growth(deposited_at: float, now: float | None = None,
 
 def user_savings_daily_pct(uid: int) -> str:
     """The daily rate this user's savings accrue at right now, for display."""
-    return ARTIFACT_SAVINGS_DAILY_PCT if savings_boost_since(uid) is not None else SAVINGS_DAILY_PCT
+    return savings_pct_text(boosted=savings_boost_since(uid) is not None)
 
 
 def rebase_savings_deposits(uid: int, now: float | None = None) -> None:
@@ -629,6 +639,37 @@ def rebase_savings_deposits(uid: int, now: float | None = None) -> None:
         {"amount": e["amount"] * savings_growth(e["deposited_at"], now, uid), "deposited_at": now}
         for e in user["savings"]
     ]
+
+
+async def set_rate_curve(mode: str | None, days_in: float | None = None) -> bool:
+    """Set the bot-wide interest curve (a RATE_CURVES key, or None for flat),
+    `days_in` days along it if given. Returns False when nothing changes.
+
+    Without `days_in` the start time survives: switching off and on, or
+    changing mode, must not go back to the top of a curve. Deposits are
+    banked first, synchronously, so a change only reaches forward. Only a
+    first pick at day 0 needs no banking, as rate_at is flat before the
+    start; any other start is backdated, and would pay the curve on the past."""
+    from src.persistence import save_bot_settings
+    if state.bot_settings.get(MODE_KEY) == mode and days_in is None:
+        return False
+    now = time.time()
+    rebase = bool(state.bot_settings.get(STARTED_KEY)) or bool(days_in)
+    if rebase:
+        for uid_str in state.economy["users"]:
+            rebase_savings_deposits(int(uid_str), now)
+    if mode is None:
+        state.bot_settings.pop(MODE_KEY, None)
+    else:
+        state.bot_settings[MODE_KEY] = mode
+        if days_in is not None:
+            state.bot_settings[STARTED_KEY] = str(now - days_in * 86400.0)
+        else:
+            state.bot_settings.setdefault(STARTED_KEY, str(now))
+    await save_bot_settings()
+    if rebase:
+        await save_economy()
+    return True
 
 
 async def get_savings_value(uid: int) -> float:

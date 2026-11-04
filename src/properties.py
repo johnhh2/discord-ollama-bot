@@ -17,6 +17,9 @@ Economics:
     revenue when that's larger, so a single skipped day always banks in
     full. The next claim pays today's rent plus the bank; today's rent is
     never capped, so the two together can exceed the cap.
+  - The bot-wide interest curve, when set, replaces the flat 1.1% with a
+    falling rate (src/rate_curves.py). That scales what owners are paid, per
+    gameplay day; book value and upgrades are untouched.
   - A user owns at most PROPERTY_MAX_OWNED properties.
   - Owners can list a property for sale at any price; listings are global,
     so a deed listed in one server can be bought from any other.
@@ -181,17 +184,21 @@ def daily_revenue(cost: int) -> int:
     return cost * PROPERTY_DAILY_REVENUE_PERMILLE // 1000
 
 
-def property_daily_revenue(pid: str, row: dict = None) -> int:
+def property_daily_revenue(pid: str, row: dict = None, *, current: bool = False) -> int:
     """One deed's daily revenue including its upgrade boost (if bought).
     Artifact bonuses are NOT applied here — they're portfolio-wide and live
-    in portfolio_daily_revenue / pending_property_revenue."""
+    in portfolio_daily_revenue / pending_property_revenue. With `current`,
+    it's what the deed pays today on the interest curve."""
     base = daily_revenue(PROPERTIES_BY_ID[pid]["cost"])
     if row is None:
         row = state.property_owners.get(pid)
     if row and row.get("upgraded"):
         boost = PROPERTY_UPGRADES[pid][2]
         base = base * (100 + boost) // 100
-    return base
+    if not current:
+        return base
+    from src.rate_curves import active_curve, property_mult
+    return int(base * property_mult(active_curve(), time.time()))
 
 
 def property_value(pid: str, row: dict = None) -> int:
@@ -241,7 +248,7 @@ def portfolio_daily_revenue(uid: int, *, boosted: bool = True) -> int:
     """The user's total property revenue per day, upgrades included. With
     `boosted`, applies artifact percentage bonuses (the number the accrual
     actually pays)."""
-    base = sum(property_daily_revenue(p["id"]) for p in owned_properties(uid))
+    base = sum(property_daily_revenue(p["id"], current=True) for p in owned_properties(uid))
     if not boosted:
         return base
     from src.artifacts import property_revenue_boosted
@@ -277,6 +284,8 @@ def _rent_due(uid: int, now: float) -> tuple[int, int]:
     if not props:
         return 0, 0
     from src.economy import gameplay_day
+    from src.rate_curves import DAY_SECS, active_curve, property_mult
+    curve = active_curve()
     today = gameplay_day(now)
     user = state.economy["users"].get(str(uid), {})
     paid_at = float(user.get("property_paid_at", 0.0) or 0.0)
@@ -292,8 +301,15 @@ def _rent_due(uid: int, now: float) -> tuple[int, int]:
         if days <= 0:
             continue
         rev = property_daily_revenue(p["id"], row)
-        today_rent += rev
-        skipped_rent += rev * (days - 1)
+        if curve is None:
+            today_rent += rev
+            skipped_rent += rev * (days - 1)
+            continue
+        # On a curve each skipped day pays that day's rate, not today's.
+        today_rent += int(rev * property_mult(curve, now))
+        skipped_rent += sum(
+            int(rev * property_mult(curve, now - back * DAY_SECS)) for back in range(1, days)
+        )
     return today_rent, skipped_rent
 
 

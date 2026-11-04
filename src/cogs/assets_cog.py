@@ -26,11 +26,12 @@ from src.properties import (
     PROPERTIES, PROPERTY_MAX_OWNED, PROPERTY_SALE_FEE_PCT,
     PROPERTY_UPGRADES, PROPERTY_BANK_BUYBACK_PCT,
     find_property, owned_properties, owned_property_count,
-    portfolio_value, portfolio_daily_revenue, accrual_cap, PROPERTY_DAILY_REVENUE_PCT,
+    portfolio_value, portfolio_daily_revenue, accrual_cap,
     pending_property_revenue, property_value, property_daily_revenue,
     bank_buyback_offer,
 )
 from src.artifacts import property_upgrade_cost
+from src.rate_curves import property_pct_text
 from src.confirm_view import confirm_prompt, confirm_purchase
 from src.persistence import save_property_owner, delete_property_owner, try_set_record
 from src import state
@@ -89,7 +90,7 @@ class AssetsCog(commands.Cog):
             desc = (
                 f"**{member.display_name}** doesn't own any properties yet.\n\n"
                 f"{_SUBCOMMANDS_HELP}\n\n"
-                f"*Properties pay **{PROPERTY_DAILY_REVENUE_PCT} of their price per day**, banked automatically "
+                f"*Properties pay **{property_pct_text()} of their price per day**, banked automatically "
                 f"with your daily claim. Own up to **{PROPERTY_MAX_OWNED}**.*"
             )
             await send_ephemeral(ctx, embed=emb("🏘️ Real Estate", desc, C_PURPLE))
@@ -105,7 +106,7 @@ class AssetsCog(commands.Cog):
             up_count = f"({1 if row.get('upgraded') else 0}/1)"
             lines.append(
                 f"{_fmt_prop(p, row)} {up_count} — {property_value(pid, row):,} 🪙 • "
-                f"{property_daily_revenue(pid, row):,} 🪙/day{listed}"
+                f"{property_daily_revenue(pid, row, current=True):,} 🪙/day{listed}"
             )
         pending = pending_property_revenue(uid)
         cap = accrual_cap(uid)
@@ -142,7 +143,7 @@ class AssetsCog(commands.Cog):
                     lines.append("")
                 lines.append(f"**Tier {cur_tier}** *(level {p['level']}+)*")
             row = _owner_row(p["id"])
-            rev = property_daily_revenue(p["id"], row)
+            rev = property_daily_revenue(p["id"], row, current=True)
             star = " ⭐" if row and row.get("upgraded") else ""
             if row is None:
                 entry = f"{_fmt_prop(p)} — **{p['cost']:,} 🪙** • {rev:,} 🪙/day"
@@ -165,7 +166,7 @@ class AssetsCog(commands.Cog):
         lines.append(
             f"Every property is unique — one owner across all servers; 🏷️ marks "
             f"player listings, buyable from any server. "
-            f"Own up to **{PROPERTY_MAX_OWNED}**; revenue is {PROPERTY_DAILY_REVENUE_PCT} of price per day, "
+            f"Own up to **{PROPERTY_MAX_OWNED}**; revenue is {property_pct_text()} of price per day, "
             "banked with your daily claim.\n"
             "`!assets buy <name>` • `!assets sell <name> <price>`"
         )
@@ -224,7 +225,7 @@ class AssetsCog(commands.Cog):
             ctx, title="🏘️ Buy Property",
             description=(
                 f"Buy {_fmt_prop(prop)} from the bank.\n"
-                f"It earns **{property_daily_revenue(pid, preview_row):,} 🪙/day**, banked with your daily claim."
+                f"It earns **{property_daily_revenue(pid, preview_row, current=True):,} 🪙/day**, banked with your daily claim."
             ),
             cost=cost, payer=ctx.author,
         ):
@@ -254,7 +255,7 @@ class AssetsCog(commands.Cog):
         await ctx.send(embed=emb(
             "🏘️ Property Acquired",
             f"**{ctx.author.display_name}** bought {_fmt_prop(prop)} for **{cost:,} 🪙**!\n"
-            f"It earns **{property_daily_revenue(pid, row):,} 🪙/day**, banked with your daily claim.",
+            f"It earns **{property_daily_revenue(pid, row, current=True):,} 🪙/day**, banked with your daily claim.",
             C_GREEN,
         ))
         await self._offer_records(ctx)
@@ -269,7 +270,7 @@ class AssetsCog(commands.Cog):
             ctx, title="🏘️ Buy Property",
             description=(
                 f"Buy {_fmt_prop(prop, row)}{upgraded_note} from <@{seller_id}>.\n"
-                f"It earns **{property_daily_revenue(pid, row):,} 🪙/day**, banked with your daily claim."
+                f"It earns **{property_daily_revenue(pid, row, current=True):,} 🪙/day**, banked with your daily claim."
             ),
             cost=price, payer=ctx.author,
         ):
@@ -306,7 +307,7 @@ class AssetsCog(commands.Cog):
             "🏘️ Property Acquired",
             f"**{ctx.author.display_name}** bought {_fmt_prop(prop, row)}{upgraded_note} "
             f"from <@{seller_id}> for **{price:,} 🪙**!\n"
-            f"It earns **{property_daily_revenue(pid, row):,} 🪙/day**, banked with your daily claim.",
+            f"It earns **{property_daily_revenue(pid, row, current=True):,} 🪙/day**, banked with your daily claim.",
             C_GREEN,
         ))
         # Cross-server sale: the seller may not be in this guild, so tell
@@ -541,7 +542,7 @@ class AssetsCog(commands.Cog):
         await ctx.send(embed=emb(
             "⭐ Upgrade Built",
             f"{_fmt_prop(prop, row)} now has a **{up_name}**!\n"
-            f"Revenue: **{property_daily_revenue(pid, row):,} 🪙/day** (+{up_boost}%) • "
+            f"Revenue: **{property_daily_revenue(pid, row, current=True):,} 🪙/day** (+{up_boost}%) • "
             f"Value: **{property_value(pid, row):,} 🪙**",
             C_GREEN,
         ))

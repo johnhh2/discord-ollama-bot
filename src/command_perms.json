@@ -81,6 +81,7 @@
   "mc buy":       {"tier": "everyone",    "hidden": false},
   "mc sell":      {"tier": "everyone",    "hidden": false},
   "settings minecraft-shop": {"tier": "server_admin", "hidden": false},
+  "settings interest": {"tier": "global_admin", "hidden": true},
   "settings minecraft-channel": {"tier": "server_admin", "hidden": false},
   "settings channel minecraft": {"tier": "server_admin", "hidden": false},
   "settings dailies-channel": {"tier": "server_admin", "hidden": false},

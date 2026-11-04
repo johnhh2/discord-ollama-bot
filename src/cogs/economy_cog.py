@@ -18,7 +18,7 @@ from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
     add_guild_house, insurance_refund, sweep_insurance_subs, _ct_now, _ct_today, do_daily_reset, _ensure_user,
     next_daily_reset_ts, get_savings_value, add_savings, remove_savings,
-    savings_growth, SAVINGS_DAILY_PCT, user_savings_daily_pct,
+    savings_growth, user_savings_daily_pct,
     seize_from_savings, record_crime_event, CRIME_ELIGIBLE_NET_WORTH,
     _maybe_latch_crime_eligible, GAMBLING_LOSS_RECORD, format_loss_record_detail,
 )
@@ -40,7 +40,8 @@ from src.coin_events import (
 )
 from src.dailies import keep_message_in_dailies_channel
 from src.jail_reasons import format_steal_reason, format_mug_reason, format_bankheist_reason
-from src.artifacts import bail_cost, steal_success_chance, crime_catch_chance, has_heist_partner
+from src.artifacts import bail_cost, steal_success_chance, crime_catch_chance, has_heist_partner, savings_boost_since
+from src.rate_curves import savings_pct_text
 from src.properties import bank_property_revenue
 from src.confirm_view import confirm_purchase
 from src.scope_view import send_scoped
@@ -1738,10 +1739,10 @@ class EconomyCog(commands.Cog):
         if action is None or action not in ("add", "remove"):
             value = await get_savings_value(uid)
             deposits = state.economy["users"][str(uid)].get("savings", [])
-            # The user's own rate: the savings artifact lifts it above the
-            # base SAVINGS_DAILY_PCT the generic help quotes.
+            # The user's own rate: the savings artifact lifts it above what
+            # the generic help quotes.
             rate_pct = user_savings_daily_pct(uid)
-            rate_note = " (boosted by your artifact)" if rate_pct != SAVINGS_DAILY_PCT else ""
+            rate_note = " (boosted by your artifact)" if savings_boost_since(uid) is not None else ""
             if not deposits:
                 desc = (
                     f"**{ctx.author.display_name}** has no savings yet.\n\n"
@@ -1943,7 +1944,7 @@ class EconomyCog(commands.Cog):
         on = {key: feature_enabled(gid_help, key) for key in ("savings", "assets", "gambling", "shop")}
         command_lines = []
         if on["savings"]:
-            command_lines.append(fmt_line('savings', '`!savings` — Piggy bank (' + SAVINGS_DAILY_PCT + ' daily interest)', uid_help, gid_help))
+            command_lines.append(fmt_line('savings', '`!savings` — Piggy bank (' + savings_pct_text() + ' daily interest)', uid_help, gid_help))
         if on["assets"]:
             command_lines.append("`!assets` — Real estate (revenue with your daily)")
         command_lines.append("`!crime` — Steal, mug, jailbreak")

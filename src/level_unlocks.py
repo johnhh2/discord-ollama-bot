@@ -19,7 +19,6 @@ from discord.ext import commands
 
 from src.guild_config import get_guild_cfg
 from src.features import feature_enabled
-from src.economy import SAVINGS_DAILY_PCT
 from src import state
 
 
@@ -61,7 +60,7 @@ def _feature(key: str) -> Callable[[int], bool]:
 
 UNLOCKS: dict[str, dict] = {
     # Level 3 — savings (advertised: savings)
-    "savings":     {"level": 3, "enabled": _feature("savings"),                       "usage": f"`!deposit` / `!withdraw <amount>` — piggy bank with {SAVINGS_DAILY_PCT} daily interest", "reward": True},
+    "savings":     {"level": 3, "enabled": _feature("savings"),                       "usage": "`!deposit` / `!withdraw <amount>` — piggy bank with daily interest", "reward": True},
 
     # Level 5 — role family (advertised: rolecreate). rolelock/roleunlock gated separately at 8.
     # !roles is the role leaderboard — never gated.

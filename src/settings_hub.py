@@ -31,7 +31,8 @@ from src.config import OLLAMA_MODEL
 from src.features import FEATURES, feature_enabled
 from src.guild_config import get_guild_cfg
 from src.helpers import emb, C_BLUE, C_GREY
-from src.permissions import is_admin
+from src.permissions import is_admin, is_global_admin
+from src.rate_curves import OFF, RATE_CURVES, active_curve
 from src.settings_views import Field, FormModal, MAX_OPTIONS, _OwnedView
 
 HUB_TIMEOUT = 300.0
@@ -162,7 +163,7 @@ def _shop(cfg: dict) -> list[Item]:
             for name in SHOP_ITEMS]
 
 
-def _games(cfg: dict) -> list[Item]:
+def _games(cfg: dict, *, global_admin: bool = False) -> list[Item]:
     gambler = cfg.get("gambler_role_enabled", False)
     quote = cfg.get("quote_bypass_restrictions", False)
     scope = cfg.get("leaderboard_default_scope", "global")
@@ -197,6 +198,21 @@ def _games(cfg: dict) -> list[Item]:
              fields=(Field("tag", "Tag", placeholder="one tag", max_length=100),),
              to_args=lambda v: ("ban", v["tag"])),
     ]
+    if global_admin:
+        curve = active_curve()
+        items.insert(0, Item(
+            key="interest", label="📈 Interest curve (global) — falling savings and property rates",
+            value=RATE_CURVES[curve[1]].label if curve else "Flat rates",
+            method="settings_interest", title="Interest curve", kind="form",
+            fields=(
+                Field("mode", "Curve", kind="choices", options=(
+                    *((c.label, c.key) for c in RATE_CURVES.values()), ("Flat rates", OFF),
+                )),
+                Field("position", "Start position", required=False, max_length=10,
+                      placeholder="A day or percent, like 274 or 75%. Empty keeps the clock"),
+            ),
+            to_args=lambda v: (v["mode"][0], v["position"]) if v["position"] else (v["mode"][0],),
+        ))
     if banned:
         items.append(Item(key="nsfw-unban", label="🔞 Unban NSFW tags", value=", ".join(banned),
                           method="settings_nsfw", title="Unban NSFW tags", kind="form",
@@ -314,7 +330,7 @@ def items_for(category: str, ctx, *, models: list[str] | None = None, bot=None) 
     if category == "shop":
         return _shop(cfg)
     if category == "games":
-        return _games(cfg)
+        return _games(cfg, global_admin=is_global_admin(ctx))
     if category == "aliases":
         return _aliases(cfg, ctx.guild)
     if category == "ai":

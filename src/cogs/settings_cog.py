@@ -7,7 +7,7 @@ from src.helpers import (
 )
 from src.economy import (
     drain_bot_balance_into_lottery, announce_new_lottery,
-    _ct_now, lottery_month_key,
+    _ct_now, lottery_month_key, set_rate_curve,
 )
 from src.permissions import (
     requires_perm, is_admin, is_silenced, command_permitted,
@@ -28,6 +28,7 @@ from src.settings_hub import (
 from src.confirm_view import confirm_choice, confirm_prompt
 from src.config import OLLAMA_MODEL, LOTTERY_SEED_POOL, MC_CONSOLE_HOST, MC_CONSOLE_PASSWORD
 from src.features import FEATURES, set_feature, features_overview
+from src.rate_curves import CURVE_QUESTION, OFF, RATE_CURVES, curve_status, parse_position
 from src.setup_wizard import run_setup_wizard
 from src.ai import list_ollama_models
 from src import state
@@ -68,6 +69,7 @@ class SettingsCog(commands.Cog):
                 f"🪙 Leaderboard default: **{cfg.get('leaderboard_default_scope', 'global')}**\n"
                 f"⚔️ Idle RPG: pace **{cfg.get('idle_pace') or 'lively'}** · auto-enroll **{'on' if cfg.get('idle_enroll') else 'off'}**\n"
                 f"⛏️ Minecraft block shop: {'✅ on' if cfg.get('mc_shop') else '❌ off'}\n"
+                f"📈 Interest curve: {curve_status()}\n"
                 f"🔞 NSFW: {nsfw}"
             ),
             inline=False,
@@ -374,6 +376,36 @@ class SettingsCog(commands.Cog):
         cfg["idle_pace"] = pace.lower()
         await save_guild_settings()
         await ctx.send(embed=emb("⚔️ Idle RPG Pace", f"The idle RPG now runs at the **{pace.lower()}** pace.", C_GREEN))
+
+    # ── !settings interest ────────────────────────────────────────────────────
+    @cmd_settings.command(name="interest", help="Pick the bot-wide falling savings and property rate, or flat rates",
+                          usage="[small|medium|large|off] [day|percent%]")
+    @requires_perm
+    async def settings_interest(self, ctx: commands.Context, mode: str = None, position: str = None):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        usage = "`!settings interest small|medium|large [day|percent%]`, or `off`"
+        if mode is None:
+            choices = [{"label": c.label, "value": c.key} for c in RATE_CURVES.values()]
+            mode = await confirm_choice(
+                ctx,
+                title="📈 Interest Curve",
+                description=f"{CURVE_QUESTION}\n\n**Currently:** {curve_status()}\n\nUsage: {usage}",
+                choices=[*choices, {"label": "Flat rates", "value": OFF}],
+                payer=ctx.author,
+                not_yours="Not your prompt.",
+            )
+            if mode is None:
+                return
+        mode = mode.lower()
+        curve = RATE_CURVES.get(mode)
+        days_in = parse_position(position, curve) if curve and position is not None else None
+        if (mode != OFF and curve is None) or (position is not None and days_in is None):
+            await ctx.send(embed=emb("📈 Interest Curve", f"Usage: {usage}\n\n{CURVE_QUESTION}", C_GREY))
+            return
+        await set_rate_curve(None if mode == OFF else mode, days_in)
+        await ctx.send(embed=emb("📈 Interest Curve", f"Every server now runs on **{curve_status()}**.", C_GREEN))
 
     # ── !settings minecraft-shop ──────────────────────────────────────────────
     @cmd_settings.command(name="minecraft-shop", help="Switch the Minecraft block shop on or off for this server (off by default)",

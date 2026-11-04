@@ -51,8 +51,9 @@ from src.features import feature_enabled
 from src.guild_config import get_guild_cfg
 from src.helpers import emb, C_PURPLE, C_GREY
 from src.level_unlocks import is_locked_for, user_global_display_level
+from src.rate_curves import property_pct_text
 from src.properties import (
-    PROPERTIES, PROPERTY_MAX_OWNED, PROPERTY_UPGRADES, PROPERTY_BANK_BUYBACK_PCT, PROPERTY_DAILY_REVENUE_PCT,
+    PROPERTIES, PROPERTY_MAX_OWNED, PROPERTY_UPGRADES, PROPERTY_BANK_BUYBACK_PCT,
     owned_properties, property_daily_revenue, property_value,
 )
 from src.settings_views import Field, FormModal, MAX_OPTIONS, _OwnedView
@@ -352,7 +353,7 @@ def _assets(ctx, tiers: tuple[int, ...]) -> list[ShopItem]:
         if p["tier"] not in tiers:
             continue
         row = state.property_owners.get(p["id"])
-        rev = property_daily_revenue(p["id"], row)
+        rev = property_daily_revenue(p["id"], row, current=True)
         if row is None:
             price, status = p["cost"], f"tier {p['tier']} · {rev:,} 🪙/day" + (f" · 🔒 global level {p['level']}" if lvl < p["level"] else "")
         elif row["owner_id"] == uid:
@@ -457,11 +458,11 @@ def items_for(page: str, ctx) -> list[ShopItem]:
     return []
 
 
+_ASSETS_NOTE = (
+    f"Every property is unique — one owner across all servers. Own up to {PROPERTY_MAX_OWNED}; "
+    "revenue is {pct} of price per day, banked with your daily claim."
+)
 _PAGE_NOTES = {
-    "assets_low": f"Every property is unique — one owner across all servers. Own up to {PROPERTY_MAX_OWNED}; "
-                  f"revenue is {PROPERTY_DAILY_REVENUE_PCT} of price per day, banked with your daily claim.",
-    "assets_high": f"Every property is unique — one owner across all servers. Own up to {PROPERTY_MAX_OWNED}; "
-                   f"revenue is {PROPERTY_DAILY_REVENUE_PCT} of price per day, banked with your daily claim.",
     "artifacts": "Permanent per-user upgrades, owned bot-wide. Level gates are your global level.",
     "insurance": "Crime still goes through; the insurer refunds your wallet. Every tier also blocks mock, ragebait, curses, nickname changes, role assignments and tax.",
 }
@@ -545,6 +546,8 @@ class ShopHub(_OwnedView):
             lines = [f"{item.label}" + (f" 🔒 **Lvl {item.lock}**" if item.lock else "") + f"\n-# {item.description}"
                      for item in self.items()]
             body = "\n".join(lines) or "Nothing here for you right now."
+            if self.page in ("assets_low", "assets_high"):
+                body += "\n\n*" + _ASSETS_NOTE.format(pct=property_pct_text()) + "*"
             if self.page in _PAGE_NOTES:
                 body += "\n\n*" + _PAGE_NOTES[self.page] + "*"
             embed = emb(f"🛒 Shop — {_PAGE_LABELS[self.page]}", body[:4000], C_PURPLE)
