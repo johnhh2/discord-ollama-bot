@@ -995,6 +995,14 @@ command, so gates, side effects and replies can't drift. The pieces live in
   lock and the economy switch apply to a press exactly as to a typed
   `!deposit` — then redraws the card. Someone else's balance gets no
   buttons.
+- **`!assets` is one card in three modes** (`src/assets_view.py`,
+  `AssetsView`, invoker-only): your portfolio carries Browse offerings /
+  Manage properties; browse is the market list plus a dropdown of
+  everything for sale and Buy; manage is a dropdown of your deeds, then
+  Sell / Unlist (if listed) / Upgrade (if not yet) / Rename. Each press
+  forwards the typed `!assets` subcommand with the catalog id, and the
+  card redraws after. `!assets browse` opens in browse mode, and `!assets
+  buy` with no name or an unknown one opens the same dropdown.
 - **Bare commands open a picker or a form instead of a usage line:**
   `!chess view` / `!chess pgn` (a dropdown of your recent games here,
   `load_recent_chess_reports`), `!chess shop` (the listing, then a dropdown

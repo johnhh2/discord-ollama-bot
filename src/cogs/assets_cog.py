@@ -23,7 +23,7 @@ from src.helpers import (
 )
 from src.economy import add_balance, add_guild_house, _ensure_user
 from src.properties import (
-    PROPERTIES, PROPERTY_SALE_FEE_PCT, max_owned, released_properties,
+    PROPERTIES, PROPERTIES_BY_ID, PROPERTY_SALE_FEE_PCT, max_owned, released_properties,
     PROPERTY_UPGRADES, PROPERTY_BANK_BUYBACK_PCT,
     find_property, owned_properties, owned_property_count,
     portfolio_value, portfolio_daily_revenue, accrual_cap,
@@ -52,19 +52,39 @@ def _fmt_prop(p: dict, row: dict = None) -> str:
     return f"{p['emoji']} **{p['name']}**"
 
 
-# Shown on both !assets portfolio states so the subcommands are always
-# discoverable from the bare command.
-_SUBCOMMANDS_HELP = (
-    "**Subcommands:**\n"
-    "`!assets browse [tier]` — properties for sale, bank and player listings\n"
-    "`!assets buy <name>` — buy from the bank or a player listing\n"
-    "`!assets upgrade [name]` — see your properties' upgrades, or buy one\n"
-    "`!assets sell <name> <price>` — list on the cross-server market "
-    f"(at ≤{PROPERTY_BANK_BUYBACK_PCT}% of value, the bank offers an instant buyback)\n"
-    "`!assets unlist <name>` — remove your listing\n"
-    "`!assets rename <name> <new name>` — rename your business\n"
-    "`!assets @user` — someone else's portfolio"
-)
+def buyable_properties(uid: int, tier: int | None = None) -> list[tuple[str, str, str, str]]:
+    """What the market dropdown offers: (pid, label, detail, name) for every
+    bank-owned deed and player listing, in catalog order."""
+    from src.level_unlocks import user_global_display_level
+    lvl = user_global_display_level(uid)
+    out = []
+    for p in released_properties():
+        if tier is not None and p["tier"] != tier:
+            continue
+        row = _owner_row(p["id"])
+        if row is None:
+            detail = f"{p['cost']:,} coins"
+        elif row.get("list_price"):
+            detail = f"Listed at {row['list_price']:,} coins"
+        else:
+            continue
+        detail += f" • {property_daily_revenue(p['id'], row, current=True):,}/day • Tier {p['tier']}"
+        if lvl < p["level"]:
+            detail += f" • 🔒 level {p['level']}"
+        out.append((p["id"], f"{p['emoji']} {p['name']}", detail, p["name"]))
+    return out
+
+
+def owned_rows(uid: int) -> list[tuple[str, str, str]]:
+    """The manage dropdown: (pid, label, detail) for each deed `uid` owns."""
+    out = []
+    for p in owned_properties(uid):
+        row = _owner_row(p["id"])
+        detail = f"{property_value(p['id'], row):,} coins • {property_daily_revenue(p['id'], row, current=True):,}/day"
+        if row.get("list_price"):
+            detail += f" • listed at {row['list_price']:,}"
+        out.append((p["id"], f"{p['emoji']} {row.get('custom_name') or p['name']}", detail))
+    return out
 
 
 class AssetsCog(commands.Cog):
@@ -79,22 +99,29 @@ class AssetsCog(commands.Cog):
     )
     async def cmd_assets(self, ctx: commands.Context, target: discord.Member = None):
         """Portfolio view: own by default, someone else's via !assets @user."""
+        from src.assets_view import AssetsView
         member = target or ctx.author
         await _ensure_user(member.id)
-        await self._send_portfolio(ctx, member)
+        if member.id != ctx.author.id:
+            await send_ephemeral(ctx, embed=self.portfolio_embed(member))
+            return
+        view = AssetsView(self, ctx.author, mode="home", home=True)
+        view.message = await send_ephemeral(ctx, embed=self.portfolio_embed(member), view=view)
 
-    async def _send_portfolio(self, ctx: commands.Context, member: discord.Member):
+    @staticmethod
+    def owner_row(pid: str) -> dict | None:
+        return _owner_row(pid)
+
+    def portfolio_embed(self, member) -> discord.Embed:
         uid = member.id
         props = owned_properties(uid)
         if not props:
             desc = (
                 f"**{member.display_name}** doesn't own any properties yet.\n\n"
-                f"{_SUBCOMMANDS_HELP}\n\n"
                 f"*Properties pay **{property_pct_text()} of their price per day**, banked automatically "
                 f"with your daily claim. Own up to **{max_owned()}**.*"
             )
-            await send_ephemeral(ctx, embed=emb("🏘️ Real Estate", desc, C_PURPLE))
-            return
+            return emb("🏘️ Real Estate", desc, C_PURPLE)
 
         lines = []
         for p in props:
@@ -119,19 +146,44 @@ class AssetsCog(commands.Cog):
             "paid on top of your next one"
         )
         lines.append(f"**Revenue banked (lifetime):** {banked:,} 🪙")
-        lines.append("")
-        lines.append(_SUBCOMMANDS_HELP)
-        await send_ephemeral(ctx, embed=emb(f"🏘️ {member.display_name}'s Real Estate", "\n".join(lines), C_PURPLE))
+        return emb(f"🏘️ {member.display_name}'s Real Estate", "\n".join(lines), C_PURPLE)
+
+    def manage_embed(self, member, pid: str | None) -> discord.Embed:
+        if not owned_properties(member.id):
+            return emb("🛠️ Manage Properties", "You don't own any properties.", C_PURPLE)
+        if pid is None or _owner_row(pid) is None or _owner_row(pid)["owner_id"] != member.id:
+            return emb("🛠️ Manage Properties", "Pick one of your properties below.", C_PURPLE)
+        prop = PROPERTIES_BY_ID[pid]
+        row = _owner_row(pid)
+        up_name, up_cost, up_boost = PROPERTY_UPGRADES[pid]
+        upgrade = (f"⭐ **{up_name}** built (+{up_boost}% revenue)" if row.get("upgraded") else
+                   f"**{up_name}**: {property_upgrade_cost(member.id, up_cost):,} 🪙 for +{up_boost}% revenue")
+        listing = f"🏷️ Listed at **{row['list_price']:,} 🪙**" if row.get("list_price") else "Not listed"
+        lines = [
+            f"**Value:** {property_value(pid, row):,} 🪙",
+            f"**Revenue:** {property_daily_revenue(pid, row, current=True):,} 🪙/day",
+            f"**Upgrade:** {upgrade}",
+            f"**Market:** {listing}",
+        ]
+        return emb(f"🛠️ {_fmt_prop(prop, row)}", "\n".join(lines), C_PURPLE)
 
     # ── !assets browse / market (combined catalog + listings view) ────────
     @cmd_assets.command(name="browse", aliases=["market", "catalog", "shop", "listings", "forsale"],
                         help="Properties for sale from the bank and from players, optionally one tier (1-5)")
     async def assets_browse(self, ctx: commands.Context, tier: int = None):
+        from src.assets_view import AssetsView
+        embed = self.browse_embed(ctx.author.id, tier)
+        if embed is None:
+            await ctx.send(embed=emb("🏘️ Real Estate", f"No tier `{tier}` — tiers are 1–5.", C_RED))
+            return
+        view = AssetsView(self, ctx.author, mode="browse", tier=tier)
+        view.message = await send_ephemeral(ctx, embed=embed, view=view)
+
+    def browse_embed(self, uid: int, tier: int | None = None) -> discord.Embed | None:
+        """The market list, or None for a tier with nothing in the catalog."""
         from src.level_unlocks import user_global_display_level
-        uid = ctx.author.id
         # Deeds are bot-wide, so the gate is the global level too.
         lvl = user_global_display_level(uid)
-
         # Only what can be bought (bank-owned deeds and player listings), under
         # the catalog name: no owners, custom names or upgrade stars.
         tiers: dict[int, list[str]] = {}
@@ -145,11 +197,11 @@ class AssetsCog(commands.Cog):
             label = f"{p['emoji']} **{p['name']}**"
             rev = property_daily_revenue(p["id"], row, current=True)
             if row is None:
-                entry = f"{label} — **{p['cost']:,} 🪙** • {rev:,} 🪙/day"
+                entry = f"{label} — **{p['cost']:,} 🪙** • {rev:,} 🪙/day • 1 available"
                 if lvl < p["level"]:
                     entry = f"~~{entry}~~ 🔒"
             elif row.get("list_price"):
-                entry = f"{label} — 🏷️ **{row['list_price']:,} 🪙** • {rev:,} 🪙/day"
+                entry = f"{label} — 🏷️ **{row['list_price']:,} 🪙** • {rev:,} 🪙/day • 1 available"
             else:
                 continue
             entries.append(entry)
@@ -157,32 +209,38 @@ class AssetsCog(commands.Cog):
         for t, entries in tiers.items():
             if lines:
                 lines.append("")
-            lines.append(f"**Tier {t}** *(level {levels[t]}+)* — {len(entries)} available")
+            lines.append(f"**Tier {t}** *(level {levels[t]}+)*")
             lines += entries
-        if not lines:
-            await ctx.send(embed=emb("🏘️ Real Estate", f"No tier `{tier}` — tiers are 1–5.", C_RED))
-            return
-        lines.append("")
-        lines.append(
-            f"Every property is unique — one owner across all servers; 🏷️ marks "
+        if not tiers:
+            return None
+        footer = (
+            f"\n\nEvery property is unique — one owner across all servers; 🏷️ marks "
             f"player listings, buyable from any server. "
             f"Own up to **{max_owned()}**; revenue is {property_pct_text()} of price per day, "
-            "banked with your daily claim.\n"
-            "`!assets buy <name>` • `!assets sell <name> <price>`"
+            "banked with your daily claim. Pick one below and press **Buy**."
         )
-        await send_ephemeral(ctx, embed=emb("🏘️ Real Estate — Catalog & Market", "\n".join(lines), C_PURPLE))
+        # Discord caps a description at 4096; the released pool can outgrow it.
+        cut = 0
+        while len("\n".join(lines)) + len(footer) > 3900:
+            lines.pop()
+            cut += 1
+        if cut:
+            lines.append(f"*…and {cut} more lines. `!assets browse <tier>` shows one tier.*")
+        return emb("🏘️ Real Estate — Catalog & Market", "\n".join(lines) + footer, C_PURPLE)
 
     # ── !assets buy ───────────────────────────────────────────────────────
     @cmd_assets.command(name="buy", aliases=["purchase"],
                         help="Buy a property from the bank or a player listing", usage="<name>")
     async def assets_buy(self, ctx: commands.Context, *, name: str = None):
+        from src.assets_view import AssetsView
         from src.level_unlocks import user_global_display_level
-        if not name:
-            await ctx.send(embed=emb("🏘️ Real Estate", "Usage: `!assets buy <property name>` — see `!assets browse`.", C_PURPLE))
-            return
-        prop = find_property(name)
+        prop = find_property(name) if name else None
         if prop is None:
-            await ctx.send(embed=emb("❌ Unknown Property", f"No property called `{name}` — see `!assets browse`.", C_RED))
+            # No name, or one that matched nothing: offer the market dropdown.
+            notice = (emb("❌ Unknown Property", f"No property called `{name}`. Pick one below.", C_RED) if name
+                      else emb("🏘️ Buy a Property", "Pick a property below and press **Buy**.", C_PURPLE))
+            view = AssetsView(self, ctx.author, mode="browse", notice=notice)
+            view.message = await ctx.send(embed=notice, view=view)
             return
         uid = ctx.author.id
         await _ensure_user(uid)

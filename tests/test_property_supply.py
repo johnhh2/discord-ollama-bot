@@ -162,8 +162,8 @@ async def test_browse_lists_only_what_is_for_sale(db):
     assert "Lemonade Stand" not in text and "Yours" not in text
     assert "Car Wash" in text and "90,000" in text
     assert "Suds City" not in text and "⭐" not in text
-    tier1 = sum(1 for p in released_properties() if p["tier"] == 1)
-    assert f"{tier1 - 1} available" in text
+    car_wash = next(line for line in text.splitlines() if "Car Wash" in line)
+    assert car_wash.endswith("• 1 available")
 
 
 async def test_buying_a_deed_you_own_cites_monopoly_laws(db):
