@@ -32,7 +32,7 @@ from src.features import FEATURES, feature_enabled
 from src.guild_config import get_guild_cfg
 from src.helpers import emb, C_BLUE, C_GREY
 from src.permissions import is_admin, is_global_admin
-from src.rate_curves import OFF, RATE_CURVES, active_curve
+from src.rate_curves import OFF, RATE_CURVES, active_curve, curve_status
 from src.settings_views import Field, FormModal, MAX_OPTIONS, _OwnedView
 
 HUB_TIMEOUT = 300.0
@@ -68,6 +68,7 @@ SHOP_ITEMS = ("nickname", "role", "unassignrole", "roleup", "roledown", "ragebai
 CATEGORIES = (
     ("overview", "📋 Overview"),
     ("features", "🧩 Features"),
+    ("economy", "💰 Economy"),
     ("channels", "📁 Channels"),
     ("shop", "🛒 Shop items"),
     ("games", "🎛️ Games & extras"),
@@ -163,7 +164,27 @@ def _shop(cfg: dict) -> list[Item]:
             for name in SHOP_ITEMS]
 
 
-def _games(cfg: dict, *, global_admin: bool = False) -> list[Item]:
+def _economy(*, global_admin: bool) -> list[Item]:
+    # Balances and deeds are bot-wide, so the curve is a global_admin setting.
+    if not global_admin:
+        return []
+    curve = active_curve()
+    return [Item(
+        key="interest", label="📈 Interest curve (global) — falling savings and property rates",
+        value=curve_status() if curve else "Flat rates",
+        method="settings_interest", title="Interest curve", kind="form",
+        fields=(
+            Field("mode", "Curve", kind="choices", options=(
+                *((c.label, c.key) for c in RATE_CURVES.values()), ("Flat rates", OFF),
+            )),
+            Field("position", "Start position", required=False, max_length=10,
+                  placeholder="A day or percent, like 274 or 75%. Empty keeps the clock"),
+        ),
+        to_args=lambda v: (v["mode"][0], v["position"]) if v["position"] else (v["mode"][0],),
+    )]
+
+
+def _games(cfg: dict) -> list[Item]:
     gambler = cfg.get("gambler_role_enabled", False)
     quote = cfg.get("quote_bypass_restrictions", False)
     scope = cfg.get("leaderboard_default_scope", "global")
@@ -198,21 +219,6 @@ def _games(cfg: dict, *, global_admin: bool = False) -> list[Item]:
              fields=(Field("tag", "Tag", placeholder="one tag", max_length=100),),
              to_args=lambda v: ("ban", v["tag"])),
     ]
-    if global_admin:
-        curve = active_curve()
-        items.insert(0, Item(
-            key="interest", label="📈 Interest curve (global) — falling savings and property rates",
-            value=RATE_CURVES[curve[1]].label if curve else "Flat rates",
-            method="settings_interest", title="Interest curve", kind="form",
-            fields=(
-                Field("mode", "Curve", kind="choices", options=(
-                    *((c.label, c.key) for c in RATE_CURVES.values()), ("Flat rates", OFF),
-                )),
-                Field("position", "Start position", required=False, max_length=10,
-                      placeholder="A day or percent, like 274 or 75%. Empty keeps the clock"),
-            ),
-            to_args=lambda v: (v["mode"][0], v["position"]) if v["position"] else (v["mode"][0],),
-        ))
     if banned:
         items.append(Item(key="nsfw-unban", label="🔞 Unban NSFW tags", value=", ".join(banned),
                           method="settings_nsfw", title="Unban NSFW tags", kind="form",
@@ -329,8 +335,10 @@ def items_for(category: str, ctx, *, models: list[str] | None = None, bot=None) 
         return _channels(cfg, with_global=bot_admin)
     if category == "shop":
         return _shop(cfg)
+    if category == "economy":
+        return _economy(global_admin=is_global_admin(ctx))
     if category == "games":
-        return _games(cfg, global_admin=is_global_admin(ctx))
+        return _games(cfg)
     if category == "aliases":
         return _aliases(cfg, ctx.guild)
     if category == "ai":
@@ -421,6 +429,8 @@ class SettingsHub(_OwnedView):
             embed = emb(f"⚙️ Settings — {_CATEGORY_LABELS[self.category]}", "\n".join(lines) or "Nothing here for you.", C_BLUE)
             if self.category == "ai" and not lines:
                 embed.description = "The AI settings (models, prompts) are bot-admin only."
+            if self.category == "economy" and not lines:
+                embed.description = "The economy settings apply to every server, so only the bot's owners can change them."
         if self.last:
             embed.add_field(name="Last change", value=_describe(self.last) or "—", inline=False)
         embed.set_footer(text="Pick a category, then a setting. Toggles apply at once; the rest open a form.")

@@ -300,9 +300,9 @@ async def test_server_admins_cannot_set_it():
 
 async def test_the_panel_lists_it_for_global_admins_only():
     ctx = _admin_ctx("settings")
-    assert any(item.key == "interest" for item in items_for("games", ctx))
+    assert [item.key for item in items_for("economy", ctx)] == ["interest"]
     other = FakeCtx(author=FakeMember(2, administrator=True), guild=FakeGuild(gid=42), command_name="settings")
-    assert not any(item.key == "interest" for item in items_for("games", other))
+    assert items_for("economy", other) == []
 
 
 async def test_the_pick_is_saved(monkeypatch):

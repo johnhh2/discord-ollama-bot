@@ -767,7 +767,7 @@ Coverage: [tests/test_features.py](tests/test_features.py).
 
 Bare `!settings` (and `/settings`, the same panel but ephemeral) opens the
 panel in `src/settings_hub.py`: one message with a category dropdown
-(overview, features, channels, shop items, games & extras, aliases & limits,
+(overview, features, economy, channels, shop items, games & extras, aliases & limits,
 AI) and a setting dropdown whose options carry the current values. A
 **toggle** pick applies at once (on ↔ off, server ↔ global, lively ↔
 classic); every other pick opens a **modal** (`FormModal`, built from
