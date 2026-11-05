@@ -565,18 +565,42 @@ Coverage: [tests/test_rate_curves.py](tests/test_rate_curves.py).
 
 Coverage: [tests/test_crime_limits.py](tests/test_crime_limits.py).
 
-## Insurance: tiers, and crime is refunded rather than blocked
+## Insurance: three types, and crime is refunded rather than blocked
 
-Insurance comes in three tiers (`SHOP_INSURANCE_TIERS` in `src/config.py`):
-basic 50% for 1k/day (100k cap), standard 75% for 3k/day (200k cap),
-premium 100% for 6k/day (400k cap). Every tier still blocks the non-crime
-effects outright (`INSURANCE_PROTECTS` — mock, ragebait, nickname, role,
-tax, curse; `is_insured` gates those as before). A policy
-row stores that list as of purchase and `init_db_state` unions it with the
-current constant on load, so a new shop effect aimed at another user goes in
-`INSURANCE_PROTECTS` **and** gets an `is_insured` check in its command (curse
-once had neither). Crime is different:
-`!steal`, `!mug` and `!bankheist` **go through** against an insured target.
+Insurance comes in three types (`INSURANCE_TYPES` in `src/config.py`), each
+its own policy and subscription. `insurance_policies(kind)` in
+`src/economy.py` returns a type's `(policies, subs)` pair; every helper takes
+`kind`, defaulting to personal (the bare `state.insurance` /
+`state.insurance_subs` and the `'insurance'` effect type, so pre-split call
+sites read personal).
+
+- **Personal** (`SHOP_INSURANCE_TIERS`): basic 50% for 1k/day (100k cap),
+  standard 75% for 3k/day (200k cap), premium 100% for 6k/day (400k cap).
+  Crime refunds only; it blocks nothing.
+- **Social** (`SHOP_SOCIAL_INSURANCE_TIERS`, one tier, 1k/day): blocks the
+  shop effects outright (`INSURANCE_PROTECTS` — mock, ragebait, nickname,
+  role, tax, curse). `is_insured` reads the social store, and the "Protected"
+  replies quote the social expiry. A social row stores that list as of
+  purchase and `init_db_state` unions it with the current constant on load,
+  so a new shop effect aimed at another user goes in `INSURANCE_PROTECTS`
+  **and** gets an `is_insured` check in its command (curse once had neither).
+- **Property** (`SHOP_PROPERTY_INSURANCE_TIERS`): 2k/5k/10k a day for
+  50/75/100% of a repair bill, capped at 30k/60k/120k a theft. Unsold while
+  `PROPERTY_INSURANCE_LIVE` is False: hidden from the menu, the panel and the
+  typed command until property theft exists to cover.
+- **Bare `!shop insurance` is the menu** (`ShopCog._insurance_menu`): every
+  type on sale with the user's tier and subscription, and a dropdown whose
+  pick opens that type's subscription prompt, plus a cancel per active
+  subscription. Typed, `!shop insurance [type] [tier]` subscribes and
+  `… unsub` cancels; a missing type word means personal.
+- **Every purchase is a subscription.** There is no prepaying a number of
+  days: a one-off buy is subscribe then cancel, since cancelling keeps the
+  coverage already paid for. A day count is an unknown word (the usage
+  embed). Admin grants (`!effects add`) still set an expiry directly.
+- **Migration 0086** only widened the effect-type enum. Existing policies
+  became personal as they stood; nobody was given social cover.
+
+Crime: `!steal`, `!mug` and `!bankheist` **go through** against an insured target.
 The thief/crew keeps the full take; after the loss lands, the crime calls
 `insurance_refund(victim, loss)` (`src/economy.py`), which pays the tier's
 `refund_pct` of the loss into the victim's **wallet** (a heist refund does
@@ -596,32 +620,35 @@ for the economy by design.
   result embed, `_robbed_ping` for the victim ping). Record the victim's
   `record_crime_event(... lost=)` **net** of the refund — it's what their
   wallet actually lost; the thief's `gained` stays gross.
-- **One tier per user.** The policy (`state.insurance[uid]["tier"]`) and the
-  subscription (`state.insurance_subs[uid]`, a dict uid → tier) must agree;
-  change both through `set_insurance_tier`. Switching tiers moves the
+- **One tier per user per type.** The policy (`state.insurance[uid]["tier"]`)
+  and the subscription (`state.insurance_subs[uid]`, a dict uid → tier) must
+  agree; change both through `set_insurance_tier(uid, tier, kind)`. Switching tiers moves the
   remaining coverage with the user: an upgrade charges the daily difference
   on it now (`insurance_switch_cost`, ceil'd), a downgrade is free but
   refunds nothing. Never let a cheap tier's days silently become an
   expensive tier's.
-- **Every purchase prompt shows all three tiers as buttons**
+- **Every purchase prompt shows all the type's tiers as buttons**
   (`confirm_choice` in `src/confirm_view.py`; `ShopCog._pick_insurance_tier`).
   A tier word in the command only pre-highlights a button. Tests get the
   highlighted choice back from conftest's `confirm_choice` stub.
 - **Migration 0065** backfilled every existing policy and subscription to
   `basic` (they were all bought at 1k/day); a NULL `insurance_tier` reads as
-  the default tier. Admin grants (`!effects add … insurance`) are premium.
-- Coverage: [tests/test_insurance_tiers.py](tests/test_insurance_tiers.py)
+  the default tier. Admin grants (`!effects add … insurance`) are premium
+  personal; `!effects add … social_insurance` grants social.
+- Coverage: [tests/test_insurance_types.py](tests/test_insurance_types.py),
+  [tests/test_insurance_tiers.py](tests/test_insurance_tiers.py)
   and the refund tests in [tests/test_money_flows.py](tests/test_money_flows.py).
 
 ## Insurance subscriptions: charged by the 5am sweep, not the daily claim
 
-Subscription premiums (`!shop insurance [tier] sub`, at the subscription's
-tier) are charged once per
-gameplay-day by `sweep_insurance_subs` (`src/economy.py`), driven from
+Subscription premiums (a menu pick or `!shop insurance [type] [tier] sub`,
+at the subscription's tier) are charged once per gameplay-day, for every
+type a user subscribes to, by `sweep_insurance_subs` (`src/economy.py`), driven from
 EconomyCog's minute loop — at the first tick after the 5am CT rollover, or at
 boot if the bot was down at 5am. Charging is independent of user activity:
 subscribers pay (and stay covered) whether or not they log on; one who can't
-afford the premium lapses for the day (sub retained). The sweep sends
+afford a premium lapses that type for the day (sub retained; types renew
+in catalog order, so with money for one the personal renews first). The sweep sends
 nothing itself — charges and lapses accrue in the per-user
 `ins_paid_since_claim` / `ins_lapsed_since_claim` columns, which the next
 daily claim (`!daily` or `_auto_daily`) reports on its own line and resets
@@ -638,11 +665,10 @@ gated off there and they couldn't cancel. One server with the shop on
 resumes billing.
 
 The one premium charged outside the sweep is a new subscriber's first day:
-`!shop insurance sub` buys it immediately when the user has no coverage
+subscribing buys it immediately when the user has no coverage of that type
 **or** coverage that runs out before the next 5am sweep
 (`ShopCog._sub_needs_first_day`), stacking 24h on whatever remains. Without
-that bridge a subscriber whose prepaid coverage ended mid-day lapsed until
-5am. When coverage already reaches past the next sweep, nothing is charged at
+that bridge a subscriber whose coverage ended mid-day lapsed until 5am. When coverage already reaches past the next sweep, nothing is charged at
 subscribe time — the sweep extends from the existing expiry.
 
 ## Game threads: chess, tic-tac-toe, Connect 4, hangman
@@ -869,7 +895,7 @@ of the bot's own roles or channels (Discord's picker past 25), text for a
 name, colour, topic, price or bounty condition — whose submit forwards.
 
 - **The panel never charges.** Every pick becomes the typed form — `shop
-  mock <@id>`, `shop rolerename <@&id> | Name`, `shop insurance standard 3`,
+  mock <@id>`, `shop rolerename <@&id> | Name`, `shop insurance standard`,
   `artifacts buy 3`, `assets buy <id>` — and runs through `ShopCog.forward`,
   so the lottery-channel guard, per-item disable check, insurance
   protection, confirm prompt and claim-before-charge blocks are the typed

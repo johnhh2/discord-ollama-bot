@@ -21,10 +21,16 @@ bot_admins: set = set()
 godmode_users: set = set()
 bot_settings: dict = {"vram_text": "16GB"}
 guild_settings: dict = {}
-# Insurance is bot-wide (migration 0055): one policy per user, protecting them
-# in every server. Stored in shop_effects under the sentinel guild_id=0.
+# Insurance is bot-wide (migration 0055): one policy per user per type, valid
+# in every server. Stored in shop_effects under the sentinel guild_id=0. The
+# bare names are personal insurance; economy.insurance_policies(kind) maps a
+# type to its pair.
 insurance: dict = {}            # uid -> {expires_at, protected_from, tier}
 insurance_subs: dict = {}       # uid -> tier — insurance auto-renews via the daily 5am sweep (sweep_insurance_subs)
+social_insurance: dict = {}
+social_insurance_subs: dict = {}
+property_insurance: dict = {}
+property_insurance_subs: dict = {}
 # Shop effects are scoped per server: every key below is a (guild_id, user_id)
 # int tuple. A user can hold one of each effect per guild, and an effect only
 # fires in the guild it was bought in. Source of truth is the shop_effects

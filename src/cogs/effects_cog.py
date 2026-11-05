@@ -1,8 +1,8 @@
 """!effects — view and (for admins) manage a user's active shop effects.
 
 Shop effects are scoped per server: state dicts are keyed by a
-(guild_id, user_id) tuple. The exception is insurance, which is bot-wide
-(keyed by user_id; `global` flag below). This cog reads/writes those dicts
+(guild_id, user_id) tuple. The exception is insurance (personal and social),
+which is bot-wide (keyed by user_id; `global` flag below). This cog reads/writes those dicts
 and persists via the same save_* helpers the shop uses.
 
   !effects [@user]            — show your (or @user's) active effects + remaining time
@@ -12,7 +12,8 @@ and persists via the same save_* helpers the shop uses.
 
 Aliases: !state, !effect.
 
-Admin add/remove is limited to the time-based effects (tax, insurance);
+Admin add/remove is limited to the time-based effects (tax, insurance,
+social_insurance);
 counter-based effects (mock, curse, ragebait) are view-only.
 """
 import time
@@ -34,6 +35,10 @@ from src.config import (
 from src import state
 
 
+async def _save_social_insurance():
+    await save_insurance("social")
+
+
 # Every effect type, with the state dict it lives in, its save fn, whether an
 # admin may add/remove it (duration-based), and a short description for !effects list.
 _EFFECTS = {
@@ -43,9 +48,14 @@ _EFFECTS = {
     },
     "insurance": {
         "store": "insurance", "save": save_insurance, "admin_settable": True,
-        "emoji": "🛡️", "desc": "Protects the user from being targeted (all servers)",
+        "emoji": "🛡️", "desc": "Personal insurance: refunds crime losses in full (all servers)",
         # Bot-wide since migration 0055: the store is keyed by uid alone, and
         # an admin grant/removal here affects every server.
+        "global": True,
+    },
+    "social_insurance": {
+        "store": "social_insurance", "save": _save_social_insurance, "admin_settable": True,
+        "emoji": "🎭", "desc": "Social insurance: blocks mock, tax, nickname, role and curse effects (all servers)",
         "global": True,
     },
     "mock": {
@@ -193,14 +203,14 @@ class EffectsCog(commands.Cog):
             await ctx.send(embed=emb(
                 "❌ Not Settable",
                 f"`{effect}` is counter-based and can't be set by duration. "
-                "Admin add/remove only supports: tax, insurance.",
+                "Admin add/remove only supports: tax, insurance, social_insurance.",
                 C_RED,
             ))
             return
         if self.bot and self.bot.user and target.id == self.bot.user.id:
             await ctx.send(embed=emb("❌ Invalid Target", "You can't put effects on the bot.", C_RED))
             return
-        # A global effect (insurance) outlives the guild the command ran in,
+        # A global effect (insurance of either type) outlives the guild the command ran in,
         # so a guild-scoped admin grant must not reach it (see CLAUDE.md:
         # "An override can never reach global state"). Env bot admins only.
         if spec.get("global") and not is_global_admin(ctx):
@@ -251,14 +261,21 @@ class EffectsCog(commands.Cog):
     def _build_effect_entry(self, effect: str, ctx, target, expires_at):
         """Construct the state dict for an admin-granted effect."""
         now = time.time()
+        forever = now + 10 * 365 * 86_400
         if effect == "insurance":
             # An admin grant is the strongest policy: premium, so crime
             # losses are refunded in full.
+            return {
+                "expires_at": expires_at if expires_at is not None else forever,
+                "protected_from": [],
+                "tier": "premium",
+            }
+        if effect == "social_insurance":
             from src.economy import INSURANCE_PROTECTS
             return {
-                "expires_at": expires_at if expires_at is not None else now + 10 * 365 * 86_400,
+                "expires_at": expires_at if expires_at is not None else forever,
                 "protected_from": list(INSURANCE_PROTECTS),
-                "tier": "premium",
+                "tier": "social",
             }
         if effect == "tax":
             # Admin grant: the admin becomes the master (receives the coins).

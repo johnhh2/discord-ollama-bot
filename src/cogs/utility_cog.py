@@ -945,7 +945,7 @@ class UtilityCog(commands.Cog):
         admin_embed.add_field(name="✨ Effects", inline=False, value=(
             "`!effects list` — List every available effect type\n"
             "`!effects @user add <effect> [duration]` — Grant a duration-based effect "
-            "(tax, insurance); no duration = permanent\n"
+            "(tax, insurance, social_insurance); no duration = permanent\n"
             "`!effects @user remove <effect>` — Clear an effect from a user"
         ))
         if feature_enabled(gid, "economy"):
@@ -990,7 +990,7 @@ class UtilityCog(commands.Cog):
 
         embed.add_field(
             name="🛡️ Insurance",
-            value=f"**{len(state.insurance)}** users with active state.insurance",
+            value=f"**{len(state.insurance)}** personal, **{len(state.social_insurance)}** social policies",
             inline=False,
         )
         embed.add_field(

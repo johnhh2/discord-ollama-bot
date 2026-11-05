@@ -673,7 +673,7 @@ async def test_insurance_protects_covers_curse():
 
 
 def _insure_all(uid: int) -> None:
-    _state.insurance[uid] = {
+    _state.social_insurance[uid] = {
         "expires_at": time.time() + 3600,
         "protected_from": list(INSURANCE_PROTECTS),
     }

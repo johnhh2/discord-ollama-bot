@@ -237,8 +237,20 @@ async def test_effects_add_insurance_permanent(db):
     _state.bot_admins.add(ctx.author.id)
     await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "add", "insurance")
     entry = _state.insurance[target.id]
-    assert "tax" in entry["protected_from"]
+    assert entry["protected_from"] == []
     assert entry["tier"] == "premium"  # admin grants are the full-refund tier
+
+
+@_aio
+async def test_effects_add_social_insurance_permanent(db):
+    cog = EffectsCog(bot=None)
+    target = FakeMember(uid=7104, display_name="t")
+    ctx = _admin_ctx()
+    _state.bot_admins.add(ctx.author.id)
+    await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "add", "social_insurance")
+    entry = _state.social_insurance[target.id]
+    assert "tax" in entry["protected_from"] and entry["tier"] == "social"
+    assert target.id not in _state.insurance
 
 
 @_aio

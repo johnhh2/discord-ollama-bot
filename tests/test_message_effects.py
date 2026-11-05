@@ -177,7 +177,7 @@ async def test_tax_skips_when_target_is_insured(db, cog):
     channel = _Channel()
 
     await _economy.add_balance(payer.id, 5000)
-    _state.insurance[payer.id] = {
+    _state.social_insurance[payer.id] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["tax"],
     }
@@ -386,7 +386,7 @@ async def test_mock_skips_when_target_is_insured(db, cog):
     guild = FakeGuild(gid=42)
     channel = _Channel(ch_id=710)
 
-    _state.insurance[target.id] = {
+    _state.social_insurance[target.id] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["mock"],
     }
@@ -406,7 +406,7 @@ async def test_curse_skips_when_target_is_insured(db, cog):
     guild = FakeGuild(gid=42)
     channel = _Channel(ch_id=711)
 
-    _state.insurance[target.id] = {
+    _state.social_insurance[target.id] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["curse"],
     }
@@ -424,7 +424,7 @@ async def test_ragebait_skips_when_target_is_insured(db, cog):
     guild = FakeGuild(gid=42)
     channel = _Channel()
 
-    _state.insurance[target.id] = {
+    _state.social_insurance[target.id] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["ragebait"],
     }

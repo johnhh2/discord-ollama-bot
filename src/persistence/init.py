@@ -178,49 +178,44 @@ async def _init_db_state_inner(state, run_migrations):
             raise
 
         # ── shop_effects: insurance ───────────────────────────────────────
-        # Insurance lives in shop_effects (effect_type='insurance') since
-        # migration 0032: protected_from in history_json, expiry in expires_at,
-        # tier in insurance_tier (0065; NULL = the default tier). Bot-wide
-        # since 0055 — keyed by user alone (rows sit at guild_id=0).
-        from src.config import SHOP_INSURANCE_DEFAULT_TIER
-        from src.economy import INSURANCE_PROTECTS
-        try:
-            await cur.execute(
-                "SELECT user_id, expires_at, history_json, insurance_tier"
-                " FROM shop_effects WHERE effect_type='insurance'"
-            )
-            now = _time.time()
-            for uid, expires_at, protected_json, tier in await cur.fetchall():
-                if expires_at and expires_at > now:
-                    # history_json is the protected list as of purchase. Union
-                    # it with the current constant so a policy bought before a
-                    # category existed (curse) covers it too — every
-                    # tier blocks every non-crime effect.
-                    stored = json.loads(protected_json) if protected_json else []
-                    state.insurance[int(uid)] = {
-                        "expires_at": expires_at,
-                        "protected_from": list(dict.fromkeys([*stored, *INSURANCE_PROTECTS])),
-                        "tier": tier or SHOP_INSURANCE_DEFAULT_TIER,
-                    }
-        except Exception as e:
-            logging.error(f"[init_db_state] shop_effects.insurance failed: {e}", exc_info=True)
-            raise
-
-        # ── shop_effects: insurance subscriptions ─────────────────────────
-        # effect_type='insurance_sub', no expiry — charged once per
-        # gameplay-day by the 5am sweep (src.economy.sweep_insurance_subs)
-        # at the row's insurance_tier, whether or not the subscriber logs
-        # on. Bot-wide like insurance itself.
-        try:
-            await cur.execute(
-                "SELECT user_id, insurance_tier FROM shop_effects"
-                " WHERE effect_type='insurance_sub'"
-            )
-            for uid, tier in await cur.fetchall():
-                state.insurance_subs[int(uid)] = tier or SHOP_INSURANCE_DEFAULT_TIER
-        except Exception as e:
-            logging.error(f"[init_db_state] shop_effects.insurance_sub failed: {e}", exc_info=True)
-            raise
+        # One policy row and one subscription row per user per type
+        # (INSURANCE_EFFECT_TYPES; migration 0086 split the types). Policies
+        # carry protected_from in history_json, expiry in expires_at and tier
+        # in insurance_tier (NULL = the type's default). Subscription rows
+        # have no expiry — the 5am sweep (src.economy.sweep_insurance_subs)
+        # charges them at their tier. Bot-wide since 0055: rows sit at
+        # guild_id=0, keyed by user alone.
+        from src.config import INSURANCE_TYPES
+        from src.economy import INSURANCE_PROTECTS, insurance_policies
+        from src.persistence.economy import INSURANCE_EFFECT_TYPES
+        now = _time.time()
+        for kind, effect in INSURANCE_EFFECT_TYPES.items():
+            policies, subs = insurance_policies(kind)
+            default = INSURANCE_TYPES[kind]["default"]
+            try:
+                await cur.execute(
+                    "SELECT user_id, expires_at, history_json, insurance_tier"
+                    " FROM shop_effects WHERE effect_type=%s", (effect,),
+                )
+                for uid, expires_at, protected_json, tier in await cur.fetchall():
+                    if expires_at and expires_at > now:
+                        # history_json is the social list as of purchase.
+                        # Union it with the current constant so a policy
+                        # bought before a category existed (curse) covers it.
+                        stored = json.loads(protected_json) if protected_json else []
+                        protected = list(dict.fromkeys([*stored, *INSURANCE_PROTECTS])) if kind == "social" else []
+                        policies[int(uid)] = {
+                            "expires_at": expires_at, "protected_from": protected, "tier": tier or default,
+                        }
+                await cur.execute(
+                    "SELECT user_id, insurance_tier FROM shop_effects WHERE effect_type=%s",
+                    (effect + "_sub",),
+                )
+                for uid, tier in await cur.fetchall():
+                    subs[int(uid)] = tier or default
+            except Exception as e:
+                logging.error(f"[init_db_state] shop_effects.{effect} failed: {e}", exc_info=True)
+                raise
 
         # ── shop_effects: ragebait ────────────────────────────────────────
         try:

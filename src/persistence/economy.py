@@ -116,37 +116,52 @@ async def save_insurance_sweep_day():
         )
 
 
-async def save_insurance():
-    """Persist insurance into the shop_effects table (effect_type='insurance').
-    Insurance is bot-wide since migration 0055 — one policy per user, stored
-    under the sentinel guild_id=0. protected_from is stored as history_json and
-    the expiry as expires_at."""
-    from src.config import SHOP_INSURANCE_DEFAULT_TIER
+# shop_effects.effect_type of each insurance type's policy rows; its
+# subscription rows add "_sub". Personal keeps the pre-split name.
+INSURANCE_EFFECT_TYPES = {
+    "personal": "insurance",
+    "social": "social_insurance",
+    "property": "property_insurance",
+}
+
+
+async def save_insurance(kind: str = "personal"):
+    """Persist one insurance type's policies into shop_effects. Insurance is
+    bot-wide since migration 0055 — one policy per user per type, stored
+    under the sentinel guild_id=0. protected_from is stored as history_json
+    and the expiry as expires_at."""
+    from src.config import INSURANCE_TYPES
+    from src.economy import insurance_policies
+    effect = INSURANCE_EFFECT_TYPES[kind]
+    default = INSURANCE_TYPES[kind]["default"]
     async with with_transaction() as cur:
-        await cur.execute("DELETE FROM shop_effects WHERE effect_type='insurance'")
-        for uid, entry in state.insurance.items():
+        await cur.execute("DELETE FROM shop_effects WHERE effect_type=%s", (effect,))
+        for uid, entry in insurance_policies(kind)[0].items():
             await cur.execute(
                 "INSERT INTO shop_effects (guild_id, user_id, effect_type, expires_at, history_json, insurance_tier)"
-                " VALUES (0,%s,'insurance',%s,%s,%s)",
-                (int(uid), entry["expires_at"],
+                " VALUES (0,%s,%s,%s,%s,%s)",
+                (int(uid), effect, entry["expires_at"],
                  json.dumps(entry.get("protected_from", [])),
-                 entry.get("tier") or SHOP_INSURANCE_DEFAULT_TIER),
+                 entry.get("tier") or default),
             )
 
 
-async def save_insurance_subs():
-    """Persist insurance subscriptions (shop_effects, effect_type='insurance_sub',
-    bot-wide under the sentinel guild_id=0). A subscription row has no expiry —
-    it lives until the user unsubscribes — and carries the tier the 5am sweep
-    renews at (insurance_tier)."""
-    from src.config import SHOP_INSURANCE_DEFAULT_TIER
+async def save_insurance_subs(kind: str = "personal"):
+    """Persist one insurance type's subscriptions (shop_effects, effect_type
+    '<type>_sub', bot-wide under the sentinel guild_id=0). A subscription row
+    has no expiry — it lives until the user unsubscribes — and carries the
+    tier the 5am sweep renews at (insurance_tier)."""
+    from src.config import INSURANCE_TYPES
+    from src.economy import insurance_policies
+    effect = INSURANCE_EFFECT_TYPES[kind] + "_sub"
+    default = INSURANCE_TYPES[kind]["default"]
     async with with_transaction() as cur:
-        await cur.execute("DELETE FROM shop_effects WHERE effect_type='insurance_sub'")
-        for uid, tier in state.insurance_subs.items():
+        await cur.execute("DELETE FROM shop_effects WHERE effect_type=%s", (effect,))
+        for uid, tier in insurance_policies(kind)[1].items():
             await cur.execute(
                 "INSERT INTO shop_effects (guild_id, user_id, effect_type, insurance_tier)"
-                " VALUES (0,%s,'insurance_sub',%s)",
-                (int(uid), tier or SHOP_INSURANCE_DEFAULT_TIER),
+                " VALUES (0,%s,%s,%s)",
+                (int(uid), effect, tier or default),
             )
 
 

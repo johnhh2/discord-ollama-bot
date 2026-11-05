@@ -3,7 +3,7 @@ nothing typed after the command.
 
 Same idea as src/settings_hub.py. The panel never charges: every pick is
 turned into the typed form of the matching command — `shop mock <@id>`,
-`shop nickname <@id> Name`, `shop insurance standard 3`, `artifacts buy 3`,
+`shop nickname <@id> Name`, `shop insurance standard`, `artifacts buy 3`,
 `assets buy lemonade_stand` — and forwarded through `ShopCog.forward`, so
 the subcommand's own lottery-channel guard, per-item disable check,
 insurance protection, confirm prompt and race-safe claim-before-charge all
@@ -38,7 +38,7 @@ from src.config import (
     SHOP_NICKNAME_SELF_COST, SHOP_NICKNAME_REMOVE_COST, SHOP_NICKNAME_OTHER_COST,
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_ASSIGN_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
     SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_LOCK_COST, SHOP_RENAME_COST, SHOP_CHANNEL_COST,
-    SHOP_CHANNEL_DELETE_COST, SHOP_TAX_COST, SHOP_INSURANCE_TIERS, SHOP_INSURANCE_MAX_DAYS,
+    SHOP_CHANNEL_DELETE_COST, SHOP_TAX_COST, INSURANCE_TYPES, PROPERTY_INSURANCE_LIVE,
     SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_CURSE_COST, SHOP_UNOREVERSE_COST,
     SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES, SHOP_CURSE_MESSAGES, SHOP_TAX_PER_MESSAGE,
     SHOP_XP_COST_PER_XP, BOUNTY_MIN_AMOUNT,
@@ -46,7 +46,7 @@ from src.config import (
     ANNOUNCE_MAX_TOTAL_CHARS, WYOMING_TTS_HOST,
 )
 from src.cogs.announce_cog import announce_form_args
-from src.economy import get_insurance_tier, get_insurance_expiry
+from src.economy import get_insurance_tier, get_insurance_expiry, insurance_policies
 from src.features import feature_enabled
 from src.guild_config import get_guild_cfg
 from src.helpers import emb, C_PURPLE, C_GREY
@@ -296,25 +296,37 @@ def _fun(ctx, shop_items: dict) -> list[ShopItem]:
 
 
 def _insurance(ctx, shop_items: dict) -> list[ShopItem]:
+    """Subscribe and (when subscribed) unsubscribe, per type on sale.
+    Personal keeps the bare `insurance` keys; other types prefix theirs."""
     uid = ctx.author.id
-    tier = get_insurance_tier(uid)
-    exp = get_insurance_expiry(uid)
-    status = f"{tier} until <t:{exp}:R>" if exp else "no coverage"
-    tiers = tuple((f"{name.title()} — {info['cost']:,} 🪙/day, refunds {info['refund_pct']}%", name)
-                  for name, info in SHOP_INSURANCE_TIERS.items())
-    tier_field = Field("tier", "Tier", kind="choices", options=tiers, defaults=(tier,) if tier else ())
-    items = [
-        ShopItem("insurance", "🛡️ Prepay insurance — from " + _coins(min(i["cost"] for i in SHOP_INSURANCE_TIERS.values())) + "/day",
-                 f"now: {status}", "shop_insurance", title="Prepay insurance",
-                 fields=(tier_field, Field("days", f"Days (1–{SHOP_INSURANCE_MAX_DAYS})", default="1", max_length=3)),
-                 call=lambda v: ((v["tier"][0], v["days"]), {})),
-        ShopItem("insurance-sub", "🛡️ Subscribe — charged daily at 5am CT",
-                 "subscribed at " + state.insurance_subs[uid] if uid in state.insurance_subs else "not subscribed",
-                 "shop_insurance", title="Subscribe to insurance", fields=(tier_field,),
-                 call=lambda v: ((v["tier"][0], "sub"), {})),
-    ]
-    if uid in state.insurance_subs:
-        items.append(ShopItem("insurance-unsub", "🛡️ Unsubscribe", "coverage already paid for stays", "shop_insurance", args=("unsub",)))
+    items = []
+    for kind, spec in INSURANCE_TYPES.items():
+        if kind == "property" and not PROPERTY_INSURANCE_LIVE:
+            continue
+        prefix = "insurance" if kind == "personal" else f"{kind}-insurance"
+        lead = () if kind == "personal" else (kind,)  # personal is the typed default
+        name = f"{spec['label']} insurance"
+        emoji = spec["emoji"]
+        tier = get_insurance_tier(uid, kind)
+        exp = get_insurance_expiry(uid, kind)
+        subs = insurance_policies(kind)[1]
+        low = _coins(min(i["cost"] for i in spec["tiers"].values()))
+        cover = f"covered until <t:{exp}:R>" if exp else "no coverage"
+        label = f"{emoji} Subscribe to {name.lower()} — {'' if len(spec['tiers']) == 1 else 'from '}{low}/day"
+        if len(spec["tiers"]) == 1:
+            items.append(ShopItem(prefix, label, ("subscribed · " if uid in subs else "") + cover,
+                                  "shop_insurance", args=lead))
+        else:
+            tiers = tuple((f"{t.title()} — {info['cost']:,} 🪙/day, covers {info['refund_pct']}%", t)
+                          for t, info in spec["tiers"].items())
+            tier_field = Field("tier", "Tier", kind="choices", options=tiers, defaults=(tier,) if tier else ())
+            items.append(ShopItem(prefix, label,
+                                  (f"subscribed at {subs[uid]} · " if uid in subs else "") + cover,
+                                  "shop_insurance", title=f"Subscribe to {name.lower()}", fields=(tier_field,),
+                                  call=lambda v, lead=lead: ((*lead, v["tier"][0]), {})))
+        if uid in subs:
+            items.append(ShopItem(f"{prefix}-unsub", f"{emoji} Unsubscribe from {name.lower()}",
+                                  "coverage already paid for stays", "shop_insurance", args=(*lead, "unsub")))
     return items
 
 
@@ -464,7 +476,7 @@ _ASSETS_NOTE = (
 )
 _PAGE_NOTES = {
     "artifacts": "Permanent per-user upgrades, owned bot-wide. Level gates are your global level.",
-    "insurance": "Crime still goes through; the insurer refunds your wallet. Every tier also blocks mock, ragebait, curses, nickname changes, role assignments and tax.",
+    "insurance": "Personal insurance refunds part of what crime takes; the thief keeps the take. Social insurance blocks mock, ragebait, curses, nickname changes, role assignments and tax.",
 }
 
 

@@ -185,98 +185,113 @@ async def announce_new_lottery(
     await channel.send(embed=embed)
 
 
-# Everything a bought/renewed insurance day blocks outright. Single source of
-# truth for `!shop insurance` and the subscription renewal below. Crime
-# (steal/mug/bankheist) is deliberately NOT here: insurance doesn't stop a
-# robbery, it refunds part of the loss — see insurance_refund.
-# A policy row stores a snapshot of this list at purchase; init_db_state
-# unions the stored list with this one on load, so a name added here covers
-# existing policies from the next boot (curse was added that way).
+# What social insurance blocks outright: the shop effects one user aims at
+# another. Crime (steal/mug/bankheist) is deliberately NOT here: personal
+# insurance doesn't stop a robbery, it refunds part of the loss — see
+# insurance_refund. A social policy row stores a snapshot of this list at
+# purchase; init_db_state unions the stored list with this one on load, so a
+# name added here covers existing policies from the next boot (curse was
+# added that way).
 INSURANCE_PROTECTS = ["ragebait", "mock", "nickname", "role", "tax", "curse"]
 
 
-def insurance_tier_info(tier: str | None) -> dict:
-    """The {cost, refund_pct, refund_cap} block for `tier`, falling back to
-    the default tier for None / unknown names (a stored tier that a later
-    catalog edit removed must still price and refund as *something*)."""
-    from src.config import SHOP_INSURANCE_TIERS, SHOP_INSURANCE_DEFAULT_TIER
-    return SHOP_INSURANCE_TIERS.get(tier or "", SHOP_INSURANCE_TIERS[SHOP_INSURANCE_DEFAULT_TIER])
+def insurance_policies(kind: str = "personal") -> tuple[dict, dict]:
+    """The (policies, subscriptions) pair for an insurance type: uid ->
+    {expires_at, protected_from, tier} and uid -> tier."""
+    return {
+        "personal": (state.insurance, state.insurance_subs),
+        "social": (state.social_insurance, state.social_insurance_subs),
+        "property": (state.property_insurance, state.property_insurance_subs),
+    }[kind]
 
 
-def insurance_tier_cost(tier: str | None) -> int:
+def insurance_tier_info(tier: str | None, kind: str = "personal") -> dict:
+    """The tier block for `tier` ({cost}, plus refund_pct/refund_cap where the
+    type refunds), falling back to the type's default tier for None / unknown
+    names (a stored tier that a later catalog edit removed must still price
+    and refund as *something*)."""
+    from src.config import INSURANCE_TYPES
+    spec = INSURANCE_TYPES[kind]
+    return spec["tiers"].get(tier or "", spec["tiers"][spec["default"]])
+
+
+def insurance_tier_cost(tier: str | None, kind: str = "personal") -> int:
     """Daily premium for `tier`."""
-    return int(insurance_tier_info(tier)["cost"])
+    return int(insurance_tier_info(tier, kind)["cost"])
 
 
-def get_insurance_tier(uid: int) -> str | None:
+def get_insurance_tier(uid: int, kind: str = "personal") -> str | None:
     """The user's current tier: the active policy's, else the subscription's
     (a lapsed subscriber still has a tier to renew at), else None."""
+    policies, subs = insurance_policies(kind)
     key = int(uid)
-    entry = state.insurance.get(key)
+    entry = policies.get(key)
     if entry and entry.get("expires_at", 0) > time.time():
         return entry.get("tier")
-    return state.insurance_subs.get(key)
+    return subs.get(key)
 
 
-def set_insurance_tier(uid: int, tier: str) -> None:
+def set_insurance_tier(uid: int, tier: str, kind: str = "personal") -> None:
     """Move the user's policy AND subscription to `tier`. A user has one tier
-    at a time — the two records must never disagree, or the sweep would renew
-    a premium policy as basic (or vice versa). Synchronous; the caller saves
-    (save_insurance / save_insurance_subs) whichever records exist."""
+    per type at a time — the two records must never disagree, or the sweep
+    would renew a premium policy as basic (or vice versa). Synchronous; the
+    caller saves (save_insurance / save_insurance_subs) whichever exist."""
+    policies, subs = insurance_policies(kind)
     key = int(uid)
-    if key in state.insurance:
-        state.insurance[key]["tier"] = tier
-    if key in state.insurance_subs:
-        state.insurance_subs[key] = tier
+    if key in policies:
+        policies[key]["tier"] = tier
+    if key in subs:
+        subs[key] = tier
 
 
-def insurance_switch_cost(uid: int, new_tier: str) -> int:
+def insurance_switch_cost(uid: int, new_tier: str, kind: str = "personal") -> int:
     """Coins owed *now* to move the user's active coverage to `new_tier`: the
     remaining coverage re-priced at the daily difference, rounded up to the
     coin. 0 when uncovered, already on that tier, or downgrading (a downgrade
     is free but refunds nothing — that's the user's call, not an exploit: the
     way back up costs the full difference again)."""
     from src.config import SHOP_INSURANCE_DURATION_SECS
-    expiry = get_insurance_expiry(uid)
+    expiry = get_insurance_expiry(uid, kind)
     if expiry is None:
         return 0
-    cur = get_insurance_tier(uid)
-    diff = insurance_tier_cost(new_tier) - insurance_tier_cost(cur)
+    cur = get_insurance_tier(uid, kind)
+    diff = insurance_tier_cost(new_tier, kind) - insurance_tier_cost(cur, kind)
     if cur is None or cur == new_tier or diff <= 0:
         return 0
     remaining_days = max(0.0, expiry - time.time()) / SHOP_INSURANCE_DURATION_SECS
     return int(math.ceil(remaining_days * diff))
 
 
-def extend_insurance(uid: int, days: int, tier: str | None = None) -> int:
-    """Extend the user's bot-wide insurance by `days` × 24h, from the current
-    expiry when coverage is still active (so renewals keep coverage
-    continuous), else from now. Synchronous on purpose — callers stamp before
-    their first await (see CLAUDE.md on per-user command races). Returns the
-    new expiry ts. Caller is responsible for save_insurance().
+def extend_insurance(uid: int, days: int, tier: str | None = None, kind: str = "personal") -> int:
+    """Extend the user's bot-wide insurance of type `kind` by `days` × 24h,
+    from the current expiry when coverage is still active (so renewals keep
+    coverage continuous), else from now. Synchronous on purpose — callers
+    stamp before their first await (see CLAUDE.md on per-user command races).
+    Returns the new expiry ts. Caller is responsible for save_insurance().
 
     `tier` sets the policy's tier (the whole remaining coverage moves to it —
     price the switch with insurance_switch_cost first); None keeps the
     current tier, falling back to the subscription's, then the default."""
-    from src.config import SHOP_INSURANCE_DURATION_SECS, SHOP_INSURANCE_DEFAULT_TIER
+    from src.config import SHOP_INSURANCE_DURATION_SECS, INSURANCE_TYPES
+    policies, subs = insurance_policies(kind)
     key = int(uid)
     now = time.time()
-    existing = state.insurance.get(key)
+    existing = policies.get(key)
     active = existing is not None and existing.get("expires_at", 0) > now
     base = existing["expires_at"] if active else now
     if tier is None:
-        tier = (existing.get("tier") if active else None) or state.insurance_subs.get(key) or SHOP_INSURANCE_DEFAULT_TIER
+        tier = (existing.get("tier") if active else None) or subs.get(key) or INSURANCE_TYPES[kind]["default"]
     expires_at = int(base + days * SHOP_INSURANCE_DURATION_SECS)
-    state.insurance[key] = {
+    policies[key] = {
         "expires_at": expires_at,
-        "protected_from": list(INSURANCE_PROTECTS),
+        "protected_from": list(INSURANCE_PROTECTS) if kind == "social" else [],
         "tier": tier,
     }
     return expires_at
 
 
 def insurance_billable(uid: int) -> bool:
-    """Whether the 5am sweep may charge `uid`'s subscription today.
+    """Whether the 5am sweep may charge `uid`'s subscriptions today.
 
     Insurance is bot-wide but is bought in a shop, and a server can switch
     its shop off (src/features.py). A subscriber active only in servers
@@ -293,31 +308,36 @@ def insurance_billable(uid: int) -> bool:
 
 
 async def renew_insurance_subs(uid: int) -> tuple[int, int]:
-    """Charge and renew `uid`'s insurance subscription, if they hold one.
+    """Charge and renew every insurance subscription `uid` holds.
 
     Called only from sweep_insurance_subs, inside the synchronously-claimed
     last_insurance_sweep window — that's what makes it once-per-gameplay-day.
-    Deducts one day's premium at the subscription's tier and extends the
-    bot-wide coverage by 24h. A renewal the user can't afford is skipped
-    (coverage lapses until they can pay again); the subscription itself stays.
+    Each type deducts one day's premium at its subscription's tier and
+    extends that type's coverage by 24h. A renewal the user can't afford is
+    skipped (that coverage lapses until they can pay again); the
+    subscription itself stays.
 
-    Returns (total_charged, lapsed_count) — each 0 or one premium/lapse now
-    that insurance is global, but callers still read both.
+    Returns (total_charged, lapsed_count) across the types.
     """
-    tier = state.insurance_subs.get(int(uid))
-    if tier is None:
-        return 0, 0
-    cost = insurance_tier_cost(tier)
+    from src.config import INSURANCE_TYPES
+    charged = lapsed = 0
     free = uid in state.godmode_users
-    if free or await deduct_balance(uid, cost):
-        extend_insurance(uid, 1, tier=tier)
-        await save_insurance()
-        return 0 if free else cost, 0
-    return 0, 1
+    for kind in INSURANCE_TYPES:
+        tier = insurance_policies(kind)[1].get(int(uid))
+        if tier is None:
+            continue
+        cost = insurance_tier_cost(tier, kind)
+        if free or await deduct_balance(uid, cost):
+            extend_insurance(uid, 1, tier=tier, kind=kind)
+            await save_insurance(kind)
+            charged += 0 if free else cost
+        else:
+            lapsed += 1
+    return charged, lapsed
 
 
 async def insurance_refund(uid: int, loss: int, *, guild_id: int | None = None, holder_name: str | None = None) -> int:
-    """Pay the insured share of a crime loss back into `uid`'s wallet.
+    """Pay the personal-insured share of a crime loss back into `uid`'s wallet.
 
     The refund is the tier's refund_pct of `loss`, capped at the tier's
     refund_cap **per incident** — every robbery is covered on its own; there
@@ -338,26 +358,27 @@ async def insurance_refund(uid: int, loss: int, *, guild_id: int | None = None, 
 
 
 async def sweep_insurance_subs() -> None:
-    """Charge every insurance subscriber one day's premium for the new
-    gameplay-day — independent of whether they log on.
+    """Charge every insurance subscriber one day's premium per subscription
+    for the new gameplay-day — independent of whether they log on.
 
     Called from EconomyCog's minute loop. The last_insurance_sweep marker
     (persisted in economy_meta) makes it fire once per gameplay-day: at the
     first tick after the 5am CT rollover, or right after boot if the bot was
-    down at 5am. A subscriber who can't afford the premium lapses for the day
-    (coverage stops extending; the subscription stays). Charges and lapses
-    are tallied into ins_paid_since_claim / ins_lapsed_since_claim, which the
-    user's next daily claim reports and resets — the sweep itself sends
-    nothing.
+    down at 5am. A subscriber who can't afford a premium lapses for the day
+    (that coverage stops extending; the subscription stays). Charges and
+    lapses are tallied into ins_paid_since_claim / ins_lapsed_since_claim,
+    which the user's next daily claim reports and resets — the sweep itself
+    sends nothing.
 
     On the very first run (no marker yet — the boot that ships this feature)
     the day is stamped without charging: subscribers were already charged by
     the old claim-time flow that day.
 
     The only premium charged outside this sweep is a new subscriber's first
-    day, bought at `!shop insurance sub` time — see
+    day, bought at `!shop insurance … sub` time — see
     ShopCog._sub_needs_first_day.
     """
+    from src.config import INSURANCE_TYPES
     today = _ct_today()
     prior = state.economy.get("last_insurance_sweep")
     if prior == today:
@@ -369,7 +390,8 @@ async def sweep_insurance_subs() -> None:
     await save_insurance_sweep_day()
     if prior is None:
         return
-    for uid in list(state.insurance_subs):
+    subscribers = dict.fromkeys(uid for kind in INSURANCE_TYPES for uid in insurance_policies(kind)[1])
+    for uid in subscribers:
         if not insurance_billable(uid):
             continue
         await _ensure_user(uid)
@@ -384,25 +406,27 @@ async def sweep_insurance_subs() -> None:
 
 
 async def is_insured(uid: int, against: str) -> bool:
-    """True if user `uid` holds active insurance against `against`.
+    """True if user `uid` holds active social insurance against `against`.
 
-    Insurance is bot-wide (one policy per user, valid in every server).
-    Expired entries are pruned on read.
+    Bot-wide (one policy per user, valid in every server). Expired entries
+    are pruned on read.
     """
     key = int(uid)
-    if key not in state.insurance:
+    policies = state.social_insurance
+    if key not in policies:
         return False
-    entry = state.insurance[key]
+    entry = policies[key]
     if entry.get("expires_at", 0) <= time.time():
-        del state.insurance[key]
-        await save_insurance()
+        del policies[key]
+        await save_insurance("social")
         return False
     return against in entry.get("protected_from", [])
 
 
-def get_insurance_expiry(uid: int) -> int | None:
-    """Expiry ts of the user's active policy; None when uninsured or expired."""
-    entry = state.insurance.get(int(uid))
+def get_insurance_expiry(uid: int, kind: str = "personal") -> int | None:
+    """Expiry ts of the user's active policy of type `kind`; None when
+    uninsured or expired."""
+    entry = insurance_policies(kind)[0].get(int(uid))
     if entry and entry.get("expires_at", 0) > time.time():
         return int(entry["expires_at"])
     return None

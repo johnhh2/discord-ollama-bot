@@ -316,15 +316,15 @@ async def test_insurance_load_unions_stored_list_with_current_protects(db):
     """A policy row stores the protected list as of purchase. Categories
     added later (curse) must cover existing policies too, so
     init_db_state unions the stored list with INSURANCE_PROTECTS."""
-    _state.insurance[3] = {
+    _state.social_insurance[3] = {
         "expires_at": time.time() + 3600,
         "protected_from": ["nickname"],
     }
-    await _persistence.save_insurance()
-    _state.insurance.clear()
+    await _persistence.save_insurance("social")
+    _state.social_insurance.clear()
     await _persistence.init_db_state()
 
-    protected = _state.insurance[3]["protected_from"]
+    protected = _state.social_insurance[3]["protected_from"]
     assert "nickname" in protected
     assert set(_economy.INSURANCE_PROTECTS) <= set(protected)
     assert await _economy.is_insured(3, "curse") is True
@@ -335,7 +335,7 @@ async def test_insurance_is_insured_returns_false_after_expiry(db):
     is correctly reported as unprotected."""
     uid = 99
     expires = time.time() + 1
-    _state.insurance[uid] = {
+    _state.social_insurance[uid] = {
         "expires_at": expires,
         "protected_from": ["nickname"],
     }
@@ -350,7 +350,7 @@ async def test_insurance_is_insured_returns_false_after_expiry(db):
 
     assert await _economy.is_insured(uid, "nickname") is False
     # And the expired entry was dropped from state by is_insured itself.
-    assert uid not in _state.insurance
+    assert uid not in _state.social_insurance
 
 
 # ── savings ───────────────────────────────────────────────────────────────────

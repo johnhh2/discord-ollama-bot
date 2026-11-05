@@ -168,7 +168,8 @@ def _ctx(uid: int) -> FakeCtx:
 
 async def test_shop_insurance_picker_offers_all_three_tiers(db, monkeypatch):
     """Every purchase prompt lists all three tiers as buttons, with the
-    named tier highlighted and each label carrying that tier's total."""
+    named tier highlighted and each label carrying what it charges now (the
+    starter day, for someone uncovered)."""
     from src.cogs.shop_cog import ShopCog
     seen = {}
 
@@ -179,12 +180,12 @@ async def test_shop_insurance_picker_offers_all_three_tiers(db, monkeypatch):
 
     uid = 9020
     await add_balance(uid, 100_000)
-    await ShopCog(bot=None).shop_insurance.callback(ShopCog(bot=None), _ctx(uid), "standard", "3")
+    await ShopCog(bot=None).shop_insurance.callback(ShopCog(bot=None), _ctx(uid), "standard")
 
     choices = seen["choices"]
     assert [c["value"] for c in choices] == ["basic", "standard", "premium"]
     assert [c.get("default", False) for c in choices] == [False, True, False]
-    assert choices[2]["label"] == f"Premium — {3 * PREMIUM:,} 🪙"
+    assert choices[2]["label"] == f"Premium — {PREMIUM:,} 🪙"
     assert await get_balance(uid) == 100_000     # cancelled: nothing charged
     assert uid not in _state.insurance
 
@@ -192,40 +193,43 @@ async def test_shop_insurance_picker_offers_all_three_tiers(db, monkeypatch):
 async def test_shop_insurance_explicit_tier_buys_that_tier(db):
     from src.cogs.shop_cog import ShopCog
     uid = 9021
-    await add_balance(uid, 2 * PREMIUM + 7)
-    await ShopCog(bot=None).shop_insurance.callback(ShopCog(bot=None), _ctx(uid), "premium", "2")
+    await add_balance(uid, PREMIUM + 7)
+    await ShopCog(bot=None).shop_insurance.callback(ShopCog(bot=None), _ctx(uid), "premium")
     assert await get_balance(uid) == 7
     assert _state.insurance[uid]["tier"] == "premium"
+    assert _state.insurance_subs[uid] == "premium"
     assert await _db_tier("insurance", uid) == "premium"
 
 
-async def test_shop_insurance_number_only_keeps_current_tier(db):
+async def test_shop_insurance_day_count_shows_info_and_charges_nothing(db):
+    """There's no prepaying: a number is an unknown word, answered with the
+    usage embed."""
     from src.cogs.shop_cog import ShopCog
     uid = 9022
     await add_balance(uid, 3 * STANDARD)
-    expiry = _insure(uid, "standard")
-    await ShopCog(bot=None).shop_insurance.callback(ShopCog(bot=None), _ctx(uid), "3")
-    assert await get_balance(uid) == 0
-    assert _state.insurance[uid]["tier"] == "standard"
-    assert _state.insurance[uid]["expires_at"] == expiry + 3 * DAY
+    ctx = _ctx(uid)
+    await ShopCog(bot=None).shop_insurance.callback(ShopCog(bot=None), ctx, "3")
+    assert await get_balance(uid) == 3 * STANDARD
+    assert uid not in _state.insurance and uid not in _state.insurance_subs
+    assert ctx.sent_embeds[-1].title == "🛡️ Insurance"
 
 
 async def test_shop_insurance_upgrade_charges_difference_on_remaining_coverage(db):
-    """Basic coverage with ~10 days left, buying 1 day of premium: pays the
-    premium day plus the daily difference across the remaining 10 days, and
-    the whole policy is premium afterwards."""
+    """Basic coverage with ~10 days left, subscribing at premium: no starter
+    day (coverage outlasts the next sweep), just the daily difference across
+    the remaining 10 days, and the whole policy is premium afterwards."""
     from src.cogs.shop_cog import ShopCog
     uid = 9023
     expiry = _insure(uid, "basic", seconds=10 * DAY)
     surcharge = insurance_switch_cost(uid, "premium")
     assert 10 * (PREMIUM - BASIC) - (PREMIUM - BASIC) < surcharge <= 10 * (PREMIUM - BASIC)
-    await add_balance(uid, PREMIUM + surcharge + 3)
+    await add_balance(uid, surcharge + 3)
     ctx = _ctx(uid)
     await ShopCog(bot=None).shop_insurance.callback(ShopCog(bot=None), ctx, "premium")
     assert await get_balance(uid) == 3
     assert _state.insurance[uid]["tier"] == "premium"
-    assert _state.insurance[uid]["expires_at"] == expiry + DAY
-    assert f"Includes **{surcharge:,} 🪙** to move your remaining coverage up" in ctx.sent_embeds[-1].description
+    assert _state.insurance[uid]["expires_at"] == expiry
+    assert f"**{surcharge:,} 🪙** charged to move your remaining coverage up" in ctx.sent_embeds[-1].description
 
 
 async def test_shop_insurance_downgrade_is_free_and_not_refunded(db):
@@ -235,9 +239,9 @@ async def test_shop_insurance_downgrade_is_free_and_not_refunded(db):
     await add_balance(uid, BASIC)
     ctx = _ctx(uid)
     await ShopCog(bot=None).shop_insurance.callback(ShopCog(bot=None), ctx, "basic")
-    assert await get_balance(uid) == 0
+    assert await get_balance(uid) == BASIC  # no starter day: coverage outlasts the sweep
     assert _state.insurance[uid]["tier"] == "basic"
-    assert _state.insurance[uid]["expires_at"] == expiry + DAY
+    assert _state.insurance[uid]["expires_at"] == expiry
     assert "no refund on the difference" in ctx.sent_embeds[-1].description
 
 

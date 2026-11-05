@@ -96,15 +96,11 @@ async def test_insurance_delete_and_replace(db):
     import time
     future = time.time() + 3600
 
-    _state.insurance[1] = {
-        "expires_at": future,
-        "protected_from": ["nickname", "curse"],
-    }
-    _state.insurance[2] = {
-        "expires_at": future,
-        "protected_from": ["tax"],
-    }
+    _state.insurance[1] = {"expires_at": future, "protected_from": []}
+    _state.insurance[2] = {"expires_at": future, "protected_from": []}
+    _state.social_insurance[1] = {"expires_at": future, "protected_from": ["nickname", "curse"]}
     await _persistence.save_insurance()
+    await _persistence.save_insurance("social")
 
     # Drop user 2, save again — DB should reflect the deletion (save_insurance
     # does DELETE FROM shop_effects WHERE effect_type='insurance' + re-insert).
@@ -112,17 +108,20 @@ async def test_insurance_delete_and_replace(db):
     await _persistence.save_insurance()
 
     _state.insurance.clear()
+    _state.social_insurance.clear()
     await _persistence.init_db_state()
     assert 1 in _state.insurance
     assert 2 not in _state.insurance
-    # Stored order is kept; the current INSURANCE_PROTECTS is folded in on
-    # load so old policies cover categories added after they were bought.
-    from src.economy import INSURANCE_PROTECTS
-    protected = _state.insurance[1]["protected_from"]
-    assert protected[:2] == ["nickname", "curse"]
-    assert set(protected) == {"nickname", "curse", *INSURANCE_PROTECTS}
     # An entry saved without a tier (pre-0065 shape) comes back on the default.
     assert _state.insurance[1]["tier"] == "basic"
+    assert _state.insurance[1]["protected_from"] == []
+    # Social: stored order is kept; the current INSURANCE_PROTECTS is folded
+    # in on load so old policies cover categories added after they were bought.
+    from src.economy import INSURANCE_PROTECTS
+    protected = _state.social_insurance[1]["protected_from"]
+    assert protected[:2] == ["nickname", "curse"]
+    assert set(protected) == {"nickname", "curse", *INSURANCE_PROTECTS}
+    assert _state.social_insurance[1]["tier"] == "social"
 
 
 # ── lottery ───────────────────────────────────────────────────────────────────

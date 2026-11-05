@@ -134,6 +134,7 @@ async def user_economy(user_id: int) -> dict[str, Any]:
     gambler_streak = await query.select_one("gambler_streak", ("last_full_date", "streak_count"), where="user_id = %s", params=(user_id,))
     chess = await query.select_one("chess_user_stats", ("max_elo_defeated", "total_elo_defeated", "elo_spent"), where="user_id = %s", params=(user_id,))
     insurance = await query.select_one("shop_effects", ("insurance_tier", "expires_at"), where="user_id = %s AND effect_type = %s", params=(user_id, "insurance"))
+    social_insurance = await query.select_one("shop_effects", ("expires_at",), where="user_id = %s AND effect_type = %s", params=(user_id, "social_insurance"))
     blocks = await query.select_one("mc_players", ("blocks", "linked_at"), where="user_id = %s", params=(user_id,))
     return {
         "user_id": user_id,
@@ -145,6 +146,7 @@ async def user_economy(user_id: int) -> dict[str, Any]:
         "gambler_streak": gambler_streak,
         "chess": chess,
         "insurance": insurance,
+        "social_insurance": social_insurance,
         "minecraft_blocks": blocks,
     }
 

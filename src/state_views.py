@@ -88,6 +88,7 @@ def overview(bot) -> dict:
             "idle_characters": sum(len(c) for c in state.idle_characters.values()),
             "counters": sum(len(c) for c in state.counters.values()),
             "insurance_policies": len(state.insurance),
+            "social_insurance_policies": len(state.social_insurance),
             "command_perms": len(state.command_perms),
         },
     }
@@ -127,6 +128,7 @@ def activity(bot) -> dict:
             "taxes": len(state.active_taxes),
             "curses": len(state.active_curses),
             "insurance": len(state.insurance),
+            "social_insurance": len(state.social_insurance),
         },
         "bounties_open": len(state.active_bounties),
         "ai_threads": {"count": len(state.ai_threads), "by_kind": ai_threads_by_kind},

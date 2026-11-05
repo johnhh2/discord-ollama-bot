@@ -199,22 +199,38 @@ ARTIFACT_SAVINGS_DAILY_MULT = 1.008
 
 # Shop effect parameters
 #
-# Insurance tiers (`!shop insurance`). Every tier blocks the non-crime effects
-# (economy.INSURANCE_PROTECTS) outright; crime (steal/mug/bankheist) still
-# goes through, and the insurer refunds `refund_pct` of each loss to the
-# victim's wallet — minted, not taken from the thief — up to `refund_cap` per
-# incident. Keys are what users type; order is cheapest → dearest (the tier
-# picker renders in this order).
+# Insurance (`!shop insurance`) comes in three types, each its own policy and
+# subscription. Personal: crime (steal/mug/bankheist) still goes through, and
+# the insurer refunds `refund_pct` of each loss to the victim's wallet —
+# minted, not taken from the thief — up to `refund_cap` per incident. Social:
+# one tier, blocks the shop effects aimed at another user
+# (economy.INSURANCE_PROTECTS) outright. Property: refunds repair bills after
+# a property theft, so it stays unsold until that crime exists
+# (PROPERTY_INSURANCE_LIVE). Tier keys are what users type; order is
+# cheapest → dearest (the tier picker renders in this order).
 SHOP_INSURANCE_TIERS = {
     "basic":    {"cost": 1_000, "refund_pct": 50,  "refund_cap": 100_000},
     "standard": {"cost": 3_000, "refund_pct": 75,  "refund_cap": 200_000},
     "premium":  {"cost": 6_000, "refund_pct": 100, "refund_cap": 400_000},
 }
-# Tier every pre-tier policy and subscription was backfilled to (migration
-# 0065) and the fallback when a stored tier is missing or unknown.
+SHOP_SOCIAL_INSURANCE_TIERS = {
+    "social": {"cost": 1_000},
+}
+SHOP_PROPERTY_INSURANCE_TIERS = {
+    "basic":    {"cost": 2_000,  "refund_pct": 50,  "refund_cap": 30_000},
+    "standard": {"cost": 5_000,  "refund_pct": 75,  "refund_cap": 60_000},
+    "premium":  {"cost": 10_000, "refund_pct": 100, "refund_cap": 120_000},
+}
+INSURANCE_TYPES = {
+    "personal": {"label": "Personal", "emoji": "🛡️", "tiers": SHOP_INSURANCE_TIERS, "default": "basic"},
+    "social":   {"label": "Social", "emoji": "🎭", "tiers": SHOP_SOCIAL_INSURANCE_TIERS, "default": "social"},
+    "property": {"label": "Property", "emoji": "🏠", "tiers": SHOP_PROPERTY_INSURANCE_TIERS, "default": "basic"},
+}
+PROPERTY_INSURANCE_LIVE = False
+# Personal tier every pre-tier policy and subscription was backfilled to
+# (migration 0065) and the fallback when a stored tier is missing or unknown.
 SHOP_INSURANCE_DEFAULT_TIER  = "basic"
-SHOP_INSURANCE_DURATION_SECS = 86_400  # 24 hours (one prepaid/renewed day)
-SHOP_INSURANCE_MAX_DAYS      = 30      # cap on total remaining prepaid coverage
+SHOP_INSURANCE_DURATION_SECS = 86_400  # 24 hours (one renewed day)
 SHOP_MOCK_MESSAGES           = 5
 SHOP_RAGEBAIT_MESSAGES       = 4       # remaining after initial AI send
 SHOP_CURSE_MESSAGES          = 5

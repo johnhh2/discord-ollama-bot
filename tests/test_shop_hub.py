@@ -159,8 +159,7 @@ async def test_forms_produce_the_typed_argument_lists():
     assert items["channelrename"].call({"channel": ["10"], "name": "new lounge"}) == (("<#10>", "new lounge"), {})
     assert items["ragebait"].call({"user": [7], "topic": ""}) == (("<@7>",), {})
     assert items["tax:rent"].invoked_with == "rent" and items["tax:rent"].method == "shop_tax"
-    assert items["insurance"].call({"tier": ["standard"], "days": "3"}) == (("standard", "3"), {})
-    assert items["insurance-sub"].call({"tier": ["premium"]}) == (("premium", "sub"), {})
+    assert items["insurance"].call({"tier": ["premium"]}) == (("premium",), {})
     assert items["insurance-unsub"].args == ("unsub",)
     assert items["buyxp-to"].call({"level": "12"}) == (("lvl", "12"), {})
     assert items["bounty"].call({"coins": "5k", "duration": "", "condition": "do a thing"}) == (("5k", "do", "a", "thing"), {})

@@ -72,6 +72,8 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "bot_admins", set())
     monkeypatch.setattr(_state, "godmode_users", set())
     monkeypatch.setattr(_state, "insurance_subs", {})
+    for _store in ("social_insurance", "social_insurance_subs", "property_insurance", "property_insurance_subs"):
+        monkeypatch.setattr(_state, _store, {})
     monkeypatch.setattr(_state, "command_perms", {})
     monkeypatch.setattr(_state, "user_perm_overrides", {})
     monkeypatch.setattr(_state, "blocklist", {})

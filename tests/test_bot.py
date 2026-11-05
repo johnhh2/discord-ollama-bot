@@ -796,14 +796,14 @@ class TestInsurance:
 
     @pytest.mark.asyncio
     async def test_not_insured_expired(self, monkeypatch):
-        monkeypatch.setattr("src.state.insurance", {
+        monkeypatch.setattr("src.state.social_insurance", {
             1: {"expires_at": time.time() - 10, "protected_from": ["rob"]}
         })
         assert await is_insured(1, "rob") is False
 
     @pytest.mark.asyncio
     async def test_insured_valid(self, monkeypatch):
-        monkeypatch.setattr("src.state.insurance", {
+        monkeypatch.setattr("src.state.social_insurance", {
             1: {"expires_at": time.time() + 3600, "protected_from": ["rob"]}
         })
         assert await is_insured(1, "rob") is True
@@ -811,14 +811,14 @@ class TestInsurance:
     @pytest.mark.asyncio
     async def test_insured_other_user_not_covered(self, monkeypatch):
         """Insurance is per-user: user 1's policy doesn't protect user 2."""
-        monkeypatch.setattr("src.state.insurance", {
+        monkeypatch.setattr("src.state.social_insurance", {
             1: {"expires_at": time.time() + 3600, "protected_from": ["rob"]}
         })
         assert await is_insured(2, "rob") is False
 
     @pytest.mark.asyncio
     async def test_insured_wrong_protection_type(self, monkeypatch):
-        monkeypatch.setattr("src.state.insurance", {
+        monkeypatch.setattr("src.state.social_insurance", {
             1: {"expires_at": time.time() + 3600, "protected_from": ["mug"]}
         })
         assert await is_insured(1, "rob") is False
