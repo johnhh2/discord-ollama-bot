@@ -56,7 +56,7 @@ def _fmt_prop(p: dict, row: dict = None) -> str:
 # discoverable from the bare command.
 _SUBCOMMANDS_HELP = (
     "**Subcommands:**\n"
-    "`!assets browse [tier]` — full catalog + player listings (cross-server)\n"
+    "`!assets browse [tier]` — properties for sale, bank and player listings\n"
     "`!assets buy <name>` — buy from the bank or a player listing\n"
     "`!assets upgrade [name]` — see your properties' upgrades, or buy one\n"
     "`!assets sell <name> <price>` — list on the cross-server market "
@@ -125,40 +125,40 @@ class AssetsCog(commands.Cog):
 
     # ── !assets browse / market (combined catalog + listings view) ────────
     @cmd_assets.command(name="browse", aliases=["market", "catalog", "shop", "listings", "forsale"],
-                        help="Full property catalog plus player listings across servers, optionally one tier (1-5)")
+                        help="Properties for sale from the bank and from players, optionally one tier (1-5)")
     async def assets_browse(self, ctx: commands.Context, tier: int = None):
         from src.level_unlocks import user_global_display_level
         uid = ctx.author.id
         # Deeds are bot-wide, so the gate is the global level too.
         lvl = user_global_display_level(uid)
 
-        lines = []
-        cur_tier = None
+        # Only what can be bought (bank-owned deeds and player listings), under
+        # the catalog name: no owners, custom names or upgrade stars.
+        tiers: dict[int, list[str]] = {}
+        levels: dict[int, int] = {}
         for p in released_properties():
             if tier is not None and p["tier"] != tier:
                 continue
-            if p["tier"] != cur_tier:
-                cur_tier = p["tier"]
-                if lines:
-                    lines.append("")
-                lines.append(f"**Tier {cur_tier}** *(level {p['level']}+)*")
+            levels[p["tier"]] = p["level"]
+            entries = tiers.setdefault(p["tier"], [])
             row = _owner_row(p["id"])
+            label = f"{p['emoji']} **{p['name']}**"
             rev = property_daily_revenue(p["id"], row, current=True)
-            star = " ⭐" if row and row.get("upgraded") else ""
             if row is None:
-                entry = f"{_fmt_prop(p)} — **{p['cost']:,} 🪙** • {rev:,} 🪙/day"
+                entry = f"{label} — **{p['cost']:,} 🪙** • {rev:,} 🪙/day"
                 if lvl < p["level"]:
                     entry = f"~~{entry}~~ 🔒"
-            elif row["owner_id"] == uid:
-                entry = f"{_fmt_prop(p, row)} — ✅ **Yours**{star} • {rev:,} 🪙/day"
             elif row.get("list_price"):
-                entry = (
-                    f"{_fmt_prop(p, row)} — 🏷️ **{row['list_price']:,} 🪙**{star} • {rev:,} 🪙/day"
-                    f" • seller: <@{row['owner_id']}>"
-                )
+                entry = f"{label} — 🏷️ **{row['list_price']:,} 🪙** • {rev:,} 🪙/day"
             else:
-                entry = f"{_fmt_prop(p, row)} — 🔒 owned{star}"
-            lines.append(entry)
+                continue
+            entries.append(entry)
+        lines = []
+        for t, entries in tiers.items():
+            if lines:
+                lines.append("")
+            lines.append(f"**Tier {t}** *(level {levels[t]}+)* — {len(entries)} available")
+            lines += entries
         if not lines:
             await ctx.send(embed=emb("🏘️ Real Estate", f"No tier `{tier}` — tiers are 1–5.", C_RED))
             return
@@ -194,7 +194,14 @@ class AssetsCog(commands.Cog):
         pid = prop["id"]
         row = _owner_row(pid)
         if row is not None and row["owner_id"] == uid:
-            await ctx.send(embed=emb("🏘️ Already Yours", f"You already own {_fmt_prop(prop)}.", C_PURPLE))
+            # Deeds are unique, so "a second one" is always this deed; the
+            # refusal is dressed up as antitrust law rather than a game rule.
+            await ctx.send(embed=emb(
+                "⚖️ Monopoly Laws",
+                f"You already own {_fmt_prop(prop)}. Antitrust regulators won't approve a second one: "
+                "monopoly laws limit every owner to one of each property.",
+                C_RED,
+            ))
             return
         if row is not None and not row.get("list_price"):
             await ctx.send(embed=emb("🔒 Not For Sale", f"{_fmt_prop(prop)} is owned and not listed for sale.", C_RED))

@@ -144,3 +144,33 @@ async def test_a_raised_cap_lets_a_sixth_deed_in(db):
     _state.economy["property_cap"] = 6
     await AssetsCog.assets_buy.callback(AssetsCog(bot=None), _ctx(uid), name="Car Wash")
     assert _state.property_owners["car_wash"]["owner_id"] == uid
+
+
+# ── !assets browse ───────────────────────────────────────────────────────────
+
+async def test_browse_lists_only_what_is_for_sale(db):
+    from src.persistence import save_property_owner
+    _set_level(7, 50)
+    await _give_property(7, "lemonade_stand")
+    await _give_property(8, "car_wash")
+    row = _state.property_owners["car_wash"]
+    row.update(list_price=90_000, upgraded=1, custom_name="Suds City")
+    await save_property_owner("car_wash", row)
+    ctx = _ctx(7)
+    await AssetsCog.assets_browse.callback(AssetsCog(bot=None), ctx, tier=1)
+    text = ctx.sent_embeds[-1].description
+    assert "Lemonade Stand" not in text and "Yours" not in text
+    assert "Car Wash" in text and "90,000" in text
+    assert "Suds City" not in text and "⭐" not in text
+    tier1 = sum(1 for p in released_properties() if p["tier"] == 1)
+    assert f"{tier1 - 1} available" in text
+
+
+async def test_buying_a_deed_you_own_cites_monopoly_laws(db):
+    _set_level(7, 50)
+    await _give_property(7, "lemonade_stand")
+    await add_balance(7, 100_000)
+    ctx = _ctx(7)
+    await AssetsCog.assets_buy.callback(AssetsCog(bot=None), ctx, name="Lemonade Stand")
+    assert "Monopoly Laws" in ctx.sent_embeds[-1].title
+    assert _state.economy["users"]["7"]["balance"] == 100_000
