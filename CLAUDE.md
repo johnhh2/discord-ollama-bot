@@ -82,11 +82,12 @@ pip install pytest pytest-asyncio ruff bandit pip-audit pip-tools
 # https://github.com/gitleaks/gitleaks/releases (or skip locally and let CI run it)
 ```
 
-CI runs five checks on every push/PR (works on both GitHub Actions and Gitea Actions — Gitea reads `.github/workflows/` as a fallback):
+CI runs six checks on every push/PR (works on both GitHub Actions and Gitea Actions — Gitea reads `.github/workflows/` as a fallback):
 - `ruff check src/ tests/` — active ruleset (`E`, `F`, `W` minus `E501`) is configured in `pyproject.toml`.
 - `gitleaks detect --source . --redact --verbose --exit-code 1` — full-history scan for committed secrets. Currently clean; new commits with API keys, tokens, or similar are blocked at CI time.
 - `bandit -r src/ --severity-level medium` — security lint. Low-severity findings (mostly `random` in gambling code, best-effort try/except) are intentionally allowed; medium and high block CI.
 - `pip-audit -r requirements.lock --strict` — fails on any unresolved CVE in the locked dep tree. CI passes `--ignore-vuln` for every id in `.pip-audit-ignore` (one per line, `#` comments); run it locally the same way: `pip-audit -r requirements.lock --strict $(grep -v '^#' .pip-audit-ignore | sed 's/^/--ignore-vuln /')`. An advisory whose only fix needs a newer Python than the bot runs on (pillow 13, dnspython 2.9 need 3.11+) goes in that file with its reason, and every alias too (pip-audit matches the id alone) rather than dropping `--strict`. Drop the block when the runtime catches up.
+- `trivy image bot:ci --severity CRITICAL --ignore-unfixed` — scans the built image. It reads `.trivyignore` from the repo root, which holds the Trivy ids for the same can't-fix-on-3.10 advisories with the same reason; Trivy and pip-audit name some advisories differently, so a new one may need adding to both. Drop it with the Python bump too.
 - `pytest -q` — full test suite.
 
 Run them locally before committing.

@@ -1,0 +1,13 @@
+# Advisories the CI image scan (trivy image … --severity CRITICAL) skips.
+# Trivy reads this file from the repo root by default. One id per line.
+#
+# pillow 12.3.0: every advisory below is fixed in 13.0.0, which needs
+# Python 3.11+ while the bot runs on 3.10. Same reasoning as the pillow block
+# in .pip-audit-ignore: the bot never decodes an image it didn't ship
+# (idle_map.py opens the bundled map; matplotlib and cairosvg only write), so
+# none is reachable. Drop this block with the Python bump.
+CVE-2026-112393
+CVE-2026-112398
+CVE-2026-112403
+CVE-2026-112900
+CVE-2026-96639
