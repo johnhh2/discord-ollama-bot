@@ -38,6 +38,8 @@ from src.persistence.artifacts import save_user_artifact, delete_user_artifact  
 from src.persistence.properties import (  # noqa: F401
     save_property_owner,
     delete_property_owner,
+    save_property_release,
+    save_property_supply_meta,
 )
 from src.persistence.rigged import (  # noqa: F401
     save_rigged_slots,

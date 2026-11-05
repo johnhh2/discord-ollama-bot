@@ -284,8 +284,8 @@ def property_accrual_cap_bonus(uid: int) -> int:
 def property_revenue_pct(uid: int, owned_count: int) -> int:
     """The artifact % boost on property revenue for a holder of
     `owned_count` deeds: +5% per property, capped at +25% (the cap lands at
-    PROPERTY_MAX_OWNED, so a holder at the ownership limit sees the full
-    boost and nothing past it)."""
+    PROPERTY_BASE_MAX_OWNED, so a holder at the base ownership limit sees
+    the full boost; deeds past it, under a raised limit, add nothing)."""
     pct = _owned_total(uid, "property_revenue_pct_per_property") * owned_count
     cap = _owned_total(uid, "property_revenue_pct_cap")
     if cap:

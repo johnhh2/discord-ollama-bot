@@ -3,8 +3,11 @@
 Every property is a UNIQUE, bot-wide deed: at most one owner across all
 servers, tracked in state.property_owners ({property_id: {owner_id,
 acquired_at, list_price, listed_at, upgraded, custom_name}}, source of truth:
-property_owners table). The catalog below is the full board — 36 properties
-from 10k to 2m.
+property_owners table). The catalog below holds the 36 shipped properties
+(10k to 2m) and a release pool of 42 more (marked "pool"), which reach the
+market one at a time at the 5am reset as the economy develops — see
+src/property_supply.py. An unreleased pool deed doesn't exist to players:
+every reader goes through is_released / released_properties.
 
 Economics:
   - Revenue is 1.1% of purchase price per day, derived (never hand-typed):
@@ -20,7 +23,8 @@ Economics:
   - The bot-wide interest curve, when set, replaces the flat 1.1% with a
     falling rate (src/rate_curves.py). That scales what owners are paid, per
     gameplay day; book value and upgrades are untouched.
-  - A user owns at most PROPERTY_MAX_OWNED properties.
+  - A user owns at most max_owned() properties: PROPERTY_BASE_MAX_OWNED,
+    raised with economy net worth by the release pass and never lowered.
   - Owners can list a property for sale at any price; listings are global,
     so a deed listed in one server can be bought from any other.
 
@@ -38,7 +42,7 @@ from src import state
 
 # ── Tuning ───────────────────────────────────────────────────────────────────
 
-PROPERTY_MAX_OWNED = 5
+PROPERTY_BASE_MAX_OWNED = 5
 # The missed-day bank holds up to this many coins (or one day's full
 # portfolio revenue, if greater). Artifacts add to it.
 PROPERTY_ACCRUAL_CAP_BASE = 10_000
@@ -105,6 +109,56 @@ PROPERTIES: list[dict] = [
     {"id": "casino_resort",    "name": "Casino Resort",    "emoji": "🎰", "tier": 5, "level": 25, "cost": 1_300_000},
     {"id": "skyscraper",       "name": "Skyscraper",       "emoji": "🏙️", "tier": 5, "level": 25, "cost": 1_600_000},
     {"id": "space_port",       "name": "Space Port",       "emoji": "🚀", "tier": 5, "level": 25, "cost": 2_000_000},
+    # ── Release pool ──
+    # Unreleased until the 5am release pass admits them (src/property_supply.py);
+    # "pool" marks them. Order of release is PROPERTY_RELEASE_ORDER, not this list.
+    # Tier 1 pool
+    {"id": "shoe_shine_stand",   "name": "Shoe Shine Stand",  "emoji": "👞", "tier": 1, "level": 5, "cost": 11_000, "pool": True},
+    {"id": "pretzel_stand",      "name": "Pretzel Stand",     "emoji": "🥨", "tier": 1, "level": 5, "cost": 13_000, "pool": True},
+    {"id": "ice_cream_truck",    "name": "Ice Cream Truck",   "emoji": "🍦", "tier": 1, "level": 5, "cost": 15_000, "pool": True},
+    {"id": "key_kiosk",          "name": "Key Kiosk",         "emoji": "🔑", "tier": 1, "level": 5, "cost": 17_000, "pool": True},
+    {"id": "thrift_shop",        "name": "Thrift Shop",       "emoji": "👕", "tier": 1, "level": 5, "cost": 19_000, "pool": True},
+    {"id": "bike_repair",        "name": "Bike Repair",       "emoji": "🚲", "tier": 1, "level": 5, "cost": 21_000, "pool": True},
+    {"id": "donut_shop",         "name": "Donut Shop",        "emoji": "🍩", "tier": 1, "level": 5, "cost": 23_000, "pool": True},
+    {"id": "pet_groomer",        "name": "Pet Groomer",       "emoji": "🐩", "tier": 1, "level": 5, "cost": 25_000, "pool": True},
+    {"id": "taco_stand",         "name": "Taco Stand",        "emoji": "🌮", "tier": 1, "level": 5, "cost": 27_000, "pool": True},
+    {"id": "print_shop",         "name": "Print Shop",        "emoji": "🖨️", "tier": 1, "level": 5, "cost": 29_000, "pool": True},
+    {"id": "record_store",       "name": "Record Store",      "emoji": "💿", "tier": 1, "level": 5, "cost": 31_000, "pool": True},
+    {"id": "bakery",             "name": "Bakery",            "emoji": "🥐", "tier": 1, "level": 5, "cost": 34_000, "pool": True},
+    # Tier 2 pool
+    {"id": "diner",              "name": "Diner",             "emoji": "🍳", "tier": 2, "level": 10, "cost": 43_000, "pool": True},
+    {"id": "sushi_bar",          "name": "Sushi Bar",         "emoji": "🍣", "tier": 2, "level": 10, "cost": 49_000, "pool": True},
+    {"id": "bookstore",          "name": "Bookstore",         "emoji": "📚", "tier": 2, "level": 10, "cost": 56_000, "pool": True},
+    {"id": "comic_shop",         "name": "Comic Shop",        "emoji": "🗯️", "tier": 2, "level": 10, "cost": 64_000, "pool": True},
+    {"id": "pool_hall",          "name": "Pool Hall",         "emoji": "🎱", "tier": 2, "level": 10, "cost": 72_000, "pool": True},
+    {"id": "mini_golf",          "name": "Mini Golf",         "emoji": "⛳", "tier": 2, "level": 10, "cost": 80_000, "pool": True},
+    {"id": "brewery",            "name": "Brewery",           "emoji": "🍻", "tier": 2, "level": 10, "cost": 87_000, "pool": True},
+    {"id": "hardware_store",     "name": "Hardware Store",    "emoji": "🔨", "tier": 2, "level": 10, "cost": 93_000, "pool": True},
+    {"id": "karaoke_bar",        "name": "Karaoke Bar",       "emoji": "🎤", "tier": 2, "level": 10, "cost": 98_000, "pool": True},
+    {"id": "ice_rink",           "name": "Ice Rink",          "emoji": "⛸️", "tier": 2, "level": 10, "cost": 104_000, "pool": True},
+    # Tier 3 pool
+    {"id": "art_gallery",        "name": "Art Gallery",       "emoji": "🖼️", "tier": 3, "level": 15, "cost": 130_000, "pool": True},
+    {"id": "water_park",         "name": "Water Park",        "emoji": "🌊", "tier": 3, "level": 15, "cost": 150_000, "pool": True},
+    {"id": "golf_course",        "name": "Golf Course",       "emoji": "🏌️", "tier": 3, "level": 15, "cost": 175_000, "pool": True},
+    {"id": "boutique_hotel",     "name": "Boutique Hotel",    "emoji": "🏨", "tier": 3, "level": 15, "cost": 205_000, "pool": True},
+    {"id": "concert_hall",       "name": "Concert Hall",      "emoji": "🎻", "tier": 3, "level": 15, "cost": 240_000, "pool": True},
+    {"id": "racetrack",          "name": "Racetrack",         "emoji": "🏁", "tier": 3, "level": 15, "cost": 280_000, "pool": True},
+    {"id": "ranch",              "name": "Ranch",             "emoji": "🐎", "tier": 3, "level": 15, "cost": 320_000, "pool": True},
+    {"id": "tv_station",         "name": "TV Station",        "emoji": "📺", "tier": 3, "level": 15, "cost": 350_000, "pool": True},
+    {"id": "zoo",                "name": "Zoo",               "emoji": "🦁", "tier": 3, "level": 15, "cost": 380_000, "pool": True},
+    # Tier 4 pool
+    {"id": "stadium",            "name": "Stadium",           "emoji": "🏟️", "tier": 4, "level": 20, "cost": 450_000, "pool": True},
+    {"id": "cruise_ship",        "name": "Cruise Ship",       "emoji": "🛳️", "tier": 4, "level": 20, "cost": 550_000, "pool": True},
+    {"id": "theme_park",         "name": "Theme Park",        "emoji": "🎢", "tier": 4, "level": 20, "cost": 700_000, "pool": True},
+    {"id": "oil_rig",            "name": "Oil Rig",           "emoji": "🛢️", "tier": 4, "level": 20, "cost": 900_000, "pool": True},
+    {"id": "film_studio",        "name": "Film Studio",       "emoji": "🎥", "tier": 4, "level": 20, "cost": 1_100_000, "pool": True},
+    {"id": "airline",            "name": "Airline",           "emoji": "✈️", "tier": 4, "level": 20, "cost": 1_200_000, "pool": True},
+    # Tier 5 pool
+    {"id": "bank_tower",         "name": "Bank Tower",        "emoji": "🏦", "tier": 5, "level": 25, "cost": 1_400_000, "pool": True},
+    {"id": "sports_franchise",   "name": "Sports Franchise",  "emoji": "🏆", "tier": 5, "level": 25, "cost": 1_800_000, "pool": True},
+    {"id": "satellite_network",  "name": "Satellite Network", "emoji": "🛰️", "tier": 5, "level": 25, "cost": 2_200_000, "pool": True},
+    {"id": "megacity",           "name": "Megacity",          "emoji": "🌆", "tier": 5, "level": 25, "cost": 2_500_000, "pool": True},
+    {"id": "moon_base",          "name": "Moon Base",         "emoji": "🌕", "tier": 5, "level": 25, "cost": 3_000_000, "pool": True},
 ]
 
 PROPERTIES_BY_ID: dict[str, dict] = {p["id"]: p for p in PROPERTIES}
@@ -154,18 +208,106 @@ PROPERTY_UPGRADES: dict[str, tuple[str, int, int]] = {
     "casino_resort": ("High-Roller Suite", 1_534_000, 68),
     "skyscraper": ("Observation Deck", 1_360_000, 60),
     "space_port": ("Orbital Hotel", 1_840_000, 55),
+    # Release pool — rolled the same way (seed "discord-ollama-bot-property-pool-0084").
+    "shoe_shine_stand": ("Leather Care Kit", 13_000, 67),
+    "pretzel_stand": ("Cheese Dip Bar", 12_000, 36),
+    "ice_cream_truck": ("Soft-Serve Machine", 17_000, 69),
+    "key_kiosk": ("Smart Lock Counter", 19_000, 71),
+    "thrift_shop": ("Vintage Rack", 16_000, 42),
+    "bike_repair": ("E-Bike Rentals", 21_000, 47),
+    "donut_shop": ("Drive-Thru Window", 20_000, 73),
+    "pet_groomer": ("Doggy Daycare", 25_000, 65),
+    "taco_stand": ("Late-Night Menu", 30_000, 39),
+    "print_shop": ("Large-Format Printer", 34_000, 40),
+    "record_store": ("Listening Booths", 25_000, 47),
+    "bakery": ("Wedding Cakes", 36_000, 71),
+    "diner": ("24-Hour Service", 50_000, 66),
+    "sushi_bar": ("Omakase Counter", 45_000, 71),
+    "bookstore": ("Reading Café", 44_000, 40),
+    "comic_shop": ("Tabletop Game Room", 79_000, 49),
+    "pool_hall": ("League Nights", 77_000, 71),
+    "mini_golf": ("Glow Course", 67_000, 48),
+    "brewery": ("Taproom", 80_000, 56),
+    "hardware_store": ("Tool Rental Desk", 100_000, 44),
+    "karaoke_bar": ("Private Rooms", 113_000, 66),
+    "ice_rink": ("Hockey League", 120_000, 68),
+    "art_gallery": ("Auction House", 109_000, 56),
+    "water_park": ("Wave Pool", 180_000, 48),
+    "golf_course": ("Country Club", 157_000, 57),
+    "boutique_hotel": ("Rooftop Bar", 191_000, 45),
+    "concert_hall": ("Season Tickets", 206_000, 59),
+    "racetrack": ("Grandstand Boxes", 343_000, 37),
+    "ranch": ("Guest Lodge", 272_000, 66),
+    "tv_station": ("Prime-Time Slot", 274_000, 35),
+    "zoo": ("Safari Tram", 289_000, 61),
+    "stadium": ("Luxury Suites", 456_000, 45),
+    "cruise_ship": ("Casino Deck", 664_000, 35),
+    "theme_park": ("Record Coaster", 531_000, 52),
+    "oil_rig": ("Second Platform", 732_000, 55),
+    "film_studio": ("Franchise Deal", 1_272_000, 74),
+    "airline": ("First-Class Cabins", 1_328_000, 56),
+    "bank_tower": ("Private Vaults", 1_509_000, 57),
+    "sports_franchise": ("Championship Run", 1_698_000, 51),
+    "satellite_network": ("Global Coverage", 2_748_000, 36),
+    "megacity": ("Transit Line", 2_703_000, 55),
+    "moon_base": ("Helium-3 Mine", 3_138_000, 75),
 }
 
 assert set(PROPERTY_UPGRADES) == set(PROPERTIES_BY_ID), \
     "every property needs exactly one entry in PROPERTY_UPGRADES"
 
+# ── Release order ────────────────────────────────────────────────────────────
+# The order each tier's pool reaches the market: a seeded shuffle (seed
+# "discord-ollama-bot-property-release-0084"), rolled once and hardcoded so
+# players never see it change. New pool entries append to their tier's tuple
+# (and get a threshold in property_supply) — never reorder a shipped tuple.
+PROPERTY_RELEASE_ORDER: dict[int, tuple[str, ...]] = {
+    1: ("ice_cream_truck", "print_shop", "pretzel_stand", "bakery", "bike_repair", "thrift_shop",
+        "record_store", "pet_groomer", "donut_shop", "shoe_shine_stand", "taco_stand", "key_kiosk"),
+    2: ("karaoke_bar", "hardware_store", "sushi_bar", "ice_rink", "mini_golf", "comic_shop",
+        "pool_hall", "bookstore", "brewery", "diner"),
+    3: ("zoo", "golf_course", "art_gallery", "water_park", "tv_station", "concert_hall",
+        "ranch", "racetrack", "boutique_hotel"),
+    4: ("film_studio", "stadium", "airline", "theme_park", "cruise_ship", "oil_rig"),
+    5: ("sports_franchise", "moon_base", "bank_tower", "megacity", "satellite_network"),
+}
+
+assert {pid for ids in PROPERTY_RELEASE_ORDER.values() for pid in ids} \
+    == {p["id"] for p in PROPERTIES if p.get("pool")}, \
+    "every pool property needs exactly one place in PROPERTY_RELEASE_ORDER"
+assert all(PROPERTIES_BY_ID[pid]["tier"] == t
+           for t, ids in PROPERTY_RELEASE_ORDER.items() for pid in ids), \
+    "a pool property is released in its own tier's order"
+
+
+def is_released(pid: str) -> bool:
+    """On the market or owned: shipped deeds always, pool deeds once the
+    release pass admitted them. An owned row counts too, so a deed can't
+    vanish from its owner if the released set failed to load."""
+    p = PROPERTIES_BY_ID.get(pid)
+    if p is None:
+        return False
+    return not p.get("pool") or pid in state.released_properties or pid in state.property_owners
+
+
+def released_properties() -> list[dict]:
+    """Every deed players can see, in catalog order."""
+    return [p for p in PROPERTIES if is_released(p["id"])]
+
+
+def max_owned() -> int:
+    """Today's per-player deed limit: the high-water mark the release pass
+    keeps in economy_meta, never below the base."""
+    return max(PROPERTY_BASE_MAX_OWNED, int(state.economy.get("property_cap") or 0))
+
 
 def find_property(token: str) -> dict | None:
-    """Resolve user input to a catalog entry: exact id, case-insensitive
-    catalog-name match (spaces/underscores interchangeable), or an owner's
-    custom business name (!assets rename)."""
+    """Resolve user input to a released catalog entry: exact id,
+    case-insensitive catalog-name match (spaces/underscores interchangeable),
+    or an owner's custom business name (!assets rename). Unreleased pool
+    deeds resolve to nothing, so a guessed name can't be bought early."""
     t = token.strip().lower().replace("_", " ")
-    for p in PROPERTIES:
+    for p in released_properties():
         if p["id"].replace("_", " ") == t or p["name"].lower() == t:
             return p
     for pid, row in state.property_owners.items():

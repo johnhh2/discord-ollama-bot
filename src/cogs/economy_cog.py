@@ -365,11 +365,17 @@ class EconomyCog(commands.Cog):
     async def _insurance_sweep_task(self):
         """Charge insurance subscribers for the new gameplay-day at the first
         tick after the 5am CT rollover — whether or not they log on. Guarded:
-        a failed tick must not stop the loop for good."""
+        a failed tick must not stop the loop for good. The property release
+        pass rides the same tick and the same once-a-day gate shape."""
         try:
             await sweep_insurance_subs()
         except Exception:
             logging.exception("[insurance] sweep tick failed")
+        try:
+            from src.property_supply import run_property_release
+            await run_property_release()
+        except Exception:
+            logging.exception("[property_supply] release tick failed")
 
     @_insurance_sweep_task.before_loop
     async def _before_insurance_sweep(self):
@@ -1914,7 +1920,7 @@ class EconomyCog(commands.Cog):
         # Property stats: book value isn't "circulation" (the purchase coins
         # were burned), so it gets its own lines and a combined net worth.
         from src.properties import (
-            PROPERTIES, PROPERTIES_BY_ID, property_daily_revenue,
+            PROPERTIES_BY_ID, property_daily_revenue, released_properties,
             total_owned_property_value,
         )
         owned_count = sum(1 for pid in state.property_owners if pid in PROPERTIES_BY_ID)
@@ -1928,7 +1934,7 @@ class EconomyCog(commands.Cog):
             f"**Total in wallets:** {total_wallets:,} 🪙\n"
             f"**Total in savings:** {total_savings:,} 🪙\n"
             f"**Total in circulation:** {total_circulation:,} 🪙\n"
-            f"**Total in property:** {total_property:,} 🪙 ({owned_count}/{len(PROPERTIES)} owned)\n"
+            f"**Total in property:** {total_property:,} 🪙 ({owned_count}/{len(released_properties())} owned)\n"
             f"**Daily property revenue:** {total_property_daily:,} 🪙/day\n"
             f"**Net worth (circulation + property):** {total_circulation + total_property:,} 🪙\n"
             f"**Lottery pool:** {lottery_pool:,} 🪙\n"

@@ -70,6 +70,7 @@ GRANT SELECT (ts, version) ON `discord_bot`.`mc_server_versions` TO 'botmcp'@'%'
 GRANT SELECT (id, guild_id, event_day, kind, category, value, created_at) ON `discord_bot`.`notable_events` TO 'botmcp'@'%';
 -- hidden: custom_name (free text a user typed)
 GRANT SELECT (property_id, owner_id, acquired_at, list_price, listed_at, upgraded) ON `discord_bot`.`property_owners` TO 'botmcp'@'%';
+GRANT SELECT (property_id, released_at) ON `discord_bot`.`property_releases` TO 'botmcp'@'%';
 GRANT SELECT (guild_id, user_id, last_date) ON `discord_bot`.`recap_usage` TO 'botmcp'@'%';
 -- hidden: holder_name (a display name)
 GRANT SELECT (guild_id, category, value, holder_id, extra_json) ON `discord_bot`.`records` TO 'botmcp'@'%';

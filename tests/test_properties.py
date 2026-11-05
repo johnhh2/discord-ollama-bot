@@ -15,7 +15,7 @@ import src.economy as _economy
 from src.config import DAILY_REWARD
 from src.economy import add_balance, get_balance
 from src.properties import (
-    PROPERTIES, PROPERTY_MAX_OWNED, PROPERTY_SALE_FEE_PCT,
+    PROPERTIES, PROPERTY_BASE_MAX_OWNED, PROPERTY_SALE_FEE_PCT,
     PROPERTY_ACCRUAL_CAP_BASE,
     find_property, daily_revenue, owned_property_count, portfolio_daily_revenue, accrual_cap, pending_property_revenue,
     bank_property_revenue, claimable_property_revenue,
@@ -217,13 +217,13 @@ async def test_mogul_artifact_caps_at_25pct(db):
     from src.artifacts import property_revenue_boosted, property_revenue_pct
     uid = 9008
     _give_artifact(uid, "property_mogul")
-    assert property_revenue_pct(uid, PROPERTY_MAX_OWNED) == 25
-    assert property_revenue_pct(uid, PROPERTY_MAX_OWNED + 3) == 25
-    assert property_revenue_boosted(uid, 1_000, PROPERTY_MAX_OWNED + 3) == 1_250
+    assert property_revenue_pct(uid, PROPERTY_BASE_MAX_OWNED) == 25
+    assert property_revenue_pct(uid, PROPERTY_BASE_MAX_OWNED + 3) == 25
+    assert property_revenue_boosted(uid, 1_000, PROPERTY_BASE_MAX_OWNED + 3) == 1_250
     # Below the cap it's still linear.
     assert property_revenue_pct(uid, 3) == 15
     # Without the artifact there's no boost at any count.
-    assert property_revenue_pct(9009, PROPERTY_MAX_OWNED) == 0
+    assert property_revenue_pct(9009, PROPERTY_BASE_MAX_OWNED) == 0
 
 
 async def test_bank_property_revenue_pays_and_stamps(db):
@@ -389,7 +389,7 @@ async def test_buy_enforces_ownership_cap(db):
     ctx = _ctx(uid)
     await AssetsCog.assets_buy.callback(cog, ctx, name="Car Wash")
     assert "car_wash" not in _state.property_owners
-    assert owned_property_count(uid) == PROPERTY_MAX_OWNED
+    assert owned_property_count(uid) == PROPERTY_BASE_MAX_OWNED
     assert "Portfolio Full" in ctx.sent_embeds[-1].title
 
 

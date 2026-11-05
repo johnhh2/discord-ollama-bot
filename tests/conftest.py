@@ -60,7 +60,8 @@ def reset_bot_state(monkeypatch):
     # GamblingSessionCog registers its rename hook on construction; same deal.
     _economy.GAMBLING_RESULT_HOOKS.clear()
 
-    _reset_dict(_state.economy, {"users": {}, "last_daily_reset": None, "last_insurance_sweep": None, "guild_house": {}})
+    _reset_dict(_state.economy, {"users": {}, "last_daily_reset": None, "last_insurance_sweep": None,
+                                 "last_property_release": None, "property_cap": None, "guild_house": {}})
     _reset_dict(_state.lottery_tickets_today, {"date": None, "count": 0})
     _reset_dict(_state.guild_settings, {})
     _reset_dict(_state.insurance, {})
@@ -87,6 +88,7 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "user_artifacts", {})
     monkeypatch.setattr(_state, "user_artifact_acquired_at", {})
     monkeypatch.setattr(_state, "property_owners", {})
+    monkeypatch.setattr(_state, "released_properties", set())
     monkeypatch.setattr(_state, "lottery_ticket_grants", {})
     monkeypatch.setattr(_state, "rigged_slots", {})
     monkeypatch.setattr(_state, "rigged_flips", {})

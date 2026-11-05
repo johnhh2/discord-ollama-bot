@@ -23,7 +23,7 @@ from src.helpers import (
 )
 from src.economy import add_balance, add_guild_house, _ensure_user
 from src.properties import (
-    PROPERTIES, PROPERTY_MAX_OWNED, PROPERTY_SALE_FEE_PCT,
+    PROPERTIES, PROPERTY_SALE_FEE_PCT, max_owned, released_properties,
     PROPERTY_UPGRADES, PROPERTY_BANK_BUYBACK_PCT,
     find_property, owned_properties, owned_property_count,
     portfolio_value, portfolio_daily_revenue, accrual_cap,
@@ -91,7 +91,7 @@ class AssetsCog(commands.Cog):
                 f"**{member.display_name}** doesn't own any properties yet.\n\n"
                 f"{_SUBCOMMANDS_HELP}\n\n"
                 f"*Properties pay **{property_pct_text()} of their price per day**, banked automatically "
-                f"with your daily claim. Own up to **{PROPERTY_MAX_OWNED}**.*"
+                f"with your daily claim. Own up to **{max_owned()}**.*"
             )
             await send_ephemeral(ctx, embed=emb("🏘️ Real Estate", desc, C_PURPLE))
             return
@@ -112,7 +112,7 @@ class AssetsCog(commands.Cog):
         cap = accrual_cap(uid)
         banked = int(state.economy["users"].get(str(uid), {}).get("property_revenue_total", 0) or 0)
         lines.append("")
-        lines.append(f"**Portfolio value:** {portfolio_value(uid):,} 🪙 ({len(props)}/{PROPERTY_MAX_OWNED} properties)")
+        lines.append(f"**Portfolio value:** {portfolio_value(uid):,} 🪙 ({len(props)}/{max_owned()} properties)")
         lines.append(f"**Daily revenue:** {portfolio_daily_revenue(uid):,} 🪙/day — one full day with every daily claim")
         lines.append(
             f"**Missed-day bank:** {pending:,} / {cap:,} 🪙 — a day's revenue per skipped claim, "
@@ -134,7 +134,7 @@ class AssetsCog(commands.Cog):
 
         lines = []
         cur_tier = None
-        for p in PROPERTIES:
+        for p in released_properties():
             if tier is not None and p["tier"] != tier:
                 continue
             if p["tier"] != cur_tier:
@@ -166,7 +166,7 @@ class AssetsCog(commands.Cog):
         lines.append(
             f"Every property is unique — one owner across all servers; 🏷️ marks "
             f"player listings, buyable from any server. "
-            f"Own up to **{PROPERTY_MAX_OWNED}**; revenue is {property_pct_text()} of price per day, "
+            f"Own up to **{max_owned()}**; revenue is {property_pct_text()} of price per day, "
             "banked with your daily claim.\n"
             "`!assets buy <name>` • `!assets sell <name> <price>`"
         )
@@ -202,10 +202,10 @@ class AssetsCog(commands.Cog):
         # Early refusal only. The race-safe gate — cap re-check plus the
         # synchronous deed claim — runs after the confirm wait, in
         # _buy_from_bank / _buy_from_market.
-        if owned_property_count(uid) >= PROPERTY_MAX_OWNED:
+        if owned_property_count(uid) >= max_owned():
             await ctx.send(embed=emb(
                 "🏘️ Portfolio Full",
-                f"You already own **{PROPERTY_MAX_OWNED}** properties — sell one first (`!assets sell <name> <price>`).",
+                f"You already own **{max_owned()}** properties — sell one first (`!assets sell <name> <price>`).",
                 C_RED,
             ))
             return
@@ -235,10 +235,10 @@ class AssetsCog(commands.Cog):
         if _owner_row(pid) is not None:
             await ctx.send(embed=emb("🔒 Not For Sale", f"{_fmt_prop(prop)} was bought while you were confirming. You were not charged.", C_RED))
             return
-        if owned_property_count(uid) >= PROPERTY_MAX_OWNED:
+        if owned_property_count(uid) >= max_owned():
             await ctx.send(embed=emb(
                 "🏘️ Portfolio Full",
-                f"You already own **{PROPERTY_MAX_OWNED}** properties — sell one first (`!assets sell <name> <price>`).",
+                f"You already own **{max_owned()}** properties — sell one first (`!assets sell <name> <price>`).",
                 C_RED,
             ))
             return
@@ -281,10 +281,10 @@ class AssetsCog(commands.Cog):
                 or state.property_owners.get(pid) is not row:
             await ctx.send(embed=emb("🏷️ Listing Changed", f"The listing for {_fmt_prop(prop)} changed while you were confirming. You were not charged.", C_RED))
             return
-        if owned_property_count(uid) >= PROPERTY_MAX_OWNED:
+        if owned_property_count(uid) >= max_owned():
             await ctx.send(embed=emb(
                 "🏘️ Portfolio Full",
-                f"You already own **{PROPERTY_MAX_OWNED}** properties — sell one first (`!assets sell <name> <price>`).",
+                f"You already own **{max_owned()}** properties — sell one first (`!assets sell <name> <price>`).",
                 C_RED,
             ))
             return

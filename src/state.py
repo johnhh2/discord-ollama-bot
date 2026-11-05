@@ -7,7 +7,8 @@ from src.config import HISTORY_LIMIT, RIDDLES_FILE, SLOT_JACKPOT_SEED
 # ── Persistent state (populated from DB in on_ready via init_db_state) ────────
 
 channel_prompts: dict = {}
-economy: dict = {"users": {}, "last_daily_reset": None, "last_insurance_sweep": None, "guild_house": {}}
+economy: dict = {"users": {}, "last_daily_reset": None, "last_insurance_sweep": None,
+                 "last_property_release": None, "property_cap": None, "guild_house": {}}
 slot_jackpot: int = SLOT_JACKPOT_SEED
 bot_roles: set = set()
 # Per-guild rank for each bot-created role: {(guild_id, role_id): rank}.
@@ -59,6 +60,9 @@ user_artifact_acquired_at: dict = {}
 # unless the owner has a live marketplace listing. Source of truth is the
 # property_owners table; loaded at boot. Catalog lives in src/properties.py.
 property_owners: dict = {}
+# Pool deeds the 5am release pass has admitted to the market (property_releases
+# table). Shipped deeds aren't listed; they are always released.
+released_properties: set = set()
 # Per-user all-time bot-chess stats — the chess-only ranks + first-defeat
 # bonuses: {uid_str: {"max_elo_defeated": int, "total_elo_defeated": int,
 # "bonus_bins": set[int], "elo_spent": int}}. Global (not guild-scoped),

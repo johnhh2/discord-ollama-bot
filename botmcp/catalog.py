@@ -142,6 +142,7 @@ TABLES: dict[str, Table] = {
                             hidden={"holder_name": _NAME}),
     "property_owners": Table(("property_id", "owner_id", "acquired_at", "list_price", "listed_at", "upgraded"),
                              hidden={"custom_name": _USER_TEXT}),
+    "property_releases": Table(("property_id", "released_at")),
     "recap_usage": Table(("guild_id", "user_id", "last_date")),
     "records": Table(("guild_id", "category", "value", "holder_id", "extra_json"), hidden={"holder_name": _NAME}),
     "schema_migrations": Table(("version", "name", "applied_at"), hidden={"checksum": "not useful, and hex-shaped like a secret"}),

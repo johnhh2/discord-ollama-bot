@@ -30,3 +30,27 @@ async def delete_property_owner(property_id: str):
         await cur.execute(
             "DELETE FROM property_owners WHERE property_id=%s", (property_id,)
         )
+
+
+async def save_property_release(property_id: str, released_at: float):
+    """Record a pool deed's release. INSERT IGNORE: a release is permanent,
+    and a re-run of the pass must not move its timestamp."""
+    async with with_transaction() as cur:
+        await cur.execute(
+            "INSERT IGNORE INTO property_releases (property_id, released_at) VALUES (%s,%s)",
+            (property_id, float(released_at)),
+        )
+
+
+async def save_property_supply_meta():
+    """Persist the release pass's gameplay-day marker and the per-player cap
+    high-water mark (economy_meta)."""
+    from src import state
+    async with with_transaction() as cur:
+        for key in ("last_property_release", "property_cap"):
+            value = state.economy.get(key)
+            await cur.execute(
+                "INSERT INTO economy_meta (key_name, value_text) VALUES (%s, %s)"
+                " ON DUPLICATE KEY UPDATE value_text=VALUES(value_text)",
+                (key, None if value is None else str(value)),
+            )

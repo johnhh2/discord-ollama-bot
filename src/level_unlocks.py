@@ -107,9 +107,9 @@ UNLOCKS: dict[str, dict] = {
     # entries gate nothing — they exist only to advertise the tiers in
     # level-up announcements and !level next-unlocks. Tiers 1–2 (levels
     # 5/10) are left out: the catalog itself already advertises them.
-    "assets tier 3": {"level": 15, "enabled": _feature("assets"), "usage": "`!assets browse 3` — Tier 3 properties (120k–300k 🪙)", "reward": True},
-    "assets tier 4": {"level": 20, "enabled": _feature("assets"), "usage": "`!assets browse 4` — Tier 4 properties (400k–1m 🪙)", "reward": True},
-    "assets tier 5": {"level": 25, "enabled": _feature("assets"), "usage": "`!assets browse 5` — Tier 5 properties (1.3m–2m 🪙)", "reward": True},
+    "assets tier 3": {"level": 15, "enabled": _feature("assets"), "usage": "`!assets browse 3` — Tier 3 properties (from 120k 🪙)", "reward": True},
+    "assets tier 4": {"level": 20, "enabled": _feature("assets"), "usage": "`!assets browse 4` — Tier 4 properties (from 400k 🪙)", "reward": True},
+    "assets tier 5": {"level": 25, "enabled": _feature("assets"), "usage": "`!assets browse 5` — Tier 5 properties (from 1.3m 🪙)", "reward": True},
 }
 
 # Also gate the !shop <subcommand> form. Maps "shop X" → same entry as "X".

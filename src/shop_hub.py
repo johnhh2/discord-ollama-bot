@@ -53,7 +53,7 @@ from src.helpers import emb, C_PURPLE, C_GREY
 from src.level_unlocks import is_locked_for, user_global_display_level
 from src.rate_curves import property_pct_text
 from src.properties import (
-    PROPERTIES, PROPERTY_MAX_OWNED, PROPERTY_UPGRADES, PROPERTY_BANK_BUYBACK_PCT,
+    PROPERTY_UPGRADES, max_owned, released_properties, PROPERTY_BANK_BUYBACK_PCT,
     owned_properties, property_daily_revenue, property_value,
 )
 from src.settings_views import Field, FormModal, MAX_OPTIONS, _OwnedView
@@ -349,7 +349,7 @@ def _assets(ctx, tiers: tuple[int, ...]) -> list[ShopItem]:
     uid = ctx.author.id
     lvl = user_global_display_level(uid)
     items = []
-    for p in PROPERTIES:
+    for p in released_properties():
         if p["tier"] not in tiers:
             continue
         row = state.property_owners.get(p["id"])
@@ -459,7 +459,7 @@ def items_for(page: str, ctx) -> list[ShopItem]:
 
 
 _ASSETS_NOTE = (
-    f"Every property is unique — one owner across all servers. Own up to {PROPERTY_MAX_OWNED}; "
+    "Every property is unique — one owner across all servers. Own up to {cap}; "
     "revenue is {pct} of price per day, banked with your daily claim."
 )
 _PAGE_NOTES = {
@@ -547,7 +547,7 @@ class ShopHub(_OwnedView):
                      for item in self.items()]
             body = "\n".join(lines) or "Nothing here for you right now."
             if self.page in ("assets_low", "assets_high"):
-                body += "\n\n*" + _ASSETS_NOTE.format(pct=property_pct_text()) + "*"
+                body += "\n\n*" + _ASSETS_NOTE.format(pct=property_pct_text(), cap=max_owned()) + "*"
             if self.page in _PAGE_NOTES:
                 body += "\n\n*" + _PAGE_NOTES[self.page] + "*"
             embed = emb(f"🛒 Shop — {_PAGE_LABELS[self.page]}", body[:4000], C_PURPLE)

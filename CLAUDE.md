@@ -385,15 +385,17 @@ Rules when touching this system:
    `highest_property_value` in `GLOBAL_STAT_CATEGORIES`) — deeds are bot-wide,
    so a purchase in one guild moves every guild's record.
 6. **Buying is the racey path.** The deed claim (and the
-   `PROPERTY_MAX_OWNED` check) runs synchronously before `shop_charge`, with
+   `max_owned()` check) runs synchronously before `shop_charge`, with
    rollback on failure — same pattern for bank and marketplace buys. Two
    racing buyers of one deed must resolve to exactly one owner, one charge
    (covered in `tests/test_properties.py`).
 7. **Catalog changes**: never rename a shipped `id`; keep display names
    unique (`find_property` matches on either, plus owners' custom names).
-   New properties just get appended — there's no supply migration, unowned
-   means bank-owned — but every property needs a `PROPERTY_UPGRADES` entry
-   (a module-load assert enforces it).
+   A new property goes in the release pool (`"pool": True`), appended to its
+   tier's `PROPERTY_RELEASE_ORDER` tuple with a threshold appended to
+   `RELEASE_THRESHOLDS` — never reorder either, players have seen them. Every
+   property needs a `PROPERTY_UPGRADES` entry; module-load asserts enforce
+   all three. Unowned and released means bank-owned.
    A property's `level` gates on the **global** level
    (`user_global_display_level` — highest level in any guild), like
    artifacts: deeds are bot-wide, so the server the command ran in
@@ -415,7 +417,23 @@ Rules when touching this system:
    bank-owned, upgrade and custom name gone). The confirm wait is a long
    await — the accept path re-validates ownership and then claims (pops the
    row) synchronously before paying.
-10. **Persistence takes the whole row.** `save_property_owner(pid, row)`
+10. **Supply grows at the 5am reset and never shrinks**
+    ([src/property_supply.py](src/property_supply.py)). The 36 shipped deeds
+    are always on the market; the 42 pool deeds reach it one at a time when
+    the development index D (¾ owned deeds / 40, ¼ log10 of net worth / 3M)
+    passes each one's hardcoded jittered threshold, checked once per
+    gameplay-day by `run_property_release` from EconomyCog's minute loop
+    (`last_property_release` in `economy_meta`; the shipping boot only
+    stamps the day). Net worth is wallets + savings + deed book value +
+    artifacts at catalog cost. Released pool ids live in `property_releases`
+    / `state.released_properties`; nothing ever deletes a row. The ownership
+    limit is `max_owned()`: 5 + ⌊W / 0.4⌋, a high-water mark in
+    `economy_meta` (`property_cap`). **Every reader goes through
+    `released_properties()` / `is_released()` / `find_property`** — an
+    unreleased deed must not be listed, matched or bought. Nothing refills
+    on sale; don't add a rule that looks at unsold counts. Coverage:
+    [tests/test_property_supply.py](tests/test_property_supply.py).
+11. **Persistence takes the whole row.** `save_property_owner(pid, row)`
     mirrors `state.property_owners[pid]` in one shot so a call site can't
     silently drop a column (listing, upgrade, custom name). Keep it that
     way when adding fields.
@@ -443,7 +461,8 @@ block and `save_user_artifact`'s first insert only).
   effect" when it's missing.
 - **The mogul boost is capped.** `property_revenue_pct` is +5% per owned
   deed up to `property_revenue_pct_cap` (25%, which is exactly
-  `PROPERTY_MAX_OWNED` deeds). Keep the cap in the payload so the catalog
+  `PROPERTY_BASE_MAX_OWNED` deeds; under a raised ownership limit the
+  extra deeds add nothing). Keep the cap in the payload so the catalog
   copy and the math can't drift.
 - **Silas is an NPC, never a Member.** The heist-partner artifact puts
   `SILAS` (`_NpcCrewMember` in `src/cogs/economy_cog.py`, Lv 1) in the

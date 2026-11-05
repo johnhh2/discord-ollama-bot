@@ -105,6 +105,12 @@ async def _init_db_state_inner(state, run_migrations):
             await cur.execute("SELECT value_text FROM economy_meta WHERE key_name='last_insurance_sweep'")
             row = await cur.fetchone()
             state.economy["last_insurance_sweep"] = row[0] if row and row[0] is not None else None
+            await cur.execute("SELECT value_text FROM economy_meta WHERE key_name='last_property_release'")
+            row = await cur.fetchone()
+            state.economy["last_property_release"] = row[0] if row and row[0] is not None else None
+            await cur.execute("SELECT value_text FROM economy_meta WHERE key_name='property_cap'")
+            row = await cur.fetchone()
+            state.economy["property_cap"] = int(row[0]) if row and row[0] is not None else None
         except Exception as e:
             logging.error(f"[init_db_state] economy_meta failed: {e}", exc_info=True)
             raise
@@ -344,6 +350,14 @@ async def _init_db_state_inner(state, run_migrations):
                 }
         except Exception as e:
             logging.error(f"[init_db_state] property_owners failed: {e}", exc_info=True)
+            raise
+
+        # ── property_releases ─────────────────────────────────────────────
+        try:
+            await cur.execute("SELECT property_id FROM property_releases")
+            state.released_properties = {pid for (pid,) in await cur.fetchall()}
+        except Exception as e:
+            logging.error(f"[init_db_state] property_releases failed: {e}", exc_info=True)
             raise
 
         # ── rigged_slots ──────────────────────────────────────────────────
