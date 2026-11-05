@@ -210,7 +210,8 @@ async def test_steal_success_transfers_coins_and_persists(db, monkeypatch):
 
 
 async def test_steal_caught_and_jailed_deducts_fee_and_sets_jail(db, monkeypatch):
-    """Failed steal + bad jail roll: thief pays fee, jail_until set 1 day out."""
+    """Failed steal + bad jail roll: thief pays fee, jailed for the 1,000-coin
+    attempt's sentence (12 hours, the under-5k bracket)."""
     cog = EconomyCog(bot=_StubBot())
     thief = FakeMember(uid=101, display_name="thief")
     victim = FakeMember(uid=201, display_name="victim")
@@ -219,7 +220,7 @@ async def test_steal_caught_and_jailed_deducts_fee_and_sets_jail(db, monkeypatch
     await _economy.add_balance(victim.id, 10_000)
     _grant_level(victim.id, 9)
 
-    # Tier 1: steal_chance=0.10, jail_chance=0.25, fee=1000, jail_days=1.
+    # Tier 1: steal_chance=0.10, jail_chance=0.25, fee=1000.
     # First random.random() = steal roll (need >= 0.10 to fail).
     # Second random.random() = jail roll (need < 0.25 to be jailed).
     rolls = iter([0.50, 0.10])
@@ -235,8 +236,7 @@ async def test_steal_caught_and_jailed_deducts_fee_and_sets_jail(db, monkeypatch
     assert await _economy.get_balance(victim.id) == 10_000
 
     jail_until = _state.economy["users"][str(thief.id)]["jail_until"]
-    assert jail_until > before + 86000  # at least a day from now (give or take)
-    assert jail_until < before + 87000
+    assert before + 43_000 < jail_until < before + 44_000
     assert await _read_db_jail_until(thief.id) == pytest.approx(jail_until)
     # Reason captured at jail time, persisted to DB
     # Tier 1: steal_pct=0.10 → steal_amount = int(10_000 * 0.10) = 1000
@@ -446,7 +446,7 @@ async def test_mug_clean_getaway_target_loses_amount(db, monkeypatch):
     assert kwargs.get("silent") is False
 
 
-async def test_mug_caught_jails_thief_for_one_day(db, monkeypatch):
+async def test_mug_caught_jails_thief_by_the_amount(db, monkeypatch):
     cog = EconomyCog(bot=_StubBot())
     thief = FakeMember(uid=301)
     victim = FakeMember(uid=401, display_name="victim")
@@ -467,7 +467,7 @@ async def test_mug_caught_jails_thief_for_one_day(db, monkeypatch):
     assert await _economy.get_balance(thief.id) == 4000
     assert await _economy.get_balance(victim.id) == 9000
     jail_until = _state.economy["users"][str(thief.id)]["jail_until"]
-    assert before + 86000 < jail_until < before + 87000
+    assert before + 43_000 < jail_until < before + 44_000  # 1,000 coins: the 12-hour bracket
     assert _state.economy["users"][str(thief.id)]["jail_reason"] == "Mugged victim for 1,000 coins"
     assert await _read_db_jail_reason(thief.id) == "Mugged victim for 1,000 coins"
 
@@ -1255,12 +1255,13 @@ async def test_bankheist_resolve_success_jails_everyone_when_rolls_low(db, monke
     # Loot still split — jail rolls happen after the credit.
     assert await _economy.get_balance(host.id) == 1000  # 2000 / 2 split
     assert await _economy.get_balance(j1.id) == 1000
-    # Both participants jailed for ~1 day.
+    # Both jailed on a 1,000-coin share: the 12-hour bracket.
     now = time.time()
     host_jail = _state.economy["users"][str(host.id)]["jail_until"]
     j1_jail = _state.economy["users"][str(j1.id)]["jail_until"]
-    assert now + 86_000 < host_jail < now + 87_000
-    assert now + 86_000 < j1_jail < now + 87_000
+    assert now + 43_000 < host_jail < now + 44_000
+    assert now + 43_000 < j1_jail < now + 44_000
+    assert "jailed for 12h" in result.description
     assert "Caught:" in result.description
     assert host.mention in result.description
     assert j1.mention in result.description
@@ -1310,7 +1311,7 @@ async def test_bankheist_resolve_jail_rolls_independent_per_player(db, monkeypat
 
     now = time.time()
     assert _state.economy["users"].get(str(host.id), {}).get("jail_until", 0) <= now
-    assert _state.economy["users"][str(j1.id)]["jail_until"] > now + 86_000
+    assert _state.economy["users"][str(j1.id)]["jail_until"] > now + 43_000
     assert _state.economy["users"].get(str(j2.id), {}).get("jail_until", 0) <= now
     assert "Caught:" in result.description
     assert j1.mention in result.description

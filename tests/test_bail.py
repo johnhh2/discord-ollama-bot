@@ -116,9 +116,9 @@ async def test_mug_jail_records_bail_amount(db, monkeypatch):
     assert _state.economy["users"][str(thief.id)]["bail_amount"] == 1_500
 
 
-async def test_bankheist_failure_records_zero_bail_amount(db, monkeypatch):
-    """Chance-miss bankheist failure: jailed participant gets bail_amount=0
-    (legacy 10k bail), since no savings were even queried."""
+async def test_bankheist_failure_records_the_attempted_share_as_bail_amount(db, monkeypatch):
+    """Chance-miss bankheist failure: a jailed participant's bail_amount is
+    the share they went for, the same number their sentence is set by."""
     cog = EconomyCog(bot=_StubBot())
     host = FakeMember(uid=1_020, display_name="host")
     target = FakeMember(uid=1_021, display_name="target")
@@ -133,7 +133,7 @@ async def test_bankheist_failure_records_zero_bail_amount(db, monkeypatch):
     ctx.bot = _StubBot()
     await cog._bankheist_resolve(ctx, hstate)
 
-    assert _state.economy["users"][str(host.id)]["bail_amount"] == 0
+    assert _state.economy["users"][str(host.id)]["bail_amount"] == 2_000  # 20% of 10k, solo
 
 
 async def test_bankheist_success_records_share_as_bail_amount(db, monkeypatch):

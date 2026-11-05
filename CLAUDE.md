@@ -546,6 +546,25 @@ original flat code path runs, untouched.
 
 Coverage: [tests/test_rate_curves.py](tests/test_rate_curves.py).
 
+## Crime: sentences scale with the take, one successful heist a day
+
+- **Every crime's jail is `crime_jail_seconds(take)`** (`src/cogs/economy_cog.py`,
+  `CRIME_JAIL_BRACKETS`): 12 hours under 5k, then 1 day, 2 days (25k+),
+  3 days (100k+) and 4 days (250k+). The take is what the crime *went for*:
+  the steal amount, the mug amount, a heist player's share (on a failed roll
+  too: 20% of savings over the crew). The same number is `bail_amount`, so
+  bail and sentence rise together. A new crime uses the helper, never a flat
+  sentence.
+- **One successful bank heist per player per gameplay day**
+  (`heist_success_day`, migration 0085). It's checked when the host opens,
+  when a player presses Join, and again in `_bankheist_resolve` after its
+  savings read: a host who heisted elsewhere meanwhile calls it off, a crew
+  member is benched (no cut, no jail roll). The day is claimed for every
+  human on the winning roll, with no await between check and claim, and
+  handed back on an empty vault. Failures don't count. Silas has no row.
+
+Coverage: [tests/test_crime_limits.py](tests/test_crime_limits.py).
+
 ## Insurance: tiers, and crime is refunded rather than blocked
 
 Insurance comes in three tiers (`SHOP_INSURANCE_TIERS` in `src/config.py`):

@@ -118,7 +118,8 @@ async def user_economy(user_id: int) -> dict[str, Any]:
     user = await query.select_one(
         "economy_users",
         ("user_id", "balance", "savings", "daily_date", "scratch_used", "scratch_date", "jail_until", "bail_amount",
-         "crime_eligible", "property_revenue_total", "daily_gamble_property", "ins_paid_since_claim", "ins_lapsed_since_claim"),
+         "crime_eligible", "property_revenue_total", "daily_gamble_property", "ins_paid_since_claim", "ins_lapsed_since_claim",
+         "heist_success_day"),
         where="user_id = %s", params=(user_id,),
     )
     if user is not None:

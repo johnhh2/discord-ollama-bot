@@ -10,7 +10,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 from src.helpers import (
-    ack_slash,
+    ack_slash, format_duration,
     emb, C_GREEN, C_RED, C_GOLD, C_ORANGE, C_GREY, C_BLUE, parse_amount, parse_int_amount, send_ephemeral, fetch_member, shop_charge, OptionalMember,
     announce_record,
 )
@@ -51,13 +51,38 @@ from src import idlerpg
 from src import state
 
 
-# (escape_chance, steal_pct, jail_chance, fine, jail_days)
+# (escape_chance, steal_pct, jail_chance, fine)
 # Bail cost on jail = 10,000 + steal_amount/2, so higher steal_pct also raises bail.
 STEAL_TIERS = [
-    (0.10, 0.10, 0.25, 1000, 1),
-    (0.09, 0.15, 0.30, 1350, 1),
-    (0.08, 0.20, 0.35, 3250, 1),
+    (0.10, 0.10, 0.25, 1000),
+    (0.09, 0.15, 0.30, 1350),
+    (0.08, 0.20, 0.35, 3250),
 ]
+
+
+# Every crime's sentence scales with the take it went for: (exclusive upper
+# bound, seconds). A flat day made a 500-coin pickpocket cost the same as a
+# six-figure heist. Past the last bound, CRIME_JAIL_MAX_SECS.
+CRIME_JAIL_BRACKETS = (
+    (5_000, 12 * 3600),
+    (25_000, 86_400),
+    (100_000, 2 * 86_400),
+    (250_000, 3 * 86_400),
+)
+CRIME_JAIL_MAX_SECS = 4 * 86_400
+
+
+def crime_jail_seconds(take: int) -> int:
+    for bound, secs in CRIME_JAIL_BRACKETS:
+        if take < bound:
+            return secs
+    return CRIME_JAIL_MAX_SECS
+
+
+def _heisted_today(uid: int) -> bool:
+    """One successful bank heist per player per gameplay day; the day is
+    claimed on the winning roll (see _bankheist_resolve)."""
+    return state.economy["users"].get(str(uid), {}).get("heist_success_day") == _ct_today()
 
 
 # ── Shared crime-score record ─────────────────────────────────────────────────
@@ -239,7 +264,7 @@ class _StealTierView(discord.ui.View):
         self._fired = False
 
         styles = [discord.ButtonStyle.success, discord.ButtonStyle.primary, discord.ButtonStyle.danger]
-        for i, (_escape, pct, _jail, _fine, _days) in enumerate(STEAL_TIERS):
+        for i, (_escape, pct, _jail, _fine) in enumerate(STEAL_TIERS):
             amount = max(1, int(victim_bal * pct))
             label = f"{amount:,} 🪙"
             self.add_item(_StealTierButton(label=label, tier=i + 1, style=styles[i]))
@@ -320,6 +345,11 @@ class _HeistLobbyView(discord.ui.View):
             # Same gate as the host: a jailed player would take a full share
             # with nothing at stake — another jail roll costs nothing inside.
             await self._refuse(interaction, "You're in jail — no heists from a cell.")
+        elif _heisted_today(user.id):
+            await self._refuse(
+                interaction,
+                f"You already pulled off a heist today. Next one <t:{next_daily_reset_ts()}:R>.",
+            )
         elif None not in slots[1:]:
             await self._refuse(interaction, "The crew is full.")
         else:
@@ -586,12 +616,12 @@ class EconomyCog(commands.Cog):
         lines = [
             f"**`!steal @user`**{steal_lock} — Pick a pocket. Chance to steal a % of their balance; risk jail if caught.",
             "",
-            f"**`!mug @user <amount>`**{mug_lock} — Pay muggers `<amount>` 🪙 to take that amount from a target. The muggers keep it. 50% chance you get jailed 1 day.",
+            f"**`!mug @user <amount>`**{mug_lock} — Pay muggers `<amount>` 🪙 to take that amount from a target. The muggers keep it. 50% chance you get jailed, longer for bigger amounts.",
             "",
         ]
         if feature_enabled(gid, "savings"):  # a heist raids savings — nothing to raid without them
             lines += [
-                f"**`!bankheist @user`**{bankheist_lock} — Open a 4-slot lobby; rally a crew to split a cut of the target's savings.",
+                f"**`!bankheist @user`**{bankheist_lock} — Open a 4-slot lobby; rally a crew to split a cut of the target's savings. One successful heist a day.",
                 "",
             ]
         lines += [
@@ -676,13 +706,14 @@ class EconomyCog(commands.Cog):
 
         victim_bal = await get_balance(target.id)
         rows = []
-        for i, (escape, _pct, jail, fine, _days) in enumerate(STEAL_TIERS, start=1):
+        for i, (escape, pct, jail, fine) in enumerate(STEAL_TIERS, start=1):
             # Show the thief's artifact-adjusted odds, not the base tier odds.
             esc = steal_success_chance(ctx.author.id, escape)
             jl = crime_catch_chance(ctx.author.id, jail)
+            sentence = format_duration(crime_jail_seconds(max(1, int(victim_bal * pct))))
             rows.append(
                 f"**Tier {i}** — {esc * 100:g}% escape · "
-                f"{jl * 100:g}% jail if caught · fine **{fine:,}**"
+                f"{jl * 100:g}% jail ({sentence}) if caught · fine **{fine:,}**"
             )
         body = (
             f"Pick a tier to steal from **{target.display_name}** "
@@ -736,7 +767,7 @@ class EconomyCog(commands.Cog):
         # so two rapid invocations could otherwise both pass the check.
         self._crime_active.add(thief_id)
         try:
-            steal_chance, steal_pct, jail_chance, fee, jail_days = STEAL_TIERS[tier_num - 1]
+            steal_chance, steal_pct, jail_chance, fee = STEAL_TIERS[tier_num - 1]
             steal_chance = steal_success_chance(thief_id, steal_chance)
             jail_chance = crime_catch_chance(thief_id, jail_chance)
             victim_bal = await get_balance(victim_id)
@@ -830,7 +861,7 @@ class EconomyCog(commands.Cog):
                 if from_savings > 0:
                     fine_line += f" (**{from_savings:,}** taken from savings)"
                 if jailed:
-                    jail_until_ts = time.time() + jail_days * 86400
+                    jail_until_ts = time.time() + crime_jail_seconds(steal_amount)
                     thief_data["jail_until"] = jail_until_ts
                     thief_data["jail_reason"] = format_steal_reason(target.display_name, steal_amount)
                     thief_data["bail_amount"] = steal_amount
@@ -870,8 +901,9 @@ class EconomyCog(commands.Cog):
     # of the target's savings via seize_from_savings and splits evenly among
     # participants (host gets the integer-division remainder). Failure leaves
     # the savings untouched, but win or lose every participant rolls 50% for
-    # a day in jail. Jail gates both ends: a jailed host can't open a lobby,
-    # a jailed player can't join.
+    # jail, sentenced on their share (crime_jail_seconds). Jail and the
+    # one-successful-heist-a-day limit gate both ends: the host opening, a
+    # player joining, and the crew again at resolve.
     #
     # Silas: a host who owns the heist-partner artifact gets SILAS (Lv 1, an
     # NPC) in slot 4 whenever fewer than three players have joined. `slots`
@@ -982,16 +1014,15 @@ class EconomyCog(commands.Cog):
         return emb(f"🏦 Bank Heist — targeting {target.display_name}", body, C_ORANGE)
 
     BANKHEIST_PARTICIPANT_JAIL_CHANCE = 0.50
-    BANKHEIST_PARTICIPANT_JAIL_SECONDS = 86400  # 1 day
 
     async def _roll_participant_jail(self, participants: list, target_name: str, intended_per_person: int = 0) -> list:
-        """For each participant, roll 50% to be jailed for 1 day. Returns the
-        list of jailed Members (for embed display). Mutates state and persists.
+        """For each participant, roll 50% to be jailed. Returns the list of
+        jailed Members (for embed display). Mutates state and persists.
 
-        `intended_per_person` is recorded as the participant's bail_amount for
-        bail-cost calculation: the amount they tried to / did steal."""
+        `intended_per_person` — the share each tried to / did take — sets
+        both the sentence and the bail_amount bail is priced from."""
         jailed: list = []
-        jail_until_ts = time.time() + self.BANKHEIST_PARTICIPANT_JAIL_SECONDS
+        jail_until_ts = time.time() + crime_jail_seconds(intended_per_person)
         for p in participants:
             if _is_npc(p):
                 continue  # Silas has no record to jail — and no roll to spend
@@ -1006,12 +1037,12 @@ class EconomyCog(commands.Cog):
         return jailed
 
     @staticmethod
-    def _format_caught_line(jailed: list) -> str:
+    def _format_caught_line(jailed: list, share: int) -> str:
         """Render the trailing 'Caught:' line for the result embed."""
         if not jailed:
             return ""
         names = ", ".join(p.mention for p in jailed)
-        return f"\n\n🚔 **Caught:** {names} — jailed for 1 day."
+        return f"\n\n🚔 **Caught:** {names} — jailed for {format_duration(crime_jail_seconds(share))}."
 
     async def _bankheist_resolve(self, ctx: commands.Context, hstate: dict) -> discord.Embed:
         """Roll the heist and apply outcome. Returns the result embed.
@@ -1019,60 +1050,98 @@ class EconomyCog(commands.Cog):
         touch reactions or the lobby loop. Tests call this directly.
 
         After the loot split (or on failure / empty vault), every participant
-        rolls 50% to get jailed for 1 day. Caught players are listed in a
-        trailing line on the result embed."""
+        rolls 50% for jail. Caught players are listed in a trailing line on
+        the result embed."""
         host = hstate["host"]
         target = hstate["target"]
+        gid = ctx.guild.id if ctx.guild else 0
+
+        savings_value = await get_savings_value(target.id)
+
+        # From here to the success claim below runs without an await, so a
+        # crew member's heist resolving in another channel can't land between
+        # this check and the claim.
+        if _heisted_today(host.id):
+            return emb(
+                "🏦 Heist Called Off",
+                f"**{host.display_name}** already pulled off a heist today. "
+                f"Next one <t:{next_daily_reset_ts()}:R>.",
+                C_GREY,
+            )
+        slots = hstate["slots"]
+        benched = [m for m in slots[1:] if m is not None and _heisted_today(m.id)]
+        for i in range(1, len(slots)):
+            if slots[i] in benched:
+                slots[i] = None
+        bench_line = (
+            f"\n\n🪑 {', '.join(m.display_name for m in benched)} already pulled off a heist "
+            "today and sat this one out."
+            if benched else ""
+        )
         joiners = self._bankheist_joiners(hstate)
         participants = [host] + joiners
-        gid = ctx.guild.id if ctx.guild else 0
 
         # Snapshot the lobby header (crew + chance + pot) once so every result
         # embed below shows the user the same info they saw in the lobby.
-        savings_value = await get_savings_value(target.id)
         header = self._bankheist_header(
             host, target, joiners, gid, savings_value, include_open_slots=False,
-        )
+        ) + bench_line
 
+        intended = int(savings_value * self.BANKHEIST_SEIZE_PCT)
+        intended_share = intended // len(participants)
         chance = self._bankheist_chance(host, joiners, gid)
         success = random.random() < chance
 
         if not success:
-            jailed = await self._roll_participant_jail(participants, target.display_name, intended_per_person=0)
+            jailed = await self._roll_participant_jail(
+                participants, target.display_name, intended_per_person=intended_share,
+            )
             return emb(
                 "🚨 Heist Failed!",
                 header + "\n\n"
                 f"The crew bailed at the door — {target.display_name}'s savings are untouched.\n"
                 f"(Roll missed a {round(chance * 100, 1)}% chance.)"
-                + self._format_caught_line(jailed),
+                + self._format_caught_line(jailed, intended_share),
                 C_RED,
             )
 
-        intended = int(savings_value * self.BANKHEIST_SEIZE_PCT)
+        # Claim today's heist for every player on the winning roll; an empty
+        # vault below hands it back. Saved with the payout's own writes.
+        humans = [p for p in participants if not _is_npc(p)]
+        prior_days = {}
+        for p in humans:
+            pdata = state.economy["users"].setdefault(str(p.id), {"balance": 0, "savings": []})
+            prior_days[p.id] = pdata.get("heist_success_day")
+            pdata["heist_success_day"] = _ct_today()
+
+        def _unclaim():
+            for p in humans:
+                state.economy["users"][str(p.id)]["heist_success_day"] = prior_days[p.id]
+
         if intended <= 0:
+            _unclaim()
             jailed = await self._roll_participant_jail(
-                participants, target.display_name,
-                intended_per_person=intended // len(participants),
+                participants, target.display_name, intended_per_person=intended_share,
             )
             return emb(
                 "💨 Empty Vault",
                 header + "\n\n"
                 f"You broke in clean — but **{target.display_name}** had no savings to steal."
-                + self._format_caught_line(jailed),
+                + self._format_caught_line(jailed, intended_share),
                 C_GREY,
             )
 
         seized = await seize_from_savings(target.id, intended)
         if seized <= 0:
+            _unclaim()
             jailed = await self._roll_participant_jail(
-                participants, target.display_name,
-                intended_per_person=intended // len(participants),
+                participants, target.display_name, intended_per_person=intended_share,
             )
             return emb(
                 "💨 Empty Vault",
                 header + "\n\n"
                 f"You broke in clean — but **{target.display_name}**'s savings were already empty."
-                + self._format_caught_line(jailed),
+                + self._format_caught_line(jailed, intended_share),
                 C_GREY,
             )
 
@@ -1131,7 +1200,7 @@ class EconomyCog(commands.Cog):
             f"The crew cracked **{target.display_name}**'s savings for **{seized:,} 🪙**!\n\n"
             f"{cut_lines}"
             + _insurance_refund_line(target.display_name, refunded)
-            + self._format_caught_line(jailed),
+            + self._format_caught_line(jailed, share),
             C_GREEN,
         )
 
@@ -1180,6 +1249,13 @@ class EconomyCog(commands.Cog):
                 "🚔 You're in Jail",
                 f"**{host.display_name}** is locked up! Released <t:{int(jail_until)}:R>.",
                 C_RED,
+            ))
+            return
+        if _heisted_today(host.id):
+            await ctx.send(embed=emb(
+                "🏦 One Heist a Day",
+                f"You already pulled off a heist today. Next one <t:{next_daily_reset_ts()}:R>.",
+                C_GOLD,
             ))
             return
 
@@ -1436,7 +1512,7 @@ class EconomyCog(commands.Cog):
         ))
 
     @commands.command(name="mug",
-                      help="Pay muggers an amount to take that much from a user; 50% chance of a day in jail", usage="<@user> <amount>")
+                      help="Pay muggers an amount to take that much from a user; 50% chance of jail, longer for bigger amounts", usage="<@user> <amount>")
     @requires_perm
     async def cmd_mug(self, ctx: commands.Context, target: OptionalMember = None, amount: str = None):
         uid = ctx.author.id
@@ -1560,7 +1636,7 @@ class EconomyCog(commands.Cog):
             await record_crime_event(gid, target.id, lost=actual_steal - refunded)
 
             if jailed:
-                jail_until_ts = time.time() + 86400
+                jail_until_ts = time.time() + crime_jail_seconds(parsed)
                 state.economy["users"][str(uid)]["jail_until"] = jail_until_ts
                 state.economy["users"][str(uid)]["jail_reason"] = format_mug_reason(target.display_name, parsed)
                 state.economy["users"][str(uid)]["bail_amount"] = parsed

@@ -94,7 +94,7 @@ TABLES: dict[str, Table] = {
         ("user_id", "balance", "last_daily", "daily_date", "scratch_used", "scratch_date", "jailbreak_used",
          "jail_until", "savings", "crime_eligible", "bail_amount", "bot_chess_elo_max_today",
          "bot_chess_elo_max_date", "scratch_won_today", "property_paid_at", "property_revenue_total",
-         "daily_gamble_property", "ins_paid_since_claim", "ins_lapsed_since_claim"),
+         "daily_gamble_property", "ins_paid_since_claim", "ins_lapsed_since_claim", "heist_success_day"),
         hidden={"jail_reason": "free text, sometimes admin-written"},
     ),
     "feature_request_watchers": Table(("message_id", "user_id", "created_at")),
