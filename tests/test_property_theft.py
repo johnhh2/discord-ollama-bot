@@ -105,7 +105,7 @@ async def _db_damage(pid):
 # ── the tables ───────────────────────────────────────────────────────────────
 
 def test_odds_and_jail_by_tier():
-    assert pt.SUCCESS_BY_TIER == {1: 0.70, 2: 0.60, 3: 0.50, 4: 0.40, 5: 0.30}
+    assert pt.SUCCESS_BY_TIER == {1: 0.35, 2: 0.30, 3: 0.25, 4: 0.20, 5: 0.15}
     assert pt.JAIL_BY_TIER == {1: 0.20, 2: 0.25, 3: 0.30, 4: 0.35, 5: 0.40}
 
 
@@ -119,7 +119,7 @@ def test_take_is_two_days_of_rent_with_the_revenue_upgrade():
 
 def test_security_cuts_success_and_investigators_need_insurance():
     row = {"owner_id": OWNER, "secured": True}
-    assert pt.success_chance(THIEF, PID, row) == pytest.approx(0.375)
+    assert pt.success_chance(THIEF, PID, row) == pytest.approx(0.1875)
     assert pt.has_investigators(row) is False
     assert pt.jail_chance(THIEF, PID, row, succeeded=False) == pytest.approx(0.30)
     assert pt.jail_chance(THIEF, PID, row, succeeded=True) == 0.0

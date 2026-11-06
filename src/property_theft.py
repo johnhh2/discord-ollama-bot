@@ -19,7 +19,7 @@ from __future__ import annotations
 from src import state
 from src.properties import PROPERTIES_BY_ID, property_daily_revenue
 
-SUCCESS_BY_TIER = {1: 0.70, 2: 0.60, 3: 0.50, 4: 0.40, 5: 0.30}
+SUCCESS_BY_TIER = {1: 0.35, 2: 0.30, 3: 0.25, 4: 0.20, 5: 0.15}
 JAIL_BY_TIER = {1: 0.20, 2: 0.25, 3: 0.30, 4: 0.35, 5: 0.40}
 TAKE_RENT_DAYS = 2
 DAMAGE_PCT = 25

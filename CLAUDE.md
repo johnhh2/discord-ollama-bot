@@ -597,7 +597,7 @@ The rules are [src/property_theft.py](src/property_theft.py); the command is
 converter, which tries the whole argument text as a deed (`find_property`,
 exact names only) before a member.
 
-- **Odds and money.** Success is 70/60/50/40/30% by tier, times the steal
+- **Odds and money.** Success is 35/30/25/20/15% by tier, times the steal
   artifact and `SECURITY_SUCCESS_MULT` on a secured deed. The take is two
   days of the deed's current rent, revenue upgrade included. A success pays
   it and damages the deed; a failure fines 25% of it (wallet, then savings)
