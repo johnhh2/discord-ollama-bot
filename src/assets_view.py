@@ -2,7 +2,8 @@
 
 One message, three modes: the portfolio (Browse / Manage), the market (a
 tier dropdown, then that tier's properties for sale, plus Buy) and manage (a dropdown of the
-invoker's deeds, then Sell / Unlist / Upgrade / Rename for the one picked).
+invoker's deeds, then Sell / Unlist / Upgrade / Rename / Repair for the one
+picked).
 Every action runs the typed `!assets` subcommand for the presser through
 `forwarding` (see CLAUDE.md: Buttons that run commands), so its confirm
 prompts, re-checks and race guards are the typed path's; the card is
@@ -17,6 +18,7 @@ from src.forwarding import button_context, forward, refusal_for
 from src.helpers import emb, C_PURPLE
 from src.permissions import is_silenced
 from src.properties import PROPERTIES_BY_ID, upgrade_types_for
+from src.property_theft import is_damaged
 from src.settings_views import Field, FormModal, MAX_OPTIONS
 
 ASSETS_TIMEOUT = 300.0
@@ -87,6 +89,8 @@ class AssetsView(ui.View):
                 if not all(row.get(self.cog._UPGRADE_FLAGS[k]) for k in upgrade_types_for(self.choice)):
                     self.add_item(_ActionButton("Upgrade", "⭐", discord.ButtonStyle.success, self._upgrade, row=1))
                 self.add_item(_ActionButton("Rename", "✏️", discord.ButtonStyle.secondary, self._rename, row=1))
+                if is_damaged(row):
+                    self.add_item(_ActionButton("Repair", "🔧", discord.ButtonStyle.danger, self._repair, row=1))
         if self.home:
             self.add_item(_ModeButton("Back", "◀️", "home", discord.ButtonStyle.secondary, row=4))
 
@@ -155,6 +159,9 @@ class AssetsView(ui.View):
 
     async def _upgrade(self, interaction):
         await self.run(interaction, "upgrade", name=self.choice, content=f"!assets upgrade {self.choice}")
+
+    async def _repair(self, interaction):
+        await self.run(interaction, "repair", name=self.choice, content=f"!assets repair {self.choice}")
 
     async def _sell(self, interaction):
         pid = self.choice

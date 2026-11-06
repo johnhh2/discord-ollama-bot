@@ -312,8 +312,8 @@ async def test_shop_insurance_unknown_word_shows_the_help_and_coverage(db):
     ctx = _ctx(uid)
     await ShopCog(bot=None).shop_insurance.callback(ShopCog(bot=None), ctx, "status")
     desc = ctx.sent_embeds[-1].description
-    assert "`!shop insurance [personal|social] [tier]`" in desc
-    assert desc.count("**Coverage:** none") == 2
+    assert "`!shop insurance [personal|social|property] [tier]`" in desc
+    assert desc.count("**Coverage:** none") == 3
     assert await get_balance(uid) == 500
 
 

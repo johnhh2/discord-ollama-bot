@@ -61,7 +61,7 @@ async def _init_db_state_inner(state, run_migrations):
                 " bot_chess_elo_max_date,"
                 " scratch_won_today, property_paid_at, property_revenue_total,"
                 " daily_gamble_property, ins_paid_since_claim, ins_lapsed_since_claim,"
-                " heist_success_day"
+                " heist_success_day, property_theft_day, bail_price"
                 " FROM economy_users"
             )
             for row in await cur.fetchall():
@@ -73,7 +73,7 @@ async def _init_db_state_inner(state, run_migrations):
                  property_paid_at, property_revenue_total,
                  daily_gamble_property,
                  ins_paid_since_claim, ins_lapsed_since_claim,
-                 heist_success_day) = row
+                 heist_success_day, property_theft_day, bail_price) = row
                 state.economy["users"][str(uid)] = {
                     "balance": bal,
                     "last_daily": last_daily,
@@ -95,6 +95,8 @@ async def _init_db_state_inner(state, run_migrations):
                     "ins_paid_since_claim": int(ins_paid_since_claim or 0),
                     "ins_lapsed_since_claim": int(ins_lapsed_since_claim or 0),
                     "heist_success_day": heist_success_day,
+                    "property_theft_day": property_theft_day,
+                    "bail_price": int(bail_price) if bail_price is not None else None,
                 }
         except Exception as e:
             logging.error(f"[init_db_state] economy_users failed: {e}", exc_info=True)
@@ -332,12 +334,14 @@ async def _init_db_state_inner(state, run_migrations):
         try:
             await cur.execute(
                 "SELECT property_id, owner_id, acquired_at, list_price, listed_at,"
-                " upgraded, secured, custom_name"
+                " upgraded, secured, custom_name,"
+                " damaged_at, repair_cost, repair_cover_pct, repair_cover_cap"
                 " FROM property_owners"
             )
             state.property_owners = {}
             for (pid, owner_id, acquired_at, list_price, listed_at,
-                 upgraded, secured, custom_name) in await cur.fetchall():
+                 upgraded, secured, custom_name,
+                 damaged_at, repair_cost, repair_cover_pct, repair_cover_cap) in await cur.fetchall():
                 state.property_owners[pid] = {
                     "owner_id": int(owner_id),
                     "acquired_at": float(acquired_at),
@@ -346,6 +350,10 @@ async def _init_db_state_inner(state, run_migrations):
                     "upgraded": bool(upgraded),
                     "secured": bool(secured),
                     "custom_name": custom_name if custom_name else None,
+                    "damaged_at": float(damaged_at) if damaged_at is not None else None,
+                    "repair_cost": int(repair_cost or 0),
+                    "repair_cover_pct": int(repair_cover_pct or 0),
+                    "repair_cover_cap": int(repair_cover_cap or 0),
                 }
         except Exception as e:
             logging.error(f"[init_db_state] property_owners failed: {e}", exc_info=True)

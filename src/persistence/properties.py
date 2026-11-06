@@ -11,17 +11,24 @@ async def save_property_owner(property_id: str, row: dict):
     async with with_transaction() as cur:
         await cur.execute(
             "INSERT INTO property_owners"
-            " (property_id, owner_id, acquired_at, list_price, listed_at, upgraded, secured, custom_name)"
-            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s)"
+            " (property_id, owner_id, acquired_at, list_price, listed_at, upgraded, secured, custom_name,"
+            " damaged_at, repair_cost, repair_cover_pct, repair_cover_cap)"
+            " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
             " ON DUPLICATE KEY UPDATE owner_id=VALUES(owner_id), acquired_at=VALUES(acquired_at),"
             " list_price=VALUES(list_price), listed_at=VALUES(listed_at),"
-            " upgraded=VALUES(upgraded), secured=VALUES(secured), custom_name=VALUES(custom_name)",
+            " upgraded=VALUES(upgraded), secured=VALUES(secured), custom_name=VALUES(custom_name),"
+            " damaged_at=VALUES(damaged_at), repair_cost=VALUES(repair_cost),"
+            " repair_cover_pct=VALUES(repair_cover_pct), repair_cover_cap=VALUES(repair_cover_cap)",
             (property_id, int(row["owner_id"]), float(row["acquired_at"]),
              int(list_price) if list_price is not None else None,
              float(listed_at) if listed_at is not None else None,
              bool(row.get("upgraded", False)),
              bool(row.get("secured", False)),
-             custom_name if custom_name else None),
+             custom_name if custom_name else None,
+             float(row["damaged_at"]) if row.get("damaged_at") is not None else None,
+             int(row.get("repair_cost", 0) or 0),
+             int(row.get("repair_cover_pct", 0) or 0),
+             int(row.get("repair_cover_cap", 0) or 0)),
         )
 
 

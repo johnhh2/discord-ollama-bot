@@ -205,8 +205,8 @@ ARTIFACT_SAVINGS_DAILY_MULT = 1.008
 # minted, not taken from the thief — up to `refund_cap` per incident. Social:
 # one tier, blocks the shop effects aimed at another user
 # (economy.INSURANCE_PROTECTS) outright. Property: refunds repair bills after
-# a property theft, so it stays unsold until that crime exists
-# (PROPERTY_INSURANCE_LIVE). Tier keys are what users type; order is
+# a property theft (src/property_theft.py); PROPERTY_INSURANCE_LIVE takes it
+# off sale. Tier keys are what users type; order is
 # cheapest → dearest (the tier picker renders in this order).
 SHOP_INSURANCE_TIERS = {
     "basic":    {"cost": 1_000, "refund_pct": 50,  "refund_cap": 100_000},
@@ -226,7 +226,7 @@ INSURANCE_TYPES = {
     "social":   {"label": "Social", "emoji": "🎭", "tiers": SHOP_SOCIAL_INSURANCE_TIERS, "default": "social"},
     "property": {"label": "Property", "emoji": "🏠", "tiers": SHOP_PROPERTY_INSURANCE_TIERS, "default": "basic"},
 }
-PROPERTY_INSURANCE_LIVE = False
+PROPERTY_INSURANCE_LIVE = True
 # Personal tier every pre-tier policy and subscription was backfilled to
 # (migration 0065) and the fallback when a stored tier is missing or unknown.
 SHOP_INSURANCE_DEFAULT_TIER  = "basic"

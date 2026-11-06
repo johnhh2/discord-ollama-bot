@@ -482,7 +482,7 @@ _ASSETS_NOTE = (
 )
 _PAGE_NOTES = {
     "artifacts": "Permanent per-user upgrades, owned bot-wide. Level gates are your global level.",
-    "insurance": "Personal insurance refunds part of what crime takes; the thief keeps the take. Social insurance blocks mock, ragebait, curses, nickname changes, role assignments and tax.",
+    "insurance": "Personal insurance refunds part of what crime takes; the thief keeps the take. Social insurance blocks mock, ragebait, curses, nickname changes, role assignments and tax. Property insurance pays part of the repair bill after a property theft.",
 }
 
 

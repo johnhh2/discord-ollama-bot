@@ -2,7 +2,8 @@
 
 Every property is a UNIQUE, bot-wide deed: at most one owner across all
 servers, tracked in state.property_owners ({property_id: {owner_id,
-acquired_at, list_price, listed_at, upgraded, secured, custom_name}}, source of truth:
+acquired_at, list_price, listed_at, upgraded, secured, custom_name, and the
+theft damage fields of src/property_theft.py}}, source of truth:
 property_owners table). The catalog below holds the 36 shipped properties
 (10k to 2m) and a release pool of 42 more (marked "pool"), which reach the
 market one at a time at the 5am reset as the economy develops — see
@@ -262,8 +263,7 @@ assert set(PROPERTY_UPGRADES) == set(PROPERTIES_BY_ID), \
 # 75–125% of the property's cost, divided by 4, then hardcoded (seed
 # "discord-ollama-bot-security-0087") — don't re-roll shipped values. Like
 # revenue, its cost folds into the property's VALUE. Tiers 1 and 2 have no
-# security upgrade. Unsold until property theft exists
-# (SECURITY_UPGRADES_LIVE).
+# security upgrade. SECURITY_UPGRADES_LIVE takes it off sale.
 PROPERTY_SECURITY_UPGRADES: dict[str, int] = {
     "movie_theater": 33_000,
     "nightclub": 36_500,
@@ -301,7 +301,7 @@ PROPERTY_SECURITY_UPGRADES: dict[str, int] = {
     "moon_base": 843_000,
 }
 SECURITY_SUCCESS_MULT = 0.75
-SECURITY_UPGRADES_LIVE = False
+SECURITY_UPGRADES_LIVE = True
 
 SECURITY_MIN_TIER = 3
 
@@ -391,16 +391,20 @@ def daily_revenue(cost: int) -> int:
 
 
 def property_daily_revenue(pid: str, row: dict = None, *, current: bool = False) -> int:
-    """One deed's daily revenue including its upgrade boost (if bought).
-    Artifact bonuses are NOT applied here — they're portfolio-wide and live
-    in portfolio_daily_revenue / pending_property_revenue. With `current`,
-    it's what the deed pays today on the interest curve."""
+    """One deed's daily revenue including its upgrade boost (if bought),
+    less theft damage until it's repaired. Artifact bonuses are NOT applied
+    here — they're portfolio-wide and live in portfolio_daily_revenue /
+    pending_property_revenue. With `current`, it's what the deed pays today
+    on the interest curve."""
     base = daily_revenue(PROPERTIES_BY_ID[pid]["cost"])
     if row is None:
         row = state.property_owners.get(pid)
     if row and row.get("upgraded"):
         boost = PROPERTY_UPGRADES[pid][2]
         base = base * (100 + boost) // 100
+    if row and row.get("damaged_at") is not None:
+        from src.property_theft import DAMAGE_PCT
+        base = base * (100 - DAMAGE_PCT) // 100
     if not current:
         return base
     from src.rate_curves import active_curve, property_mult

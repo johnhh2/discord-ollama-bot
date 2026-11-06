@@ -411,8 +411,8 @@ Rules when touching this system:
    (`SECURITY_SUCCESS_MULT` on a property theft's odds, plus the
    investigators with property insurance). Both are hardcoded; never re-roll
    a shipped value: owners have paid for them. Tiers 1 and 2 have no
-   security upgrade (`SECURITY_MIN_TIER`), and security is unsold while
-   `SECURITY_UPGRADES_LIVE` is False — `upgrade_types_for(pid)` is what
+   security upgrade (`SECURITY_MIN_TIER`), and `SECURITY_UPGRADES_LIVE`
+   takes security off sale — `upgrade_types_for(pid)` is what
    every menu, count and button reads. `!assets upgrade [revenue|security] <name>`
    picks a type; without one it builds the type the deed lacks, or asks
    with a button per type when it lacks both. A bought upgrade folds its
@@ -448,8 +448,14 @@ Rules when touching this system:
     [tests/test_property_supply.py](tests/test_property_supply.py).
 11. **Persistence takes the whole row.** `save_property_owner(pid, row)`
     mirrors `state.property_owners[pid]` in one shot so a call site can't
-    silently drop a column (listing, upgrade, custom name). Keep it that
-    way when adding fields.
+    silently drop a column (listing, upgrade, custom name, theft damage).
+    Keep it that way when adding fields.
+12. **Theft damage lives on the row** (migration 0088): `damaged_at`, the
+    `repair_cost` bill and the `repair_cover_pct` / `repair_cover_cap`
+    insurance snapshot. `property_daily_revenue` takes `DAMAGE_PCT` off a
+    damaged deed, so rent, listings and every card see it from one place.
+    Damage travels with the deed on a market sale; a bank buyback deletes it
+    with the row. See "Property theft" under Crime.
 
 ## Artifacts (!artifacts): permanent per-user effects
 
@@ -577,6 +583,43 @@ Coverage: [tests/test_rate_curves.py](tests/test_rate_curves.py).
 
 Coverage: [tests/test_crime_limits.py](tests/test_crime_limits.py).
 
+### Property theft (`!steal <property>`)
+
+The rules are [src/property_theft.py](src/property_theft.py); the command is
+`EconomyCog._run_property_theft`, reached through `!steal`'s `_StealTarget`
+converter, which tries the whole argument text as a deed (`find_property`,
+exact names only) before a member.
+
+- **Odds and money.** Success is 70/60/50/40/30% by tier, times the steal
+  artifact and `SECURITY_SUCCESS_MULT` on a secured deed. The take is two
+  days of the deed's current rent, revenue upgrade included. A success pays
+  it and damages the deed; a failure fines 25% of it (wallet, then savings)
+  and rolls jail at 20–40% by tier, through `crime_catch_chance`.
+- **Investigators** (security plus any property insurance on the owner)
+  double that jail roll, and roll an arrest at the base chance on a success,
+  which keeps its loot. Without both, a success is never jailed.
+- **One success per thief per gameplay day** (`property_theft_day`).
+  Failures don't count. The day, the crime slot and the damage are claimed
+  with no await between the last gate and the claim; the gates before that
+  (owner in this server, crime eligibility, jail) await, so the deed is
+  re-read before claiming. The chase animation comes after the claim.
+- **Bail is twice the take, 1k minimum**, stored as `bail_price`
+  (`_bail_base`). Every other jail site sets `bail_price = None` so the old
+  formula on `bail_amount` applies; a new jail site must too.
+- **Repairs** (`!assets repair [name|all]`, the owner ping's Repair button,
+  the manage card's Repair button). The insurer pays the snapshot's share,
+  never a policy bought after the theft, and the owner pays the rest. Bare
+  with several damaged deeds is a dropdown with Repair all first. A repair
+  re-checks after its confirm, clears the damage synchronously, then
+  charges, putting the damage back if the charge fails. Repair-all spends
+  the wallet in `damaged_deeds` order (most income lost first) and reports
+  what it couldn't cover. The button forwards the typed command for the
+  owner only.
+- A deed can't be robbed while damaged, by its owner, or while bank-owned,
+  and the whole crime is off where the `assets` feature is.
+
+Coverage: [tests/test_property_theft.py](tests/test_property_theft.py).
+
 ## Insurance: three types, and crime is refunded rather than blocked
 
 Insurance comes in three types (`INSURANCE_TYPES` in `src/config.py`), each
@@ -597,9 +640,10 @@ sites read personal).
   so a new shop effect aimed at another user goes in `INSURANCE_PROTECTS`
   **and** gets an `is_insured` check in its command (curse once had neither).
 - **Property** (`SHOP_PROPERTY_INSURANCE_TIERS`): 2k/5k/10k a day for
-  50/75/100% of a repair bill, capped at 30k/60k/120k a theft. Unsold while
-  `PROPERTY_INSURANCE_LIVE` is False: hidden from the menu, the panel and the
-  typed command until property theft exists to cover.
+  50/75/100% of a repair bill, capped at 30k/60k/120k a theft. The tier
+  held at the moment of a theft is what pays, locked onto the deed's row.
+  `PROPERTY_INSURANCE_LIVE` takes it off sale: hidden from the menu, the
+  panel and the typed command.
 - **Bare `!shop insurance` is the menu** (`InsuranceView` in
   `src/insurance_view.py`): one message. The overview shows each type's
   coverage only, no tier list, and a type dropdown; a pick redraws it as

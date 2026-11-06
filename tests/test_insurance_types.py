@@ -15,6 +15,7 @@ import discord
 
 import src.state as _state
 import src.persistence as _persistence
+import src.cogs.shop_cog as _shop_cog
 import src.migrations as _migrations
 from src.cogs.shop_cog import ShopCog
 from src.config import (
@@ -78,7 +79,8 @@ async def test_social_subscription_charges_the_first_day(db):
     assert uid not in _state.insurance_subs
 
 
-async def test_property_insurance_is_not_sold_yet(db):
+async def test_property_insurance_off_switch_refuses_it(db, monkeypatch):
+    monkeypatch.setattr(_shop_cog, "PROPERTY_INSURANCE_LIVE", False)
     cog = ShopCog(bot=None)
     uid = 9103
     await add_balance(uid, 50_000)
@@ -89,6 +91,18 @@ async def test_property_insurance_is_not_sold_yet(db):
     assert await get_balance(uid) == 50_000
     assert uid not in _state.property_insurance_subs
     assert ctx.sent_embeds[-1].title == "🏠 Property Insurance"
+
+
+async def test_property_insurance_subscribes(db):
+    cog = ShopCog(bot=None)
+    uid = 9104
+    await add_balance(uid, 50_000)
+
+    await cog.shop_insurance.callback(cog, _ctx(uid), "property", "standard")
+
+    assert _state.property_insurance_subs[uid] == "standard"
+    assert get_insurance_expiry(uid, "property") is not None
+    assert await get_balance(uid) == 45_000
 
 
 # ── the 5am sweep ────────────────────────────────────────────────────────────
@@ -170,7 +184,7 @@ async def test_bare_insurance_shows_coverage_not_a_tier_list(db):
     assert "**Basic**" not in desc and "**Premium**" not in desc
     assert "Subscription:" not in desc
     select = next(i for i in view.children if isinstance(i, _TypeSelect))
-    assert [o.value for o in select.options] == ["personal", "social"]
+    assert [o.value for o in select.options] == ["personal", "social", "property"]
 
 
 async def test_cancelled_coverage_says_when_it_ends(db):
@@ -236,12 +250,12 @@ async def test_only_the_invoker_can_press(db):
 
 # ── the shop panel ───────────────────────────────────────────────────────────
 
-def test_shop_panel_lists_personal_and_social_but_not_property():
+def test_shop_panel_lists_every_type():
     ctx = _ctx(9130)
     _state.social_insurance_subs[9130] = "social"
     keys = {item.key: item for item in items_for("insurance", ctx)}
 
-    assert set(keys) == {"insurance", "social-insurance", "social-insurance-unsub"}
+    assert set(keys) == {"insurance", "social-insurance", "social-insurance-unsub", "property-insurance"}
     assert keys["social-insurance"].args == ("social",)
     assert keys["social-insurance-unsub"].args == ("social", "unsub")
 

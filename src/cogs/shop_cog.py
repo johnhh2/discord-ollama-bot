@@ -1755,13 +1755,14 @@ class ShopCog(commands.Cog):
         return emb(
             "🛡️ Insurance",
             "Insurance is a daily subscription, charged at the 5am reset. Bare `!shop insurance` "
-            "opens the menu; typed, `!shop insurance [personal|social] [tier]` subscribes and "
+            "opens the menu; typed, `!shop insurance [personal|social|property] [tier]` subscribes and "
             "`!shop insurance [type] unsub` stops. The type defaults to personal, and the prompt "
             "shows every tier, so the tier word is optional. Cancelling keeps the coverage "
             "you've paid for.\n\n"
             "Crime still goes through with personal insurance — the insurer pays the refund into your "
-            "wallet and the thief keeps their take. Social insurance stops the effects outright. Both "
-            "work in every server.\n\n"
+            "wallet and the thief keeps their take. Social insurance stops the effects outright. "
+            "Property insurance pays part of the repair bill after a property theft, at the tier you "
+            "held when it happened. All of them work in every server.\n\n"
             + self._insurance_overview(uid),
             C_PURPLE,
         )
@@ -1802,8 +1803,8 @@ class ShopCog(commands.Cog):
         return choices
 
     @cmd_shop.command(name="insurance",
-                      help="Insurance menu: personal refunds crime losses, social blocks mock/tax/nickname/role effects",
-                      usage="[personal|social] [tier] [unsub]")
+                      help="Insurance menu: personal refunds crime losses, social blocks mock/tax/nickname/role effects, property pays theft repairs",
+                      usage="[personal|social|property] [tier] [unsub]")
     @_shop_subcommand(None)
     async def shop_insurance(self, ctx: commands.Context, *args: str):
         uid = ctx.author.id
@@ -1823,7 +1824,7 @@ class ShopCog(commands.Cog):
         if kind not in self._insurance_kinds():
             await ctx.send(embed=emb(
                 "🏠 Property Insurance",
-                "Property insurance goes on sale when property theft arrives.",
+                "Property insurance isn't on sale right now.",
                 C_GOLD,
             ))
             return

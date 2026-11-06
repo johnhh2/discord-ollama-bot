@@ -63,9 +63,10 @@ def test_security_folds_into_value_and_the_bank_buyback():
     )
 
 
-# ── !assets upgrade while security is off ────────────────────────────────────
+# ── !assets upgrade with security switched off ────────────────────────────────────
 
-async def test_security_is_refused_while_property_theft_is_off(db):
+async def test_security_is_refused_while_switched_off(db, monkeypatch):
+    monkeypatch.setattr(_properties, "SECURITY_UPGRADES_LIVE", False)
     uid = 9201
     await _give_property(uid, PID)
     await add_balance(uid, 1_000_000)

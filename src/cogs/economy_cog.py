@@ -29,7 +29,7 @@ from src.permissions import (
 from src.guild_config import get_guild_cfg
 from src.features import feature_enabled
 from src.persistence import (
-    save_economy, save_rigged_steal, save_guild_settings,
+    save_economy, save_rigged_steal, save_guild_settings, save_property_owner,
     load_lottery, load_records, load_global_records, try_set_record,
 )
 from src.config import (
@@ -39,10 +39,13 @@ from src.coin_events import (
     event_budget_remaining, claim_event_budget, refund_event_budget, event_budget_status,
 )
 from src.dailies import keep_message_in_dailies_channel
-from src.jail_reasons import format_steal_reason, format_mug_reason, format_bankheist_reason
+from src.jail_reasons import (
+    format_steal_reason, format_mug_reason, format_bankheist_reason, format_property_theft_reason,
+)
 from src.artifacts import bail_cost, steal_success_chance, crime_catch_chance, has_heist_partner, savings_boost_since
 from src.rate_curves import savings_pct_text
-from src.properties import bank_property_revenue
+from src.properties import bank_property_revenue, find_property
+from src import property_theft
 from src.confirm_view import confirm_purchase
 from src.scope_view import send_scoped
 from src.wallet_view import WalletView
@@ -98,6 +101,7 @@ CRIME_RECORD_CATEGORY = "crime"
 CRIME_TYPE_LABELS = {
     "steal": "Steal",
     "bankheist": "Bank Heist",
+    "property_theft": "Property Theft",
 }
 
 
@@ -247,6 +251,75 @@ async def _ping_robbed(ctx: commands.Context, victim_id: int, verb: str, refunde
     silent, and a silent mention never notifies — the victim is the one
     person in the channel who didn't type the command and should hear it."""
     await ctx.send(_robbed_ping(victim_id, verb, refunded), silent=False)
+
+
+async def _chase(ctx: commands.Context, success: bool):
+    """The robber-and-cop chase a steal plays before its result; returns the
+    message, which the caller edits into the result."""
+    track = 20
+    msg = None
+
+    def build_frame(robber_p, cop_p, done=False, caught=False):
+        robber_icon = "🏃" if not caught else "🤜"
+        r_track = "░" * robber_p + robber_icon + "░" * (track - robber_p)
+        c_track = "░" * cop_p + "👮" + "░" * (track - cop_p)
+        lines = [f"`{r_track}` 🦹", f"`{c_track}` 🚔"]
+        if done:
+            lines.append("\n**You got caught!** 🚨" if caught else "\n**Escaped!** 💨")
+        return "\n".join(lines)
+
+    steps = 8
+    if success:
+        robber_steps = [int(track * (i + 1) / steps) for i in range(steps)]
+        cop_steps = [max(0, int(track * (i + 1) / steps) - random.randint(3, 6)) for i in range(steps)]
+    else:
+        half = steps // 2
+        robber_steps = [int((track // 2) * (i + 1) / half) if i < half else track // 2 for i in range(steps)]
+        cop_steps = [max(0, int((track // 2) * (i + 1) / half) - random.randint(2, 4)) if i < half
+                     else min(track // 2, int((track // 2) + (track // 2) * (i - half + 1) / (steps - half)))
+                     for i in range(steps)]
+
+    for i in range(steps):
+        caught_now = (not success) and (i == steps - 1)
+        frame = build_frame(robber_steps[i], cop_steps[i], done=(i == steps - 1), caught=caught_now)
+        e = emb("🦹 Robbery in Progress...", frame, C_ORANGE)
+        if msg is None:
+            # silent=True: the animation (and the result embed it edits into)
+            # must never notify the channel; the victim gets one explicit
+            # ping instead.
+            msg = await ctx.send(embed=e, silent=True)
+        else:
+            await msg.edit(embed=e)
+        await asyncio.sleep(0.6)
+    return msg
+
+
+class _StealTarget(commands.Converter):
+    """`!steal`'s argument: a property's name (or an owner's custom name)
+    wins over a member's. The whole argument text is tried as a deed, since
+    "Moon Base" is two tokens; anything else goes to OptionalMember."""
+
+    async def convert(self, ctx: commands.Context, argument: str):
+        rest = argument
+        if ctx.prefix is not None and ctx.invoked_with:
+            rest = ctx.message.content[len(ctx.prefix) + len(ctx.invoked_with):].strip() or argument
+        prop = find_property(rest)
+        if prop is not None:
+            return prop
+        return await OptionalMember().convert(ctx, argument)
+
+
+def _deed_label(prop: dict, row: dict | None) -> str:
+    custom = row.get("custom_name") if row else None
+    return f"{prop['emoji']} **{custom}** ({prop['name']})" if custom else f"{prop['emoji']} **{prop['name']}**"
+
+
+def _bail_base(jdata: dict) -> int:
+    """Bail before artifact discounts: a jail's fixed price if it set one
+    (property theft), else the formula on bail_amount."""
+    if jdata.get("bail_price"):
+        return int(jdata["bail_price"])
+    return 10_000 + int(jdata.get("bail_amount", 0) or 0) // 2
 
 
 class _StealTierView(discord.ui.View):
@@ -616,6 +689,14 @@ class EconomyCog(commands.Cog):
         lines = [
             f"**`!steal @user`**{steal_lock} — Pick a pocket. Chance to steal a % of their balance; risk jail if caught.",
             "",
+        ]
+        if feature_enabled(gid, "assets"):
+            lines += [
+                f"**`!steal <property>`**{steal_lock} — Rob a player's property for two days of its rent. "
+                "Its income drops until the owner repairs it. Fails more on security; one success a day.",
+                "",
+            ]
+        lines += [
             f"**`!mug @user <amount>`**{mug_lock} — Pay muggers `<amount>` 🪙 to take that amount from a target. The muggers keep it. 50% chance you get jailed, longer for bigger amounts.",
             "",
         ]
@@ -632,14 +713,18 @@ class EconomyCog(commands.Cog):
         await send_ephemeral(ctx, embed=emb("🦹 Crime", "\n".join(lines), C_GOLD))
 
     @commands.command(name="steal",
-                      help="Pick a user's pocket for a % of their balance; pick a tier 1-3, jail if caught", usage="<@user> [1-3]")
-    async def cmd_steal(self, ctx: commands.Context, target: OptionalMember = None):
+                      help="Pick a user's pocket for a % of their balance (tier 1-3), or rob a property's takings",
+                      usage="<@user> [1-3] | <property>")
+    async def cmd_steal(self, ctx: commands.Context, target: _StealTarget = None):
         if target is None:
             await ctx.invoke(self.cmd_crime)
             return
 
         if (err := _crime_public_only_error(ctx)) is not None:
             await ctx.send(embed=err)
+            return
+        if isinstance(target, dict):
+            await self._run_property_theft(ctx, target)
             return
 
         # Parse tier from the rest of the message; if not present, show picker.
@@ -725,8 +810,6 @@ class EconomyCog(commands.Cog):
         view.message = await ctx.send(embed=emb("🦹 Choose Robbery Tier", body, C_GOLD), view=view)
 
     async def _run_steal(self, ctx: commands.Context, target, tier_num: int):
-        TRACK = 20
-
         thief_id = ctx.author.id
         victim_id = target.id
 
@@ -783,41 +866,7 @@ class EconomyCog(commands.Cog):
                 roll = random.random()
                 success = roll < steal_chance
 
-            # Animate the chase
-            msg = None
-
-            def build_frame(robber_p, cop_p, done=False, caught=False):
-                robber_icon = "🏃" if not caught else "🤜"
-                r_track = "░" * robber_p + robber_icon + "░" * (TRACK - robber_p)
-                c_track = "░" * cop_p + "👮" + "░" * (TRACK - cop_p)
-                lines = [f"`{r_track}` 🦹", f"`{c_track}` 🚔"]
-                if done:
-                    lines.append("\n**You got caught!** 🚨" if caught else "\n**Escaped!** 💨")
-                return "\n".join(lines)
-
-            steps = 8
-            if success:
-                robber_steps = [int(TRACK * (i + 1) / steps) for i in range(steps)]
-                cop_steps = [max(0, int(TRACK * (i + 1) / steps) - random.randint(3, 6)) for i in range(steps)]
-            else:
-                half = steps // 2
-                robber_steps = [int((TRACK // 2) * (i + 1) / half) if i < half else TRACK // 2 for i in range(steps)]
-                cop_steps = [max(0, int((TRACK // 2) * (i + 1) / half) - random.randint(2, 4)) if i < half
-                             else min(TRACK // 2, int((TRACK // 2) + (TRACK // 2) * (i - half + 1) / (steps - half)))
-                             for i in range(steps)]
-
-            for i in range(steps):
-                caught_now = (not success) and (i == steps - 1)
-                frame = build_frame(robber_steps[i], cop_steps[i], done=(i == steps - 1), caught=caught_now)
-                e = emb("🦹 Robbery in Progress...", frame, C_ORANGE)
-                if msg is None:
-                    # silent=True: the animation (and the result embed it edits
-                    # into) must never notify the channel; the victim gets one
-                    # explicit ping below instead.
-                    msg = await ctx.send(embed=e, silent=True)
-                else:
-                    await msg.edit(embed=e)
-                await asyncio.sleep(0.6)
+            msg = await _chase(ctx, success)
 
             # Resolve outcome
             stolen = 0
@@ -865,6 +914,7 @@ class EconomyCog(commands.Cog):
                     thief_data["jail_until"] = jail_until_ts
                     thief_data["jail_reason"] = format_steal_reason(target.display_name, steal_amount)
                     thief_data["bail_amount"] = steal_amount
+                    thief_data["bail_price"] = None
                     await save_economy(uid=thief_id)
                     result_embed = emb(
                         "🚔 Caught & Jailed!",
@@ -890,6 +940,161 @@ class EconomyCog(commands.Cog):
                 ctx.channel, ctx.guild, stolen, thief_id, ctx.author.display_name,
                 "steal", target.display_name,
             )
+        finally:
+            self._crime_active.discard(thief_id)
+
+    # ── !steal <property> ─────────────────────────────────────────────────────
+    # The rules live in src/property_theft.py. Every gate runs before the
+    # claim block, and the claim (crime slot, the day's success, the damage)
+    # has no await in it; the chase animation comes after.
+    async def _run_property_theft(self, ctx: commands.Context, prop: dict):
+        thief_id = ctx.author.id
+        pid = prop["id"]
+        gid = ctx.guild.id if ctx.guild else 0
+        if not feature_enabled(gid, "assets"):
+            await ctx.send(embed=emb("🚫 Turned Off", "Real estate is switched off in this server, so its properties can't be robbed.", C_GOLD))
+            return
+        row = state.property_owners.get(pid)
+        if row is None:
+            await ctx.send(embed=emb("🏦 Bank-Owned", f"{prop['emoji']} **{prop['name']}** belongs to the bank. There's no owner to rob.", C_GOLD))
+            return
+        owner_id = row["owner_id"]
+        if owner_id == thief_id:
+            await ctx.send(embed=emb("🦹 Steal", "You can't rob your own property.", C_RED))
+            return
+        owner = await fetch_member(ctx.guild, owner_id) if ctx.guild else None
+        if owner is None or owner.bot:
+            await ctx.send(embed=emb("🛡️ Off-Limits", f"{_deed_label(prop, row)}'s owner isn't in this server.", C_GOLD))
+            return
+        await _ensure_user(thief_id)
+        await _ensure_user(owner_id)
+        await _maybe_latch_crime_eligible(owner_id)
+        if not state.economy["users"][str(owner_id)].get("crime_eligible"):
+            await ctx.send(embed=emb(
+                "🛡️ Off-Limits",
+                f"**{owner.display_name}** isn't in the crime system yet — they're below Level 10 and have never held more than {CRIME_ELIGIBLE_NET_WORTH:,} 🪙 across wallet + savings.",
+                C_GOLD,
+            ))
+            return
+        thief_data = state.economy["users"][str(thief_id)]
+        if time.time() < thief_data.get("jail_until", 0):
+            await ctx.send(embed=emb("🚔 You're in Jail", _jail_body(ctx.author.display_name, thief_data["jail_until"], thief_data.get("jail_reason")), C_RED))
+            return
+
+        # Gate and claim, no awaits: the awaits above may have let the deed
+        # change hands or another theft land.
+        row = state.property_owners.get(pid)
+        if row is None or row["owner_id"] != owner_id:
+            await ctx.send(embed=emb("🦹 Steal", f"{_deed_label(prop, row)} changed hands. Try again.", C_GOLD))
+            return
+        if property_theft.is_damaged(row):
+            await ctx.send(embed=emb(
+                "🔧 Already Damaged",
+                f"{_deed_label(prop, row)} was robbed already and hasn't been repaired. It can't be hit again until it is.",
+                C_GOLD,
+            ))
+            return
+        if property_theft.stolen_today(thief_id):
+            await ctx.send(embed=emb(
+                "🕵️ Lie Low",
+                f"You've already pulled off a property theft today. Try again after the reset <t:{int(next_daily_reset_ts())}:R>.",
+                C_GOLD,
+            ))
+            return
+        if thief_id in self._crime_active:
+            await ctx.send(embed=emb("⏳ Already Running", "You already have a crime in progress — wait for it to finish.", C_RED))
+            return
+        self._crime_active.add(thief_id)
+        try:
+            take = property_theft.theft_take(pid, row)
+            investigated = property_theft.has_investigators(row)
+            rigged = thief_id in state.rigged_steal
+            if rigged:
+                state.rigged_steal[thief_id] -= 1
+                if state.rigged_steal[thief_id] <= 0:
+                    del state.rigged_steal[thief_id]
+                success = True
+            else:
+                success = random.random() < property_theft.success_chance(thief_id, pid, row)
+            arrested = random.random() < property_theft.jail_chance(thief_id, pid, row, succeeded=success)
+            prior_day = thief_data.get("property_theft_day")
+            prior_damage = None
+            if success:
+                thief_data["property_theft_day"] = _ct_today()
+                prior_damage = property_theft.damage(row, take, time.time())
+            if rigged:
+                await save_rigged_steal()
+
+            msg = await _chase(ctx, success)
+            deed = _deed_label(prop, row)
+            lines = []
+            if success:
+                try:
+                    await add_balance(thief_id, take, guild_id=gid or None, holder_name=ctx.author.display_name)
+                    await save_property_owner(pid, row)
+                except Exception:
+                    thief_data["property_theft_day"] = prior_day
+                    property_theft.restore(row, prior_damage)
+                    raise
+                await record_crime_event(gid, thief_id, gained=take)
+                lines.append(
+                    f"**{ctx.author.display_name}** cleaned out the takings at {deed}, "
+                    f"owned by **{owner.display_name}**: **{take:,} 🪙**."
+                )
+                lines.append(f"Its income is down {property_theft.DAMAGE_PCT}% until it's repaired.")
+                title, colour = "🏚️ Property Robbed!", C_GREEN
+            else:
+                fine = property_theft.fine_for(take)
+                from_wallet = min(fine, await get_balance(thief_id))
+                await deduct_balance(thief_id, from_wallet)
+                from_savings = await seize_from_savings(thief_id, fine - from_wallet)
+                paid = from_wallet + from_savings
+                await record_crime_event(gid, thief_id, lost=paid)
+                fine_line = f"Fined **{paid:,} 🪙**"
+                if from_savings > 0:
+                    fine_line += f" (**{from_savings:,}** taken from savings)"
+                lines.append(f"**{ctx.author.display_name}** was caught trying to rob {deed}! {fine_line}.")
+                title, colour = "🚔 Caught!", C_ORANGE
+            if investigated:
+                lines.append("🕵️ The security alarm called in the insurer's investigators.")
+            if arrested:
+                jail_until_ts = time.time() + crime_jail_seconds(take)
+                thief_data["jail_until"] = jail_until_ts
+                thief_data["jail_reason"] = format_property_theft_reason(owner.display_name, prop["name"], take)
+                thief_data["bail_amount"] = take
+                thief_data["bail_price"] = property_theft.bail_for(take)
+                await save_economy(uid=thief_id)
+                when = f"<t:{int(jail_until_ts)}:F> (<t:{int(jail_until_ts)}:R>)"
+                if success:
+                    lines.append(f"They traced the job: **{ctx.author.display_name}** was arrested and jailed until {when}. The loot stays theirs.")
+                    colour = C_ORANGE
+                else:
+                    lines.append(f"Jailed until {when}.")
+                    title, colour = "🚔 Caught & Jailed!", C_RED
+            elif success:
+                if investigated:
+                    lines.append("They lost the trail.")
+                await save_economy(uid=thief_id)
+            else:
+                lines.append("You got lucky — no jail time.")
+            lines.append(f"Balance: **{await get_balance(thief_id):,} 🪙**")
+            await msg.edit(embed=emb(title, "\n".join(lines), colour))
+
+            if success:
+                covered, share = property_theft.repair_split(row)
+                cover = f" Your insurance covers **{covered:,} 🪙**." if covered else ""
+                from src.repair_view import RepairView
+                view = RepairView(self.bot, owner_id, pid)
+                view.message = await ctx.send(
+                    f"🚨 <@{owner_id}> — your {deed} was robbed! Its income is down "
+                    f"{property_theft.DAMAGE_PCT}% until it's repaired, for **{share:,} 🪙**.{cover} "
+                    "Press **Repair** or use `!assets repair`.",
+                    view=view, silent=False,
+                )
+                await try_set_crime_record(
+                    ctx.channel, ctx.guild, take, thief_id, ctx.author.display_name,
+                    "property_theft", f"{owner.display_name}'s {prop['name']}",
+                )
         finally:
             self._crime_active.discard(thief_id)
 
@@ -1032,6 +1237,7 @@ class EconomyCog(commands.Cog):
                 pdata["jail_until"] = jail_until_ts
                 pdata["jail_reason"] = format_bankheist_reason(target_name)
                 pdata["bail_amount"] = int(intended_per_person)
+                pdata["bail_price"] = None
                 await save_economy(uid=p.id)
                 jailed.append(p)
         return jailed
@@ -1444,8 +1650,7 @@ class EconomyCog(commands.Cog):
             await ctx.send(embed=emb("🔓 Not Jailed", f"{who} not in jail.", C_GOLD))
             return
 
-        bail_amount = int(jdata.get("bail_amount", 0) or 0)
-        cost = bail_cost(payer.id, 10_000 + (bail_amount // 2))
+        cost = bail_cost(payer.id, _bail_base(jdata))
 
         payer_bal = await get_balance(payer.id)
         if payer_bal < cost:
@@ -1483,15 +1688,18 @@ class EconomyCog(commands.Cog):
             return
         prior_jail_reason = jdata.get("jail_reason")
         prior_bail_amount = jdata.get("bail_amount", 0)
+        prior_bail_price = jdata.get("bail_price")
         jdata["jail_until"] = 0
         jdata["jail_reason"] = None
         jdata["bail_amount"] = 0
+        jdata["bail_price"] = None
 
         if not await deduct_balance(payer.id, cost):
             # Roll back the jail state so the user stays jailed.
             jdata["jail_until"] = prior_jail_until
             jdata["jail_reason"] = prior_jail_reason
             jdata["bail_amount"] = prior_bail_amount
+            jdata["bail_price"] = prior_bail_price
             await ctx.send(embed=emb(
                 "❌ Insufficient Funds",
                 f"Your balance dropped during confirmation — bail costs **{cost:,} 🪙**.",
@@ -1640,6 +1848,7 @@ class EconomyCog(commands.Cog):
                 state.economy["users"][str(uid)]["jail_until"] = jail_until_ts
                 state.economy["users"][str(uid)]["jail_reason"] = format_mug_reason(target.display_name, parsed)
                 state.economy["users"][str(uid)]["bail_amount"] = parsed
+                state.economy["users"][str(uid)]["bail_price"] = None
                 await save_economy(uid=uid)
                 result_embed = emb(
                     "🔪 Mugged — but Caught!",

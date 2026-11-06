@@ -119,7 +119,7 @@ async def user_economy(user_id: int) -> dict[str, Any]:
         "economy_users",
         ("user_id", "balance", "savings", "daily_date", "scratch_used", "scratch_date", "jail_until", "bail_amount",
          "crime_eligible", "property_revenue_total", "daily_gamble_property", "ins_paid_since_claim", "ins_lapsed_since_claim",
-         "heist_success_day"),
+         "heist_success_day", "property_theft_day"),
         where="user_id = %s", params=(user_id,),
     )
     if user is not None:
@@ -129,7 +129,8 @@ async def user_economy(user_id: int) -> dict[str, Any]:
         user["in_jail"] = (user.get("jail_until") or 0) > time.time()
     levels = await query.select("leveling", ("guild_id", "data"), where="user_id = %s", params=(user_id,))
     artifacts = await query.select("user_artifacts", ("artifact_id", "quantity", "acquired_at"), where="user_id = %s", params=(user_id,))
-    deeds = await query.select("property_owners", ("property_id", "acquired_at", "list_price", "upgraded"), where="owner_id = %s", params=(user_id,))
+    deeds = await query.select("property_owners", ("property_id", "acquired_at", "list_price", "upgraded", "secured", "damaged_at", "repair_cost"),
+                               where="owner_id = %s", params=(user_id,))
     command_streak = await query.select_one("command_streak", ("last_date", "streak_count"), where="user_id = %s", params=(user_id,))
     gambler_streak = await query.select_one("gambler_streak", ("last_full_date", "streak_count"), where="user_id = %s", params=(user_id,))
     chess = await query.select_one("chess_user_stats", ("max_elo_defeated", "total_elo_defeated", "elo_spent"), where="user_id = %s", params=(user_id,))

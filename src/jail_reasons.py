@@ -15,5 +15,9 @@ def format_mug_reason(victim_name: str, amount: int) -> str:
     return f"Mugged {victim_name} for {amount:,} coins"
 
 
+def format_property_theft_reason(owner_name: str, property_name: str, amount: int) -> str:
+    return f"Tried to rob {amount:,} coins from {owner_name}'s {property_name}"
+
+
 def format_bankheist_reason(target_name: str) -> str:
     return f"Participated in a bankheist targeting {target_name}"

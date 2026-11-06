@@ -38,7 +38,7 @@ GRANT SELECT (snapshot_date, user_id, gained, lost, bucket, guild_id) ON `discor
 GRANT SELECT (day, counter, value) ON `discord_bot`.`daily_counters` TO 'botmcp'@'%';
 GRANT SELECT (key_name, value_text) ON `discord_bot`.`economy_meta` TO 'botmcp'@'%';
 -- hidden: jail_reason (free text, sometimes admin-written)
-GRANT SELECT (user_id, balance, last_daily, daily_date, scratch_used, scratch_date, jailbreak_used, jail_until, savings, crime_eligible, bail_amount, bot_chess_elo_max_today, bot_chess_elo_max_date, scratch_won_today, property_paid_at, property_revenue_total, daily_gamble_property, ins_paid_since_claim, ins_lapsed_since_claim, heist_success_day) ON `discord_bot`.`economy_users` TO 'botmcp'@'%';
+GRANT SELECT (user_id, balance, last_daily, daily_date, scratch_used, scratch_date, jailbreak_used, jail_until, savings, crime_eligible, bail_amount, bot_chess_elo_max_today, bot_chess_elo_max_date, scratch_won_today, property_paid_at, property_revenue_total, daily_gamble_property, ins_paid_since_claim, ins_lapsed_since_claim, heist_success_day, property_theft_day, bail_price) ON `discord_bot`.`economy_users` TO 'botmcp'@'%';
 GRANT SELECT (message_id, user_id, created_at) ON `discord_bot`.`feature_request_watchers` TO 'botmcp'@'%';
 -- hidden: description (free text a user typed)
 GRANT SELECT (id, guild_id, channel_id, message_id, reporter_id, status, feature_issue_id, created_at, resolved_by, resolved_at) ON `discord_bot`.`feature_requests` TO 'botmcp'@'%';
@@ -69,7 +69,7 @@ GRANT SELECT (ts, version) ON `discord_bot`.`mc_server_versions` TO 'botmcp'@'%'
 -- hidden: holder_name (a display name)
 GRANT SELECT (id, guild_id, event_day, kind, category, value, created_at) ON `discord_bot`.`notable_events` TO 'botmcp'@'%';
 -- hidden: custom_name (free text a user typed)
-GRANT SELECT (property_id, owner_id, acquired_at, list_price, listed_at, upgraded, secured) ON `discord_bot`.`property_owners` TO 'botmcp'@'%';
+GRANT SELECT (property_id, owner_id, acquired_at, list_price, listed_at, upgraded, secured, damaged_at, repair_cost, repair_cover_pct, repair_cover_cap) ON `discord_bot`.`property_owners` TO 'botmcp'@'%';
 GRANT SELECT (property_id, released_at) ON `discord_bot`.`property_releases` TO 'botmcp'@'%';
 GRANT SELECT (guild_id, user_id, last_date) ON `discord_bot`.`recap_usage` TO 'botmcp'@'%';
 -- hidden: holder_name (a display name)

@@ -21,7 +21,7 @@ from src.helpers import (
     parse_amount, send_ephemeral, shop_charge,
     announce_record,
 )
-from src.economy import add_balance, add_guild_house, _ensure_user, get_insurance_tier, get_insurance_expiry
+from src.economy import add_balance, add_guild_house, _ensure_user, get_balance, get_insurance_tier, get_insurance_expiry
 from src.properties import (
     PROPERTIES, PROPERTIES_BY_ID, PROPERTY_SALE_FEE_PCT, max_owned, released_properties,
     PROPERTY_UPGRADES, PROPERTY_SECURITY_UPGRADES, SECURITY_MIN_TIER, PROPERTY_BANK_BUYBACK_PCT,
@@ -35,7 +35,8 @@ from src.artifacts import property_upgrade_cost
 from src.rate_curves import property_pct_text
 from src.confirm_view import confirm_choice, confirm_prompt, confirm_purchase
 from src.persistence import save_property_owner, delete_property_owner, try_set_record
-from src import state
+from src.settings_views import pick_from_list
+from src import property_theft, state
 
 
 def _owner_row(pid: str) -> dict | None:
@@ -84,6 +85,8 @@ def owned_rows(uid: int) -> list[tuple[str, str, str]]:
         detail = f"{property_value(p['id'], row):,} coins • {property_daily_revenue(p['id'], row, current=True):,}/day"
         if row.get("list_price"):
             detail += f" • listed at {row['list_price']:,}"
+        if property_theft.is_damaged(row):
+            detail += " • 🔧 damaged"
         out.append((p["id"], f"{p['emoji']} {row.get('custom_name') or p['name']}", detail))
     return out
 
@@ -129,6 +132,8 @@ class AssetsCog(commands.Cog):
             pid = p["id"]
             row = _owner_row(pid)
             listed = f" • 🏷️ listed at **{row['list_price']:,} 🪙**" if row.get("list_price") else ""
+            if property_theft.is_damaged(row):
+                listed += " • 🔧 damaged"
             # One upgrade per type on sale — (n/n) means all bought.
             # Upgrade names/costs live in `!assets upgrade`, not here.
             kinds = upgrade_types_for(pid)
@@ -149,6 +154,8 @@ class AssetsCog(commands.Cog):
             "paid on top of your next one"
         )
         lines.append(f"**Revenue banked (lifetime):** {banked:,} 🪙")
+        if property_theft.damaged_deeds(uid):
+            lines.append(f"🔧 Damaged properties earn {property_theft.DAMAGE_PCT}% less until repaired — `!assets repair`.")
         return emb(f"🏘️ {member.display_name}'s Real Estate", "\n".join(lines), C_PURPLE)
 
     def manage_embed(self, member, pid: str | None) -> discord.Embed:
@@ -170,6 +177,11 @@ class AssetsCog(commands.Cog):
         if "security" in upgrade_types_for(pid):
             lines.append(f"**Security:** {self._upgrade_line(member.id, pid, row, 'security')[0]}")
         lines.append(f"**Market:** {listing}")
+        if property_theft.is_damaged(row):
+            covered, share = property_theft.repair_split(row)
+            cover = f", insurance pays {covered:,} 🪙" if covered else ""
+            lines.append(f"**Damage:** 🔧 robbed <t:{int(row['damaged_at'])}:R>, income −{property_theft.DAMAGE_PCT}% "
+                         f"until repaired. Repair: **{share:,} 🪙**{cover}.")
         return emb(f"🛠️ {_fmt_prop(prop, row)}", "\n".join(lines), C_PURPLE)
 
     # ── !assets browse / market (combined catalog + listings view) ────────
@@ -787,6 +799,109 @@ class AssetsCog(commands.Cog):
             f"{prop['emoji']} **{prior or prop['name']}** is now {_fmt_prop(prop, row)}.",
             C_GREEN,
         ))
+
+    # ── !assets repair ────────────────────────────────────────────────────
+    # A theft leaves a deed damaged (src/property_theft.py) until this runs.
+    # The insurer pays the share locked in at the theft, the owner the rest.
+    # Every pick is re-checked after the confirm, then claimed (damage
+    # cleared) with no await before the charge, which rolls back on failure,
+    # so the button and the typed command can't both charge.
+    def _repair_line(self, pid: str, row: dict) -> str:
+        covered, share = property_theft.repair_split(row)
+        cover = f" (insurance pays {covered:,} 🪙)" if covered else ""
+        return (f"{_fmt_prop(PROPERTIES_BY_ID[pid], row)} — **{share:,} 🪙**{cover}, "
+                f"restores +{property_theft.income_lost(pid, row):,} 🪙/day")
+
+    @cmd_assets.command(name="repair", aliases=["fix"],
+                        help="Repair a property damaged by theft, or all of them",
+                        usage="[property name|all]")
+    async def assets_repair(self, ctx: commands.Context, *, name: str = None):
+        uid = ctx.author.id
+        damaged = property_theft.damaged_deeds(uid)
+        if not damaged:
+            await ctx.send(embed=emb("🔧 Nothing to Repair", "None of your properties are damaged.", C_PURPLE))
+            return
+        repair_all = False
+        if name is None and len(damaged) > 1:
+            total = sum(property_theft.repair_split(state.property_owners[p])[1] for p in damaged)
+            options = [(f"🔧 Repair all — {total:,} coins", "all")] + [
+                (f"{PROPERTIES_BY_ID[p]['emoji']} {state.property_owners[p].get('custom_name') or PROPERTIES_BY_ID[p]['name']}"
+                 f" — {property_theft.repair_split(state.property_owners[p])[1]:,} coins", p)
+                for p in damaged[:24]
+            ]
+            picked = await pick_from_list(
+                ctx, title="🔧 Repair Properties",
+                description="\n".join(self._repair_line(p, state.property_owners[p]) for p in damaged),
+                options=options, placeholder="Pick a property, or repair all…", multi=False,
+            )
+            if not picked:
+                return
+            repair_all = picked[0] == "all"
+            pids = damaged if repair_all else [picked[0]]
+        elif name is None:
+            pids = damaged
+        elif name.strip().lower() == "all":
+            repair_all = True
+            pids = damaged
+        else:
+            prop = find_property(name)
+            if prop is None:
+                await ctx.send(embed=emb("❌ Unknown Property", f"No property called `{name}` — see `!assets`.", C_RED))
+                return
+            row = _owner_row(prop["id"])
+            if row is None or row["owner_id"] != uid:
+                await ctx.send(embed=emb("❌ Not Yours", f"You don't own {_fmt_prop(prop)}.", C_RED))
+                return
+            if not property_theft.is_damaged(row):
+                await ctx.send(embed=emb("🔧 Not Damaged", f"{_fmt_prop(prop, row)} doesn't need repairs.", C_PURPLE))
+                return
+            pids = [prop["id"]]
+
+        total = sum(property_theft.repair_split(state.property_owners[p])[1] for p in pids)
+        lines = [self._repair_line(p, state.property_owners[p]) for p in pids]
+        if repair_all:
+            lines.append("\nIf your wallet runs short, the deeds losing the most income are repaired first.")
+        if not await confirm_purchase(
+            ctx, title="🔧 Repair", description="\n".join(lines), cost=total, payer=ctx.author,
+        ):
+            return
+
+        balance = await get_balance(uid)
+        # Re-check after the long confirm and claim with no await before the
+        # charge. A repair-all spends the wallet in damaged_deeds' order.
+        chosen, short = [], []
+        spend = 0
+        for pid in property_theft.damaged_deeds(uid):
+            if pid not in pids:
+                continue
+            share = property_theft.repair_split(state.property_owners[pid])[1]
+            if repair_all and uid not in state.godmode_users and spend + share > balance:
+                short.append(pid)
+                continue
+            chosen.append(pid)
+            spend += share
+        if not chosen:
+            if short:
+                await ctx.send(embed=emb(
+                    "💸 Insufficient Funds",
+                    f"Your wallet doesn't cover any of those repairs. Balance: {balance:,} 🪙", C_RED))
+            else:
+                await ctx.send(embed=emb("🔧 Nothing to Repair", "Those properties were already repaired. You were not charged.", C_PURPLE))
+            return
+        priors = {pid: property_theft.clear_damage(state.property_owners[pid]) for pid in chosen}
+        rows = {pid: {**state.property_owners[pid], **priors[pid]} for pid in chosen}
+        if not await shop_charge(ctx, uid, spend):
+            for pid, prior in priors.items():
+                property_theft.restore(state.property_owners[pid], prior)
+            return
+        for pid in chosen:
+            await save_property_owner(pid, state.property_owners[pid])
+        body = [self._repair_line(pid, rows[pid]).replace(", restores", ", restored") for pid in chosen]
+        body.append(f"\nYou paid **{spend:,} 🪙**.")
+        if short:
+            body.append("Not enough left for: " + ", ".join(
+                _fmt_prop(PROPERTIES_BY_ID[p], state.property_owners[p]) for p in short) + ".")
+        await ctx.send(embed=emb("🔧 Repaired", "\n".join(body), C_GREEN))
 
 
 async def setup(bot):
