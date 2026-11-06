@@ -600,7 +600,7 @@ exact names only) before a member.
 - **Odds and money.** Success is 35/30/25/20/15% by tier, times the steal
   artifact and `SECURITY_SUCCESS_MULT` on a secured deed. The take is two
   days of the deed's current rent, revenue upgrade included. A success pays
-  it and damages the deed; a failure fines 25% of it (wallet, then savings)
+  it and damages the deed; a failure fines 12.5% of it (wallet, then savings)
   and rolls jail at 20–40% by tier, through `crime_catch_chance`.
 - **Investigators** (security plus any property insurance on the owner)
   double that jail roll, and roll an arrest at the base chance on a success,

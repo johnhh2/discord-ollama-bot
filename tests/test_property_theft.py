@@ -130,7 +130,7 @@ def test_security_cuts_success_and_investigators_need_insurance():
 
 
 def test_fine_and_bail():
-    assert pt.fine_for(10_000) == 2_500
+    assert pt.fine_for(10_000) == 1_250
     assert pt.bail_for(220) == 1_000
     assert pt.bail_for(10_000) == 20_000
 
@@ -204,7 +204,7 @@ async def test_assets_switched_off_refuses_it(db):
 
 # ── a failed theft ───────────────────────────────────────────────────────────
 
-async def test_failure_fines_a_quarter_of_the_take_and_doesnt_use_up_the_day(db, monkeypatch):
+async def test_failure_fines_an_eighth_of_the_take_and_doesnt_use_up_the_day(db, monkeypatch):
     await _setup()
     take = pt.theft_take(PID, _state.property_owners[PID])
     await add_balance(THIEF, 10_000)
@@ -212,7 +212,7 @@ async def test_failure_fines_a_quarter_of_the_take_and_doesnt_use_up_the_day(db,
 
     await _steal()
 
-    assert await get_balance(THIEF) == 10_000 - take // 4
+    assert await get_balance(THIEF) == 10_000 - take // 8
     assert not pt.is_damaged(_state.property_owners[PID])
     assert _state.economy["users"][str(THIEF)].get("property_theft_day") != _ct_today()
 

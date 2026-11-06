@@ -4,7 +4,7 @@ A theft goes for two days of the deed's current rent (`theft_take`). A
 success pays the thief that much and damages the deed, cutting its income
 by DAMAGE_PCT until the owner repairs it; the repair bill is the take, and
 the owner's property insurance at that moment (snapshotted onto the row)
-pays its share. A failure fines the thief FINE_PCT of the take and may
+pays its share. A failure fines the thief FINE_PERMILLE of the take and may
 jail them. Security cuts the odds; security plus any property insurance
 calls the investigators, who double the jail chance on a failure and roll
 an arrest on a success (the thief keeps the loot). One success per thief
@@ -23,7 +23,7 @@ SUCCESS_BY_TIER = {1: 0.35, 2: 0.30, 3: 0.25, 4: 0.20, 5: 0.15}
 JAIL_BY_TIER = {1: 0.20, 2: 0.25, 3: 0.30, 4: 0.35, 5: 0.40}
 TAKE_RENT_DAYS = 2
 DAMAGE_PCT = 25
-FINE_PCT = 25
+FINE_PERMILLE = 125  # 12.5% of the take
 BAIL_TAKE_MULT = 2
 BAIL_MIN = 1_000
 INVESTIGATOR_JAIL_MULT = 2
@@ -67,7 +67,7 @@ def jail_chance(thief_id: int, pid: str, row: dict, *, succeeded: bool) -> float
 
 
 def fine_for(take: int) -> int:
-    return take * FINE_PCT // 100
+    return take * FINE_PERMILLE // 1000
 
 
 def bail_for(take: int) -> int:
