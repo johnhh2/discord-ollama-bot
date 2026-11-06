@@ -1035,8 +1035,8 @@ command, so gates, side effects and replies can't drift. The pieces live in
   buttons.
 - **`!assets` is one card in three modes** (`src/assets_view.py`,
   `AssetsView`, invoker-only): your portfolio carries Browse offerings /
-  Manage properties; browse is the market list plus a dropdown of
-  everything for sale and Buy; manage is a dropdown of your deeds, then
+  Manage properties; browse is the market list plus a tier
+  dropdown, then one dropdown of that tier's deeds for sale, and Buy; manage is a dropdown of your deeds, then
   Sell / Unlist (if listed) / Upgrade (if not yet) / Rename. Each press
   forwards the typed `!assets` subcommand with the catalog id, and the
   card redraws after. `!assets browse` opens in browse mode, and `!assets

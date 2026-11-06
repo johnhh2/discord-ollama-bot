@@ -6,7 +6,7 @@ import pytest
 
 import src.assets_view as _view
 import src.state as _state
-from src.assets_view import AssetsView, _PropertySelect
+from src.assets_view import AssetsView, _PropertySelect, _TierSelect
 from src.cogs.assets_cog import AssetsCog
 from src.persistence import save_property_owner
 from tests.fakes.discord import FakeMember, FakeMessage
@@ -34,6 +34,16 @@ async def _pick(view, pid, uid):
     select = next(i for i in view.children if isinstance(i, _PropertySelect) and pid in {o.value for o in i.options})
     select._values = [pid]
     await select.callback(_interaction(uid))
+
+
+async def _pick_tier(view, tier, uid):
+    select = next(i for i in view.children if isinstance(i, _TierSelect))
+    select._values = [str(tier)]
+    await select.callback(_interaction(uid))
+
+
+def _property_selects(view):
+    return [i for i in view.children if isinstance(i, _PropertySelect)]
 
 
 @pytest.fixture
@@ -81,6 +91,8 @@ async def test_browse_dropdown_then_buy_forwards_the_pick(db, forwarded):
     await AssetsCog.assets_browse.callback(AssetsCog(bot=None), ctx)
     view = ctx.sent_views[-1]
     view.message = FakeMessage()
+    assert _property_selects(view) == []
+    await _pick_tier(view, 1, 1)
     offered = {o.value for s in view.children if isinstance(s, _PropertySelect) for o in s.options}
     assert "lemonade_stand" in offered and "car_wash" not in offered
     assert _button(view, "Buy").disabled
@@ -94,8 +106,33 @@ async def test_buy_with_no_name_or_an_unknown_one_offers_the_dropdown(db):
         ctx = _ctx(1)
         await AssetsCog.assets_buy.callback(AssetsCog(bot=None), ctx, name=name)
         view = ctx.sent_views[-1]
-        assert view.mode == "browse" and any(isinstance(i, _PropertySelect) for i in view.children)
+        assert view.mode == "browse" and any(isinstance(i, _TierSelect) for i in view.children)
     assert "Unknown Property" in ctx.sent_embeds[-1].title
+
+
+async def test_browse_picks_a_tier_then_shows_one_dropdown_of_it(db):
+    _set_level(1, 50)
+    ctx = _ctx(1)
+    await AssetsCog.assets_browse.callback(AssetsCog(bot=None), ctx)
+    view = ctx.sent_views[-1]
+    tiers = next(i for i in view.children if isinstance(i, _TierSelect))
+    assert [o.value for o in tiers.options] == ["1", "2", "3", "4", "5"]
+    assert "for sale" in tiers.options[0].description
+
+    await _pick_tier(view, 3, 1)
+
+    selects = _property_selects(view)
+    assert len(selects) == 1
+    assert {_view.PROPERTIES_BY_ID[o.value]["tier"] for o in selects[0].options} == {3}
+    assert view.embed().description.startswith("**Tier 3**")
+
+
+async def test_browse_with_a_tier_argument_opens_on_that_tier(db):
+    ctx = _ctx(1)
+    await AssetsCog.assets_browse.callback(AssetsCog(bot=None), ctx, 2)
+    view = ctx.sent_views[-1]
+    assert next(o for o in next(i for i in view.children if isinstance(i, _TierSelect)).options if o.default).value == "2"
+    assert len(_property_selects(view)) == 1
 
 
 async def test_manage_shows_the_actions_for_the_picked_deed(db, forwarded):

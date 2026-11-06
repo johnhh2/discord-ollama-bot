@@ -1,7 +1,7 @@
 """Buttons and dropdowns on the `!assets` cards.
 
 One message, three modes: the portfolio (Browse / Manage), the market (a
-dropdown of everything for sale plus Buy) and manage (a dropdown of the
+tier dropdown, then that tier's properties for sale, plus Buy) and manage (a dropdown of the
 invoker's deeds, then Sell / Unlist / Upgrade / Rename for the one picked).
 Every action runs the typed `!assets` subcommand for the presser through
 `forwarding` (see CLAUDE.md: Buttons that run commands), so its confirm
@@ -16,7 +16,7 @@ from discord import ui
 from src.forwarding import button_context, forward, refusal_for
 from src.helpers import emb, C_PURPLE
 from src.permissions import is_silenced
-from src.properties import upgrade_types_for
+from src.properties import PROPERTIES_BY_ID, upgrade_types_for
 from src.settings_views import Field, FormModal, MAX_OPTIONS
 
 ASSETS_TIMEOUT = 300.0
@@ -54,12 +54,19 @@ class AssetsView(ui.View):
             self.add_item(manage)
             return
         if self.mode == "browse":
-            options = buyable_properties(self.owner.id, self.tier)
+            # Tier first: the whole market outgrows one 25-option dropdown.
+            tiers: dict[int, int] = {}
+            for pid, *_ in buyable_properties(self.owner.id):
+                t = PROPERTIES_BY_ID[pid]["tier"]
+                tiers[t] = tiers.get(t, 0) + 1
+            if tiers:
+                self.add_item(_TierSelect(tiers, self.tier))
+            options = buyable_properties(self.owner.id, self.tier) if self.tier in tiers else []
             if self.choice not in {o[0] for o in options}:
                 self.choice = None
-            chunks = [options[i:i + MAX_OPTIONS] for i in range(0, len(options), MAX_OPTIONS)][:_MAX_SELECTS]
-            for row, chunk in enumerate(chunks):
-                placeholder = "Pick a property to buy…" if len(chunks) == 1 else (
+            chunks = [options[i:i + MAX_OPTIONS] for i in range(0, len(options), MAX_OPTIONS)][:_MAX_SELECTS - 1]
+            for row, chunk in enumerate(chunks, start=1):
+                placeholder = f"Pick a tier {self.tier} property to buy…" if len(chunks) == 1 else (
                     f"Pick a property ({chunk[0][3]} – {chunk[-1][3]})…")
                 self.add_item(_PropertySelect(chunk, self.choice, placeholder, row))
             buy = _ActionButton("Buy", "🛒", discord.ButtonStyle.success, self._buy)
@@ -192,6 +199,27 @@ class _ActionButton(ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         await self.handler(interaction)
+
+
+class _TierSelect(ui.Select):
+    """`tiers` maps each tier with something for sale to how many."""
+
+    def __init__(self, tiers: dict[int, int], chosen: int | None):
+        levels: dict[int, int] = {}
+        for p in PROPERTIES_BY_ID.values():
+            levels[p["tier"]] = min(levels.get(p["tier"], p["level"]), p["level"])
+        super().__init__(placeholder="Pick a tier…", row=0, options=[
+            discord.SelectOption(label=f"Tier {t}", value=str(t), default=t == chosen,
+                                 description=f"{n} for sale • level {levels[t]}+")
+            for t, n in sorted(tiers.items())
+        ])
+
+    async def callback(self, interaction: discord.Interaction):
+        view: AssetsView = self.view  # type: ignore[assignment]
+        view.tier = int(self.values[0])
+        view.choice = None
+        view.notice = None
+        await view.show(interaction)
 
 
 class _PropertySelect(ui.Select):

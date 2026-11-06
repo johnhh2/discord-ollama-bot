@@ -222,7 +222,7 @@ class AssetsCog(commands.Cog):
             f"\n\nEvery property is unique — one owner across all servers; 🏷️ marks "
             f"player listings, buyable from any server. "
             f"Own up to **{max_owned()}**; revenue is {property_pct_text()} of price per day, "
-            "banked with your daily claim. Pick one below and press **Buy**."
+            "banked with your daily claim. Pick a tier and a property below, then press **Buy**."
         )
         # Discord caps a description at 4096; the released pool can outgrow it.
         cut = 0
@@ -242,8 +242,8 @@ class AssetsCog(commands.Cog):
         prop = find_property(name) if name else None
         if prop is None:
             # No name, or one that matched nothing: offer the market dropdown.
-            notice = (emb("❌ Unknown Property", f"No property called `{name}`. Pick one below.", C_RED) if name
-                      else emb("🏘️ Buy a Property", "Pick a property below and press **Buy**.", C_PURPLE))
+            notice = (emb("❌ Unknown Property", f"No property called `{name}`. Pick a tier and a property below.", C_RED) if name
+                      else emb("🏘️ Buy a Property", "Pick a tier and a property below, then press **Buy**.", C_PURPLE))
             view = AssetsView(self, ctx.author, mode="browse", notice=notice)
             view.message = await ctx.send(embed=notice, view=view)
             return
