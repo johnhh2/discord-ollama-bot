@@ -1,6 +1,7 @@
 """Buttons and dropdowns on the `!assets` cards.
 
-One message, three modes: the portfolio (Browse / Manage), the market (a
+One message, three modes: the portfolio (Browse / Manage, plus Repair while
+a deed is damaged), the market (a
 tier dropdown, then that tier's properties for sale, plus Buy) and manage (a dropdown of the
 invoker's deeds, then Sell / Unlist / Upgrade / Rename / Repair for the one
 picked).
@@ -18,7 +19,7 @@ from src.forwarding import button_context, forward, refusal_for
 from src.helpers import emb, C_PURPLE
 from src.permissions import is_silenced
 from src.properties import PROPERTIES_BY_ID, upgrade_types_for
-from src.property_theft import is_damaged
+from src.property_theft import damaged_deeds, is_damaged
 from src.settings_views import Field, FormModal, MAX_OPTIONS
 
 ASSETS_TIMEOUT = 300.0
@@ -54,6 +55,9 @@ class AssetsView(ui.View):
             manage = _ModeButton("Manage properties", "🛠️", "manage", discord.ButtonStyle.secondary)
             manage.disabled = not owned_rows(self.owner.id)
             self.add_item(manage)
+            if damaged_deeds(self.owner.id):
+                # Bare `!assets repair`: one deed repairs, several get its Repair-all dropdown.
+                self.add_item(_ActionButton("Repair", "🔧", discord.ButtonStyle.danger, self._repair_any, row=0))
             return
         if self.mode == "browse":
             # Tier first: the whole market outgrows one 25-option dropdown.
@@ -162,6 +166,9 @@ class AssetsView(ui.View):
 
     async def _repair(self, interaction):
         await self.run(interaction, "repair", name=self.choice, content=f"!assets repair {self.choice}")
+
+    async def _repair_any(self, interaction):
+        await self.run(interaction, "repair", content="!assets repair")
 
     async def _sell(self, interaction):
         pid = self.choice

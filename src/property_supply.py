@@ -20,6 +20,11 @@ order): k / target plus a seeded jitter of up to 30% of a step, so two tiers
 release on the same morning only by coincidence. The table was rolled once
 (seed "discord-ollama-bot-property-supply-1965") and is a shipped constant.
 
+Once a tier's last pool deed is due, the thresholds carry on at the same
+spacing (copy_threshold) and each releases the tier's next numbered copy
+(properties.copy_id): Lemonade Stand #2, ... then every #3. So supply keeps
+scaling with the economy instead of stopping at the catalog's end.
+
 The per-player cap is 5 + floor(W / 0.4): one more slot each time net worth
 grows 2.5 times. Both releases and the cap ratchet — a released deed stays
 released and the cap is a high-water mark — so a shrinking economy never
@@ -27,6 +32,7 @@ takes anything back.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import time
@@ -34,7 +40,7 @@ import time
 from src import state
 from src.properties import (
     PROPERTIES_BY_ID, PROPERTY_BASE_MAX_OWNED, PROPERTY_RELEASE_ORDER,
-    is_released, max_owned, total_owned_property_value,
+    copy_id, is_released, max_owned, register_copy, total_owned_property_value,
 )
 
 OWNED_ANCHOR = 40
@@ -60,6 +66,17 @@ assert all(len(RELEASE_THRESHOLDS[t]) == len(ids) for t, ids in PROPERTY_RELEASE
     "every pool deed needs a release threshold"
 assert all(list(th) == sorted(th) for th in RELEASE_THRESHOLDS.values()), \
     "thresholds rise along the release order"
+
+RELEASE_STEPS = {1: 1 / 6, 2: 1 / 5, 3: 1 / 4, 4: 1 / 3, 5: 1 / 2}
+
+
+def copy_threshold(tier: int, k: int) -> float:
+    """Threshold for a tier's k-th copy: the pool's spacing continued past
+    its last deed, with the same up-to-30% jitter, from a hash so it never
+    changes between boots."""
+    step = RELEASE_STEPS[tier]
+    roll = int(hashlib.sha256(f"property-copy:{tier}:{k}".encode()).hexdigest()[:8], 16) / 2 ** 32
+    return RELEASE_THRESHOLDS[tier][-1] + (k + 1) * step + 0.3 * step * roll
 
 
 def economy_net_worth(now: float | None = None) -> int:
@@ -99,6 +116,10 @@ def deeds_due(index: float) -> list[str]:
     for tier, ids in PROPERTY_RELEASE_ORDER.items():
         progress = index ** TIER_EXPONENTS[tier] if index > 0 else 0.0
         due += [pid for pid, th in zip(ids, RELEASE_THRESHOLDS[tier]) if th <= progress]
+        k = 0
+        while copy_threshold(tier, k) <= progress:
+            due.append(copy_id(tier, k))
+            k += 1
     return due
 
 
@@ -127,7 +148,10 @@ async def run_property_release(now: float | None = None) -> tuple[list[str], int
     now = time.time() if now is None else now
     net_worth = economy_net_worth(now)
     index = development_index(owned_deed_count(), net_worth)
-    new = [pid for pid in deeds_due(index) if not is_released(pid)]
+    due = deeds_due(index)
+    for pid in due:
+        register_copy(pid)
+    new = [pid for pid in due if not is_released(pid)]
     for pid in new:
         state.released_properties.add(pid)
     cap = max(max_owned(), cap_for(net_worth))

@@ -119,7 +119,7 @@ async def user_economy(user_id: int) -> dict[str, Any]:
         "economy_users",
         ("user_id", "balance", "savings", "daily_date", "scratch_used", "scratch_date", "jail_until", "bail_amount",
          "crime_eligible", "property_revenue_total", "daily_gamble_property", "ins_paid_since_claim", "ins_lapsed_since_claim",
-         "heist_success_day", "property_theft_day"),
+         "heist_success_day", "property_theft_day", "auto_repair"),
         where="user_id = %s", params=(user_id,),
     )
     if user is not None:

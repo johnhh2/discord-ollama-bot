@@ -61,7 +61,9 @@ async def _init_db_state_inner(state, run_migrations):
                 " bot_chess_elo_max_date,"
                 " scratch_won_today, property_paid_at, property_revenue_total,"
                 " daily_gamble_property, ins_paid_since_claim, ins_lapsed_since_claim,"
-                " heist_success_day, property_theft_day, bail_price"
+                " heist_success_day, property_theft_day, bail_price,"
+                " auto_repair, robbed_since_claim, investigations_since_claim,"
+                " arrests_since_claim, auto_repaired_since_claim"
                 " FROM economy_users"
             )
             for row in await cur.fetchall():
@@ -73,7 +75,9 @@ async def _init_db_state_inner(state, run_migrations):
                  property_paid_at, property_revenue_total,
                  daily_gamble_property,
                  ins_paid_since_claim, ins_lapsed_since_claim,
-                 heist_success_day, property_theft_day, bail_price) = row
+                 heist_success_day, property_theft_day, bail_price,
+                 auto_repair, robbed_since_claim, investigations_since_claim,
+                 arrests_since_claim, auto_repaired_since_claim) = row
                 state.economy["users"][str(uid)] = {
                     "balance": bal,
                     "last_daily": last_daily,
@@ -97,6 +101,11 @@ async def _init_db_state_inner(state, run_migrations):
                     "heist_success_day": heist_success_day,
                     "property_theft_day": property_theft_day,
                     "bail_price": int(bail_price) if bail_price is not None else None,
+                    "auto_repair": bool(auto_repair),
+                    "robbed_since_claim": int(robbed_since_claim or 0),
+                    "investigations_since_claim": int(investigations_since_claim or 0),
+                    "arrests_since_claim": int(arrests_since_claim or 0),
+                    "auto_repaired_since_claim": int(auto_repaired_since_claim or 0),
                 }
         except Exception as e:
             logging.error(f"[init_db_state] economy_users failed: {e}", exc_info=True)
@@ -363,6 +372,10 @@ async def _init_db_state_inner(state, run_migrations):
         try:
             await cur.execute("SELECT property_id FROM property_releases")
             state.released_properties = {pid for (pid,) in await cur.fetchall()}
+            # Numbered copies live only in these two tables (src/properties.py).
+            from src.properties import register_copy
+            for pid in state.released_properties | set(state.property_owners):
+                register_copy(pid)
         except Exception as e:
             logging.error(f"[init_db_state] property_releases failed: {e}", exc_info=True)
             raise

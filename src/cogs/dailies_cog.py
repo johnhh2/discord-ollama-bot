@@ -297,7 +297,7 @@ class DailiesCog(commands.Cog):
             if lottery_cog is not None:
                 await lottery_cog.buy_daily_ticket(member, channel, guild, silent=True)
             return
-        claimed, prop_rev = await _auto_daily(member, channel)
+        claimed, prop_rev = await _auto_daily(member, channel, reserve_claim=True)
         winnings = await play_scratchoffs(
             self.bot, member, channel, guild, count=scratchoff_daily_cap(member.id)
         )

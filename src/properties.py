@@ -7,8 +7,9 @@ theft damage fields of src/property_theft.py}}, source of truth:
 property_owners table). The catalog below holds the 36 shipped properties
 (10k to 2m) and a release pool of 42 more (marked "pool"), which reach the
 market one at a time at the 5am reset as the economy develops — see
-src/property_supply.py. An unreleased pool deed doesn't exist to players:
-every reader goes through is_released / released_properties.
+src/property_supply.py, followed by numbered copies (Lemonade Stand #2)
+once a tier's pool is out. An unreleased pool deed doesn't exist to
+players: every reader goes through is_released / released_properties.
 
 Economics:
   - Revenue is 1.1% of purchase price per day, derived (never hand-typed):
@@ -342,6 +343,42 @@ assert {pid for ids in PROPERTY_RELEASE_ORDER.values() for pid in ids} \
 assert all(PROPERTIES_BY_ID[pid]["tier"] == t
            for t, ids in PROPERTY_RELEASE_ORDER.items() for pid in ids), \
     "a pool property is released in its own tier's order"
+
+# ── Numbered copies ──────────────────────────────────────────────────────────
+# Once a tier's whole pool is out, the release pass keeps going with copies
+# of that tier's properties, in catalog order: every one gets a #2, then
+# every one a #3, and so on (property_supply.copy_threshold). A copy is its
+# own unique deed with the original's emoji, tier, level, price and upgrades.
+# Its id is "<original>__<n>"; it is registered into the catalog dicts when
+# released or loaded (register_copy), never listed here.
+COPY_SEP = "__"
+TIER_ORIGINALS: dict[int, tuple[str, ...]] = {
+    t: tuple(p["id"] for p in PROPERTIES if p["tier"] == t) for t in PROPERTY_RELEASE_ORDER
+}
+
+
+def copy_id(tier: int, k: int) -> str:
+    """The k-th copy (0-based) a tier releases."""
+    originals = TIER_ORIGINALS[tier]
+    return f"{originals[k % len(originals)]}{COPY_SEP}{2 + k // len(originals)}"
+
+
+def register_copy(pid: str) -> dict | None:
+    """Add a copy id to the catalog dicts and return its entry; an original
+    is returned as it is, anything else malformed gives None."""
+    if pid in PROPERTIES_BY_ID:
+        return PROPERTIES_BY_ID[pid]
+    original, sep, n = pid.partition(COPY_SEP)
+    base = PROPERTIES_BY_ID.get(original)
+    if not sep or base is None or not n.isdigit() or int(n) < 2:
+        return None
+    entry = {**base, "id": pid, "name": f"{base['name']} #{int(n)}", "pool": True, "copy_of": original}
+    PROPERTIES.append(entry)
+    PROPERTIES_BY_ID[pid] = entry
+    PROPERTY_UPGRADES[pid] = PROPERTY_UPGRADES[original]
+    if original in PROPERTY_SECURITY_UPGRADES:
+        PROPERTY_SECURITY_UPGRADES[pid] = PROPERTY_SECURITY_UPGRADES[original]
+    return entry
 
 
 def is_released(pid: str) -> bool:

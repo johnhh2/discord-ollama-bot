@@ -34,7 +34,8 @@ from src.properties import (
 from src.artifacts import property_upgrade_cost
 from src.rate_curves import property_pct_text
 from src.confirm_view import confirm_choice, confirm_prompt, confirm_purchase
-from src.persistence import save_property_owner, delete_property_owner, try_set_record
+from src.persistence import save_economy, save_property_owner, delete_property_owner, try_set_record
+from src.property_repair import auto_repair, auto_repair_on
 from src.settings_views import pick_from_list
 from src import property_theft, state
 
@@ -156,6 +157,7 @@ class AssetsCog(commands.Cog):
         lines.append(f"**Revenue banked (lifetime):** {banked:,} 🪙")
         if property_theft.damaged_deeds(uid):
             lines.append(f"🔧 Damaged properties earn {property_theft.DAMAGE_PCT}% less until repaired — `!assets repair`.")
+        lines.append(f"**Auto-repair:** {'on' if auto_repair_on(uid) else 'off'} — `!assets autorepair`")
         return emb(f"🏘️ {member.display_name}'s Real Estate", "\n".join(lines), C_PURPLE)
 
     def manage_embed(self, member, pid: str | None) -> discord.Embed:
@@ -214,11 +216,11 @@ class AssetsCog(commands.Cog):
             label = f"{p['emoji']} **{p['name']}**"
             rev = property_daily_revenue(p["id"], row, current=True)
             if row is None:
-                entry = f"{label} — **{p['cost']:,} 🪙** • {rev:,} 🪙/day • 1 available"
+                entry = f"{label} — **{p['cost']:,} 🪙** • {rev:,} 🪙/day"
                 if lvl < p["level"]:
                     entry = f"~~{entry}~~ 🔒"
             elif row.get("list_price"):
-                entry = f"{label} — 🏷️ **{row['list_price']:,} 🪙** • {rev:,} 🪙/day • 1 available"
+                entry = f"{label} — 🏷️ **{row['list_price']:,} 🪙** • {rev:,} 🪙/day"
             else:
                 continue
             entries.append(entry)
@@ -227,7 +229,7 @@ class AssetsCog(commands.Cog):
             if lines:
                 lines.append("")
             lines.append(f"**Tier {t}** *(level {levels[t]}+)*")
-            lines += entries
+            lines += entries or ["*Sold out.*"]
         if not tiers:
             return None
         footer = (
@@ -269,17 +271,10 @@ class AssetsCog(commands.Cog):
         pid = prop["id"]
         row = _owner_row(pid)
         if row is not None and row["owner_id"] == uid:
-            # Deeds are unique, so "a second one" is always this deed; the
-            # refusal is dressed up as antitrust law rather than a game rule.
-            await ctx.send(embed=emb(
-                "⚖️ Monopoly Laws",
-                f"You already own {_fmt_prop(prop)}. Antitrust regulators won't approve a second one: "
-                "monopoly laws limit every owner to one of each property.",
-                C_RED,
-            ))
+            await ctx.send(embed=emb("🔒 Already Owned", f"You already own {_fmt_prop(prop)}.", C_RED))
             return
         if row is not None and not row.get("list_price"):
-            await ctx.send(embed=emb("🔒 Not For Sale", f"{_fmt_prop(prop)} is owned and not listed for sale.", C_RED))
+            await ctx.send(embed=emb("🔒 Already Owned", f"{_fmt_prop(prop)} is already owned by someone else.", C_RED))
             return
         # Early refusal only. The race-safe gate — cap re-check plus the
         # synchronous deed claim — runs after the confirm wait, in
@@ -315,7 +310,7 @@ class AssetsCog(commands.Cog):
         # The confirm wait is a long await — re-check the deed and the
         # ownership cap, since a concurrent buyer may have moved first.
         if _owner_row(pid) is not None:
-            await ctx.send(embed=emb("🔒 Not For Sale", f"{_fmt_prop(prop)} was bought while you were confirming. You were not charged.", C_RED))
+            await ctx.send(embed=emb("🔒 Already Owned", f"{_fmt_prop(prop)} was bought by someone else while you were confirming. You were not charged.", C_RED))
             return
         if owned_property_count(uid) >= max_owned():
             await ctx.send(embed=emb(
@@ -781,6 +776,10 @@ class AssetsCog(commands.Cog):
         # name/id or another business's custom name (case-insensitive).
         t = new_name.lower()
         taken = {p["name"].lower() for p in PROPERTIES} | {p["id"].replace("_", " ") for p in PROPERTIES}
+        # "<catalog name> #n" is reserved for a numbered copy, released or not.
+        t_base, hash_, n = t.rpartition(" #")
+        if hash_ and n.isdigit():
+            t = t_base if t_base in taken else t
         for other_pid, other_row in state.property_owners.items():
             if other_pid != prop["id"] and other_row.get("custom_name"):
                 taken.add(other_row["custom_name"].lower())
@@ -902,6 +901,50 @@ class AssetsCog(commands.Cog):
             body.append("Not enough left for: " + ", ".join(
                 _fmt_prop(PROPERTIES_BY_ID[p], state.property_owners[p]) for p in short) + ".")
         await ctx.send(embed=emb("🔧 Repaired", "\n".join(body), C_GREEN))
+
+    # ── !assets autorepair ────────────────────────────────────────────────
+    # src/property_repair.py does the repairing: at the theft, then at each
+    # daily claim while the wallet falls short. Switching it on also tries
+    # the deeds already damaged.
+    @cmd_assets.command(name="autorepair", aliases=["auto-repair"],
+                        help="Repair robbed properties automatically from your wallet",
+                        usage="[on|off]")
+    async def assets_autorepair(self, ctx: commands.Context, setting: str = None):
+        uid = ctx.author.id
+        await _ensure_user(uid)
+        user = state.economy["users"][str(uid)]
+        current = bool(user.get("auto_repair"))
+        word = (setting or "").lower()
+        if word in ("on", "off"):
+            enabled = word == "on"
+        elif setting is None:
+            enabled = await confirm_choice(
+                ctx, title="🔧 Auto-Repair",
+                description=(f"Auto-repair is **{'on' if current else 'off'}**. When it's on, a robbed property "
+                             "is repaired from your wallet as soon as it covers your share of the bill, or at "
+                             "your next daily claim if it doesn't yet. Savings are never touched."),
+                choices=[{"label": "On", "value": True, "default": current},
+                         {"label": "Off", "value": False, "default": not current}],
+                payer=ctx.author,
+            )
+            if enabled is None:
+                return
+        else:
+            await ctx.send(embed=emb("🔧 Auto-Repair", "Use `!assets autorepair on` or `off`.", C_RED))
+            return
+        user["auto_repair"] = enabled
+        await save_economy(uid=uid)
+        if not enabled:
+            await ctx.send(embed=emb("🔧 Auto-Repair Off", "Robbed properties wait for `!assets repair`.", C_GREEN))
+            return
+        body = ["Robbed properties are repaired from your wallet as soon as it covers your share."]
+        fixed, spent = await auto_repair(uid)
+        if fixed:
+            body.append("Repaired now: " + ", ".join(
+                _fmt_prop(PROPERTIES_BY_ID[p], state.property_owners[p]) for p in fixed) + f" for **{spent:,} 🪙**.")
+        if property_theft.damaged_deeds(uid):
+            body.append("Your wallet doesn't cover the rest yet; they're tried again at your next daily claim.")
+        await ctx.send(embed=emb("🔧 Auto-Repair On", "\n".join(body), C_GREEN))
 
 
 async def setup(bot):

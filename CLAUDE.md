@@ -444,7 +444,14 @@ Rules when touching this system:
     `economy_meta` (`property_cap`). **Every reader goes through
     `released_properties()` / `is_released()` / `find_property`** — an
     unreleased deed must not be listed, matched or bought. Nothing refills
-    on sale; don't add a rule that looks at unsold counts. Coverage:
+    on sale; don't add a rule that looks at unsold counts. Once a tier's
+    pool is out, its thresholds continue at the same spacing
+    (`copy_threshold`) and release **numbered copies** of that tier in
+    catalog order — every deed's #2, then every #3 (`copy_id`). A copy
+    (id `<original>__<n>`, name "Lemonade Stand #2") is its own unique
+    deed with the original's tier, level, price and upgrades; it exists
+    only in `property_releases` / `property_owners`, and `register_copy`
+    puts it into the catalog dicts at release and at boot. Coverage:
     [tests/test_property_supply.py](tests/test_property_supply.py).
 11. **Persistence takes the whole row.** `save_property_owner(pid, row)`
     mirrors `state.property_owners[pid]` in one shot so a call site can't
@@ -618,7 +625,39 @@ exact names only) before a member.
 - A deed can't be robbed while damaged, by its owner, or while bank-owned,
   and the whole crime is off where the `assets` feature is.
 
-Coverage: [tests/test_property_theft.py](tests/test_property_theft.py).
+### The `!steal` panel
+
+Every `!steal` with a target opens one message (`src/steal_view.py`):
+Wallet / Property buttons (Property only when the target owns deeds here,
+greyed out after the thief's success today), a tier or deed dropdown, a
+preview of the odds, take, fine, jail chance and length, bail and the
+investigators, and Submit. A typed tier (`!steal @user 2`) or deed name
+opens it with that pick made. Nothing is robbed until Submit, which calls
+`_run_steal` / `_run_property_theft` — they run every gate again. Submit
+re-reads the numbers (`wallet_steal_odds` / `property_theft_odds`, which
+the run paths roll with) and redraws instead when they've moved since the
+preview. The cog gates before opening (`_steal_preflight`,
+`_property_theft_gate`) so no panel is drawn for an impossible robbery.
+Conftest swaps `open_steal_panel` for an auto-submit of the typed pick;
+panel tests put the real one back.
+
+### Auto-repair and the daily claim
+
+[src/property_repair.py](src/property_repair.py). `!assets autorepair
+[on|off]` (`auto_repair`, migration 0089, off by default) repairs a robbed
+deed from the **wallet only** the moment it's robbed if that covers the
+owner's share, and otherwise at each daily claim. It claims like `!assets
+repair` (damage cleared synchronously, put back if the charge fails), so it
+can't double-pay with the button. The dailies-channel claim passes
+`reserve_claim`, keeping the claimed coins for the stake that follows.
+
+The owner's `*_since_claim` tallies (robbed, investigator call-outs,
+arrests, coins auto-repair spent) are bumped by the theft and read and
+zeroed by `claim_report`, which every daily claim appends, with a line for
+deeds still damaged.
+
+Coverage: [tests/test_property_theft.py](tests/test_property_theft.py) and
+[tests/test_steal_panel.py](tests/test_steal_panel.py).
 
 ## Insurance: three types, and crime is refunded rather than blocked
 
@@ -1083,7 +1122,8 @@ command, so gates, side effects and replies can't drift. The pieces live in
   buttons.
 - **`!assets` is one card in three modes** (`src/assets_view.py`,
   `AssetsView`, invoker-only): your portfolio carries Browse offerings /
-  Manage properties; browse is the market list plus a tier
+  Manage properties (and Repair, the bare `!assets repair`, while a deed
+  is damaged); browse is the market list plus a tier
   dropdown, then one dropdown of that tier's deeds for sale, and Buy; manage is a dropdown of your deeds, then
   Sell / Unlist (if listed) / Upgrade (if not yet) / Rename. Each press
   forwards the typed `!assets` subcommand with the catalog id, and the

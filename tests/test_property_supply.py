@@ -8,11 +8,12 @@ from src.cogs.assets_cog import AssetsCog
 from src.economy import add_balance
 from src.persistence import init_db_state
 from src.properties import (
-    PROPERTIES, PROPERTY_BASE_MAX_OWNED, PROPERTY_RELEASE_ORDER,
-    find_property, is_released, max_owned, released_properties,
+    PROPERTIES, PROPERTIES_BY_ID, PROPERTY_BASE_MAX_OWNED, PROPERTY_RELEASE_ORDER,
+    PROPERTY_SECURITY_UPGRADES, PROPERTY_UPGRADES, TIER_ORIGINALS,
+    copy_id, find_property, is_released, max_owned, register_copy, released_properties,
 )
 from src.property_supply import (
-    RELEASE_THRESHOLDS, cap_for, deeds_due, development_index,
+    RELEASE_THRESHOLDS, cap_for, copy_threshold, deeds_due, development_index,
     economy_net_worth, run_property_release, wealth_progress,
 )
 from tests.test_properties import _ctx, _give_property, _set_level
@@ -162,15 +163,94 @@ async def test_browse_lists_only_what_is_for_sale(db):
     assert "Lemonade Stand" not in text and "Yours" not in text
     assert "Car Wash" in text and "90,000" in text
     assert "Suds City" not in text and "⭐" not in text
-    car_wash = next(line for line in text.splitlines() if "Car Wash" in line)
-    assert car_wash.endswith("• 1 available")
+    assert "available" not in text
 
 
-async def test_buying_a_deed_you_own_cites_monopoly_laws(db):
+async def test_browse_marks_a_tier_with_nothing_for_sale_sold_out(db):
+    _set_level(7, 50)
+    for p in released_properties():
+        if p["tier"] == 5:
+            await _give_property(8, p["id"])
+    ctx = _ctx(7)
+    await AssetsCog.assets_browse.callback(AssetsCog(bot=None), ctx, tier=5)
+    assert "*Sold out.*" in ctx.sent_embeds[-1].description
+
+
+async def test_buying_an_owned_deed_says_it_is_already_owned(db):
     _set_level(7, 50)
     await _give_property(7, "lemonade_stand")
+    await _give_property(8, "car_wash")
     await add_balance(7, 100_000)
     ctx = _ctx(7)
     await AssetsCog.assets_buy.callback(AssetsCog(bot=None), ctx, name="Lemonade Stand")
-    assert "Monopoly Laws" in ctx.sent_embeds[-1].title
+    assert ctx.sent_embeds[-1].title == "🔒 Already Owned"
+    assert "You already own" in ctx.sent_embeds[-1].description
+    await AssetsCog.assets_buy.callback(AssetsCog(bot=None), ctx, name="Car Wash")
+    assert "already owned by someone else" in ctx.sent_embeds[-1].description
     assert _state.economy["users"]["7"]["balance"] == 100_000
+
+
+# ── numbered copies ──────────────────────────────────────────────────────────
+
+async def test_copies_follow_the_last_pool_deed_in_catalog_order():
+    for tier, ids in PROPERTY_RELEASE_ORDER.items():
+        last = RELEASE_THRESHOLDS[tier][-1]
+        assert copy_threshold(tier, 0) > last
+        assert [copy_threshold(tier, k) for k in range(30)] == sorted(copy_threshold(tier, k) for k in range(30))
+        tier_copies = {copy_id(tier, k) for k in range(30)}
+        assert not tier_copies & set(deeds_due(last))
+    originals = TIER_ORIGINALS[5]
+    assert copy_id(5, 0) == f"{originals[0]}__2"
+    assert copy_id(5, len(originals)) == f"{originals[0]}__3"
+    assert [p for p in deeds_due(copy_threshold(5, 1)) if "__" in p and PROPERTIES_BY_ID.get(p.split("__")[0], {}).get("tier") == 5] \
+        == [copy_id(5, 0), copy_id(5, 1)]
+
+
+async def test_a_copy_is_its_own_deed_with_the_originals_numbers():
+    entry = register_copy("lemonade_stand__2")
+    original = PROPERTIES_BY_ID["lemonade_stand"]
+    assert entry["name"] == "Lemonade Stand #2"
+    assert {k: entry[k] for k in ("emoji", "tier", "level", "cost")} == {k: original[k] for k in ("emoji", "tier", "level", "cost")}
+    assert PROPERTY_UPGRADES["lemonade_stand__2"] == PROPERTY_UPGRADES["lemonade_stand"]
+    register_copy("movie_theater__3")
+    assert PROPERTY_SECURITY_UPGRADES["movie_theater__3"] == PROPERTY_SECURITY_UPGRADES["movie_theater"]
+    assert register_copy("lemonade_stand__1") is None and register_copy("nope__2") is None
+    assert not is_released("lemonade_stand__2")
+    _state.released_properties.add("lemonade_stand__2")
+    assert find_property("Lemonade Stand #2")["id"] == "lemonade_stand__2"
+    assert find_property("Lemonade Stand")["id"] == "lemonade_stand"
+
+
+async def test_the_reset_releases_copies_once_a_tier_is_exhausted(db, monkeypatch):
+    _state.economy["last_property_release"] = "2026-11-05"
+    _day(monkeypatch, "2026-11-06")
+    target = copy_threshold(1, 1)
+    monkeypatch.setattr("src.property_supply.development_index", lambda owned, worth: target)
+    new, _ = await run_property_release()
+    assert set(PROPERTY_RELEASE_ORDER[1]) <= set(new)
+    assert copy_id(1, 0) in new and copy_id(1, 1) in new and copy_id(1, 2) not in new
+    assert find_property(PROPERTIES_BY_ID[copy_id(1, 0)]["name"])["id"] == copy_id(1, 0)
+
+    # A boot sees them in the table only; it registers them again.
+    for pid in (copy_id(1, 0), copy_id(1, 1)):
+        del PROPERTIES_BY_ID[pid]
+    import src.persistence as _persistence  # the conftest wrapper re-arms the one-shot guard
+    await _persistence.init_db_state()
+    assert copy_id(1, 0) in PROPERTIES_BY_ID and is_released(copy_id(1, 1))
+
+
+async def test_a_copy_can_be_bought_and_named_names_are_reserved(db):
+    from src.persistence import save_property_owner
+    register_copy("lemonade_stand__2")
+    _state.released_properties.add("lemonade_stand__2")
+    _set_level(7, 50)
+    await add_balance(7, 100_000)
+    await _give_property(7, "lemonade_stand")
+    ctx = _ctx(7)
+    await AssetsCog.assets_buy.callback(AssetsCog(bot=None), ctx, name="Lemonade Stand #2")
+    assert _state.property_owners["lemonade_stand__2"]["owner_id"] == 7
+
+    row = _state.property_owners["lemonade_stand"]
+    await save_property_owner("lemonade_stand", row)
+    await AssetsCog.assets_rename.callback(AssetsCog(bot=None), ctx, "Lemonade", "Stand", "Hot", "Dog", "Cart", "#4")
+    assert "Name Taken" in ctx.sent_embeds[-1].title

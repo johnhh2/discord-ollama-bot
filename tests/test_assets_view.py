@@ -1,4 +1,5 @@
 """The !assets buttons and dropdowns (src/assets_view.py)."""
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -68,20 +69,32 @@ async def test_own_portfolio_has_browse_and_manage_but_not_the_subcommand_list(d
     assert "Subcommands" not in ctx.sent_embeds[-1].description
 
 
+async def test_portfolio_offers_repair_only_while_a_deed_is_damaged(db, forwarded):
+    await _give_property(1, "lemonade_stand")
+    view = AssetsView(AssetsCog(bot=None), FakeMember(uid=1))
+    assert "Repair" not in _labels(view)
+
+    _state.property_owners["lemonade_stand"].update(damaged_at=time.time(), repair_cost=500)
+    view = AssetsView(AssetsCog(bot=None), FakeMember(uid=1))
+    view.message = FakeMessage()
+    assert _labels(view) == ["Browse offerings", "Manage properties", "Repair"]
+    await _button(view, "Repair").callback(_interaction(1))
+    assert forwarded[-1] == ("repair", (), {})
+
+
 async def test_someone_elses_portfolio_has_no_buttons(db):
     ctx = _ctx(1)
     await AssetsCog.cmd_assets.callback(AssetsCog(bot=None), ctx, FakeMember(uid=2))
     assert ctx.sent_views == []
 
 
-async def test_browse_lines_each_say_one_available(db):
+async def test_browse_lines_end_at_the_daily_revenue(db):
     _set_level(1, 50)
     ctx = _ctx(1)
     await AssetsCog.assets_browse.callback(AssetsCog(bot=None), ctx, 1)
     text = ctx.sent_embeds[-1].description
     lemonade = next(line for line in text.splitlines() if "Lemonade Stand" in line)
-    assert lemonade.endswith("• 1 available")
-    assert "available" not in next(line for line in text.splitlines() if line.startswith("**Tier 1**"))
+    assert lemonade.endswith("🪙/day") and "available" not in text
 
 
 async def test_browse_dropdown_then_buy_forwards_the_pick(db, forwarded):

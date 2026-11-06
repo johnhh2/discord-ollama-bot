@@ -91,6 +91,13 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_state, "user_artifact_acquired_at", {})
     monkeypatch.setattr(_state, "property_owners", {})
     monkeypatch.setattr(_state, "released_properties", set())
+    # Numbered copies register into the catalog itself (src/properties.py).
+    import src.properties as _properties
+    _properties.PROPERTIES[:] = [p for p in _properties.PROPERTIES if "copy_of" not in p]
+    for _catalog in (_properties.PROPERTIES_BY_ID, _properties.PROPERTY_UPGRADES,
+                     _properties.PROPERTY_SECURITY_UPGRADES):
+        for _pid in [k for k in _catalog if _properties.COPY_SEP in k]:
+            del _catalog[_pid]
     monkeypatch.setattr(_state, "lottery_ticket_grants", {})
     monkeypatch.setattr(_state, "rigged_slots", {})
     monkeypatch.setattr(_state, "rigged_flips", {})
@@ -246,6 +253,19 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_shop_cog_mod, "confirm_prompt", _auto_confirm)   # `!artifacts sell`
     import src.cogs.announce_cog as _announce_cog_mod
     monkeypatch.setattr(_announce_cog_mod, "confirm_purchase", _auto_confirm)  # the paid `!announce`
+
+    # The `!steal` panel (src/steal_view.py) submits a typed tier or deed as
+    # if Submit were pressed; with nothing picked it's dismissed. Panel tests
+    # monkeypatch this back to the real one.
+    import src.cogs.economy_cog as _economy_cog_mod
+
+    async def _auto_steal(cog, ctx, target, *, tier=None, pid=None):
+        if tier:
+            await cog._run_steal(ctx, target, tier)
+        elif pid:
+            from src.properties import PROPERTIES_BY_ID
+            await cog._run_property_theft(ctx, PROPERTIES_BY_ID[pid])
+    monkeypatch.setattr(_economy_cog_mod, "open_steal_panel", _auto_steal)
 
     # The insurance tier picker (confirm_choice) auto-picks the highlighted
     # default choice — the tier the command was given, else the buyer's

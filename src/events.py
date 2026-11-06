@@ -304,7 +304,7 @@ async def _handle_soundboard_ratelimit(bot, guild_id: int, user_id: int):
         return
 
 
-async def _auto_daily(author, channel) -> tuple[int, int]:
+async def _auto_daily(author, channel, *, reserve_claim: bool = False) -> tuple[int, int]:
     """Award daily coins (plus any pending property revenue) on first
     interaction of the day. Sends a short message if awarded.
 
@@ -316,7 +316,10 @@ async def _auto_daily(author, channel) -> tuple[int, int]:
     flip/slots gamble: the property portion only joins the stake for users
     who opted in with `!daily property`, and then rides as the gamble's
     record_exclude so property income can't inflate the flip/slots records.
+    It passes `reserve_claim` so auto-repair leaves the claimed coins for that
+    stake.
     """
+    from src.property_repair import claim_report
     from src.properties import bank_property_revenue
     uid = author.id
     await _ensure_user(uid)
@@ -355,6 +358,7 @@ async def _auto_daily(author, channel) -> tuple[int, int]:
     # rolls itself back if the balance write fails.
     prop_rev = await bank_property_revenue(uid)
     await save_economy(uid=uid)
+    theft_str = await claim_report(uid, keep=DAILY_REWARD + prop_rev if reserve_claim else 0)
     greeting = f"Welcome, **{author.display_name}**! 🎉 Here are your first" if is_new else "Daily coins ready!"
     prop_str = f" + **{prop_rev:,} 🪙** property revenue" if prop_rev else ""
     ins_str = f"\n🛡️ Insurance paid since your last claim: **{ins_paid:,} 🪙**" if ins_paid else ""
@@ -371,7 +375,7 @@ async def _auto_daily(author, channel) -> tuple[int, int]:
         )
     await channel.send(embed=emb(
         "🪙 Daily Reward",
-        f"{greeting} **{DAILY_REWARD:,} 🪙**{prop_str} added. Balance: {await get_balance(uid):,} 🪙{ins_str}{lapse_str}{prop_note}",
+        f"{greeting} **{DAILY_REWARD:,} 🪙**{prop_str} added. Balance: {await get_balance(uid):,} 🪙{ins_str}{lapse_str}{theft_str}{prop_note}",
         C_GREEN,
     ), silent=True)
     return DAILY_REWARD + prop_rev, prop_rev

@@ -851,7 +851,7 @@ async def test_buy_deed_taken_during_confirm_no_charge(db, monkeypatch):
 
     assert await get_balance(uid) == prop["cost"] + 500
     assert _state.property_owners[prop["id"]]["owner_id"] == rival
-    assert any("Not For Sale" in (e.title or "") for e in ctx.sent_embeds)
+    assert any("Already Owned" in (e.title or "") for e in ctx.sent_embeds)
 
 
 async def test_market_buy_delisted_during_confirm_no_charge(db, monkeypatch):
