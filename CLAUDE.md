@@ -504,9 +504,16 @@ block and `save_user_artifact`'s first insert only).
   `!artifacts` gates on `user_global_display_level(uid)` (the user's highest
   level in any guild — the same number `!profile` shows), not the level in
   the guild the command ran in. It works in DMs too.
-- **Level and cost live in the catalog, not the tests.** Levels 5–50 in
-  5-step increments; two artifacts may share a level (both property deeds
-  sit at 40, Silas and the upgrade discount at 45). Existing tests assert
+- **Retired artifacts stay in the code.** `RETIRED_ARTIFACTS` (the
+  missed-day bank deed, the savings boost, the mogul boost) are off sale:
+  never listed, never numbered, never bought. Owners keep the effect they
+  paid for and see it as "Retired" with a sell-back at half the old price
+  through the sell dropdown. Every effect helper, `_artifact_by_id` and the
+  net-worth sum read `ALL_ARTIFACTS`; dropping one from there would end an
+  owner's effect without a refund, and the savings boost would re-price
+  unbanked interest. Retire an artifact by moving it, never by deleting it.
+- **Level and cost live in the catalog, not the tests.** Levels 5–45 in
+  5-step increments; two artifacts may share a level. Existing tests assert
   on the 🔒 markers by level, not by list index — `!artifacts buy <n>`
   numbers shift whenever an entry is inserted.
 

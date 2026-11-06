@@ -34,7 +34,7 @@ from src.persistence import (
     save_ragebait, save_mock, save_tax, save_curse,
     save_user_artifact, delete_user_artifact, save_economy, try_set_record, save_leveling,
 )
-from src.artifacts import ARTIFACTS, owned_qty, owned_artifact_count
+from src.artifacts import ARTIFACTS, RETIRED_ARTIFACTS, ALL_ARTIFACTS, owned_qty, owned_artifact_count
 from src.confirm_view import confirm_purchase, confirm_choice, confirm_prompt
 from src.settings_views import pick_from_list, pick_from_menus
 from src.guild_config import get_guild_cfg
@@ -141,7 +141,7 @@ def _artifact_sell_price(art: dict) -> int:
 
 
 def _artifact_by_id(artifact_id: str) -> dict:
-    return next(a for a in ARTIFACTS if a["id"] == artifact_id)
+    return next(a for a in ALL_ARTIFACTS if a["id"] == artifact_id)
 
 
 def _artifact_options(uid: int, lvl: int, action: str) -> list[tuple[str, str]]:
@@ -155,6 +155,10 @@ def _artifact_options(uid: int, lvl: int, action: str) -> list[tuple[str, str]]:
                 options.append((f"{i}. {art['effect'][:70]} — +{_artifact_sell_price(art):,} 🪙", art["id"]))
         elif owned < art["max"] and lvl >= art.get("level", 1):
             options.append((f"{i}. {art['effect'][:70]} — {art['cost']:,} 🪙", art["id"]))
+    if action == "sell":
+        for art in RETIRED_ARTIFACTS:
+            if owned_qty(uid, art["id"]) > 0:
+                options.append((f"Retired: {art['effect'][:62]} — +{_artifact_sell_price(art):,} 🪙", art["id"]))
     return options
 
 
@@ -584,6 +588,9 @@ class ShopCog(commands.Cog):
                     lines.append(f"~~**{i}.** {art['effect']} — **{art['cost']:,} 🪙**~~ 🔒 **Lvl {req}**")
                 else:
                     lines.append(f"**{i}.** {art['effect']} — **{art['cost']:,} 🪙**")
+            for art in RETIRED_ARTIFACTS:
+                if owned_qty(uid, art["id"]) > 0:
+                    lines.append(f"**Retired:** {art['effect']} — ✅ **Owned** · sells for {_artifact_sell_price(art):,} 🪙")
             lines.append("")
             lines.append("Buy one with `!artifacts buy`, or sell one back for half its price with `!artifacts sell`.")
             await send_ephemeral(ctx, embed=emb("🏺 Artifacts", "\n".join(lines), C_PURPLE))

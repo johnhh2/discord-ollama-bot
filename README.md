@@ -80,7 +80,7 @@ PvP works too, with SAN/UCI move input, board rendering, threat analysis (`!ches
 ### 🛒 Shop with real consequences
 Coins buy actual Discord effects: nicknames, role creation/colors, channel renames and locks, mock/curse/ragebait text effects, taxing another user, UNO-reverse cards, a message read aloud in a voice channel (`!shop announce`, 100 coins a character), and social insurance (1k a day) that blocks all of the above. Crime is covered by personal insurance, which refunds rather than blocks. Prices are centrally tuned in [src/config.py](src/config.py).
 
-`!artifacts` sells twelve permanent upgrades unlocked by level (5 through 50) and owned across every server: a bail discount, a steal boost, an extra daily scratchoff, a higher savings rate, a bigger missed-day property revenue bank, an NPC heist partner, and more.
+`!artifacts` sells nine permanent upgrades unlocked by level (5 through 45) and owned across every server: a bail discount, a steal boost, an extra daily scratchoff, an NPC heist partner, a property upgrade discount, and more.
 
 ### 🎮 Games & progression
 - `!hangman` (~7.5k-word list, rarity-weighted payouts), `!ttt`, `!c4`, `!race` (multiplayer with a shared pot, or `!race @Bot [amount]` — a coin flip with a track, playable with no coins at all), `!puzzle`

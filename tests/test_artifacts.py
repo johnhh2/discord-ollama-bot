@@ -10,7 +10,7 @@ import pytest
 import src.state as _state
 import src.persistence as _persistence
 import src.cogs.shop_cog as _shop_cog
-from src.artifacts import ARTIFACTS, get_slot_reel
+from src.artifacts import ARTIFACTS, RETIRED_ARTIFACTS, get_slot_reel
 from src.config import ARTIFACT_SLOTS_BLANK_COST, SLOT_REEL
 from src.cogs.shop_cog import ShopCog
 from src.economy import add_balance, get_balance
@@ -58,6 +58,12 @@ def _set_level(uid: int, display_level: int, gid: int = 42):
 
 async def _invoke(cog: ShopCog, ctx: FakeCtx, *args):
     await cog.shop_artifacts.callback(cog, ctx, *args)
+
+
+def _picks(result):
+    async def _stub(ctx, **kwargs):
+        return result
+    return _stub
 
 
 # ── listing ───────────────────────────────────────────────────────────────────
@@ -326,7 +332,7 @@ async def test_godmode_sell_pays_nothing(db):
     assert await get_balance(uid) == 0
 
 
-async def test_selling_the_savings_artifact_keeps_interest_already_earned(db):
+async def test_selling_the_savings_artifact_keeps_interest_already_earned(db, monkeypatch):
     """The boost is read from ownership, so the sale first banks each
     deposit's grown value — a month of boosted interest can't vanish."""
     from src.economy import get_savings_value, add_savings
@@ -334,7 +340,7 @@ async def test_selling_the_savings_artifact_keeps_interest_already_earned(db):
 
     cog = ShopCog(bot=None)
     uid = 7025
-    art_idx = next(i for i, a in enumerate(ARTIFACTS, start=1) if a["id"] == "savings_rate_boost")
+    monkeypatch.setattr(_shop_cog, "pick_from_list", _picks(["savings_rate_boost"]))
     month_ago = time.time() - 30 * 86400
     _state.user_artifacts[uid] = {"savings_rate_boost": 1}
     _state.user_artifact_acquired_at[uid] = {"savings_rate_boost": month_ago}
@@ -344,7 +350,7 @@ async def test_selling_the_savings_artifact_keeps_interest_already_earned(db):
     before = await get_savings_value(uid)
     assert before > 100_000
 
-    await _invoke(cog, _ctx(uid), "sell", str(art_idx))
+    await _invoke(cog, _ctx(uid), "sell")
 
     assert "savings_rate_boost" not in _state.user_artifacts.get(uid, {})
     assert await get_savings_value(uid) == pytest.approx(before, rel=1e-6)
@@ -562,30 +568,68 @@ async def test_catalog_levels_costs_and_order():
     assert len(by_id) == len(ARTIFACTS)
 
     assert (by_id["crime_catch_reducer"]["level"], ARTIFACT_CRIME_CATCH_COST) == (30, 200_000)
-    assert (by_id["streak_scratchoffs"]["level"], ARTIFACT_STREAK_SCRATCH_COST) == (35, 200_000)
-    assert (by_id["property_cap_deed"]["level"], ARTIFACT_PROPERTY_CAP_COST) == (40, 150_000)
-    assert by_id["property_cap_deed"]["property_accrual_cap_bonus"] == 10_000
-    assert "10,000" in by_id["property_cap_deed"]["effect"]
-    assert (by_id["savings_rate_boost"]["level"], ARTIFACT_SAVINGS_BOOST_COST) == (40, 200_000)
-    assert (by_id["property_upgrade_discount"]["level"], ARTIFACT_UPGRADE_DISCOUNT_COST) == (45, 300_000)
-    assert by_id["property_upgrade_discount"]["property_upgrade_discount_pct"] == 20
-    assert (by_id["silas_heist_partner"]["level"], ARTIFACT_HEIST_PARTNER_COST) == (45, 250_000)
+    assert (by_id["streak_scratchoffs"]["level"], ARTIFACT_STREAK_SCRATCH_COST) == (35, 300_000)
+    assert (by_id["silas_heist_partner"]["level"], ARTIFACT_HEIST_PARTNER_COST) == (40, 400_000)
     assert by_id["silas_heist_partner"]["heist_npc_partner"] == 1
     assert "Silas" in by_id["silas_heist_partner"]["effect"]
-    assert (by_id["property_mogul"]["level"], ARTIFACT_PROPERTY_BOOST_COST) == (50, 500_000)
-    assert by_id["property_mogul"]["effect"] == (
-        "Your property revenue increases by 5% for each property you own (up to 25%)"
-    )
-    assert by_id["property_mogul"]["property_revenue_pct_cap"] == 25
-    for art in ARTIFACTS:
+    assert (by_id["property_upgrade_discount"]["level"], ARTIFACT_UPGRADE_DISCOUNT_COST) == (45, 500_000)
+    assert by_id["property_upgrade_discount"]["property_upgrade_discount_pct"] == 20
+    assert [a["id"] for a in ARTIFACTS][6:] == [
+        "streak_scratchoffs", "silas_heist_partner", "property_upgrade_discount",
+    ]
+
+    # Retired: off sale, but owners paid these prices and sell back at half.
+    retired = {a["id"]: a for a in RETIRED_ARTIFACTS}
+    assert set(retired) == {"property_cap_deed", "savings_rate_boost", "property_mogul"}
+    assert not set(retired) & set(by_id)
+    assert retired["property_cap_deed"]["cost"] == ARTIFACT_PROPERTY_CAP_COST == 150_000
+    assert retired["property_cap_deed"]["property_accrual_cap_bonus"] == 10_000
+    assert retired["savings_rate_boost"]["cost"] == ARTIFACT_SAVINGS_BOOST_COST == 200_000
+    assert retired["property_mogul"]["cost"] == ARTIFACT_PROPERTY_BOOST_COST == 500_000
+    assert retired["property_mogul"]["property_revenue_pct_cap"] == 25
+    for art in ARTIFACTS + RETIRED_ARTIFACTS:
         assert art["cost"] > 0 and art["max"] >= 1
+
+
+async def test_retired_artifacts_are_off_sale_but_owners_keep_and_sell(db, monkeypatch):
+    """A retired artifact is neither listed nor offered for purchase, even at
+    level 50; an owner still has its effect, sees it, and can sell it back."""
+    from src.artifacts import property_accrual_cap_bonus
+
+    cog = ShopCog(bot=None)
+    buyer, owner = 7040, 7041
+    _set_level(buyer, 50)
+    calls = _menu_pick(monkeypatch, "pick_from_menus", None)
+    ctx = _ctx(buyer)
+    await _invoke(cog, ctx)
+    menus = {key: [v for _, v in options] for key, _, options in calls[0]["menus"]}
+    retired_ids = {a["id"] for a in RETIRED_ARTIFACTS}
+    assert not retired_ids & set(menus["buy"])
+    assert "10,000" not in ctx.sent_embeds[-1].description
+    assert "Retired" not in ctx.sent_embeds[-1].description
+
+    _state.user_artifacts[owner] = {"property_cap_deed": 1}
+    assert property_accrual_cap_bonus(owner) == 10_000
+    calls.clear()
+    ctx = _ctx(owner)
+    await _invoke(cog, ctx)
+    menus = {key: [v for _, v in options] for key, _, options in calls[0]["menus"]}
+    assert menus["sell"] == ["property_cap_deed"]
+    assert "Retired" in ctx.sent_embeds[-1].description
+
+    monkeypatch.setattr(_shop_cog, "pick_from_list", _picks(["property_cap_deed"]))
+    ctx = _ctx(owner)
+    await _invoke(cog, ctx, "sell")
+    assert "Artifact Sold" in ctx.sent_embeds[-1].title
+    assert await get_balance(owner) == 75_000
+    assert property_accrual_cap_bonus(owner) == 0
 
 
 async def test_savings_artifact_copy_matches_rates():
     """The savings artifact's blurb quotes both rates from the constants the
     math uses, so a rate change can't leave stale copy behind."""
     from src.economy import SAVINGS_DAILY_PCT, ARTIFACT_SAVINGS_DAILY_PCT
-    art = next(a for a in ARTIFACTS if a["id"] == "savings_rate_boost")
+    art = next(a for a in RETIRED_ARTIFACTS if a["id"] == "savings_rate_boost")
     assert SAVINGS_DAILY_PCT == "0.60%"
     assert ARTIFACT_SAVINGS_DAILY_PCT == "0.80%"
     assert ARTIFACT_SAVINGS_DAILY_PCT in art["effect"]

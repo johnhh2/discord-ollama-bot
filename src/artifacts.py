@@ -118,6 +118,27 @@ ARTIFACTS: list[dict] = [
         "scratchoffs_at_25_streak": 1,
     },
     {
+        "id": "silas_heist_partner",
+        "level": 40,
+        "cost": ARTIFACT_HEIST_PARTNER_COST,
+        "effect": "Silas (Lv 1) joins any bank heist you host, holding the 4️⃣ slot until a third player takes it",
+        "max": 1,
+        "heist_npc_partner": 1,
+    },
+    {
+        "id": "property_upgrade_discount",
+        "level": 45,
+        "cost": ARTIFACT_UPGRADE_DISCOUNT_COST,
+        "effect": "Property upgrades cost you 20% less",
+        "max": 1,
+        "property_upgrade_discount_pct": 20,
+    },
+]
+
+# Off sale. Owners keep the effect they paid for and can sell it back for
+# half the old price, so every effect helper reads ALL_ARTIFACTS.
+RETIRED_ARTIFACTS: list[dict] = [
+    {
         "id": "property_cap_deed",
         "level": 40,
         "cost": ARTIFACT_PROPERTY_CAP_COST,
@@ -137,22 +158,6 @@ ARTIFACTS: list[dict] = [
         "savings_rate_boost": 1,
     },
     {
-        "id": "property_upgrade_discount",
-        "level": 45,
-        "cost": ARTIFACT_UPGRADE_DISCOUNT_COST,
-        "effect": "Property upgrades cost you 20% less",
-        "max": 1,
-        "property_upgrade_discount_pct": 20,
-    },
-    {
-        "id": "silas_heist_partner",
-        "level": 45,
-        "cost": ARTIFACT_HEIST_PARTNER_COST,
-        "effect": "Silas (Lv 1) joins any bank heist you host, holding the 4️⃣ slot until a third player takes it",
-        "max": 1,
-        "heist_npc_partner": 1,
-    },
-    {
         "id": "property_mogul",
         "level": 50,
         "cost": ARTIFACT_PROPERTY_BOOST_COST,
@@ -162,6 +167,8 @@ ARTIFACTS: list[dict] = [
         "property_revenue_pct_cap": 25,
     },
 ]
+
+ALL_ARTIFACTS: list[dict] = ARTIFACTS + RETIRED_ARTIFACTS
 
 
 def artifacts_at_level(level: int) -> list[dict]:
@@ -195,7 +202,7 @@ def owned_artifact_count(uid: int) -> int:
 def _owned_total(uid: int, key: str) -> int:
     """Sum a payload key across every artifact the user owns."""
     owned = state.user_artifacts.get(uid, {})
-    return sum(art.get(key, 0) * owned.get(art["id"], 0) for art in ARTIFACTS)
+    return sum(art.get(key, 0) * owned.get(art["id"], 0) for art in ALL_ARTIFACTS)
 
 
 def slots_blanks_removed(uid: int) -> int:
@@ -257,7 +264,7 @@ def savings_boost_since(uid: int) -> float | None:
         return None
     since = [
         artifact_acquired_at(uid, art["id"])
-        for art in ARTIFACTS if art.get("savings_rate_boost")
+        for art in ALL_ARTIFACTS if art.get("savings_rate_boost")
     ]
     known = [ts for ts in since if ts is not None]
     return min(known) if known else None

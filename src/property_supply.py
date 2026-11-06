@@ -82,7 +82,7 @@ def copy_threshold(tier: int, k: int) -> float:
 def economy_net_worth(now: float | None = None) -> int:
     """Wallets + savings (with interest to date) + property book value +
     artifacts at catalog cost, bot-wide."""
-    from src.artifacts import ARTIFACTS
+    from src.artifacts import ALL_ARTIFACTS
     from src.economy import savings_growth
     now = time.time() if now is None else now
     wallets = savings = 0.0
@@ -90,7 +90,7 @@ def economy_net_worth(now: float | None = None) -> int:
         wallets += u.get("balance", 0) or 0
         for e in u.get("savings", []):
             savings += e["amount"] * savings_growth(e["deposited_at"], now, int(uid_str))
-    costs = {a["id"]: a["cost"] for a in ARTIFACTS}
+    costs = {a["id"]: a["cost"] for a in ALL_ARTIFACTS}
     artifacts = sum(costs.get(aid, 0) * qty
                     for owned in state.user_artifacts.values() for aid, qty in owned.items())
     return int(wallets + savings + total_owned_property_value() + artifacts)
