@@ -600,10 +600,13 @@ sites read personal).
   50/75/100% of a repair bill, capped at 30k/60k/120k a theft. Unsold while
   `PROPERTY_INSURANCE_LIVE` is False: hidden from the menu, the panel and the
   typed command until property theft exists to cover.
-- **Bare `!shop insurance` is the menu** (`ShopCog._insurance_menu`): every
-  type on sale with the user's tier and subscription, and a dropdown whose
-  pick opens that type's subscription prompt, plus a cancel per active
-  subscription. Typed, `!shop insurance [type] [tier]` subscribes and
+- **Bare `!shop insurance` is the menu** (`InsuranceView` in
+  `src/insurance_view.py`): one message. The overview shows each type's
+  coverage only, no tier list, and a type dropdown; a pick redraws it as
+  that type's tier buttons, Cancel subscription and Back, and a press's
+  reply lands in a field under the page. Presses run `_insurance_apply` /
+  `_insurance_unsubscribe`, the typed path's steps, with `ctx.send`
+  captured. Typed, `!shop insurance [type] [tier]` subscribes and
   `… unsub` cancels; a missing type word means personal.
 - **Every purchase is a subscription.** There is no prepaying a number of
   days: a one-off buy is subscribe then cancel, since cancelling keeps the
@@ -639,9 +642,10 @@ for the economy by design.
   on it now (`insurance_switch_cost`, ceil'd), a downgrade is free but
   refunds nothing. Never let a cheap tier's days silently become an
   expensive tier's.
-- **Every purchase prompt shows all the type's tiers as buttons**
-  (`confirm_choice` in `src/confirm_view.py`; `ShopCog._pick_insurance_tier`).
-  A tier word in the command only pre-highlights a button. Tests get the
+- **Every purchase prompt shows all the type's tiers as buttons**, each
+  labelled with its premium, what it charges now and its cover
+  (`ShopCog._insurance_tier_choices`, used by the menu and by
+  `confirm_choice` on the typed path). A tier word in the command only pre-highlights a button. Tests get the
   highlighted choice back from conftest's `confirm_choice` stub.
 - **Migration 0065** backfilled every existing policy and subscription to
   `basic` (they were all bought at 1k/day); a NULL `insurance_tier` reads as

@@ -1662,10 +1662,10 @@ class ShopCog(commands.Cog):
     # Three types (INSURANCE_TYPES): personal refunds crime losses, social
     # blocks the shop effects, property covers repair bills (unsold until
     # PROPERTY_INSURANCE_LIVE). Each type is its own policy and subscription.
-    # Bare `!shop insurance` is the menu: a dropdown of the types whose pick
-    # opens that type's subscription prompt. Every purchase or subscribe
-    # opens the tier picker — one button per tier, so the buyer sees every
-    # price/coverage before committing. A user has ONE tier per type at a time
+    # Bare `!shop insurance` is the menu (src/insurance_view.py): one message,
+    # a type dropdown, then that type's tier buttons with a Back. Typed, a
+    # subscribe opens the same tier buttons through confirm_choice. Every
+    # button label carries the tier's price and cover. A user has ONE tier per type at a time
     # (policy and subscription agree — set_insurance_tier); switching moves
     # the remaining coverage with them, charging the daily difference on it
     # for an upgrade (insurance_switch_cost) and nothing for a downgrade.
@@ -1713,68 +1713,51 @@ class ShopCog(commands.Cog):
         sweep's charge lands while it still holds and extends from it."""
         return expiry is None or expiry < next_daily_reset_ts()
 
-    def _insurance_tier_lines(self, kind: str) -> str:
-        """One line per tier: price and what it covers."""
-        tiers = INSURANCE_TYPES[kind]["tiers"]
-        if kind == "social":
-            return "\n".join(
-                f"**Social** — **{info['cost']:,} 🪙/day** · blocks {self.INSURANCE_PROTECTS_STR}"
-                for info in tiers.values()
-            )
-        if kind == "property":
-            verb, what, per = "covers", "of a property repair bill", "theft"
-        else:
-            verb, what, per = "refunds", "of what crime takes from you", "robbery"
-        return "\n".join(
-            f"**{name.title()}** — **{info['cost']:,} 🪙/day** · {verb} **{info['refund_pct']}%** "
-            f"{what}, up to {info['refund_cap']:,} 🪙 per {per}"
-            for name, info in tiers.items()
-        )
+    INSURANCE_BLURBS = {
+        "personal": "Refunds part of what crime takes from you, into your wallet. The thief keeps their take.",
+        "social": f"Blocks {INSURANCE_PROTECTS_STR} aimed at you.",
+        "property": "Covers part of a property's repair bill after a theft.",
+    }
 
-    def _insurance_status_lines(self, uid: int, kind: str) -> str:
-        """The buyer's current coverage + subscription of one type."""
+    @staticmethod
+    def _short_coins(n: int) -> str:
+        if n >= 1_000_000 and n % 100_000 == 0:
+            return f"{n / 1_000_000:g}m"
+        if n >= 1_000 and n % 100 == 0:
+            return f"{n / 1_000:g}k"
+        return f"{n:,}"
+
+    def _insurance_coverage_line(self, uid: int, kind: str) -> str:
+        """The buyer's coverage of one type. Every purchase is a subscription,
+        so coverage without one is a cancelled subscription running out."""
         exp = get_insurance_expiry(uid, kind)
         tier = get_insurance_tier(uid, kind)
         sub_tier = insurance_policies(kind)[1].get(uid)
-        one_tier = len(INSURANCE_TYPES[kind]["tiers"]) == 1
-        coverage = "none"
         if exp and tier:
-            coverage = f"active, expires <t:{exp}:R>" if one_tier else f"**{tier.title()}**, expires <t:{exp}:R>"
+            what = "Active" if len(INSURANCE_TYPES[kind]["tiers"]) == 1 else (
+                f"**{tier.title()}**, {self._coverage_text(kind, tier)}")
+            tail = "renews at the 5am reset" if sub_tier else f"cancelled, ends <t:{exp}:R>"
+            return f"**Coverage:** {what} · {tail}"
         if sub_tier:
-            sub = ("renews" if one_tier else f"**{sub_tier.title()}** — renews") + " daily at the 5am reset"
-        else:
-            sub = "none"
-        return f"**Current coverage:** {coverage}\n**Subscription:** {sub}"
-
-    def _insurance_switch_note(self, uid: int, kind: str) -> str:
-        """Explain what picking a different tier does to active coverage."""
-        if len(INSURANCE_TYPES[kind]["tiers"]) == 1 or get_insurance_expiry(uid, kind) is None:
-            return ""
-        return (
-            "\n\nPicking another tier moves your remaining coverage with you: an upgrade "
-            "charges the daily difference on it now (already in the button prices), a "
-            "downgrade is free but refunds nothing."
-        )
+            # Subscribed but uncovered: the last sweep couldn't charge.
+            return "**Coverage:** none · subscribed, it starts at the next 5am charge you can afford"
+        return "**Coverage:** none"
 
     def _insurance_overview(self, uid: int) -> str:
-        """Every type on sale: its tiers, then the user's status."""
-        blocks = []
-        for kind in self._insurance_kinds():
-            spec = INSURANCE_TYPES[kind]
-            blocks.append(
-                f"__{spec['emoji']} {spec['label']} insurance__\n"
-                + self._insurance_tier_lines(kind) + "\n"
-                + self._insurance_status_lines(uid, kind)
-            )
-        return "\n\n".join(blocks)
+        """Every type on sale with the user's coverage of it."""
+        return "\n\n".join(
+            f"__{INSURANCE_TYPES[kind]['emoji']} {INSURANCE_TYPES[kind]['label']} insurance__\n"
+            + self._insurance_coverage_line(uid, kind)
+            for kind in self._insurance_kinds()
+        )
 
     def _insurance_info_embed(self, uid: int) -> discord.Embed:
         return emb(
             "🛡️ Insurance",
             "Insurance is a daily subscription, charged at the 5am reset. Bare `!shop insurance` "
             "opens the menu; typed, `!shop insurance [personal|social] [tier]` subscribes and "
-            "`!shop insurance [type] unsub` stops. The type defaults to personal, and every prompt "
-            "shows all of its tiers, so the tier word is optional. Cancelling keeps the coverage "
+            "`!shop insurance [type] unsub` stops. The type defaults to personal, and the prompt "
+            "shows every tier, so the tier word is optional. Cancelling keeps the coverage "
             "you've paid for.\n\n"
             "Crime still goes through with personal insurance — the insurer pays the refund into your "
             "wallet and the thief keeps their take. Social insurance stops the effects outright. Both "
@@ -1783,28 +1766,40 @@ class ShopCog(commands.Cog):
             C_PURPLE,
         )
 
-    async def _pick_insurance_tier(self, ctx: commands.Context, *, kind: str, title: str, description: str,
-                                   days: int, preferred: str) -> str | None:
-        """Show the type's tier buttons (plus Cancel). Each label carries what
-        that tier costs right now: `days` × its premium plus any upgrade
-        surcharge on the buyer's remaining coverage; with days=0 (a sub that
-        needs no starter day) it shows the daily premium instead. Returns the
-        picked tier name, or None on Cancel / timeout."""
-        uid = ctx.author.id
+    def _insurance_prompt(self, uid: int, kind: str) -> str:
+        """What a type's tier buttons sit under: what it does, the buyer's
+        coverage, and what pressing a button charges now."""
+        exp = get_insurance_expiry(uid, kind)
+        lines = [
+            self.INSURANCE_BLURBS[kind] + " Charged at the 5am reset each day, valid in every server.",
+            self._insurance_coverage_line(uid, kind),
+        ]
+        if exp is None:
+            lines.append("The first day is charged now so coverage starts immediately.")
+        elif self._sub_needs_first_day(exp):
+            lines.append("Your coverage runs out before the next 5am charge, so the first day is charged now.")
+        if exp is not None and len(INSURANCE_TYPES[kind]["tiers"]) > 1:
+            lines.append("Another tier moves your remaining coverage with you: an upgrade charges the "
+                         "difference on it now, a downgrade refunds nothing.")
+        return "\n\n".join(lines)
+
+    def _insurance_tier_choices(self, uid: int, kind: str, preferred: str | None) -> list[dict]:
+        """One button per tier. A label reads 'Standard — 3,000 🪙/day (3,000
+        now) · 75% up to 200k': the premium, what pressing it charges now (the
+        starter day plus any upgrade surcharge), and the cover."""
+        days = 1 if self._sub_needs_first_day(get_insurance_expiry(uid, kind)) else 0
         choices = []
         for name, info in INSURANCE_TYPES[kind]["tiers"].items():
             if uid in state.godmode_users:
-                label = f"{name.title()} — free"
-            elif days > 0:
-                total = info["cost"] * days + insurance_switch_cost(uid, name, kind)
-                label = f"{name.title()} — {total:,} 🪙"
+                price = "free"
             else:
-                switch = insurance_switch_cost(uid, name, kind)
-                label = f"{name.title()} — {info['cost']:,} 🪙/day" + (f" (+{switch:,} now)" if switch else "")
-            choices.append({"label": label, "value": name, "default": name == preferred})
-        return await confirm_choice(
-            ctx, title=title, description=description, choices=choices, payer=ctx.author,
-        )
+                now = info["cost"] * days + insurance_switch_cost(uid, name, kind)
+                price = f"{info['cost']:,} 🪙/day" + (f" ({now:,} now)" if now else "")
+            cover = "" if kind == "social" else (
+                f" · {info['refund_pct']}% up to {self._short_coins(info['refund_cap'])}")
+            choices.append({"label": f"{name.title()} — {price}{cover}", "value": name,
+                            "default": name == preferred})
+        return choices
 
     @cmd_shop.command(name="insurance",
                       help="Insurance menu: personal refunds crime losses, social blocks mock/tax/nickname/role effects",
@@ -1851,34 +1846,11 @@ class ShopCog(commands.Cog):
             await self._insurance_subscribe(ctx, kind, tier_arg)
 
     async def _insurance_menu(self, ctx: commands.Context):
-        """Bare `!shop insurance`: every type with the user's tier, and a
-        dropdown whose pick opens that type's subscription prompt (or
-        cancels a subscription)."""
-        uid = ctx.author.id
-        options = []
-        for kind in self._insurance_kinds():
-            spec = INSURANCE_TYPES[kind]
-            low = min(t["cost"] for t in spec["tiers"].values())
-            price = f"{low:,} 🪙/day" if len(spec["tiers"]) == 1 else f"from {low:,} 🪙/day"
-            options.append((f"{spec['emoji']} Subscribe: {spec['label']} insurance — {price}", f"sub:{kind}"))
-        for kind in self._insurance_kinds():
-            if uid in insurance_policies(kind)[1]:
-                options.append((f"✖️ Cancel {INSURANCE_TYPES[kind]['label'].lower()} subscription", f"unsub:{kind}"))
-        picked = await pick_from_list(
-            ctx, title="🛡️ Insurance",
-            description=(
-                "Pick a type to subscribe: its premium is charged at the 5am reset each day, "
-                "and the first day now if you aren't covered.\n\n" + self._insurance_overview(uid)
-            ),
-            options=options, placeholder="Pick an insurance type…", multi=False,
-        )
-        if not picked:
-            return
-        action, kind = picked[0].split(":", 1)
-        if action == "unsub":
-            await self._insurance_unsubscribe(ctx, kind)
-        else:
-            await self._insurance_subscribe(ctx, kind, None)
+        """Bare `!shop insurance`: one message that pages from the overview to
+        a type's tier buttons and back (src/insurance_view.py)."""
+        from src.insurance_view import InsuranceView
+        view = InsuranceView(self, ctx)
+        view.message = await ctx.send(embed=view.embed(), view=view)
 
     async def _insurance_unsubscribe(self, ctx: commands.Context, kind: str = "personal"):
         uid = ctx.author.id
@@ -1902,46 +1874,24 @@ class ShopCog(commands.Cog):
         ))
 
     async def _insurance_subscribe(self, ctx: commands.Context, kind: str, tier_arg: str | None):
-        """`!shop insurance [type] [tier] sub` (or a menu pick): subscribe at
-        the picked tier, or move an existing subscription of that type — and
-        its coverage — to that tier."""
+        """Typed `!shop insurance [type] [tier]`: the tier buttons, then
+        `_insurance_apply` with the pick."""
+        uid = ctx.author.id
+        preferred = tier_arg or get_insurance_tier(uid, kind) or INSURANCE_TYPES[kind]["default"]
+        chosen = await confirm_choice(
+            ctx, title=f"{INSURANCE_TYPES[kind]['emoji']} {self._policy_name(kind)} Subscription",
+            description=self._insurance_prompt(uid, kind),
+            choices=self._insurance_tier_choices(uid, kind, preferred), payer=ctx.author,
+        )
+        if chosen:
+            await self._insurance_apply(ctx, kind, chosen)
+
+    async def _insurance_apply(self, ctx: commands.Context, kind: str, chosen: str):
+        """Subscribe at `chosen`, or move an existing subscription of that
+        type, and its coverage, to it."""
         uid = ctx.author.id
         key = uid
         subs = insurance_policies(kind)[1]
-        name = self._policy_name(kind)
-        cur_sub_tier = subs.get(key)
-        sub_exp = get_insurance_expiry(uid, kind)
-        if sub_exp is None:
-            first_day_str = "\n\nThe first day is charged now so coverage starts immediately."
-        elif self._sub_needs_first_day(sub_exp):
-            first_day_str = (
-                "\n\nYour current coverage runs out before the next 5am charge, so the first "
-                "day is charged now to keep it continuous."
-            )
-        else:
-            first_day_str = ""
-        already_str = (
-            f"\n\nYou're subscribed at **{cur_sub_tier.title()}** — picking another tier switches "
-            "the subscription (and your coverage) to it; the new premium starts at the next 5am reset."
-            if cur_sub_tier and len(INSURANCE_TYPES[kind]["tiers"]) > 1 else ""
-        )
-        preferred = tier_arg or get_insurance_tier(uid, kind) or INSURANCE_TYPES[kind]["default"]
-        chosen = await self._pick_insurance_tier(
-            ctx, kind=kind, title=f"{INSURANCE_TYPES[kind]['emoji']} {name} Subscription",
-            description=(
-                f"Subscribe to {name.lower()} — the premium is charged at the 5am reset each "
-                "day (whether or not you log on), adding 24h of coverage valid in every server. "
-                "Pick a tier:\n\n"
-                + self._insurance_tier_lines(kind)
-                + first_day_str
-                + already_str + "\n\n"
-                + self._insurance_status_lines(uid, kind)
-                + self._insurance_switch_note(uid, kind)
-            ),
-            days=1 if self._sub_needs_first_day(sub_exp) else 0, preferred=preferred,
-        )
-        if not chosen:
-            return
         # The picker wait is a long await — a concurrent subscribe may have
         # landed during the prompt.
         if subs.get(key) == chosen:

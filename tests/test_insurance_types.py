@@ -8,10 +8,13 @@ items, the save/load round trip and the 0086 grandfathering of social cover.
 import sqlite3
 import time as _time
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import discord
 
 import src.state as _state
 import src.persistence as _persistence
-import src.cogs.shop_cog as _shop_cog
 import src.migrations as _migrations
 from src.cogs.shop_cog import ShopCog
 from src.config import (
@@ -21,9 +24,10 @@ from src.economy import (
     add_balance, get_balance, is_insured, get_insurance_expiry, insurance_refund,
     renew_insurance_subs, sweep_insurance_subs,
 )
+from src.insurance_view import _TypeSelect
 from src.shop_hub import items_for
 from tests.fakes.db import FakeCursor
-from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild
+from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild, FakeMessage
 
 DAY = SHOP_INSURANCE_DURATION_SECS
 BASIC = SHOP_INSURANCE_TIERS["basic"]["cost"]
@@ -132,49 +136,102 @@ async def test_sweep_reaches_a_social_only_subscriber(db, monkeypatch):
 
 # ── the menu ─────────────────────────────────────────────────────────────────
 
-def _menu_pick(monkeypatch, value):
-    seen = {}
-
-    async def _pick(ctx, *, options, **kwargs):
-        seen["options"] = [v for _, v in options]
-        seen["description"] = kwargs.get("description", "")
-        return [value] if value else None
-    monkeypatch.setattr(_shop_cog, "pick_from_list", _pick)
-    return seen
+def _interaction(uid: int):
+    response = SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock(), edit_message=AsyncMock())
+    return SimpleNamespace(user=FakeMember(uid=uid), guild=SimpleNamespace(id=42), message=None,
+                           response=response)
 
 
-async def test_bare_insurance_opens_the_menu_without_property(db, monkeypatch):
+async def _open_menu(uid: int):
+    ctx = _ctx(uid)
     cog = ShopCog(bot=None)
-    seen = _menu_pick(monkeypatch, None)
-
-    await cog.shop_insurance.callback(cog, _ctx(9120))
-
-    assert seen["options"] == ["sub:personal", "sub:social"]
-    assert "Personal insurance" in seen["description"] and "Social insurance" in seen["description"]
+    await cog.shop_insurance.callback(cog, ctx)
+    return ctx, ctx.sent_views[-1]
 
 
-async def test_a_menu_pick_subscribes_to_that_type(db, monkeypatch):
-    cog = ShopCog(bot=None)
+async def _pick_type(view, kind: str):
+    select = next(i for i in view.children if isinstance(i, _TypeSelect))
+    select._values = [kind]
+    await select.callback(_interaction(view.owner.id))
+
+
+def _buttons(view):
+    return [b for b in view.children if isinstance(b, discord.ui.Button)]
+
+
+async def test_bare_insurance_shows_coverage_not_a_tier_list(db):
+    _state.insurance_subs[9120] = "standard"
+    _state.insurance[9120] = {"expires_at": _time.time() + 3600, "protected_from": [], "tier": "standard"}
+    ctx, view = await _open_menu(9120)
+
+    desc = ctx.sent_embeds[-1].description
+    assert "Personal insurance" in desc and "Social insurance" in desc
+    assert "**Standard**, **75%** of crime losses refunded" in desc and "renews at the 5am reset" in desc
+    assert "**Basic**" not in desc and "**Premium**" not in desc
+    assert "Subscription:" not in desc
+    select = next(i for i in view.children if isinstance(i, _TypeSelect))
+    assert [o.value for o in select.options] == ["personal", "social"]
+
+
+async def test_cancelled_coverage_says_when_it_ends(db):
+    _state.insurance[9123] = {"expires_at": _time.time() + 3600, "protected_from": [], "tier": "basic"}
+    ctx, _ = await _open_menu(9123)
+    assert "cancelled, ends <t:" in ctx.sent_embeds[-1].description
+
+
+async def test_a_type_pick_redraws_the_same_message_with_tier_buttons_and_back(db):
+    ctx, view = await _open_menu(9124)
+    await _pick_type(view, "personal")
+
+    assert len(ctx.sent_embeds) == 1
+    labels = [b.label for b in _buttons(view)]
+    assert labels[:3] == [
+        f"Basic — {BASIC:,} 🪙/day ({BASIC:,} now) · 50% up to 100k",
+        "Standard — 3,000 🪙/day (3,000 now) · 75% up to 200k",
+        "Premium — 6,000 🪙/day (6,000 now) · 100% up to 400k",
+    ]
+    assert labels[-1] == "Back" and "Cancel subscription" not in labels
+    assert "Personal" in view.embed().title
+
+
+async def test_a_tier_press_subscribes_and_shows_the_result_in_place(db):
     uid = 9121
     await add_balance(uid, SOCIAL)
-    _menu_pick(monkeypatch, "sub:social")
+    ctx, view = await _open_menu(uid)
+    view.message = FakeMessage()
+    await _pick_type(view, "social")
 
-    await cog.shop_insurance.callback(cog, _ctx(uid))
+    await _buttons(view)[0].callback(_interaction(uid))
 
     assert _state.social_insurance_subs[uid] == "social"
     assert await get_balance(uid) == 0
+    assert len(ctx.sent_embeds) == 1
+    assert view.embed().fields[0].name == "🛡️ Insurance Subscribed"
+    current = _buttons(view)[0]
+    assert current.disabled
+    assert "Cancel subscription" in [b.label for b in _buttons(view)]
 
 
-async def test_the_menu_offers_and_runs_a_cancel(db, monkeypatch):
-    cog = ShopCog(bot=None)
+async def test_cancel_and_back(db):
     uid = 9122
     _state.insurance_subs[uid] = "standard"
-    seen = _menu_pick(monkeypatch, "unsub:personal")
+    ctx, view = await _open_menu(uid)
+    view.message = FakeMessage()
+    await _pick_type(view, "personal")
 
-    await cog.shop_insurance.callback(cog, _ctx(uid))
-
-    assert "unsub:personal" in seen["options"] and "unsub:social" not in seen["options"]
+    await next(b for b in _buttons(view) if b.label == "Cancel subscription").callback(_interaction(uid))
     assert uid not in _state.insurance_subs
+    assert view.embed().fields[0].name == "🛡️ Insurance Unsubscribed"
+
+    await next(b for b in _buttons(view) if b.label == "Back").callback(_interaction(uid))
+    assert view.kind is None and not view.embed().fields
+
+
+async def test_only_the_invoker_can_press(db):
+    _, view = await _open_menu(9125)
+    other = _interaction(1)
+    assert await view.interaction_check(other) is False
+    other.response.send_message.assert_awaited()
 
 
 # ── the shop panel ───────────────────────────────────────────────────────────

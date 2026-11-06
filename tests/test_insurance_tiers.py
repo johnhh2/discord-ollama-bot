@@ -185,7 +185,7 @@ async def test_shop_insurance_picker_offers_all_three_tiers(db, monkeypatch):
     choices = seen["choices"]
     assert [c["value"] for c in choices] == ["basic", "standard", "premium"]
     assert [c.get("default", False) for c in choices] == [False, True, False]
-    assert choices[2]["label"] == f"Premium — {PREMIUM:,} 🪙"
+    assert choices[2]["label"] == f"Premium — {PREMIUM:,} 🪙/day ({PREMIUM:,} now) · 100% up to 400k"
     assert await get_balance(uid) == 100_000     # cancelled: nothing charged
     assert uid not in _state.insurance
 
@@ -305,16 +305,15 @@ async def test_shop_insurance_sub_same_tier_is_already_subscribed(db):
     assert await get_balance(uid) == 500
 
 
-async def test_shop_insurance_unknown_word_shows_tier_info(db):
+async def test_shop_insurance_unknown_word_shows_the_help_and_coverage(db):
     from src.cogs.shop_cog import ShopCog
     uid = 9029
     await add_balance(uid, 500)
     ctx = _ctx(uid)
     await ShopCog(bot=None).shop_insurance.callback(ShopCog(bot=None), ctx, "status")
     desc = ctx.sent_embeds[-1].description
-    for name, info in SHOP_INSURANCE_TIERS.items():
-        assert f"**{name.title()}** — **{info['cost']:,} 🪙/day**" in desc
-        assert f"refunds **{info['refund_pct']}%**" in desc
+    assert "`!shop insurance [personal|social] [tier]`" in desc
+    assert desc.count("**Coverage:** none") == 2
     assert await get_balance(uid) == 500
 
 
