@@ -1832,3 +1832,9 @@ ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS heist_success_day VARCHAR(10)
 ALTER TABLE shop_effects
     MODIFY COLUMN effect_type ENUM('ragebait','mock','curse','tax','insurance','insurance_sub',
         'social_insurance','social_insurance_sub','property_insurance','property_insurance_sub') NOT NULL;
+
+-- ── 0087_property_security_upgrade.sql ──
+-- 0087: the second property upgrade type. `secured` marks that the owner
+-- bought the deed's security upgrade (src/properties.py
+-- PROPERTY_SECURITY_UPGRADES); it travels with the deed like `upgraded`.
+ALTER TABLE property_owners ADD COLUMN IF NOT EXISTS secured BOOLEAN NOT NULL DEFAULT FALSE;

@@ -395,19 +395,31 @@ Rules when touching this system:
    A new property goes in the release pool (`"pool": True`), appended to its
    tier's `PROPERTY_RELEASE_ORDER` tuple with a threshold appended to
    `RELEASE_THRESHOLDS` — never reorder either, players have seen them. Every
-   property needs a `PROPERTY_UPGRADES` entry; module-load asserts enforce
-   all three. Unowned and released means bank-owned.
+   property needs a `PROPERTY_UPGRADES` entry, and every tier 3+ property a
+   `PROPERTY_SECURITY_UPGRADES` entry; module-load asserts enforce all of these. Unowned and released
+   means bank-owned.
    A property's `level` gates on the **global** level
    (`user_global_display_level` — highest level in any guild), like
    artifacts: deeds are bot-wide, so the server the command ran in
    doesn't matter.
-8. **Upgrade values are shipped constants.** Each property has exactly one
-   upgrade in `PROPERTY_UPGRADES` — (name, cost, boost%), rolled once at
-   75–125% of cost / 35–75% boost and hardcoded. Never re-roll a shipped
-   value: owners have paid for them. A bought upgrade folds its cost into
-   `property_value` (records, snapshots, bank buyback) and its boost into
-   that deed's `property_daily_revenue`; both travel with the deed on a
-   market sale, as does the owner's custom name (`!assets rename`). The
+8. **Upgrade values are shipped constants.** Each property has one upgrade
+   of each type (`UPGRADE_TYPES`). **Revenue** is `PROPERTY_UPGRADES` —
+   (name, cost, boost%), rolled once at 75–125% of cost / 35–75% boost, the
+   row's `upgraded` flag. **Security** is `PROPERTY_SECURITY_UPGRADES` — a
+   price only, rolled once at 75–125% of cost divided by 4, the row's
+   `secured` flag (migration 0087); its effect is the same on every deed
+   (`SECURITY_SUCCESS_MULT` on a property theft's odds, plus the
+   investigators with property insurance). Both are hardcoded; never re-roll
+   a shipped value: owners have paid for them. Tiers 1 and 2 have no
+   security upgrade (`SECURITY_MIN_TIER`), and security is unsold while
+   `SECURITY_UPGRADES_LIVE` is False — `upgrade_types_for(pid)` is what
+   every menu, count and button reads. `!assets upgrade [revenue|security] <name>`
+   picks a type; without one it builds the type the deed lacks, or asks
+   with a button per type when it lacks both. A bought upgrade folds its
+   cost into `property_value` (records, snapshots, bank buyback), and a
+   revenue upgrade its boost into that deed's `property_daily_revenue`;
+   both upgrades travel with the deed on a market sale, as does the owner's
+   custom name (`!assets rename`). The
    upgrade-discount artifact (`artifacts.property_upgrade_cost`) only
    shrinks the price `!assets upgrade` charges — the **full** catalog cost
    still folds into `property_value`, so the bank buyback (75% of value)

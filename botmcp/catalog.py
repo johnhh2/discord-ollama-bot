@@ -140,7 +140,7 @@ TABLES: dict[str, Table] = {
     "mc_server_versions": Table(("ts", "version")),
     "notable_events": Table(("id", "guild_id", "event_day", "kind", "category", "value", "created_at"),
                             hidden={"holder_name": _NAME}),
-    "property_owners": Table(("property_id", "owner_id", "acquired_at", "list_price", "listed_at", "upgraded"),
+    "property_owners": Table(("property_id", "owner_id", "acquired_at", "list_price", "listed_at", "upgraded", "secured"),
                              hidden={"custom_name": _USER_TEXT}),
     "property_releases": Table(("property_id", "released_at")),
     "recap_usage": Table(("guild_id", "user_id", "last_date")),

@@ -21,10 +21,11 @@ from src.helpers import (
     parse_amount, send_ephemeral, shop_charge,
     announce_record,
 )
-from src.economy import add_balance, add_guild_house, _ensure_user
+from src.economy import add_balance, add_guild_house, _ensure_user, get_insurance_tier, get_insurance_expiry
 from src.properties import (
     PROPERTIES, PROPERTIES_BY_ID, PROPERTY_SALE_FEE_PCT, max_owned, released_properties,
-    PROPERTY_UPGRADES, PROPERTY_BANK_BUYBACK_PCT,
+    PROPERTY_UPGRADES, PROPERTY_SECURITY_UPGRADES, SECURITY_MIN_TIER, PROPERTY_BANK_BUYBACK_PCT,
+    UPGRADE_TYPES, live_upgrade_types, upgrade_types_for,
     find_property, owned_properties, owned_property_count,
     portfolio_value, portfolio_daily_revenue, accrual_cap,
     pending_property_revenue, property_value, property_daily_revenue,
@@ -32,7 +33,7 @@ from src.properties import (
 )
 from src.artifacts import property_upgrade_cost
 from src.rate_curves import property_pct_text
-from src.confirm_view import confirm_prompt, confirm_purchase
+from src.confirm_view import confirm_choice, confirm_prompt, confirm_purchase
 from src.persistence import save_property_owner, delete_property_owner, try_set_record
 from src import state
 
@@ -128,9 +129,11 @@ class AssetsCog(commands.Cog):
             pid = p["id"]
             row = _owner_row(pid)
             listed = f" • 🏷️ listed at **{row['list_price']:,} 🪙**" if row.get("list_price") else ""
-            # Every property has exactly one upgrade — (1/1) means bought.
+            # One upgrade per type on sale — (n/n) means all bought.
             # Upgrade names/costs live in `!assets upgrade`, not here.
-            up_count = f"({1 if row.get('upgraded') else 0}/1)"
+            kinds = upgrade_types_for(pid)
+            built = sum(1 for k in kinds if row.get(self._UPGRADE_FLAGS[k]))
+            up_count = f"({built}/{len(kinds)})"
             lines.append(
                 f"{_fmt_prop(p, row)} {up_count} — {property_value(pid, row):,} 🪙 • "
                 f"{property_daily_revenue(pid, row, current=True):,} 🪙/day{listed}"
@@ -162,9 +165,11 @@ class AssetsCog(commands.Cog):
         lines = [
             f"**Value:** {property_value(pid, row):,} 🪙",
             f"**Revenue:** {property_daily_revenue(pid, row, current=True):,} 🪙/day",
-            f"**Upgrade:** {upgrade}",
-            f"**Market:** {listing}",
+            f"**Revenue upgrade:** {upgrade}",
         ]
+        if "security" in upgrade_types_for(pid):
+            lines.append(f"**Security:** {self._upgrade_line(member.id, pid, row, 'security')[0]}")
+        lines.append(f"**Market:** {listing}")
         return emb(f"🛠️ {_fmt_prop(prop, row)}", "\n".join(lines), C_PURPLE)
 
     # ── !assets browse / market (combined catalog + listings view) ────────
@@ -285,7 +290,7 @@ class AssetsCog(commands.Cog):
         uid = ctx.author.id
         pid = prop["id"]
         cost = prop["cost"]
-        preview_row = {"upgraded": False}
+        preview_row = {"upgraded": False, "secured": False}
         if not await confirm_purchase(
             ctx, title="🏘️ Buy Property",
             description=(
@@ -310,7 +315,7 @@ class AssetsCog(commands.Cog):
         # Claim the deed synchronously, then charge; roll back on failure.
         row = {
             "owner_id": uid, "acquired_at": now, "list_price": None, "listed_at": None,
-            "upgraded": False, "custom_name": None,
+            "upgraded": False, "secured": False, "custom_name": None,
         }
         state.property_owners[pid] = row
         if not await shop_charge(ctx, uid, cost):
@@ -519,43 +524,69 @@ class AssetsCog(commands.Cog):
         await ctx.send(embed=emb("🏷️ Unlisted", f"{_fmt_prop(prop, row)} is no longer for sale.", C_GREEN))
 
     # ── !assets upgrade ───────────────────────────────────────────────────
+    # Two upgrade types (UPGRADE_TYPES): revenue (PROPERTY_UPGRADES, the row's
+    # `upgraded` flag) and security (PROPERTY_SECURITY_UPGRADES, `secured`),
+    # unsold while SECURITY_UPGRADES_LIVE is False. A type word picks one;
+    # without it, the one the deed still lacks, or a button per type when it
+    # lacks both.
+    _UPGRADE_FLAGS = {"revenue": "upgraded", "security": "secured"}
+
+    @staticmethod
+    def _upgrade_full_cost(pid: str, kind: str) -> int:
+        return PROPERTY_UPGRADES[pid][1] if kind == "revenue" else PROPERTY_SECURITY_UPGRADES[pid]
+
+    @staticmethod
+    def _security_effect_text(uid: int) -> str:
+        tier = get_insurance_tier(uid, "property") if get_insurance_expiry(uid, "property") else None
+        have = f"{tier.title()} property insurance" if tier else "no property insurance"
+        return (
+            "• Thefts on this deed succeed 25% less often.\n"
+            "• With property insurance, the alarm also calls the insurer's investigators, "
+            "doubling the thief's arrest odds.\n"
+            f"You have: 📋 {have}"
+        )
+
+    def _upgrade_line(self, uid: int, pid: str, row: dict, kind: str) -> tuple[str, bool]:
+        """One upgrade's status line for the listing, and whether the price
+        shown is artifact-discounted."""
+        full = self._upgrade_full_cost(pid, kind)
+        if kind == "revenue":
+            up_name, _, up_boost = PROPERTY_UPGRADES[pid]
+            if row.get("upgraded"):
+                return f"⭐ **{up_name}** owned (+{up_boost}% revenue)", False
+            what = f"**{up_name}**: {{price}} for +{up_boost}% revenue"
+        else:
+            if row.get("secured"):
+                return "🛡️ **Security** installed", False
+            what = "🛡️ **Security**: {price}, thefts succeed 25% less often"
+        price = property_upgrade_cost(uid, full)
+        price_str = f"~~{full:,}~~ {price:,} 🪙" if price != full else f"{full:,} 🪙"
+        return what.format(price=price_str), price != full
+
     @cmd_assets.command(name="upgrade", aliases=["upgrades"],
-                        help="See your properties' upgrades, or buy the upgrade for the named property")
+                        help="See your properties' upgrades, or buy one for the named property",
+                        usage="[revenue|security] [property name]")
     async def assets_upgrade(self, ctx: commands.Context, *, name: str = None):
         uid = ctx.author.id
+        kind = None
+        # A leading or trailing type word picks the upgrade, unless the whole
+        # text is itself a property's name (a business renamed "Security").
+        if name and find_property(name) is None:
+            words = name.split()
+            if words and words[0].lower() in UPGRADE_TYPES:
+                kind = words.pop(0).lower()
+            elif words and words[-1].lower() in UPGRADE_TYPES:
+                kind = words.pop().lower()
+            name = " ".join(words) or None
+        if kind is not None and kind not in live_upgrade_types():
+            await ctx.send(embed=emb(
+                "🛡️ Security Upgrades",
+                "Security upgrades go on sale when property theft arrives.",
+                C_GOLD,
+            ))
+            return
         if not name:
-            props = owned_properties(uid)
-            if not props:
-                await ctx.send(embed=emb(
-                    "⭐ Property Upgrades",
-                    "You don't own any properties yet — see `!assets browse`.\n"
-                    "Usage: `!assets upgrade <property name>`",
-                    C_PURPLE,
-                ))
-                return
-            lines = []
-            discounted = False
-            for p in props:
-                row = _owner_row(p["id"])
-                up_name, up_cost, up_boost = PROPERTY_UPGRADES[p["id"]]
-                if row.get("upgraded"):
-                    lines.append(f"{_fmt_prop(p, row)} — ⭐ **{up_name}** owned (+{up_boost}% revenue)")
-                    continue
-                # Show the artifact-discounted price the buy path below charges.
-                price = property_upgrade_cost(uid, up_cost)
-                if price != up_cost:
-                    discounted = True
-                    price_str = f"~~{up_cost:,}~~ {price:,} 🪙"
-                else:
-                    price_str = f"{up_cost:,} 🪙"
-                lines.append(f"{_fmt_prop(p, row)} — **{up_name}**: {price_str} for +{up_boost}% revenue")
-            lines.append("")
-            lines.append(
-                "Each property has one upgrade; its full cost adds to the property's value"
-                + (" (your artifact discount doesn't change that)" if discounted else "")
-                + ". `!assets upgrade <name>` to buy."
-            )
-            await send_ephemeral(ctx, embed=emb("⭐ Property Upgrades", "\n".join(lines), C_PURPLE))
+            await self._upgrade_listing(ctx)
             return
 
         prop = find_property(name)
@@ -567,9 +598,88 @@ class AssetsCog(commands.Cog):
         if row is None or row["owner_id"] != uid:
             await ctx.send(embed=emb("❌ Not Yours", f"You don't own {_fmt_prop(prop)}.", C_RED))
             return
-        up_name, full_cost, up_boost = PROPERTY_UPGRADES[pid]
-        if row.get("upgraded"):
-            await ctx.send(embed=emb("⭐ Already Upgraded", f"{_fmt_prop(prop, row)} already has its **{up_name}**.", C_PURPLE))
+        if kind is not None and kind not in upgrade_types_for(pid):
+            await ctx.send(embed=emb(
+                "🛡️ No Security Upgrade",
+                f"{_fmt_prop(prop, row)} is tier {prop['tier']}; security upgrades start at tier {SECURITY_MIN_TIER}.",
+                C_GOLD,
+            ))
+            return
+        if kind is None:
+            missing = [t for t in upgrade_types_for(pid) if not row.get(self._UPGRADE_FLAGS[t])]
+            if not missing:
+                await ctx.send(embed=emb("⭐ Already Upgraded", f"{_fmt_prop(prop, row)} has every upgrade.", C_PURPLE))
+                return
+            if len(missing) == 1:
+                kind = missing[0]
+            else:
+                kind = await confirm_choice(
+                    ctx, title="⭐ Build Upgrade",
+                    description=(
+                        f"Which upgrade for {_fmt_prop(prop, row)}?\n\n"
+                        f"**Revenue:** {self._upgrade_line(uid, pid, row, 'revenue')[0]}\n\n"
+                        f"**Security:** {self._upgrade_line(uid, pid, row, 'security')[0]}\n"
+                        + self._security_effect_text(uid)
+                    ),
+                    choices=[
+                        {"label": f"⭐ Revenue — {property_upgrade_cost(uid, self._upgrade_full_cost(pid, t)):,} 🪙"
+                         if t == "revenue" else
+                         f"🛡️ Security — {property_upgrade_cost(uid, self._upgrade_full_cost(pid, t)):,} 🪙",
+                         "value": t, "default": t == "revenue"}
+                        for t in missing
+                    ],
+                    payer=ctx.author,
+                )
+                if not kind:
+                    return
+        await self._buy_upgrade(ctx, prop, row, kind)
+
+    async def _upgrade_listing(self, ctx: commands.Context):
+        """Bare `!assets upgrade`: every owned deed's upgrades and prices."""
+        uid = ctx.author.id
+        props = owned_properties(uid)
+        if not props:
+            await ctx.send(embed=emb(
+                "⭐ Property Upgrades",
+                "You don't own any properties yet — see `!assets browse`.\n"
+                "Usage: `!assets upgrade <property name>`",
+                C_PURPLE,
+            ))
+            return
+        lines = []
+        discounted = False
+        for p in props:
+            row = _owner_row(p["id"])
+            parts = []
+            for kind in upgrade_types_for(p["id"]):
+                line, cut = self._upgrade_line(uid, p["id"], row, kind)
+                parts.append(line)
+                discounted |= cut
+            lines.append(f"{_fmt_prop(p, row)} — " + " · ".join(parts))
+        lines.append("")
+        each = (f"a revenue upgrade, and from tier {SECURITY_MIN_TIER} a security upgrade"
+                if "security" in live_upgrade_types() else "one upgrade")
+        lines.append(
+            f"Each property has {each}; an upgrade's full cost adds to the property's value"
+            + (" (your artifact discount doesn't change that)" if discounted else "")
+            + ". `!assets upgrade <name>` to buy."
+        )
+        await send_ephemeral(ctx, embed=emb("⭐ Property Upgrades", "\n".join(lines), C_PURPLE))
+
+    async def _buy_upgrade(self, ctx: commands.Context, prop: dict, row: dict, kind: str):
+        uid = ctx.author.id
+        pid = prop["id"]
+        flag = self._UPGRADE_FLAGS[kind]
+        if kind == "revenue":
+            up_name, full_cost, up_boost = PROPERTY_UPGRADES[pid]
+            label = f"its **{up_name}**"
+            what = f"Build the **{up_name}** on {_fmt_prop(prop, row)} — **+{up_boost}%** revenue"
+        else:
+            full_cost = PROPERTY_SECURITY_UPGRADES[pid]
+            label = "security"
+            what = f"🛡️ Install security on {_fmt_prop(prop, row)}:\n{self._security_effect_text(uid)}\n\nIts cost"
+        if row.get(flag):
+            await ctx.send(embed=emb("⭐ Already Upgraded", f"{_fmt_prop(prop, row)} already has {label}.", C_PURPLE))
             return
         # Charge the artifact-discounted price; property_value still folds in
         # the full catalog cost, so the discount can't be sold back to the bank.
@@ -578,12 +688,10 @@ class AssetsCog(commands.Cog):
             f" — your artifact takes it from {full_cost:,} 🪙 to {up_cost:,} 🪙"
             if up_cost != full_cost else ""
         )
+        joiner = " folds" if kind == "security" else ", its full cost folds"
         if not await confirm_purchase(
             ctx, title="⭐ Build Upgrade",
-            description=(
-                f"Build the **{up_name}** on {_fmt_prop(prop, row)} — **+{up_boost}%** revenue, "
-                f"its full cost folds into the value{discount_note}."
-            ),
+            description=f"{what}{joiner} into the value{discount_note}.",
             cost=up_cost, payer=ctx.author,
         ):
             return
@@ -593,24 +701,29 @@ class AssetsCog(commands.Cog):
         if row.get("owner_id") != uid or state.property_owners.get(pid) is not row:
             await ctx.send(embed=emb("❌ Not Yours", f"You no longer own {_fmt_prop(prop)}. You were not charged.", C_RED))
             return
-        if row.get("upgraded"):
-            await ctx.send(embed=emb("⭐ Already Upgraded", f"{_fmt_prop(prop, row)} already has its **{up_name}**.", C_PURPLE))
+        if row.get(flag):
+            await ctx.send(embed=emb("⭐ Already Upgraded", f"{_fmt_prop(prop, row)} already has {label}.", C_PURPLE))
             return
-        # Gate-and-claim: mark upgraded synchronously before the charge so a
+        # Gate-and-claim: set the flag synchronously before the charge so a
         # concurrent second !assets upgrade sees the claim and bails instead
         # of double-charging.
-        row["upgraded"] = True
+        row[flag] = True
         if not await shop_charge(ctx, uid, up_cost):
-            row["upgraded"] = False
+            row[flag] = False
             return
         await save_property_owner(pid, row)
-        await ctx.send(embed=emb(
-            "⭐ Upgrade Built",
-            f"{_fmt_prop(prop, row)} now has a **{up_name}**!\n"
-            f"Revenue: **{property_daily_revenue(pid, row, current=True):,} 🪙/day** (+{up_boost}%) • "
-            f"Value: **{property_value(pid, row):,} 🪙**",
-            C_GREEN,
-        ))
+        if kind == "revenue":
+            body = (
+                f"{_fmt_prop(prop, row)} now has a **{up_name}**!\n"
+                f"Revenue: **{property_daily_revenue(pid, row, current=True):,} 🪙/day** (+{up_boost}%) • "
+                f"Value: **{property_value(pid, row):,} 🪙**"
+            )
+        else:
+            body = (
+                f"{_fmt_prop(prop, row)} now has security: thefts on it succeed 25% less often.\n"
+                f"Value: **{property_value(pid, row):,} 🪙**"
+            )
+        await ctx.send(embed=emb("⭐ Upgrade Built", body, C_GREEN))
         # The upgrade cost folds into portfolio value — offer the records.
         await self._offer_records(ctx)
 

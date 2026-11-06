@@ -332,18 +332,19 @@ async def _init_db_state_inner(state, run_migrations):
         try:
             await cur.execute(
                 "SELECT property_id, owner_id, acquired_at, list_price, listed_at,"
-                " upgraded, custom_name"
+                " upgraded, secured, custom_name"
                 " FROM property_owners"
             )
             state.property_owners = {}
             for (pid, owner_id, acquired_at, list_price, listed_at,
-                 upgraded, custom_name) in await cur.fetchall():
+                 upgraded, secured, custom_name) in await cur.fetchall():
                 state.property_owners[pid] = {
                     "owner_id": int(owner_id),
                     "acquired_at": float(acquired_at),
                     "list_price": int(list_price) if list_price is not None else None,
                     "listed_at": float(listed_at) if listed_at is not None else None,
                     "upgraded": bool(upgraded),
+                    "secured": bool(secured),
                     "custom_name": custom_name if custom_name else None,
                 }
         except Exception as e:

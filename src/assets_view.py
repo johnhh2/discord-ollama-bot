@@ -16,6 +16,7 @@ from discord import ui
 from src.forwarding import button_context, forward, refusal_for
 from src.helpers import emb, C_PURPLE
 from src.permissions import is_silenced
+from src.properties import upgrade_types_for
 from src.settings_views import Field, FormModal, MAX_OPTIONS
 
 ASSETS_TIMEOUT = 300.0
@@ -76,7 +77,7 @@ class AssetsView(ui.View):
                 self.add_item(_ActionButton("Sell", "🏷️", discord.ButtonStyle.primary, self._sell, row=1))
                 if row.get("list_price"):
                     self.add_item(_ActionButton("Unlist", "↩️", discord.ButtonStyle.secondary, self._unlist, row=1))
-                if not row.get("upgraded"):
+                if not all(row.get(self.cog._UPGRADE_FLAGS[k]) for k in upgrade_types_for(self.choice)):
                     self.add_item(_ActionButton("Upgrade", "⭐", discord.ButtonStyle.success, self._upgrade, row=1))
                 self.add_item(_ActionButton("Rename", "✏️", discord.ButtonStyle.secondary, self._rename, row=1))
         if self.home:

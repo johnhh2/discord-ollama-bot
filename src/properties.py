@@ -2,7 +2,7 @@
 
 Every property is a UNIQUE, bot-wide deed: at most one owner across all
 servers, tracked in state.property_owners ({property_id: {owner_id,
-acquired_at, list_price, listed_at, upgraded, custom_name}}, source of truth:
+acquired_at, list_price, listed_at, upgraded, secured, custom_name}}, source of truth:
 property_owners table). The catalog below holds the 36 shipped properties
 (10k to 2m) and a release pool of 42 more (marked "pool"), which reach the
 market one at a time at the 5am reset as the economy develops — see
@@ -164,7 +164,8 @@ PROPERTIES: list[dict] = [
 PROPERTIES_BY_ID: dict[str, dict] = {p["id"]: p for p in PROPERTIES}
 
 # ── Upgrades ─────────────────────────────────────────────────────────────────
-# Exactly one predefined upgrade per property: (name, cost, revenue_boost_pct).
+# Two upgrade types per property. Revenue: exactly one predefined upgrade per
+# property, (name, cost, revenue_boost_pct), the row's `upgraded` flag.
 # Costs were rolled once at 75–125% of the property's cost and boosts at
 # 35–75%, then hardcoded (seed "discord-ollama-bot-upgrades-0050") — don't
 # re-roll shipped values; owners have paid for them. The upgrade's cost folds
@@ -256,6 +257,69 @@ PROPERTY_UPGRADES: dict[str, tuple[str, int, int]] = {
 assert set(PROPERTY_UPGRADES) == set(PROPERTIES_BY_ID), \
     "every property needs exactly one entry in PROPERTY_UPGRADES"
 
+# The second upgrade type, security: price only, the same effect on every
+# deed (SECURITY_SUCCESS_MULT on a property theft's odds). Rolled once at
+# 75–125% of the property's cost, divided by 4, then hardcoded (seed
+# "discord-ollama-bot-security-0087") — don't re-roll shipped values. Like
+# revenue, its cost folds into the property's VALUE. Tiers 1 and 2 have no
+# security upgrade. Unsold until property theft exists
+# (SECURITY_UPGRADES_LIVE).
+PROPERTY_SECURITY_UPGRADES: dict[str, int] = {
+    "movie_theater": 33_000,
+    "nightclub": 36_500,
+    "gym": 45_000,
+    "apartment_block": 51_000,
+    "recording_studio": 56_000,
+    "marina": 65_000,
+    "vineyard": 77_000,
+    "ski_lodge": 105_000,
+    "shopping_mall": 122_000,
+    "server_farm": 248_000,
+    "private_island": 189_000,
+    "casino_resort": 404_000,
+    "skyscraper": 492_000,
+    "space_port": 536_000,
+    "art_gallery": 33_000,
+    "water_park": 36_000,
+    "golf_course": 51_000,
+    "boutique_hotel": 52_000,
+    "concert_hall": 46_500,
+    "racetrack": 87_000,
+    "ranch": 72_000,
+    "tv_station": 84_000,
+    "zoo": 116_000,
+    "stadium": 118_000,
+    "cruise_ship": 111_000,
+    "theme_park": 161_000,
+    "oil_rig": 198_000,
+    "film_studio": 219_000,
+    "airline": 287_000,
+    "bank_tower": 411_000,
+    "sports_franchise": 417_000,
+    "satellite_network": 466_000,
+    "megacity": 698_000,
+    "moon_base": 843_000,
+}
+SECURITY_SUCCESS_MULT = 0.75
+SECURITY_UPGRADES_LIVE = False
+
+SECURITY_MIN_TIER = 3
+
+assert set(PROPERTY_SECURITY_UPGRADES) == {p["id"] for p in PROPERTIES if p["tier"] >= SECURITY_MIN_TIER}, \
+    "every tier 3+ property, and no other, needs an entry in PROPERTY_SECURITY_UPGRADES"
+
+# Upgrade types as players name them; "revenue" is PROPERTY_UPGRADES.
+UPGRADE_TYPES = ("revenue", "security")
+
+
+def live_upgrade_types() -> tuple[str, ...]:
+    return UPGRADE_TYPES if SECURITY_UPGRADES_LIVE else ("revenue",)
+
+
+def upgrade_types_for(pid: str) -> tuple[str, ...]:
+    """The upgrade types on sale for one deed: security only from tier 3."""
+    return tuple(t for t in live_upgrade_types() if t != "security" or pid in PROPERTY_SECURITY_UPGRADES)
+
 # ── Release order ────────────────────────────────────────────────────────────
 # The order each tier's pool reaches the market: a seeded shuffle (seed
 # "discord-ollama-bot-property-release-0084"), rolled once and hardcoded so
@@ -344,13 +408,15 @@ def property_daily_revenue(pid: str, row: dict = None, *, current: bool = False)
 
 
 def property_value(pid: str, row: dict = None) -> int:
-    """One deed's book value: catalog cost, plus the upgrade's cost once
+    """One deed's book value: catalog cost, plus each upgrade's cost once
     bought — an upgraded property is worth what went into it."""
     value = PROPERTIES_BY_ID[pid]["cost"]
     if row is None:
         row = state.property_owners.get(pid)
     if row and row.get("upgraded"):
         value += PROPERTY_UPGRADES[pid][1]
+    if row and row.get("secured"):
+        value += PROPERTY_SECURITY_UPGRADES.get(pid, 0)
     return value
 
 

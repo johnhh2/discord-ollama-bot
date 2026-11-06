@@ -53,7 +53,8 @@ from src.helpers import emb, C_PURPLE, C_GREY
 from src.level_unlocks import is_locked_for, user_global_display_level
 from src.rate_curves import property_pct_text
 from src.properties import (
-    PROPERTY_UPGRADES, max_owned, released_properties, PROPERTY_BANK_BUYBACK_PCT,
+    PROPERTY_UPGRADES, PROPERTY_SECURITY_UPGRADES, upgrade_types_for, max_owned, released_properties,
+    PROPERTY_BANK_BUYBACK_PCT,
     owned_properties, property_daily_revenue, property_value,
 )
 from src.settings_views import Field, FormModal, MAX_OPTIONS, _OwnedView
@@ -394,7 +395,12 @@ def _portfolio(ctx) -> list[ShopItem]:
         if not row.get("upgraded"):
             up_name, up_cost, up_boost = PROPERTY_UPGRADES[pid]
             items.append(ShopItem(f"upgrade:{pid}", f"⭐ Build the {up_name} on {name} — {_coins(up_cost)}",
-                                  f"+{up_boost}% revenue", "bot:assets upgrade", kwargs={"name": pid}))
+                                  f"+{up_boost}% revenue", "bot:assets upgrade", kwargs={"name": f"revenue {pid}"}))
+        if "security" in upgrade_types_for(pid) and not row.get("secured"):
+            items.append(ShopItem(f"security:{pid}",
+                                  f"🛡️ Install security on {name} — {_coins(PROPERTY_SECURITY_UPGRADES[pid])}",
+                                  "thefts succeed 25% less often; calls investigators with property insurance",
+                                  "bot:assets upgrade", kwargs={"name": f"security {pid}"}))
         if row.get("list_price"):
             items.append(ShopItem(f"unlist:{pid}", f"🏷️ Unlist {name}", f"listed at {row['list_price']:,} 🪙",
                                   "bot:assets unlist", kwargs={"name": pid}))
