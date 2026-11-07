@@ -440,14 +440,14 @@ class SettingsCog(commands.Cog):
         await ctx.send(embed=emb("⛏️ Minecraft Block Shop", f"The block shop is now **{choice.lower()}**.{note}", C_GREEN))
 
     # ── !settings minecraft-joins ─────────────────────────────────────────────
-    @cmd_settings.command(name="minecraft-joins", help="Switch the Minecraft channel's player joined/left notices on or off (server status notices stay)",
+    @cmd_settings.command(name="minecraft-joins", help="Switch Minecraft player joined/left notices in the game-servers channel on or off (server status notices stay)",
                           usage="[on|off]")
     @requires_perm
     async def settings_minecraft_joins(self, ctx: commands.Context, choice: str = None):
         await self._join_notices(ctx, choice, key="mc_join_notices", game="Minecraft", emoji="⛏️", name="minecraft")
 
     # ── !settings vrising-joins ───────────────────────────────────────────────
-    @cmd_settings.command(name="vrising-joins", help="Switch the V Rising channel's player joined/left notices on or off (server status notices stay)",
+    @cmd_settings.command(name="vrising-joins", help="Switch V Rising player joined/left notices in the game-servers channel on or off (server status notices stay)",
                           usage="[on|off]")
     @requires_perm
     async def settings_vrising_joins(self, ctx: commands.Context, choice: str = None):
@@ -461,7 +461,7 @@ class SettingsCog(commands.Cog):
         title = f"{emoji} {game} Join Notices"
         usage = f"`!settings {name}-joins on|off`"
         what = (
-            f"The \"player joined\" / \"player left\" notices in the {game} channel. "
+            f"The {game} \"player joined\" / \"player left\" notices in the game-servers channel. "
             "Online, offline and update notices are posted either way."
         )
         if choice is None:
@@ -501,59 +501,31 @@ class SettingsCog(commands.Cog):
                 C_GREEN,
             ))
 
-    # ── !settings channel minecraft ───────────────────────────────────────────
-    @cmd_settings_channel.command(name="minecraft", help="Set the channel for Minecraft server up/down alerts and player-count notices",
+    # ── !settings channel game-servers ────────────────────────────────────────
+    @cmd_settings_channel.command(name="game-servers", help="Set the channel for Minecraft, V Rising and Vintage Story server up/down, update and player notices",
                                   usage="[#channel] | clear")
     @requires_perm
-    async def settings_minecraft_channel(self, ctx: commands.Context, *args):
+    async def settings_game_servers_channel(self, ctx: commands.Context, *args):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
             return
         cfg = get_guild_cfg(ctx.guild.id)
-        chosen = await self._channel_choice(ctx, args, title="⛏️ Minecraft Channel", current=cfg.get("minecraft_channel"), multi=False)
+        title = "🎮 Game Servers Channel"
+        chosen = await self._channel_choice(ctx, args, title=title, current=cfg.get("game_servers_channel"), multi=False)
         if chosen is None:
             return
-        if not chosen:
-            cfg["minecraft_channel"] = None
-            await save_guild_settings()
-            await ctx.send(embed=emb("⛏️ Minecraft Channel", "Minecraft server notifications disabled.", C_GREEN))
-        else:
-            channel = chosen[0]
-            cfg["minecraft_channel"] = channel.id
-            await save_guild_settings()
-            await ctx.send(embed=emb(
-                "⛏️ Minecraft Channel",
-                f"Minecraft server up/down alerts and player-count notices will post in {channel.mention}.",
-                C_GREEN,
-            ))
-
-    # ── !settings channel vrising / vintagestory ──────────────────────────────
-    @cmd_settings_channel.command(name="vrising", help="Set the channel for V Rising server up/down, update and player-count notices",
-                                  usage="[#channel] | clear")
-    @requires_perm
-    async def settings_vrising_channel(self, ctx: commands.Context, *args):
-        await self._game_server_channel(ctx, args, key="vrising_channel", title="🧛 V Rising Channel",
-                                        what="V Rising server up/down, update and player-count notices")
-
-    @cmd_settings_channel.command(name="vintagestory", help="Set the channel for Vintage Story server up/down and update notices",
-                                  usage="[#channel] | clear")
-    @requires_perm
-    async def settings_vintagestory_channel(self, ctx: commands.Context, *args):
-        await self._game_server_channel(ctx, args, key="vintagestory_channel", title="🌲 Vintage Story Channel",
-                                        what="Vintage Story server up/down and update notices")
-
-    async def _game_server_channel(self, ctx: commands.Context, args, *, key: str, title: str, what: str):
-        if ctx.guild is None:
-            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
-            return
-        cfg = get_guild_cfg(ctx.guild.id)
-        chosen = await self._channel_choice(ctx, args, title=title, current=cfg.get(key), multi=False)
-        if chosen is None:
-            return
-        cfg[key] = chosen[0].id if chosen else None
+        cfg["game_servers_channel"] = chosen[0].id if chosen else None
         await save_guild_settings()
-        text = f"{what} will post in {chosen[0].mention}." if chosen else f"{what} disabled."
-        await ctx.send(embed=emb(title, text[0].upper() + text[1:], C_GREEN))
+        if chosen:
+            text = f"Game server up/down, update and player notices will post in {chosen[0].mention}."
+        else:
+            text = "Game server notifications disabled."
+        await ctx.send(embed=emb(title, text, C_GREEN))
+
+    @cmd_settings_channel.command(name="minecraft", hidden=True)
+    @requires_perm
+    async def settings_minecraft_channel_legacy_sub(self, ctx: commands.Context, *args):
+        await self._forward(ctx, self.settings_game_servers_channel, *args)
 
     # ── !settings channel dailies ─────────────────────────────────────────────
     @cmd_settings_channel.command(name="dailies", help="Set the self-cleaning channel that holds the react-to-claim dailies embed",
@@ -613,7 +585,7 @@ class SettingsCog(commands.Cog):
     @cmd_settings.command(name="minecraft-channel", hidden=True)
     @requires_perm
     async def settings_minecraft_channel_legacy(self, ctx: commands.Context, *args):
-        await self._forward(ctx, self.settings_minecraft_channel, *args)
+        await self._forward(ctx, self.settings_game_servers_channel, *args)
 
     @cmd_settings.command(name="dailies-channel", hidden=True)
     @requires_perm

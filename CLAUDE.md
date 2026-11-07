@@ -496,7 +496,7 @@ Coverage: [tests/test_mc_shop.py](tests/test_mc_shop.py).
 
 Every monitored server folds its polls through `_mc_events` and posts via [src/server_notices.py](src/server_notices.py). V Rising and Vintage Story live in [src/cogs/game_servers_cog.py](src/cogs/game_servers_cog.py) (details in its docstring).
 
-- **Status notices always post** to the game's channel; only join/leave notices have a per-guild switch (`mc_join_notices`, `vrising_join_notices`, missing means on). A new game with a player count gets one too.
+- **One channel for all three:** `!settings channel game-servers` (`game_servers_channel`). Status notices always post there; only join/leave notices have a per-guild switch (`mc_join_notices`, `vrising_join_notices`, missing means on). A new game with a player count gets one too.
 - **No "0/x online".** An empty server's count is left off every notice.
 - **Vintage Story has no player count** and no query protocol. Don't poll its master list per tick: it is ~4 MB, so it is fetched only while an online stretch lacks a version (`VS_LOOKUP_TRIES`).
 - **Versions persist** in `state.bot_settings` (`<key>_version`) so an update during bot downtime is still announced.

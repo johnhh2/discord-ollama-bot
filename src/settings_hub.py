@@ -52,9 +52,7 @@ CHANNEL_SETTINGS = (
     ("🏆 Records", "records_channel", "settings_channel_records", False, "❌ off", "this server's new records, plus every new global-top record from any server"),
     ("📖 Feature requests", "feature_request_channel", "settings_channel_feature_request", False, "❌ off", "`!featurerequest` posts here"),
     ("🎯 Bounties", "bounty_channel", "settings_bounty_channel", False, "❌ off", "`!bounty` posts here"),
-    ("⛏️ Minecraft", "minecraft_channel", "settings_minecraft_channel", False, "❌ off", "server up/down alerts and player-count notices"),
-    ("🧛 V Rising", "vrising_channel", "settings_vrising_channel", False, "❌ off", "server up/down, update and player-count notices"),
-    ("🌲 Vintage Story", "vintagestory_channel", "settings_vintagestory_channel", False, "❌ off", "server up/down and update notices"),
+    ("🎮 Game servers", "game_servers_channel", "settings_game_servers_channel", False, "❌ off", "Minecraft, V Rising and Vintage Story up/down, update and player notices"),
     ("🪙 Dailies", "dailies_channel", "settings_dailies_channel", False, "❌ off", "self-cleaning channel with the react-to-claim dailies embed"),
     ("⚔️ Idle RPG", "idle_channel", "settings_channel_idle", False, "❌ off", "idle RPG news and feed threads — the game is off without one"),
 )

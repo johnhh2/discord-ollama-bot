@@ -376,3 +376,39 @@ async def test_0083_drops_only_mug_held_crime_records(tmp_path, fake_cur):
     applied = await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
     assert applied == [2]
     assert await _rows() == expected
+
+async def test_0092_moves_the_minecraft_channel_to_game_servers(tmp_path, fake_cur):
+    """Each guild's Minecraft channel becomes its game-servers channel; a
+    cleared one, an already-set game-servers channel and other keys are left
+    alone; re-run is a no-op."""
+    import json
+    _write(tmp_path, "0001_guild_settings.sql",
+           "CREATE TABLE guild_settings (guild_id INTEGER PRIMARY KEY, settings_json TEXT NOT NULL);")
+    await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur)
+    seed = {
+        1: {"minecraft_channel": 1234567890123456789, "mc_shop": True},
+        2: {"minecraft_channel": None},
+        3: {"minecraft_channel": 5, "game_servers_channel": 6},
+        4: {"idle_channel": 7},
+    }
+    for gid, cfg in seed.items():
+        await fake_cur.execute("INSERT INTO guild_settings VALUES (%s,%s)", (gid, json.dumps(cfg)))
+
+    real_sql = (Path(__file__).parent.parent / "migrations" / "0092_game_servers_channel.sql").read_text(encoding="utf-8")
+    _write(tmp_path, "0002_game_servers_channel.sql", real_sql)
+
+    async def _settings():
+        await fake_cur.execute("SELECT guild_id, settings_json FROM guild_settings ORDER BY guild_id")
+        return {gid: json.loads(raw) for gid, raw in await fake_cur.fetchall()}
+
+    expected = {
+        1: {"game_servers_channel": 1234567890123456789, "mc_shop": True},
+        2: {"minecraft_channel": None},
+        3: {"minecraft_channel": 5, "game_servers_channel": 6},
+        4: {"idle_channel": 7},
+    }
+    for _ in range(2):
+        await fake_cur.execute("DELETE FROM schema_migrations WHERE version=2")
+        _migrations._done = False
+        assert await _migrations.run_migrations(migrations_dir=tmp_path, cur=fake_cur) == [2]
+        assert await _settings() == expected

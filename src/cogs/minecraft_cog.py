@@ -960,7 +960,7 @@ class MinecraftCog(commands.Cog):
         return event_payloads("Minecraft", _server_label(), events, prev, status, self._last_seen_online)
 
     async def _announce(self, payloads: list[tuple[str, dict]]):
-        await announce(self.bot, payloads, channel_key="minecraft_channel", joins_key="mc_join_notices")
+        await announce(self.bot, payloads, joins_key="mc_join_notices")
 
     def status_text(self) -> "str | None":
         """Presence line for the status manager rotation.

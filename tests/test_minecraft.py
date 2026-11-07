@@ -208,7 +208,7 @@ async def test_monitor_announces_to_configured_guilds_only(monkeypatch):
     channel = FakeTextChannel(ch_id=555)
     bot = _FakeBot(guilds=[FakeGuild(gid=1), FakeGuild(gid=2)],
                    channels={555: channel})
-    _state.guild_settings["1"] = {"minecraft_channel": 555}
+    _state.guild_settings["1"] = {"game_servers_channel": 555}
     _state.guild_settings["2"] = {}
 
     cog = _make_cog(monkeypatch, bot=bot)
@@ -229,7 +229,7 @@ async def test_monitor_announces_to_configured_guilds_only(monkeypatch):
 async def test_monitor_count_change_embeds(monkeypatch):
     channel = FakeTextChannel(ch_id=555)
     bot = _FakeBot(guilds=[FakeGuild(gid=1)], channels={555: channel})
-    _state.guild_settings["1"] = {"minecraft_channel": 555}
+    _state.guild_settings["1"] = {"game_servers_channel": 555}
 
     cog = _make_cog(monkeypatch, bot=bot)
     cog._monitor = MonitorState(online=True, count=2)
@@ -259,7 +259,7 @@ async def test_monitor_count_change_embeds(monkeypatch):
 async def test_empty_server_leaves_the_count_off(monkeypatch):
     channel = FakeTextChannel(ch_id=555)
     bot = _FakeBot(guilds=[FakeGuild(gid=1)], channels={555: channel})
-    _state.guild_settings["1"] = {"minecraft_channel": 555}
+    _state.guild_settings["1"] = {"game_servers_channel": 555}
     cog = _make_cog(monkeypatch, bot=bot)
     cog._monitor = MonitorState(online=False, fail_streak=3)
     results = iter([_status(players=0), _status(players=1), _status(players=0)])
@@ -280,8 +280,8 @@ async def test_empty_server_leaves_the_count_off(monkeypatch):
 async def test_join_notices_off_keeps_status_notices(monkeypatch):
     quiet, loud = FakeTextChannel(ch_id=555), FakeTextChannel(ch_id=556)
     bot = _FakeBot(guilds=[FakeGuild(gid=1), FakeGuild(gid=2)], channels={555: quiet, 556: loud})
-    _state.guild_settings["1"] = {"minecraft_channel": 555, "mc_join_notices": False}
-    _state.guild_settings["2"] = {"minecraft_channel": 556}
+    _state.guild_settings["1"] = {"game_servers_channel": 555, "mc_join_notices": False}
+    _state.guild_settings["2"] = {"game_servers_channel": 556}
     cog = _make_cog(monkeypatch, bot=bot)
     cog._monitor = MonitorState(online=True, count=2)
     results = iter([_status(players=3), _status(players=1), None, None])
@@ -314,7 +314,7 @@ async def test_settings_minecraft_joins_toggles(db):
 async def test_monitor_offline_alert_only_after_debounce(monkeypatch):
     channel = FakeTextChannel(ch_id=555)
     bot = _FakeBot(guilds=[FakeGuild(gid=1)], channels={555: channel})
-    _state.guild_settings["1"] = {"minecraft_channel": 555}
+    _state.guild_settings["1"] = {"game_servers_channel": 555}
 
     cog = _make_cog(monkeypatch, bot=bot)
     cog._monitor = MonitorState(online=True, count=3)
@@ -810,7 +810,7 @@ async def test_version_key_orders_numeric_prefix():
 def _update_channel(monkeypatch):
     channel = FakeTextChannel(ch_id=555)
     bot = _FakeBot(guilds=[FakeGuild(gid=1)], channels={555: channel})
-    _state.guild_settings["1"] = {"minecraft_channel": 555}
+    _state.guild_settings["1"] = {"game_servers_channel": 555}
     return channel, _make_cog(monkeypatch, bot=bot)
 
 
@@ -1285,29 +1285,29 @@ def _admin_ctx(channel_mentions=None) -> FakeCtx:
     return ctx
 
 
-async def test_settings_minecraft_channel_set(db):
+async def test_settings_game_servers_channel_set(db):
     cog = SettingsCog(bot=None)
     channel = FakeTextChannel(ch_id=555)
     ctx = _admin_ctx(channel_mentions=[channel])
 
-    await cog.settings_minecraft_channel.callback(cog, ctx)
+    await cog.settings_game_servers_channel.callback(cog, ctx)
 
-    assert _state.guild_settings["42"]["minecraft_channel"] == 555
+    assert _state.guild_settings["42"]["game_servers_channel"] == 555
     persisted = await _read_guild_settings(42)
-    assert persisted["minecraft_channel"] == 555
+    assert persisted["game_servers_channel"] == 555
 
 
-async def test_settings_minecraft_channel_clear(db):
+async def test_settings_game_servers_channel_clear(db):
     cog = SettingsCog(bot=None)
     ctx = _admin_ctx(channel_mentions=[FakeTextChannel(ch_id=555)])
-    await cog.settings_minecraft_channel.callback(cog, ctx)
+    await cog.settings_game_servers_channel.callback(cog, ctx)
 
     ctx2 = _admin_ctx()
-    await cog.settings_minecraft_channel.callback(cog, ctx2, "clear")
+    await cog.settings_game_servers_channel.callback(cog, ctx2, "clear")
 
-    assert _state.guild_settings["42"]["minecraft_channel"] is None
+    assert _state.guild_settings["42"]["game_servers_channel"] is None
     persisted = await _read_guild_settings(42)
-    assert persisted["minecraft_channel"] is None
+    assert persisted["game_servers_channel"] is None
 
 
 # ── Transports: RakNet ping and NetherNet /v1/join ───────────────────────────

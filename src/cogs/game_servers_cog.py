@@ -3,7 +3,7 @@
 Each configured server is polled every GAME_POLL_SECONDS. Polls fold through
 minecraft_cog's `_mc_events`, so the offline debounce and the update-replaces-
 online rule match Minecraft, and post via src/server_notices.py to the
-`!settings channel vrising|vintagestory` channel.
+shared `!settings channel game-servers` channel.
 
 - **V Rising** answers Steam's A2S_INFO on its query port. That reply carries
   the player count, so it also posts join/leave notices
@@ -59,16 +59,12 @@ class ServerStatus:
 
 @dataclasses.dataclass(frozen=True)
 class GameServer:
-    key: str                  # settings + bot_settings prefix
+    key: str                  # bot_settings prefix
     game: str                 # display name
     host: str
     port: int
     probe: Callable[[str, int], Awaitable[ServerStatus]]
     joins_key: "str | None"   # None: no player count, so no join notices
-
-    @property
-    def channel_key(self) -> str:
-        return f"{self.key}_channel"
 
     @property
     def version_key(self) -> str:
@@ -210,7 +206,7 @@ class GameServersCog(commands.Cog):
             label = f"The {server.game} server"
             payloads = event_payloads(server.game, label, events, prev, status,
                                       self._last_seen_online.get(server.key) if status is None else None)
-            await announce(self.bot, payloads, channel_key=server.channel_key, joins_key=server.joins_key)
+            await announce(self.bot, payloads, joins_key=server.joins_key)
 
     async def _vintagestory_version(self, server: GameServer) -> str:
         # "" until found: an empty version keeps the monitor's baseline.

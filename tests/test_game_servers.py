@@ -123,8 +123,8 @@ async def test_tcp_status_is_online_only_while_the_port_accepts():
 async def test_vrising_join_notices_follow_each_guilds_switch(monkeypatch):
     quiet, loud = FakeTextChannel(ch_id=1), FakeTextChannel(ch_id=2)
     bot = _FakeBot([FakeGuild(gid=10), FakeGuild(gid=20)], {1: quiet, 2: loud})
-    _state.guild_settings["10"] = {"vrising_channel": 1, "vrising_join_notices": False}
-    _state.guild_settings["20"] = {"vrising_channel": 2}
+    _state.guild_settings["10"] = {"game_servers_channel": 1, "vrising_join_notices": False}
+    _state.guild_settings["20"] = {"game_servers_channel": 2}
     cog = _cog(monkeypatch, bot, _vrising([
         ServerStatus(0, 20, "1.1"), ServerStatus(2, 20, "1.1"), ServerStatus(0, 20, "1.1"), None, None]))
 
@@ -140,7 +140,7 @@ async def test_vrising_join_notices_follow_each_guilds_switch(monkeypatch):
 async def test_vrising_update_survives_a_bot_restart(monkeypatch):
     channel = FakeTextChannel(ch_id=1)
     bot = _FakeBot([FakeGuild(gid=10)], {1: channel})
-    _state.guild_settings["10"] = {"vrising_channel": 1}
+    _state.guild_settings["10"] = {"game_servers_channel": 1}
     cog = _cog(monkeypatch, bot, _vrising([ServerStatus(0, 20, "1.1")]))
     await cog._before_monitor()
     await _ticks(cog, 1)
@@ -158,7 +158,7 @@ async def test_vrising_update_survives_a_bot_restart(monkeypatch):
 async def test_vintagestory_posts_status_and_finds_its_version_on_the_master_list(monkeypatch):
     channel = FakeTextChannel(ch_id=1)
     bot = _FakeBot([FakeGuild(gid=10)], {1: channel})
-    _state.guild_settings["10"] = {"vintagestory_channel": 1}
+    _state.guild_settings["10"] = {"game_servers_channel": 1}
     server = GameServer("vintagestory", "Vintage Story", "vs.example.com", 42420,
                         _scripted([ServerStatus(0, 0, ""), None, None, ServerStatus(0, 0, ""),
                                    ServerStatus(0, 0, "")]), joins_key=None)
@@ -250,15 +250,14 @@ def _admin_ctx(name, channel_mentions=()):
     return ctx
 
 
-async def test_settings_game_channels_set_and_clear(db):
+async def test_old_minecraft_channel_spellings_set_the_game_servers_channel(db):
     cog = SettingsCog(bot=None)
-    ctx = _admin_ctx("settings channel vrising", [FakeTextChannel(ch_id=555)])
-    await cog.settings_vrising_channel.callback(cog, ctx)
-    assert _state.guild_settings["42"]["vrising_channel"] == 555
-    await cog.settings_vintagestory_channel.callback(cog, _admin_ctx("settings channel vintagestory", [FakeTextChannel(ch_id=556)]))
-    assert _state.guild_settings["42"]["vintagestory_channel"] == 556
-    await cog.settings_vrising_channel.callback(cog, _admin_ctx("settings channel vrising"), "clear")
-    assert _state.guild_settings["42"]["vrising_channel"] is None
+    ctx = _admin_ctx("settings channel minecraft", [FakeTextChannel(ch_id=555)])
+    await cog.settings_minecraft_channel_legacy_sub.callback(cog, ctx)
+    assert _state.guild_settings["42"]["game_servers_channel"] == 555
+    ctx = _admin_ctx("settings minecraft-channel")
+    await cog.settings_minecraft_channel_legacy.callback(cog, ctx, "clear")
+    assert _state.guild_settings["42"]["game_servers_channel"] is None
 
 
 async def test_settings_vrising_joins_toggles(db):

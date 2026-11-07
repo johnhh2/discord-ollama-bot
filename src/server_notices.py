@@ -1,7 +1,7 @@
 """Channel notices for monitored game servers (Minecraft, V Rising, Vintage Story).
 
 The cogs fold each poll into events (minecraft_cog._mc_events); this module
-words them and posts them to every guild that set the game's channel.
+words them and posts them to every guild's `!settings channel game-servers`.
 """
 import logging
 
@@ -65,13 +65,12 @@ def event_payloads(game: str, label: str, events: list[str], prev, status,
     return payloads
 
 
-async def announce(bot, payloads: list[tuple[str, dict]], *, channel_key: str,
-                   joins_key: "str | None" = None):
-    """Post to each guild's `cfg[channel_key]`; join/leave notices only where
-    `cfg[joins_key]` isn't switched off (missing means on)."""
+async def announce(bot, payloads: list[tuple[str, dict]], *, joins_key: "str | None" = None):
+    """Post to each guild's game-servers channel; join/leave notices only
+    where `cfg[joins_key]` isn't switched off (missing means on)."""
     for guild in bot.guilds:
         cfg = get_guild_cfg(guild.id)
-        channel_id = cfg.get(channel_key)
+        channel_id = cfg.get("game_servers_channel")
         if not channel_id:
             continue
         wanted = [payload for ev, payload in payloads
@@ -83,4 +82,4 @@ async def announce(bot, payloads: list[tuple[str, dict]], *, channel_key: str,
             for payload in wanted:
                 await channel.send(silent=True, **payload)
         except Exception:
-            logger.exception("[%s] announce failed for guild %s", channel_key, guild.id)
+            logger.exception("[game servers] announce failed for guild %s", guild.id)
