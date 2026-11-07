@@ -1870,3 +1870,9 @@ ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS auto_repaired_since_claim BIG
 -- target's messages (ragebait, mock, curse, tax). JSON {item: CT day} of the
 -- buyer's last purchase of each.
 ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS targeted_buy_days TEXT NULL;
+
+-- ── 0091_insurance_claims.sql ──
+-- 0091: per-user log of recent insurance refunds, for the claims surcharge
+-- on premiums. JSON {type: {CT day: refunded}}, pruned to
+-- INSURANCE_CLAIMS_DAYS on read.
+ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS insurance_claims TEXT NULL;

@@ -285,6 +285,20 @@ async def test_a_policy_bought_after_the_theft_pays_nothing(db, monkeypatch):
     assert pt.repair_split(_state.property_owners[PID]) == (0, take)
 
 
+async def test_the_insurer_share_counts_toward_the_owner_surcharge(db, monkeypatch):
+    await _setup()
+    _insure(OWNER, "premium")
+    before = _economy.insurance_premium(OWNER, "premium", "property")
+    _rolls(monkeypatch, 0.0, 0.99)
+    await _steal()
+
+    covered, _ = pt.repair_split(_state.property_owners[PID])
+    assert covered > 0
+    assert _state.economy["users"][str(OWNER)]["insurance_claims"]["property"] == {_ct_today(): covered}
+    assert _economy.insurance_surcharge(OWNER, "property") > 0
+    assert _economy.insurance_premium(OWNER, "premium", "property") > before
+
+
 def test_the_cap_limits_the_insurer_share():
     row = {"repair_cost": 100_000, "repair_cover_pct": 75, "repair_cover_cap": 60_000}
     assert pt.repair_split(row) == (60_000, 40_000)

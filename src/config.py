@@ -210,19 +210,30 @@ ARTIFACT_SAVINGS_DAILY_MULT = 1.008
 # a property theft (src/property_theft.py); PROPERTY_INSURANCE_LIVE takes it
 # off sale. Tier keys are what users type; order is
 # cheapest → dearest (the tier picker renders in this order).
+#
+# Personal and property premiums scale with what crime can reach
+# (economy.insurance_premium): `rate_bp` basis points a day of the exposure,
+# never below `cost`. Personal exposure stops at `exposure_cap`, the wallet +
+# savings where a 20% heist hits refund_cap, since more wealth buys no more
+# cover. Property has no cap: each deed is robbed on its own.
 SHOP_INSURANCE_TIERS = {
-    "basic":    {"cost": 1_000, "refund_pct": 50,  "refund_cap": 100_000},
-    "standard": {"cost": 3_000, "refund_pct": 75,  "refund_cap": 200_000},
-    "premium":  {"cost": 6_000, "refund_pct": 100, "refund_cap": 400_000},
+    "basic":    {"cost": 1_000, "refund_pct": 50,  "refund_cap": 100_000, "rate_bp": 40,  "exposure_cap": 1_000_000},
+    "standard": {"cost": 3_000, "refund_pct": 75,  "refund_cap": 200_000, "rate_bp": 60,  "exposure_cap": 1_333_333},
+    "premium":  {"cost": 6_000, "refund_pct": 100, "refund_cap": 400_000, "rate_bp": 100, "exposure_cap": 2_000_000},
 }
 SHOP_SOCIAL_INSURANCE_TIERS = {
     "social": {"cost": 1_000},
 }
 SHOP_PROPERTY_INSURANCE_TIERS = {
-    "basic":    {"cost": 2_000,  "refund_pct": 50,  "refund_cap": 30_000},
-    "standard": {"cost": 5_000,  "refund_pct": 75,  "refund_cap": 60_000},
-    "premium":  {"cost": 10_000, "refund_pct": 100, "refund_cap": 120_000},
+    "basic":    {"cost": 2_000,  "refund_pct": 50,  "refund_cap": 30_000,  "rate_bp": 10},
+    "standard": {"cost": 5_000,  "refund_pct": 75,  "refund_cap": 60_000,  "rate_bp": 15},
+    "premium":  {"cost": 10_000, "refund_pct": 100, "refund_cap": 120_000, "rate_bp": 25},
 }
+# Each premium adds this share of the policy's refunds over the last
+# INSURANCE_CLAIMS_DAYS gameplay days, spread per day, so a victim robbed
+# daily (or a friend farming refunds) pays back part of the minted coins.
+INSURANCE_CLAIMS_DAYS = 7
+INSURANCE_SURCHARGE_PCT = 50
 INSURANCE_TYPES = {
     "personal": {"label": "Personal", "emoji": "🛡️", "tiers": SHOP_INSURANCE_TIERS, "default": "basic"},
     "social":   {"label": "Social", "emoji": "🎭", "tiers": SHOP_SOCIAL_INSURANCE_TIERS, "default": "social"},

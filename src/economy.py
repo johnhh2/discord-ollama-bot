@@ -216,8 +216,101 @@ def insurance_tier_info(tier: str | None, kind: str = "personal") -> dict:
 
 
 def insurance_tier_cost(tier: str | None, kind: str = "personal") -> int:
-    """Daily premium for `tier`."""
+    """The tier's minimum daily premium; insurance_premium is what a user pays."""
     return int(insurance_tier_info(tier, kind)["cost"])
+
+
+def insurance_exposure(uid: int, kind: str = "personal") -> int:
+    """What crime can reach that this type covers: wallet + savings (with
+    interest to date) for personal, the owned deeds' book value for property,
+    0 for social."""
+    user = state.economy["users"].get(str(uid), {})
+    if kind == "personal":
+        now = time.time()
+        savings = sum(e["amount"] * savings_growth(e["deposited_at"], now, int(uid)) for e in user.get("savings", []))
+        return int(user.get("balance", 0) or 0) + int(savings)
+    if kind == "property":
+        from src.properties import PROPERTIES_BY_ID, property_value
+        return sum(property_value(pid, row) for pid, row in state.property_owners.items()
+                   if row["owner_id"] == int(uid) and pid in PROPERTIES_BY_ID)
+    return 0
+
+
+def _recent_claims(user: dict, kind: str) -> dict:
+    """The type's {CT day: refunded} within INSURANCE_CLAIMS_DAYS, today
+    included. Prunes older days in place."""
+    from src.config import INSURANCE_CLAIMS_DAYS
+    days = user.setdefault("insurance_claims", {}).get(kind)
+    if not days:
+        return {}
+    cutoff = (_ct_today_date() - datetime.timedelta(days=INSURANCE_CLAIMS_DAYS - 1)).isoformat()
+    for day in [d for d in days if d < cutoff]:
+        del days[day]
+    return days
+
+
+def record_insurance_claim(uid: int, kind: str, amount: int) -> None:
+    """Log a refund the insurer owes or paid, for the claims surcharge.
+    Synchronous; the caller saves the economy row."""
+    if amount <= 0:
+        return
+    user = state.economy["users"].setdefault(str(uid), {})
+    _recent_claims(user, kind)
+    days = user["insurance_claims"].setdefault(kind, {})
+    today = _ct_today()
+    days[today] = int(days.get(today, 0)) + int(amount)
+
+
+def insurance_surcharge(uid: int, kind: str = "personal") -> int:
+    """INSURANCE_SURCHARGE_PCT of the type's recent refunds, per day."""
+    from src.config import INSURANCE_CLAIMS_DAYS, INSURANCE_SURCHARGE_PCT
+    user = state.economy["users"].get(str(uid))
+    if not user:
+        return 0
+    total = sum(_recent_claims(user, kind).values())
+    return math.ceil(total * INSURANCE_SURCHARGE_PCT / 100 / INSURANCE_CLAIMS_DAYS)
+
+
+def insurance_base_premium(uid: int, tier: str | None, kind: str = "personal") -> int:
+    """The tier's rate on the user's exposure (up to exposure_cap), never
+    below its `cost`. Flat `cost` for a tier with no rate (social)."""
+    info = insurance_tier_info(tier, kind)
+    floor = int(info["cost"])
+    rate = info.get("rate_bp")
+    if not rate:
+        return floor
+    exposure = insurance_exposure(uid, kind)
+    if info.get("exposure_cap"):
+        exposure = min(exposure, int(info["exposure_cap"]))
+    return max(floor, math.ceil(exposure * rate / 10_000))
+
+
+def insurance_premium(uid: int, tier: str | None, kind: str = "personal") -> int:
+    """What `uid` pays today for a day of `tier`: the base premium plus the
+    claims surcharge. Recomputed at every charge, so it follows the user's
+    wealth from day to day."""
+    return insurance_base_premium(uid, tier, kind) + insurance_surcharge(uid, kind)
+
+
+def insurance_pricing_text(uid: int, kind: str = "personal") -> str:
+    """How the type's premiums are worked out for this user, for the
+    purchase prompt; "" for a flat-priced type."""
+    from src.config import INSURANCE_CLAIMS_DAYS, INSURANCE_TYPES
+    tiers = INSURANCE_TYPES[kind]["tiers"]
+    if not any(t.get("rate_bp") for t in tiers.values()):
+        return ""
+    what = "wallet + savings" if kind == "personal" else "deeds' value"
+    parts = []
+    for name, info in tiers.items():
+        cap = f", counted up to {int(info['exposure_cap']):,}" if info.get("exposure_cap") else ""
+        parts.append(f"{name.title()} {info['rate_bp'] / 100:g}% (min {int(info['cost']):,}{cap})")
+    text = (f"Premiums are a daily share of your {what}, now **{insurance_exposure(uid, kind):,} 🪙**, "
+            "recalculated at each 5am charge: " + " · ".join(parts) + ".")
+    surcharge = insurance_surcharge(uid, kind)
+    if surcharge:
+        text += (f" Refunds paid to you in the last {INSURANCE_CLAIMS_DAYS} days add "
+                 f"**{surcharge:,} 🪙**/day.")
+    return text
 
 
 def get_insurance_tier(uid: int, kind: str = "personal") -> str | None:
@@ -255,7 +348,8 @@ def insurance_switch_cost(uid: int, new_tier: str, kind: str = "personal") -> in
     if expiry is None:
         return 0
     cur = get_insurance_tier(uid, kind)
-    diff = insurance_tier_cost(new_tier, kind) - insurance_tier_cost(cur, kind)
+    # The surcharge is the same on both tiers, so the base premiums suffice.
+    diff = insurance_base_premium(uid, new_tier, kind) - insurance_base_premium(uid, cur, kind)
     if cur is None or cur == new_tier or diff <= 0:
         return 0
     remaining_days = max(0.0, expiry - time.time()) / SHOP_INSURANCE_DURATION_SECS
@@ -326,7 +420,7 @@ async def renew_insurance_subs(uid: int) -> tuple[int, int]:
         tier = insurance_policies(kind)[1].get(int(uid))
         if tier is None:
             continue
-        cost = insurance_tier_cost(tier, kind)
+        cost = insurance_premium(uid, tier, kind)
         if free or await deduct_balance(uid, cost):
             extend_insurance(uid, 1, tier=tier, kind=kind)
             await save_insurance(kind)
@@ -341,9 +435,10 @@ async def insurance_refund(uid: int, loss: int, *, guild_id: int | None = None, 
 
     The refund is the tier's refund_pct of `loss`, capped at the tier's
     refund_cap **per incident** — every robbery is covered on its own; there
-    is no daily or lifetime tally, and no state beyond the policy row. The
-    coins are minted by the "insurance company": the thief keeps the full
-    take. Returns the amount refunded (0 when uninsured or expired)."""
+    is no daily or lifetime cap. The coins are minted by the "insurance
+    company": the thief keeps the full take. Each refund is logged for the
+    claims surcharge on later premiums. Returns the amount refunded (0 when
+    uninsured or expired)."""
     if loss <= 0:
         return 0
     entry = state.insurance.get(int(uid))
@@ -353,6 +448,7 @@ async def insurance_refund(uid: int, loss: int, *, guild_id: int | None = None, 
     refund = min(int(loss) * int(info["refund_pct"]) // 100, int(info["refund_cap"]))
     if refund <= 0:
         return 0
+    record_insurance_claim(uid, "personal", refund)
     await add_balance(uid, refund, guild_id=guild_id, holder_name=holder_name)
     return refund
 

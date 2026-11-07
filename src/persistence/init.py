@@ -63,7 +63,8 @@ async def _init_db_state_inner(state, run_migrations):
                 " daily_gamble_property, ins_paid_since_claim, ins_lapsed_since_claim,"
                 " heist_success_day, property_theft_day, bail_price,"
                 " auto_repair, robbed_since_claim, investigations_since_claim,"
-                " arrests_since_claim, auto_repaired_since_claim, targeted_buy_days"
+                " arrests_since_claim, auto_repaired_since_claim, targeted_buy_days,"
+                " insurance_claims"
                 " FROM economy_users"
             )
             for row in await cur.fetchall():
@@ -78,7 +79,7 @@ async def _init_db_state_inner(state, run_migrations):
                  heist_success_day, property_theft_day, bail_price,
                  auto_repair, robbed_since_claim, investigations_since_claim,
                  arrests_since_claim, auto_repaired_since_claim,
-                 targeted_buy_days) = row
+                 targeted_buy_days, insurance_claims) = row
                 state.economy["users"][str(uid)] = {
                     "balance": bal,
                     "last_daily": last_daily,
@@ -108,6 +109,7 @@ async def _init_db_state_inner(state, run_migrations):
                     "arrests_since_claim": int(arrests_since_claim or 0),
                     "auto_repaired_since_claim": int(auto_repaired_since_claim or 0),
                     "targeted_buy_days": json.loads(targeted_buy_days) if targeted_buy_days else {},
+                    "insurance_claims": json.loads(insurance_claims) if insurance_claims else {},
                 }
         except Exception as e:
             logging.error(f"[init_db_state] economy_users failed: {e}", exc_info=True)

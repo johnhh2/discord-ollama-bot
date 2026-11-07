@@ -288,10 +288,12 @@ Coverage: [tests/test_property_theft.py](tests/test_property_theft.py), [tests/t
 - **Every purchase is a subscription**; there are no prepaid days. Admin grants (`!effects add … insurance|social_insurance`) set expiry directly.
 - **Purchase prompts show all tiers as buttons** (`_insurance_tier_choices`); a typed tier only pre-highlights. A NULL `insurance_tier` reads as the default.
 - **One tier per user per type.** Change policy and subscription together via `set_insurance_tier(uid, tier, kind)`. Upgrading charges the difference on remaining coverage (`insurance_switch_cost`); downgrading refunds nothing.
+- **Personal and property premiums scale with exposure.** Price every charge, prompt and switch with `insurance_premium(uid, tier, kind)`: `rate_bp` of `insurance_exposure` (wallet + savings, or deed value), up to `exposure_cap`, never below the tier's `cost`. `insurance_tier_cost` is only that floor. It is recomputed at each sweep, so tests pin balances.
+- **Every payout feeds the claims surcharge.** Log it with `record_insurance_claim` (personal in `insurance_refund`; property when a theft locks in cover). Logs live in `economy_users.insurance_claims`, pruned to `INSURANCE_CLAIMS_DAYS`. A new insurer payout path must log too, or it escapes the surcharge.
 
 **Crime goes through** against an insured victim. After the debit, `insurance_refund(victim, loss)` mints `refund_pct` of the loss, capped per incident, into the victim's wallet; nothing is clawed back from the thief. Every crime that takes coins must call it, show `_insurance_refund_line` / `_robbed_ping`, and record the victim's `lost=` net of the refund (the thief's `gained` stays gross). The per-incident cap permits collusion bounded only by crime odds and jail. If that needs a limit, add a synchronously claimed tally in `insurance_refund`, not in the crimes.
 
-Coverage: [tests/test_insurance_types.py](tests/test_insurance_types.py), [tests/test_insurance_tiers.py](tests/test_insurance_tiers.py), refund tests in `test_money_flows.py`.
+Coverage: [tests/test_insurance_types.py](tests/test_insurance_types.py), [tests/test_insurance_tiers.py](tests/test_insurance_tiers.py), [tests/test_insurance_scaling.py](tests/test_insurance_scaling.py), refund tests in `test_money_flows.py`.
 
 ### Subscriptions are charged by the 5am sweep, never the daily claim
 

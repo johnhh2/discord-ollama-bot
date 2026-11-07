@@ -16,7 +16,7 @@ from src.helpers import (
 )
 from src.economy import (
     add_balance, deduct_balance, get_balance, get_guild_house_balance,
-    add_guild_house, insurance_refund, sweep_insurance_subs, _ct_now, _ct_today, do_daily_reset, _ensure_user,
+    add_guild_house, insurance_refund, record_insurance_claim, sweep_insurance_subs, _ct_now, _ct_today, do_daily_reset, _ensure_user,
     next_daily_reset_ts, get_savings_value, add_savings, remove_savings,
     savings_growth, user_savings_daily_pct,
     seize_from_savings, record_crime_event, CRIME_ELIGIBLE_NET_WORTH,
@@ -1050,6 +1050,9 @@ class EconomyCog(commands.Cog):
                     owner_data["arrests_since_claim"] = int(owner_data.get("arrests_since_claim", 0) or 0) + 1
             if success:
                 covered, share = property_theft.repair_split(row)
+                # Logged when the cover is locked in, not at repair: the
+                # insurer owes it from here on (saved with owner_data below).
+                record_insurance_claim(owner_id, "property", covered)
                 cover = f" Your insurance covered **{covered:,} 🪙**." if covered else ""
                 fixed, spent = await auto_repair(owner_id, [pid])
                 if fixed:

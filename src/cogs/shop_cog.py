@@ -19,7 +19,7 @@ from src.economy import (
     add_balance, get_balance, is_insured, get_insurance_expiry,
     extend_insurance, next_daily_reset_ts, rebase_savings_deposits,
     get_insurance_tier, set_insurance_tier, insurance_switch_cost,
-    insurance_tier_cost, insurance_tier_info, insurance_policies,
+    insurance_premium, insurance_pricing_text, insurance_tier_info, insurance_policies,
     _ensure_user, _ct_today,
 )
 from src.leveling import (
@@ -1791,6 +1791,14 @@ class ShopCog(commands.Cog):
             return f"{n / 1_000:g}k"
         return f"{n:,}"
 
+    @staticmethod
+    def _premium_phrase(kind: str, premium: int) -> str:
+        """'**N 🪙** is charged', hedged for types priced on a user's
+        wealth, which moves the premium day to day."""
+        scales = any(t.get("rate_bp") for t in INSURANCE_TYPES[kind]["tiers"].values())
+        return (f"about **{premium:,} 🪙** at today's worth is charged" if scales
+                else f"**{premium:,} 🪙** is charged")
+
     def _insurance_coverage_line(self, uid: int, kind: str) -> str:
         """The buyer's coverage of one type. Every purchase is a subscription,
         so coverage without one is a cancelled subscription running out."""
@@ -1827,6 +1835,9 @@ class ShopCog(commands.Cog):
             "wallet and the thief keeps their take. Social insurance stops the effects outright. "
             "Property insurance pays part of the repair bill after a property theft, at the tier you "
             "held when it happened. All of them work in every server.\n\n"
+            "Personal and property premiums scale with what a thief can reach (your wallet + savings, or "
+            "your deeds' value) above each tier's minimum, and rise for a week after the insurer pays you "
+            "out. They're recalculated at every 5am charge.\n\n"
             + self._insurance_overview(uid),
             C_PURPLE,
         )
@@ -1839,6 +1850,8 @@ class ShopCog(commands.Cog):
             self.INSURANCE_BLURBS[kind] + " Charged at the 5am reset each day, valid in every server.",
             self._insurance_coverage_line(uid, kind),
         ]
+        if pricing := insurance_pricing_text(uid, kind):
+            lines.append(pricing)
         if exp is None:
             lines.append("The first day is charged now so coverage starts immediately.")
         elif self._sub_needs_first_day(exp):
@@ -1850,16 +1863,18 @@ class ShopCog(commands.Cog):
 
     def _insurance_tier_choices(self, uid: int, kind: str, preferred: str | None) -> list[dict]:
         """One button per tier. A label reads 'Standard — 3,000 🪙/day (3,000
-        now) · 75% up to 200k': the premium, what pressing it charges now (the
-        starter day plus any upgrade surcharge), and the cover."""
+        now) · 75% up to 200k': the buyer's premium today, what pressing it
+        charges now (the starter day plus any upgrade surcharge), and the
+        cover."""
         days = 1 if self._sub_needs_first_day(get_insurance_expiry(uid, kind)) else 0
         choices = []
         for name, info in INSURANCE_TYPES[kind]["tiers"].items():
             if uid in state.godmode_users:
                 price = "free"
             else:
-                now = info["cost"] * days + insurance_switch_cost(uid, name, kind)
-                price = f"{info['cost']:,} 🪙/day" + (f" ({now:,} now)" if now else "")
+                premium = insurance_premium(uid, name, kind)
+                now = premium * days + insurance_switch_cost(uid, name, kind)
+                price = f"{premium:,} 🪙/day" + (f" ({now:,} now)" if now else "")
             cover = "" if kind == "social" else (
                 f" · {info['refund_pct']}% up to {self._short_coins(info['refund_cap'])}")
             choices.append({"label": f"{name.title()} — {price}{cover}", "value": name,
@@ -1963,7 +1978,7 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb(
                 "🛡️ Already Subscribed",
                 f"You're already subscribed to {self._policy_name(kind, chosen).lower()} — "
-                f"**{insurance_tier_cost(chosen, kind):,} 🪙** is charged at the 5am reset each day. "
+                f"{self._premium_phrase(kind, insurance_premium(uid, chosen, kind))} at the 5am reset each day. "
                 "`!shop insurance` to cancel.",
                 C_GOLD,
             ))
@@ -1978,11 +1993,12 @@ class ShopCog(commands.Cog):
         bridged = self._sub_needs_first_day(cur_exp)
         expires_at = None
         charge = switch
+        premium = insurance_premium(uid, chosen, kind)
         if bridged:
             # Charge the first day now, stacked on any remaining coverage —
             # see _sub_needs_first_day.
             expires_at = extend_insurance(uid, 1, tier=chosen, kind=kind)
-            charge += insurance_tier_cost(chosen, kind)
+            charge += premium
         set_insurance_tier(uid, chosen, kind)
         cost = 0 if uid in state.godmode_users else charge
         if not await shop_charge(ctx, uid, cost, cost_label=f"{cost:,}"):
@@ -1998,7 +2014,6 @@ class ShopCog(commands.Cog):
         await save_insurance(kind)
         await save_insurance_subs(kind)
 
-        premium = insurance_tier_cost(chosen, kind)
         if bridged:
             if cur_exp is None:
                 start_str = (
@@ -2021,13 +2036,13 @@ class ShopCog(commands.Cog):
         if prev_sub_tier is not None:
             title = "🛡️ Subscription Switched"
             body = (
-                f"Your subscription is now {self._policy_name(kind, chosen)} — **{premium:,} 🪙** is charged "
+                f"Your subscription is now {self._policy_name(kind, chosen)} — {self._premium_phrase(kind, premium)} "
                 f"at the 5am reset each day from now on.{switch_str}{start_str}"
             )
         else:
             title = "🛡️ Insurance Subscribed"
             body = (
-                f"{self._policy_name(kind, chosen)} — **{premium:,} 🪙** is now charged at the 5am reset "
+                f"{self._policy_name(kind, chosen)} — {self._premium_phrase(kind, premium)} at the 5am reset "
                 f"each day, adding 24h of coverage.{switch_str}{start_str} Cancel anytime from "
                 "`!shop insurance`."
             )
