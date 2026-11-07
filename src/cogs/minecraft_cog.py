@@ -966,40 +966,33 @@ class MinecraftCog(commands.Cog):
         self._monitor.version = await persistence.load_mc_server_version()
 
     def _event_payloads(self, events: list[str], prev: MonitorState,
-                        status: "McStatus | None") -> list[dict]:
-        """Turn events into channel.send kwargs (colored embeds)."""
+                        status: "McStatus | None") -> list[tuple[str, dict]]:
+        """Turn events into (event, channel.send kwargs) pairs (colored embeds)."""
+        # An empty server's "0/10 online" is noise, so the count is left off.
+        online = f"**{status.players}/{status.max_players}** online" if status and status.players else ""
         payloads = []
         for ev in events:
             if ev == "came_online":
-                payloads.append({"embed": emb(
-                    "🟢 Minecraft Server Online",
-                    f"{_server_label()} is back up — "
-                    f"**{status.players}/{status.max_players}** online.",
-                    C_GREEN,
-                )})
+                desc = f"{_server_label()} is back up" + (f" — {online}." if online else ".")
+                payloads.append((ev, {"embed": emb("🟢 Minecraft Server Online", desc, C_GREEN)}))
             elif ev == "went_offline":
                 desc = f"{_server_label()} stopped responding."
                 if self._last_seen_online:
                     desc += f"\nLast seen online <t:{int(self._last_seen_online)}:R>."
-                payloads.append({"embed": emb("🔴 Minecraft Server Offline", desc, C_RED)})
+                payloads.append((ev, {"embed": emb("🔴 Minecraft Server Offline", desc, C_RED)}))
             elif ev == "count_up":
                 delta = status.players - prev.count
                 who = "A player" if delta == 1 else f"{delta} players"
-                payloads.append({"embed": emb(
+                payloads.append((ev, {"embed": emb(
                     "🟢 Player Joined",
-                    f"{who} joined the Minecraft server — "
-                    f"**{status.players}/{status.max_players}** online",
+                    f"{who} joined the Minecraft server — {online}",
                     C_GREEN,
-                )})
+                )}))
             elif ev == "count_down":
                 delta = prev.count - status.players
                 who = "A player" if delta == 1 else f"{delta} players"
-                payloads.append({"embed": emb(
-                    "🔴 Player Left",
-                    f"{who} left the Minecraft server — "
-                    f"**{status.players}/{status.max_players}** online",
-                    C_RED,
-                )})
+                desc = f"{who} left the Minecraft server" + (f" — {online}" if online else " — it's empty now")
+                payloads.append((ev, {"embed": emb("🔴 Player Left", desc, C_RED)}))
             elif ev == "version_changed":
                 old, new = _version_key(prev.version), _version_key(status.version)
                 rollback = bool(old and new and new < old)
@@ -1009,23 +1002,27 @@ class MinecraftCog(commands.Cog):
                 # This embed replaces the "back online" one when the monitor
                 # saw the server go down for the update.
                 lead = "is back up," if prev.online is False else "was"
-                payloads.append({"embed": emb(
-                    title,
-                    f"{_server_label()} {lead} {what}: "
-                    f"**{prev.version}** → **{status.version}** — "
-                    f"**{status.players}/{status.max_players}** online",
-                    C_ORANGE if rollback else C_BLUE,
-                )})
+                desc = (f"{_server_label()} {lead} {what}: "
+                        f"**{prev.version}** → **{status.version}**")
+                if online:
+                    desc += f" — {online}"
+                payloads.append((ev, {"embed": emb(title, desc, C_ORANGE if rollback else C_BLUE)}))
         return payloads
 
-    async def _announce(self, payloads: list[dict]):
+    async def _announce(self, payloads: list[tuple[str, dict]]):
         for guild in self.bot.guilds:
-            channel_id = get_guild_cfg(guild.id).get("minecraft_channel")
+            cfg = get_guild_cfg(guild.id)
+            channel_id = cfg.get("minecraft_channel")
             if not channel_id:
+                continue
+            # `!settings minecraft-joins off` keeps only the server status notices.
+            wanted = [payload for ev, payload in payloads
+                      if cfg.get("mc_join_notices", True) or ev not in ("count_up", "count_down")]
+            if not wanted:
                 continue
             try:
                 channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
-                for payload in payloads:
+                for payload in wanted:
                     await channel.send(silent=True, **payload)
             except Exception:
                 logger.exception("[minecraft] announce failed for guild %s", guild.id)

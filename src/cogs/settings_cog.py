@@ -68,7 +68,8 @@ class SettingsCog(commands.Cog):
                 f"💬 Quote bypass: {'✅ on' if cfg.get('quote_bypass_restrictions', False) else '❌ off'}\n"
                 f"🪙 Leaderboard default: **{cfg.get('leaderboard_default_scope', 'global')}**\n"
                 f"⚔️ Idle RPG: pace **{cfg.get('idle_pace') or 'lively'}** · auto-enroll **{'on' if cfg.get('idle_enroll') else 'off'}**\n"
-                f"⛏️ Minecraft block shop: {'✅ on' if cfg.get('mc_shop') else '❌ off'}\n"
+                f"⛏️ Minecraft block shop: {'✅ on' if cfg.get('mc_shop') else '❌ off'}"
+                f" · join notices: {'✅ on' if cfg.get('mc_join_notices', True) else '❌ off'}\n"
                 f"📈 Interest curve: {curve_status()}\n"
                 f"🔞 NSFW: {nsfw}"
             ),
@@ -436,6 +437,32 @@ class SettingsCog(commands.Cog):
         if cfg["mc_shop"] and not (MC_CONSOLE_HOST and MC_CONSOLE_PASSWORD):
             note = " The server console isn't configured yet (`MC_CONSOLE_HOST` / `MC_CONSOLE_PASSWORD`), so the shop stays closed until it is."
         await ctx.send(embed=emb("⛏️ Minecraft Block Shop", f"The block shop is now **{choice.lower()}**.{note}", C_GREEN))
+
+    # ── !settings minecraft-joins ─────────────────────────────────────────────
+    @cmd_settings.command(name="minecraft-joins", help="Switch the Minecraft channel's player joined/left notices on or off (server status notices stay)",
+                          usage="[on|off]")
+    @requires_perm
+    async def settings_minecraft_joins(self, ctx: commands.Context, choice: str = None):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        usage = "`!settings minecraft-joins on|off`"
+        what = (
+            "The \"player joined\" / \"player left\" notices in the Minecraft channel. "
+            "Online, offline and update notices are posted either way."
+        )
+        if choice is None:
+            choice = await self._on_off_choice(ctx, title="⛏️ Minecraft Join Notices", what=what,
+                                               current=cfg.get("mc_join_notices", True), usage=usage)
+            if choice is None:
+                return
+        if choice.lower() not in ("on", "off"):
+            await ctx.send(embed=emb("⛏️ Minecraft Join Notices", f"Usage: {usage}\n\n{what}", C_GREY))
+            return
+        cfg["mc_join_notices"] = choice.lower() == "on"
+        await save_guild_settings()
+        await ctx.send(embed=emb("⛏️ Minecraft Join Notices", f"Player joined/left notices are now **{choice.lower()}**.", C_GREEN))
 
     # ── !settings channel bounty ──────────────────────────────────────────────
     @cmd_settings_channel.command(name="bounty", help="Set the channel where !bounty posts, or clear it to disable bounties",

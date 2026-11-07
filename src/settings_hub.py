@@ -191,6 +191,7 @@ def _games(cfg: dict) -> list[Item]:
     pace = cfg.get("idle_pace") or "lively"
     enroll = bool(cfg.get("idle_enroll"))
     mc_shop = bool(cfg.get("mc_shop"))
+    mc_joins = cfg.get("mc_join_notices", True)
     nsfw = cfg.get("nsfw_enabled", False)
     nsfw_channels = [int(c) for c in cfg.get("nsfw_channels", [])]
     banned = list(cfg.get("nsfw_banned_tags", []))
@@ -207,6 +208,8 @@ def _games(cfg: dict) -> list[Item]:
              method="settings_idle_enroll", args=("off" if enroll else "on",)),
         Item(key="mc-shop", label="⛏️ Minecraft block shop — sell ores, buy building blocks for 🟫", value=_on(mc_shop),
              method="settings_minecraft_shop", args=("off" if mc_shop else "on",)),
+        Item(key="mc-joins", label="⛏️ Minecraft join notices — player joined/left posts", value=_on(mc_joins),
+             method="settings_minecraft_joins", args=("off" if mc_joins else "on",)),
         Item(key="nsfw", label="🔞 NSFW commands", value=_on(nsfw),
              method="settings_nsfw", args=("off" if nsfw else "on",)),
         Item(key="nsfw-channels", label="🔞 NSFW channels — where !nsfw may answer", value=mentions(nsfw_channels, "all channels"),

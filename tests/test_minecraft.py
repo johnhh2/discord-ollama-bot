@@ -255,6 +255,61 @@ async def test_monitor_count_change_embeds(monkeypatch):
     assert leave.color.value == mc_mod.C_RED
 
 
+async def test_empty_server_leaves_the_count_off(monkeypatch):
+    channel = FakeTextChannel(ch_id=555)
+    bot = _FakeBot(guilds=[FakeGuild(gid=1)], channels={555: channel})
+    _state.guild_settings["1"] = {"minecraft_channel": 555}
+    cog = _make_cog(monkeypatch, bot=bot)
+    cog._monitor = MonitorState(online=False, fail_streak=3)
+    results = iter([_status(players=0), _status(players=1), _status(players=0)])
+
+    async def _fake_fetch():
+        return next(results)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
+    for _ in range(3):
+        await _tick(cog)
+
+    online, join, leave = (c.kwargs["embed"].description for c in channel.send.call_args_list)
+    assert online == "The Minecraft server is back up."
+    assert "**1/10** online" in join
+    assert "/10" not in leave and "empty" in leave
+
+
+async def test_join_notices_off_keeps_status_notices(monkeypatch):
+    quiet, loud = FakeTextChannel(ch_id=555), FakeTextChannel(ch_id=556)
+    bot = _FakeBot(guilds=[FakeGuild(gid=1), FakeGuild(gid=2)], channels={555: quiet, 556: loud})
+    _state.guild_settings["1"] = {"minecraft_channel": 555, "mc_join_notices": False}
+    _state.guild_settings["2"] = {"minecraft_channel": 556}
+    cog = _make_cog(monkeypatch, bot=bot)
+    cog._monitor = MonitorState(online=True, count=2)
+    results = iter([_status(players=3), _status(players=1), None, None])
+
+    async def _fake_fetch():
+        return next(results)
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _fake_fetch)
+
+    for _ in range(4):
+        await _tick(cog)
+
+    assert [c.kwargs["embed"].title for c in quiet.send.call_args_list] == ["🔴 Minecraft Server Offline"]
+    assert [c.kwargs["embed"].title for c in loud.send.call_args_list] == [
+        "🟢 Player Joined", "🔴 Player Left", "🔴 Minecraft Server Offline"]
+
+
+async def test_settings_minecraft_joins_toggles(db):
+    cog = SettingsCog(bot=None)
+    ctx = _admin_ctx()
+    ctx.command.qualified_name = "settings minecraft-joins"
+    await cog.settings_minecraft_joins.callback(cog, ctx, "off")
+    assert _state.guild_settings["42"]["mc_join_notices"] is False
+    assert (await _read_guild_settings(42))["mc_join_notices"] is False
+    await cog.settings_minecraft_joins.callback(cog, ctx, "on")
+    assert _state.guild_settings["42"]["mc_join_notices"] is True
+    await cog.settings_minecraft_joins.callback(cog, ctx, "maybe")
+    assert "Usage:" in ctx.sent_embeds[-1].description
+
+
 async def test_monitor_offline_alert_only_after_debounce(monkeypatch):
     channel = FakeTextChannel(ch_id=555)
     bot = _FakeBot(guilds=[FakeGuild(gid=1)], channels={555: channel})
@@ -806,8 +861,7 @@ async def test_update_after_restart_posts_only_the_update(monkeypatch):
     embed = channel.send.call_args.kwargs["embed"]
     assert embed.title == "⬆️ Minecraft Server Updated"
     assert embed.description == (
-        "The Minecraft server is back up, updated: **1.21.51** → **1.21.60** — "
-        "**0/10** online")
+        "The Minecraft server is back up, updated: **1.21.51** → **1.21.60**")
 
 
 async def test_rollback_after_restart_says_back_up(monkeypatch):
