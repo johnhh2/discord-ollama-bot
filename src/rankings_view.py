@@ -22,8 +22,8 @@ RANKINGS_TIMEOUT = 300.0
 # (key, label, the command whose feature switch gates it)
 BOARDS = (
     ("coins", "🪙 Coins", "leaderboard"),
-    ("levels", "📊 Levels", "levels"),
     ("records", "🏆 Records", "records"),
+    ("levels", "📊 Levels", "levels"),
     ("idle", "⚔️ Idle RPG", "leaderboard"),
     ("roles", "👑 Roles", "roles"),
 )

@@ -629,6 +629,24 @@ def _chess_menu() -> list[Action]:
     ]
 
 
+def _equip_menu(uid: int, eq_pieces: str, eq_board: str) -> list[Action]:
+    """Change pieces / Change board on the inventory card: a dropdown of the
+    owned, unequipped items in that slot, equipped by the typed `!chess <name>`
+    (names are unique across the catalog). A slot with nothing to switch to
+    gets no button."""
+    actions = []
+    for label, emoji, items, equipped in (("Change pieces", "♟️", PIECE_SET_ITEMS, eq_pieces),
+                                         ("Change board", "🎨", BOARD_ITEMS, eq_board)):
+        owned = [it for it in items if it["key"] != equipped and has_chess_unlock(uid, it["id"])]
+        if not owned:
+            continue
+        actions.append(Action(
+            label=label, emoji=emoji, command="chess", style=discord.ButtonStyle.primary, title=label,
+            fields=(Field("item", "Equip", kind="choices", options=tuple((it["name"], it["name"]) for it in owned)),),
+            build=lambda v, g: Call(args=(v["item"][0],), content=f"!chess {v['item'][0]}")))
+    return actions
+
+
 class ChessCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -1454,8 +1472,12 @@ class ChessCog(commands.Cog):
                 lines.append("")
                 lines.append("**Board colors**")
         lines.append("")
-        lines.append("Equip with `!chess <name>` · unlock more in `!chess shop`.")
-        await send_ephemeral(ctx, embed=emb("♟️ Chess Inventory", "\n".join(lines), C_BLUE))
+        lines.append("Change what's equipped below, or type `!chess <name>` · unlock more in `!chess shop`.")
+
+        async def _ephemeral(c, **kwargs):
+            return await send_ephemeral(c, **kwargs)
+        await send_with_menu(self.bot, ctx, _equip_menu(uid, eq_pieces, eq_board), send=_ephemeral,
+                             embed=emb("♟️ Chess Inventory", "\n".join(lines), C_BLUE))
 
     # ── !chess <item name>: equip an owned piece set / board color ──────────
     async def _cmd_equip(self, ctx: commands.Context, item: dict):

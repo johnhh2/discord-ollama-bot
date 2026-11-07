@@ -158,7 +158,7 @@ def _current(view):
 
 async def test_every_ranking_carries_the_same_board_row_in_the_same_order(db):
     bot, cogs = _rankings_bot()
-    boards = ["🪙 Coins", "📊 Levels", "🏆 Records", "👑 Roles"]  # no idle channel: no Idle RPG
+    boards = ["🪙 Coins", "🏆 Records", "📊 Levels", "👑 Roles"]  # no idle channel: no Idle RPG
     lb = _ctx("leaderboard")
     await cogs["EconomyCog"].cmd_leaderboard.callback(cogs["EconomyCog"], lb, "server")
     assert _row(lb.sent_views[0]) == boards + ["Server", "Global"]
@@ -208,7 +208,7 @@ async def test_idle_rpg_is_offered_only_where_its_channel_is_set(db):
     get_guild_cfg(GID)["idle_channel"] = 555
     ctx = _ctx("leaderboard")
     await cogs["EconomyCog"].cmd_leaderboard.callback(cogs["EconomyCog"], ctx, "idle")
-    assert _row(ctx.sent_views[0]) == ["🪙 Coins", "📊 Levels", "🏆 Records", "⚔️ Idle RPG", "👑 Roles"]
+    assert _row(ctx.sent_views[0]) == ["🪙 Coins", "🏆 Records", "📊 Levels", "⚔️ Idle RPG", "👑 Roles"]
     assert ctx.sent_embeds[0].title == "⚔️ Idle RPG Leaderboard"
 
 
@@ -677,3 +677,33 @@ async def test_bare_counter_subcommands_prompt_instead_of_printing_usage(monkeyp
     monkeypatch.setattr(_counter_cog, "pick_users", _users)
     await cog.cmd_counter_addperm.callback(cog, _ctx("counter addperm"))
     assert seen[-1] == "🔑 Give counter access"
+
+
+async def test_chess_inventory_offers_owned_unequipped_items_and_equips_by_name(db):
+    from src.chess_shop import BOARD_ITEMS, PIECE_SET_ITEMS
+    from src.games.chess import ChessCog
+    bot, commands = _fake_bot("chess")
+    cog = ChessCog.__new__(ChessCog)
+    cog.bot = bot
+    paid_board = next(it for it in BOARD_ITEMS if it["cost"] > 0)
+    _state.chess_unlocks[1] = {paid_board["id"]}
+    ctx = _ctx("chess")
+    await cog.cmd_chess.callback(cog, ctx, "inventory")
+    view = ctx.sent_views[-1]
+    labels = [b.label for b in view.children]
+    assert "Change board" in labels
+    # Nothing to switch to means no button.
+    free_sets = [it for it in PIECE_SET_ITEMS if it["cost"] == 0]
+    assert ("Change pieces" in labels) == (len(free_sets) > 1)
+
+    await _submit(view, "Change board", FakeGuild(gid=GID), item=[paid_board["name"]])
+    assert commands["chess"].cog.calls == [(1, (paid_board["name"],), {})]
+
+
+async def test_shop_artifact_singular_is_the_artifacts_subcommand():
+    import discord as _discord
+    from discord.ext import commands as _commands
+    bot = _commands.Bot(command_prefix="!", intents=_discord.Intents.none())
+    await bot.add_cog(ShopCog(bot))
+    shop = bot.get_command("shop")
+    assert shop.get_command("artifact") is shop.get_command("artifacts")

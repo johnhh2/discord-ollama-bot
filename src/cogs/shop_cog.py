@@ -604,7 +604,7 @@ class ShopCog(commands.Cog):
             await ctx.send(embed=emb("🏘️ Real Estate", refusal, C_GREY))
 
     # ── !shop artifacts ───────────────────────────────────────────────────────
-    @cmd_shop.command(name="artifacts",
+    @cmd_shop.command(name="artifacts", aliases=["artifact"],
                       help="List the permanent artifacts with passive effects; buy one, or sell one back for half its price",
                       usage="[buy [number]|sell [number]]")
     @_shop_subcommand(None)
