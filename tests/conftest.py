@@ -315,8 +315,7 @@ def reset_bot_state(monkeypatch):
     import src.games.chess as _chess_mod
     monkeypatch.setattr(_chess_mod, "pick_from_list", _dismissed)  # `!chess view` / `pgn` / `shop` pickers
     import src.cogs.utility_cog as _utility_cog_mod
-    for _prompt in ("pick_from_list", "open_form"):  # `!puzzle`, `!issue`, `!bugreport`, `!featurerequest`
-        monkeypatch.setattr(_utility_cog_mod, _prompt, _dismissed)
+    monkeypatch.setattr(_utility_cog_mod, "open_form", _dismissed)  # `!issue`, `!bugreport`, `!featurerequest`
     import src.cogs.ai_cog as _ai_cog_mod
     monkeypatch.setattr(_ai_cog_mod, "open_form", _dismissed)  # `!ask`, `!story`, `!roleplay` forms
     import src.cogs.minecraft_cog as _mc_cog_mod
@@ -325,6 +324,9 @@ def reset_bot_state(monkeypatch):
     monkeypatch.setattr(_announce_cog_mod, "open_form", _dismissed)  # `!announce` with a piece missing
     import src.gambling.slots as _slots_mod
     monkeypatch.setattr(_slots_mod, "open_form", _dismissed)  # `!rig` without a game or player
+    import src.cogs.counter_cog as _counter_cog_mod
+    for _prompt in ("open_form", "pick_from_list", "pick_users"):  # bare `!counter add|remove|addperm|removeperm`
+        monkeypatch.setattr(_counter_cog_mod, _prompt, _dismissed)
     # The user / voice-channel dropdowns a name lookup opens when it misses
     # (src/pickers.py, via resolve_member and VoiceChannelConverter).
     import src.pickers as _pickers_mod

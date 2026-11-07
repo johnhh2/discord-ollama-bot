@@ -18,7 +18,8 @@ from src.helpers import (
     _delete_after, send_ephemeral, announce_record, parse_int_amount,
 )
 from src.confirm_view import confirm_prompt
-from src.settings_views import pick_from_list
+from src.command_menu import Action, Call, member as picked_member, send_with_menu
+from src.settings_views import Field, pick_from_list
 from src.persistence.chess import load_recent_chess_reports
 from src.config import EPHEMERAL_DELETE_AFTER
 from src.economy import (
@@ -589,6 +590,43 @@ class _BonusListButton(discord.ui.Button):
         await interaction.response.send_message(
             embed=_bonus_list_embed(interaction.user.id), ephemeral=True,
         )
+
+
+def _challenge(values: dict, guild) -> "Call | str":
+    opponent = picked_member(guild, values)
+    if opponent is None:
+        return "Pick someone in this server."
+    wager = values.get("wager") or ""
+    args = (opponent.mention, wager) if wager else (opponent.mention,)
+    # `!chess` reads the opponent off ctx.message.mentions.
+    return Call(args=args, mentions=(opponent,), content=f"!chess {' '.join(args)}")
+
+
+def _chess_menu() -> list[Action]:
+    """The bare `!chess` card's buttons: each runs the typed `!chess …` /
+    `!chessbot …` for the presser."""
+    elo_hint = f"{chess_bot.ELO_MIN}–{chess_bot.ELO_MAX}; empty shows your ladder"
+    return [
+        Action(label="Play the bot", emoji="🤖", command="chessbot", style=discord.ButtonStyle.primary,
+               title="Play the chess bot",
+               fields=(Field("elo", "Bot Elo (optional)", required=False, max_length=4, description=elo_hint),),
+               build=lambda v, g: Call(args=(v["elo"],) if v.get("elo") else (),
+                                       content=f"!chessbot {v.get('elo') or ''}".strip())),
+        Action(label="Challenge a player", emoji="⚔️", command="chess", style=discord.ButtonStyle.primary,
+               title="Challenge a player",
+               fields=(Field("user", "Opponent", kind="users"),
+                       Field("wager", "Wager (optional)", required=False, max_length=12,
+                             placeholder="e.g. 500 or 2.5k; empty for a friendly")),
+               build=_challenge),
+        Action(label="Chess shop", emoji="🛒", command="chess", style=discord.ButtonStyle.success,
+               build=lambda v, g: Call(args=("shop",), content="!chess shop")),
+        Action(label="Inventory", emoji="🎒", command="chess", row=1,
+               build=lambda v, g: Call(args=("inventory",), content="!chess inventory")),
+        Action(label="Replay a game", emoji="📜", command="chess", row=1,
+               build=lambda v, g: Call(args=("view",), content="!chess view")),
+        Action(label="Game PGN", emoji="📄", command="chess", row=1,
+               build=lambda v, g: Call(args=("pgn",), content="!chess pgn")),
+    ]
 
 
 class ChessCog(commands.Cog):
@@ -1472,7 +1510,11 @@ class ChessCog(commands.Cog):
             "**Notation**\n"
             "SAN (`Nf3`, `O-O`, `Qxh4#`) or UCI (`g1f3`, `e1g1`, `d8h4`). Both work everywhere."
         )
-        await send_ephemeral(ctx, embed=emb("♟️ Chess — Commands", desc, C_BLUE))
+
+        async def _ephemeral(c, **kwargs):
+            return await send_ephemeral(c, **kwargs)
+        await send_with_menu(self.bot, ctx, _chess_menu(), send=_ephemeral,
+                             embed=emb("♟️ Chess — Commands", desc, C_BLUE))
 
     # ── !move ───────────────────────────────────────────────────────────────
     @commands.command(name="move",

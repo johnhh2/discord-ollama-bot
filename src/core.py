@@ -224,11 +224,14 @@ def create_bot() -> commands.Bot:
         command stays invisible to users who can't run it anyway."""
         if ctx.guild is None or ctx.command is None:
             return True
-        from src.features import disabled_feature_for, FeatureDisabled
+        from src.features import disabled_feature_for, FeatureDisabled, FREE_WHEN_BARE
         from src.helpers import emb, C_GREY
         feature = disabled_feature_for(ctx.command.qualified_name, ctx.guild.id)
         if feature is None:
             return True
+        view = getattr(ctx, "view", None)
+        if ctx.command.qualified_name in FREE_WHEN_BARE and view is not None and not view.buffer[view.index:].strip():
+            return True  # checks run before argument parsing, so the view still holds the arguments
         await ctx.send(embed=emb(
             "🚫 Turned Off",
             f"`!{ctx.command.qualified_name}` needs **{feature.label}**, which is off in this server. "

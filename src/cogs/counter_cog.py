@@ -8,6 +8,7 @@ counter's total is the sum of all of them.
 import re
 import time
 
+import discord
 from discord.ext import commands
 
 import src.persistence as persistence
@@ -18,7 +19,9 @@ from src.helpers import (
     emb, C_BLUE, C_GREEN, C_GREY, C_RED,
     resolve_member, OptionalMember, format_duration, parse_duration, parse_int_amount,
 )
-from src.permissions import can_manage_settings
+from src.command_menu import Action, Call, member as picked_member, send_with_menu
+from src.permissions import can_manage_settings, permitted_for
+from src.settings_views import Field, open_form, pick_from_list, pick_users
 
 # Subcommands of !counter, so `!counter <word>` is never ambiguous.
 RESERVED_NAMES = frozenset({"add", "remove", "list", "addperm", "removeperm", "perms"})
@@ -57,6 +60,14 @@ def can_write_counters(ctx: commands.Context) -> bool:
     Checked inline because `count` is one command whose view half is open and
     whose write half isn't — a command_perms.json tier can't split that."""
     return can_manage_settings(ctx) or ctx.author.id in state.counter_perms.get(ctx.guild.id, set())
+
+
+def _member_call(command: str, values: dict, guild) -> "Call | str":
+    user = picked_member(guild, values)
+    if user is None:
+        return "Pick someone in this server."
+    # The converter doesn't run on a direct call, so the command gets the Member.
+    return Call(kwargs={"member": user}, mentions=(user,), content=f"!{command} {user.mention}")
 
 
 class CounterCog(commands.Cog):
@@ -167,15 +178,61 @@ class CounterCog(commands.Cog):
     async def _send_list(self, ctx):
         counters = _guild_counters(ctx.guild.id)
         if not counters:
-            await ctx.send(embed=emb("🔢 Counters", "No counters yet. An admin can make one with `!counter add`.", C_GREY))
-            return
-        lines = [
-            f"`{name}` — {c['description']} ({'time' if c['kind'] == 'time' else 'number'}"
-            f"{', user required' if c['user_required'] else ''})"
-            for name, c in sorted(counters.items())
-        ]
-        lines.append("\n`!count <counter> [@user]` to view · `!count <counter> [@user] <n>` to add")
-        await ctx.send(embed=emb("🔢 Counters", "\n".join(lines), C_BLUE))
+            embed = emb("🔢 Counters", "No counters yet." + ("" if permitted_for(ctx, "counter add") else
+                                                              " An admin can make one."), C_GREY)
+        else:
+            lines = [
+                f"`{name}` — {c['description']} ({'time' if c['kind'] == 'time' else 'number'}"
+                f"{', user required' if c['user_required'] else ''})"
+                for name, c in sorted(counters.items())
+            ]
+            lines.append("\n-# Typed: `!<counter> [@user]` to view, `!<counter> [@user] <n>` to add.")
+            embed = emb("🔢 Counters", "\n".join(lines), C_BLUE)
+        await send_with_menu(self.bot, ctx, self._menu(ctx, counters), embed=embed)
+
+    def _menu(self, ctx, counters: dict) -> "list[Action]":
+        """View / Add for counters, and the `!counter` admin actions for those
+        who may run them. Each press runs the typed command."""
+        pick = Field("counter", "Counter", kind="choices",
+                     options=tuple((name, name) for name in sorted(counters)))
+        who = Field("user", "User (optional)", kind="users", required=False)
+
+        def _count(values: dict, guild, amount: str = "") -> Call:
+            name = values["counter"][0]
+            user = picked_member(guild, values)
+            rest = " ".join(t for t in (str(user.id) if user else "", amount) if t)
+            return Call(args=(name,), kwargs={"rest": rest}, content=f"!count {name} {rest}".strip())
+
+        actions = []
+        if counters:
+            actions.append(Action(label="View", emoji="👀", command="count", style=discord.ButtonStyle.primary,
+                                  title="View a counter", fields=(pick, who), build=_count))
+            if can_write_counters(ctx):
+                actions.append(Action(
+                    label="Add", emoji="➕", command="count", style=discord.ButtonStyle.success,
+                    title="Add to a counter",
+                    fields=(pick, who, Field("amount", "Amount", max_length=20, placeholder="3, -1, or a time: 1h 30m")),
+                    build=lambda v, g: _count(v, g, v["amount"])))
+        if permitted_for(ctx, "counter add"):
+            actions.append(Action(
+                label="New counter", emoji="🆕", command="counter add", row=1, title="New counter",
+                fields=(Field("name", "Name", max_length=32, placeholder="letters, digits, _ and -"),
+                        Field("description", "What it counts", kind="paragraph", max_length=MAX_DESCRIPTION)),
+                build=lambda v, g: Call(args=(v["name"],), kwargs={"description": v["description"]},
+                                        content=f"!counter add {v['name']} {v['description']}")))
+            if counters:
+                actions.append(Action(label="Remove counter", emoji="🗑️", command="counter remove", row=1,
+                                      title="Remove a counter", fields=(pick,),
+                                      build=lambda v, g: Call(args=(v["counter"][0],),
+                                                              content=f"!counter remove {v['counter'][0]}")))
+            for label, emoji, command in (("Give access", "🔑", "counter addperm"),
+                                          ("Take access", "🚫", "counter removeperm")):
+                actions.append(Action(label=label, emoji=emoji, command=command, row=1, title=label,
+                                      fields=(Field("user", "User", kind="users"),),
+                                      build=lambda v, g, command=command: _member_call(command, v, g)))
+            actions.append(Action(label="Access list", emoji="📋", command="counter perms", row=1,
+                                  build=lambda v, g: Call(content="!counter perms")))
+        return actions
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
@@ -223,8 +280,14 @@ class CounterCog(commands.Cog):
         if ctx.guild is None:
             return
         if not ref or not description:
-            await ctx.send(embed=emb("❌ Usage", "`!counter add <name> <description>`", C_RED))
-            return
+            values = await open_form(
+                ctx, title="🔢 New counter", description="Name the counter and say what it counts.", button="New counter…",
+                fields=(Field("name", "Name", max_length=32, default=ref, placeholder="letters, digits, _ and -"),
+                        Field("description", "What it counts", kind="paragraph", max_length=MAX_DESCRIPTION,
+                              default=description)))
+            if not values:
+                return
+            ref, description = values["name"], values["description"]
         name = ref.lower()
         gid = ctx.guild.id
         problem = None
@@ -298,7 +361,17 @@ class CounterCog(commands.Cog):
     async def cmd_counter_remove(self, ctx: commands.Context, ref: str = None):
         if ctx.guild is None:
             return
-        name = (ref or "").lower()
+        if not ref:
+            names = sorted(_guild_counters(ctx.guild.id))
+            if not names:
+                await ctx.send(embed=emb("🔢 Counters", "There are no counters to remove.", C_GREY))
+                return
+            picked = await pick_from_list(ctx, title="🗑️ Remove a counter", description="Pick the counter to delete.",
+                                          options=[(n, n) for n in names], placeholder="Counter…", multi=False)
+            if not picked:
+                return
+            ref = picked[0]
+        name = ref.lower()
         gid = ctx.guild.id
         counter = _guild_counters(gid).get(name)
         if counter is None:
@@ -325,8 +398,9 @@ class CounterCog(commands.Cog):
         if ctx.guild is None:
             return
         if member is None:
-            await ctx.send(embed=emb("❌ Usage", "`!counter addperm @user`", C_RED))
-            return
+            member = await self._pick_one(ctx, "🔑 Give counter access")
+            if member is None:
+                return
         if member.bot:
             await ctx.send(embed=emb("❌ Counter", "Bots can't be given counter access.", C_RED))
             return
@@ -340,11 +414,17 @@ class CounterCog(commands.Cog):
         if ctx.guild is None:
             return
         if member is None:
-            await ctx.send(embed=emb("❌ Usage", "`!counter removeperm @user`", C_RED))
-            return
+            member = await self._pick_one(ctx, "🚫 Take counter access")
+            if member is None:
+                return
         state.counter_perms.get(ctx.guild.id, set()).discard(member.id)
         await persistence.delete_counter_perm(ctx.guild.id, member.id)
         await ctx.send(embed=emb("✅ Counter Access", f"{member.mention} can no longer change counters.", C_GREY))
+
+    @staticmethod
+    async def _pick_one(ctx, title: str):
+        picked = await pick_users(ctx, title=title, description="Pick the user.")
+        return picked[0] if picked else None
 
     @cmd_counter.command(name="perms", help="List who may change this server's counters besides admins")
     async def cmd_counter_perms(self, ctx: commands.Context):

@@ -151,6 +151,11 @@ def feature_states(guild_id: int | None) -> dict[str, bool]:
     return {key: feature_enabled(guild_id, key) for key in FEATURES}
 
 
+# Commands whose bare form isn't the feature: a bare `!flip` tosses a coin
+# with no stake, so `_feature_gate` lets it through with gambling off.
+FREE_WHEN_BARE = frozenset({"flip"})
+
+
 def command_features(qualified_name: str) -> tuple[str, ...]:
     parts = qualified_name.split(" ")
     for i in range(len(parts), 0, -1):

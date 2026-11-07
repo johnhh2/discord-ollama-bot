@@ -13,7 +13,8 @@ from discord.ext import commands
 
 from src.discord_retry import send_dm
 from src.reactions import seed_reactions
-from src.settings_views import Field, open_form, pick_from_list
+from src.command_menu import Action, Call, send_with_menu
+from src.settings_views import Field, open_form
 from src.helpers import (
     ack_slash,
     emb, C_GREEN, C_RED, C_GOLD, C_BLUE, C_GREY,
@@ -500,6 +501,46 @@ class UtilityCog(commands.Cog):
 
 
 
+    async def _puzzle_menu(self, ctx: commands.Context, invited: set[int]) -> None:
+        """Bare `!puzzle`: a button per kind; its modal picks the difficulty
+        (coding) and who else may answer, then runs the typed form. Mentions
+        typed with the bare command arrive preselected."""
+        gid = ctx.guild.id if ctx.guild else None
+        ai = gid is None or feature_enabled(gid, "ai")
+        economy = gid is None or feature_enabled(gid, "economy")
+        rewards = " · ".join(f"{d} {c:,} 🪙" for d, c in PUZZLE_REWARDS.items())
+        riddle_reward = f" **{PUZZLE_RIDDLE_REWARD:,} 🪙**" if economy else ""
+        lines = []
+        if ai:
+            lines.append("💻 **Coding**: an AI writes a code snippet; work out what it prints."
+                         + (f" Rewards by difficulty: {rewards}." if economy else ""))
+        lines.append(f"🧠 **Riddle**: a classic one-word riddle.{riddle_reward}")
+        if ai:
+            lines.append(f"🤖 **AI riddle**: an AI-made one-word riddle.{riddle_reward}")
+        lines.append("\nOnly you can answer unless you invite others.")
+
+        invite = Field("invite", "Invite others (optional)", kind="users", required=False, max_values=10,
+                       defaults=tuple(invited))
+
+        def _call(kind: str, values: dict, extra: tuple = ()) -> Call:
+            args = (kind, *extra, *(f"<@{uid}>" for uid in values.get("invite") or []))
+            return Call(args=args, content="!puzzle " + " ".join(args))
+
+        difficulty = Field("difficulty", "Difficulty", kind="choices", defaults=("medium",),
+                           options=tuple(((f"{d.title()}: {c:,} coins" if economy else d.title()), d)
+                                         for d, c in PUZZLE_REWARDS.items()))
+        actions = []
+        if ai:
+            actions.append(Action(label="Coding", emoji="💻", command="puzzle", style=discord.ButtonStyle.primary,
+                                  title="Coding puzzle", fields=(difficulty, invite),
+                                  build=lambda v, g: _call("coding", v, (v["difficulty"][0],))))
+        actions.append(Action(label="Riddle", emoji="🧠", command="puzzle", style=discord.ButtonStyle.primary,
+                              title="Riddle", fields=(invite,), build=lambda v, g: _call("riddle", v)))
+        if ai:
+            actions.append(Action(label="AI riddle", emoji="🤖", command="puzzle", style=discord.ButtonStyle.primary,
+                                  title="AI riddle", fields=(invite,), build=lambda v, g: _call("riddleai", v)))
+        await send_with_menu(self.bot, ctx, actions, embed=emb("🧩 Puzzles", "\n".join(lines), C_BLUE))
+
     @commands.command(name="puzzle", help="Start a coding puzzle or riddle for coins; bare opens a picker, mention users to invite them",
                       usage="<coding|riddle|riddleai> [easy|medium|hard|extreme] [@user...]")
     async def cmd_puzzle(self, ctx: commands.Context, *args):
@@ -527,50 +568,7 @@ class UtilityCog(commands.Cog):
             difficulty = pos_args[1]
 
         if subcommand is None:
-            embed = discord.Embed(title="🧩 Puzzle Commands", color=C_BLUE)
-            embed.add_field(
-                name="!puzzle coding [difficulty] [@user …]",
-                value=(
-                    "AI generates a code snippet — figure out its output!\n"
-                    "**Difficulties:** `easy` (10 🪙) · `medium` (20 🪙) · `hard` (35 🪙) · `extreme` (50 🪙)\n"
-                    "Default difficulty: `medium`\n"
-                    "Only you can answer by default. Mention users to invite them too.\n"
-                    "Example: `!puzzle coding hard @Alice @Bob`"
-                ),
-                inline=False,
-            )
-            embed.add_field(
-                name="!puzzle riddle [@user …]",
-                value=(
-                    "Classic riddle from our curated list — answer in one word!\n"
-                    f"Reward: **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
-                    "Only you can answer by default. Mention users to invite them too.\n"
-                    "Example: `!puzzle riddle @Alice`"
-                ),
-                inline=False,
-            )
-            embed.add_field(
-                name="!puzzle riddleai [@user …]",
-                value=(
-                    "AI-generated riddle — answer in one word!\n"
-                    f"Reward: **{PUZZLE_RIDDLE_REWARD:,} 🪙**\n"
-                    "Only you can answer by default. Mention users to invite them too.\n"
-                    "Example: `!puzzle riddleai @Alice`"
-                ),
-                inline=False,
-            )
-            await ctx.send(embed=embed)
-            # A dropdown of the kinds (and coding difficulties); the pick runs
-            # the typed form for the same invoker and invitees.
-            picked = await pick_from_list(
-                ctx, title="🧩 Start a puzzle", description="Pick a puzzle.",
-                options=[("Coding — easy", "coding easy"), ("Coding — medium", "coding medium"),
-                         ("Coding — hard", "coding hard"), ("Coding — extreme", "coding extreme"),
-                         ("Riddle", "riddle"), ("AI riddle", "riddleai")],
-                placeholder="Puzzle…", multi=False,
-            )
-            if picked:
-                await self.cmd_puzzle.callback(self, ctx, *picked[0].split(), *(f"<@{uid}>" for uid in invited_ids if uid != ctx.author.id))
+            await self._puzzle_menu(ctx, invited_ids - {ctx.author.id})
             return
 
         if subcommand.lower() not in ("coding", "riddle", "riddleai"):

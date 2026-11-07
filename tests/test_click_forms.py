@@ -335,28 +335,58 @@ async def test_chess_view_bare_offers_recent_games_then_replays_the_pick(db, mon
 
 # ── forms behind bare commands ───────────────────────────────────────────────
 
-async def test_bare_puzzle_offers_the_kinds_and_runs_the_pick(monkeypatch):
-    cog = UtilityCog(bot=SimpleNamespace())
+async def _submit(view, label, guild=None, **values):
+    """Press `label` on a command menu; fill its modal (if any) with `values` and submit."""
+    press = _interaction(guild=guild)
+    await _button(view, label).callback(press)
+    if not press.response.send_modal.await_count:
+        return press
+    modal = press.response.send_modal.await_args.args[0]
+    for key, value in values.items():
+        component = modal._inputs[key]
+        if isinstance(value, list):
+            component._values = value
+        else:
+            component._value = value
+    submit = _interaction(guild=guild)
+    await modal.on_submit(submit)
+    return submit
+
+
+async def test_bare_puzzle_offers_a_button_per_kind_with_invitees_preselected(monkeypatch):
+    bot, commands = _fake_bot("puzzle")
+    cog = UtilityCog(bot=bot)
     ctx = _ctx("puzzle")
-    ran = []
-
-    async def _pick_list(ctx_, **kwargs):
-        return ["coding hard"]
-    monkeypatch.setattr(_utility_cog, "pick_from_list", _pick_list)
-    original = cog.cmd_puzzle.callback
-
-    async def _spy(self, ctx_, *args):
-        if args:
-            ran.append(args)
-            return
-        await original(self, ctx_, *args)
-    monkeypatch.setattr(cog.cmd_puzzle, "callback", _spy)
 
     async def _no_gate(ctx_):
         return False
     monkeypatch.setattr(_utility_cog, "check_puzzle_channel", _no_gate)
-    await original(cog, ctx, "<@7>")  # the bare form: only an invitee, no kind
-    assert ran == [("coding", "hard", "<@7>")]
+    await cog.cmd_puzzle.callback(cog, ctx, "<@7>")  # the bare form: only an invitee, no kind
+    view = ctx.sent_views[-1]
+    assert [b.label for b in view.children] == ["Coding", "Riddle", "AI riddle"]
+
+    press = _interaction()
+    await _button(view, "Coding").callback(press)
+    modal = press.response.send_modal.await_args.args[0]
+    assert modal.fields[1].defaults == (7,)
+    modal._inputs["difficulty"]._values = ["hard"]
+    modal._inputs["invite"]._values = [SimpleNamespace(id=7)]
+    await modal.on_submit(_interaction())
+    assert commands["puzzle"].cog.calls == [(1, ("coding", "hard", "<@7>"), {})]
+
+
+async def test_bare_puzzle_offers_only_the_curated_riddle_with_ai_off(monkeypatch):
+    from src.features import set_feature
+    bot, _ = _fake_bot("puzzle")
+    cog = UtilityCog(bot=bot)
+    ctx = _ctx("puzzle")
+
+    async def _no_gate(ctx_):
+        return False
+    monkeypatch.setattr(_utility_cog, "check_puzzle_channel", _no_gate)
+    set_feature(GID, "ai", False)
+    await cog.cmd_puzzle.callback(cog, ctx)
+    assert [b.label for b in ctx.sent_views[-1].children] == ["Riddle"]
 
 
 async def test_bare_issue_and_featurerequest_take_a_form(monkeypatch):
@@ -513,3 +543,137 @@ async def test_crime_insurance_button_opens_the_typed_shop_insurance():
     await _button(view, "Insurance 0/2").callback(interaction)
     assert shop.forward.await_args.args[1] == "shop_insurance"
     assert "Shop" in interaction.followup.send.await_args.args[0]  # the shop's refusal, privately
+
+
+# ── !chess menu ──────────────────────────────────────────────────────────────
+
+async def test_bare_chess_has_bot_challenge_and_shop_buttons(db):
+    from src.games.chess import ChessCog
+    bot, commands = _fake_bot("chess", "chessbot")
+    cog = ChessCog.__new__(ChessCog)
+    cog.bot = bot
+    ctx = _ctx("chess")
+    await cog.cmd_chess.callback(cog, ctx)
+    view = ctx.sent_views[-1]
+    assert [b.label for b in view.children] == ["Play the bot", "Challenge a player", "Chess shop",
+                                                "Inventory", "Replay a game", "Game PGN"]
+    guild = FakeGuild(gid=GID)
+    guild.members.append(FakeMember(7))
+
+    await _submit(view, "Play the bot", guild, elo="1500")
+    await _submit(view, "Play the bot", guild, elo="")  # empty: the ladder
+    assert [a for _, a, _ in commands["chessbot"].cog.calls] == [("1500",), ()]
+
+    await _submit(view, "Challenge a player", guild, user=[SimpleNamespace(id=7)], wager="2.5k")
+    await _submit(view, "Chess shop", guild)
+    assert [a for _, a, _ in commands["chess"].cog.calls] == [("<@7>", "2.5k"), ("shop",)]
+
+
+async def test_chess_challenge_hands_the_opponent_over_as_a_mention():
+    from src.games.chess import _challenge
+    guild = FakeGuild(gid=GID)
+    opponent = FakeMember(7)
+    guild.members.append(opponent)
+    call = _challenge({"user": [7], "wager": ""}, guild)
+    assert call.args == ("<@7>",) and call.mentions == (opponent,)
+    assert _challenge({"user": [], "wager": ""}, guild) == "Pick someone in this server."
+
+
+# ── bare !flip ───────────────────────────────────────────────────────────────
+
+async def test_bare_flip_tosses_a_coin_and_offers_a_bet():
+    from src.gambling.flip import FlipCog
+    bot, commands = _fake_bot("flip")
+    cog = FlipCog(bot)
+    ctx = _ctx("flip")
+    await cog.cmd_flip.callback(cog, ctx)
+    embed = ctx.sent_embeds[-1]
+    assert ("Heads" in embed.description or "Tails" in embed.description) and "!flip <coins>" in embed.description
+    view = ctx.sent_views[-1]
+    await _submit(view, "Bet coins", FakeGuild(gid=GID), amount="500", side=["tails"])
+    assert commands["flip"].cog.calls == [(1, ("500", 1, "tails"), {})]
+
+
+async def test_bare_flip_with_gambling_off_has_no_bet_and_no_betting_hint():
+    from src.features import set_feature
+    from src.gambling.flip import FlipCog
+    cog = FlipCog(_fake_bot("flip")[0])
+    set_feature(GID, "gambling", False)
+    ctx = _ctx("flip")
+    await cog.cmd_flip.callback(cog, ctx)
+    assert "!flip <coins>" not in ctx.sent_embeds[-1].description
+    assert not any(v for v in ctx.sent_views)
+
+
+async def test_the_feature_gate_lets_only_a_bare_flip_through_with_gambling_off():
+    from discord.ext.commands.view import StringView
+    from src.features import FREE_WHEN_BARE, disabled_feature_for, set_feature
+    set_feature(GID, "gambling", False)
+    assert "flip" in FREE_WHEN_BARE and disabled_feature_for("flip", GID) is not None
+
+    def _remainder(text):
+        view = StringView(text)
+        view.skip_string("!")
+        view.get_word()
+        return view.buffer[view.index:].strip()
+    assert _remainder("!flip") == "" and _remainder("!flip 500") == "500"
+
+
+# ── counters ─────────────────────────────────────────────────────────────────
+
+async def test_counter_list_offers_view_add_and_the_admin_actions():
+    from src.cogs.counter_cog import CounterCog
+    bot, commands = _fake_bot("count", "counter add", "counter addperm")
+    cog = CounterCog(bot)
+    _state.counters[GID] = {"afk": {"description": "times afk", "user_required": False, "kind": "number",
+                                    "created_by": 1, "created_at": 0, "values": {}}}
+    ctx = _ctx("count")  # an administrator, so a writer and a counter admin
+    await cog.cmd_count.callback(cog, ctx)
+    view = ctx.sent_views[-1]
+    assert [b.label for b in view.children] == ["View", "Add", "New counter", "Remove counter",
+                                                "Give access", "Take access", "Access list"]
+    guild = FakeGuild(gid=GID)
+    guild.members.append(FakeMember(7))
+
+    await _submit(view, "Add", guild, counter=["afk"], user=[SimpleNamespace(id=7)], amount="3")
+    await _submit(view, "View", guild, counter=["afk"], user=[])
+    assert commands["count"].cog.calls == [(1, ("afk",), {"rest": "7 3"}), (1, ("afk",), {"rest": ""})]
+
+    await _submit(view, "New counter", guild, name="wins", description="games won")
+    assert commands["counter add"].cog.calls == [(1, ("wins",), {"description": "games won"})]
+    await _submit(view, "Give access", guild, user=[SimpleNamespace(id=7)])
+    (_, _, kwargs), = commands["counter addperm"].cog.calls
+    assert kwargs["member"].id == 7
+
+
+async def test_counter_list_for_a_plain_member_is_view_only():
+    from src.cogs.counter_cog import CounterCog
+    cog = CounterCog(_fake_bot("count")[0])
+    _state.command_perms["counter"] = {"tier": "server_admin", "hidden": False}
+    _state.counters[GID] = {"afk": {"description": "times afk", "user_required": False, "kind": "number",
+                                    "created_by": 1, "created_at": 0, "values": {}}}
+    ctx = FakeCtx(author=FakeMember(5), guild=FakeGuild(gid=GID), command_name="count")
+    await cog.cmd_count.callback(cog, ctx)
+    assert [b.label for b in ctx.sent_views[-1].children] == ["View"]
+
+
+async def test_bare_counter_subcommands_prompt_instead_of_printing_usage(monkeypatch):
+    import src.cogs.counter_cog as _counter_cog
+    from src.cogs.counter_cog import CounterCog
+    cog = CounterCog(_fake_bot()[0])
+    seen = []
+
+    async def _form(ctx_, **kwargs):
+        seen.append(kwargs["title"])
+        return None
+    monkeypatch.setattr(_counter_cog, "open_form", _form)
+    ctx = _ctx("counter add")
+    await cog.cmd_counter_add.callback(cog, ctx)
+    assert seen == ["🔢 New counter"] and not any("Usage" in (e.title or "") for e in ctx.sent_embeds)
+
+    async def _users(ctx_, **kwargs):
+        seen.append(kwargs["title"])
+        return None
+    monkeypatch.setattr(_counter_cog, "pick_users", _users)
+    await cog.cmd_counter_addperm.callback(cog, _ctx("counter addperm"))
+    assert seen[-1] == "🔑 Give counter access"

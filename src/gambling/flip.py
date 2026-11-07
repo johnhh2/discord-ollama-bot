@@ -1,6 +1,11 @@
 import random
 
+import discord
 from discord.ext import commands
+
+from src.command_menu import Action, Call, send_with_menu
+from src.features import disabled_feature_for
+from src.settings_views import Field
 
 from src.helpers import (
     emb, C_GREEN, C_RED, parse_amount, shop_charge, shop_payout, announce_record,
@@ -144,12 +149,14 @@ class FlipCog(commands.Cog):
         self.bot = bot
 
     @commands.command(name="flip", aliases=["coinflip"],
-                      help="Flip a coin for coins at even money; batches up to 100,000 flips on heads or tails")
+                      help="Flip a coin; with an amount, bet coins at even money on up to 100,000 flips of heads or tails",
+                      usage="[amount] [n] [heads|tails]")
     async def cmd_flip(self, ctx: commands.Context, amount: str = None, n: int = 1, side: str = "heads"):
-        if await check_game_channel(ctx, "Gambling"):
-            return
         if amount is None:
-            await ctx.send("Usage: `!flip <amount> [n] [heads|tails]`")
+            # No stake, so no gambling gate: this runs with gambling off (FREE_WHEN_BARE) and anywhere.
+            await self._free_flip(ctx)
+            return
+        if await check_game_channel(ctx, "Gambling"):
             return
         amount = await parse_amount(ctx, amount)
         if amount is None:
@@ -169,6 +176,26 @@ class FlipCog(commands.Cog):
             await ctx.send("Side must be `heads` or `tails`.")
             return
         await play_flip(ctx.author, ctx.channel, ctx.guild, amount, n, side, play_again=True)
+
+    async def _free_flip(self, ctx: commands.Context) -> None:
+        """Heads or tails, nothing staked. Where betting is open, a Bet coins
+        button and the typed hint; where gambling is off, neither."""
+        side = random.choice(("Heads", "Tails"))
+        desc = f"**{ctx.author.display_name}** flipped a coin: **{side}**"
+        gid = ctx.guild.id if ctx.guild else None
+        betting = disabled_feature_for("flip", gid) is None
+        actions = []
+        if betting:
+            desc += "\n\n-# `!flip <coins>` wagers on a flip instantly, at even money."
+            actions.append(Action(
+                label="Bet coins", emoji="🪙", command="flip", style=discord.ButtonStyle.primary, title="Bet on a flip",
+                fields=(Field("amount", "Coins to bet", placeholder="500, 2.5k, half, all", max_length=12),
+                        Field("side", "Call it", kind="choices", options=(("Heads", "heads"), ("Tails", "tails")),
+                              defaults=("heads",))),
+                build=lambda v, guild: Call(args=(v["amount"], 1, v["side"][0]),
+                                            content=f"!flip {v['amount']} 1 {v['side'][0]}"),
+            ))
+        await send_with_menu(self.bot, ctx, actions, embed=emb("🪙 Coin Flip", desc, C_GREEN))
 
 
 async def setup(bot):
