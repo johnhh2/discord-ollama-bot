@@ -179,7 +179,8 @@ from src.persistence.ephemeral import (  # noqa: F401
     load_restart_msg,
     clear_restart_msg,
     add_ephemeral_msg,
-    load_and_clear_ephemeral_msgs,
+    delete_ephemeral_msg,
+    load_ephemeral_msgs,
 )
 from src.persistence.issues import (  # noqa: F401
     insert_issue,

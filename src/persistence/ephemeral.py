@@ -32,16 +32,23 @@ async def add_ephemeral_msg(channel_id: int, message_id: int):
         )
 
 
-async def load_and_clear_ephemeral_msgs() -> list:
+async def delete_ephemeral_msg(channel_id: int, message_id: int):
     async with with_cursor() as cur:
-        await cur.execute("SELECT id, channel_id, message_id FROM ephemeral_msgs")
+        await cur.execute(
+            "DELETE FROM ephemeral_msgs WHERE channel_id=%s AND message_id=%s",
+            (channel_id, message_id),
+        )
+
+
+async def load_ephemeral_msgs(before_snowflake: int) -> list:
+    """Rows for messages older than `before_snowflake`, newest first. The
+    cutoff keeps this process's own replies, whose timers are still live,
+    out of the boot cleanup."""
+    async with with_cursor() as cur:
+        await cur.execute(
+            "SELECT channel_id, message_id FROM ephemeral_msgs"
+            " WHERE message_id < %s ORDER BY message_id DESC",
+            (before_snowflake,),
+        )
         rows = await cur.fetchall()
-        if rows:
-            # Delete only what we fetched — a row inserted by a concurrent
-            # add_ephemeral_msg between the SELECT and a blanket DELETE would
-            # vanish without ever being returned (message never cleaned up).
-            await cur.execute(
-                "DELETE FROM ephemeral_msgs WHERE id <= %s",
-                (max(r[0] for r in rows),),
-            )
-    return [{"channel_id": r[1], "message_id": r[2]} for r in rows]
+    return [{"channel_id": r[0], "message_id": r[1]} for r in rows]

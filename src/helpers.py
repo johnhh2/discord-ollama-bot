@@ -9,7 +9,7 @@ from discord.ext import commands
 
 from src import state
 from src.config import RACE_TRACK_LEN, EPHEMERAL_DELETE_AFTER
-from src.persistence import add_ephemeral_msg
+from src.persistence import add_ephemeral_msg, delete_ephemeral_msg
 
 # ── Embed colors ──────────────────────────────────────────────────────────────
 
@@ -295,11 +295,29 @@ async def ack_slash(ctx: commands.Context) -> None:
         await ctx.defer()
 
 
+# Strong refs: the loop only holds weak references to tasks.
+_ephemeral_timers: set[asyncio.Task] = set()
+
+
+async def _expire_ephemeral(msg: discord.Message) -> None:
+    await asyncio.sleep(EPHEMERAL_DELETE_AFTER)
+    try:
+        await msg.delete()
+    except discord.HTTPException:
+        pass
+    await delete_ephemeral_msg(msg.channel.id, msg.id)
+
+
 async def send_ephemeral(ctx: commands.Context, *args, **kwargs) -> discord.Message:
-    """Send a message with delete_after=EPHEMERAL_DELETE_AFTER and register it for cleanup on restart."""
-    kwargs["delete_after"] = EPHEMERAL_DELETE_AFTER
+    """Send a message that deletes itself after EPHEMERAL_DELETE_AFTER. Its
+    `ephemeral_msgs` row lives exactly as long as the timer, so the boot
+    cleanup only sees messages a restart cut off."""
+    kwargs.pop("delete_after", None)
     msg = await ctx.send(*args, **kwargs)
     await add_ephemeral_msg(msg.channel.id, msg.id)
+    task = asyncio.create_task(_expire_ephemeral(msg))
+    _ephemeral_timers.add(task)
+    task.add_done_callback(_ephemeral_timers.discard)
     return msg
 
 

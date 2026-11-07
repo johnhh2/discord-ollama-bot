@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 import time
 import logging
@@ -21,7 +22,7 @@ from src.permissions import (
     is_silenced,
 )
 from src.persistence import (
-    init_db_state, save_economy, save_ragebait, save_mock, save_tax, save_curse, load_restart_msg, clear_restart_msg, load_and_clear_ephemeral_msgs,
+    init_db_state, save_economy, save_ragebait, save_mock, save_tax, save_curse, load_restart_msg, clear_restart_msg, load_ephemeral_msgs, delete_ephemeral_msg,
     insert_issue,
 )
 from src.guild_config import get_guild_cfg
@@ -439,15 +440,7 @@ class EventsCog(commands.Cog):
                 pass  # best-effort: the channel or message may be gone
             await clear_restart_msg()
 
-        # Delete all ephemeral messages that survived the restart
-        records = await load_and_clear_ephemeral_msgs()
-        for record in records:
-            try:
-                channel = await self.bot.fetch_channel(record["channel_id"])
-                msg = await channel.fetch_message(record["message_id"])
-                await msg.delete()
-            except Exception:
-                pass
+        await self._sweep_ephemeral_msgs()
 
         # Resume any chess games where it's the bot's turn at restart —
         # otherwise they'd freeze waiting for the human to make another
@@ -458,6 +451,24 @@ class EventsCog(commands.Cog):
                 await chess_cog.resume_pending_bot_turns()
             except Exception as e:
                 logging.error(f"chess: resume_pending_bot_turns failed: {e}", exc_info=True)
+
+    async def _sweep_ephemeral_msgs(self) -> None:
+        """Delete ephemeral replies whose timers died with the last process.
+        Each row goes only after its delete is tried, so a pass cut short by
+        another restart resumes on the next boot."""
+        booted_at = discord.utils.utcnow() - datetime.timedelta(seconds=time.monotonic() - state.bot_start_time)
+        for record in await load_ephemeral_msgs(discord.utils.time_snowflake(booted_at)):
+            channel = self.bot.get_partial_messageable(record["channel_id"])
+            try:
+                await channel.get_partial_message(record["message_id"]).delete()
+            except discord.NotFound:
+                pass
+            except discord.HTTPException as e:
+                logging.warning(
+                    "ephemeral_cleanup_failed channel=%s message=%s status=%s",
+                    record["channel_id"], record["message_id"], e.status,
+                )
+            await delete_ephemeral_msg(record["channel_id"], record["message_id"])
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
