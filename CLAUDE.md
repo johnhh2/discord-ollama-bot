@@ -2,6 +2,17 @@
 
 A Discord bot backed by a local Ollama LLM, with economy, gambling, games, and moderation features.
 
+## Editing this file
+
+Each entry is a rule a future change could break, not a record of how the feature was built.
+
+- **Write the rule and its one-clause reason.** Bug stories, "used to" and "was once" belong in git.
+- **Name the constant, don't copy its value.** Prices, odds, caps and tuned numbers live in code and go stale here.
+- **No UI tours.** Describe a panel only for its invariants: what it forwards, what it gates, its test seam.
+- **One home per rule.** Extend the existing section, or point to it, instead of restating it elsewhere.
+- **Budget:** a new feature gets about 5–10 bullets. If it needs more, the detail belongs in the module docstring, with a pointer here.
+- **Keep headings and quoted phrases stable.** Source comments cite them ("see CLAUDE.md: Concurrency").
+
 ## Running the Bot
 
 ```bash
