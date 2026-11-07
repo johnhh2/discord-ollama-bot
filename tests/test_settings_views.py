@@ -119,29 +119,44 @@ async def test_pick_from_list_notes_when_options_are_truncated():
     assert "first 25 of 30" in ctx.sent_embeds[0].description
 
 
-async def test_pick_from_menus_reports_which_menu_was_used():
+async def test_pick_from_menus_button_swaps_in_one_dropdown():
     ctx = FakeCtx(author=FakeMember(1))
 
     async def _pick():
         await asyncio.sleep(0.01)
         view = ctx.sent_views[-1]
+        buttons = {i.key: i for i in view.children if type(i).__name__ == "_ModeButton"}
+        assert list(buttons) == ["buy", "skip", "sell"]
+        assert buttons["skip"].disabled and not buttons["sell"].disabled
+        assert not any(type(i).__name__ == "_KeyedSelect" for i in view.children)
+
+        press = _interaction()
+        await buttons["sell"].callback(press)
+        press.response.edit_message.assert_awaited_once()
         selects = [i for i in view.children if type(i).__name__ == "_KeyedSelect"]
-        assert [sel.key for sel in selects] == ["buy", "sell"]
-        selects[1]._values = ["b"]
-        await selects[1].callback(_interaction())
+        assert [sel.key for sel in selects] == ["sell"]
+
+        await _item(view, "_BackButton").callback(_interaction())
+        assert not any(type(i).__name__ == "_KeyedSelect" for i in view.children)
+
+        await _item(view, "_ModeButton").callback(_interaction())  # Buy
+        select = _item(view, "_KeyedSelect")
+        assert select.key == "buy"
+        select._values = ["a"]
+        await select.callback(_interaction())
     task = asyncio.create_task(_pick())
     picked = await pick_from_menus(ctx, title="t", description="d", menus=[
-        ("buy", "Buy…", [("A", "a")]),
-        ("skip", "Nothing…", []),          # an empty menu isn't rendered
-        ("sell", "Sell…", [("B", "b")]),
+        ("buy", "Buy", [("A", "a")], "Pick one to buy."),
+        ("skip", "Nothing", [], "-"),        # no options: a disabled button
+        ("sell", "Sell", [("B", "b")], "Pick one to sell."),
     ])
     await task
-    assert picked == ("sell", ["b"])
+    assert picked == ("buy", ["a"])
 
 
 async def test_pick_from_menus_with_no_options_sends_nothing():
     ctx = FakeCtx(author=FakeMember(1))
-    assert await pick_from_menus(ctx, title="t", description="d", menus=[("buy", "Buy…", [])]) is None
+    assert await pick_from_menus(ctx, title="t", description="d", menus=[("buy", "Buy", [], "-")]) is None
     assert ctx.sent_embeds == []
 
 

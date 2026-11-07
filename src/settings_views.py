@@ -229,21 +229,78 @@ class _KeyedSelect(_StringSelect):
         await self.view.finish(interaction, (self.key, list(self.values)), "✅ Done")
 
 
+class _ModeButton(ui.Button):
+    def __init__(self, key: str, label: str, enabled: bool):
+        super().__init__(label=label, style=discord.ButtonStyle.primary, disabled=not enabled, row=0)
+        self.key = key
+
+    async def callback(self, interaction: discord.Interaction):
+        view: _MenusView = self.view  # type: ignore[assignment]
+        view.show_menu(self.key)
+        await interaction.response.edit_message(embed=view.embed(), view=view)
+
+
+class _BackButton(ui.Button):
+    def __init__(self):
+        super().__init__(label="Back", style=discord.ButtonStyle.secondary, row=4)
+
+    async def callback(self, interaction: discord.Interaction):
+        view: _MenusView = self.view  # type: ignore[assignment]
+        view.show_modes()
+        await interaction.response.edit_message(embed=view.embed(), view=view)
+
+
+class _MenusView(_OwnedView):
+    """Mode buttons first; a press redraws the same message as that mode's
+    one dropdown, with Back to the buttons."""
+
+    def __init__(self, owner_id: int, timeout: float, title: str, description: str, menus):
+        super().__init__(owner_id, timeout)
+        self.base = (title, description)
+        self.menus = {key: (label, options, desc) for key, label, options, desc in menus}
+        self.title, self.description = self.base
+        self.show_modes()
+
+    def embed(self) -> discord.Embed:
+        return emb(self.title, self.description, C_GOLD)
+
+    def show_modes(self):
+        self.clear_items()
+        self.title, self.description = self.base
+        for key, (label, options, _desc) in self.menus.items():
+            self.add_item(_ModeButton(key, label, bool(options)))
+        self.add_item(_CancelButton())
+
+    def show_menu(self, key: str):
+        label, options, desc = self.menus[key]
+        self.clear_items()
+        self.title, self.description = f"{self.base[0]} — {label}", desc
+        if len(options) > MAX_OPTIONS:
+            self.description += f"\n*Showing the first {MAX_OPTIONS} of {len(options)} — the typed command reaches the rest.*"
+        self.add_item(_KeyedSelect(key, options, f"{label}…", row=0))
+        self.add_item(_BackButton())
+        self.add_item(_CancelButton())
+
+
 async def pick_from_menus(ctx, *, title: str, description: str,
-                          menus: list[tuple[str, str, list[tuple[str, str]]]],
+                          menus: list[tuple[str, str, list[tuple[str, str]], str]],
                           timeout: float = PROMPT_TIMEOUT) -> "tuple[str, list[str]] | None":
-    """Several single-pick dropdowns in one prompt — `(key, placeholder,
-    options)` each, one per row. Returns `(key, [value])` for the menu the
-    invoker used, or None on Cancel / timeout. Menus with no options are
-    skipped; with none left the prompt isn't shown at all."""
-    shown = [(key, placeholder, options) for key, placeholder, options in menus if options]
-    if not shown:
+    """One button per `(key, label, options, description)` menu; a press
+    edits the prompt into that menu's single dropdown. Returns `(key,
+    [value])` for the pick, or None on Cancel / timeout. A menu with no
+    options shows a disabled button; with none to pick from the prompt isn't
+    shown at all."""
+    if not any(options for _key, _label, options, _desc in menus):
         return None
-    view = _OwnedView(ctx.author.id, timeout)
-    for row, (key, placeholder, options) in enumerate(shown[:4]):
-        view.add_item(_KeyedSelect(key, options, placeholder, row))
-    view.add_item(_CancelButton())
-    return await _run(ctx, view, title, description)
+    view = _MenusView(ctx.author.id, timeout, title, description, menus)
+    msg = await ctx.send(embed=view.embed(), view=view)
+    await view.wait()
+    color = C_GREEN if view.result is not None else C_GREY
+    try:
+        await msg.edit(embed=emb(f"{view.title} — {view.closed_as}", view.description, color), view=None)
+    except discord.HTTPException:
+        pass  # cosmetic — the result stands either way
+    return view.result
 
 
 # ── forms (modals) ───────────────────────────────────────────────────────────

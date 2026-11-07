@@ -594,12 +594,13 @@ class ShopCog(commands.Cog):
             lines.append("")
             lines.append("Buy one with `!artifacts buy`, or sell one back for half its price with `!artifacts sell`.")
             await send_ephemeral(ctx, embed=emb("🏺 Artifacts", "\n".join(lines), C_PURPLE))
-            # The menus under the listing — a pick runs the typed branch.
+            # Buy / Sell buttons under the listing; a pick runs the typed branch.
             picked = await pick_from_menus(
                 ctx, title="🏺 Buy or sell",
-                description="Pick an artifact to buy, or one of yours to sell back for half its price.",
-                menus=[("buy", "Buy…", _artifact_options(uid, lvl, "buy")),
-                       ("sell", "Sell…", _artifact_options(uid, lvl, "sell"))],
+                description="Buy an artifact, or sell one of yours back for half its price.",
+                menus=[("buy", "Buy", _artifact_options(uid, lvl, "buy"), "Pick an artifact to buy."),
+                       ("sell", "Sell", _artifact_options(uid, lvl, "sell"),
+                        "Pick an artifact to sell back for half its price.")],
             )
             if picked:
                 action, (art_id,) = picked

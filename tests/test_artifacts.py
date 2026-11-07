@@ -380,7 +380,7 @@ async def test_listing_offers_buy_and_sell_menus(db, monkeypatch):
 
     await _invoke(cog, _ctx(uid))
 
-    menus = {key: [v for _, v in options] for key, _, options in calls[0]["menus"]}
+    menus = {key: [v for _, v in options] for key, _, options, _ in calls[0]["menus"]}
     # Level 10 unlocks slots (5, owned) and chessthreats (10); the rest are locked.
     assert menus["buy"] == ["chessthreats_unlock"]
     assert menus["sell"] == [BLANK_ART_ID]
@@ -602,7 +602,7 @@ async def test_retired_artifacts_are_off_sale_but_owners_keep_and_sell(db, monke
     calls = _menu_pick(monkeypatch, "pick_from_menus", None)
     ctx = _ctx(buyer)
     await _invoke(cog, ctx)
-    menus = {key: [v for _, v in options] for key, _, options in calls[0]["menus"]}
+    menus = {key: [v for _, v in options] for key, _, options, _ in calls[0]["menus"]}
     retired_ids = {a["id"] for a in RETIRED_ARTIFACTS}
     assert not retired_ids & set(menus["buy"])
     assert "10,000" not in ctx.sent_embeds[-1].description
@@ -613,7 +613,7 @@ async def test_retired_artifacts_are_off_sale_but_owners_keep_and_sell(db, monke
     calls.clear()
     ctx = _ctx(owner)
     await _invoke(cog, ctx)
-    menus = {key: [v for _, v in options] for key, _, options in calls[0]["menus"]}
+    menus = {key: [v for _, v in options] for key, _, options, _ in calls[0]["menus"]}
     assert menus["sell"] == ["property_cap_deed"]
     assert "Retired" in ctx.sent_embeds[-1].description
 
