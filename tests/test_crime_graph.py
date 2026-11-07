@@ -194,6 +194,25 @@ async def test_build_series_crime_skips_days_user_was_inactive(monkeypatch):
     assert data.x_points[0].astimezone(_economy._ct_now().tzinfo).date() == yest
 
 
+@pytest.mark.asyncio
+async def test_build_series_crime_window_is_calendar_days_not_last_keys(monkeypatch):
+    import datetime
+    today = graph_series._calendar_today_date()
+    edge = today - datetime.timedelta(days=13)
+    stale = [today - datetime.timedelta(days=n) for n in (14, 30, 60)]
+    fake_history = {
+        d.isoformat(): {0: {(GID, "42"): {"gained": 10, "lost": 0}}}
+        for d in [*stale, edge]
+    }
+
+    async def _load(): return fake_history
+    monkeypatch.setattr(graph_series, "load_crime_history", _load)
+
+    data = await graph_series.build_series_crime(_stub_member(42, "alice"))
+
+    assert [p.astimezone(_economy._ct_now().tzinfo).date() for p in data.x_points] == [edge]
+
+
 # ── token parsing ────────────────────────────────────────────────────────────
 
 

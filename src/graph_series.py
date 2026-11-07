@@ -116,7 +116,10 @@ class SeriesSpec:
 
 
 def _sorted_dates(history: dict, limit: int = 14) -> list[str]:
-    return sorted(history.keys())[-limit:]
+    # A window of calendar days, not the last `limit` keys: sparse histories
+    # (crime) would otherwise reach back months and stretch the shared x-axis.
+    since = (_calendar_today_date() - datetime.timedelta(days=limit - 1)).isoformat()
+    return sorted(d for d in history if d >= since)
 
 
 def _date_to_iso(d: datetime.date) -> str:
