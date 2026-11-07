@@ -233,6 +233,15 @@ Coverage: [tests/test_artifacts.py](tests/test_artifacts.py), plus artifact bloc
 
 Every `!shop` command that edits a role or channel checks `state.bot_roles` or `cfg["bot_channels"]` (`ShopCog._is_bot_channel`). That includes `rolecolor`, `rolerename`, `channelrename`, `rolechannel` and `channellock`, not just deletes. New Discord-editing shop commands must gate the same way. Multi-step buys roll back before refunding: `rolecreate` deletes the role if assigning fails, and `rolechannel` restores prior overwrites.
 
+## Targeted shop effects: once a day per buyer
+
+Ragebait, mock, curse and tax make the bot post on each of the target's messages, so each is limited to one buy per buyer per gameplay day (`targeted_buy_days` on `economy_users`, helpers at the top of `src/cogs/shop_cog.py`).
+
+- **A new shop effect that makes the bot post on someone else's messages** gets the same limit.
+- **Claim with `_claim_targeted_buy` before `shop_charge`; release with `_release_targeted_buy`** on a failed charge or any refund path.
+
+Coverage: [tests/test_targeted_daily_limit.py](tests/test_targeted_daily_limit.py).
+
 ## Interest curves: one bot-wide falling rate
 
 `!settings interest <mode> [day|percent%]` (`global_admin`) swaps the flat savings and property rates for a falling curve, stored in `state.bot_settings` (`rate_curve_mode`, `rate_curve_started_at`). The modes are `RATE_CURVES` in [src/rate_curves.py](src/rate_curves.py). With no mode the flat code path runs.

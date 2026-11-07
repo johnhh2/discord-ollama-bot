@@ -34,6 +34,7 @@ def _economy_user_row(uid_str: str, u: dict) -> tuple:
         int(u.get("investigations_since_claim", 0) or 0),
         int(u.get("arrests_since_claim", 0) or 0),
         int(u.get("auto_repaired_since_claim", 0) or 0),
+        json.dumps(u["targeted_buy_days"]) if u.get("targeted_buy_days") else None,
     )
 
 
@@ -45,8 +46,9 @@ _ECONOMY_UPSERT_SQL = """INSERT INTO economy_users
      property_paid_at, property_revenue_total, daily_gamble_property,
      ins_paid_since_claim, ins_lapsed_since_claim, heist_success_day,
      property_theft_day, bail_price, auto_repair, robbed_since_claim,
-     investigations_since_claim, arrests_since_claim, auto_repaired_since_claim)
-   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+     investigations_since_claim, arrests_since_claim, auto_repaired_since_claim,
+     targeted_buy_days)
+   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
    ON DUPLICATE KEY UPDATE
      balance=VALUES(balance),
      last_daily=VALUES(last_daily),
@@ -74,7 +76,8 @@ _ECONOMY_UPSERT_SQL = """INSERT INTO economy_users
      robbed_since_claim=VALUES(robbed_since_claim),
      investigations_since_claim=VALUES(investigations_since_claim),
      arrests_since_claim=VALUES(arrests_since_claim),
-     auto_repaired_since_claim=VALUES(auto_repaired_since_claim)"""
+     auto_repaired_since_claim=VALUES(auto_repaired_since_claim),
+     targeted_buy_days=VALUES(targeted_buy_days)"""
 
 
 async def save_economy(uid: int = None):

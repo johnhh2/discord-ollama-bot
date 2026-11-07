@@ -1864,3 +1864,9 @@ ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS robbed_since_claim INT NOT NU
 ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS investigations_since_claim INT NOT NULL DEFAULT 0;
 ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS arrests_since_claim INT NOT NULL DEFAULT 0;
 ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS auto_repaired_since_claim BIGINT NOT NULL DEFAULT 0;
+
+-- ── 0090_targeted_buy_days.sql ──
+-- 0090: once-a-day limit on shop effects that make the bot post on the
+-- target's messages (ragebait, mock, curse, tax). JSON {item: CT day} of the
+-- buyer's last purchase of each.
+ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS targeted_buy_days TEXT NULL;

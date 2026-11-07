@@ -20,6 +20,7 @@ from src.economy import (
     extend_insurance, next_daily_reset_ts, rebase_savings_deposits,
     get_insurance_tier, set_insurance_tier, insurance_switch_cost,
     insurance_tier_cost, insurance_tier_info, insurance_policies,
+    _ensure_user, _ct_today,
 )
 from src.leveling import (
     _ensure_lvl_record, _xp_cost, level_from_xp, display_level, record_levelup,
@@ -133,6 +134,45 @@ _SHOP_TOP_ALIASES: list[tuple[str, str, list[str]]] = [
     ("roleup",         "shop_roleup",        []),
     ("roledown",       "shop_roleup",        []),
 ]
+
+
+# ── Once-a-day targeted effects ──────────────────────────────────────────────
+# Ragebait, mock, curse and tax make the bot post on every message the target
+# sends, so one buyer covering the whole server floods every channel. Each is
+# limited to one buy per buyer per gameplay day.
+
+def _once_a_day_embed(item: str) -> discord.Embed:
+    return emb("⏳ Once a Day", f"You can buy one {item} a day. Your next one unlocks <t:{next_daily_reset_ts()}:R>.", C_GREY)
+
+
+def _targeted_buy_used(uid: int, item: str) -> bool:
+    days = state.economy["users"].get(str(uid), {}).get("targeted_buy_days") or {}
+    return days.get(item) == _ct_today()
+
+
+async def _claim_targeted_buy(ctx: commands.Context, item: str) -> "tuple[bool, str | None]":
+    """Claim today's buy of *item* before the charge (see CLAUDE.md: Concurrency).
+
+    Returns (claimed, prior day); hand the prior day to _release_targeted_buy on failure.
+    """
+    uid = ctx.author.id
+    await _ensure_user(uid)
+    days = state.economy["users"][str(uid)].setdefault("targeted_buy_days", {})
+    prior = days.get(item)
+    if prior == _ct_today():
+        await ctx.send(embed=_once_a_day_embed(item))
+        return False, prior
+    days[item] = _ct_today()
+    return True, prior
+
+
+async def _release_targeted_buy(uid: int, item: str, prior: "str | None"):
+    days = state.economy["users"][str(uid)].setdefault("targeted_buy_days", {})
+    if prior is None:
+        days.pop(item, None)
+    else:
+        days[item] = prior
+    await save_economy(uid)
 
 
 def _artifact_sell_price(art: dict) -> int:
@@ -455,12 +495,12 @@ class ShopCog(commands.Cog):
         fun_items = [
             (min(t["cost"] for t in SHOP_INSURANCE_TIERS.values()),
              f"`!shop insurance` — Personal insurance refunds 50–100% of crime losses; social insurance blocks mock/tax/nickname/role effects. Every server — **from {min(t['cost'] for t in SHOP_INSURANCE_TIERS.values()):,} 🪙/day**"),
-            (SHOP_TAX_COST,      f"`!shop tax @user` — Apply a per-message tax to a user for 24h — **{SHOP_TAX_COST:,} 🪙**"),
-            (SHOP_MOCK_COST,      f"`!shop mock @user` — Mock someone's next {SHOP_MOCK_MESSAGES} messages — **{SHOP_MOCK_COST:,} 🪙**"),
+            (SHOP_TAX_COST,      f"`!shop tax @user` — Apply a per-message tax to a user for 24h, once a day — **{SHOP_TAX_COST:,} 🪙**"),
+            (SHOP_MOCK_COST,      f"`!shop mock @user` — Mock someone's next {SHOP_MOCK_MESSAGES} messages, once a day — **{SHOP_MOCK_COST:,} 🪙**"),
         ]
         if _si.get("ragebait", True):
-            fun_items.append((SHOP_RAGEBAIT_COST, f"`!shop ragebait @user [topic]` — Ragebait for {SHOP_RAGEBAIT_MESSAGES + 1} messages — **{SHOP_RAGEBAIT_COST:,} 🪙**"))
-        fun_items.append((SHOP_CURSE_COST, f"`!shop curse @user` — Curse someone's messages for {SHOP_CURSE_MESSAGES} messages — **{SHOP_CURSE_COST:,} 🪙**"))
+            fun_items.append((SHOP_RAGEBAIT_COST, f"`!shop ragebait @user [topic]` — Ragebait for {SHOP_RAGEBAIT_MESSAGES + 1} messages, once a day — **{SHOP_RAGEBAIT_COST:,} 🪙**"))
+        fun_items.append((SHOP_CURSE_COST, f"`!shop curse @user` — Curse someone's messages for {SHOP_CURSE_MESSAGES} messages, once a day — **{SHOP_CURSE_COST:,} 🪙**"))
         fun_items.append((SHOP_UNOREVERSE_COST, L("unoreverse", f"`!shop unoreverse @user` — Redirect active mock/ragebait/curse onto someone else — **{SHOP_UNOREVERSE_COST:,} 🪙**")))
         if WYOMING_TTS_HOST and _si.get("announce", True):  # off without a TTS server, like the command
             fun_items.append((SHOP_ANNOUNCE_COST_PER_CHAR,
@@ -1526,6 +1566,9 @@ class ShopCog(commands.Cog):
             _exp = get_insurance_expiry(target.id, "social")
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has social insurance against ragebait (expires <t:{_exp}:R>).", C_GOLD))
             return
+        if _targeted_buy_used(uid, "ragebait"):
+            await ctx.send(embed=_once_a_day_embed("ragebait"))
+            return
         topic = " ".join(args[1:])
         cost = 0 if uid in state.godmode_users else SHOP_RAGEBAIT_COST
         topic_note = f" (topic: {topic})" if topic else ""
@@ -1535,8 +1578,13 @@ class ShopCog(commands.Cog):
             cost=cost, payer=ctx.author,
         ):
             return
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_RAGEBAIT_COST:,}"):
+        claimed, prior_buy = await _claim_targeted_buy(ctx, "ragebait")
+        if not claimed:
             return
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_RAGEBAIT_COST:,}"):
+            await _release_targeted_buy(uid, "ragebait", prior_buy)
+            return
+        await save_economy(uid)
         topic_clause = f" The topic should be specifically about: {topic}." if topic else ""
         ragebait_system = (
             "You are an expert at crafting ragebait — messages specifically engineered to provoke "
@@ -1560,6 +1608,7 @@ class ShopCog(commands.Cog):
                     {"role": "user", "content": prompt},
                 ], placeholder, user_id=uid)
         except Exception as e:
+            await _release_targeted_buy(uid, "ragebait", prior_buy)
             if cost > 0:
                 await add_balance(uid, cost)
             await placeholder.edit(content=f"⚠️ {e}")
@@ -1570,6 +1619,7 @@ class ShopCog(commands.Cog):
             # AI disabled or token budget denied — stream_ollama already
             # edited the placeholder with the reason. Refund; don't
             # activate the effect or post a bare mention.
+            await _release_targeted_buy(uid, "ragebait", prior_buy)
             if cost > 0:
                 await add_balance(uid, cost)
             return
@@ -1581,6 +1631,7 @@ class ShopCog(commands.Cog):
             await save_ragebait()
         except Exception as e:
             state.active_ragebaits.pop(key, None)
+            await _release_targeted_buy(uid, "ragebait", prior_buy)
             if cost > 0:
                 await add_balance(uid, cost)
             await placeholder.edit(content=f"⚠️ {e}")
@@ -1616,6 +1667,9 @@ class ShopCog(commands.Cog):
             _exp = get_insurance_expiry(target.id, "social")
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has social insurance against mock (expires <t:{_exp}:R>).", C_GOLD))
             return
+        if _targeted_buy_used(uid, "mock"):
+            await ctx.send(embed=_once_a_day_embed("mock"))
+            return
         cost = 0 if uid in state.godmode_users else SHOP_MOCK_COST
         if not await confirm_purchase(
             ctx, title="🎭 Mock",
@@ -1623,8 +1677,13 @@ class ShopCog(commands.Cog):
             cost=cost, payer=ctx.author,
         ):
             return
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MOCK_COST:,}"):
+        claimed, prior_buy = await _claim_targeted_buy(ctx, "mock")
+        if not claimed:
             return
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_MOCK_COST:,}"):
+            await _release_targeted_buy(uid, "mock", prior_buy)
+            return
+        await save_economy(uid)
         state.active_mocks[(gid, target.id)] = {"remaining": SHOP_MOCK_MESSAGES, "started_by": uid, "channel_id": ctx.channel.id}
         await save_mock()
         await ctx.send(embed=emb(
@@ -2069,6 +2128,9 @@ class ShopCog(commands.Cog):
             _exp = get_insurance_expiry(target.id, "social")
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has social insurance against tax (expires <t:{_exp}:R>).", C_GOLD))
             return
+        if _targeted_buy_used(uid, "tax"):
+            await ctx.send(embed=_once_a_day_embed("tax"))
+            return
         cost = 0 if uid in state.godmode_users else SHOP_TAX_COST
         if not await confirm_purchase(
             ctx, title=f"{tax_emoji} {tax_type.capitalize()} Tax",
@@ -2079,8 +2141,13 @@ class ShopCog(commands.Cog):
             cost=cost, payer=ctx.author,
         ):
             return
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_TAX_COST:,}"):
+        claimed, prior_buy = await _claim_targeted_buy(ctx, "tax")
+        if not claimed:
             return
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_TAX_COST:,}"):
+            await _release_targeted_buy(uid, "tax", prior_buy)
+            return
+        await save_economy(uid)
         activated_at = time.time()
         expires_ts = int(activated_at + SHOP_TAX_DURATION_SECS)
         tax_data = {"master": uid, "type": tax_type, "emoji": tax_emoji, "channel_id": ctx.channel.id, "activated_at": activated_at, "expires_at": expires_ts}
@@ -2123,6 +2190,9 @@ class ShopCog(commands.Cog):
             _exp = get_insurance_expiry(target.id, "social")
             await ctx.send(embed=emb("🛡️ Protected", f"**{target.display_name}** has social insurance against curses (expires <t:{_exp}:R>).", C_GOLD))
             return
+        if _targeted_buy_used(uid, "curse"):
+            await ctx.send(embed=_once_a_day_embed("curse"))
+            return
         cost = 0 if uid in state.godmode_users else SHOP_CURSE_COST
         if not await confirm_purchase(
             ctx, title="🔮 Curse",
@@ -2130,8 +2200,13 @@ class ShopCog(commands.Cog):
             cost=cost, payer=ctx.author,
         ):
             return
-        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_CURSE_COST:,}"):
+        claimed, prior_buy = await _claim_targeted_buy(ctx, "curse")
+        if not claimed:
             return
+        if not await shop_charge(ctx, uid, cost, cost_label=f"{SHOP_CURSE_COST:,}"):
+            await _release_targeted_buy(uid, "curse", prior_buy)
+            return
+        await save_economy(uid)
         state.active_curses[(gid, target.id)] = {"cursed_by": uid, "remaining": SHOP_CURSE_MESSAGES, "channel_id": ctx.channel.id}
         await save_curse(state.active_curses)
         await ctx.send(embed=emb(
