@@ -48,7 +48,6 @@
   "adminhelp":     {"tier": "server_admin", "hidden": false},
   "streaks":       {"tier": "server_admin", "hidden": false},
   "graph":         {"tier": "everyone",    "hidden": false},
-  "graph admin":   {"tier": "bot_admin",   "hidden": false},
   "graph wallet":  {"tier": "bot_admin",   "hidden": false},
   "graph savings": {"tier": "bot_admin",   "hidden": false},
   "graph total":   {"tier": "bot_admin",   "hidden": false},

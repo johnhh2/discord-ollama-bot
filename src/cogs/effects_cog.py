@@ -33,6 +33,7 @@ from src.persistence import (
 from src.config import (
     SHOP_MOCK_MESSAGES, SHOP_CURSE_MESSAGES, SHOP_RAGEBAIT_MESSAGES,
 )
+from src.economy import insurance_policies
 from src import state
 
 
@@ -87,10 +88,17 @@ async def _persist(effect: str):
         await spec["save"]()
 
 
-def _describe_entry(effect: str, data: dict) -> str:
+_INSURANCE_KINDS = {"insurance": "personal", "social_insurance": "social"}
+
+
+def _describe_entry(effect: str, data: dict, uid: int | None = None) -> str:
     """One-line status for an active effect, including remaining duration/count."""
     spec = _EFFECTS[effect]
     bits = [f"{spec['emoji']} **{effect}**"]
+    kind = _INSURANCE_KINDS.get(effect)
+    if kind and uid in insurance_policies(kind)[1]:
+        # Paid daily by the 5am sweep, so its expiry is only tomorrow's; an admin grant has no sub and shows its time.
+        return " ".join(bits + ["— subscribed"])
     # Time-based: show remaining time if an expiry is set (omit if permanent).
     exp = data.get("expires_at")
     if exp:
@@ -163,7 +171,7 @@ class EffectsCog(commands.Cog):
         if not active:
             who = "You have" if target.id == ctx.author.id else f"**{target.display_name}** has"
             return emb("✨ Effects", f"{who} no active effects.", C_GREY)
-        lines = [_describe_entry(name, data) for name, data in active]
+        lines = [_describe_entry(name, data, target.id) for name, data in active]
         title = "✨ Your Effects" if target.id == ctx.author.id else f"✨ {target.display_name}'s Effects"
         return emb(title, "\n".join(lines), C_PURPLE)
 

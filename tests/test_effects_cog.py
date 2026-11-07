@@ -393,3 +393,20 @@ async def test_named_player_add_offers_the_settable_effects_and_runs_the_typed_a
     modal._inputs["effect"]._values = ["tax"]
     await modal.on_submit(_effects_press(ctx.guild))
     assert (42, target.id) not in _state.active_taxes
+
+
+@_aio
+async def test_subscribed_insurance_shows_subscribed_and_an_admin_grant_shows_its_time():
+    cog = EffectsCog(bot=None)
+    subscriber, granted = 7301, 7302
+    for uid in (subscriber, granted):
+        _state.insurance[uid] = {"expires_at": time.time() + 3 * 86_400, "protected_from": [], "tier": "premium"}
+    _state.insurance_subs[subscriber] = "premium"
+
+    ctx = FakeCtx(author=FakeMember(uid=subscriber), guild=FakeGuild(gid=42))
+    await cog.cmd_effects.callback(cog, ctx)
+    assert "insurance** — subscribed" in ctx.sent_embeds[-1].description and "left" not in ctx.sent_embeds[-1].description
+
+    ctx = FakeCtx(author=FakeMember(uid=granted), guild=FakeGuild(gid=42))
+    await cog.cmd_effects.callback(cog, ctx)
+    assert "left" in ctx.sent_embeds[-1].description and "subscribed" not in ctx.sent_embeds[-1].description

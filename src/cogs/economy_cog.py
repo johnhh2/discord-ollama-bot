@@ -685,11 +685,12 @@ class EconomyCog(commands.Cog):
                 f"**`!bankheist @user`**{bankheist_lock} — Open a 4-slot lobby; rally a crew to split a cut of the target's savings. One successful heist a day.",
                 "",
             ]
-        lines += [
-            "**`!jailbreak`** — Attempt to escape jail (20% success). One attempt per day.",
-            "",
-            jail_status,
-        ]
+        if time.time() < jail_until:  # the Jailbreak / Bail buttons show only then too
+            lines += [
+                "**`!jailbreak`** — Attempt to escape jail (20% success). One attempt per day.",
+                "",
+            ]
+        lines.append(jail_status)
         return emb("🦹 Crime", "\n".join(lines), C_GOLD)
 
     @commands.command(name="steal",

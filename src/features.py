@@ -92,7 +92,7 @@ COMMAND_FEATURES: dict[str, tuple[str, ...]] = {
     "event": ("economy",), "admingive": ("economy",),
     "bounty": ("economy",), "bounties": ("economy",), "shop bounty": ("economy",),
     "graph balance": ("economy",), "graph economy": ("economy",), "graph wallet": ("economy",),
-    "graph total": ("economy",), "graph crime": ("economy",), "graph admin": ("economy",),
+    "graph total": ("economy",), "graph crime": ("economy",),
     # gambling
     "flip": ("gambling",), "slots": ("gambling",), "slotsrewards": ("gambling",),
     "scratchoff": ("gambling",), "scratches": ("gambling",), "streak": ("gambling",),
@@ -101,10 +101,10 @@ COMMAND_FEATURES: dict[str, tuple[str, ...]] = {
     "lottery": ("gambling",), "graph gambling": ("gambling",),
     # savings
     "savings": ("savings",), "save": ("savings",), "deposit": ("savings",), "withdraw": ("savings",),
-    "bankheist": ("savings",), "graph savings": ("savings",), "graph admin savings": ("savings",),
+    "bankheist": ("savings",), "graph savings": ("savings",),
     # assets
     "assets": ("assets",), "daily property": ("assets",), "shop assets": ("assets",),
-    "graph assets": ("assets",), "graph admin assets": ("assets",),
+    "graph assets": ("assets",),
     # shop
     "shop": ("shop",), "effects": ("shop",), "roles": ("shop",), "tax": ("shop",),
     "announce": ("shop",),  # the paid one; !adminannounce is free and stays on

@@ -1,5 +1,5 @@
 """The `!graph` panel: one dropdown of every graph, the per-user breakouts
-included for bot admins.
+included (labelled Admin) for admins.
 
 A pick with parameters opens a modal: whose graph, which same-axis graphs
 to draw alongside it, or a breakout's top-N / users. A pick without any
@@ -36,11 +36,12 @@ GRAPHS = (
     ("ping", "📡 Ping", "Discord gateway ping in ms"),
     ("minecraft", "⛏️ Minecraft", "server ping and daily players"),
 )
+# Admin-only per-user breakouts: (key, command, leading args, label, description).
 BREAKOUTS = (
-    ("wallet", "👥 Wallets per user", "one line per user — top N, or the users you pick"),
-    ("savings", "👥 Savings per user", "one line per user"),
-    ("assets", "👥 Property value per user", "one line per user"),
-    ("total", "👥 Total per user", "wallet + savings + property, one line per user"),
+    ("wallet", "graph wallet", (), "🔑 Admin · Wallets per user", "Admin only: one line per user, top N or the users you pick"),
+    ("savings", "graph savings", (), "🔑 Admin · Savings per user", "Admin only: one line per user"),
+    ("assets", "graph assets", ("all",), "🔑 Admin · Property value per user", "Admin only: one line per user"),
+    ("total", "graph total", (), "🔑 Admin · Total per user", "Admin only: wallet + savings + property, one line per user"),
 )
 _LABELS = {name: label for name, label, _ in GRAPHS}
 
@@ -48,6 +49,7 @@ _LABELS = {name: label for name, label, _ in GRAPHS}
 @dataclass(frozen=True, kw_only=True)
 class GraphItem(PanelItem):
     command: str  # the qualified `graph …` command
+    lead: tuple = ()  # arguments before the picked ones (`all` for the assets breakout)
 
 
 def _graph_fields(name: str) -> tuple:
@@ -80,11 +82,11 @@ def items_for(ctx) -> list[GraphItem]:
         items.append(GraphItem(key=name, label=label, description=description, command=f"graph {name}",
                                fields=_graph_fields(name), title=f"{label} graph"[:45]))
     if is_admin(ctx):
-        items += [GraphItem(key=f"admin:{field}", label=label, description=description, command=f"graph admin {field}",
-                            title=label[:45],
+        items += [GraphItem(key=f"admin:{field}", label=label, description=description, command=command, lead=lead,
+                            title=label.split(" · ", 1)[1][:45],
                             fields=(Field("n", "Top N (default 10)", required=False, placeholder="10", max_length=3),
                                     Field("users", "…or specific users", kind="users", required=False, max_values=10)))
-                  for field, label, description in BREAKOUTS]
+                  for field, command, lead, label, description in BREAKOUTS]
     return items
 
 
@@ -121,7 +123,7 @@ class GraphHub(Panel):
             await interaction.followup.send(refusal, ephemeral=True)
             return
         values = values or {}
-        args: list[str] = list(values.get("with") or [])
+        args: list[str] = [*item.lead, *(values.get("with") or [])]
         if values.get("n"):
             args.append(values["n"])
         args += [f"<@{uid}>" for uid in (values.get("user") or []) + (values.get("users") or [])]

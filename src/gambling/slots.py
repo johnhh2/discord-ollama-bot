@@ -407,8 +407,15 @@ class SlotsCog(commands.Cog):
         typed subcommand. The form opens whenever the type or the player is
         missing; given values arrive preselected."""
         active = await self._active_rig_lines(ctx)
-        desc = ["Pick a game and a player. Quantity is optional; `cancel` clears that rig. "
-                "`!unrig @user` clears them all."]
+        desc = [
+            "Pick a game and a player. The amount means something different per game; leave it empty for the default:",
+            "🎰 **Slots**: which win the next spin hits. 75 is the jackpot, then 15, 7, 4 or 3 times the bet. Default 75.",
+            "🪙 **Flip**: how many flips in a row win. Default 1.",
+            "🎫 **Scratch**: how many symbols match on one upcoming card, 1 to 4. Default 4.",
+            "🦹 **Steal**: how many steal attempts succeed. Default 1.",
+            "",
+            "Type `cancel` as the amount to clear that game's rig. `!unrig @user` clears all of them.",
+        ]
         if active:
             desc += ["", "**Active riggings:**", *active]
         values = await open_form(
@@ -417,8 +424,9 @@ class SlotsCog(commands.Cog):
                 Field("kind", "Game", kind="choices", options=RIG_KINDS,
                       defaults=(kind,) if kind else ()),
                 Field("user", "Player", kind="users", defaults=(target.id,) if target is not None else ()),
-                Field("qty", "Quantity (optional)", required=False, max_length=6, default=qty,
-                      description="Slots: multiplier 75/15/7/4/3 · flip, steal: count · scratch: 1–4 symbols"),
+                Field("qty", "Amount (optional)", required=False, max_length=6, default=qty,
+                      placeholder="Empty = default, or cancel",
+                      description="Slots: 75, 15, 7, 4 or 3. Flip, Steal: how many. Scratch: symbols, 1 to 4."),
             ),
         )
         if not values or not values.get("kind") or not values.get("user"):

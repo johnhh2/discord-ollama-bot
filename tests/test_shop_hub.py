@@ -103,13 +103,13 @@ async def test_every_item_names_a_real_command_and_fits_a_select():
 async def test_pages_hide_what_the_server_or_the_invoker_lacks():
     ctx = _ctx()
     keys = dict(pages_for(ctx))
-    assert "bounties" not in keys and "portfolio" not in keys and "artifacts" in keys
+    assert "bounties" not in keys and "artifacts" in keys and "assets" in keys
     set_feature(GID, "assets", False)
     set_feature(GID, "artifacts", False)
     get_guild_cfg(GID)["shop_items"] = {k: False for k in ("createrole", "assignrole", "unassignrole", "deleterole",
                                                             "roleup", "roledown", "rolecolor", "renamerole", "lockrole")}
     keys = dict(pages_for(ctx))
-    assert not {"assets_low", "assets_high", "artifacts", "roles"} & set(keys)
+    assert not {"assets", "artifacts", "roles"} & set(keys)
     assert "channels" in keys and "fun" in keys
 
 
@@ -129,19 +129,20 @@ async def test_the_announce_item_needs_a_tts_server_and_its_form_forwards_the_ty
     assert not any(i.key == "announce" for i in items_for("fun", ctx))
 
 
-async def test_assets_pages_show_price_status_and_the_owners_deeds():
+async def test_artifacts_and_assets_are_one_section_each_that_open_their_own_menus():
     ctx = _ctx()
-    _stock(ctx)
-    low = {i.key: i for i in items_for("assets_low", ctx)}
-    assert low["asset:lemonade_stand"].description.startswith("✅ yours")
-    assert low["asset:hot_dog_cart"].kwargs == {"name": "hot_dog_cart"} and "12,000 🪙" in low["asset:hot_dog_cart"].label
-    assert "🔒 global level" in low["asset:hot_dog_cart"].description  # a level-1 user
-    high = items_for("assets_high", ctx)
-    assert high and all(i.method == "bot:assets buy" for i in high)
-    mine = {i.key: i for i in items_for("portfolio", ctx)}
-    assert set(mine) == {"sell:lemonade_stand", "upgrade:lemonade_stand", "unlist:lemonade_stand", "rename:lemonade_stand"}
-    assert mine["sell:lemonade_stand"].call({"price": "50k"}) == (("lemonade_stand", "50k"), {})
-    assert mine["rename:lemonade_stand"].call({"name": "Sour Power"}) == (("lemonade_stand", "Sour", "Power"), {})
+    labels = dict(pages_for(ctx))
+    assert labels["assets"] == "🏘️ Assets" and not {"assets_low", "assets_high", "portfolio"} & set(labels)
+    cog = ShopCog(bot=None)
+    calls = []
+
+    async def _forward(c, method, *args, **kwargs):
+        calls.append(method)
+    cog.forward = _forward
+    hub = ShopHub(cog, ctx, "overview", _overview)
+    for page in ("artifacts", "assets"):
+        await _pick(hub, _PageSelect, page).callback(_interaction())
+    assert calls == ["shop_artifacts", "bot:assets browse"] and hub.page == "overview"
 
 
 async def test_forms_produce_the_typed_argument_lists():
@@ -213,10 +214,10 @@ async def test_a_buy_pick_forwards_and_refreshes_and_a_locked_pick_is_refused():
         seen.append((method, args, kwargs))
         return None
     cog.forward = _forward
-    hub = ShopHub(cog, ctx, "artifacts", _overview)
+    hub = ShopHub(cog, ctx, "nicknames", _overview)
     interaction = _interaction()
-    await _pick(hub, _ItemSelect, "artifact:1").callback(interaction)
-    assert seen == [("shop_artifacts", ("buy", "1"), {})]
+    await _pick(hub, _ItemSelect, "removenickname").callback(interaction)
+    assert seen == [("shop_removenickname", (), {})]
     interaction.response.defer.assert_awaited_once()
     assert interaction.edit_original_response.await_args.kwargs["view"] is hub
 

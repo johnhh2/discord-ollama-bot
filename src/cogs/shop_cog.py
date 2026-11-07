@@ -535,11 +535,8 @@ class ShopCog(commands.Cog):
                 "`!bounties` — List the server's open bounties and their rewards",
             ]
 
-        # Assets — unique deeds, listed on their own pages of the panel.
         if feature_enabled(_gid, "assets"):
-            sections["🏘️ Assets"] = [
-                "`!shop assets` — Real-estate deeds that pay daily rent (`!assets browse` / `!assets buy <name>`)"
-            ]
+            sections["🏘️ Assets"] = ["`!assets` — Real-estate deeds that pay daily rent"]
 
         if not sections:
             return None

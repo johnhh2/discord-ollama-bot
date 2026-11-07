@@ -1,4 +1,4 @@
-"""Tests for `!graph admin wallet|savings`.
+"""Tests for the per-user breakouts (`!graph wallet|savings|total`).
 
 Covers the parser (number XOR mentions, default top-10, cap, dedupe) and
 the builder (top-N ranking, explicit-members filter, field selection).

@@ -3,8 +3,7 @@ nothing typed after the command.
 
 Same idea as src/settings_hub.py. The panel never charges: every pick is
 turned into the typed form of the matching command — `shop mock <@id>`,
-`shop nickname <@id> Name`, `shop insurance standard`, `artifacts buy 3`,
-`assets buy lemonade_stand` — and forwarded through `ShopCog.forward`, so
+`shop nickname <@id> Name`, `shop tax <@id>` — and forwarded through `ShopCog.forward`, so
 the subcommand's own lottery-channel guard, per-item disable check,
 insurance protection, confirm prompt and race-safe claim-before-charge all
 run exactly as they would for a typed command. Unlike the settings panel the
@@ -33,7 +32,6 @@ import discord
 from discord import ui
 
 from src import state
-from src.artifacts import ARTIFACTS, owned_qty
 from src.config import (
     SHOP_NICKNAME_SELF_COST, SHOP_NICKNAME_REMOVE_COST, SHOP_NICKNAME_OTHER_COST,
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_ASSIGN_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
@@ -48,13 +46,7 @@ from src.cogs.announce_cog import announce_form_args
 from src.features import feature_enabled
 from src.guild_config import get_guild_cfg
 from src.helpers import emb, C_PURPLE, C_GREY
-from src.level_unlocks import is_locked_for, user_global_display_level
-from src.rate_curves import property_pct_text
-from src.properties import (
-    PROPERTY_UPGRADES, PROPERTY_SECURITY_UPGRADES, upgrade_types_for, max_owned, released_properties,
-    PROPERTY_BANK_BUYBACK_PCT,
-    owned_properties, property_daily_revenue, property_value,
-)
+from src.level_unlocks import is_locked_for
 from src.settings_views import Field, FormModal, MAX_OPTIONS, _OwnedView
 
 HUB_TIMEOUT = 300.0
@@ -69,15 +61,13 @@ PAGES = (
     ("insurance", "🛡️ Insurance"),
     ("leveling", "✨ Leveling"),
     ("artifacts", "🏺 Artifacts"),
-    ("assets_low", "🏘️ Assets — tiers 1–2"),
-    ("assets_high", "🏘️ Assets — tiers 3–5"),
-    ("portfolio", "🏘️ My properties"),
+    ("assets", "🏘️ Assets"),
     ("bounties", "🎯 Bounties"),
 )
 _PAGE_LABELS = dict(PAGES)
 
 # Sections that open the command's own menu instead of a page of items.
-_MENU_PAGES = {"insurance": "shop_insurance"}
+_MENU_PAGES = {"insurance": "shop_insurance", "artifacts": "shop_artifacts", "assets": "bot:assets browse"}
 
 # Shop items whose section is a page, by the shop_items key each needs.
 _PAGE_ITEM_KEYS = {
@@ -307,75 +297,6 @@ def _leveling(ctx, shop_items: dict) -> list[ShopItem]:
     ]
 
 
-def _artifacts(ctx, shop_items: dict) -> list[ShopItem]:
-    uid = ctx.author.id
-    lvl = user_global_display_level(uid)
-    items = []
-    for i, art in enumerate(ARTIFACTS, start=1):
-        req = art.get("level", 1)
-        if owned_qty(uid, art["id"]) >= art["max"]:
-            status = "✅ owned"
-        elif lvl < req:
-            status = f"🔒 global level {req}"
-        else:
-            status = "permanent, yours forever"
-        items.append(ShopItem(f"artifact:{i}", f"🏺 {i}. {art['effect'][:70]} — {_coins(art['cost'])}", status,
-                              "shop_artifacts", args=("buy", str(i))))
-    return items[:MAX_OPTIONS]
-
-
-def _assets(ctx, tiers: tuple[int, ...]) -> list[ShopItem]:
-    uid = ctx.author.id
-    lvl = user_global_display_level(uid)
-    items = []
-    for p in released_properties():
-        if p["tier"] not in tiers:
-            continue
-        row = state.property_owners.get(p["id"])
-        rev = property_daily_revenue(p["id"], row, current=True)
-        if row is None:
-            price, status = p["cost"], f"tier {p['tier']} · {rev:,} 🪙/day" + (f" · 🔒 global level {p['level']}" if lvl < p["level"] else "")
-        elif row["owner_id"] == uid:
-            price, status = None, f"✅ yours · {rev:,} 🪙/day"
-        elif row.get("list_price"):
-            price, status = row["list_price"], f"🏷️ listed by a player · {rev:,} 🪙/day"
-        else:
-            price, status = None, "🔒 owned by someone else"
-        label = f"{p['emoji']} {p['name']}" + (f" — {_coins(price)}" if price else "")
-        items.append(ShopItem(f"asset:{p['id']}", label, status, "bot:assets buy", kwargs={"name": p["id"]}))
-    return items[:MAX_OPTIONS]
-
-
-def _portfolio(ctx) -> list[ShopItem]:
-    uid = ctx.author.id
-    items = []
-    for p in owned_properties(uid):
-        pid = p["id"]
-        row = state.property_owners.get(pid, {})
-        name = f"{p['emoji']} {row.get('custom_name') or p['name']}"
-        value = property_value(pid, row)
-        items.append(ShopItem(f"sell:{pid}", f"🏷️ Sell {name}", f"value {value:,} 🪙 · at ≤{PROPERTY_BANK_BUYBACK_PCT}% the bank offers an instant buyback",
-                              "bot:assets sell", title=f"Sell {p['name']}"[:45],
-                              fields=(Field("price", "Asking price", placeholder="e.g. 50k", max_length=12),),
-                              call=lambda v, pid=pid: ((pid, v["price"]), {})))
-        if not row.get("upgraded"):
-            up_name, up_cost, up_boost = PROPERTY_UPGRADES[pid]
-            items.append(ShopItem(f"upgrade:{pid}", f"⭐ Build the {up_name} on {name} — {_coins(up_cost)}",
-                                  f"+{up_boost}% revenue", "bot:assets upgrade", kwargs={"name": f"revenue {pid}"}))
-        if "security" in upgrade_types_for(pid) and not row.get("secured"):
-            items.append(ShopItem(f"security:{pid}",
-                                  f"🛡️ Install security on {name} — {_coins(PROPERTY_SECURITY_UPGRADES[pid])}",
-                                  "thefts succeed 25% less often; calls investigators with property insurance",
-                                  "bot:assets upgrade", kwargs={"name": f"security {pid}"}))
-        if row.get("list_price"):
-            items.append(ShopItem(f"unlist:{pid}", f"🏷️ Unlist {name}", f"listed at {row['list_price']:,} 🪙",
-                                  "bot:assets unlist", kwargs={"name": pid}))
-        items.append(ShopItem(f"rename:{pid}", f"✏️ Rename {name}", "1–48 characters", "bot:assets rename",
-                              title=f"Rename {p['name']}"[:45], fields=(Field("name", "New name", max_length=48),),
-                              call=lambda v, pid=pid: ((pid, *v["name"].split()), {})))
-    return items[:MAX_OPTIONS]
-
-
 def _bounties(ctx) -> list[ShopItem]:
     return [
         ShopItem("bounty", f"🎯 Post a bounty — {_coins(BOUNTY_MIN_AMOUNT)} minimum", "escrowed from you until someone claims it",
@@ -404,9 +325,7 @@ def pages_for(ctx) -> list[tuple[str, str]]:
             continue
         if key == "artifacts" and not feature_enabled(gid, "artifacts"):
             continue
-        if key in ("assets_low", "assets_high", "portfolio") and not feature_enabled(gid, "assets"):
-            continue
-        if key == "portfolio" and not owned_properties(ctx.author.id):
+        if key == "assets" and not feature_enabled(gid, "assets"):
             continue
         if key == "bounties" and not cfg.get("bounty_channel"):
             continue
@@ -427,26 +346,9 @@ def items_for(page: str, ctx) -> list[ShopItem]:
         return _fun(ctx, shop_items)
     if page == "leveling":
         return _leveling(ctx, shop_items)
-    if page == "artifacts":
-        return _artifacts(ctx, shop_items)
-    if page == "assets_low":
-        return _assets(ctx, (1, 2))
-    if page == "assets_high":
-        return _assets(ctx, (3, 4, 5))
-    if page == "portfolio":
-        return _portfolio(ctx)
     if page == "bounties":
         return _bounties(ctx)
     return []
-
-
-_ASSETS_NOTE = (
-    "Every property is unique — one owner across all servers. Own up to {cap}; "
-    "revenue is {pct} of price per day, banked with your daily claim."
-)
-_PAGE_NOTES = {
-    "artifacts": "Permanent per-user upgrades, owned bot-wide. Level gates are your global level.",
-}
 
 
 # ── the view ─────────────────────────────────────────────────────────────────
@@ -527,10 +429,6 @@ class ShopHub(_OwnedView):
             lines = [f"{item.label}" + (f" 🔒 **Lvl {item.lock}**" if item.lock else "") + f"\n-# {item.description}"
                      for item in self.items()]
             body = "\n".join(lines) or "Nothing here for you right now."
-            if self.page in ("assets_low", "assets_high"):
-                body += "\n\n*" + _ASSETS_NOTE.format(pct=property_pct_text(), cap=max_owned()) + "*"
-            if self.page in _PAGE_NOTES:
-                body += "\n\n*" + _PAGE_NOTES[self.page] + "*"
             embed = emb(f"🛒 Shop — {_PAGE_LABELS[self.page]}", body[:4000], C_PURPLE)
         embed.set_footer(text="Pick a section, then an item. Every purchase still asks you to confirm.")
         return embed

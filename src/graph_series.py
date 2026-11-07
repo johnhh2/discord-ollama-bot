@@ -769,7 +769,7 @@ async def parse_tokens(
 
 
 # ── Admin: per-user breakouts ────────────────────────────────────────────────
-# `!graph admin wallet [N|@users…]` and `!graph admin savings [N|@users…]`
+# `!graph wallet|savings|total [N|@users…]` and `!graph assets all [N|@users…]`
 # render one line per user. Tokens can be either (a) a single integer N
 # selecting top-N by current value, or (b) one or more @user mentions. They
 # can't be mixed — the parser rejects with a clear error.

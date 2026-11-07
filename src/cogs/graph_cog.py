@@ -267,45 +267,6 @@ class GraphCog(commands.Cog):
     async def cmd_graph_ai(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("ai"))
 
-    # ── Admin: per-user breakouts ────────────────────────────────────────
-    # bot_admin tier — see src/command_perms.json. Renders one line per user
-    # to inspect economy distribution. Tokens are either an integer N (top
-    # N by current value) or one or more @user mentions, never both.
-
-    @cmd_graph.group(name="admin", invoke_without_command=True,
-                     help="Open the graph panel, where the per-user breakout graphs are listed")
-    @requires_perm
-    async def cmd_graph_admin(self, ctx: commands.Context):
-        # The breakouts are in the !graph panel's dropdown for admins.
-        await open_panel(ctx, GraphHub(self, ctx))
-
-    @cmd_graph_admin.command(name="wallet",
-                             help="Draw one wallet line per user — top N (default 10), or the users you pick",
-                             usage="[N|@users…]")
-    @requires_perm
-    async def cmd_graph_admin_wallet(self, ctx: commands.Context, *tokens: str):
-        await _admin_handler(ctx, tokens, field="wallet")
-
-    @cmd_graph_admin.command(name="savings",
-                             help="Draw one savings line per user — top N (default 10), or the users you pick",
-                             usage="[N|@users…]")
-    @requires_perm
-    async def cmd_graph_admin_savings(self, ctx: commands.Context, *tokens: str):
-        await _admin_handler(ctx, tokens, field="savings")
-
-    @cmd_graph_admin.command(name="assets", aliases=["asset", "property", "properties"],
-                             help="Draw one property-value line per user — top N (default 10), or the users you pick",
-                             usage="[N|@users…]")
-    async def cmd_graph_admin_assets(self, ctx: commands.Context, *tokens: str):
-        await _admin_handler(ctx, tokens, field="assets")
-
-    @cmd_graph_admin.command(name="total",
-                             help="Draw wallet + savings + property, one line per user — top N (default 10) or the users you pick",
-                             usage="[N|@users…]")
-    @requires_perm
-    async def cmd_graph_admin_total(self, ctx: commands.Context, *tokens: str):
-        await _admin_handler(ctx, tokens, field="total")
-
 
 def _strip_all(tokens: tuple[str, ...]) -> tuple[str, ...]:
     """Drop a leading `all` keyword if present — accepted for symmetry with
