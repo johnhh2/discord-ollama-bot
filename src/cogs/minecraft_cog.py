@@ -1,9 +1,11 @@
 """Minecraft Bedrock server status & monitor.
 
-Talks to the itzg/minecraft-bedrock-server container over the same public UDP
-port players use (RakNet "unconnected ping" via mcstatus). MC_SERVER_HOST is
-the server's EXTERNAL address so latency reflects the internet-facing route.
-The Bedrock pong carries player *counts* only, never names — so the monitor
+Talks to the itzg/minecraft-bedrock-server container over the same public
+port players use. MC_SERVER_HOST is the server's EXTERNAL address so latency
+reflects the internet-facing route. Each poll asks both ways a Bedrock server
+answers — the RakNet "unconnected ping" over UDP (via mcstatus) and the
+NetherNet transport's GET /v1/join over TCP — and takes the first reply.
+Either status carries player *counts* only, never names — so the monitor
 posts anonymous "a player joined — 3/10" notices, not per-gamertag events.
 Count deltas also feed the persistent player stats (mc_player_events +
 mc_daily_player_stats, migration 0041): joins/leaves, daily peak concurrent,
@@ -22,7 +24,9 @@ closed everywhere until MC_CONSOLE_HOST / MC_CONSOLE_PASSWORD are set.
 """
 import asyncio
 import collections
+import contextlib
 import dataclasses
+import json
 import logging
 import secrets
 import time
@@ -52,6 +56,12 @@ from src.settings_views import Field, open_form
 logger = logging.getLogger(__name__)
 
 MC_STATUS_TIMEOUT_SECS = 5.0
+# A NetherNet server (BDS 1.26.5x+, `transport=nethernet`) no longer answers
+# the RakNet ping; it serves its status as JSON at GET /v1/join on the game
+# port, over TCP. The reply is ~150 bytes; the cap only bounds a bad peer.
+MC_NETHERNET_MAX_BYTES = 16_384
+# Bedrock's GameType ids as /v1/join reports them; anything else shows blank.
+_NETHERNET_GAMETYPES = {0: "Survival", 1: "Creative", 2: "Adventure", 6: "Spectator"}
 # Consecutive failed pings before the monitor declares the server offline.
 # One lost UDP packet must not produce an offline/online alert pair.
 MC_OFFLINE_AFTER_FAILURES = 2
@@ -120,6 +130,7 @@ class McStatus:
     motd: str
     gamemode: str
     map_name: str
+    transport: str = "RakNet"
 
 
 @dataclasses.dataclass
@@ -165,19 +176,9 @@ def _server_label() -> str:
     return "The Minecraft server"
 
 
-async def fetch_mc_status() -> "McStatus | None":
-    """One status ping. Returns None if the server didn't answer.
-
-    Module-level (not a method) so tests can monkeypatch
-    src.cogs.minecraft_cog.fetch_mc_status.
-    """
-    try:
-        server = BedrockServer.lookup(f"{MC_SERVER_HOST}:{MC_SERVER_PORT}")
-        status = await asyncio.wait_for(
-            server.async_status(), timeout=MC_STATUS_TIMEOUT_SECS
-        )
-    except Exception:
-        return None
+async def _raknet_status() -> McStatus:
+    server = BedrockServer.lookup(f"{MC_SERVER_HOST}:{MC_SERVER_PORT}")
+    status = await server.async_status()
     return McStatus(
         players=status.players.online,
         max_players=status.players.max,
@@ -186,7 +187,85 @@ async def fetch_mc_status() -> "McStatus | None":
         motd=status.motd.to_plain().strip(),
         gamemode=status.gamemode or "",
         map_name=status.map_name or "",
+        transport="RakNet",
     )
+
+
+def _parse_nethernet(raw: bytes, latency_ms: float) -> McStatus:
+    """A /v1/join HTTP response → McStatus. Raises on anything but a 200
+    with the counts in it."""
+    head, sep, body = raw.partition(b"\r\n\r\n")
+    status_line = head.split(b"\r\n", 1)[0].split()
+    if not sep or len(status_line) < 2 or status_line[1] != b"200":
+        raise ValueError(f"unexpected /v1/join reply: {head[:80]!r}")
+    data = json.loads(body)
+    return McStatus(
+        players=int(data["players"]),
+        max_players=int(data["maxPlayers"]),
+        latency_ms=round(latency_ms),
+        version=str(data.get("version") or ""),
+        # "name" is the server-name line RakNet calls the MOTD; "level" is
+        # the world folder, which RakNet reports as map_name.
+        motd=str(data.get("name") or "").strip(),
+        gamemode=_NETHERNET_GAMETYPES.get(data.get("gameType"), ""),
+        map_name=str(data.get("level") or ""),
+        transport="NetherNet",
+    )
+
+
+async def _nethernet_status() -> McStatus:
+    reader, writer = await asyncio.open_connection(MC_SERVER_HOST, MC_SERVER_PORT)
+    try:
+        # HTTP/1.0, so the reply can't be chunked and simply ends at EOF.
+        request = (
+            f"GET /v1/join HTTP/1.0\r\nHost: {MC_SERVER_HOST}:{MC_SERVER_PORT}\r\n"
+            "Accept: application/json\r\n\r\n"
+        ).encode()
+        # Timed from the request, not the TCP handshake: one round trip,
+        # comparable with the RakNet pong.
+        start = time.perf_counter()
+        writer.write(request)
+        await writer.drain()
+        chunks = [await reader.readline()]
+        latency_ms = (time.perf_counter() - start) * 1000
+        size = len(chunks[0])
+        while chunk := await reader.read(4096):
+            size += len(chunk)
+            if size > MC_NETHERNET_MAX_BYTES:
+                raise ValueError("/v1/join reply too large")
+            chunks.append(chunk)
+    finally:
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+    return _parse_nethernet(b"".join(chunks), latency_ms)
+
+
+async def fetch_mc_status() -> "McStatus | None":
+    """One status poll over both transports at once; the first to answer
+    wins. Returns None if neither did within MC_STATUS_TIMEOUT_SECS.
+
+    A server speaks only one transport, so the other probe just fails or
+    times out. Racing them keeps a poll at one round trip whichever the
+    server uses, and follows a switch with no setting to change.
+
+    Module-level (not a method) so tests can monkeypatch
+    src.cogs.minecraft_cog.fetch_mc_status.
+    """
+    probes = [asyncio.ensure_future(p()) for p in (_raknet_status, _nethernet_status)]
+    for probe in probes:
+        # Retrieve the loser's exception so asyncio doesn't log it as unseen.
+        probe.add_done_callback(lambda t: t.cancelled() or t.exception())
+    try:
+        for next_done in asyncio.as_completed(probes, timeout=MC_STATUS_TIMEOUT_SECS):
+            try:
+                return await next_done
+            except Exception:
+                continue
+        return None
+    finally:
+        for probe in probes:
+            probe.cancel()
 
 
 def _mc_events(prev: MonitorState, status: "McStatus | None") -> tuple[MonitorState, list[str]]:
@@ -302,6 +381,7 @@ class MinecraftCog(commands.Cog):
             embed.add_field(name="World", value=status.motd, inline=False)
         if status.gamemode:
             embed.add_field(name="Gamemode", value=status.gamemode)
+        embed.add_field(name="Transport", value=status.transport)
 
         # Monitor-derived stats; absent until the poll loop has data.
         now = time.time()

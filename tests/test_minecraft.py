@@ -1,9 +1,10 @@
 """Minecraft Bedrock status cog: !mc, the monitor fold, announce, presence.
 
-No network anywhere — fetch_mc_status is monkeypatched at module scope
+No network beyond loopback — fetch_mc_status is monkeypatched at module scope
 (src.cogs.minecraft_cog.fetch_mc_status), and the monitor loop is driven by
 awaiting its .coro directly instead of starting the tasks.Loop.
 """
+import asyncio
 import json
 import time
 from unittest.mock import AsyncMock
@@ -1252,3 +1253,114 @@ async def test_settings_minecraft_channel_clear(db):
     assert _state.guild_settings["42"]["minecraft_channel"] is None
     persisted = await _read_guild_settings(42)
     assert persisted["minecraft_channel"] is None
+
+
+# ── Transports: RakNet ping and NetherNet /v1/join ───────────────────────────
+_JOIN_BODY = (b'{"name":"The Wurld","protocol":2225,"version":"1.26.63",'
+              b'"level":"world","players":2,"maxPlayers":10,"gameType":0}')
+
+
+def _join_reply(body=_JOIN_BODY, status=b"200 OK"):
+    return (b"HTTP/1.1 " + status + b"\r\nContent-Type: application/json\r\n"
+            b"Connection: close\r\n\r\n" + body)
+
+
+async def test_parse_nethernet_maps_fields():
+    s = mc_mod._parse_nethernet(_join_reply(), 12.4)
+    assert (s.players, s.max_players, s.latency_ms) == (2, 10, 12)
+    assert (s.version, s.motd, s.map_name) == ("1.26.63", "The Wurld", "world")
+    assert (s.gamemode, s.transport) == ("Survival", "NetherNet")
+
+
+async def test_parse_nethernet_unknown_gametype_is_blank():
+    body = _JOIN_BODY.replace(b'"gameType":0', b'"gameType":99')
+    assert mc_mod._parse_nethernet(_join_reply(body), 1).gamemode == ""
+
+
+@pytest.mark.parametrize("raw", [
+    _join_reply(status=b"404 Not Found"),
+    _join_reply(body=b"not json"),
+    _join_reply(body=b'{"name":"x"}'),
+    b"garbage with no header break",
+])
+async def test_parse_nethernet_rejects_bad_replies(raw):
+    with pytest.raises(Exception):
+        mc_mod._parse_nethernet(raw, 1)
+
+
+async def _serve_once(reply: bytes):
+    """A loopback server that answers one request with `reply`; returns
+    (server, port, the request bytes it received)."""
+    seen = []
+
+    async def handle(reader, writer):
+        seen.append(await reader.readuntil(b"\r\n\r\n"))
+        writer.write(reply)
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    return server, server.sockets[0].getsockname()[1], seen
+
+
+async def test_nethernet_status_over_loopback(monkeypatch):
+    server, port, seen = await _serve_once(_join_reply())
+    monkeypatch.setattr(mc_mod, "MC_SERVER_HOST", "127.0.0.1")
+    monkeypatch.setattr(mc_mod, "MC_SERVER_PORT", port)
+    async with server:
+        status = await mc_mod._nethernet_status()
+    assert seen[0].startswith(b"GET /v1/join HTTP/1.0\r\n")
+    assert status.players == 2 and status.transport == "NetherNet"
+
+
+async def test_nethernet_status_refuses_oversized_reply(monkeypatch):
+    big = _join_reply(body=b" " * (mc_mod.MC_NETHERNET_MAX_BYTES + 1) + _JOIN_BODY)
+    server, port, _ = await _serve_once(big)
+    monkeypatch.setattr(mc_mod, "MC_SERVER_HOST", "127.0.0.1")
+    monkeypatch.setattr(mc_mod, "MC_SERVER_PORT", port)
+    async with server:
+        with pytest.raises(ValueError):
+            await mc_mod._nethernet_status()
+
+
+def _probe(result=None, error=None, delay=0.0):
+    async def probe():
+        await asyncio.sleep(delay)
+        if error:
+            raise error
+        return result
+    return probe
+
+
+@pytest.mark.parametrize("raknet_ok", [True, False])
+async def test_fetch_takes_whichever_transport_answers(monkeypatch, raknet_ok):
+    up = _status()
+    if raknet_ok:
+        raknet, nethernet = _probe(up), _probe(error=ConnectionRefusedError())
+    else:
+        raknet, nethernet = _probe(delay=10), _probe(up)
+    monkeypatch.setattr(mc_mod, "_raknet_status", raknet)
+    monkeypatch.setattr(mc_mod, "_nethernet_status", nethernet)
+    assert await mc_mod.fetch_mc_status() is up
+
+
+async def test_fetch_returns_none_when_both_fail(monkeypatch):
+    monkeypatch.setattr(mc_mod, "_raknet_status", _probe(error=OSError()))
+    monkeypatch.setattr(mc_mod, "_nethernet_status", _probe(error=ConnectionRefusedError()))
+    assert await mc_mod.fetch_mc_status() is None
+
+
+async def test_fetch_times_out_and_cancels_the_probes(monkeypatch):
+    started = []
+
+    async def hang():
+        task = asyncio.current_task()
+        started.append(task)
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(mc_mod, "MC_STATUS_TIMEOUT_SECS", 0.05)
+    monkeypatch.setattr(mc_mod, "_raknet_status", hang)
+    monkeypatch.setattr(mc_mod, "_nethernet_status", hang)
+    assert await mc_mod.fetch_mc_status() is None
+    await asyncio.sleep(0)
+    assert len(started) == 2 and all(t.cancelled() for t in started)
