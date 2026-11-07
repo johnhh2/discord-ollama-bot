@@ -26,7 +26,6 @@ from src.economy import (
     renew_insurance_subs, sweep_insurance_subs,
 )
 from src.insurance_view import _TypeSelect
-from src.shop_hub import items_for
 from tests.fakes.db import FakeCursor
 from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild, FakeMessage
 
@@ -250,14 +249,15 @@ async def test_only_the_invoker_can_press(db):
 
 # ── the shop panel ───────────────────────────────────────────────────────────
 
-def test_shop_panel_lists_every_type():
+def test_insurance_menu_lists_every_type():
+    from src.cogs.shop_cog import ShopCog
+    from src.insurance_view import InsuranceView
     ctx = _ctx(9130)
     _state.social_insurance_subs[9130] = "social"
-    keys = {item.key: item for item in items_for("insurance", ctx)}
+    options = {o.value: o for o in InsuranceView(ShopCog(bot=None), ctx).children[0].options}
 
-    assert set(keys) == {"insurance", "social-insurance", "social-insurance-unsub", "property-insurance"}
-    assert keys["social-insurance"].args == ("social",)
-    assert keys["social-insurance-unsub"].args == ("social", "unsub")
+    assert set(options) == {"personal", "social", "property"}
+    assert options["social"].description == "Subscribed"
 
 
 # ── persistence ──────────────────────────────────────────────────────────────

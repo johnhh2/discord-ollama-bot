@@ -41,6 +41,7 @@ from src.settings_views import pick_from_list, pick_from_menus
 from src.guild_config import get_guild_cfg
 from src.features import feature_enabled, disabled_feature_for
 from src.shop_hub import open_shop_hub
+from src.rankings_view import send_rankings
 from src.ai import (
     keep_typing,
     stream_ollama, finalize,
@@ -2599,6 +2600,9 @@ class ShopCog(commands.Cog):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command can only be used in a server.", C_RED))
             return
+        await send_rankings(self, ctx, "roles")
+
+    def roles_embed(self, ctx: commands.Context) -> discord.Embed:
         candidates: list = []
         for r in ctx.guild.roles:
             if r.id not in state.bot_roles:
@@ -2609,8 +2613,7 @@ class ShopCog(commands.Cog):
             sort_key = (0, rank) if rank is not None else (1, -r.position)
             candidates.append((sort_key, r))
         if not candidates:
-            await ctx.send(embed=emb("👑 Role Leaderboard", "No bot-created roles in this server yet.", C_PURPLE))
-            return
+            return emb("👑 Role Leaderboard", "No bot-created roles in this server yet.", C_PURPLE)
         candidates.sort(key=lambda x: x[0])
         lines = []
         medals = ["🥇", "🥈", "🥉"]
@@ -2618,8 +2621,7 @@ class ShopCog(commands.Cog):
             prefix = medals[i] if i < 3 else f"{i + 1}."
             lock = " 🔒" if role.id in state.locked_roles else ""
             lines.append(f"{prefix} **{role.name}**{lock}")
-        lines.append("\n*Also: `!lb` currency · `!levels` XP*")
-        await ctx.send(embed=emb("👑 Role Leaderboard", "\n".join(lines), C_PURPLE))
+        return emb("👑 Role Leaderboard", "\n".join(lines), C_PURPLE)
 
 
 async def setup(bot):

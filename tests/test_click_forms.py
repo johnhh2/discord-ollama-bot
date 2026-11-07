@@ -1,10 +1,11 @@
 """Round three of "a click instead of a typed command": the `!graph` panel,
-scope buttons on records and the leaderboard, the wallet and savings cards,
+the rankings row on the leaderboards and records, the wallet and savings cards,
 the chess pickers, and the forms behind bare `!puzzle`, `!issue`,
 `!featurerequest`, `!ask`, `!story` and `!roleplay`."""
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import discord
 import pytest
 
 import src.state as _state
@@ -14,10 +15,11 @@ import src.cogs.utility_cog as _utility_cog
 import src.games.chess as _chess
 from src.cogs.economy_cog import EconomyCog
 from src.cogs.graph_cog import GraphCog
+from src.cogs.leveling_cog import LevelingCog
+from src.cogs.shop_cog import ShopCog
 from src.cogs.utility_cog import UtilityCog
 from src.graph_hub import GraphHub, items_for as graph_items
 from src.panel import _ItemSelect
-from src.scope_view import ScopeView, send_scoped
 from src.settings_views import FormModal
 from src.wallet_view import WalletView
 
@@ -124,36 +126,103 @@ async def test_graph_pick_forwards_to_the_typed_subcommand_with_mentions():
     assert commands["graph admin wallet"].cog.calls == [(1, ("5",), {})]
 
 
-# ── scope buttons ────────────────────────────────────────────────────────────
+# ── rankings row ─────────────────────────────────────────────────────────────
 
-async def test_scope_view_rerenders_on_press_and_disables_the_current_scope():
-    seen = []
+def _rankings_bot():
+    """A bot whose get_cog finds the boards' owners."""
+    cogs = {}
+    bot = SimpleNamespace(user=SimpleNamespace(id=999), fetch_user=AsyncMock(), get_cog=lambda n: cogs.get(n),
+                          add_command=lambda c: None, remove_command=lambda n: None)
+    leveling = LevelingCog.__new__(LevelingCog)  # no voice loop in tests
+    leveling.bot = bot
+    cogs.update(EconomyCog=EconomyCog(bot=bot), LevelingCog=leveling, ShopCog=ShopCog(bot=bot))
+    return bot, cogs
 
-    async def _render(scope):
-        seen.append(scope)
-        return _economy_cog.emb(scope, "", 0)
-    ctx = _ctx()
-    await send_scoped(ctx, _render, [("Server", "server"), ("Global", "global")], "server")
+
+def _row(view):
+    return [getattr(c, "label", None) for c in view.children]
+
+
+def _current(view):
+    return [c.label for c in view.children
+            if getattr(c, "disabled", False) and c.style is discord.ButtonStyle.primary]
+
+
+async def test_every_ranking_carries_the_same_board_row_in_the_same_order(db):
+    bot, cogs = _rankings_bot()
+    boards = ["🪙 Coins", "📊 Levels", "🏆 Records", "👑 Roles"]  # no idle channel: no Idle RPG
+    lb = _ctx("leaderboard")
+    await cogs["EconomyCog"].cmd_leaderboard.callback(cogs["EconomyCog"], lb, "server")
+    assert _row(lb.sent_views[0]) == boards + ["Server", "Global"]
+    assert _current(lb.sent_views[0]) == ["🪙 Coins", "Server"]
+
+    levels = _ctx("levels")
+    await cogs["LevelingCog"].cmd_levels.callback(cogs["LevelingCog"], levels)
+    assert _row(levels.sent_views[0]) == boards and _current(levels.sent_views[0]) == ["📊 Levels"]
+
+    records = _ctx("records")
+    await cogs["EconomyCog"].cmd_records.callback(cogs["EconomyCog"], records)
+    assert _row(records.sent_views[0]) == [None] + boards + ["Server", "Global"]  # the section dropdown first
+    assert _current(records.sent_views[0]) == ["🏆 Records", "Server"]
+
+    roles = _ctx("roles")
+    await cogs["ShopCog"].cmd_roles.callback(cogs["ShopCog"], roles)
+    assert _row(roles.sent_views[0]) == boards and _current(roles.sent_views[0]) == ["👑 Roles"]
+
+
+async def test_a_board_press_redraws_in_place_and_keeps_each_boards_scope(db):
+    bot, cogs = _rankings_bot()
+    ctx = _ctx("leaderboard")
+    await cogs["EconomyCog"].cmd_leaderboard.callback(cogs["EconomyCog"], ctx, "server")
     view = ctx.sent_views[0]
-    assert isinstance(view, ScopeView) and _button(view, "Server").disabled and not _button(view, "Global").disabled
+
+    interaction = _interaction()
+    await _button(view, "📊 Levels").callback(interaction)
+    assert interaction.response.edit_message.await_args.kwargs["embed"].title == "📊 XP Leaderboard"
+    assert "Server" not in _row(view)  # levels are per server only
+
+    await _button(view, "🪙 Coins").callback(_interaction())
+    assert _current(view) == ["🪙 Coins", "Server"]
     interaction = _interaction()
     await _button(view, "Global").callback(interaction)
-    assert seen == ["server", "global"]
-    assert interaction.response.edit_message.await_args.kwargs["embed"].title == "global"
-    assert _button(view, "Global").disabled and not _button(view, "Server").disabled
+    assert interaction.response.edit_message.await_args.kwargs["embed"].title == "🪙 Leaderboard"
+    await _button(view, "🏆 Records").callback(_interaction())
+    assert _current(view) == ["🏆 Records", "Server"]  # records keep their own scope
 
 
-async def test_records_and_leaderboard_carry_scope_buttons(db):
-    cog = EconomyCog(bot=SimpleNamespace(user=SimpleNamespace(id=999), fetch_user=AsyncMock()))
+async def test_idle_rpg_is_offered_only_where_its_channel_is_set(db):
+    from src.guild_config import get_guild_cfg
+    bot, cogs = _rankings_bot()
+    ctx = _ctx("leaderboard")
+    await cogs["EconomyCog"].cmd_leaderboard.callback(cogs["EconomyCog"], ctx, "idle")
+    assert "⚔️ Idle RPG" not in _row(ctx.sent_views[0]) and _current(ctx.sent_views[0])[0] == "🪙 Coins"
+
+    get_guild_cfg(GID)["idle_channel"] = 555
+    ctx = _ctx("leaderboard")
+    await cogs["EconomyCog"].cmd_leaderboard.callback(cogs["EconomyCog"], ctx, "idle")
+    assert _row(ctx.sent_views[0]) == ["🪙 Coins", "📊 Levels", "🏆 Records", "⚔️ Idle RPG", "👑 Roles"]
+    assert ctx.sent_embeds[0].title == "⚔️ Idle RPG Leaderboard"
+
+
+async def test_boards_whose_feature_is_off_are_left_out(db):
+    from src.features import set_feature
+    bot, cogs = _rankings_bot()
+    set_feature(GID, "economy", False)
+    set_feature(GID, "shop", False)
+    ctx = _ctx("levels")
+    await cogs["LevelingCog"].cmd_levels.callback(cogs["LevelingCog"], ctx)
+    assert _row(ctx.sent_views[0]) == ["📊 Levels"]
+
+
+async def test_records_section_dropdown_and_typed_words(db):
+    bot, cogs = _rankings_bot()
+    cog = cogs["EconomyCog"]
     ctx = _ctx("records")
     await cog.cmd_records.callback(cog, ctx, "server")
-    view = ctx.sent_views[0]
-    assert [getattr(b, "label", None) for b in view.children] == [None, "Server", "Global"]
     assert ctx.sent_embeds[0].title == "🏆 All-Time Records"
     assert "__**💰 Economy**__" in ctx.sent_embeds[0].description and "__**🎰 Gambling**__" in ctx.sent_embeds[0].description
 
-    # The dropdown narrows the board to one section; a typed word does the same.
-    select = view.children[0]
+    select = ctx.sent_views[0].children[0]
     select._values = ["gambling"]
     interaction = _interaction()
     await select.callback(interaction)
@@ -166,11 +235,6 @@ async def test_records_and_leaderboard_carry_scope_buttons(db):
     bad = _ctx("records")
     await cog.cmd_records.callback(cog, bad, "nonsense")
     assert "Usage" in bad.sent_embeds[0].description
-
-    ctx = _ctx("leaderboard")
-    await cog.cmd_leaderboard.callback(cog, ctx, "idle")
-    assert [b.label for b in ctx.sent_views[0].children] == ["Server", "Global", "Idle RPG"]
-    assert ctx.sent_embeds[0].title == "⚔️ Idle RPG Leaderboard"
 
 
 # ── wallet & savings cards ───────────────────────────────────────────────────

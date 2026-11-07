@@ -38,15 +38,13 @@ from src.config import (
     SHOP_NICKNAME_SELF_COST, SHOP_NICKNAME_REMOVE_COST, SHOP_NICKNAME_OTHER_COST,
     SHOP_ROLE_CREATE_COST, SHOP_ROLE_ASSIGN_COST, SHOP_ROLE_REMOVE_COST, SHOP_ROLE_DELETE_COST, SHOP_ROLE_MOVE_COST,
     SHOP_ROLECOLOR_COST, SHOP_ROLECHANNEL_COST, SHOP_LOCK_COST, SHOP_RENAME_COST, SHOP_CHANNEL_COST,
-    SHOP_CHANNEL_DELETE_COST, SHOP_TAX_COST, INSURANCE_TYPES, PROPERTY_INSURANCE_LIVE,
-    SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_CURSE_COST, SHOP_UNOREVERSE_COST,
+    SHOP_CHANNEL_DELETE_COST, SHOP_TAX_COST, SHOP_MOCK_COST, SHOP_RAGEBAIT_COST, SHOP_CURSE_COST, SHOP_UNOREVERSE_COST,
     SHOP_MOCK_MESSAGES, SHOP_RAGEBAIT_MESSAGES, SHOP_CURSE_MESSAGES, SHOP_TAX_PER_MESSAGE,
     SHOP_XP_COST_PER_XP, BOUNTY_MIN_AMOUNT,
     SHOP_ANNOUNCE_COST_PER_CHAR, SHOP_ANNOUNCE_MAX_COST, ANNOUNCE_MAX_CHARS, ANNOUNCE_MAX_REPEATS,
     ANNOUNCE_MAX_TOTAL_CHARS, WYOMING_TTS_HOST,
 )
 from src.cogs.announce_cog import announce_form_args
-from src.economy import get_insurance_tier, get_insurance_expiry, insurance_policies
 from src.features import feature_enabled
 from src.guild_config import get_guild_cfg
 from src.helpers import emb, C_PURPLE, C_GREY
@@ -77,6 +75,9 @@ PAGES = (
     ("bounties", "🎯 Bounties"),
 )
 _PAGE_LABELS = dict(PAGES)
+
+# Sections that open the command's own menu instead of a page of items.
+_MENU_PAGES = {"insurance": "shop_insurance"}
 
 # Shop items whose section is a page, by the shop_items key each needs.
 _PAGE_ITEM_KEYS = {
@@ -296,41 +297,6 @@ def _fun(ctx, shop_items: dict) -> list[ShopItem]:
     return items[:MAX_OPTIONS]
 
 
-def _insurance(ctx, shop_items: dict) -> list[ShopItem]:
-    """Subscribe and (when subscribed) unsubscribe, per type on sale.
-    Personal keeps the bare `insurance` keys; other types prefix theirs."""
-    uid = ctx.author.id
-    items = []
-    for kind, spec in INSURANCE_TYPES.items():
-        if kind == "property" and not PROPERTY_INSURANCE_LIVE:
-            continue
-        prefix = "insurance" if kind == "personal" else f"{kind}-insurance"
-        lead = () if kind == "personal" else (kind,)  # personal is the typed default
-        name = f"{spec['label']} insurance"
-        emoji = spec["emoji"]
-        tier = get_insurance_tier(uid, kind)
-        exp = get_insurance_expiry(uid, kind)
-        subs = insurance_policies(kind)[1]
-        low = _coins(min(i["cost"] for i in spec["tiers"].values()))
-        cover = f"covered until <t:{exp}:R>" if exp else "no coverage"
-        label = f"{emoji} Subscribe to {name.lower()} — {'' if len(spec['tiers']) == 1 else 'from '}{low}/day"
-        if len(spec["tiers"]) == 1:
-            items.append(ShopItem(prefix, label, ("subscribed · " if uid in subs else "") + cover,
-                                  "shop_insurance", args=lead))
-        else:
-            tiers = tuple((f"{t.title()} — {info['cost']:,} 🪙/day, covers {info['refund_pct']}%", t)
-                          for t, info in spec["tiers"].items())
-            tier_field = Field("tier", "Tier", kind="choices", options=tiers, defaults=(tier,) if tier else ())
-            items.append(ShopItem(prefix, label,
-                                  (f"subscribed at {subs[uid]} · " if uid in subs else "") + cover,
-                                  "shop_insurance", title=f"Subscribe to {name.lower()}", fields=(tier_field,),
-                                  call=lambda v, lead=lead: ((*lead, v["tier"][0]), {})))
-        if uid in subs:
-            items.append(ShopItem(f"{prefix}-unsub", f"{emoji} Unsubscribe from {name.lower()}",
-                                  "coverage already paid for stays", "shop_insurance", args=(*lead, "unsub")))
-    return items
-
-
 def _leveling(ctx, shop_items: dict) -> list[ShopItem]:
     return [
         ShopItem("buyxp", f"✨ Buy your next level — {SHOP_XP_COST_PER_XP} 🪙/XP", "quoted and confirmed before you pay",
@@ -459,8 +425,6 @@ def items_for(page: str, ctx) -> list[ShopItem]:
         return _channels(ctx, shop_items)
     if page == "fun":
         return _fun(ctx, shop_items)
-    if page == "insurance":
-        return _insurance(ctx, shop_items)
     if page == "leveling":
         return _leveling(ctx, shop_items)
     if page == "artifacts":
@@ -482,7 +446,6 @@ _ASSETS_NOTE = (
 )
 _PAGE_NOTES = {
     "artifacts": "Permanent per-user upgrades, owned bot-wide. Level gates are your global level.",
-    "insurance": "Personal insurance refunds part of what crime takes; the thief keeps the take. Social insurance blocks mock, ragebait, curses, nickname changes, role assignments and tax. Property insurance pays part of the repair bill after a property theft.",
 }
 
 
@@ -573,6 +536,14 @@ class ShopHub(_OwnedView):
         return embed
 
     async def show(self, interaction: discord.Interaction, page: str) -> None:
+        method = _MENU_PAGES.get(page)
+        if method is not None:
+            # The menu posts as its own message; the panel stays on its page.
+            refusal = await self.cog.forward(self.ctx, method)
+            if refusal:
+                await interaction.followup.send(refusal, ephemeral=True)
+            await self.refresh(interaction)
+            return
         self.page = page
         await self.refresh(interaction)
 

@@ -11,6 +11,7 @@ from src.guild_config import get_guild_cfg
 from src.features import feature_enabled
 from src.economy import add_balance, next_daily_reset_ts
 from src import state
+from src.rankings_view import send_rankings
 from src.leveling import (
     grant_xp, _ensure_lvl_record, _day_reset, xp_for_level, xp_for_next_level, display_level, levelup_coin_reward, _bar,
     XP_MESSAGE, XP_COMMAND, XP_VOICE, XP_SCRATCH, XP_STREAM,
@@ -214,10 +215,12 @@ class LevelingCog(commands.Cog):
         if ctx.guild is None:
             await ctx.send(embed=emb("❌", "Leveling is per-server and not available in DMs.", 0xe74c3c))
             return
+        await send_rankings(self, ctx, "levels")
+
+    async def levels_embed(self, ctx: commands.Context) -> discord.Embed:
         guild_data = state.leveling.get(str(ctx.guild.id), {})
         if not guild_data:
-            await ctx.send(embed=emb("📊 XP Leaderboard", "No XP data yet.", C_BLUE))
-            return
+            return emb("📊 XP Leaderboard", "No XP data yet.", C_BLUE)
 
         sorted_users = sorted(guild_data.items(), key=lambda x: x[1].get("xp", 0), reverse=True)[:10]
 
@@ -237,8 +240,7 @@ class LevelingCog(commands.Cog):
         for i, (name, (_, data)) in enumerate(zip(names, sorted_users)):
             prefix = medals[i] if i < 3 else f"{i + 1}."
             lines.append(f"{prefix} **{name}** — **Level {display_level(data.get('level', 0))}** ({data.get('xp', 0):,} XP)")
-        lines.append("\n*Also: `!lvl` your level · `!lb` currency · `!lbr` roles*")
-        await ctx.send(embed=emb("📊 XP Leaderboard", "\n".join(lines), C_BLUE))
+        return emb("📊 XP Leaderboard", "\n".join(lines), C_BLUE)
 
 
 async def setup(bot):

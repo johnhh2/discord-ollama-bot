@@ -26,7 +26,6 @@ from src.permissions import (
     requires_perm,
     is_silenced, is_admin,
 )
-from src.guild_config import get_guild_cfg
 from src.features import feature_enabled
 from src.persistence import (
     save_economy, save_rigged_steal, save_guild_settings, save_property_owner,
@@ -49,7 +48,7 @@ from src import property_theft
 from src.property_repair import auto_repair, auto_repair_on, claim_report
 from src.confirm_view import confirm_purchase
 from src.steal_view import open_steal_panel
-from src.scope_view import send_scoped
+from src.rankings_view import send_rankings
 from src.crime_view import CrimeView
 from src.wallet_view import WalletView
 from src.reactions import seed_reactions
@@ -577,20 +576,13 @@ class EconomyCog(commands.Cog):
             await ctx.send("Leaderboard is only available in servers.")
             return
 
-        if scope is not None and scope.lower() in ("idle", "irpg", "idlerpg"):
-            scope = "idle"
-        elif scope is not None and scope.lower() in ("server", "global"):
-            scope = scope.lower()
-        else:
-            scope = get_guild_cfg(ctx.guild.id).get("leaderboard_default_scope", "global")
-        await send_scoped(
-            ctx, lambda s: self._leaderboard_embed(ctx, s),
-            [("Server", "server"), ("Global", "global"), ("Idle RPG", "idle")], scope,
-        )
+        word = scope.lower() if scope else ""
+        if word in ("idle", "irpg", "idlerpg"):
+            await send_rankings(self, ctx, "idle")  # falls back to Coins where the idle RPG is off
+            return
+        await send_rankings(self, ctx, "coins", scope=word if word in ("server", "global") else None)
 
     async def _leaderboard_embed(self, ctx: commands.Context, scope: str) -> discord.Embed:
-        if scope == "idle":
-            return await self._idle_leaderboard(ctx)
         server_only = scope == "server"
 
         lottery = await load_lottery(ctx.guild.id)
@@ -629,7 +621,6 @@ class EconomyCog(commands.Cog):
             tickets = lottery_players.get(uid_str, 0)
             ticket_str = f" • {tickets:,} 🎟️" if tickets else ""
             lines.append(f"{prefix} **{name}** — {data['balance']:,} 🪙{ticket_str}")
-        lines.append(f"\n*Scope: **{scope}** · `!levels` XP · `!lbr` roles*")
         return emb(title, "\n".join(lines), C_GREEN)
 
     async def _idle_leaderboard(self, ctx: commands.Context) -> discord.Embed:
@@ -1897,10 +1888,7 @@ class EconomyCog(commands.Cog):
         if ctx.guild is None:
             await ctx.send(embed=await self._records_embed(ctx, scope, section))
             return
-        await send_scoped(
-            ctx, lambda s, sec: self._records_embed(ctx, s, sec), [("Server", "server"), ("Global", "global")], scope,
-            sections=[(label, key) for key, label in self.RECORD_SECTIONS], section=section,
-        )
+        await send_rankings(self, ctx, "records", scope=scope, section=section)
 
     async def _records_embed(self, ctx: commands.Context, scope: str, section: str = "all") -> discord.Embed:
         if scope == "global":

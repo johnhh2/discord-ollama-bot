@@ -148,7 +148,7 @@ async def test_forms_produce_the_typed_argument_lists():
     ctx = _ctx()
     _stock(ctx)
     items = {}
-    for page in ("nicknames", "roles", "channels", "fun", "insurance", "leveling", "bounties"):
+    for page in ("nicknames", "roles", "channels", "fun", "leveling", "bounties"):
         items.update({i.key: i for i in items_for(page, ctx)})
     assert items["nickname"].call({"user": [7], "name": "Boss"}) == (("<@7>", "Boss"), {})
     assert items["nickname"].call({"user": [], "name": "Boss"}) == (("Boss",), {})
@@ -159,8 +159,6 @@ async def test_forms_produce_the_typed_argument_lists():
     assert items["channelrename"].call({"channel": ["10"], "name": "new lounge"}) == (("<#10>", "new lounge"), {})
     assert items["ragebait"].call({"user": [7], "topic": ""}) == (("<@7>",), {})
     assert items["tax:rent"].invoked_with == "rent" and items["tax:rent"].method == "shop_tax"
-    assert items["insurance"].call({"tier": ["premium"]}) == (("premium",), {})
-    assert items["insurance-unsub"].args == ("unsub",)
     assert items["buyxp-to"].call({"level": "12"}) == (("lvl", "12"), {})
     assert items["bounty"].call({"coins": "5k", "duration": "", "condition": "do a thing"}) == (("5k", "do", "a", "thing"), {})
     # The bot's roles and channels come as a dropdown while they fit; the
@@ -255,9 +253,22 @@ async def test_the_page_dropdown_switches_pages_and_the_overview_has_no_picks():
     hub = ShopHub(ShopCog(bot=None), ctx, "overview", _overview)
     assert not any(isinstance(i, _ItemSelect) for i in hub.children)
     assert hub.embed().title == "🛒 Shop"
-    await _pick(hub, _PageSelect, "insurance").callback(_interaction())
-    assert hub.page == "insurance" and "Insurance" in hub.embed().title
+    await _pick(hub, _PageSelect, "fun").callback(_interaction())
+    assert hub.page == "fun" and "Fun" in hub.embed().title
     assert any(isinstance(i, _ItemSelect) for i in hub.children)
+
+
+async def test_the_insurance_section_opens_the_insurance_menu_not_a_page():
+    ctx = _ctx()
+    cog = ShopCog(bot=None)
+    calls = []
+
+    async def _forward(c, method, *args, **kwargs):
+        calls.append(method)
+    cog.forward = _forward
+    hub = ShopHub(cog, ctx, "overview", _overview)
+    await _pick(hub, _PageSelect, "insurance").callback(_interaction())
+    assert calls == ["shop_insurance"] and hub.page == "overview"
 
 
 async def test_bare_shop_and_shop_roles_open_the_panel(monkeypatch):
