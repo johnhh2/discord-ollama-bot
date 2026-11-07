@@ -68,23 +68,41 @@ def _button(view, label):
 
 # ── !graph ───────────────────────────────────────────────────────────────────
 
-async def test_graph_panel_lists_every_graph_and_the_admin_page_for_bot_admins():
+async def test_graph_panel_is_one_dropdown_of_every_graph_plus_breakouts_for_bot_admins():
     ctx = _ctx()
-    keys = [i.key for i in graph_items("graphs", ctx)]
+    keys = [i.key for i in graph_items(ctx)]
     assert keys[:3] == ["balance", "economy", "assets"] and len(keys) == 12
-    by_key = {i.key: i for i in graph_items("graphs", ctx)}
-    assert by_key["balance"].fields and by_key["balance"].fields[0].kind == "users"  # takes a user
-    assert not by_key["memory"].fields
-    assert [k for k, _ in GraphHub(SimpleNamespace(bot=None), ctx).pages()] == ["graphs"]
-    assert [k for k, _ in GraphHub(SimpleNamespace(bot=None), _ctx(bot_admin=True)).pages()] == ["graphs", "admin"]
+    hub = GraphHub(SimpleNamespace(bot=None), ctx)
+    assert [type(c).__name__ for c in hub.children] == ["_ItemSelect", "_CloseButton"]  # no page dropdown
+    admin_keys = [i.key for i in graph_items(_ctx(bot_admin=True))]
+    assert admin_keys[12:] == ["admin:wallet", "admin:savings", "admin:assets", "admin:total"]
+
+
+async def test_graph_modals_offer_the_user_and_same_axis_graphs_to_combine():
+    by_key = {i.key: i for i in graph_items(_ctx())}
+    kinds = {f.key: f for f in by_key["balance"].fields}
+    assert kinds["user"].kind == "users"
+    assert [v for _, v in kinds["with"].options] == ["economy", "assets", "crime", "gambling"]
+    assert [v for _, v in by_key["commands"].fields[0].options] == ["server", "ai"]
+    assert [f.key for f in by_key["commands"].fields] == ["with"]  # nothing per-user to combine
+    assert [f.key for f in by_key["economy"].fields] == ["with", "user"]  # for the per-user graphs it can add
+    assert [f.key for f in by_key["levels"].fields] == ["user"]
+    assert not by_key["memory"].fields and not by_key["ping"].fields
+
+
+async def test_graph_levels_is_left_out_of_a_dm():
+    ctx = _ctx()
+    ctx.guild = None
+    assert "levels" not in [i.key for i in graph_items(ctx)]
 
 
 async def test_graph_pick_forwards_to_the_typed_subcommand_with_mentions():
     bot, commands = _fake_bot("graph balance", "graph memory", "graph admin wallet")
     cog = GraphCog.__new__(GraphCog)  # no snapshot loop in tests
     cog.bot = bot
+    _state.bot_admins.add(1)
     ctx = _ctx()
-    hub = GraphHub(cog, ctx, "graphs")
+    hub = GraphHub(cog, ctx)
 
     interaction = _interaction()
     await _pick(hub, _ItemSelect, "memory").callback(interaction)
@@ -93,13 +111,11 @@ async def test_graph_pick_forwards_to_the_typed_subcommand_with_mentions():
     interaction = _interaction()
     await _pick(hub, _ItemSelect, "balance").callback(interaction)
     modal = interaction.response.send_modal.await_args.args[0]
+    modal._inputs["with"]._values = ["crime", "gambling"]
     modal._inputs["user"]._values = [SimpleNamespace(id=7)]
     await modal.on_submit(_interaction())
-    assert commands["graph balance"].cog.calls == [(1, ("<@7>",), {})]
+    assert commands["graph balance"].cog.calls == [(1, ("crime", "gambling", "<@7>"), {})]
 
-    _state.bot_admins.add(1)
-    hub.page = "admin"
-    hub._build()
     interaction = _interaction()
     await _pick(hub, _ItemSelect, "admin:wallet").callback(interaction)
     modal = interaction.response.send_modal.await_args.args[0]
@@ -319,3 +335,88 @@ async def test_bare_story_and_ask_take_a_form(monkeypatch):
     ctx = _ctx("ask")
     await cog.cmd_ask.callback(cog, ctx)
     assert started[-1] == ("budget", "why?")
+
+
+# ── !crime buttons ───────────────────────────────────────────────────────────
+
+def _crime_view(*names, shop=None):
+    from src.crime_view import CrimeView
+    bot, commands = _fake_bot(*names)
+    bot.get_cog = lambda n: shop if n == "ShopCog" else None
+    drawn = []
+
+    async def _render():
+        drawn.append(1)
+        return _economy_cog.emb("card", "", 0)
+    view = CrimeView(SimpleNamespace(bot=bot), _ctx(), render=_render)
+    view.message = FakeMessage()
+    guild = FakeGuild(gid=GID)
+    guild.members.append(FakeMember(7))
+    return view, commands, guild, drawn
+
+
+def _press(guild, uid=1):
+    return _interaction(uid=uid, guild=guild, channel=SimpleNamespace(id=1, _state=None))
+
+
+async def test_crime_buttons_forward_the_member_and_amount_then_redraw():
+    view, commands, guild, drawn = _crime_view("steal", "mug", "jailbreak", "bail")
+    interaction = _press(guild)
+    await _button(view, "Jailbreak").callback(interaction)
+    assert commands["jailbreak"].cog.calls == [(1, (), {})]
+    await _button(view, "Steal").callback(interaction)
+    modal = interaction.response.send_modal.await_args.args[0]
+    modal._inputs["user"]._values = [SimpleNamespace(id=7)]
+    refused = _press(guild)
+    await modal.on_submit(refused)  # the level lock applies to a press as to a typed !steal
+    assert "🔒" in refused.response.send_message.await_args.args[0] and commands["steal"].cog.calls == []
+    _state.leveling.setdefault(str(GID), {})["1"] = {"level": 20, "xp": 0}
+    commands["jailbreak"].cog.calls.clear()
+    drawn.clear()
+    assert [b.label for b in view.children] == ["Steal", "Mug", "Bank heist", "Jailbreak", "Bail", "Insurance"]
+
+    interaction = _press(guild)
+    await _button(view, "Steal").callback(interaction)
+    modal = interaction.response.send_modal.await_args.args[0]
+    modal._inputs["user"]._values = [SimpleNamespace(id=7)]
+    await modal.on_submit(_press(guild))
+    (uid, (target,), _), = commands["steal"].cog.calls
+    assert uid == 1 and target.id == 7 and drawn == [1]
+
+    interaction = _press(guild)
+    await _button(view, "Mug").callback(interaction)
+    modal = interaction.response.send_modal.await_args.args[0]
+    modal._inputs["user"]._values = [SimpleNamespace(id=7)]
+    modal._inputs["amount"]._value = "5k"
+    await modal.on_submit(_press(guild))
+    assert [(a[0].id, a[1]) for _, a, _ in commands["mug"].cog.calls] == [(7, "5k")]
+
+    await _button(view, "Jailbreak").callback(_press(guild))
+    assert commands["jailbreak"].cog.calls == [(1, (), {})]
+
+    interaction = _press(guild)
+    await _button(view, "Bail").callback(interaction)
+    modal = interaction.response.send_modal.await_args.args[0]
+    await modal.on_submit(_press(guild))  # left empty: your own bail
+    assert commands["bail"].cog.calls == [(1, (), {})]
+
+
+async def test_crime_card_is_the_invokers_and_ignores_the_silenced():
+    view, commands, guild, _ = _crime_view("jailbreak")
+    stranger = _press(guild, uid=9)
+    assert await view.interaction_check(stranger) is False
+    _state.global_blocklist[1] = {"reason": None, "banned_by": 2, "banned_at": None}
+    try:
+        await _button(view, "Jailbreak").callback(_press(guild))
+    finally:
+        _state.global_blocklist.pop(1)
+    assert commands["jailbreak"].cog.calls == []
+
+
+async def test_crime_insurance_button_opens_the_typed_shop_insurance():
+    shop = SimpleNamespace(forward=AsyncMock(return_value="🚫 That needs **Shop**, which is off in this server."))
+    view, _, guild, _ = _crime_view("shop insurance", shop=shop)
+    interaction = _press(guild)
+    await _button(view, "Insurance").callback(interaction)
+    assert shop.forward.await_args.args[1] == "shop_insurance"
+    assert "Shop" in interaction.followup.send.await_args.args[0]  # the shop's refusal, privately

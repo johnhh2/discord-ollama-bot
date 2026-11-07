@@ -4,7 +4,9 @@ then Submit.
 The panel only chooses and shows the numbers. Submit calls the cog's
 `_run_steal` / `_run_property_theft`, which run every gate again, so a press
 can't do what the typed command can't. A typed tier or property name opens
-the panel with that pick made. Submit re-reads the numbers first and redraws
+the panel with that pick made. Bare `!steal` opens it with no target and a
+Choose target button; the pick runs `_steal_preflight` before the menu
+appears. Submit re-reads the numbers first and redraws
 instead of robbing when they've moved since the preview was drawn (a wallet
 drained, a deed robbed, insurance bought).
 """
@@ -18,6 +20,7 @@ from src.features import feature_enabled
 from src.helpers import C_GOLD, C_GREY, emb, format_duration
 from src.permissions import is_silenced
 from src.properties import PROPERTIES_BY_ID
+from src.settings_views import Field, FormModal
 
 STEAL_PANEL_TIMEOUT = 120.0
 MAX_DEEDS = 25  # a Discord select's option limit
@@ -41,7 +44,9 @@ class StealView(ui.View):
         self.target = target
         self.tier = tier
         self.pid = pid
-        self.deeds = self._deeds()
+        self.choosable = target is None  # opened bare: the target can be (re)chosen
+        self.refusal = None              # why the last chosen target can't be robbed
+        self.deeds = self._deeds() if target is not None else []
         if tier:
             self.mode = "wallet"
         elif pid:
@@ -99,6 +104,12 @@ class StealView(ui.View):
         blocked = self._blocked()
         self.shown = odds
         self._build(ready=odds is not None and blocked is None)
+        if self.target is None:
+            e = emb("🦹 Steal", "Choose who to rob. You'll see the odds, the take and the jail time "
+                    "before anything happens.", C_GOLD)
+            if self.refusal:
+                e.add_field(name="🚫 Not them", value=self.refusal, inline=False)
+            return e
         lines = []
         if self.mode is None:
             lines.append(f"Rob **{self.target.display_name}**'s **wallet**, or one of their **properties**?")
@@ -150,6 +161,10 @@ class StealView(ui.View):
 
     def _build(self, *, ready: bool) -> None:
         self.clear_items()
+        if self.target is None:
+            self.add_item(_TargetButton("Choose target"))
+            self.add_item(_CancelButton())
+            return
         if self.deeds:
             done_today = property_theft.stolen_today(self.ctx.author.id)
             self.add_item(_ModeButton("wallet", "Wallet", "👛", self.mode == "wallet"))
@@ -162,6 +177,8 @@ class StealView(ui.View):
             submit = _SubmitButton()
             submit.disabled = not ready
             self.add_item(submit)
+        if self.choosable:
+            self.add_item(_TargetButton("Change target"))
         self.add_item(_CancelButton())
 
     async def redraw(self, interaction: discord.Interaction) -> None:
@@ -176,6 +193,28 @@ class StealView(ui.View):
             await interaction.response.defer()
             return False
         return True
+
+    async def choose(self, interaction: discord.Interaction, values: dict) -> None:
+        """The Choose target modal's submit: the steal gates, then the menu
+        for that player. A refused pick keeps the previous target."""
+        ids = values.get("user") or []
+        member = interaction.guild.get_member(int(ids[0])) if ids and interaction.guild else None
+        if member is None:
+            gate = "Pick someone in this server."
+        else:
+            refused = await self.cog._steal_preflight(self.ctx, member)
+            gate = refused.description if refused is not None else None
+        if gate is not None:
+            self.refusal = gate
+            if self.target is not None:
+                self.notice = gate
+            await self.redraw(interaction)
+            return
+        self.target, self.tier, self.pid = member, None, None
+        self.refusal = self.notice = None
+        self.deeds = self._deeds()
+        self.mode = None if self.deeds else "wallet"
+        await self.redraw(interaction)
 
     async def submit(self, interaction: discord.Interaction) -> None:
         odds, blocked = self._odds(), self._blocked()
@@ -266,6 +305,16 @@ class _DeedSelect(ui.Select):
         view.pid = self.values[0]
         view.notice = None
         await view.redraw(interaction)
+
+
+class _TargetButton(ui.Button):
+    def __init__(self, label: str):
+        super().__init__(label=label, emoji="🎯", style=discord.ButtonStyle.primary, row=2)
+
+    async def callback(self, interaction: discord.Interaction):
+        view: StealView = self.view
+        await interaction.response.send_modal(FormModal(
+            "Choose target", (Field("user", "Who do you want to rob?", kind="users"),), on_submit=view.choose))
 
 
 class _SubmitButton(ui.Button):

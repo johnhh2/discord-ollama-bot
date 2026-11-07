@@ -95,6 +95,7 @@ class Panel(_OwnedView):
     page_placeholder = "Section…"
     item_placeholder = "Pick…"
     buttons = False   # the page's items as buttons (at most MAX_BUTTONS) instead of a dropdown
+    page_select = True  # False for a one-page panel: its item dropdown is the only one
     closed_title = "closed"
     closed_hint = "Run the command again to open the panel."
 
@@ -130,7 +131,8 @@ class Panel(_OwnedView):
         pages = self.pages()
         if self.page not in dict(pages):
             self.page = pages[0][0] if pages else self.page
-        self.add_item(_PageSelect(pages, self.page, self.page_placeholder))
+        if self.page_select:
+            self.add_item(_PageSelect(pages, self.page, self.page_placeholder))
         items = self.items()
         if items and self.buttons:
             for i, item in enumerate(items[:MAX_BUTTONS]):

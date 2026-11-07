@@ -50,6 +50,7 @@ from src.property_repair import auto_repair, auto_repair_on, claim_report
 from src.confirm_view import confirm_purchase
 from src.steal_view import open_steal_panel
 from src.scope_view import send_scoped
+from src.crime_view import CrimeView
 from src.wallet_view import WalletView
 from src.reactions import seed_reactions
 from src import idlerpg
@@ -658,7 +659,12 @@ class EconomyCog(commands.Cog):
                     help="Crime menu: steal, mug, bankheist and jailbreak, plus your jail status")
     @requires_perm
     async def cmd_crime(self, ctx: commands.Context):
-        uid = ctx.author.id
+        gid = ctx.guild.id if ctx.guild else 0
+        # The card carries the crime buttons and Insurance (src/crime_view.py).
+        view = CrimeView(self, ctx, render=lambda: self._crime_embed(ctx.author.id, gid))
+        view.message = await send_ephemeral(ctx, embed=await self._crime_embed(ctx.author.id, gid), view=view)
+
+    async def _crime_embed(self, uid: int, gid: int) -> discord.Embed:
         await _ensure_user(uid)
         jail_until = state.economy["users"][str(uid)].get("jail_until", 0)
         if time.time() < jail_until:
@@ -666,7 +672,6 @@ class EconomyCog(commands.Cog):
         else:
             jail_status = "✅ **You are not in jail.**"
         from src.level_unlocks import lock_marker
-        gid = ctx.guild.id if ctx.guild else 0
         steal_lock = lock_marker("steal", uid, gid)
         mug_lock   = lock_marker("mug",   uid, gid)
         bankheist_lock = lock_marker("bankheist", uid, gid)
@@ -694,18 +699,18 @@ class EconomyCog(commands.Cog):
             "",
             jail_status,
         ]
-        await send_ephemeral(ctx, embed=emb("🦹 Crime", "\n".join(lines), C_GOLD))
+        return emb("🦹 Crime", "\n".join(lines), C_GOLD)
 
     @commands.command(name="steal",
                       help="Pick a user's pocket for a % of their balance (tier 1-3), or rob a property's takings",
                       usage="<@user> [1-3] | <property>")
     async def cmd_steal(self, ctx: commands.Context, target: _StealTarget = None):
-        if target is None:
-            await ctx.invoke(self.cmd_crime)
-            return
-
         if (err := _crime_public_only_error(ctx)) is not None:
             await ctx.send(embed=err)
+            return
+        if target is None:
+            # Bare: the panel with a Choose target button; the pick runs _steal_preflight.
+            await open_steal_panel(self, ctx, None)
             return
         # Every form opens the panel (src/steal_view.py); a typed tier or
         # deed arrives picked, and only its Submit robs anyone.

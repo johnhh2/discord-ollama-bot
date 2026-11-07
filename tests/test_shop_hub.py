@@ -260,7 +260,7 @@ async def test_the_page_dropdown_switches_pages_and_the_overview_has_no_picks():
     assert any(isinstance(i, _ItemSelect) for i in hub.children)
 
 
-async def test_bare_shop_and_shop_assets_open_the_panel(monkeypatch):
+async def test_bare_shop_and_shop_roles_open_the_panel(monkeypatch):
     opened = []
 
     async def _hub(ctx, cog, **kwargs):
@@ -271,10 +271,8 @@ async def test_bare_shop_and_shop_assets_open_the_panel(monkeypatch):
     ctx.subcommand_passed = None
     await cog.cmd_shop.callback(cog, ctx)
     assert "page" not in opened[0] and opened[0]["overview"](ctx).title == "🛒 Shop"
-    await cog.shop_assets.callback(cog, _ctx())
-    assert opened[1]["page"] == "assets_low"
     await cog.shop_roles.callback(cog, _ctx())
-    assert opened[2]["page"] == "roles"
+    assert opened[1]["page"] == "roles"
 
 
 async def test_shop_assets_forwards_typed_subcommands():
@@ -286,3 +284,17 @@ async def test_shop_assets_forwards_typed_subcommands():
     assert commands["assets buy"].cog.calls == [((), {"name": "hot dog cart"})]
     await cog.shop_assets.callback(cog, _ctx(), "sell", "hot_dog_cart", "50k")
     assert commands["assets sell"].cog.calls == [(("hot_dog_cart", "50k"), {})]
+
+
+async def test_bare_shop_assets_opens_the_assets_menu_not_a_shop_page(monkeypatch):
+    opened = []
+
+    async def _hub(ctx, cog, **kwargs):
+        opened.append(kwargs)
+    monkeypatch.setattr(_shop_cog, "open_shop_hub", _hub)
+    bot, commands = _fake_bot("assets")
+    commands["assets"].get_command = lambda name: None
+    cog = ShopCog(bot=bot)
+    await cog.shop_assets.callback(cog, _ctx())
+    await cog.shop_assets.callback(cog, _ctx(), "nonsense")
+    assert len(commands["assets"].cog.calls) == 2 and opened == []

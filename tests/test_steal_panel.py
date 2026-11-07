@@ -79,7 +79,7 @@ async def _setup(*pids, wallet=10_000, **row):
 
 
 def _press(uid=THIEF):
-    response = SimpleNamespace(edit_message=AsyncMock(), defer=AsyncMock(), send_message=AsyncMock())
+    response = SimpleNamespace(edit_message=AsyncMock(), defer=AsyncMock(), send_message=AsyncMock(), send_modal=AsyncMock())
     return SimpleNamespace(user=FakeMember(uid=uid), guild=SimpleNamespace(id=GID), response=response)
 
 
@@ -374,3 +374,42 @@ async def test_the_new_columns_persist(db):
                 "SELECT auto_repair, robbed_since_claim, auto_repaired_since_claim FROM economy_users WHERE user_id=?",
                 (OWNER,))
             assert tuple(await cur.fetchone()) == (1, 4, 900)
+
+
+# ── bare !steal: Choose target ───────────────────────────────────────────────
+
+async def _pick_target(view, ctx, uid):
+    opened = _press()
+    await _child(view, "Choose target" if view.target is None else "Change target").callback(opened)
+    modal = opened.response.send_modal.await_args.args[0]
+    modal._inputs["user"]._values = [SimpleNamespace(id=uid)]
+    submit = _press()
+    submit.guild = ctx.guild
+    await modal.on_submit(submit)
+    return submit
+
+
+async def test_bare_steal_asks_for_a_target_before_the_menu(db, panel):
+    await _setup(PID)
+    ctx = _ctx(content="!steal")
+    cog = EconomyCog(bot=_StubBot())
+    await cog.cmd_steal.callback(cog, ctx, target=None)
+    view = ctx.sent_views[-1]
+    assert [c.label for c in view.children] == ["Choose target", "Cancel"]
+
+    submit = await _pick_target(view, ctx, OWNER)
+    assert {c.label for c in view.children} == {"Wallet", "Property", "Change target", "Cancel"}
+    assert "owner" in _drawn(submit).title
+
+
+async def test_a_refused_target_keeps_the_choose_button_and_says_why(db, panel):
+    await _setup(PID)
+    ctx = _ctx(content="!steal")
+    cog = EconomyCog(bot=_StubBot())
+    await cog.cmd_steal.callback(cog, ctx, target=None)
+    view = ctx.sent_views[-1]
+    ctx.guild.members.append(ctx.author)
+
+    submit = await _pick_target(view, ctx, THIEF)  # yourself
+    assert view.target is None and [c.label for c in view.children] == ["Choose target", "Cancel"]
+    assert "yourself" in _drawn(submit).fields[0].value

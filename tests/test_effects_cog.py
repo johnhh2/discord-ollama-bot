@@ -316,3 +316,80 @@ async def test_effects_add_unknown_effect(db):
     ctx = _admin_ctx()
     await _run_with_stub_target(cog, ctx, target, f"<@{target.id}>", "add", "banana", "1d")
     assert any("Unknown Effect" in (e.title or "") for e in ctx.sent_embeds)
+
+
+# ── the card's admin buttons (src/effects_view.py) ─────────────────────────────
+
+def _effects_press(guild):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    response = SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock(), send_modal=AsyncMock(), edit_message=AsyncMock())
+    return SimpleNamespace(user=FakeMember(uid=1), guild=guild, response=response)
+
+
+def _labels(view):
+    return [c.label for c in view.children]
+
+
+@_aio
+async def test_effects_card_has_no_buttons_for_a_non_admin():
+    cog = EffectsCog(bot=None)
+    ctx = FakeCtx(author=FakeMember(uid=7201), guild=FakeGuild(gid=42))
+    await cog.cmd_effects.callback(cog, ctx)
+    assert ctx.sent_views == [] or ctx.sent_views == [None]
+
+
+@_aio
+async def test_bare_effects_admin_button_picks_a_player_then_offers_add_and_remove():
+    from types import SimpleNamespace
+    cog = EffectsCog(bot=None)
+    ctx = _admin_ctx()
+    target = FakeMember(uid=7202, display_name="victim")
+    ctx.guild.members.append(target)
+    await cog.cmd_effects.callback(cog, ctx)
+    view = ctx.sent_views[-1]
+    assert _labels(view) == ["Admin"]
+
+    press = _effects_press(ctx.guild)
+    await view.children[0].callback(press)
+    modal = press.response.send_modal.await_args.args[0]
+    modal._inputs["user"]._values = [SimpleNamespace(id=target.id)]
+    submit = _effects_press(ctx.guild)
+    await modal.on_submit(submit)
+    assert _labels(view) == ["Add", "Remove", "Change player"]
+    assert "victim" in submit.response.edit_message.await_args.kwargs["embed"].description
+
+
+@_aio
+async def test_named_player_add_offers_the_settable_effects_and_runs_the_typed_add(db, monkeypatch):
+    cog = EffectsCog(bot=None)
+    ctx = _admin_ctx()
+    target = FakeMember(uid=7203, display_name="t")
+
+    class _Stub:
+        async def convert(self, ctx, arg):
+            return target
+    monkeypatch.setattr(_effects_cog, "MemberConverter", lambda: _Stub())
+    await cog.cmd_effects.callback(cog, ctx, f"<@{target.id}>")
+    view = ctx.sent_views[-1]
+    assert _labels(view) == ["Add", "Remove", "Change player"]
+
+    press = _effects_press(ctx.guild)
+    await view.children[1].callback(press)  # Remove: nothing on them yet
+    assert "nothing" in press.response.send_message.await_args.args[0]
+
+    press = _effects_press(ctx.guild)
+    await view.children[0].callback(press)
+    modal = press.response.send_modal.await_args.args[0]
+    assert [v for _, v in modal.fields[0].options] == ["tax"]  # insurance is bot-wide: global admins only
+    modal._inputs["effect"]._values = ["tax"]
+    modal._inputs["duration"]._value = "2h"
+    await modal.on_submit(_effects_press(ctx.guild))
+    assert 7000 < _state.active_taxes[(42, target.id)]["expires_at"] - time.time() <= 7200
+
+    press = _effects_press(ctx.guild)
+    await view.children[1].callback(press)
+    modal = press.response.send_modal.await_args.args[0]
+    modal._inputs["effect"]._values = ["tax"]
+    await modal.on_submit(_effects_press(ctx.guild))
+    assert (42, target.id) not in _state.active_taxes

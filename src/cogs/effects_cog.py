@@ -10,7 +10,8 @@ and persists via the same save_* helpers the shop uses.
   !effects @user add <effect> [duration]   — (server admin) grant a duration-based effect
   !effects @user remove <effect>           — (server admin) clear an effect
 
-Aliases: !state, !effect.
+Aliases: !state, !effect. For admins the card carries Admin / Add / Remove
+buttons (src/effects_view.py) that forward to the typed add/remove.
 
 Admin add/remove is limited to the time-based effects (tax, insurance,
 social_insurance);
@@ -139,11 +140,13 @@ class EffectsCog(commands.Cog):
         # Resolve a leading @user (defaults to the author). Everything after it
         # is an optional admin subcommand: add <effect> [dur] | remove <effect>.
         target = ctx.author
+        named = False
         rest = list(args)
         if rest:
             try:
                 target = await MemberConverter().convert(ctx, rest[0])
                 rest = rest[1:]
+                named = True
             except commands.BadArgument:
                 # Not a member: the author stays the target and the whole
                 # tail is read as the subcommand.
@@ -153,17 +156,25 @@ class EffectsCog(commands.Cog):
             await self._handle_admin_action(ctx, target, rest)
             return
 
-        await self._show_user(ctx, target)
+        await self._show_user(ctx, target, named=named)
 
-    async def _show_user(self, ctx: commands.Context, target: discord.Member):
+    def effects_embed(self, ctx: commands.Context, target: discord.Member) -> discord.Embed:
         active = self._active_effects_for(ctx.guild.id, target.id)
         if not active:
             who = "You have" if target.id == ctx.author.id else f"**{target.display_name}** has"
-            await ctx.send(embed=emb("✨ Effects", f"{who} no active effects.", C_GREY))
-            return
+            return emb("✨ Effects", f"{who} no active effects.", C_GREY)
         lines = [_describe_entry(name, data) for name, data in active]
         title = "✨ Your Effects" if target.id == ctx.author.id else f"✨ {target.display_name}'s Effects"
-        await ctx.send(embed=emb(title, "\n".join(lines), C_PURPLE))
+        return emb(title, "\n".join(lines), C_PURPLE)
+
+    async def _show_user(self, ctx: commands.Context, target: discord.Member, *, named: bool = False):
+        if not (is_admin(ctx) or is_server_admin(ctx)):
+            await ctx.send(embed=self.effects_embed(ctx, target))
+            return
+        # Admins get Add / Remove for a named player, else an Admin button that picks one (src/effects_view.py).
+        from src.effects_view import EffectsView
+        view = EffectsView(self, ctx, target, chosen=named)
+        view.message = await ctx.send(embed=self.effects_embed(ctx, target), view=view)
 
     async def _show_list(self, ctx: commands.Context):
         lines = []

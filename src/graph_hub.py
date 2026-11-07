@@ -1,10 +1,11 @@
-"""The `!graph` panel: every graph as a dropdown pick, the per-user
-breakouts as a second page for bot admins.
+"""The `!graph` panel: one dropdown of every graph, the per-user breakouts
+included for bot admins.
 
-A pick forwards to the `!graph <name>` subcommand itself (`forwarding`), so
-the rendering, the group rules and the permission tiers are the typed
-command's. Graphs that take a user open a user picker first; the breakouts
-take a top-N or specific users. The rendered image posts publicly, as a
+A pick with parameters opens a modal: whose graph, which same-axis graphs
+to draw alongside it, or a breakout's top-N / users. A pick without any
+draws at once. Either way it forwards to the `!graph <name>` subcommand
+itself (`forwarding`), so the rendering, the group rules and the permission
+tiers are the typed command's. The rendered image posts publicly, as a
 typed `!graph` does; the panel stays open for the next pick.
 """
 from __future__ import annotations
@@ -19,9 +20,6 @@ from src.helpers import emb, C_GOLD
 from src.panel import Panel, PanelItem
 from src.permissions import is_admin
 from src.settings_views import Field
-
-PAGES = (("graphs", "📊 Graphs"), ("admin", "🔑 Per-user breakouts"))
-_PAGE_LABELS = dict(PAGES)
 
 # (graph name, label, description) — the names are graph_series.REGISTRY's.
 GRAPHS = (
@@ -39,11 +37,12 @@ GRAPHS = (
     ("minecraft", "⛏️ Minecraft", "server ping and daily players"),
 )
 BREAKOUTS = (
-    ("wallet", "💰 Wallets", "one line per user — top N, or the users you pick"),
-    ("savings", "🐷 Savings", "one line per user"),
-    ("assets", "🏘️ Property value", "one line per user"),
-    ("total", "🏦 Total", "wallet + savings + property, one line per user"),
+    ("wallet", "👥 Wallets per user", "one line per user — top N, or the users you pick"),
+    ("savings", "👥 Savings per user", "one line per user"),
+    ("assets", "👥 Property value per user", "one line per user"),
+    ("total", "👥 Total per user", "wallet + savings + property, one line per user"),
 )
+_LABELS = {name: label for name, label, _ in GRAPHS}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -51,47 +50,65 @@ class GraphItem(PanelItem):
     command: str  # the qualified `graph …` command
 
 
-def items_for(page: str, ctx) -> list[GraphItem]:
-    if page == "graphs":
-        items = []
-        for name, label, description in GRAPHS:
-            spec = find_spec(name)
-            fields = ()
-            if spec is not None and spec.accepts_member:
-                fields = (Field("user", "Whose? (empty = you)", kind="users", required=False),)
-            items.append(GraphItem(key=name, label=label, description=description, command=f"graph {name}",
-                                   fields=fields, title=f"{label} graph"[:45]))
-        return items
-    if page == "admin":
-        return [GraphItem(key=f"admin:{field}", label=label, description=description, command=f"graph admin {field}",
-                          title=f"{label} breakout"[:45],
-                          fields=(Field("n", "Top N (default 10)", required=False, placeholder="10", max_length=3),
-                                  Field("users", "…or specific users", kind="users", required=False, max_values=10)))
-                for field, label, description in BREAKOUTS]
-    return []
+def _graph_fields(name: str) -> tuple:
+    """A graph's modal: the same-axis graphs it can be drawn with, and a
+    user when it or any of those is per-user. Empty for a graph with
+    neither, which then draws on the pick."""
+    spec = find_spec(name)
+    if spec is None:
+        return ()
+    partners = [s for s in (find_spec(n) for n, _, _ in GRAPHS)
+                if s is not None and s.group == spec.group and s.name != spec.name]
+    fields = []
+    if partners:
+        fields.append(Field("with", "Draw it with (optional)", kind="choices", required=False,
+                            options=tuple((_LABELS[s.name], s.name) for s in partners),
+                            max_values=len(partners), placeholder="Just this one"))
+    if spec.accepts_member or any(s.accepts_member for s in partners):
+        fields.append(Field("user", "Whose? (empty = you)", kind="users", required=False,
+                            description=None if spec.accepts_member else "For the per-user graphs you add"))
+    return tuple(fields)
+
+
+def items_for(ctx) -> list[GraphItem]:
+    in_guild = ctx.guild is not None
+    items = []
+    for name, label, description in GRAPHS:
+        spec = find_spec(name)
+        if spec is not None and spec.accepts_guild and not in_guild:
+            continue  # per-server graphs can't draw in a DM
+        items.append(GraphItem(key=name, label=label, description=description, command=f"graph {name}",
+                               fields=_graph_fields(name), title=f"{label} graph"[:45]))
+    if is_admin(ctx):
+        items += [GraphItem(key=f"admin:{field}", label=label, description=description, command=f"graph admin {field}",
+                            title=label[:45],
+                            fields=(Field("n", "Top N (default 10)", required=False, placeholder="10", max_length=3),
+                                    Field("users", "…or specific users", kind="users", required=False, max_values=10)))
+                  for field, label, description in BREAKOUTS]
+    return items
 
 
 class GraphHub(Panel):
-    item_placeholder = "Draw…"
+    item_placeholder = "Pick a graph…"
+    page_select = False
     closed_title = "📊 Graph — closed"
     closed_hint = "Run `!graph` to open it again."
 
-    def __init__(self, cog, ctx, page: str = "graphs"):
+    def __init__(self, cog, ctx):
         self.cog = cog
-        super().__init__(ctx, page)
+        super().__init__(ctx, "graphs")
 
     def pages(self):
-        return [(k, label) for k, label in PAGES if k == "graphs" or is_admin(self.ctx)]
+        return [("graphs", "📊 Graphs")]
 
     def items(self):
-        return items_for(self.page, self.ctx)
+        return items_for(self.ctx)
 
     def embed(self) -> discord.Embed:
         lines = [f"{item.label} — {item.description}" for item in self.items()]
-        note = ("Graphs that take a user ask for one; empty means you." if self.page == "graphs"
-                else "Leave both empty for the top 10.")
-        embed = emb(f"📊 Graph — {_PAGE_LABELS[self.page]}", "\n".join(lines) + f"\n\n*{note}*", C_GOLD)
-        embed.set_footer(text="Pick a graph to draw it here. Typed: !graph <name> [@user], !graph balance crime to combine.")
+        note = "Graphs with options ask for them: whose, and what to draw alongside. Empty means you, on its own."
+        embed = emb("📊 Graph", "\n".join(lines) + f"\n\n*{note}*", C_GOLD)
+        embed.set_footer(text="Typed: !graph <name> [@user], !graph balance crime to combine.")
         return embed
 
     async def on_pick(self, interaction: discord.Interaction, item: GraphItem, values: dict | None) -> None:
@@ -104,7 +121,7 @@ class GraphHub(Panel):
             await interaction.followup.send(refusal, ephemeral=True)
             return
         values = values or {}
-        args: list[str] = []
+        args: list[str] = list(values.get("with") or [])
         if values.get("n"):
             args.append(values["n"])
         args += [f"<@{uid}>" for uid in (values.get("user") or []) + (values.get("users") or [])]

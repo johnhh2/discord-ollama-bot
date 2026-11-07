@@ -584,19 +584,18 @@ class ShopCog(commands.Cog):
                       usage="[browse|buy|sell|upgrade|unlist|rename] [args]")
     @_shop_subcommand(None)
     async def shop_assets(self, ctx: commands.Context, sub: str = None, *args):
-        """The assets section of the shop. Bare, the panel on the deeds
-        pages; `!shop assets <browse|buy|sell|upgrade|unlist|rename> …`
-        forwards to the matching `!assets` subcommand."""
+        """Bare (or an unknown word), the `!assets` menu itself;
+        `!shop assets <browse|buy|sell|upgrade|unlist|rename> …` forwards to
+        the matching `!assets` subcommand."""
         if ctx.guild is None:
             await ctx.send(embed=emb("❌ Server Only", "This command only works in servers.", C_RED))
             return
-        if sub is None:
-            await open_shop_hub(ctx, self, page="assets_low", overview=self._overview_embed)
-            return
         assets = self.bot.get_command("assets") if self.bot is not None else None
-        target = assets.get_command(sub.lower()) if assets is not None else None
+        target = assets.get_command(sub.lower()) if assets is not None and sub is not None else None
         if target is None:
-            await ctx.send(embed=emb("🏘️ Real Estate", "Usage: `!shop assets` to browse, or `!shop assets <browse|buy|sell|upgrade|unlist|rename> …`", C_PURPLE))
+            refusal = await self.forward(ctx, "bot:assets")
+            if refusal:
+                await ctx.send(embed=emb("🏘️ Real Estate", refusal, C_GREY))
             return
         # `buy`, `upgrade` and `unlist` take their name keyword-only.
         if target.name in ("buy", "upgrade", "unlist"):

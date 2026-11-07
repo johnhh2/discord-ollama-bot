@@ -155,9 +155,6 @@ class GraphCog(commands.Cog):
     async def cmd_graph(self, ctx: commands.Context):
         """Bare: the panel (src/graph_hub.py) — every graph as a pick; the
         typed subcommands below are what its picks forward to."""
-        if ctx.guild is None:
-            await ctx.send(embed=emb("📊 Graph", "Usage: `!graph <balance|economy|assets|crime|gambling|commands|server|ai|memory|ping|minecraft> [@user]`", C_GOLD))
-            return
         await open_panel(ctx, GraphHub(self, ctx))
 
     @cmd_graph.command(name="balance", aliases=["bal"],
@@ -276,19 +273,11 @@ class GraphCog(commands.Cog):
     # N by current value) or one or more @user mentions, never both.
 
     @cmd_graph.group(name="admin", invoke_without_command=True,
-                     help="List the per-user breakout graphs")
+                     help="Open the graph panel, where the per-user breakout graphs are listed")
     @requires_perm
     async def cmd_graph_admin(self, ctx: commands.Context):
-        await ctx.send(embed=emb(
-            "📊 Graph — Admin",
-            "**Subcommands:**\n"
-            "`!graph admin wallet [N|@users…]` — per-user wallet, top N (default 10) "
-            "or specific users\n"
-            "`!graph admin savings [N|@users…]` — per-user savings, same shape\n"
-            "`!graph admin assets [N|@users…]` — per-user property value, same shape\n"
-            "`!graph admin total [N|@users…]` — per-user wallet + savings + property, same shape",
-            C_GOLD,
-        ))
+        # The breakouts are in the !graph panel's dropdown for admins.
+        await open_panel(ctx, GraphHub(self, ctx))
 
     @cmd_graph_admin.command(name="wallet",
                              help="Draw one wallet line per user — top N (default 10), or the users you pick",

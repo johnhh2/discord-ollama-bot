@@ -30,6 +30,11 @@ from src.config import (
     SLOT_JACKPOT_BONUS_MIN_BET, SLOT_JACKPOT_BONUS_MAX_BET, SLOT_JACKPOT_BONUS_MAX_MULT,
 )
 from src import state
+from src.forwarding import forward
+from src.settings_views import Field, open_form
+
+# `!rig` subcommands as the form's game choices.
+RIG_KINDS = (("🎰 Slots", "slots"), ("🪙 Flip", "flip"), ("🎫 Scratch", "scratch"), ("🦹 Steal", "steal"))
 
 # User ids already shown the sub-1,000 jackpot-bonus note. Deliberately
 # in-memory: the note repeats once per bot restart, not once ever.
@@ -368,18 +373,12 @@ class SlotsCog(commands.Cog):
 
     @commands.group(name="rig", hidden=True, invoke_without_command=True)
     @commands.check(is_admin)
-    async def cmd_rig(self, ctx: commands.Context):
-        """Hidden admin-only command group for rigging games."""
-        lines = [
-            "`!rig slots @user [mult]` — rig next slots spin (mult: 75/15/7/4/3, default 75)",
-            "`!rig flip @user <n>` — rig next n coin flips to win",
-            "`!rig scratch @user <1-4>` — rig a random upcoming scratchoff to match N symbols",
-            "`!rig steal @user [n]` — rig next n steal attempts to succeed (default 1)",
-            "`!unrig @user` — clear all active rigs for a player",
-            "",
-            "*@user can be a mention, user ID, or name — including users in other servers. Omit it to target yourself.*",
-        ]
+    async def cmd_rig(self, ctx: commands.Context, target: Optional[GlobalUser] = None):
+        """Hidden admin-only command group for rigging games. Bare (or with
+        only a player), the rig form; see `_rig_form`."""
+        await self._rig_form(ctx, kind=None, target=target, qty=None)
 
+    async def _active_rig_lines(self, ctx: commands.Context) -> "list[str]":
         async def name(uid: int) -> str:
             if ctx.guild:
                 m = await fetch_member(ctx.guild, uid)
@@ -391,25 +390,50 @@ class SlotsCog(commands.Cog):
             except Exception:
                 return str(uid)
 
-        slots_rigged = dict(state.rigged_slots)
-        flips_rigged = dict(state.rigged_flips)
-        scratch_rigged = dict(state.rigged_scratch)
-        steal_rigged = dict(state.rigged_steal)
+        lines = []
+        for uid, sym in dict(state.rigged_slots).items():
+            sym_label = next((lbl for s, lbl in self.SLOT_RIG_SYMBOLS.values() if s == sym), f"{sym}{sym}{sym}")
+            lines.append(f"🎰 {await name(uid)} — {sym_label}")
+        for uid, n in dict(state.rigged_flips).items():
+            lines.append(f"🪙 {await name(uid)} — {n} flip {'win' if n == 1 else 'wins'}")
+        for uid, n in dict(state.rigged_scratch).items():
+            lines.append(f"🎫 {await name(uid)} — {n} symbol match on a random upcoming scratch")
+        for uid, n in dict(state.rigged_steal).items():
+            lines.append(f"🦹 {await name(uid)} — {n} steal {'success' if n == 1 else 'successes'}")
+        return lines
 
-        if slots_rigged or flips_rigged or scratch_rigged or steal_rigged:
-            lines.append("")
-            lines.append("**Active riggings:**")
-            for uid, sym in slots_rigged.items():
-                sym_label = next((lbl for s, lbl in self.SLOT_RIG_SYMBOLS.values() if s == sym), f"{sym}{sym}{sym}")
-                lines.append(f"🎰 {await name(uid)} — {sym_label}")
-            for uid, n in flips_rigged.items():
-                lines.append(f"🪙 {await name(uid)} — {n} flip {'win' if n == 1 else 'wins'}")
-            for uid, n in scratch_rigged.items():
-                lines.append(f"🎫 {await name(uid)} — {n} symbol match on a random upcoming scratch")
-            for uid, n in steal_rigged.items():
-                lines.append(f"🦹 {await name(uid)} — {n} steal {'success' if n == 1 else 'successes'}")
-
-        await ctx.send(embed=emb("🎰 Rig", "\n".join(lines), C_GOLD))
+    async def _rig_form(self, ctx: commands.Context, *, kind: "str | None", target, qty: "str | None") -> None:
+        """Ask for whatever `!rig [type] [player] [qty]` left out, then run the
+        typed subcommand. The form opens whenever the type or the player is
+        missing; given values arrive preselected."""
+        active = await self._active_rig_lines(ctx)
+        desc = ["Pick a game and a player. Quantity is optional; `cancel` clears that rig. "
+                "`!unrig @user` clears them all."]
+        if active:
+            desc += ["", "**Active riggings:**", *active]
+        values = await open_form(
+            ctx, title="🎰 Rig", description="\n".join(desc), button="Rig…",
+            fields=(
+                Field("kind", "Game", kind="choices", options=RIG_KINDS,
+                      defaults=(kind,) if kind else ()),
+                Field("user", "Player", kind="users", defaults=(target.id,) if target is not None else ()),
+                Field("qty", "Quantity (optional)", required=False, max_length=6, default=qty,
+                      description="Slots: multiplier 75/15/7/4/3 · flip, steal: count · scratch: 1–4 symbols"),
+            ),
+        )
+        if not values or not values.get("kind") or not values.get("user"):
+            return
+        uid = int(values["user"][0])
+        user = (await fetch_member(ctx.guild, uid) if ctx.guild else None) or self.bot.get_user(uid)
+        if user is None:
+            try:
+                user = await self.bot.fetch_user(uid)
+            except discord.HTTPException:
+                await ctx.send(embed=emb("❌ Rig", "Couldn't find that player.", C_RED))
+                return
+        command = self.cmd_rig.get_command(values["kind"][0])
+        args = (values["qty"],) if values.get("qty") else ()
+        await forward(ctx, command, user, *args, cog=self)
 
     # Maps multiplier number → (symbol, label)
     SLOT_RIG_SYMBOLS = {
@@ -424,7 +448,8 @@ class SlotsCog(commands.Cog):
     async def cmd_rig_slots(self, ctx: commands.Context, target: Optional[GlobalUser] = None, mult: str = "75"):
         """Hidden admin-only command: rig the next slots spin. mult: 75/15/7/4/3/cancel."""
         if target is None:
-            target = ctx.author
+            await self._rig_form(ctx, kind="slots", target=None, qty=mult if mult != "75" else None)
+            return
         uid = target.id
         target_name = target.display_name
 
@@ -462,7 +487,8 @@ class SlotsCog(commands.Cog):
     async def cmd_rig_flip(self, ctx: commands.Context, target: Optional[GlobalUser] = None, n: str = "1"):
         """Hidden admin-only command: rig the next n coin flips to win. n can be 'cancel'."""
         if target is None:
-            target = ctx.author
+            await self._rig_form(ctx, kind="flip", target=None, qty=n if n != "1" else None)
+            return
         uid = target.id
         target_name = target.display_name
 
@@ -497,7 +523,8 @@ class SlotsCog(commands.Cog):
     async def cmd_rig_scratch(self, ctx: commands.Context, target: Optional[GlobalUser] = None, n: str = "4"):
         """Hidden admin-only command: rig a random upcoming scratchoff to match N symbols (1-4)."""
         if target is None:
-            target = ctx.author
+            await self._rig_form(ctx, kind="scratch", target=None, qty=n if n != "4" else None)
+            return
         uid = target.id
         target_name = target.display_name
 
@@ -533,7 +560,8 @@ class SlotsCog(commands.Cog):
     async def cmd_rig_steal(self, ctx: commands.Context, target: Optional[GlobalUser] = None, n: str = "1"):
         """Hidden admin-only command: rig the next n steal attempts to succeed. n can be 'cancel'."""
         if target is None:
-            target = ctx.author
+            await self._rig_form(ctx, kind="steal", target=None, qty=n if n != "1" else None)
+            return
         uid = target.id
         target_name = target.display_name
 
