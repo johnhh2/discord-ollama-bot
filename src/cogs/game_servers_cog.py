@@ -15,6 +15,10 @@ shared `!settings channel game-servers` channel.
 
 The last version seen is kept in `state.bot_settings` (`<key>_version`), so an
 update that lands while the bot is down is announced on the first poll.
+
+`!gameservers` (`!servers`, singular too) shows every configured server live;
+its subcommands also answer bare as `!vrising` / `!vintagestory`, and
+`!gameservers minecraft` forwards to `!mc`.
 """
 import asyncio
 import dataclasses
@@ -24,15 +28,20 @@ import time
 from typing import Awaitable, Callable
 
 import aiohttp
+import discord
 from discord.ext import commands, tasks
 
 from src import state
+import src.cogs.minecraft_cog as mc_mod
 import src.persistence as persistence
 from src.config import (
     VRISING_SERVER_HOST, VRISING_QUERY_PORT,
     VINTAGESTORY_SERVER_HOST, VINTAGESTORY_SERVER_PORT,
 )
 from src.cogs.minecraft_cog import MonitorState, _mc_events
+from src.forwarding import forward
+from src.helpers import emb, C_GREEN, C_GREY, C_RED
+from src.permissions import requires_perm
 from src.server_notices import announce, event_payloads
 
 logger = logging.getLogger(__name__)
@@ -48,6 +57,17 @@ VS_MASTER_LIST_URL = "https://masterserver.vintagestory.at/api/v1/servers/list"
 # last try it's taken as unadvertised until its next restart.
 VS_LOOKUP_INTERVAL_SECS = 300
 VS_LOOKUP_TRIES = 4
+
+# key → (display name, env var that enables it), for the "not configured" reply.
+GAMES = {
+    "vrising": ("V Rising", "VRISING_SERVER_HOST"),
+    "vintagestory": ("Vintage Story", "VINTAGESTORY_SERVER_HOST"),
+}
+# Bare `!<name>` copies of `!gameservers <sub>`, registered as IdleCog does.
+_TOP_ALIASES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("vrising", "cmd_vrising", ()),
+    ("vintagestory", "cmd_vintagestory", ("vintage",)),
+)
 
 
 @dataclasses.dataclass
@@ -155,6 +175,7 @@ class GameServersCog(commands.Cog):
         self.servers = configured_servers()
         self._monitors: dict[str, MonitorState] = {}
         self._last_seen_online: dict[str, float] = {}
+        self._online_since: dict[str, float] = {}
         # Vintage Story's version for the current online stretch, and the
         # master-list tries spent finding it; reset when the server goes down.
         self._vs_version: "str | None" = None
@@ -162,10 +183,22 @@ class GameServersCog(commands.Cog):
         self._vs_tried_at = 0.0
         if self.servers:
             self.game_monitor.start()
+        # Tests hand in a fake bot and call the callbacks directly.
+        if isinstance(bot, commands.Bot):
+            for name, attr, aliases in _TOP_ALIASES:
+                source = getattr(self, attr)
+                alias = commands.Command(source.callback, name=name, aliases=list(aliases),
+                                         help=source.help, usage=source.usage)
+                # Without it discord.py binds `self` to the Context.
+                alias.cog = self
+                bot.add_command(alias)
 
     def cog_unload(self):
         if self.servers:
             self.game_monitor.cancel()
+        if isinstance(self.bot, commands.Bot):
+            for name, _attr, _aliases in _TOP_ALIASES:
+                self.bot.remove_command(name)
 
     @tasks.loop(seconds=GAME_POLL_SECONDS)
     async def game_monitor(self):
@@ -192,8 +225,11 @@ class GameServersCog(commands.Cog):
         now = time.time()
         if status is not None:
             self._last_seen_online[server.key] = now
-        elif self._monitors[server.key].online is False and server.key == "vintagestory":
-            self._vs_version, self._vs_tries, self._vs_tried_at = None, 0, 0.0
+            self._online_since.setdefault(server.key, now)
+        elif self._monitors[server.key].online is False:
+            self._online_since.pop(server.key, None)
+            if server.key == "vintagestory":
+                self._vs_version, self._vs_tries, self._vs_tried_at = None, 0, 0.0
 
         if status is not None and status.version and status.version != prev.version:
             state.bot_settings[server.version_key] = status.version
@@ -222,6 +258,83 @@ class GameServersCog(commands.Cog):
         except Exception:
             logger.warning("[vintagestory] master list lookup failed", exc_info=True)
         return self._vs_version or ""
+
+    # ── !gameservers ──────────────────────────────────────────────────────────
+    def _server(self, key: str) -> "GameServer | None":
+        return next((s for s in self.servers if s.key == key), None)
+
+    async def _live(self, server: GameServer) -> "ServerStatus | None":
+        try:
+            status = await server.probe(server.host, server.port)
+        except Exception:
+            return None
+        # Vintage Story's version is never looked up live (the list is ~4 MB).
+        if not status.version:
+            status.version = self._vs_version or state.bot_settings.get(server.version_key) or ""
+        return status
+
+    @staticmethod
+    def _summary_line(server: GameServer, status: "ServerStatus | None") -> str:
+        if status is None:
+            return f"🔴 **{server.game}** — offline"
+        parts = [f"{status.players}/{status.max_players} online" if server.joins_key else "online"]
+        if status.version:
+            parts.append(status.version)
+        return f"🟢 **{server.game}** — " + " · ".join(parts)
+
+    @commands.group(name="gameservers", aliases=["gameserver", "servers", "server"], invoke_without_command=True,
+                    help="Show whether the Minecraft, V Rising and Vintage Story servers are up, with players and version")
+    @requires_perm
+    async def cmd_gameservers(self, ctx: commands.Context):
+        lines = []
+        if mc_mod.MC_SERVER_HOST:
+            mc = await mc_mod.fetch_mc_status()
+            lines.append(f"🟢 **Minecraft** — {mc.players}/{mc.max_players} online · {mc.version}"
+                         if mc else "🔴 **Minecraft** — offline")
+        statuses = await asyncio.gather(*(self._live(server) for server in self.servers))
+        lines += [self._summary_line(server, status) for server, status in zip(self.servers, statuses)]
+        if not lines:
+            await ctx.send(embed=emb("🎮 Game Servers", "No game servers are configured.", C_GREY))
+            return
+        details = (["`!mc`"] if mc_mod.MC_SERVER_HOST else []) + [f"`!{server.key}`" for server in self.servers]
+        lines.append("\nDetails: " + ", ".join(details))
+        await ctx.send(embed=emb("🎮 Game Servers", "\n".join(lines), C_GREEN))
+
+    @cmd_gameservers.command(name="minecraft", aliases=["mc"], help="Show the Minecraft server's status (same as !mc)")
+    @requires_perm
+    async def cmd_minecraft(self, ctx: commands.Context):
+        await forward(ctx, self.bot.get_cog("MinecraftCog").cmd_mc, invoked_with="mc")
+
+    @cmd_gameservers.command(name="vrising", help="Show the V Rising server's status: players, version and uptime")
+    @requires_perm
+    async def cmd_vrising(self, ctx: commands.Context):
+        await self._show(ctx, "vrising")
+
+    @cmd_gameservers.command(name="vintagestory", aliases=["vintage"], help="Show the Vintage Story server's status: online and version")
+    @requires_perm
+    async def cmd_vintagestory(self, ctx: commands.Context):
+        await self._show(ctx, "vintagestory")
+
+    async def _show(self, ctx: commands.Context, key: str):
+        game, env = GAMES[key]
+        server = self._server(key)
+        if server is None:
+            await ctx.send(embed=emb(f"🎮 {game}", f"{game} integration isn't configured (set `{env}`).", C_GREY))
+            return
+        status = await self._live(server)
+        if status is None:
+            desc = f"The {game} server didn't respond."
+            if key in self._last_seen_online:
+                desc += f"\nLast seen online <t:{int(self._last_seen_online[key])}:R>."
+            await ctx.send(embed=emb(f"🔴 {game} Server Offline", desc, C_RED))
+            return
+        embed = discord.Embed(title=f"🟢 {game} Server Status", color=C_GREEN)
+        if server.joins_key:
+            embed.add_field(name="Players", value=f"{status.players}/{status.max_players}")
+        embed.add_field(name="Version", value=status.version or "?")
+        if key in self._online_since:
+            embed.add_field(name="Online since", value=f"<t:{int(self._online_since[key])}:R>")
+        await ctx.send(embed=embed)
 
 
 async def setup(bot):

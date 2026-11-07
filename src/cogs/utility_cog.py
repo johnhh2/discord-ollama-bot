@@ -52,6 +52,7 @@ from src.ai import (
 from src.config import (
     OLLAMA_MODEL, OLLAMA_BASE_URL, PUZZLE_REWARDS, MC_SERVER_HOST,
     MC_CONSOLE_HOST, MC_CONSOLE_PASSWORD, EVENT_WEEKLY_BUDGET,
+    VRISING_SERVER_HOST, VINTAGESTORY_SERVER_HOST,
 )
 from src.puzzle import (
     PUZZLE_RIDDLE_PROMPT, build_coding_prompt,
@@ -355,6 +356,8 @@ class UtilityCog(commands.Cog):
             fun_lines.append("`!searchquote [#channel] [@user]` — Find spicy/volatile messages to quote")
         if MC_SERVER_HOST:
             fun_lines.append("`!minecraft` — Minecraft server status (players, ping)")
+        if MC_SERVER_HOST or VRISING_SERVER_HOST or VINTAGESTORY_SERVER_HOST:
+            fun_lines.append("`!servers` — Which game servers are up, with players and version")
         # The block shop is off until a server admin switches it on, and
         # needs the console configured (see CLAUDE.md: Minecraft block shop).
         if MC_CONSOLE_HOST and MC_CONSOLE_PASSWORD and ctx.guild and get_guild_cfg(ctx.guild.id).get("mc_shop"):

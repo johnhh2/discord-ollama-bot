@@ -500,6 +500,7 @@ Every monitored server folds its polls through `_mc_events` and posts via [src/s
 - **No "0/x online".** An empty server's count is left off every notice.
 - **Vintage Story has no player count** and no query protocol. Don't poll its master list per tick: it is ~4 MB, so it is fetched only while an online stretch lacks a version (`VS_LOOKUP_TRIES`).
 - **Versions persist** in `state.bot_settings` (`<key>_version`) so an update during bot downtime is still announced.
+- **`!gameservers` subcommands answer bare** (`!vrising`, `!vintagestory`) via `_TOP_ALIASES`, like IdleCog. `!gameservers minecraft` forwards to `!mc`, which stays its own group for the shop.
 
 Coverage: [tests/test_game_servers.py](tests/test_game_servers.py), monitor tests in `test_minecraft.py`.
 

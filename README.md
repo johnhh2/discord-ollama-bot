@@ -98,7 +98,8 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 - `!settings minecraft-joins off` keeps the up/down and update alerts but drops the player joined/left notices
 
 ### 🧛 V Rising and 🌲 Vintage Story server notices
-- Set `VRISING_SERVER_HOST` and/or `VINTAGESTORY_SERVER_HOST`, and they post to the same `!settings channel game-servers` as Minecraft: the same up/down and update alerts, with no status command
+- Set `VRISING_SERVER_HOST` and/or `VINTAGESTORY_SERVER_HOST`, and they post to the same `!settings channel game-servers` as Minecraft: the same up/down and update alerts
+- `!gameservers` (`!servers`, `!server`, `!gameserver`) shows every configured server at once; `!vrising` and `!vintagestory` (also `!servers vrising|vintagestory`) show one, and `!servers minecraft` runs `!mc`
 - V Rising is read over the Steam server query (A2S), so it also posts player joined/left notices (`!settings vrising-joins off` turns them off)
 - Vintage Story has no query protocol: online means the game port accepts a connection, and the version comes from the public master list, so update alerts need the server to be advertised (`AdvertiseServer`). No player count
 

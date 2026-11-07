@@ -2,10 +2,13 @@
 import asyncio
 import struct
 
+import discord
 import pytest
+from discord.ext import commands
 
 import src.state as _state
 import src.cogs.game_servers_cog as gs_mod
+import src.cogs.minecraft_cog as mc_mod
 from src.cogs.game_servers_cog import GameServer, GameServersCog, ServerStatus, _parse_a2s_info
 from src.cogs.settings_cog import SettingsCog
 from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild, FakeTextChannel
@@ -240,6 +243,98 @@ async def test_vintagestory_listed_version_matches_host_and_port(monkeypatch):
 
     assert await gs_mod.vintagestory_listed_version("vs.example.com", 42420) == "1.21.0"
     assert await gs_mod.vintagestory_listed_version("vs.example.com", 1) is None
+
+
+# ── !gameservers ─────────────────────────────────────────────────────────────
+
+def _ctx(name="gameservers"):
+    return FakeCtx(author=FakeMember(1), guild=FakeGuild(gid=42), command_name=name)
+
+
+async def test_gameservers_lists_every_configured_server(monkeypatch):
+    monkeypatch.setattr(mc_mod, "MC_SERVER_HOST", "mc.example.com")
+
+    async def _mc():
+        return None
+    monkeypatch.setattr(mc_mod, "fetch_mc_status", _mc)
+    cog = _cog(monkeypatch, _FakeBot(), _vrising([ServerStatus(3, 20, "1.1")]), _vintage(1))
+    _state.bot_settings["vintagestory_version"] = "1.21.0"
+    ctx = _ctx()
+
+    await cog.cmd_gameservers.callback(cog, ctx)
+
+    assert ctx.sent_embeds[-1].description.split("\n") == [
+        "🔴 **Minecraft** — offline",
+        "🟢 **V Rising** — 3/20 online · 1.1",
+        "🟢 **Vintage Story** — online · 1.21.0",
+        "",
+        "Details: `!mc`, `!vrising`, `!vintagestory`",
+    ]
+
+
+async def test_gameservers_with_nothing_configured(monkeypatch):
+    monkeypatch.setattr(mc_mod, "MC_SERVER_HOST", "")
+    cog = _cog(monkeypatch, _FakeBot())
+    ctx = _ctx()
+    await cog.cmd_gameservers.callback(cog, ctx)
+    assert ctx.sent_embeds[-1].description == "No game servers are configured."
+
+
+async def test_vrising_status_card(monkeypatch):
+    cog = _cog(monkeypatch, _FakeBot(), _vrising([ServerStatus(2, 20, "1.1"), ServerStatus(2, 20, "1.1")]))
+    await _ticks(cog, 1)
+    ctx = _ctx("vrising")
+
+    await cog.cmd_vrising.callback(cog, ctx)
+
+    embed = ctx.sent_embeds[-1]
+    fields = {f.name: f.value for f in embed.fields}
+    assert embed.title == "🟢 V Rising Server Status"
+    assert fields["Players"] == "2/20" and fields["Version"] == "1.1"
+    assert fields["Online since"].startswith("<t:")
+
+
+async def test_vintagestory_offline_and_unconfigured(monkeypatch):
+    cog = _cog(monkeypatch, _FakeBot(), GameServer(
+        "vintagestory", "Vintage Story", "vs.example.com", 42420, _scripted([None]), joins_key=None))
+    cog._last_seen_online["vintagestory"] = 1_700_000_000
+    ctx = _ctx("vintagestory")
+    await cog.cmd_vintagestory.callback(cog, ctx)
+    assert ctx.sent_embeds[-1].title == "🔴 Vintage Story Server Offline"
+    assert "<t:1700000000:R>" in ctx.sent_embeds[-1].description
+
+    await cog.cmd_vrising.callback(cog, ctx)
+    assert "set `VRISING_SERVER_HOST`" in ctx.sent_embeds[-1].description
+
+
+async def test_gameservers_minecraft_runs_mc(monkeypatch):
+    ran = []
+
+    class _Mc:
+        @commands.command(name="mc")
+        async def cmd_mc(self, ctx):
+            ran.append(ctx.invoked_with)
+
+    bot = _FakeBot()
+    bot.get_cog = lambda name: _Mc() if name == "MinecraftCog" else None
+    cog = _cog(monkeypatch, bot)
+    await cog.cmd_minecraft.callback(cog, _ctx("gameservers minecraft"))
+    assert ran == ["mc"]
+
+
+async def test_names_reach_the_commands(monkeypatch):
+    monkeypatch.setattr(gs_mod, "configured_servers", lambda: [])
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    cog = GameServersCog(bot)
+    await bot.add_cog(cog)
+    for name in ("gameservers", "gameserver", "servers", "server"):
+        assert bot.get_command(name) is cog.cmd_gameservers
+    assert bot.get_command("servers vrising").callback is cog.cmd_vrising.callback
+    assert bot.get_command("vrising").callback is cog.cmd_vrising.callback
+    assert bot.get_command("vintage").callback is cog.cmd_vintagestory.callback
+    assert bot.get_command("server mc").callback is cog.cmd_minecraft.callback
+    await bot.remove_cog("GameServersCog")
+    assert bot.get_command("vrising") is None
 
 
 # ── Settings ─────────────────────────────────────────────────────────────────
