@@ -187,7 +187,7 @@ class AssetsCog(commands.Cog):
         return emb(f"🛠️ {_fmt_prop(prop, row)}", "\n".join(lines), C_PURPLE)
 
     # ── !assets browse / market (combined catalog + listings view) ────────
-    @cmd_assets.command(name="browse", aliases=["market", "catalog", "shop", "listings", "forsale"],
+    @cmd_assets.command(name="browse", aliases=["market", "catalog", "shop", "listings", "forsale", "list"],
                         help="Properties for sale from the bank and from players, optionally one tier (1-5)")
     async def assets_browse(self, ctx: commands.Context, tier: int = None):
         from src.assets_view import AssetsView
@@ -414,7 +414,7 @@ class AssetsCog(commands.Cog):
             await announce_record(ctx.channel, "highest_property_value", ctx.author.display_name, value, holder_id=uid)
 
     # ── !assets sell / unlist ─────────────────────────────────────────────
-    @cmd_assets.command(name="sell", aliases=["list"],
+    @cmd_assets.command(name="sell",
                         help="List a property on the cross-server market; at 75% of value or less the bank buys it instantly", usage="<name> <price>")
     async def assets_sell(self, ctx: commands.Context, *args):
         if len(args) < 2:
