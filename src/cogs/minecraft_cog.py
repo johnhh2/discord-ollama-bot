@@ -43,7 +43,7 @@ from src.config import (
     MC_SERVER_HOST, MC_SERVER_PORT, MC_POLL_SECONDS, MC_SERVER_SHOW_IP,
     MC_CONSOLE_HOST, MC_CONSOLE_PORT, MC_CONSOLE_PASSWORD,
 )
-from src.helpers import emb, parse_int_amount, C_GREEN, C_RED, C_GREY, C_BLUE, C_ORANGE, C_PURPLE
+from src.helpers import emb, parse_int_amount, C_GREEN, C_RED, C_GREY, C_BLUE, C_PURPLE
 from src.guild_config import get_guild_cfg
 from src.mc_console import McConsole, ConsoleError, ConsoleRefused
 from src.mc_shop import (
@@ -51,6 +51,7 @@ from src.mc_shop import (
     find_item, fmt_blocks, items_in, match_category,
 )
 from src.permissions import requires_perm
+from src.server_notices import _version_key, announce, event_payloads  # noqa: F401 (tests reach _version_key here)
 from src.settings_views import Field, open_form
 
 logger = logging.getLogger(__name__)
@@ -145,17 +146,6 @@ class MonitorState:
     # up-transition) and seeded from mc_server_versions at boot, so the
     # update alert always compares against the last version actually seen.
     version: str | None = None
-
-
-def _version_key(version: str) -> tuple[int, ...]:
-    """Numeric prefix of a Bedrock version string, for ordering: "1.21.51" →
-    (1, 21, 51); anything unparsable contributes nothing ("" → ())."""
-    parts = []
-    for piece in version.split("."):
-        if not piece.isdigit():
-            break
-        parts.append(int(piece))
-    return tuple(parts)
 
 
 def _ct_date_iso(ts: float) -> str:
@@ -967,65 +957,10 @@ class MinecraftCog(commands.Cog):
 
     def _event_payloads(self, events: list[str], prev: MonitorState,
                         status: "McStatus | None") -> list[tuple[str, dict]]:
-        """Turn events into (event, channel.send kwargs) pairs (colored embeds)."""
-        # An empty server's "0/10 online" is noise, so the count is left off.
-        online = f"**{status.players}/{status.max_players}** online" if status and status.players else ""
-        payloads = []
-        for ev in events:
-            if ev == "came_online":
-                desc = f"{_server_label()} is back up" + (f" — {online}." if online else ".")
-                payloads.append((ev, {"embed": emb("🟢 Minecraft Server Online", desc, C_GREEN)}))
-            elif ev == "went_offline":
-                desc = f"{_server_label()} stopped responding."
-                if self._last_seen_online:
-                    desc += f"\nLast seen online <t:{int(self._last_seen_online)}:R>."
-                payloads.append((ev, {"embed": emb("🔴 Minecraft Server Offline", desc, C_RED)}))
-            elif ev == "count_up":
-                delta = status.players - prev.count
-                who = "A player" if delta == 1 else f"{delta} players"
-                payloads.append((ev, {"embed": emb(
-                    "🟢 Player Joined",
-                    f"{who} joined the Minecraft server — {online}",
-                    C_GREEN,
-                )}))
-            elif ev == "count_down":
-                delta = prev.count - status.players
-                who = "A player" if delta == 1 else f"{delta} players"
-                desc = f"{who} left the Minecraft server" + (f" — {online}" if online else " — it's empty now")
-                payloads.append((ev, {"embed": emb("🔴 Player Left", desc, C_RED)}))
-            elif ev == "version_changed":
-                old, new = _version_key(prev.version), _version_key(status.version)
-                rollback = bool(old and new and new < old)
-                title = ("⬇️ Minecraft Server Rolled Back" if rollback
-                         else "⬆️ Minecraft Server Updated")
-                what = "rolled back" if rollback else "updated"
-                # This embed replaces the "back online" one when the monitor
-                # saw the server go down for the update.
-                lead = "is back up," if prev.online is False else "was"
-                desc = (f"{_server_label()} {lead} {what}: "
-                        f"**{prev.version}** → **{status.version}**")
-                if online:
-                    desc += f" — {online}"
-                payloads.append((ev, {"embed": emb(title, desc, C_ORANGE if rollback else C_BLUE)}))
-        return payloads
+        return event_payloads("Minecraft", _server_label(), events, prev, status, self._last_seen_online)
 
     async def _announce(self, payloads: list[tuple[str, dict]]):
-        for guild in self.bot.guilds:
-            cfg = get_guild_cfg(guild.id)
-            channel_id = cfg.get("minecraft_channel")
-            if not channel_id:
-                continue
-            # `!settings minecraft-joins off` keeps only the server status notices.
-            wanted = [payload for ev, payload in payloads
-                      if cfg.get("mc_join_notices", True) or ev not in ("count_up", "count_down")]
-            if not wanted:
-                continue
-            try:
-                channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
-                for payload in wanted:
-                    await channel.send(silent=True, **payload)
-            except Exception:
-                logger.exception("[minecraft] announce failed for guild %s", guild.id)
+        await announce(self.bot, payloads, channel_key="minecraft_channel", joins_key="mc_join_notices")
 
     def status_text(self) -> "str | None":
         """Presence line for the status manager rotation.

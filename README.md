@@ -95,6 +95,12 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 - `!graph minecraft` — server ping over the last 2 weeks as an averaged line with a min/max band: hourly resolution from the ~60s polls of the last 7 days, daily avg/min/max rollups beyond that (kept ~10 years); downtime shows as dips to 0. Daily bars overlay the chart with each day's peak concurrent players, join count, and total player-hours (count-based — the Bedrock pong never carries names; also kept ~10 years)
 - Works against any reachable Bedrock endpoint (e.g. an [itzg/minecraft-bedrock-server](https://github.com/itzg/docker-minecraft-bedrock-server) container on the same host) — status needs only the UDP ping, no docker socket; only the block shop below needs the server console
 - **Block shop** (`!mc shop`, off by default — `!settings minecraft-shop on` per server, plus `MC_CONSOLE_HOST` / `MC_CONSOLE_PASSWORD` pointing at the itzg image's SSH remote console): sell ores and building blocks straight out of your in-game inventory for 🟫 **blocks**, the shop's own currency, and spend them on decorative blocks delivered into your inventory. Blocks can't be bought with coins, paid or won — selling is the only way in. The sell side takes nothing a farm makes (no iron, gold, wool or generator stone), the buy side sells nothing that turns back into a resource (no wood, ingot blocks or hay), and everything that's both bought and sold pays back half its price, so crafting can't mint blocks. Coal, copper, lapis, quartz, diamond and netherite (and their ores) sell at fixed prices; the rest follows verzion's economy price guide's method. `!mc link <gamertag>` sends a code in-game (you must be online) and `!mc verify <code>` claims it; `!mc blocks` shows the purse
+- `!settings minecraft-joins off` keeps the up/down and update alerts but drops the player joined/left notices
+
+### 🧛 V Rising and 🌲 Vintage Story server notices
+- Set `VRISING_SERVER_HOST` and/or `VINTAGESTORY_SERVER_HOST`, then `!settings channel vrising|vintagestory`: the same up/down and update alerts as Minecraft, with no status command
+- V Rising is read over the Steam server query (A2S), so it also posts player joined/left notices (`!settings vrising-joins off` turns them off)
+- Vintage Story has no query protocol: online means the game port accepts a connection, and the version comes from the public master list, so update alerts need the server to be advertised (`AdvertiseServer`). No player count
 
 ### 🔌 Read-only MCP server for your agents
 
@@ -159,6 +165,8 @@ All configuration is via environment variables — see [.env.example](.env.examp
 | `MC_POLL_SECONDS` | `60` | Monitor poll interval (up/down alerts, player-count notices, presence) |
 | `MC_SERVER_SHOW_IP` | `false` | Show the server address in `!mc` embeds and monitor alerts (hidden by default) |
 | `MC_CONSOLE_HOST` / `MC_CONSOLE_PORT` / `MC_CONSOLE_PASSWORD` | _(disabled)_ / `2222` / — | The Bedrock container's SSH remote console (`ENABLE_SSH=true` on the itzg image; the password is its `RCON_PASSWORD`). Enables the block shop, which each server still has to switch on |
+| `VRISING_SERVER_HOST` / `VRISING_QUERY_PORT` | _(disabled)_ / `9877` | V Rising server and its Steam query port. Enables up/down, update and player joined/left notices in `!settings channel vrising` |
+| `VINTAGESTORY_SERVER_HOST` / `VINTAGESTORY_SERVER_PORT` | _(disabled)_ / `42420` | Vintage Story server. Enables up/down notices in `!settings channel vintagestory`, plus update notices if the server is listed on the public master list under this address |
 | `WYOMING_TTS_HOST` / `WYOMING_TTS_PORT` / `WYOMING_TTS_VOICE` | _(disabled)_ / `10200` / _(server default)_ | A Wyoming text-to-speech server (Piper, for one) as the bot's container sees it. Enables `!adminannounce` and the paid `!shop announce` |
 | `COMPOSE_PROFILES=mcp` + `MCP_BEARER_TOKEN` / `MCP_BIND_IP` / `MCP_DB_USER` / `MCP_DB_PASSWORD` | _(off)_ | The read-only MCP sidecar for AI agents on your LAN — see [botmcp/README.md](botmcp/README.md) |
 | `NSFW_API_URL` / `NSFW_API_KEY` / `NSFW_API_USER_ID` | _(disabled)_ | Credentials for an NSFW image API, enabling `!nsfw`; servers allow it, restrict it to channels or ban tags with `!settings nsfw` |

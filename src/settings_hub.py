@@ -53,6 +53,8 @@ CHANNEL_SETTINGS = (
     ("📖 Feature requests", "feature_request_channel", "settings_channel_feature_request", False, "❌ off", "`!featurerequest` posts here"),
     ("🎯 Bounties", "bounty_channel", "settings_bounty_channel", False, "❌ off", "`!bounty` posts here"),
     ("⛏️ Minecraft", "minecraft_channel", "settings_minecraft_channel", False, "❌ off", "server up/down alerts and player-count notices"),
+    ("🧛 V Rising", "vrising_channel", "settings_vrising_channel", False, "❌ off", "server up/down, update and player-count notices"),
+    ("🌲 Vintage Story", "vintagestory_channel", "settings_vintagestory_channel", False, "❌ off", "server up/down and update notices"),
     ("🪙 Dailies", "dailies_channel", "settings_dailies_channel", False, "❌ off", "self-cleaning channel with the react-to-claim dailies embed"),
     ("⚔️ Idle RPG", "idle_channel", "settings_channel_idle", False, "❌ off", "idle RPG news and feed threads — the game is off without one"),
 )
@@ -192,6 +194,7 @@ def _games(cfg: dict) -> list[Item]:
     enroll = bool(cfg.get("idle_enroll"))
     mc_shop = bool(cfg.get("mc_shop"))
     mc_joins = cfg.get("mc_join_notices", True)
+    vr_joins = cfg.get("vrising_join_notices", True)
     nsfw = cfg.get("nsfw_enabled", False)
     nsfw_channels = [int(c) for c in cfg.get("nsfw_channels", [])]
     banned = list(cfg.get("nsfw_banned_tags", []))
@@ -210,6 +213,8 @@ def _games(cfg: dict) -> list[Item]:
              method="settings_minecraft_shop", args=("off" if mc_shop else "on",)),
         Item(key="mc-joins", label="⛏️ Minecraft join notices — player joined/left posts", value=_on(mc_joins),
              method="settings_minecraft_joins", args=("off" if mc_joins else "on",)),
+        Item(key="vrising-joins", label="🧛 V Rising join notices — player joined/left posts", value=_on(vr_joins),
+             method="settings_vrising_joins", args=("off" if vr_joins else "on",)),
         Item(key="nsfw", label="🔞 NSFW commands", value=_on(nsfw),
              method="settings_nsfw", args=("off" if nsfw else "on",)),
         Item(key="nsfw-channels", label="🔞 NSFW channels — where !nsfw may answer", value=mentions(nsfw_channels, "all channels"),

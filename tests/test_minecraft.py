@@ -18,6 +18,7 @@ from src.cogs.minecraft_cog import (
     MinecraftCog, MonitorState, McStatus, _mc_events,
 )
 from src.cogs.settings_cog import SettingsCog
+from src.helpers import C_ORANGE
 
 from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild, FakeTextChannel
 
@@ -843,7 +844,7 @@ async def test_monitor_posts_rollback_embed(monkeypatch):
     embed = channel.send.call_args.kwargs["embed"]
     assert embed.title == "⬇️ Minecraft Server Rolled Back"
     assert "**1.21.60** → **1.21.51**" in embed.description
-    assert embed.color.value == mc_mod.C_ORANGE
+    assert embed.color.value == C_ORANGE
 
 
 async def test_update_after_restart_posts_only_the_update(monkeypatch):

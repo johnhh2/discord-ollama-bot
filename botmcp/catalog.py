@@ -166,11 +166,13 @@ TABLES: dict[str, Table] = {
 GUILD_SETTINGS_KEYS: tuple[str, ...] = (
     "features", "ai_enabled", "ai_channels", "bot_channels", "game_channels", "chess_channels",
     "lottery_channel", "dailies_channel", "records_channel", "levelup_channel", "minecraft_channel",
-    "idle_channel", "bounty_channel", "feature_request_channel", "command_whitelist", "command_blacklist",
-    "gambler_role_enabled", "idle_enroll", "idle_pace", "leaderboard_default_scope", "dailies_reset_day",
-    "soundboard_ratelimit", "event_budget", "shop_items", "mc_shop", "mc_join_notices", "ask_model", "roleplay_model",
-    "coding_model", "locked_channels", "locked_roles", "tax_aliases", "quote_bypass_restrictions",
-    "dailies_message_id", "idle_board_message",
+    "vrising_channel", "vintagestory_channel", "idle_channel", "bounty_channel",
+    "feature_request_channel", "command_whitelist", "command_blacklist", "gambler_role_enabled",
+    "idle_enroll", "idle_pace", "leaderboard_default_scope", "dailies_reset_day",
+    "soundboard_ratelimit", "event_budget", "shop_items", "mc_shop", "mc_join_notices",
+    "vrising_join_notices", "ask_model", "roleplay_model", "coding_model", "locked_channels",
+    "locked_roles", "tax_aliases", "quote_bypass_restrictions", "dailies_message_id",
+    "idle_board_message",
 )
 
 # leveling.data holds xp, level and rate-limit timestamps; only these leave.

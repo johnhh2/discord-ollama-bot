@@ -46,6 +46,7 @@ EXTENSIONS = [
     "src.cogs.voice_cog",
     "src.cogs.announce_cog",
     "src.cogs.minecraft_cog",
+    "src.cogs.game_servers_cog",
     "src.cogs.status_cog",
     "src.cogs.counter_cog",
     "src.cogs.idle_cog",

@@ -42,6 +42,8 @@ Environment variables (all optional except `DISCORD_TOKEN`):
 | `MC_SERVER_SHOW_IP` | `false` | Show the address in `!mc` embeds and alerts |
 | `MC_CONSOLE_HOST` / `MC_CONSOLE_PORT` | _(disabled)_ / `2222` | The Bedrock container's SSH remote console (`ENABLE_SSH=true`, itzg image). With the password, enables `!mc shop` |
 | `MC_CONSOLE_PASSWORD` | — | The Bedrock container's `RCON_PASSWORD` |
+| `VRISING_SERVER_HOST` / `VRISING_QUERY_PORT` | _(disabled)_ / `9877` | V Rising server and its Steam query port (enables its notices) |
+| `VINTAGESTORY_SERVER_HOST` / `VINTAGESTORY_SERVER_PORT` | _(disabled)_ / `42420` | Vintage Story server (enables its notices). Use the address it advertises on the master list, or update notices can't find its version |
 | `WYOMING_TTS_HOST` / `WYOMING_TTS_PORT` | _(disabled)_ / `10200` | Wyoming TTS server (Piper). Enables `!adminannounce` and `!shop announce` |
 | `WYOMING_TTS_VOICE` | _(server default)_ | One of the TTS server's voices |
 | `YTDLP_PATH` | `yt-dlp` | yt-dlp binary; the image sets `/opt/ytdlp/yt-dlp`, the self-updating copy |
@@ -489,6 +491,17 @@ Players buy and sell items on the Bedrock server for 🟫 **blocks**, earned onl
 - **Linking:** `!mc link` checks `list`, stores the code in `_link_codes` before `tellraw`, and `!mc verify` claims synchronously. One Discord user per gamertag (`_holder_of`); unlinking keeps the purse.
 
 Coverage: [tests/test_mc_shop.py](tests/test_mc_shop.py).
+
+## Game server notices (Minecraft, V Rising, Vintage Story)
+
+Every monitored server folds its polls through `_mc_events` and posts via [src/server_notices.py](src/server_notices.py). V Rising and Vintage Story live in [src/cogs/game_servers_cog.py](src/cogs/game_servers_cog.py) (details in its docstring).
+
+- **Status notices always post** to the game's channel; only join/leave notices have a per-guild switch (`mc_join_notices`, `vrising_join_notices`, missing means on). A new game with a player count gets one too.
+- **No "0/x online".** An empty server's count is left off every notice.
+- **Vintage Story has no player count** and no query protocol. Don't poll its master list per tick: it is ~4 MB, so it is fetched only while an online stretch lacks a version (`VS_LOOKUP_TRIES`).
+- **Versions persist** in `state.bot_settings` (`<key>_version`) so an update during bot downtime is still announced.
+
+Coverage: [tests/test_game_servers.py](tests/test_game_servers.py), monitor tests in `test_minecraft.py`.
 
 ## Concurrency: per-user command races
 
