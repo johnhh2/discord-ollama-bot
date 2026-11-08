@@ -97,7 +97,7 @@ TABLES: dict[str, Table] = {
          "daily_gamble_property", "ins_paid_since_claim", "ins_lapsed_since_claim", "heist_success_day",
          "property_theft_day", "bail_price", "auto_repair", "robbed_since_claim", "investigations_since_claim",
          "arrests_since_claim", "auto_repaired_since_claim", "targeted_buy_days",
-         "insurance_claims"),
+         "insurance_claims", "flip_side"),
         hidden={"jail_reason": "free text, sometimes admin-written"},
     ),
     "feature_request_watchers": Table(("message_id", "user_id", "created_at")),

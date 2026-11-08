@@ -1889,3 +1889,8 @@ UPDATE guild_settings
          '$.minecraft_channel')
  WHERE UPPER(JSON_TYPE(JSON_EXTRACT(settings_json, '$.minecraft_channel'))) = 'INTEGER'
    AND JSON_EXTRACT(settings_json, '$.game_servers_channel') IS NULL;
+
+-- ── 0093_flip_default_side.sql ──
+-- !flip default heads|tails: the side a flip calls when none is typed,
+-- including the dailies 🪙 stake. NULL means heads.
+ALTER TABLE economy_users ADD COLUMN IF NOT EXISTS flip_side VARCHAR(5) NULL;

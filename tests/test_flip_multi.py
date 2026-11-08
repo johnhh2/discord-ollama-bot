@@ -197,3 +197,39 @@ async def test_flip_again_click_replays_same_stake(db, monkeypatch):
     assert [b.stake for b in views[1].children] == [1000, 2000]
     for v in views:
         v.stop()
+
+
+@pytest.mark.asyncio
+async def test_flip_default_sets_the_side_untyped_flips_call(db, monkeypatch):
+    """`!flip default tails` makes `!flip 1000` and the dailies flip call
+    tails; a typed side still wins, and `heads` goes back to the default."""
+    cog = FlipCog(bot=_StubBot())
+    ctx = _ctx(uid=90)
+    await _economy.add_balance(90, 100_000)
+    monkeypatch.setattr(random, "random", lambda: 0.99)   # every coin lands tails
+
+    await cog.cmd_flip_default.callback(cog, ctx, side="t")
+    assert _state.economy["users"]["90"]["flip_side"] == "tails"
+
+    await cog.cmd_flip.callback(cog, ctx, amount="1000")
+    assert await _economy.get_balance(90) == 101_000
+    await play_flip(ctx.author, ctx.channel, ctx.guild, 1000)
+    assert await _economy.get_balance(90) == 102_000
+    await cog.cmd_flip.callback(cog, ctx, amount="1000", side="heads")
+    assert await _economy.get_balance(90) == 101_000
+
+    await cog.cmd_flip_default.callback(cog, ctx, side="heads")
+    assert _state.economy["users"]["90"]["flip_side"] is None
+    await cog.cmd_flip.callback(cog, ctx, amount="1000")
+    assert await _economy.get_balance(90) == 100_000
+    for v in _result_views(ctx):
+        v.stop()
+
+
+@pytest.mark.asyncio
+async def test_flip_default_rejects_other_sides(db):
+    cog = FlipCog(bot=_StubBot())
+    ctx = _ctx(uid=91)
+    await cog.cmd_flip_default.callback(cog, ctx, side="edge")
+    assert ctx.sent_messages == ["Side must be `heads` or `tails`."]
+    assert "flip_side" not in _state.economy["users"].get("91", {})
