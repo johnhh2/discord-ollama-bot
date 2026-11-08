@@ -121,6 +121,25 @@ async def test_tcp_status_is_online_only_while_the_port_accepts():
         await gs_mod.tcp_status("127.0.0.1", port)
 
 
+def test_vrising_rcon_port_swaps_a2s_for_a_tcp_check(monkeypatch):
+    monkeypatch.setattr(gs_mod, "VRISING_SERVER_HOST", "192.168.1.5")
+    monkeypatch.setattr(gs_mod, "VINTAGESTORY_SERVER_HOST", "")
+    (server,) = gs_mod.configured_servers()
+    assert (server.port, server.probe, server.joins_key) == (9877, gs_mod.a2s_status, "vrising_join_notices")
+
+    monkeypatch.setattr(gs_mod, "VRISING_RCON_PORT", 25575)
+    (server,) = gs_mod.configured_servers()
+    assert (server.port, server.probe, server.joins_key) == (25575, gs_mod.tcp_status, None)
+
+
+def test_vrising_joins_setting_hidden_when_polled_over_rcon(monkeypatch):
+    import src.settings_hub as hub
+    keys = lambda: [item.key for item in hub._games({})]  # noqa: E731
+    assert "vrising-joins" in keys()
+    monkeypatch.setattr(hub, "VRISING_RCON_PORT", 25575)
+    assert "vrising-joins" not in keys()
+
+
 # ── Monitor ──────────────────────────────────────────────────────────────────
 
 async def test_vrising_join_notices_follow_each_guilds_switch(monkeypatch):

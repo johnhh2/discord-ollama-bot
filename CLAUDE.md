@@ -43,6 +43,7 @@ Environment variables (all optional except `DISCORD_TOKEN`):
 | `MC_CONSOLE_HOST` / `MC_CONSOLE_PORT` | _(disabled)_ / `2222` | The Bedrock container's SSH remote console (`ENABLE_SSH=true`, itzg image). With the password, enables `!mc shop` |
 | `MC_CONSOLE_PASSWORD` | — | The Bedrock container's `RCON_PASSWORD` |
 | `VRISING_SERVER_HOST` / `VRISING_QUERY_PORT` | _(disabled)_ / `9877` | V Rising server and its Steam query port (enables its notices) |
+| `VRISING_RCON_PORT` | _(unset)_ | V Rising's RCON port; when set, polls it instead (online/offline only, for a server not listed on Steam) |
 | `VINTAGESTORY_SERVER_HOST` / `VINTAGESTORY_SERVER_PORT` | _(disabled)_ / `42420` | Vintage Story server (enables its notices). Use the address it advertises on the master list, or update notices can't find its version |
 | `WYOMING_TTS_HOST` / `WYOMING_TTS_PORT` | _(disabled)_ / `10200` | Wyoming TTS server (Piper). Enables `!adminannounce` and `!shop announce` |
 | `WYOMING_TTS_VOICE` | _(server default)_ | One of the TTS server's voices |
@@ -498,6 +499,7 @@ Every monitored server folds its polls through `_mc_events` and posts via [src/s
 
 - **One channel for all three:** `!settings channel game-servers` (`game_servers_channel`). Status notices always post there; only join/leave notices have a per-guild switch (`mc_join_notices`, `vrising_join_notices`, missing means on). A new game with a player count gets one too.
 - **No "0/x online".** An empty server's count is left off every notice.
+- **V Rising's A2S answers only while it's listed on Steam.** `VRISING_RCON_PORT` switches it to a TCP check of the RCON port (no player count, no version), and the `vrising-joins` setting is hidden then. Never send the RCON password; the connect alone is the check.
 - **Vintage Story has no player count** and no query protocol. Don't poll its master list per tick: it is ~4 MB, so it is fetched only while an online stretch lacks a version (`VS_LOOKUP_TRIES`).
 - **Versions persist** in `state.bot_settings` (`<key>_version`) so an update during bot downtime is still announced.
 - **`!gameservers` subcommands answer bare** (`!vrising`, `!vintagestory`) via `_TOP_ALIASES`, like IdleCog. `!gameservers minecraft` forwards to `!mc`, which stays its own group for the shop.

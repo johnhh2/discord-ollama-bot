@@ -41,11 +41,14 @@ MC_CONSOLE_PORT = int(os.getenv("MC_CONSOLE_PORT") or "2222")
 MC_CONSOLE_PASSWORD = os.getenv("MC_CONSOLE_PASSWORD", "")
 
 # V Rising / Vintage Story server notices (optional; empty host disables each).
-# V Rising is polled on its Steam query port, not the game port. Vintage Story's
+# V Rising is polled on its Steam query port, not the game port; that needs
+# ListOnSteam, so with VRISING_RCON_PORT set it's instead online-only via a TCP
+# connect to its RCON port (no password needed). Vintage Story's
 # version comes from the public master list, matched on this host's address,
 # so use the address the server advertises (DDNS name or WAN IP).
 VRISING_SERVER_HOST = os.getenv("VRISING_SERVER_HOST", "")
 VRISING_QUERY_PORT = int(os.getenv("VRISING_QUERY_PORT") or "9877")
+VRISING_RCON_PORT = int(os.getenv("VRISING_RCON_PORT") or "0")
 VINTAGESTORY_SERVER_HOST = os.getenv("VINTAGESTORY_SERVER_HOST", "")
 VINTAGESTORY_SERVER_PORT = int(os.getenv("VINTAGESTORY_SERVER_PORT") or "42420")
 

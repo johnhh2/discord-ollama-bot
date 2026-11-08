@@ -100,7 +100,7 @@ Coins buy actual Discord effects: nicknames, role creation/colors, channel renam
 ### 🧛 V Rising and 🌲 Vintage Story server notices
 - Set `VRISING_SERVER_HOST` and/or `VINTAGESTORY_SERVER_HOST`, and they post to the same `!settings channel game-servers` as Minecraft: the same up/down and update alerts
 - `!gameservers` (`!servers`, `!server`, `!gameserver`) shows every configured server at once; `!vrising` and `!vintagestory` (also `!servers vrising|vintagestory`) show one, and `!servers minecraft` runs `!mc`
-- V Rising is read over the Steam server query (A2S), so it also posts player joined/left notices (`!settings vrising-joins off` turns them off)
+- V Rising is read over the Steam server query (A2S), so it also posts player joined/left notices (`!settings vrising-joins off` turns them off). A2S only answers while the server is listed on Steam; to stay unlisted, enable RCON in `ServerHostSettings.json` and set `VRISING_RCON_PORT` instead, which gives online/offline only (no players, join notices or update alerts)
 - Vintage Story has no query protocol: online means the game port accepts a connection, and the version comes from the public master list, so update alerts need the server to be advertised (`AdvertiseServer`). No player count
 
 ### 🔌 Read-only MCP server for your agents
@@ -167,6 +167,7 @@ All configuration is via environment variables — see [.env.example](.env.examp
 | `MC_SERVER_SHOW_IP` | `false` | Show the server address in `!mc` embeds and monitor alerts (hidden by default) |
 | `MC_CONSOLE_HOST` / `MC_CONSOLE_PORT` / `MC_CONSOLE_PASSWORD` | _(disabled)_ / `2222` / — | The Bedrock container's SSH remote console (`ENABLE_SSH=true` on the itzg image; the password is its `RCON_PASSWORD`). Enables the block shop, which each server still has to switch on |
 | `VRISING_SERVER_HOST` / `VRISING_QUERY_PORT` | _(disabled)_ / `9877` | V Rising server and its Steam query port. Enables up/down, update and player joined/left notices in the game-servers channel |
+| `VRISING_RCON_PORT` | _(unset)_ | For a server not listed on Steam: poll its RCON port instead (online/offline only) |
 | `VINTAGESTORY_SERVER_HOST` / `VINTAGESTORY_SERVER_PORT` | _(disabled)_ / `42420` | Vintage Story server. Enables up/down notices in the game-servers channel, plus update notices if the server is listed on the public master list under this address |
 | `WYOMING_TTS_HOST` / `WYOMING_TTS_PORT` / `WYOMING_TTS_VOICE` | _(disabled)_ / `10200` / _(server default)_ | A Wyoming text-to-speech server (Piper, for one) as the bot's container sees it. Enables `!adminannounce` and the paid `!shop announce` |
 | `COMPOSE_PROFILES=mcp` + `MCP_BEARER_TOKEN` / `MCP_BIND_IP` / `MCP_DB_USER` / `MCP_DB_PASSWORD` | _(off)_ | The read-only MCP sidecar for AI agents on your LAN — see [botmcp/README.md](botmcp/README.md) |

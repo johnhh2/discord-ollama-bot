@@ -7,7 +7,10 @@ shared `!settings channel game-servers` channel.
 
 - **V Rising** answers Steam's A2S_INFO on its query port. That reply carries
   the player count, so it also posts join/leave notices
-  (`!settings vrising-joins`). Its version is whatever A2S reports.
+  (`!settings vrising-joins`). Its version is whatever A2S reports. A2S
+  only answers while the server is listed on Steam, so with VRISING_RCON_PORT
+  set it's polled like Vintage Story instead: online means the RCON port
+  accepts a TCP connection, with no players, join notices or version.
 - **Vintage Story** has no query protocol. Online means the game port accepts
   a TCP connection. The version comes from the public master list (~4 MB),
   fetched only while an online stretch has no version yet, and found only if
@@ -35,7 +38,7 @@ from src import state
 import src.cogs.minecraft_cog as mc_mod
 import src.persistence as persistence
 from src.config import (
-    VRISING_SERVER_HOST, VRISING_QUERY_PORT,
+    VRISING_SERVER_HOST, VRISING_QUERY_PORT, VRISING_RCON_PORT,
     VINTAGESTORY_SERVER_HOST, VINTAGESTORY_SERVER_PORT,
 )
 from src.cogs.minecraft_cog import MonitorState, _mc_events
@@ -160,7 +163,10 @@ async def vintagestory_listed_version(host: str, port: int) -> "str | None":
 
 def configured_servers() -> list[GameServer]:
     servers = []
-    if VRISING_SERVER_HOST:
+    if VRISING_SERVER_HOST and VRISING_RCON_PORT:
+        servers.append(GameServer("vrising", "V Rising", VRISING_SERVER_HOST, VRISING_RCON_PORT,
+                                  tcp_status, joins_key=None))
+    elif VRISING_SERVER_HOST:
         servers.append(GameServer("vrising", "V Rising", VRISING_SERVER_HOST, VRISING_QUERY_PORT,
                                   a2s_status, joins_key="vrising_join_notices"))
     if VINTAGESTORY_SERVER_HOST:

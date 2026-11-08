@@ -27,7 +27,7 @@ from discord import ui
 
 from src import state
 from src.ai import list_ollama_models
-from src.config import OLLAMA_MODEL
+from src.config import OLLAMA_MODEL, VRISING_RCON_PORT
 from src.features import FEATURES, feature_enabled
 from src.guild_config import get_guild_cfg
 from src.helpers import emb, C_BLUE, C_GREY
@@ -211,8 +211,9 @@ def _games(cfg: dict) -> list[Item]:
              method="settings_minecraft_shop", args=("off" if mc_shop else "on",)),
         Item(key="mc-joins", label="⛏️ Minecraft join notices — player joined/left posts", value=_on(mc_joins),
              method="settings_minecraft_joins", args=("off" if mc_joins else "on",)),
-        Item(key="vrising-joins", label="🧛 V Rising join notices — player joined/left posts", value=_on(vr_joins),
-             method="settings_vrising_joins", args=("off" if vr_joins else "on",)),
+        *([] if VRISING_RCON_PORT else [  # polled over RCON: no player count
+            Item(key="vrising-joins", label="🧛 V Rising join notices — player joined/left posts", value=_on(vr_joins),
+                 method="settings_vrising_joins", args=("off" if vr_joins else "on",))]),
         Item(key="nsfw", label="🔞 NSFW commands", value=_on(nsfw),
              method="settings_nsfw", args=("off" if nsfw else "on",)),
         Item(key="nsfw-channels", label="🔞 NSFW channels — where !nsfw may answer", value=mentions(nsfw_channels, "all channels"),

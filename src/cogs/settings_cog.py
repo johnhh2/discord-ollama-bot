@@ -26,7 +26,7 @@ from src.settings_hub import (
     SHOP_ITEMS, channel_rows, channels_in, mentions, open_settings_hub,
 )
 from src.confirm_view import confirm_choice, confirm_prompt
-from src.config import OLLAMA_MODEL, LOTTERY_SEED_POOL, MC_CONSOLE_HOST, MC_CONSOLE_PASSWORD
+from src.config import OLLAMA_MODEL, LOTTERY_SEED_POOL, MC_CONSOLE_HOST, MC_CONSOLE_PASSWORD, VRISING_RCON_PORT
 from src.features import FEATURES, set_feature, features_overview
 from src.rate_curves import CURVE_QUESTION, OFF, RATE_CURVES, curve_status, parse_position
 from src.setup_wizard import run_setup_wizard
@@ -61,6 +61,9 @@ class SettingsCog(commands.Cog):
         nsfw += " · channels: " + mentions(cfg.get("nsfw_channels"), "all")
         if cfg.get("nsfw_banned_tags"):
             nsfw += " · banned tags: " + ", ".join(cfg["nsfw_banned_tags"])
+        # Polled over RCON there's no player count, so no join notices to switch.
+        vrising = "" if VRISING_RCON_PORT else (
+            f"🧛 V Rising join notices: {'✅ on' if cfg.get('vrising_join_notices', True) else '❌ off'}\n")
         embed.add_field(
             name="🎛️ Other",
             value=(
@@ -70,7 +73,7 @@ class SettingsCog(commands.Cog):
                 f"⚔️ Idle RPG: pace **{cfg.get('idle_pace') or 'lively'}** · auto-enroll **{'on' if cfg.get('idle_enroll') else 'off'}**\n"
                 f"⛏️ Minecraft block shop: {'✅ on' if cfg.get('mc_shop') else '❌ off'}"
                 f" · join notices: {'✅ on' if cfg.get('mc_join_notices', True) else '❌ off'}\n"
-                f"🧛 V Rising join notices: {'✅ on' if cfg.get('vrising_join_notices', True) else '❌ off'}\n"
+                f"{vrising}"
                 f"📈 Interest curve: {curve_status()}\n"
                 f"🔞 NSFW: {nsfw}"
             ),
