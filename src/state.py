@@ -37,7 +37,7 @@ property_insurance_subs: dict = {}
 # table (effect_type column); loaded at boot.
 locked_channels: dict = {}
 locked_roles: dict = {}
-active_ragebaits: dict = {}     # (guild_id, uid) -> {remaining, started_by, history, channel_id}
+active_ragebaits: dict = {}     # (guild_id, uid) -> {remaining, started_by, history, topic, channel_id}
 active_mocks: dict = {}         # (guild_id, uid) -> {remaining, started_by, channel_id}
 active_taxes: dict = {}         # (guild_id, uid) -> {master, type, emoji, channel_id, activated_at}
 active_curses: dict = {}        # (guild_id, uid) -> {cursed_by, remaining, channel_id}

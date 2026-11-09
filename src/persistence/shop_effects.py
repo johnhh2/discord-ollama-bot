@@ -14,11 +14,14 @@ async def save_ragebait():
     async with with_transaction() as cur:
         await cur.execute("DELETE FROM shop_effects WHERE effect_type='ragebait'")
         for (guild_id, uid), data in state.active_ragebaits.items():
+            # The buyer's topic rides in history_json (already hidden from the MCP
+            # sidecar) rather than a new column; init.py still reads the old bare list.
+            blob = {"history": data.get("history", []), "topic": data.get("topic", "")}
             await cur.execute(
                 "INSERT INTO shop_effects (guild_id, user_id, effect_type, remaining, started_by, history_json, channel_id)"
                 " VALUES (%s,%s,'ragebait',%s,%s,%s,%s)",
                 (int(guild_id), int(uid), data.get("remaining"), data.get("started_by"),
-                 json.dumps(data.get("history", [])), data.get("channel_id")),
+                 json.dumps(blob), data.get("channel_id")),
             )
 
 

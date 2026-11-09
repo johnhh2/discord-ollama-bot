@@ -240,10 +240,14 @@ async def _init_db_state_inner(state, run_migrations):
                 " FROM shop_effects WHERE effect_type='ragebait'"
             )
             for guild_id, uid, remaining, started_by, history_json, channel_id in await cur.fetchall():
+                blob = json.loads(history_json) if history_json else []
+                if isinstance(blob, list):
+                    blob = {"history": blob}
                 state.active_ragebaits[(int(guild_id), int(uid))] = {
                     "remaining": remaining,
                     "started_by": started_by,
-                    "history": json.loads(history_json) if history_json else [],
+                    "history": blob.get("history", []),
+                    "topic": blob.get("topic", ""),
                     "channel_id": channel_id,
                 }
         except Exception as e:

@@ -39,7 +39,7 @@ from src.config import (
     SOUNDBOARD_WINDOW_SECS, SOUNDBOARD_MAX_SOUNDS,
     DAILY_REWARD,
 )
-from src import state
+from src import ragebait, state
 from src.games.blackjack import blackjack_hit, blackjack_stand, blackjack_double
 from src.games.hangman import _process_hangman_guess
 from src.leveling import grant_xp as _grant_xp
@@ -382,30 +382,15 @@ async def _auto_daily(author, channel, *, reserve_claim: bool = False) -> tuple[
     return DAILY_REWARD + prop_rev, prop_rev
 
 
-async def _passive_ragebait(message: discord.Message, history: list[str]):
-    context = "\n".join(history)
-    ragebait_system = (
-        "You are an expert at crafting ragebait — messages specifically engineered to provoke "
-        "an emotional reaction. Your goal is to write something that will genuinely irritate, "
-        "annoy, or get under the skin of the target. "
-        "Rules: be specific to the target by referring to them by name (no @ symbols), be witty and cutting rather than just insulting, "
-        "use irony or condescension where effective, keep it under 200 characters, "
-        "and make it feel natural — like something a person would actually say. "
-        "Output only the ragebait message with no preamble, explanation, or quotation marks."
-    )
-    prompt = (
-        f"Write a ragebait reply aimed at {message.author.display_name} based on what they just said. "
-        f"Their recent messages for context:\n{context}\n"
-        "Make it personal, pointed, and reactive to what they actually wrote. Do not use @ symbols."
+async def _passive_ragebait(message: discord.Message, history: list[str], topic: str = ""):
+    messages = ragebait.reply_messages(
+        message.author.display_name, ragebait.bot_name(message.guild), topic, history,
     )
     placeholder = await message.reply("...", silent=True)
     typing_task = asyncio.create_task(keep_typing(message.channel))
     try:
         async with aiohttp.ClientSession() as session:
-            full_response = await stream_ollama(session, [
-                {"role": "system", "content": ragebait_system},
-                {"role": "user", "content": prompt},
-            ], placeholder)
+            full_response = await stream_ollama(session, messages, placeholder)
         await finalize(placeholder, message.channel, f"{message.author.mention} {full_response}")
     except Exception as e:
         await placeholder.edit(content=f"⚠️ {e}")
@@ -786,12 +771,12 @@ class EventsCog(commands.Cog):
         rage = state.active_ragebaits.get(key)
         if rage is None:
             return
-        rage["history"].append(f"[{message.author.display_name}]: {message.content[:200]}")
+        rage["history"].append(ragebait.describe_message(message))
         rage["remaining"] -= 1
         if rage["remaining"] <= 0:
             del state.active_ragebaits[key]
         await save_ragebait()
-        asyncio.create_task(_passive_ragebait(message, list(rage["history"])))
+        asyncio.create_task(_passive_ragebait(message, list(rage["history"]), rage.get("topic", "")))
 
     async def _handle_mock(self, message: discord.Message):
         """Repeat the message in mocking font if the author is being mocked."""

@@ -58,7 +58,7 @@ from src.config import (
     SHOP_XP_COST_PER_XP, SHOP_XP_CATCHUP_DISCOUNT_PCT, SHOP_XP_CATCHUP_COST_PER_XP,
     BOUNTY_MIN_AMOUNT, SHOP_ANNOUNCE_COST_PER_CHAR, SHOP_ANNOUNCE_MAX_COST, ANNOUNCE_MAX_TOTAL_CHARS, WYOMING_TTS_HOST,
 )
-from src import state
+from src import ragebait, state
 
 
 # ── Per-subcommand boilerplate ────────────────────────────────────────────────
@@ -1582,28 +1582,12 @@ class ShopCog(commands.Cog):
             await _release_targeted_buy(uid, "ragebait", prior_buy)
             return
         await save_economy(uid)
-        topic_clause = f" The topic should be specifically about: {topic}." if topic else ""
-        ragebait_system = (
-            "You are an expert at crafting ragebait — messages specifically engineered to provoke "
-            "an emotional reaction. Your goal is to write something that will genuinely irritate, "
-            "annoy, or get under the skin of the target. "
-            "Rules: be specific to the target by referring to them by name (no @ symbols), be witty and cutting rather than just insulting, "
-            "use irony or condescension where effective, keep it under 200 characters, "
-            "and make it feel natural — like something a person would actually say. "
-            "Output only the ragebait message with no preamble, explanation, or quotation marks."
-        )
-        prompt = (
-            f"Write a ragebait message aimed at {target.display_name}.{topic_clause} "
-            "Make it personal, pointed, and likely to provoke a reaction. Do not use @ symbols."
-        )
+        messages = ragebait.opener_messages(target.display_name, ragebait.bot_name(ctx.guild), topic)
         placeholder = await ctx.send("...")
         typing_task = asyncio.create_task(keep_typing(ctx.channel))
         try:
             async with aiohttp.ClientSession() as session:
-                full_response = await stream_ollama(session, [
-                    {"role": "system", "content": ragebait_system},
-                    {"role": "user", "content": prompt},
-                ], placeholder, user_id=uid)
+                full_response = await stream_ollama(session, messages, placeholder, user_id=uid)
         except Exception as e:
             await _release_targeted_buy(uid, "ragebait", prior_buy)
             if cost > 0:
@@ -1623,7 +1607,10 @@ class ShopCog(commands.Cog):
         # Activate and save before posting the opener: a failed save must refund
         # with nothing posted and no live effect.
         key = (gid, target.id)
-        state.active_ragebaits[key] = {"remaining": SHOP_RAGEBAIT_MESSAGES, "history": [], "channel_id": ctx.channel.id}
+        state.active_ragebaits[key] = {
+            "remaining": SHOP_RAGEBAIT_MESSAGES, "started_by": uid, "history": [], "topic": topic,
+            "channel_id": ctx.channel.id,
+        }
         try:
             await save_ragebait()
         except Exception as e:
