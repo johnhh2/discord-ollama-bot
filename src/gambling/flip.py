@@ -168,7 +168,7 @@ class FlipCog(commands.Cog):
     @commands.group(name="flip", aliases=["coinflip"], invoke_without_command=True,
                     help="Flip a coin; with an amount, bet coins at even money on up to 100,000 flips of heads or tails",
                     usage="[amount] [n] [heads|tails]")
-    async def cmd_flip(self, ctx: commands.Context, amount: str = None, n: int = 1, side: str = None):
+    async def cmd_flip(self, ctx: commands.Context, amount: str = None, n: str = None, side: str = None):
         if amount is None:
             # No stake, so no gambling gate: this runs with gambling off (FREE_WHEN_BARE) and anywhere.
             await self._free_flip(ctx)
@@ -178,6 +178,13 @@ class FlipCog(commands.Cog):
         amount = await parse_amount(ctx, amount)
         if amount is None:
             return
+        # `!flip 50k tails`: a side in the count's slot means one coin.
+        if side is None and n is not None and _parse_side(str(n)) is not None:
+            n, side = 1, str(n)
+        try:
+            n = 1 if n is None else int(n)
+        except ValueError:
+            n = 0
         if n < 1:
             await ctx.send("`n` must be a positive whole number.")
             return

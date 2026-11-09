@@ -557,7 +557,9 @@ class EventsCog(commands.Cog):
                 # Echo the command name as the user typed it (alias-aware):
                 # showing the canonical name for an alias invocation reads as
                 # "that command doesn't exist, use this one instead".
-                parents = getattr(ctx, "invoked_parents", None) or []
+                # A group running its own callback lists itself in
+                # invoked_parents; keep only the command's real ancestors.
+                parents = (getattr(ctx, "invoked_parents", None) or [])[:len(getattr(ctx.command, "parents", ()))]
                 typed = " ".join([*parents, getattr(ctx, "invoked_with", None) or ""]).strip() \
                     or ctx.command.qualified_name
                 usage = f"{prefix}{typed} {ctx.command.signature}".rstrip()

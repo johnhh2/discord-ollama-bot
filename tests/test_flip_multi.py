@@ -233,3 +233,68 @@ async def test_flip_default_rejects_other_sides(db):
     await cog.cmd_flip_default.callback(cog, ctx, side="edge")
     assert ctx.sent_messages == ["Side must be `heads` or `tails`."]
     assert "flip_side" not in _state.economy["users"].get("91", {})
+
+
+async def _typed(content: str, monkeypatch):
+    """Run `content` through discord.py's real parsing and on_command_error;
+    returns (play_flip calls, usage replies)."""
+    import discord
+    from discord.ext import commands
+    from discord.ext.commands.view import StringView
+    from src import events as _events
+    import src.gambling.flip as _flip
+
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+    await bot.add_cog(FlipCog(bot))
+    calls, sent = [], []
+
+    async def _play(author, channel, guild, amount, n=1, side=None, **kw):
+        calls.append((amount, n, side))
+    monkeypatch.setattr(_flip, "play_flip", _play)
+    monkeypatch.setattr(_flip, "check_game_channel", AsyncMock(return_value=False))
+
+    author = FakeMember(uid=95, display_name="player")
+    guild = FakeGuild(gid=42)
+    guild.me = SimpleNamespace(id=999, display_name="bot")   # read by ctx.clean_prefix
+    message = SimpleNamespace(content=content, author=author, guild=guild,
+                              channel=SimpleNamespace(id=1), mentions=[], attachments=[], _state=None)
+    view = StringView(content)
+    ctx = commands.Context(message=message, bot=bot, view=view, prefix="!")
+    view.skip_string("!")
+    ctx.invoked_with = view.get_word()
+    ctx.command = bot.all_commands[ctx.invoked_with]
+
+    async def _send(msg=None, **kw):
+        sent.append(msg)
+    ctx.send = _send
+    try:
+        await ctx.command.invoke(ctx)
+    except commands.UserInputError as e:
+        monkeypatch.setattr(_events, "_log_command_error", lambda *a: None)
+        await _events.EventsCog(bot=bot).on_command_error(ctx, e)
+    return calls, sent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content, expected", [
+    ("!flip 50k tails", (50_000, 1, "tails")),
+    ("!flip 50k", (50_000, 1, None)),
+    ("!flip 50k 3", (50_000, 3, None)),
+    ("!flip 50k 3 t", (50_000, 3, "tails")),
+    ("!coinflip 1k h", (1_000, 1, "heads")),
+])
+async def test_typed_flip_forms_parse(db, monkeypatch, content, expected):
+    await _economy.add_balance(95, 1_000_000)
+    calls, sent = await _typed(content, monkeypatch)
+    assert calls == [expected], sent
+
+
+@pytest.mark.asyncio
+async def test_typed_flip_usage_names_the_command_once(db, monkeypatch):
+    from discord.ext import commands
+
+    async def _bad(self, ctx, *a, **kw):
+        raise commands.BadArgument("x")
+    monkeypatch.setattr(commands.Group, "_parse_arguments", _bad)
+    _, sent = await _typed("!flip 50k tails", monkeypatch)
+    assert sent == ["❌ Usage: `!flip [amount] [n] [heads|tails]`"]
