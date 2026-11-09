@@ -337,7 +337,8 @@ class GameServersCog(commands.Cog):
         embed = discord.Embed(title=f"🟢 {game} Server Status", color=C_GREEN)
         if server.joins_key:
             embed.add_field(name="Players", value=f"{status.players}/{status.max_players}")
-        embed.add_field(name="Version", value=status.version or "?")
+        if status.version:
+            embed.add_field(name="Version", value=status.version)
         if key in self._online_since:
             embed.add_field(name="Online since", value=f"<t:{int(self._online_since[key])}:R>")
         await ctx.send(embed=embed)

@@ -326,6 +326,15 @@ async def test_vintagestory_offline_and_unconfigured(monkeypatch):
     assert "set `VRISING_SERVER_HOST`" in ctx.sent_embeds[-1].description
 
 
+async def test_unknown_version_is_left_off_the_card(monkeypatch):
+    _state.bot_settings.pop("vintagestory_version", None)
+    cog = _cog(monkeypatch, _FakeBot(), _vintage(1))
+    ctx = _ctx("vintagestory")
+    await cog.cmd_vintagestory.callback(cog, ctx)
+    assert ctx.sent_embeds[-1].title == "🟢 Vintage Story Server Status"
+    assert "Version" not in [f.name for f in ctx.sent_embeds[-1].fields]
+
+
 async def test_gameservers_minecraft_runs_mc(monkeypatch):
     ran = []
 
