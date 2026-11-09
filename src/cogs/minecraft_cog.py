@@ -51,6 +51,7 @@ from src.mc_shop import (
     find_item, fmt_blocks, items_in, match_category,
 )
 from src.permissions import requires_perm
+from src.server_addresses import address_view
 from src.server_notices import _version_key, announce, event_payloads  # noqa: F401 (tests reach _version_key here)
 from src.settings_views import Field, open_form
 
@@ -355,7 +356,7 @@ class MinecraftCog(commands.Cog):
             desc = f"{_server_label()} didn't respond."
             if self._last_seen_online:
                 desc += f"\nLast seen online <t:{int(self._last_seen_online)}:R>."
-            await ctx.send(embed=emb("🔴 Server Offline", desc, C_RED))
+            await ctx.send(embed=emb("🔴 Server Offline", desc, C_RED), view=address_view(ctx, ("minecraft",)))
             return
 
         self._last_seen_online = time.time()
@@ -390,7 +391,7 @@ class MinecraftCog(commands.Cog):
             else:
                 value = f"{pct:.1f}% (last 7 days)"
             embed.add_field(name="Uptime", value=value)
-        await ctx.send(embed=embed)
+        await ctx.send(embed=embed, view=address_view(ctx, ("minecraft",)))
 
     # ── Block shop: gates and helpers ─────────────────────────────────────────
     def _shop_refusal(self, ctx: commands.Context) -> "discord.Embed | None":

@@ -26,6 +26,7 @@ from src.settings_hub import (
     SHOP_ITEMS, channel_rows, channels_in, mentions, open_settings_hub,
 )
 from src.confirm_view import confirm_choice, confirm_prompt
+from src.server_addresses import MIN_LEVEL_KEY
 from src.config import OLLAMA_MODEL, LOTTERY_SEED_POOL, MC_CONSOLE_HOST, MC_CONSOLE_PASSWORD, VRISING_RCON_PORT
 from src.features import FEATURES, set_feature, features_overview
 from src.rate_curves import CURVE_QUESTION, OFF, RATE_CURVES, curve_status, parse_position
@@ -64,6 +65,7 @@ class SettingsCog(commands.Cog):
         # Polled over RCON there's no player count, so no join notices to switch.
         vrising = "" if VRISING_RCON_PORT else (
             f"🧛 V Rising join notices: {'✅ on' if cfg.get('vrising_join_notices', True) else '❌ off'}\n")
+        ip_level = cfg.get(MIN_LEVEL_KEY)
         embed.add_field(
             name="🎛️ Other",
             value=(
@@ -74,6 +76,7 @@ class SettingsCog(commands.Cog):
                 f"⛏️ Minecraft block shop: {'✅ on' if cfg.get('mc_shop') else '❌ off'}"
                 f" · join notices: {'✅ on' if cfg.get('mc_join_notices', True) else '❌ off'}\n"
                 f"{vrising}"
+                f"📍 Server addresses: {f'level {ip_level}+' if ip_level else '❌ off'}\n"
                 f"📈 Interest curve: {curve_status()}\n"
                 f"🔞 NSFW: {nsfw}"
             ),
@@ -455,6 +458,45 @@ class SettingsCog(commands.Cog):
     @requires_perm
     async def settings_vrising_joins(self, ctx: commands.Context, choice: str = None):
         await self._join_notices(ctx, choice, key="vrising_join_notices", game="V Rising", emoji="🧛", name="vrising")
+
+    # ── !settings server-ip ───────────────────────────────────────────────────
+    @cmd_settings.command(name="server-ip", help="Set the level that sees the Show IP address button on the game server cards, or turn it off (off by default)",
+                          usage="[level|off]")
+    @requires_perm
+    async def settings_server_ip(self, ctx: commands.Context, choice: str = None):
+        if ctx.guild is None:
+            await ctx.send(embed=emb("❌", "Settings are only available in servers.", C_RED))
+            return
+        cfg = get_guild_cfg(ctx.guild.id)
+        title = "📍 Server Addresses"
+        usage = "`!settings server-ip <level>|off`"
+        current = cfg.get(MIN_LEVEL_KEY)
+        what = (
+            "Members at this level or above get a **Show IP address** button under `!gameservers`, `!mc`, "
+            "`!vrising` and `!vintagestory` that privately shows how to connect. "
+            f"**Currently:** {f'level {current}' if current else 'off'}"
+        )
+        if choice is None:
+            values = await open_form(
+                ctx, title=title, description=f"{what}\n\nUsage: {usage}",
+                fields=[Field("level", "Minimum level", required=False, max_length=4,
+                              default=str(current) if current else None, placeholder="Empty turns it off")],
+                button="Set level…",
+            )
+            if values is None:
+                return
+            choice = values.get("level") or "off"
+        if choice.lower() == "off":
+            level = None
+        elif choice.isdigit() and int(choice) >= 1:
+            level = int(choice)
+        else:
+            await ctx.send(embed=emb(title, f"Usage: {usage}\n\n{what}", C_GREY))
+            return
+        cfg[MIN_LEVEL_KEY] = level
+        await save_guild_settings()
+        status = f"shown to members at **level {level}** and above" if level else "**off**"
+        await ctx.send(embed=emb(title, f"The Show IP address button is now {status}.", C_GREEN))
 
     async def _join_notices(self, ctx: commands.Context, choice, *, key: str, game: str, emoji: str, name: str):
         if ctx.guild is None:

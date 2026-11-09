@@ -45,6 +45,7 @@ from src.cogs.minecraft_cog import MonitorState, _mc_events
 from src.forwarding import forward
 from src.helpers import emb, C_GREEN, C_GREY, C_RED
 from src.permissions import requires_perm
+from src.server_addresses import ShowAddressButton, address_view
 from src.server_notices import announce, event_payloads
 
 logger = logging.getLogger(__name__)
@@ -199,10 +200,14 @@ class GameServersCog(commands.Cog):
                 alias.cog = self
                 bot.add_command(alias)
 
+    async def cog_load(self):
+        self.bot.add_dynamic_items(ShowAddressButton)
+
     def cog_unload(self):
         if self.servers:
             self.game_monitor.cancel()
         if isinstance(self.bot, commands.Bot):
+            self.bot.remove_dynamic_items(ShowAddressButton)
             for name, _attr, _aliases in _TOP_ALIASES:
                 self.bot.remove_command(name)
 
@@ -304,7 +309,8 @@ class GameServersCog(commands.Cog):
             return
         details = (["`!mc`"] if mc_mod.MC_SERVER_HOST else []) + [f"`!{server.key}`" for server in self.servers]
         lines.append("\nDetails: " + ", ".join(details))
-        await ctx.send(embed=emb("🎮 Game Servers", "\n".join(lines), C_GREEN))
+        await ctx.send(embed=emb("🎮 Game Servers", "\n".join(lines), C_GREEN),
+                       view=address_view(ctx, ("minecraft", "vrising", "vintagestory")))
 
     @cmd_gameservers.command(name="minecraft", aliases=["mc"], help="Show the Minecraft server's status (same as !mc)")
     @requires_perm
@@ -332,7 +338,7 @@ class GameServersCog(commands.Cog):
             desc = f"The {game} server didn't respond."
             if key in self._last_seen_online:
                 desc += f"\nLast seen online <t:{int(self._last_seen_online[key])}:R>."
-            await ctx.send(embed=emb(f"🔴 {game} Server Offline", desc, C_RED))
+            await ctx.send(embed=emb(f"🔴 {game} Server Offline", desc, C_RED), view=address_view(ctx, (key,)))
             return
         embed = discord.Embed(title=f"🟢 {game} Server Status", color=C_GREEN)
         if server.joins_key:
@@ -341,7 +347,7 @@ class GameServersCog(commands.Cog):
             embed.add_field(name="Version", value=status.version)
         if key in self._online_since:
             embed.add_field(name="Online since", value=f"<t:{int(self._online_since[key])}:R>")
-        await ctx.send(embed=embed)
+        await ctx.send(embed=embed, view=address_view(ctx, (key,)))
 
 
 async def setup(bot):

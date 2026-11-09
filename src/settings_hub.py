@@ -184,7 +184,7 @@ def _economy(*, global_admin: bool) -> list[Item]:
     )]
 
 
-def _games(cfg: dict) -> list[Item]:
+def _games(cfg: dict, *, bot_admin: bool = False) -> list[Item]:
     gambler = cfg.get("gambler_role_enabled", False)
     quote = cfg.get("quote_bypass_restrictions", False)
     scope = cfg.get("leaderboard_default_scope", "global")
@@ -193,7 +193,8 @@ def _games(cfg: dict) -> list[Item]:
     mc_shop = bool(cfg.get("mc_shop"))
     mc_joins = cfg.get("mc_join_notices", True)
     vr_joins = cfg.get("vrising_join_notices", True)
-    nsfw = cfg.get("nsfw_enabled", False)
+    ip_level = cfg.get("server_ip_min_level")
+    nsfw =cfg.get("nsfw_enabled", False)
     nsfw_channels = [int(c) for c in cfg.get("nsfw_channels", [])]
     banned = list(cfg.get("nsfw_banned_tags", []))
     items = [
@@ -214,6 +215,12 @@ def _games(cfg: dict) -> list[Item]:
         *([] if VRISING_RCON_PORT else [  # polled over RCON: no player count
             Item(key="vrising-joins", label="🧛 V Rising join notices — player joined/left posts", value=_on(vr_joins),
                  method="settings_vrising_joins", args=("off" if vr_joins else "on",))]),
+        *([Item(key="server-ip", label="📍 Server addresses — level that sees the Show IP address button",
+                value=f"Level {ip_level}+" if ip_level else "Off", method="settings_server_ip",
+                title="Server addresses", kind="form",
+                fields=(Field("level", "Minimum level", required=False, max_length=4,
+                              default=str(ip_level) if ip_level else None, placeholder="Empty turns it off"),),
+                to_args=lambda v: (v.get("level") or "off",))] if bot_admin else []),
         Item(key="nsfw", label="🔞 NSFW commands", value=_on(nsfw),
              method="settings_nsfw", args=("off" if nsfw else "on",)),
         Item(key="nsfw-channels", label="🔞 NSFW channels — where !nsfw may answer", value=mentions(nsfw_channels, "all channels"),
@@ -345,7 +352,7 @@ def items_for(category: str, ctx, *, models: list[str] | None = None, bot=None) 
     if category == "economy":
         return _economy(global_admin=is_global_admin(ctx))
     if category == "games":
-        return _games(cfg)
+        return _games(cfg, bot_admin=bot_admin)
     if category == "aliases":
         return _aliases(cfg, ctx.guild)
     if category == "ai":

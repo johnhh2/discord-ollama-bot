@@ -504,6 +504,16 @@ Every monitored server folds its polls through `_mc_events` and posts via [src/s
 - **Versions persist** in `state.bot_settings` (`<key>_version`) so an update during bot downtime is still announced.
 - **`!gameservers` subcommands answer bare** (`!vrising`, `!vintagestory`) via `_TOP_ALIASES`, like IdleCog. `!gameservers minecraft` forwards to `!mc`, which stays its own group for the shop.
 
+### Show IP address button
+
+[src/server_addresses.py](src/server_addresses.py) adds it to the `!gameservers`, `!mc`, `!vrising` and `!vintagestory` cards.
+
+- **Off until `!settings server-ip <level>`** (`MIN_LEVEL_KEY`, `bot_admin`, since it exposes the operator's home address). Never in DMs.
+- **Attached only when the invoker meets the level; every click re-checks the clicker** (level, setting, `is_silenced`), since anyone can press it. The answer is always ephemeral.
+- **It has no typed form** on purpose: only an interaction reply can be private. Don't add one that posts addresses in a channel.
+- **V Rising shows an IP, not its host,** because its direct connect takes no hostnames. A host resolving to a LAN address falls back to the bot's public IP (`PUBLIC_IP_URL`).
+- **A `DynamicItem`** keyed by its custom_id, registered in `GameServersCog.cog_load`, so old cards keep working after a restart.
+
 Coverage: [tests/test_game_servers.py](tests/test_game_servers.py), monitor tests in `test_minecraft.py`.
 
 ## Concurrency: per-user command races

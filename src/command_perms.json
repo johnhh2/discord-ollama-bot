@@ -85,6 +85,7 @@
   "settings minecraft-shop": {"tier": "server_admin", "hidden": false},
   "settings minecraft-joins": {"tier": "server_admin", "hidden": false},
   "settings vrising-joins": {"tier": "server_admin", "hidden": false},
+  "settings server-ip": {"tier": "bot_admin", "hidden": false},
   "settings interest": {"tier": "global_admin", "hidden": true},
   "settings minecraft-channel": {"tier": "server_admin", "hidden": false},
   "settings channel minecraft": {"tier": "server_admin", "hidden": false},

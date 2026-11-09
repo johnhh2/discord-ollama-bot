@@ -1,6 +1,9 @@
 """V Rising / Vintage Story server notices (src/cogs/game_servers_cog.py)."""
 import asyncio
+import re
 import struct
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import discord
 import pytest
@@ -9,8 +12,10 @@ from discord.ext import commands
 import src.state as _state
 import src.cogs.game_servers_cog as gs_mod
 import src.cogs.minecraft_cog as mc_mod
+import src.server_addresses as addr_mod
 from src.cogs.game_servers_cog import GameServer, GameServersCog, ServerStatus, _parse_a2s_info
 from src.cogs.settings_cog import SettingsCog
+from src.guild_config import get_guild_cfg
 from tests.fakes.discord import FakeCtx, FakeMember, FakeGuild, FakeTextChannel
 
 
@@ -390,3 +395,150 @@ async def test_settings_vrising_joins_toggles(db):
     assert _state.guild_settings["42"]["vrising_join_notices"] is False
     await cog.settings_vrising_joins.callback(cog, ctx, "maybe")
     assert "Usage:" in ctx.sent_embeds[-1].description
+
+
+# ── Show IP address ──────────────────────────────────────────────────────────
+
+@pytest.fixture
+def _hosts(monkeypatch):
+    monkeypatch.setattr(addr_mod, "MC_SERVER_HOST", "mc.example.com")
+    monkeypatch.setattr(addr_mod, "MC_SERVER_PORT", 19132)
+    monkeypatch.setattr(addr_mod, "VRISING_SERVER_HOST", "vr.example.com")
+    monkeypatch.setattr(addr_mod, "VINTAGESTORY_SERVER_HOST", "vs.example.com")
+    monkeypatch.setattr(addr_mod, "VINTAGESTORY_SERVER_PORT", 42420)
+
+    async def _ip(host):
+        return "203.0.113.7"
+    monkeypatch.setattr(addr_mod, "_public_ip", _ip)
+
+
+def _set_level(uid, level, gid=42):
+    _state.leveling.setdefault(str(gid), {})[str(uid)] = {"level": level - 1}
+
+
+def _ip_level(level, gid=42):
+    get_guild_cfg(gid)[addr_mod.MIN_LEVEL_KEY] = level
+
+
+def _click(view, uid):
+    response = SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock())
+    interaction = SimpleNamespace(user=FakeMember(uid), guild=FakeGuild(gid=42), response=response,
+                                  followup=SimpleNamespace(send=AsyncMock()))
+    return view.children[0].callback(interaction), interaction
+
+
+def _private_text(interaction):
+    for mock in (interaction.response.send_message, interaction.followup.send):
+        if mock.await_count:
+            assert mock.call_args.kwargs["ephemeral"] is True
+            return mock.call_args.args[0]
+
+
+async def test_no_ip_button_until_a_level_is_set(monkeypatch, _hosts):
+    cog = _cog(monkeypatch, _FakeBot(), _vintage(1))
+    _set_level(1, 99)
+    ctx = _ctx("vintagestory")
+    await cog.cmd_vintagestory.callback(cog, ctx)
+    assert ctx.sent_views == []
+
+
+async def test_ip_button_shows_only_for_members_at_the_level(monkeypatch, _hosts):
+    cog = _cog(monkeypatch, _FakeBot(), _vintage(2))
+    _ip_level(10)
+    _set_level(1, 9)
+    ctx = _ctx("vintagestory")
+    await cog.cmd_vintagestory.callback(cog, ctx)
+    assert ctx.sent_views == []
+
+    _set_level(1, 10)
+    await cog.cmd_vintagestory.callback(cog, ctx)
+    button = ctx.sent_views[-1].children[0]
+    assert button.item.label == "Show IP address" and button.custom_id == "srvaddr:vintagestory"
+
+
+async def test_gameservers_button_reveals_all_three_privately(monkeypatch, _hosts):
+    monkeypatch.setattr(mc_mod, "MC_SERVER_HOST", "")
+    cog = _cog(monkeypatch, _FakeBot(), _vintage(1))
+    _ip_level(5)
+    _set_level(1, 5)
+    ctx = _ctx()
+    await cog.cmd_gameservers.callback(cog, ctx)
+
+    click, interaction = _click(ctx.sent_views[-1], uid=1)
+    await click
+    assert _private_text(interaction).split("\n") == [
+        "⛏️ Minecraft: `mc.example.com` · port `19132`",
+        "🧛 V Rising: `203.0.113.7`",
+        "🌿 Vintage Story: `vs.example.com:42420`",
+    ]
+
+
+async def test_ip_click_rechecks_the_clicker(monkeypatch, _hosts):
+    _ip_level(5)
+    _set_level(1, 5)
+    view = addr_mod.address_view(_ctx("vrising"), ("vrising",))
+
+    _set_level(2, 4)
+    click, interaction = _click(view, uid=2)
+    await click
+    assert "level 5" in _private_text(interaction)
+
+    _state.blocklist[(42, 1)] = {"reason": "t", "banned_by": 9, "banned_at": None}
+    click, interaction = _click(view, uid=1)
+    await click
+    assert "203.0.113.7" not in _private_text(interaction)
+
+    del _state.blocklist[(42, 1)]
+    _ip_level(None)
+    click, interaction = _click(view, uid=1)
+    await click
+    assert _private_text(interaction) == "Server addresses aren't shared here."
+
+
+async def test_ip_button_survives_a_restart(_hosts):
+    item = await addr_mod.ShowAddressButton.from_custom_id(
+        None, None, re.fullmatch(addr_mod.ShowAddressButton.__discord_ui_compiled_template__, "srvaddr:minecraft,vrising"))
+    assert item.keys == ("minecraft", "vrising")
+
+
+async def test_public_ip_falls_back_when_the_host_resolves_to_the_lan(monkeypatch):
+    async def _lan(*a, **k):
+        return [(None, None, None, None, ("192.168.1.20", 0))]
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", _lan)
+
+    class _Resp:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        def raise_for_status(self):
+            pass
+
+        async def text(self):
+            return "198.51.100.4\n"
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            pass
+
+        def get(self, url, timeout):
+            assert url == addr_mod.PUBLIC_IP_URL
+            return _Resp()
+    monkeypatch.setattr(addr_mod.aiohttp, "ClientSession", _Session)
+    assert await addr_mod._public_ip("vr.example.com") == "198.51.100.4"
+
+
+async def test_settings_server_ip_sets_and_clears(db):
+    cog = SettingsCog(bot=None)
+    ctx = _admin_ctx("settings server-ip")
+    await cog.settings_server_ip.callback(cog, ctx, "15")
+    assert _state.guild_settings["42"]["server_ip_min_level"] == 15
+    await cog.settings_server_ip.callback(cog, ctx, "0")
+    assert "Usage:" in ctx.sent_embeds[-1].description
+    await cog.settings_server_ip.callback(cog, ctx, "off")
+    assert _state.guild_settings["42"]["server_ip_min_level"] is None
