@@ -209,7 +209,7 @@ class LevelingCog(commands.Cog):
 
 
     # ── !levels XP leaderboard ────────────────────────────────────────────────
-    @commands.command(name="levels", aliases=["lbxp", "xplb", "lbx", "xlb", "lblvl", "lblevel"],
+    @commands.command(name="levels", aliases=["lvls", "lbxp", "xplb", "lbx", "xlb", "lblvl", "lblevel"],
                       help="Top 10 XP leaderboard for this server")
     async def cmd_levels(self, ctx: commands.Context):
         if ctx.guild is None:

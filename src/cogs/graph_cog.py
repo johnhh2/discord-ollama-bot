@@ -221,7 +221,7 @@ class GraphCog(commands.Cog):
     async def cmd_graph_gambling(self, ctx: commands.Context, *tokens: str):
         await _build_and_render(ctx, tokens, find_spec("gambling"))
 
-    @cmd_graph.command(name="levels", aliases=["level", "lvl"],
+    @cmd_graph.command(name="levels", aliases=["level", "lvl", "lvls"],
                        help="Draw level-ups per day in this server over the last 2 weeks (you by default)",
                        usage="[@user]")
     @requires_perm

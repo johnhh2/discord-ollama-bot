@@ -685,7 +685,7 @@ REGISTRY: list[SeriesSpec] = [
     SeriesSpec("memory",   ("memory", "mem", "ram"),                    GROUP_MB,     build_series_memory,                           y_unit_label="MB"),
     SeriesSpec("ping",     ("ping", "latency"),                         GROUP_MS,     build_series_ping,     accepts_bot=True,     y_unit_label="ms"),
     SeriesSpec("minecraft", ("minecraft", "mc", "mcping"),              GROUP_MS_MC,  build_series_minecraft,                        y_unit_label="ms"),
-    SeriesSpec("levels",   ("levels", "level", "lvl"),                  GROUP_XP,     build_series_levels,   accepts_member=True, accepts_guild=True, y_unit_label="Level-ups"),
+    SeriesSpec("levels",   ("levels", "level", "lvl", "lvls"),          GROUP_XP,     build_series_levels,   accepts_member=True, accepts_guild=True, y_unit_label="Level-ups"),
 ]
 
 
