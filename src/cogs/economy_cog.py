@@ -197,6 +197,22 @@ def _crime_public_only_error(ctx) -> discord.Embed | None:
     return None
 
 
+def _property_cap_block(now: float) -> str:
+    """!economy's view of the per-player deed cap: the cap now and a bar of
+    the economy's net worth toward the next step (src/property_supply.py)."""
+    from src.leveling import _bar
+    from src.property_supply import cap_progress, economy_net_worth
+    net_worth = economy_net_worth(now)
+    cap, next_cap, target = cap_progress(net_worth)
+    pct = min(100, int(net_worth * 100 / target)) if target else 100
+    return (
+        f"\n**Property cap:** {cap} deeds per player\n"
+        f"`{_bar(net_worth, target)}` {pct}% to {next_cap}\n"
+        f"{net_worth:,} / {target:,} 🪙 ({max(0, target - net_worth):,} to go)\n"
+        "*Counts wallets, savings, property and artifacts; rechecked daily at the 5am CT reset.*\n"
+    )
+
+
 def _is_jailed(uid: int) -> bool:
     """Sync jail read for places that can't await (the heist lobby's
     reaction predicate). A user with no economy row has never been jailed."""
@@ -2203,6 +2219,7 @@ class EconomyCog(commands.Cog):
             f"**Total in property:** {total_property:,} 🪙 ({owned_count}/{len(released_properties())} owned)\n"
             f"**Daily property revenue:** {total_property_daily:,} 🪙/day\n"
             f"**Net worth (circulation + property):** {total_circulation + total_property:,} 🪙\n"
+            f"{_property_cap_block(now)}\n"
             f"**Lottery pool:** {lottery_pool:,} 🪙\n"
             f"**House pot:** {house_bal:,} 🪙\n\n"
             f"**Users tracked:** {total_users:,}\n"

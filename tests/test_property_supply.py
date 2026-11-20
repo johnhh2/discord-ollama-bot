@@ -13,7 +13,7 @@ from src.properties import (
     copy_id, find_property, is_released, max_owned, register_copy, released_properties,
 )
 from src.property_supply import (
-    RELEASE_THRESHOLDS, cap_for, copy_threshold, deeds_due, development_index,
+    RELEASE_THRESHOLDS, cap_for, cap_progress, cap_threshold, copy_threshold, deeds_due, development_index,
     economy_net_worth, run_property_release, wealth_progress,
 )
 from tests.test_properties import _ctx, _give_property, _set_level
@@ -89,6 +89,38 @@ async def test_cap_steps_every_two_and_a_half_times():
     assert cap_for(18_000_000) == 6
     assert cap_for(19_000_000) == 7
     assert cap_for(48_000_000) == 8
+
+
+async def test_cap_threshold_is_where_cap_for_steps():
+    assert cap_threshold(PROPERTY_BASE_MAX_OWNED) == 0
+    assert cap_threshold(6) == 7_535_660 and cap_threshold(7) == 18_928_721
+    for cap in range(6, 12):
+        t = cap_threshold(cap)
+        assert cap_for(t) == cap and cap_for(t - 1) == cap - 1
+
+
+async def test_cap_progress_aims_one_above_the_ratcheted_cap():
+    assert cap_progress(8_000_000) == (6, 7, 18_928_721)
+    _state.economy["property_cap"] = 7  # high-water mark above today's net worth
+    assert cap_progress(8_000_000) == (7, 8, cap_threshold(8))
+
+
+async def test_economy_embed_shows_the_cap_bar(db, monkeypatch):
+    import src.cogs.economy_cog as economy_cog
+    from src.cogs.economy_cog import EconomyCog
+
+    async def _no_lottery(gid):
+        return {"prize_pool": 0}
+    monkeypatch.setattr(economy_cog, "load_lottery", _no_lottery)
+    await _economy._ensure_user(2)
+    _state.economy["users"]["2"]["balance"] = 8_000_000
+    cog = EconomyCog(bot=None)
+    ctx = _ctx(2)
+    await cog.cmd_economy.callback(cog, ctx)
+    body = ctx.sent_embeds[-1].description
+    assert "**Property cap:** 6 deeds per player" in body
+    assert "42% to 7" in body
+    assert "8,000,000 / 18,928,721 🪙 (10,928,721 to go)" in body
 
 
 async def test_net_worth_counts_wallets_savings_deeds_and_artifacts():

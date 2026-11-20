@@ -127,6 +127,22 @@ def cap_for(net_worth: float) -> int:
     return PROPERTY_BASE_MAX_OWNED + int(wealth_progress(net_worth) / CAP_STEP)
 
 
+def cap_threshold(cap: int) -> int:
+    """The net worth at which cap_for first reaches `cap` (the base cap: 0)."""
+    steps = cap - PROPERTY_BASE_MAX_OWNED
+    if steps <= 0:
+        return 0
+    return math.ceil(NET_WORTH_FLOOR * (NET_WORTH_ANCHOR / NET_WORTH_FLOOR) ** (steps * CAP_STEP))
+
+
+def cap_progress(net_worth: float) -> tuple[int, int, int]:
+    """(cap now, the next cap, the net worth that earns it). The cap is the
+    ratcheted high-water mark, so the next step is one above it even when
+    net worth has since fallen below the current step's threshold."""
+    cap = max(max_owned(), cap_for(net_worth))
+    return cap, cap + 1, cap_threshold(cap + 1)
+
+
 async def run_property_release(now: float | None = None) -> tuple[list[str], int]:
     """The once-per-gameplay-day release pass; returns (newly released ids,
     the cap after it). Driven by EconomyCog's minute loop, gated like the
